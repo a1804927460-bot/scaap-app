@@ -688,7 +688,7 @@ function buildAiPlaceholderElement(item) {
     </div>
     <div class="ai-pending-copy">
       <strong>${item.kind === 'video' ? '正在生成视频' : '正在生成图片'}</strong>
-      <small>${escapeHtml(item.modelName || 'Nano Banana Pro')}</small>
+      <small>${escapeHtml(item.modelName || 'QuickRouter GPT Image')}</small>
     </div>
   `;
   makeBoardItemDraggable(el, item);
@@ -2052,7 +2052,7 @@ function getConfiguredImageProviders(aiConfig) {
   if (providers.length) return providers;
   return [{
     id: 'image-1',
-    name: 'Nano Banana Pro',
+    name: 'QuickRouter GPT Image',
     endpoint: aiConfig.imageEndpoint
   }];
 }
@@ -2064,7 +2064,7 @@ function getConfiguredVideoProviders(aiConfig) {
   if (providers.length) return providers;
   return [{
     id: 'video-1',
-    name: aiConfig.videoProviderName || 'Grok Imagine',
+    name: aiConfig.videoProviderName || 'QuickRouter Sora 2',
     endpoint: aiConfig.videoEndpoint
   }];
 }

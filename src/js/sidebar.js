@@ -1056,8 +1056,8 @@ async function submitCloudAccount(action) {
 async function refreshAiMediaSettings() {
   const config = await window.messsAPI.getAiMediaConfig();
   renderCloudSecurity(config);
-  renderAiProviderSlots('ai-image-provider-slots', 'image', config.imageProviders, config.activeImageProviderId, 'Nano Banana Pro', config.imageEndpoint);
-  renderAiProviderSlots('ai-video-provider-slots', 'video', config.videoProviders, config.activeVideoProviderId, config.videoProviderName || 'Grok Imagine', config.videoEndpoint);
+  renderAiProviderSlots('ai-image-provider-slots', 'image', config.imageProviders, config.activeImageProviderId, 'QuickRouter GPT Image', config.imageEndpoint);
+  renderAiProviderSlots('ai-video-provider-slots', 'video', config.videoProviders, config.activeVideoProviderId, config.videoProviderName || 'QuickRouter Sora 2', config.videoEndpoint);
   if (document.getElementById('ai-chat-provider-slots')) {
     renderChatProviderSlots(config.chatProviders, config.activeChatProviderId);
     document.getElementById('ai-api-key').value = '';

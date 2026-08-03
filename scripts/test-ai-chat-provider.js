@@ -10,7 +10,7 @@ const {
   discoverChatModels,
   extractChatText,
   requestChat
-} = require('../lib/wuyin-chat-provider');
+} = require('../lib/ai-chat-provider');
 
 function response(payload, ok = true, status = 200) {
   return {
