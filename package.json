@@ -1,0 +1,31 @@
+{
+  "name": "messs",
+  "version": "0.0.1",
+  "description": "Messs. — Resolve your confusion. A file preview & organizing desktop app.",
+  "main": "main.js",
+  "author": "Messs.",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "postinstall": "node scripts/ensure-canvas-stub.js",
+    "test": "node scripts/test-ai-media-provider.js && node scripts/test-ai-chat-provider.js && node scripts/test-board-engine.js && node scripts/test-membership-service.js && node scripts/test-privacy-guard.js && node scripts/test-security-clients.js && npm --prefix gateway run check",
+    "start": "node ../messs-app/node_modules/electron/cli.js .",
+    "build:dev": "node ../messs-app/node_modules/electron-builder/cli.js --config electron-builder.dev.yml",
+    "release:win": "electron-builder --config electron-builder.release.yml --win --publish always"
+  },
+  "dependencies": {
+    "docx": "^9.1.1",
+    "electron-updater": "^6.3.9",
+    "ffmpeg-static": "^5.2.0",
+    "mammoth": "^1.8.0",
+    "pdfjs-dist": "4.10.38",
+    "sharp": "^0.35.3"
+  },
+  "devDependencies": {
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3"
+  },
+  "overrides": {
+    "canvas": "file:./vendor/empty-canvas-stub"
+  }
+}

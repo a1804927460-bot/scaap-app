@@ -1,0 +1,134 @@
+/* ===========================================================
+   Messs. �?design tokens
+   Brand blue sampled from the supplied logo reference: #0052A6
+   =========================================================== */
+
+:root {
+  --brand-blue: #0052A6;
+  --brand-blue-bright: #2C7BE0;
+  --brand-yellow: #F2C94C;
+  --brand-yellow-bright: #FFD45A;
+
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 24px;
+  --radius-pill: 999px;
+
+  --ease-spring: cubic-bezier(0.34, 1.26, 0.36, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 180ms;
+  --dur-base: 320ms;
+  --dur-slow: 560ms;
+
+  --font-display: "Helvetica Neue LT Pro 93 Black Extended", "Helvetica Neue LT Pro", "Helvetica Neue", -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Helvetica, Arial, sans-serif;
+}
+
+/* -------- Dark theme (default; also the only theme for the start screen) -------- */
+[data-theme="dark"] {
+  --bg-base: #080A0D;
+  --bg-elevated: #0E1115;
+  --bg-surface: #15191E;
+  --bg-surface-2: #20252B;
+  --border-hairline: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(72, 137, 232, 0.34);
+
+  --text-primary: #F4F6F8;
+  --text-secondary: #A7ADB6;
+  --text-tertiary: #707780;
+
+  --title-accent: #4A8BE8;
+
+  --accent: #F5D84C;
+  --accent-soft: rgba(245, 216, 76, 0.14);
+  --accent-ink: #0A0C0F;
+  --accent-glow: rgba(245, 216, 76, 0.24);
+  --selection-outline: #F5D84C;
+  --selection-handle: #FFF3A8;
+  --glow-color: rgba(44, 123, 224, 0.30);
+  --resize-handle-line: rgba(167, 173, 182, 0.10);
+  --resize-handle-hover: rgba(167, 173, 182, 0.30);
+  --resize-handle-active: rgba(74, 139, 232, 0.72);
+
+  --shadow-elevated: 0 20px 60px rgba(0, 0, 0, 0.62);
+  --scrollbar-thumb: rgba(112, 119, 128, 0.42);
+}
+
+/* -------- Light theme (main app only) �?black text on white -------- */
+[data-theme="light"] {
+  --bg-base: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-surface: #f5f5f7;
+  --bg-surface-2: #ececef;
+  --border-hairline: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.16);
+
+  --text-primary: #0a0a0a;
+  --text-secondary: #5b5f66;
+  --text-tertiary: #8b8f96;
+
+  --title-accent: #0a0a0a;
+
+  --accent: var(--brand-blue);
+  --accent-soft: rgba(0, 82, 166, 0.10);
+  --accent-ink: #ffffff;
+  --accent-glow: rgba(0, 82, 166, 0.25);
+  --selection-outline: #111820;
+  --selection-handle: #ffffff;
+  --glow-color: rgba(0, 82, 166, 0.06);
+  --resize-handle-line: rgba(91, 95, 102, 0.10);
+  --resize-handle-hover: rgba(91, 95, 102, 0.26);
+  --resize-handle-active: rgba(0, 82, 166, 0.60);
+
+  --shadow-elevated: 0 20px 50px rgba(0, 0, 0, 0.10);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.14);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+body { transition: background-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out); }
+
+button {
+  font-family: inherit;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  transform-origin: center;
+}
+
+button:active:not(:disabled) { transform: scale(0.95); }
+
+input { font-family: inherit; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}

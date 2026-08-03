@@ -1,0 +1,14 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "RAILPACK",
+    "buildCommand": "npm --prefix gateway install --omit=dev"
+  },
+  "deploy": {
+    "startCommand": "npm --prefix gateway start",
+    "healthcheckPath": "/healthz",
+    "healthcheckTimeout": 20,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 5
+  }
+}

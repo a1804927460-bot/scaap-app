@@ -1,0 +1,32 @@
+appId: com.messs.desktop
+productName: Messs
+electronVersion: 43.2.0
+electronDist: ../messs-app/node_modules/electron/dist
+asar: true
+directories:
+  output: release-dev
+files:
+  - main.js
+  - preload.js
+  - package.json
+  - config/runtime.json
+  - lib/**/*
+  - src/**/*
+  - vendor/**/*
+  - scripts/**/*
+  - node_modules/@napi-rs/**/*
+  - "!release{,/**/*}"
+  - "!release-dev{,/**/*}"
+asarUnpack:
+  - node_modules/ffmpeg-static/**/*
+  - node_modules/sharp/**/*
+  - node_modules/@img/**/*
+  - node_modules/@napi-rs/**/*
+extraResources:
+  - from: build-resources/tools
+    to: tools
+    filter:
+      - "**/*"
+win:
+  target: dir
+  signAndEditExecutable: false
