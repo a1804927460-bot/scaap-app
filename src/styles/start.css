@@ -1,0 +1,154 @@
+/* ===========================================================
+   Start screen �?black background, blue wordmark, morphing play button
+   =========================================================== */
+
+.start-screen[hidden] {
+  display: none;
+}
+
+.start-screen {
+  position: fixed;
+  top: 38px; left: 0; right: 0; bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-base);
+  overflow: hidden;
+  z-index: 50;
+  transition: opacity var(--dur-slow) var(--ease-out), filter var(--dur-slow) var(--ease-out);
+}
+
+.start-screen.is-leaving {
+  opacity: 0;
+  filter: blur(6px);
+  pointer-events: none;
+}
+
+.start-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  transform: translateY(0);
+  transition: transform var(--dur-slow) var(--ease-out), opacity var(--dur-slow) var(--ease-out);
+}
+
+.start-screen.is-leaving .start-content {
+  transform: translateY(-18px) scale(0.97);
+  opacity: 0;
+}
+
+.start-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-stretch: expanded;
+  font-size: clamp(56px, 11vw, 128px);
+  line-height: 1;
+  letter-spacing: -0.09em;
+  color: var(--brand-blue-bright);
+  text-shadow: 0 0 60px rgba(44, 123, 224, 0.35);
+}
+
+.start-title-dot { color: var(--brand-blue-bright); margin-left: 0.04em; }
+
+/* "sss." hover effect: hovering anywhere over these letters scales each one
+   up by 10%, one after another, like a small ripple running left to right. */
+.sss-wrap {
+  display: inline-block;
+}
+
+.sss-char {
+  display: inline-block;
+  transform-origin: 50% 75%;
+  transform: scale(1);
+  transition: transform 260ms var(--ease-spring);
+}
+
+.sss-wrap:hover .sss-char:nth-child(1) { transform: scale(1.1); transition-delay: 0ms; }
+.sss-wrap:hover .sss-char:nth-child(2) { transform: scale(1.1); transition-delay: 70ms; }
+.sss-wrap:hover .sss-char:nth-child(3) { transform: scale(1.1); transition-delay: 140ms; }
+.sss-wrap:hover .sss-char:nth-child(4) { transform: scale(1.1); transition-delay: 210ms; }
+
+.start-subtitle {
+  margin: 14px 0 48px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-stretch: expanded;
+  font-size: clamp(15px, 1.6vw, 20px);
+  letter-spacing: 0;
+  color: var(--brand-blue-bright);
+  opacity: 0.92;
+}
+
+/* The morphing play -> Start pill */
+.start-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+  transition: width var(--dur-base) var(--ease-spring),
+              background-color var(--dur-base) var(--ease-out),
+              transform var(--dur-fast) var(--ease-out);
+}
+
+.start-btn:hover,
+.start-btn:focus-visible {
+  width: 148px;
+  background: var(--accent);
+}
+
+.start-btn:active {
+  transform: scale(0.96);
+}
+
+.start-btn-icon {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-primary);
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+
+.start-btn:hover .start-btn-icon,
+.start-btn:focus-visible .start-btn-icon {
+  opacity: 0;
+  transform: scale(0.5);
+}
+
+.start-btn-label {
+  position: absolute;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 0.02em;
+  color: var(--accent-ink);
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity var(--dur-fast) var(--ease-out) 60ms, transform var(--dur-fast) var(--ease-out) 60ms;
+  white-space: nowrap;
+}
+
+.start-btn:hover .start-btn-label,
+.start-btn:focus-visible .start-btn-label {
+  opacity: 1;
+  transform: scale(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .start-btn, .start-btn-icon, .start-btn-label, .start-screen, .start-content, .sss-char {
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+  }
+}

@@ -1,0 +1,40 @@
+appId: com.messs.desktop
+productName: Messs
+asar: true
+directories:
+  output: release
+files:
+  - main.js
+  - preload.js
+  - package.json
+  - config/runtime.json
+  - lib/**/*
+  - src/**/*
+  - vendor/**/*
+  - node_modules/@napi-rs/**/*
+  - "!release{,/**/*}"
+  - "!release-dev{,/**/*}"
+asarUnpack:
+  - node_modules/ffmpeg-static/**/*
+  - node_modules/sharp/**/*
+  - node_modules/@img/**/*
+  - node_modules/@napi-rs/**/*
+extraResources:
+  - from: build-resources/tools
+    to: tools
+    filter:
+      - "**/*"
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: "Messs-${version}-${arch}-Setup.${ext}"
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+publish:
+  provider: github
+  releaseType: release

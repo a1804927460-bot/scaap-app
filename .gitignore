@@ -1,0 +1,29 @@
+node_modules/
+gateway/node_modules/
+release/
+release-dev/
+.qa-user-data/
+
+# Secrets and local runtime overrides
+.env
+.env.*
+!.env.example
+**/service-role*.json
+**/*service_role*
+**/*secret-key*
+*.pem
+*.key
+*.p12
+*.pfx
+*.kdbx
+
+# Local archives, caches, and user data
+MesssLibrary/
+previewCache/
+thumbCache/
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

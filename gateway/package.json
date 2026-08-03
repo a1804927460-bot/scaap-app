@@ -1,0 +1,16 @@
+{
+  "name": "messs-ai-gateway",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "check": "node --check src/server.js && node --check src/auth.js && node --check src/providers.js && node --check src/usage.js"
+  },
+  "dependencies": {
+    "jose": "^6.1.0"
+  }
+}
