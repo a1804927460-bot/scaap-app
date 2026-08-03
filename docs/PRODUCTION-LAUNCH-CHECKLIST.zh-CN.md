@@ -38,13 +38,13 @@ SUPABASE_SECRET_KEY=你的 secret key
 REQUIRE_DURABLE_QUOTA=true
 REQUESTS_PER_MINUTE=30
 ALLOWED_ORIGINS=
-WUYIN_API_KEY=服务商密钥
-CHAT_API_ENDPOINT=对话服务 API Base URL
-CHAT_API_KEY=对话服务密钥
+QUICKROUTER_API_KEY=QuickRouter 服务端密钥
+QUICKROUTER_CHAT_MODELS=允许在客户端选择的对话模型，使用英文逗号分隔
+AI_PROVIDERS_JSON=其他中转站的服务端注册表，不包含真实密钥
 CHAT_MODELS=模型1,模型2
 ```
 
-6. 将 `SUPABASE_SECRET_KEY`、`WUYIN_API_KEY`、`CHAT_API_KEY` 和新增 provider key 全部设置为 Railway sealed variable。
+6. 将 `SUPABASE_SECRET_KEY`、`QUICKROUTER_API_KEY` 和每个新增中转站的 provider key 全部设置为 Railway sealed variable。
 7. 保持 `ALLOWED_ORIGINS` 为空。Electron 主进程请求没有浏览器 Origin；网页 Origin 默认拒绝。
 8. 只有尚未迁移非对称 JWT 时，才可临时设置 `ALLOW_AUTH_USER_FALLBACK=true`。迁移完成后立即删除。
 9. 访问 `/healthz`，应返回 `{"ok":true}`。其他 `/v1/*` 路由无 JWT 时必须返回 401。
