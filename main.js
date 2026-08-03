@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
+const http = require('http');
 const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 const { autoUpdater } = require('electron-updater');
@@ -24,12 +25,20 @@ const {
 } = require('./lib/ai-media-provider');
 const { requestChat, discoverChatModels } = require('./lib/ai-chat-provider');
 const { loadRuntimeConfig } = require('./lib/runtime-config');
-const { SupabaseAuth } = require('./lib/supabase-auth');
+const { SupabaseAuth, createPkcePair } = require('./lib/supabase-auth');
 const { AiGatewayClient } = require('./lib/ai-gateway-client');
 const { assertSafeLocalFile, sanitizeAiRequest } = require('./lib/privacy-guard');
+const { activate: activateApp, getActivationStatus } = require('./lib/activation');
 
 if (process.env.MESSS_DISABLE_GPU === '1') {
   app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('disable-gpu');
+  app.commandLine.appendSwitch('disable-gpu-sandbox');
+  app.commandLine.appendSwitch('in-process-gpu');
+}
+
+if (process.env.MESSS_USER_DATA_DIR && path.isAbsolute(process.env.MESSS_USER_DATA_DIR)) {
+  app.setPath('userData', path.resolve(process.env.MESSS_USER_DATA_DIR));
 }
 
 let sharp;
@@ -56,6 +65,16 @@ let usageTickInterval;
 let previewCacheDir;
 let previewTmpDir;
 let thumbCacheDir;
+let updateCheckInterval;
+let googleOAuthPromise;
+let updaterState = {
+  enabled: true,
+  status: 'idle',
+  currentVersion: app.getVersion(),
+  availableVersion: null,
+  progress: null,
+  message: null
+};
 const transientAiAttachments = new Map();
 
 function createStoreWithFallback() {
@@ -204,33 +223,147 @@ function getPublishInfo() {
 }
 
 function notifyUpdateDownloaded(info) {
+  setUpdaterState({
+    status: 'downloaded',
+    availableVersion: info && info.version || null,
+    progress: 100,
+    message: null
+  });
   if (mainWindow) {
     mainWindow.webContents.send('updater:downloaded', { version: info.version });
   }
+}
+
+function publicUpdaterState() {
+  return { ...updaterState, packaged: app.isPackaged };
+}
+
+function setUpdaterState(patch) {
+  updaterState = { ...updaterState, ...patch };
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater:status', publicUpdaterState());
+  }
+  return publicUpdaterState();
+}
+
+async function checkForUpdates(manual = false) {
+  if (!app.isPackaged) return setUpdaterState({ status: 'development', message: null });
+  if (!manual && !updaterState.enabled) return publicUpdaterState();
+  setUpdaterState({ status: 'checking', progress: null, message: null });
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (err) {
+    console.error('checkForUpdates failed:', err.message);
+    setUpdaterState({ status: 'error', message: String(err.message || 'Update check failed.') });
+  }
+  return publicUpdaterState();
 }
 
 function checkForUpdatesQuietly() {
   // Update checks fail for plenty of benign reasons (offline, no release
   // published yet, unsigned mac build, rate limits) 锟?never surface these
   // as user-facing errors, just log for our own debugging.
-  autoUpdater.checkForUpdates().catch((err) => {
-    console.error('checkForUpdates failed:', err.message);
-  });
+  return checkForUpdates(false);
 }
 
 function setupAutoUpdater() {
-  if (!app.isPackaged) return; // No published feed to check against in dev.
+  updaterState.enabled = store.data.settings.autoUpdateEnabled !== false;
+  autoUpdater.autoDownload = updaterState.enabled;
+  autoUpdater.autoInstallOnAppQuit = updaterState.enabled;
 
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
-
+  autoUpdater.on('checking-for-update', () => setUpdaterState({ status: 'checking', message: null }));
+  autoUpdater.on('update-available', (info) => setUpdaterState({
+    status: updaterState.enabled ? 'downloading' : 'available',
+    availableVersion: info && info.version || null,
+    progress: 0,
+    message: null
+  }));
+  autoUpdater.on('update-not-available', () => setUpdaterState({
+    status: 'up-to-date', availableVersion: null, progress: null, message: null
+  }));
+  autoUpdater.on('download-progress', (progress) => setUpdaterState({
+    status: 'downloading',
+    progress: Math.max(0, Math.min(100, Number(progress && progress.percent) || 0)),
+    message: null
+  }));
   autoUpdater.on('update-downloaded', notifyUpdateDownloaded);
   autoUpdater.on('error', (err) => {
     console.error('Auto-update error:', err == null ? err : err.message);
+    setUpdaterState({ status: 'error', message: String(err && err.message || 'Update failed.') });
   });
 
-  checkForUpdatesQuietly();
-  setInterval(checkForUpdatesQuietly, 4 * 60 * 60 * 1000); // also re-check every 4 hours.
+  if (!app.isPackaged) {
+    setUpdaterState({ status: 'development' });
+    return;
+  }
+  if (updaterState.enabled) checkForUpdatesQuietly();
+  updateCheckInterval = setInterval(checkForUpdatesQuietly, 4 * 60 * 60 * 1000);
+}
+
+function oauthResponseHtml(success, message) {
+  const title = success ? 'Messs login complete' : 'Messs login failed';
+  const safeMessage = String(message || '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[char]));
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>${title}</title><style>body{font:16px system-ui;background:#111318;color:#f5f6f8;display:grid;place-items:center;min-height:100vh;margin:0}.box{max-width:480px;padding:32px;text-align:center}h1{font-size:22px}p{color:#a8adb7;line-height:1.6}</style></head><body><div class="box"><h1>${title}</h1><p>${safeMessage}</p></div></body></html>`;
+}
+
+function signInWithGoogle() {
+  if (googleOAuthPromise) return googleOAuthPromise;
+  googleOAuthPromise = new Promise((resolve, reject) => {
+    const { verifier, challenge } = createPkcePair();
+    const callbackNonce = crypto.randomBytes(24).toString('base64url');
+    let settled = false;
+    let timeout;
+    const finish = (error, session) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      server.close();
+      googleOAuthPromise = null;
+      if (error) reject(error); else resolve(session);
+    };
+    const server = http.createServer(async (request, response) => {
+      response.setHeader('Cache-Control', 'no-store');
+      response.setHeader('X-Content-Type-Options', 'nosniff');
+      try {
+        const requestUrl = new URL(request.url, 'http://127.0.0.1');
+        if (request.method !== 'GET' || requestUrl.pathname !== `/oauth/callback/${callbackNonce}`) {
+          response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+          response.end('Not found');
+          return;
+        }
+        const oauthError = requestUrl.searchParams.get('error_description') || requestUrl.searchParams.get('error');
+        const code = requestUrl.searchParams.get('code');
+        if (oauthError || !code) throw new Error(oauthError || 'Google did not return an authorization code.');
+        const session = await supabaseAuth.exchangeOAuthCode(code, verifier);
+        response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        response.end(oauthResponseHtml(true, 'You can close this window and return to Messs.'));
+        finish(null, session);
+      } catch (error) {
+        response.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+        response.end(oauthResponseHtml(false, error.message));
+        finish(error);
+      }
+    });
+    server.on('error', (error) => finish(error));
+    server.listen(0, '127.0.0.1', async () => {
+      try {
+        const address = server.address();
+        const redirectTo = `http://127.0.0.1:${address.port}/oauth/callback/${callbackNonce}`;
+        const authorizeUrl = supabaseAuth.getOAuthAuthorizeUrl('google', redirectTo, challenge);
+        await shell.openExternal(authorizeUrl);
+      } catch (error) {
+        finish(error);
+      }
+    });
+    timeout = setTimeout(() => {
+      const error = new Error('Google login timed out. Please try again.');
+      error.code = 'oauth-timeout';
+      finish(error);
+    }, 5 * 60 * 1000);
+  });
+  return googleOAuthPromise;
 }
 
 function getDesktopDir() {
@@ -916,6 +1049,8 @@ async function getPublicAiMediaConfig() {
         name: String(provider.name || provider.id || '').slice(0, 80),
         endpoint: gatewayEndpoint,
         models: Array.isArray(provider.models) ? provider.models.slice(0, 30) : [],
+        capabilities: provider.capabilities && typeof provider.capabilities === 'object' ? provider.capabilities : null,
+        protocol: String(provider.protocol || ''),
         hasOwnApiKey: false,
         hasApiKey: true,
         cloudManaged: true
@@ -972,6 +1107,7 @@ async function generateAiMediaBuffer(kind, prompt, options = {}) {
         prompt,
         providerId: kind === 'video' ? options.videoProviderId : options.imageProviderId,
         size: options.size,
+        resolution: options.resolution,
         aspectRatio: options.aspectRatio,
         sourceWidth: options.sourceWidth,
         sourceHeight: options.sourceHeight,
@@ -1173,6 +1309,9 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
       providerId: providerId.slice(0, 80) || null,
       aspectRatio: String(request.aspectRatio || 'auto').trim().slice(0, 32) || 'auto',
       size: String(request.size || 'auto').trim().slice(0, 32) || 'auto',
+      resolution: mediaKind === 'video'
+        ? String(request.resolution || request.size || 'auto').trim().slice(0, 32)
+        : null,
       duration: mediaKind === 'video' ? Math.max(1, Number(request.duration) || 6) : null,
       referenceFileIds,
       referenceCount,
@@ -1344,6 +1483,8 @@ function registerIpcHandlers() {
     return {
       theme: store.data.settings.theme,
       language: store.data.settings.language === 'zh' ? 'zh' : 'en',
+      autoUpdateEnabled: store.data.settings.autoUpdateEnabled !== false,
+      activation: getActivationStatus(store.data.settings),
       viewMode: store.data.settings.viewMode,
       sidebarCollapsed: store.data.settings.sidebarCollapsed,
       defaultFolderName: store.data.settings.defaultFolderName,
@@ -1363,6 +1504,14 @@ function registerIpcHandlers() {
     return store.data.settings.theme;
   });
 
+  ipcMain.handle('activation:getStatus', () => getActivationStatus(store.data.settings));
+
+  ipcMain.handle('activation:activate', (_evt, code) => {
+    const result = activateApp(store.data.settings, code);
+    if (result.ok) store.scheduleSave();
+    return result;
+  });
+
   ipcMain.handle('settings:setLanguage', (_evt, language) => {
     store.data.settings.language = language === 'zh' ? 'zh' : 'en';
     store.scheduleSave();
@@ -1378,6 +1527,8 @@ function registerIpcHandlers() {
   ipcMain.handle('auth:signUp', async (_evt, credentials = {}) => {
     return supabaseAuth.signUp(credentials.email, credentials.password);
   });
+
+  ipcMain.handle('auth:signInWithGoogle', () => signInWithGoogle());
 
   ipcMain.handle('auth:signOut', () => supabaseAuth.signOut());
 
@@ -1604,6 +1755,9 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('ai:generateMedia', async (_evt, request = {}) => {
+    if (!getActivationStatus(store.data.settings).activated) {
+      return { ok: false, reason: 'activation-required', message: 'Activate Messs in Settings before using AI.' };
+    }
     let safeRequest;
     try {
       const urls = await resolveAiReferenceUrls(request, 'referenceFileIds');
@@ -1627,6 +1781,7 @@ function registerIpcHandlers() {
         modelName: request.modelName || null,
         aspectRatio: request.aspectRatio || null,
         size: request.size || null,
+        resolution: kind === 'video' ? request.resolution || null : null,
         duration: kind === 'video' ? Number(request.duration) || null : null,
         referenceCount: Array.isArray(request.urls) ? request.urls.length : 0
       }
@@ -1644,6 +1799,7 @@ function registerIpcHandlers() {
     try {
       const tasks = Array.from({ length: count }, () => generateAiMediaBuffer(kind, prompt, {
         size: request.size,
+        resolution: request.resolution,
         aspectRatio: request.aspectRatio,
         sourceWidth: request.sourceWidth,
         sourceHeight: request.sourceHeight,
@@ -1710,6 +1866,9 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('ai:chat', async (_evt, request = {}) => {
+    if (!getActivationStatus(store.data.settings).activated) {
+      return { ok: false, reason: 'activation-required', message: 'Activate Messs in Settings before using AI.' };
+    }
     let safeRequest;
     try {
       const urls = await resolveAiReferenceUrls(request, 'attachmentFileIds');
@@ -2376,6 +2535,22 @@ app.whenReady().then(() => {
     sessionPath: path.join(store.dir, 'cloud-session.bin'),
     supabaseUrl: runtimeConfig.supabaseUrl,
     publishableKey: runtimeConfig.supabasePublishableKey
+  });
+
+  ipcMain.handle('updater:getState', () => publicUpdaterState());
+
+  ipcMain.handle('updater:checkNow', () => checkForUpdates(true));
+
+  ipcMain.handle('updater:setAutoUpdateEnabled', (_event, enabled) => {
+    const next = enabled !== false;
+    store.data.settings.autoUpdateEnabled = next;
+    store.scheduleSave();
+    updaterState.enabled = next;
+    autoUpdater.autoDownload = next;
+    autoUpdater.autoInstallOnAppQuit = next;
+    const state = setUpdaterState({ status: next ? 'idle' : 'disabled', message: null });
+    if (next && app.isPackaged) checkForUpdates(false);
+    return state;
   });
   aiGateway = new AiGatewayClient({
     fetchImpl: appFetch,

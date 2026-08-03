@@ -21,13 +21,16 @@ function initTheme(initialTheme) {
   });
 
   const settingsBtn = document.getElementById('settings-btn');
+  const accountBtn = document.getElementById('account-menu-open');
   const popover = document.getElementById('settings-popover');
-  settingsBtn.addEventListener('click', (e) => {
+  const togglePopover = (e) => {
     e.stopPropagation();
     popover.hidden = !popover.hidden;
-  });
+  };
+  settingsBtn.addEventListener('click', togglePopover);
+  accountBtn.addEventListener('click', togglePopover);
   document.addEventListener('click', (e) => {
-    if (!popover.hidden && !popover.contains(e.target) && e.target !== settingsBtn) {
+    if (!popover.hidden && !popover.contains(e.target) && !settingsBtn.contains(e.target) && !accountBtn.contains(e.target)) {
       popover.hidden = true;
     }
   });

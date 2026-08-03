@@ -89,6 +89,7 @@ function validateBody(body, kind) {
     messages,
     urls,
     size: ['1K', '2K', '4K', 'original'].includes(body.size) ? body.size : '1K',
+    resolution: ['768P', '2K'].includes(body.resolution) ? body.resolution : '768P',
     aspectRatio: String(body.aspectRatio || 'auto').slice(0, 16),
     duration: Math.max(1, Math.min(30, Number(body.duration) || 6)),
     sourceWidth: Math.max(0, Math.min(16384, Number(body.sourceWidth) || 0)),

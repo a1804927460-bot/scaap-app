@@ -982,6 +982,40 @@ function updateAiChatConfigHint() {
     );
 }
 
+async function renderAccountSummary(config) {
+  const session = config && config.cloudSession || {};
+  const email = session.user && session.user.email || '';
+  const authenticated = !!session.authenticated;
+  let membership = null;
+  try { membership = await window.messsAPI.getMembershipSnapshot(); } catch (error) {}
+  const displayName = authenticated
+    ? ((membership && membership.account && membership.account.displayName) || email.split('@')[0] || 'Messs user')
+    : t('Messs user', 'Messs 用户');
+  const plan = membership && membership.plan && membership.plan.name || t('Free', '免费');
+  const balance = membership && Number.isFinite(Number(membership.credits && membership.credits.balance))
+    ? Number(membership.credits.balance)
+    : 0;
+  const initial = (displayName.trim()[0] || 'M').toUpperCase();
+  const values = {
+    'account-footer-avatar': initial,
+    'account-popover-avatar': initial,
+    'account-footer-name': displayName,
+    'account-popover-name': displayName,
+    'account-popover-email': authenticated ? email : t('Sign in to sync your account', '登录后同步账户'),
+    'account-footer-meta': `${plan} · ${balance.toLocaleString()} ${t('credits', '积分')}`,
+    'account-credit-count': balance.toLocaleString(),
+    'account-plan-badge': plan
+  };
+  Object.entries(values).forEach(([id, value]) => {
+    const element = document.getElementById(id);
+    if (element) element.textContent = value;
+  });
+  const google = document.getElementById('account-google-sign-in');
+  const signOut = document.getElementById('account-sign-out');
+  if (google) google.hidden = authenticated;
+  if (signOut) signOut.hidden = !authenticated;
+}
+
 function renderCloudSecurity(config) {
   const section = document.querySelector('.cloud-security-section');
   const state = document.getElementById('cloud-security-state');
@@ -994,6 +1028,7 @@ function renderCloudSecurity(config) {
   const configured = !!(config && config.cloudConfigured);
   const session = config && config.cloudSession || {};
   const authenticated = configured && !!session.authenticated;
+  renderAccountSummary(config);
   document.querySelectorAll('.direct-ai-provider-section').forEach((item) => {
     item.hidden = configured || !(config && config.directAiAllowed);
   });
@@ -1025,6 +1060,28 @@ function renderCloudSecurity(config) {
       '\u767b\u5f55\u540e\u83b7\u53d6 Supabase \u77ed\u671f\u4f1a\u8bdd\uff0c\u670d\u52a1\u5546\u5bc6\u94a5\u6c38\u8fdc\u4e0d\u4f1a\u79bb\u5f00 Railway\u3002'
     );
   }
+}
+
+async function signInCloudWithGoogle(button) {
+  if (!button || button.disabled) return;
+  button.disabled = true;
+  try {
+    await window.messsAPI.signInCloudWithGoogle();
+    const config = await refreshAiMediaSettings();
+    document.dispatchEvent(new CustomEvent('messs:ai-config-updated', { detail: config }));
+    showToast(t('Google account connected.', 'Google 账号已连接。'), 'Cloud');
+  } catch (error) {
+    showToast(error && error.message ? error.message : t('Google sign-in failed.', 'Google 登录失败。'), 'Cloud');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function signOutCloudAccount() {
+  await window.messsAPI.signOutCloud();
+  const config = await refreshAiMediaSettings();
+  document.dispatchEvent(new CustomEvent('messs:ai-config-updated', { detail: config }));
+  showToast(t('Signed out.', '已退出登录。'), 'Cloud');
 }
 
 async function submitCloudAccount(action) {
@@ -1242,11 +1299,12 @@ async function initAiMediaSettings() {
   });
   document.getElementById('cloud-account-sign-in').addEventListener('click', () => submitCloudAccount('signin'));
   document.getElementById('cloud-account-sign-up').addEventListener('click', () => submitCloudAccount('signup'));
-  document.getElementById('cloud-account-sign-out').addEventListener('click', async () => {
-    await window.messsAPI.signOutCloud();
-    const config = await refreshAiMediaSettings();
-    document.dispatchEvent(new CustomEvent('messs:ai-config-updated', { detail: config }));
-    showToast(t('Signed out.', '\u5df2\u9000\u51fa\u767b\u5f55\u3002'), 'Cloud');
+  document.getElementById('cloud-account-sign-out').addEventListener('click', signOutCloudAccount);
+  document.getElementById('account-sign-out').addEventListener('click', signOutCloudAccount);
+  document.getElementById('cloud-account-google').addEventListener('click', (event) => signInCloudWithGoogle(event.currentTarget));
+  document.getElementById('account-google-sign-in').addEventListener('click', (event) => signInCloudWithGoogle(event.currentTarget));
+  document.getElementById('account-plan-open').addEventListener('click', () => {
+    showToast(t('Plans will be available before the public release.', '套餐将在正式发布前开放。'), 'Messs');
   });
   document.getElementById('ai-image-provider-slots').addEventListener('input', updateAiProviderCount);
   document.getElementById('ai-video-provider-slots').addEventListener('input', updateAiProviderCount);

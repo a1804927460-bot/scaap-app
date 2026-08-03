@@ -98,6 +98,8 @@ async function renderPdfPage(pdfPath, pageNumber, scale) {
 
 contextBridge.exposeInMainWorld('messsAPI', {
   getInitialState: () => ipcRenderer.invoke('app:getInitialState'),
+  getActivationStatus: () => ipcRenderer.invoke('activation:getStatus'),
+  activateApp: (code) => ipcRenderer.invoke('activation:activate', code),
   setTheme: (theme) => ipcRenderer.invoke('settings:setTheme', theme),
   setLanguage: (language) => ipcRenderer.invoke('settings:setLanguage', language),
   getMembershipSnapshot: () => ipcRenderer.invoke('membership:getSnapshot'),
@@ -105,6 +107,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   getCloudSession: () => ipcRenderer.invoke('auth:getSession'),
   signInCloud: (credentials) => ipcRenderer.invoke('auth:signIn', credentials),
   signUpCloud: (credentials) => ipcRenderer.invoke('auth:signUp', credentials),
+  signInCloudWithGoogle: () => ipcRenderer.invoke('auth:signInWithGoogle'),
   signOutCloud: () => ipcRenderer.invoke('auth:signOut'),
 
   getLibraryPaths: () => ipcRenderer.invoke('settings:getLibraryPaths'),
@@ -170,7 +173,13 @@ contextBridge.exposeInMainWorld('messsAPI', {
   removeBoardItem: (itemId) => ipcRenderer.invoke('board:removeItem', itemId),
 
   installUpdateNow: () => ipcRenderer.invoke('updater:installNow'),
+  getUpdateState: () => ipcRenderer.invoke('updater:getState'),
+  checkForUpdatesNow: () => ipcRenderer.invoke('updater:checkNow'),
+  setAutoUpdateEnabled: (enabled) => ipcRenderer.invoke('updater:setAutoUpdateEnabled', enabled),
   openReleasesPage: () => ipcRenderer.invoke('updater:openReleasesPage'),
+  onUpdateStatus: (callback) => {
+    ipcRenderer.on('updater:status', (_evt, payload) => callback(payload));
+  },
   onUpdateDownloaded: (callback) => {
     ipcRenderer.on('updater:downloaded', (_evt, payload) => callback(payload));
   },

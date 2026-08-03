@@ -3,6 +3,7 @@ gateway/node_modules/
 release/
 release-dev/
 .qa-user-data/
+.codex-test-profile/
 
 # Secrets and local runtime overrides
 .env

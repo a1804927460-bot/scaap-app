@@ -2363,7 +2363,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const imageButton = pop.querySelector('[data-ai-kind="image"]');
     const videoButton = pop.querySelector('[data-ai-kind="video"]');
     const headings = pop.querySelectorAll('.ai-options-heading strong');
-    const px = size === '1K' ? 1024 : size === '2K' ? 2048 : 4096;
+    const px = size === '768P' ? '768p' : size === '1K' ? '1024 px' : size === '2K' ? '2048 px' : '4096 px';
     const autoLabel = t('Auto', '自动');
 
     mode.setAttribute('aria-label', t('Generation type', '生成类型'));
@@ -2400,10 +2400,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       label.textContent = autoLabel;
     });
     pop.querySelector('.ai-count-value').textContent = t(`x ${count}`, `× ${count}`);
-    pop.querySelector('.ai-resolution-hint').textContent = t(`≈ ${px} px`, `≈ ${px} 像素`);
+    pop.querySelector('.ai-resolution-hint').textContent = `≈ ${px}`;
     pop.querySelector('.ai-duration-value').textContent = t(`${duration}s`, `${duration} 秒`);
     optionsToggle.textContent = kind === 'video'
-      ? t(`${ratio} · ${duration}s`, `${ratio} · ${duration} 秒`)
+      ? t(`${ratio} · ${size} · ${duration}s`, `${ratio} · ${size} · ${duration} 秒`)
       : `${ratio === 'auto' ? autoLabel : ratio} · ${size} · ${t(`x${count}`, `×${count}`)}`;
   }
 
@@ -2445,6 +2445,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
         });
         modelPickerMenu.hidden = true;
         modelPickerTrigger.setAttribute('aria-expanded', 'false');
+        syncGenerationOptions();
       });
       modelPickerMenu.appendChild(option);
     });
@@ -2457,8 +2458,56 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     });
   }
 
+  function selectedVideoProvider() {
+    return videoProviders.find((provider) => provider.id === modelSelect.value) || null;
+  }
+
+  function selectedVideoCapabilities() {
+    const provider = selectedVideoProvider();
+    return provider && provider.capabilities && typeof provider.capabilities === 'object'
+      ? provider.capabilities
+      : {};
+  }
+
+  function syncGenerationOptions() {
+    const capabilities = kind === 'video' ? selectedVideoCapabilities() : {};
+    const resolutions = kind === 'video' && Array.isArray(capabilities.resolutions)
+      ? capabilities.resolutions
+      : ['1K', '2K', '4K'];
+    const durations = kind === 'video' && Array.isArray(capabilities.durations) && capabilities.durations.length
+      ? capabilities.durations.map(Number).filter(Number.isFinite)
+      : [6, 8, 10, 15];
+    if (!resolutions.includes(size)) size = resolutions[0];
+    const sizeGroup = pop.querySelector('[data-option="size"]');
+    sizeGroup.innerHTML = '';
+    resolutions.forEach((value) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.value = value;
+      button.textContent = value;
+      sizeGroup.appendChild(button);
+    });
+    const durationRange = pop.querySelector('.ai-duration-range');
+    const minimum = durations.length ? Math.min(...durations) : 6;
+    const maximum = durations.length ? Math.max(...durations) : 15;
+    durationRange.min = String(minimum);
+    durationRange.max = String(maximum);
+    duration = Math.max(minimum, Math.min(maximum, Math.round(duration)));
+    durationRange.value = String(duration);
+    pop.querySelector('.ai-resolution-block').hidden = kind === 'video' && !capabilities.resolutions;
+    renderRatios();
+    syncSegments();
+    updateSummary();
+    refreshLanguage();
+  }
+
   function renderRatios() {
-    const ratios = kind === 'video' ? ['16:9', '9:16'] : AI_IMAGE_RATIOS;
+    const capabilities = kind === 'video' ? selectedVideoCapabilities() : {};
+    const ratios = kind === 'video'
+      ? (Array.isArray(capabilities.ratios) && capabilities.ratios.length
+        ? capabilities.ratios
+        : ['16:9', '9:16'])
+      : AI_IMAGE_RATIOS;
     if (!ratios.includes(ratio)) ratio = ratios[0];
     ratioGrid.innerHTML = '';
     ratios.forEach((value) => {
@@ -2489,12 +2538,13 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       button.classList.toggle('is-active', Number(button.dataset.value) === count);
     });
     pop.querySelector('.ai-count-value').textContent = `× ${count}`;
-    pop.querySelector('.ai-resolution-hint').textContent = `≈ ${size === '1K' ? '1024' : size === '2K' ? '2048' : '4096'} px`;
+    const sizeHint = size === '768P' ? '768p' : size === '1K' ? '1024 px' : size === '2K' ? '2048 px' : '4096 px';
+    pop.querySelector('.ai-resolution-hint').textContent = `≈ ${sizeHint}`;
   }
 
   function updateSummary() {
     optionsToggle.textContent = kind === 'video'
-      ? t(`${ratio} · ${duration}s`, `${ratio} · ${duration} 秒`)
+      ? t(`${ratio} · ${size} · ${duration}s`, `${ratio} · ${size} · ${duration} 秒`)
       : `${ratio === 'auto' ? t('Auto', '自动') : ratio} · ${size} · ${t(`x${count}`, `×${count}`)}`;
   }
 
@@ -2510,13 +2560,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     prompt.placeholder = kind === 'video'
       ? '描述视频内容、动作、镜头运动、环境和声音…'
       : '描述主体、构图、镜头、光线、材质和色彩氛围…';
-    pop.querySelector('.ai-resolution-block').hidden = kind === 'video';
     pop.querySelector('.ai-count-block').hidden = kind === 'video';
     pop.querySelector('.ai-duration-block').hidden = kind !== 'video';
     renderModels();
-    renderRatios();
-    syncSegments();
-    updateSummary();
+    syncGenerationOptions();
   }
 
   pop.querySelector('.ai-composer-mode').addEventListener('click', (event) => {
@@ -2592,17 +2639,13 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       prompt.focus();
       return;
     }
-    if (!text) {
-      showToast('请输入生成提示词', 'AI');
-      prompt.focus();
-      return;
-    }
     const selectedProvider = (kind === 'image' ? providers : videoProviders)
       .find((provider) => provider.id === modelSelect.value);
     const request = {
       kind,
       prompt: text,
       size,
+      resolution: kind === 'video' ? size : undefined,
       count,
       duration,
       aspectRatio: ratio,
@@ -2625,7 +2668,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   pop._applyGenerationPreset = (preset = {}) => {
     updateMode(preset.kind === 'video' ? 'video' : 'image');
     ratio = String(preset.aspectRatio || ratio);
-    size = ['1K', '2K', '4K', 'original'].includes(preset.size) ? preset.size : size;
+    const presetSize = preset.resolution || preset.size;
+    size = ['768P', '1K', '2K', '4K', 'original'].includes(presetSize) ? presetSize : size;
     count = Math.max(1, Math.min(4, Number(preset.count) || 1));
     duration = Math.max(1, Number(preset.duration) || duration);
     renderRatios();

@@ -28,5 +28,6 @@ extraResources:
     filter:
       - "**/*"
 win:
+  icon: build-resources/icon.png
   target: dir
   signAndEditExecutable: false

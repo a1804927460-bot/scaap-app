@@ -30,6 +30,24 @@
     </div>
   </div>
 
+  <div id="activation-overlay" class="activation-overlay" hidden>
+    <section class="activation-dialog" role="dialog" aria-modal="true" aria-labelledby="activation-title">
+      <div class="activation-brand">Messs<span>.</span></div>
+      <p class="activation-kicker">DEVELOPMENT ACCESS</p>
+      <h1 id="activation-title">Activate this build</h1>
+      <p class="activation-copy">Enter the testing activation code to continue.</p>
+      <form id="activation-form" class="activation-form">
+        <label for="activation-code">Activation code</label>
+        <div class="activation-input-row">
+          <input id="activation-code" type="password" autocomplete="off" spellcheck="false" placeholder="Enter code" />
+          <button id="activation-submit" type="submit">Activate</button>
+        </div>
+        <p id="activation-error" class="activation-error" role="alert" hidden>Invalid activation code.</p>
+      </form>
+      <small>Development v0.0.1</small>
+    </section>
+  </div>
+
   <div id="section-messs" class="app-section is-active">
     <section id="start-screen" class="start-screen">
       <div class="start-content">
@@ -64,6 +82,12 @@
         <div class="file-list-header">
           <span class="file-list-label" data-i18n-en="Files" data-i18n-zh="文件">Files</span>
           <div class="file-list-header-actions">
+            <button id="import-btn" class="icon-btn-sm" title="Import files" aria-label="Import files">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+            </button>
+            <button id="import-folder-btn" class="icon-btn-sm" title="Import folder" aria-label="Import folder">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="9.5" y1="13.5" x2="14.5" y2="13.5"/></svg>
+            </button>
             <button id="add-folder-btn" class="icon-btn-sm" title="Add folder" aria-label="Add folder">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             </button>
@@ -88,19 +112,26 @@
           </div>
         </div>
 
-        <div class="sidebar-footer">
-          <button id="import-btn" class="sidebar-icon-btn" title="Import files" aria-label="Import files">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+        <div class="sidebar-footer account-footer">
+          <button id="account-menu-open" class="account-footer-main" type="button" aria-label="Account and settings">
+            <span id="account-footer-avatar" class="account-avatar">M</span>
+            <span class="account-footer-copy"><strong id="account-footer-name">Messs user</strong><small id="account-footer-meta">Free · 0 credits</small></span>
           </button>
-          <button id="import-folder-btn" class="sidebar-icon-btn" title="Import folder" aria-label="Import folder">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="9.5" y1="13.5" x2="14.5" y2="13.5"/></svg>
-          </button>
-          <button id="settings-btn" class="sidebar-icon-btn" title="Settings" aria-label="Settings">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <button id="settings-btn" class="account-settings-btn" title="Settings" aria-label="Settings">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
           </button>
         </div>
 
         <div id="settings-popover" class="settings-popover" hidden>
+          <div class="account-popover-head">
+            <span id="account-popover-avatar" class="account-avatar account-avatar-lg">M</span>
+            <span><strong id="account-popover-name">Messs user</strong><small id="account-popover-email">Sign in to sync your account</small></span>
+          </div>
+          <div class="account-plan-card">
+            <div><strong><span id="account-credit-count">0</span><small> credits</small></strong><span id="account-plan-badge">Free</span></div>
+            <p id="account-plan-note">No plan · purchased credits only</p>
+            <button id="account-plan-open" class="account-plan-button" type="button">View Plans</button>
+          </div>
           <div class="settings-popover-title" data-i18n-en="Appearance" data-i18n-zh="外观">Appearance</div>
           <div class="theme-switch" role="group" aria-label="Theme">
             <button class="theme-opt" data-theme-choice="light">
@@ -119,13 +150,26 @@
             <button class="language-opt" data-language-choice="zh">中文</button>
           </div>
 
+          <div class="account-update-block settings-section-spaced">
+            <div class="account-menu-row account-update-toggle-row">
+              <span class="account-menu-icon">↻</span>
+              <span><strong id="account-update-title">Automatic updates</strong><small id="account-update-status">Checking update status...</small></span>
+              <label class="switch-control" title="Automatic updates"><input id="auto-update-toggle" type="checkbox" checked><span></span></label>
+            </div>
+            <button id="check-update-btn" class="account-subtle-button" type="button">Check for Updates</button>
+          </div>
+
           <button id="ai-provider-manager-open" class="settings-nav-row settings-section-spaced" type="button">
             <span class="settings-nav-icon">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l1.7 5.1L19 10l-5.3 1.9L12 17l-1.7-5.1L5 10l5.3-1.9L12 3z"/><path d="M19 15l.9 2.6L22 18.5l-2.1.9L19 22l-.9-2.6-2.1-.9 2.1-.9L19 15z"/></svg>
             </span>
-            <span><strong>More Settings</strong><small id="ai-provider-summary">AI API, storage, tools</small></span>
+            <span><strong>All Settings</strong><small id="ai-provider-summary">Account, AI, storage, tools</small></span>
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
           </button>
+          <button id="account-google-sign-in" class="account-menu-row account-auth-row" type="button">
+            <span class="google-mark">G</span><span><strong>Continue with Google</strong><small>Secure login through Supabase</small></span>
+          </button>
+          <button id="account-sign-out" class="account-sign-out" type="button" hidden>Sign Out</button>
         </div>
       </aside>
 
@@ -473,6 +517,29 @@
             <button id="library-path-add-btn" class="pill-btn pill-btn-ghost pill-btn-block" type="button">Add Mirror Location</button>
           </section>
 
+          <section class="ai-provider-section software-update-section">
+            <div class="ai-provider-section-heading">
+              <div><strong>Software Update</strong><small>Signed releases are checked securely</small></div>
+              <span id="software-update-version">v0.0.1</span>
+            </div>
+            <div class="software-update-settings">
+              <label><span><strong>Automatic updates</strong><small>Download updates and install after restart</small></span><input id="software-auto-update-toggle" type="checkbox" checked></label>
+              <div><span id="software-update-status">Checking update status...</span><button id="software-check-update-btn" class="pill-btn pill-btn-ghost" type="button">Check Now</button></div>
+            </div>
+          </section>
+
+          <section class="ai-provider-section activation-settings-section">
+            <div class="ai-provider-section-heading">
+              <div><strong>Activation</strong><small>Development access control</small></div>
+              <span id="activation-settings-status">Not activated</span>
+            </div>
+            <form id="activation-settings-form" class="activation-settings-form">
+              <input id="activation-settings-code" type="password" autocomplete="off" spellcheck="false" placeholder="Activation code" />
+              <button class="pill-btn pill-btn-ghost" type="submit">Verify</button>
+            </form>
+            <p id="activation-settings-note" class="activation-settings-note">Activation is required before this testing build can be used.</p>
+          </section>
+
           <section class="ai-provider-section cloud-security-section">
             <div class="ai-provider-section-heading">
               <div><strong>Cloud Account</strong><small>Secure access to Messs AI Gateway</small></div>
@@ -485,6 +552,8 @@
                 <button id="cloud-account-sign-in" class="pill-btn" type="button">Sign In</button>
                 <button id="cloud-account-sign-up" class="pill-btn pill-btn-ghost" type="button">Create Account</button>
               </div>
+              <div class="cloud-account-divider"><span>or</span></div>
+              <button id="cloud-account-google" class="google-sign-in-btn" type="button"><span class="google-mark">G</span><span>Continue with Google</span></button>
             </div>
             <div id="cloud-account-signed-in" class="cloud-account-session" hidden>
               <div><span>Signed in as</span><strong id="cloud-account-user"></strong></div>
@@ -659,6 +728,7 @@
   <script src="js/stats-detail.js"></script>
   <script src="js/ai-assistant.js"></script>
   <script src="js/updater.js"></script>
+  <script src="js/activation.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

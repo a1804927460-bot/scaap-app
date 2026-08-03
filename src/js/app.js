@@ -38,5 +38,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const initial = await window.messsAPI.getInitialState();
   initTheme(initial.theme);
   initUpdater();
+  await initActivation(initial.activation);
   initStartScreen(() => bootstrapMainApp(initial));
 });

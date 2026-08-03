@@ -237,6 +237,7 @@ function renderAssistantModels() {
       });
       menu.hidden = true;
       trigger.setAttribute('aria-expanded', 'false');
+      syncAssistantMediaOptions();
     });
     menu.appendChild(menuOption);
   });
@@ -260,6 +261,58 @@ function renderAssistantModels() {
     option.classList.toggle('is-active', active);
     option.setAttribute('aria-selected', String(active));
   });
+}
+
+function selectedAssistantProvider() {
+  const select = document.getElementById('ai-assistant-model');
+  return configuredAssistantProviders(AiAssistant.kind)
+    .find((provider) => provider.id === (select && select.value)) || null;
+}
+
+function assistantVideoCapabilities() {
+  const provider = selectedAssistantProvider();
+  return provider && provider.capabilities && typeof provider.capabilities === 'object'
+    ? provider.capabilities
+    : {};
+}
+
+function syncAssistantMediaOptions() {
+  const isVideo = AiAssistant.kind === 'video';
+  const capabilities = isVideo ? assistantVideoCapabilities() : {};
+  const sizeWrap = document.getElementById('ai-assistant-size-wrap');
+  const sizeSelect = document.getElementById('ai-assistant-size');
+  const durationSelect = document.getElementById('ai-assistant-duration');
+  const resolutions = isVideo && Array.isArray(capabilities.resolutions)
+    ? capabilities.resolutions
+    : ['1K', '2K', '4K'];
+  const durations = isVideo && Array.isArray(capabilities.durations) && capabilities.durations.length
+    ? capabilities.durations
+    : [6, 8, 10, 15];
+  const previousSize = sizeSelect.value;
+  const previousDuration = Number(durationSelect.value);
+
+  sizeWrap.hidden = isVideo && !capabilities.resolutions;
+  sizeSelect.innerHTML = '';
+  resolutions.forEach((value) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    sizeSelect.appendChild(option);
+  });
+  sizeSelect.value = resolutions.includes(previousSize) ? previousSize : resolutions[0];
+
+  durationSelect.innerHTML = '';
+  durations.forEach((value) => {
+    const option = document.createElement('option');
+    option.value = String(value);
+    option.textContent = `${value}s`;
+    durationSelect.appendChild(option);
+  });
+  durationSelect.value = durations.includes(previousDuration)
+    ? String(previousDuration)
+    : String(durations[0]);
+  renderAssistantRatios();
+  refreshAssistantOptionSummary();
 }
 
 function renderAssistantAttachments() {
@@ -347,8 +400,11 @@ async function uploadAssistantImages() {
 
 function renderAssistantRatios() {
   const select = document.getElementById('ai-assistant-ratio');
+  const capabilities = AiAssistant.kind === 'video' ? assistantVideoCapabilities() : {};
   const ratios = AiAssistant.kind === 'video'
-    ? ['16:9', '9:16']
+    ? (Array.isArray(capabilities.ratios) && capabilities.ratios.length
+      ? capabilities.ratios
+      : ['16:9', '9:16'])
     : AI_IMAGE_RATIOS;
   const config = AiAssistant.config || {};
   const selected = AiAssistant.kind === 'video'
@@ -371,7 +427,9 @@ function refreshAssistantOptionSummary() {
   const ratio = document.getElementById('ai-assistant-ratio').value || 'auto';
   if (AiAssistant.kind === 'video') {
     const duration = document.getElementById('ai-assistant-duration').value || '6';
-    toggle.textContent = `${ratio} · ${duration}s`;
+    const sizeWrap = document.getElementById('ai-assistant-size-wrap');
+    const resolution = sizeWrap.hidden ? '' : ` · ${document.getElementById('ai-assistant-size').value}`;
+    toggle.textContent = `${ratio}${resolution} · ${duration}s`;
   } else {
     const size = document.getElementById('ai-assistant-size').value || '1K';
     const count = document.getElementById('ai-assistant-count').value || '1';
@@ -397,15 +455,13 @@ function setAssistantKind(kind) {
   const isMedia = AiAssistant.kind !== 'chat';
   const isVideo = AiAssistant.kind === 'video';
   document.getElementById('ai-assistant-options-toggle').hidden = !isMedia;
-  document.getElementById('ai-assistant-size-wrap').hidden = isVideo;
   document.getElementById('ai-assistant-count-wrap').hidden = isVideo;
   document.getElementById('ai-assistant-duration-wrap').hidden = !isVideo;
   if (!isMedia) {
     document.getElementById('ai-assistant-options').hidden = true;
   }
   renderAssistantModels();
-  renderAssistantRatios();
-  refreshAssistantOptionSummary();
+  syncAssistantMediaOptions();
 }
 
 function showAssistantConversation() {
@@ -560,6 +616,9 @@ async function submitAssistantMessage() {
         prompt,
         aspectRatio: document.getElementById('ai-assistant-ratio').value,
         size: document.getElementById('ai-assistant-size').value,
+        resolution: AiAssistant.kind === 'video'
+          ? document.getElementById('ai-assistant-size').value
+          : undefined,
         count: Number(document.getElementById('ai-assistant-count').value),
         duration: Number(document.getElementById('ai-assistant-duration').value),
         referenceFileIds: attachments.filter((item) => !item.attachmentToken).map((item) => item.id),
@@ -615,7 +674,7 @@ async function refreshAssistantConfig(config) {
     document.getElementById('ai-assistant-size').value = AiAssistant.config.imageSize || '1K';
     document.getElementById('ai-assistant-duration').value = String(AiAssistant.config.videoDuration || 6);
     renderAssistantModels();
-    renderAssistantRatios();
+    syncAssistantMediaOptions();
   } catch (err) {
     showToast(t('Failed to load API settings.', 'API 设置加载失败。'), 'AI');
   }
@@ -743,6 +802,7 @@ function initAiAssistant() {
   ['ai-assistant-ratio', 'ai-assistant-size', 'ai-assistant-count', 'ai-assistant-duration'].forEach((id) => {
     document.getElementById(id).addEventListener('change', refreshAssistantOptionSummary);
   });
+  document.getElementById('ai-assistant-model').addEventListener('change', syncAssistantMediaOptions);
   document.querySelector('.ai-assistant-quick-prompts').addEventListener('click', (event) => {
     const button = event.target.closest('[data-ai-quick]');
     if (!button) return;

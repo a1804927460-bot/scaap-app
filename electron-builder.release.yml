@@ -1,5 +1,7 @@
 appId: com.messs.desktop
 productName: Messs
+electronVersion: 43.2.0
+electronDist: ../messs-app/node_modules/electron/dist
 asar: true
 directories:
   output: release
@@ -25,6 +27,7 @@ extraResources:
     filter:
       - "**/*"
 win:
+  icon: build-resources/icon.png
   target:
     - target: nsis
       arch:
