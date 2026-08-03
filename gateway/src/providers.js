@@ -1,11 +1,14 @@
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { generateMediaBuffer } = require('../../lib/wuyin-media-provider');
-const { requestChat, discoverChatModels } = require('../../lib/wuyin-chat-provider');
+const { generateMediaBuffer } = require('../../lib/ai-media-provider');
+const { requestChat, discoverChatModels } = require('../../lib/ai-chat-provider');
 
-const DEFAULT_RESULT_ENDPOINT = 'https://api.wuyinkeji.com/api/async/detail';
+const QUICKROUTER_BASE_URL = 'https://api.quickrouter.ai';
+const DEFAULT_RESULT_ENDPOINT = `${QUICKROUTER_BASE_URL}/v1/videos`;
 const PROVIDER_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const PROVIDER_KEY_ENV = /^[A-Z][A-Z0-9_]{1,80}$/;
+const MAX_PROVIDERS = 100;
 
 function safeServerEndpoint(value) {
   try {
@@ -25,22 +28,28 @@ function safeServerEndpoint(value) {
 function builtinProviders() {
   return [
     {
-      id: 'image-1', kind: 'image', name: 'Nano Banana Pro',
-      endpoint: process.env.WUYIN_IMAGE_ENDPOINT || 'https://api.wuyinkeji.com/api/async/image_nanoBanana_pro',
-      resultEndpoint: process.env.WUYIN_RESULT_ENDPOINT || DEFAULT_RESULT_ENDPOINT,
-      keyEnv: 'WUYIN_API_KEY'
+      id: 'image-1', kind: 'image', name: 'QuickRouter GPT Image',
+      endpoint: process.env.QUICKROUTER_IMAGE_ENDPOINT || `${QUICKROUTER_BASE_URL}/v1/images/generations?model=gpt-image-1`,
+      resultEndpoint: DEFAULT_RESULT_ENDPOINT,
+      keyEnv: 'QUICKROUTER_API_KEY'
     },
     {
-      id: 'video-1', kind: 'video', name: 'Grok Imagine',
-      endpoint: process.env.WUYIN_VIDEO_ENDPOINT || 'https://api.wuyinkeji.com/api/async/video_grok_imagine',
-      resultEndpoint: process.env.WUYIN_RESULT_ENDPOINT || DEFAULT_RESULT_ENDPOINT,
-      keyEnv: 'WUYIN_API_KEY'
+      id: 'video-1', kind: 'video', name: 'QuickRouter Sora 2',
+      endpoint: process.env.QUICKROUTER_VIDEO_ENDPOINT || `${QUICKROUTER_BASE_URL}/v1/videos?model=sora-2`,
+      resultEndpoint: DEFAULT_RESULT_ENDPOINT,
+      keyEnv: 'QUICKROUTER_API_KEY'
     },
     {
-      id: 'chat-1', kind: 'chat', name: process.env.CHAT_PROVIDER_NAME || 'Messs AI',
-      endpoint: process.env.CHAT_API_ENDPOINT || '',
-      models: String(process.env.CHAT_MODELS || 'gpt-4o-mini').split(',').map((value) => value.trim()).filter(Boolean),
-      keyEnv: 'CHAT_API_KEY'
+      id: 'video-2', kind: 'video', name: 'QuickRouter Veo 3.1 Fast',
+      endpoint: `${QUICKROUTER_BASE_URL}/v1/video/create?model=veo3.1-fast`,
+      resultEndpoint: `${QUICKROUTER_BASE_URL}/v1/video/query`,
+      keyEnv: 'QUICKROUTER_API_KEY'
+    },
+    {
+      id: 'chat-1', kind: 'chat', name: process.env.QUICKROUTER_CHAT_NAME || 'QuickRouter Chat',
+      endpoint: process.env.QUICKROUTER_CHAT_ENDPOINT || `${QUICKROUTER_BASE_URL}/v1`,
+      models: String(process.env.QUICKROUTER_CHAT_MODELS || 'gemini-2.5-pro,gemini-2.5-flash,deepseek-chat').split(',').map((value) => value.trim()).filter(Boolean),
+      keyEnv: 'QUICKROUTER_API_KEY'
     }
   ];
 }
@@ -54,12 +63,12 @@ function configuredProviders() {
     throw new Error('AI_PROVIDERS_JSON is not valid JSON.');
   }
   const byId = new Map();
-  for (const raw of [...builtinProviders(), ...extra]) {
+  for (const raw of [...builtinProviders(), ...extra].slice(0, MAX_PROVIDERS)) {
     const id = String(raw.id || '').trim().toLowerCase();
     const kind = ['chat', 'image', 'video'].includes(raw.kind) ? raw.kind : '';
     const endpoint = safeServerEndpoint(raw.endpoint);
     const keyEnv = String(raw.keyEnv || '').trim();
-    if (!PROVIDER_ID.test(id) || !kind || !endpoint || !/^[A-Z][A-Z0-9_]{1,80}$/.test(keyEnv)) continue;
+    if (!PROVIDER_ID.test(id) || !kind || !endpoint || !PROVIDER_KEY_ENV.test(keyEnv)) continue;
     byId.set(id, {
       id, kind,
       name: String(raw.name || id).trim().slice(0, 80),
@@ -72,8 +81,17 @@ function configuredProviders() {
   return [...byId.values()];
 }
 
+function providerApiKey(provider) {
+  const direct = String(process.env[provider.keyEnv] || '').trim();
+  if (direct) return direct;
+  if (provider.keyEnv === 'QUICKROUTER_API_KEY') {
+    return String(process.env.QUICK_API_KEY || process.env.Quick_API_KEY || '').trim();
+  }
+  return '';
+}
+
 export function publicProviderConfig() {
-  const providers = configuredProviders().filter((provider) => Boolean(process.env[provider.keyEnv]));
+  const providers = configuredProviders().filter((provider) => Boolean(providerApiKey(provider)));
   return {
     providers: providers.map(({ keyEnv, endpoint, resultEndpoint, ...provider }) => provider)
   };
@@ -81,9 +99,12 @@ export function publicProviderConfig() {
 
 function providerFor(kind, id) {
   const candidates = configuredProviders().filter((provider) => provider.kind === kind);
-  const selected = candidates.find((provider) => provider.id === id) || candidates[0];
+  const requestedId = String(id || '').trim().toLowerCase();
+  const selected = requestedId
+    ? candidates.find((provider) => provider.id === requestedId)
+    : candidates[0];
   if (!selected) throw Object.assign(new Error(`No ${kind} provider is configured.`), { code: 'provider-not-configured' });
-  const apiKey = String(process.env[selected.keyEnv] || '').trim();
+  const apiKey = providerApiKey(selected);
   if (!apiKey) throw Object.assign(new Error(`The server secret ${selected.keyEnv} is missing.`), { code: 'provider-secret-missing' });
   return { ...selected, apiKey };
 }
