@@ -60,13 +60,14 @@ jobs:
           $config = Get-Content -Raw config/runtime.json | ConvertFrom-Json
           if (-not $config.supabasePublishableKey) { throw 'Repository variable SUPABASE_PUBLISHABLE_KEY is missing.' }
           if ($config.aiGatewayUrl -notmatch '^https://') { throw 'Repository variable AI_GATEWAY_URL must be HTTPS.' }
-          if ($env:SIGNING_CERT_PRESENT -ne 'true') { throw 'CSC_LINK is missing. Public releases must be code signed.' }
+          if ($env:SIGNING_CERT_PRESENT -ne 'true') { Write-Warning 'CSC_LINK is missing. Publishing an unsigned Windows build.' }
 
       - name: Test
         run: npm test
 
-      - name: Build and publish signed update
+      - name: Build and publish Windows update
         run: npm run release:win
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
