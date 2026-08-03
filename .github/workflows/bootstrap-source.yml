@@ -17,7 +17,7 @@ jobs:
         shell: bash
         run: |
           unzip -oq messs-source-c3fea8a.zip
-          rm -f messs-source-c3fea8a.zip .github/workflows/bootstrap-source.yml
+          rm -f messs-source-c3fea8a.zip .github/workflows/bootstrap-source.yml .github/workflows/release.yml
       - name: Commit source tree
         shell: bash
         run: |
