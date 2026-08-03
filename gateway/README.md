@@ -27,17 +27,35 @@ npm --prefix gateway start
 Authorization: Bearer <short-lived-supabase-access-token>
 ```
 
-Use `AI_PROVIDERS_JSON` to add providers. It contains only endpoint metadata and
-the name of a Railway environment variable, never the secret value itself.
+QuickRouter is the built-in relay. Store its key as the sealed Railway variable
+`QUICKROUTER_API_KEY`. The temporary aliases `QUICK_API_KEY` and `Quick_API_KEY`
+are accepted during migration, but the canonical name is recommended.
+
+Use `AI_PROVIDERS_JSON` to register additional relays without rebuilding the
+desktop app. The registry supports up to 100 chat, image, and video entries. It
+contains only public endpoint metadata and the name of a Railway environment
+variable, never the secret value itself. Each relay key must be stored as a
+separate sealed Railway variable.
 
 ```json
 [
   {
-    "id": "image-2",
+    "id": "relay-2-image",
     "kind": "image",
-    "name": "Second image provider",
-    "endpoint": "https://api.example.com/image",
-    "keyEnv": "IMAGE_PROVIDER_2_KEY"
+    "name": "Relay 2 Image",
+    "endpoint": "https://relay.example.com/v1/images/generations?model=gpt-image-1",
+    "keyEnv": "RELAY_2_API_KEY"
+  },
+  {
+    "id": "relay-2-chat",
+    "kind": "chat",
+    "name": "Relay 2 Chat",
+    "endpoint": "https://relay.example.com/v1",
+    "models": ["model-a", "model-b"],
+    "keyEnv": "RELAY_2_API_KEY"
   }
 ]
 ```
+
+Only providers whose key variable exists are returned to the desktop app. The
+gateway never returns endpoints or secret-variable names to the client.
