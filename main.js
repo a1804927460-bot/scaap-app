@@ -21,8 +21,8 @@ const {
   DEFAULT_RESULT_ENDPOINT,
   normalizeConfig: normalizeAiMediaConfig,
   generateMediaBuffer
-} = require('./lib/wuyin-media-provider');
-const { requestChat, discoverChatModels } = require('./lib/wuyin-chat-provider');
+} = require('./lib/ai-media-provider');
+const { requestChat, discoverChatModels } = require('./lib/ai-chat-provider');
 const { loadRuntimeConfig } = require('./lib/runtime-config');
 const { SupabaseAuth } = require('./lib/supabase-auth');
 const { AiGatewayClient } = require('./lib/ai-gateway-client');
@@ -680,7 +680,7 @@ function readSavedAiApiKeys() {
 }
 
 function getEnvironmentAiApiKey() {
-  return process.env.MESSS_WUYIN_API_KEY || process.env.WUYIN_API_KEY || '';
+  return process.env.MESSS_AI_API_KEY || process.env.QUICKROUTER_API_KEY || process.env.QUICK_API_KEY || '';
 }
 
 function getSavedAiApiKey(secretId = 'default') {
@@ -754,7 +754,7 @@ function normalizeImageProviders(value, fallbackEndpoint) {
     );
     return {
       id: `image-${index + 1}`,
-      name: String(saved.name || (index === 0 ? 'Nano Banana Pro' : endpoint ? deriveProviderName(endpoint) : '')).trim().slice(0, 40),
+      name: String(saved.name || (index === 0 ? 'QuickRouter GPT Image' : endpoint ? deriveProviderName(endpoint) : '')).trim().slice(0, 40),
       endpoint
     };
   });
@@ -769,7 +769,7 @@ function normalizeVideoProviders(value, fallbackEndpoint, fallbackName) {
     );
     return {
       id: `video-${index + 1}`,
-      name: String(saved.name || (index === 0 ? fallbackName || 'Grok Imagine' : endpoint ? deriveProviderName(endpoint) : '')).trim().slice(0, 40),
+      name: String(saved.name || (index === 0 ? fallbackName || 'QuickRouter Sora 2' : endpoint ? deriveProviderName(endpoint) : '')).trim().slice(0, 40),
       endpoint
     };
   });
@@ -860,7 +860,7 @@ function getAiMediaConfig() {
     activeImageProviderId,
     videoProviders,
     activeVideoProviderId,
-    videoProviderName: activeVideoProvider.name || 'Grok Imagine',
+    videoProviderName: activeVideoProvider.name || 'QuickRouter Sora 2',
     chatProviders,
     activeChatProviderId,
     chatProviderName: activeChatProvider.name || String(saved.chatProviderName || 'Messs AI').trim().slice(0, 40) || 'Messs AI',
@@ -869,7 +869,7 @@ function getAiMediaConfig() {
   };
 }
 
-function getPublicAiMediaConfig() {
+async function getPublicAiMediaConfig() {
   const config = getAiMediaConfig();
   const { apiKey, ...publicConfig } = config;
   const savedKeys = readSavedAiApiKeys();
@@ -878,7 +878,7 @@ function getPublicAiMediaConfig() {
   const hasUsableKey = (id) => !!(savedKeys[id] || fallbackKey);
   const gatewayMode = Boolean(runtimeConfig && runtimeConfig.gatewayConfigured);
   const cloudSession = supabaseAuth ? supabaseAuth.getPublicSession() : { configured: false, authenticated: false, user: null };
-  return {
+  const result = {
     ...publicConfig,
     gatewayMode,
     cloudConfigured: gatewayMode,
@@ -903,6 +903,54 @@ function getPublicAiMediaConfig() {
     hasChatApiKey: gatewayMode || hasUsableKey('chat'),
     hasApiKey: gatewayMode || !!fallbackKey
   };
+  if (!gatewayMode || !cloudSession.authenticated) return result;
+  try {
+    const remote = await aiGateway.getConfig();
+    const providers = Array.isArray(remote && remote.providers) ? remote.providers : [];
+    const gatewayEndpoint = runtimeConfig.aiGatewayUrl;
+    const cloudProviders = (kind) => providers
+      .filter((provider) => provider && provider.kind === kind)
+      .slice(0, 10)
+      .map((provider) => ({
+        id: String(provider.id || '').slice(0, 64),
+        name: String(provider.name || provider.id || '').slice(0, 80),
+        endpoint: gatewayEndpoint,
+        models: Array.isArray(provider.models) ? provider.models.slice(0, 30) : [],
+        hasOwnApiKey: false,
+        hasApiKey: true,
+        cloudManaged: true
+      }));
+    const imageProviders = cloudProviders('image');
+    const videoProviders = cloudProviders('video');
+    const chatProviders = cloudProviders('chat');
+    return {
+      ...result,
+      ...(imageProviders.length ? {
+        imageProviders,
+        activeImageProviderId: imageProviders.some((provider) => provider.id === result.activeImageProviderId)
+          ? result.activeImageProviderId
+          : imageProviders[0].id
+      } : {}),
+      ...(videoProviders.length ? {
+        videoProviders,
+        activeVideoProviderId: videoProviders.some((provider) => provider.id === result.activeVideoProviderId)
+          ? result.activeVideoProviderId
+          : videoProviders[0].id,
+        videoProviderName: videoProviders[0].name
+      } : {}),
+      ...(chatProviders.length ? {
+        chatProviders,
+        activeChatProviderId: chatProviders.some((provider) => provider.id === result.activeChatProviderId)
+          ? result.activeChatProviderId
+          : chatProviders[0].id,
+        chatProviderName: chatProviders[0].name,
+        chatEndpoint: gatewayEndpoint,
+        chatModel: chatProviders[0].models[0] || result.chatModel
+      } : {})
+    };
+  } catch (error) {
+    return result;
+  }
 }
 
 function assertAiTransportReady() {
@@ -1435,11 +1483,12 @@ function registerIpcHandlers() {
       videoDuration: next.videoDuration
     });
     store.data.settings.aiMedia = {
+      providerDefaultsVersion: 2,
       imageEndpoint: normalized.imageEndpoint,
       imageProviders,
       activeImageProviderId,
       videoEndpoint: normalized.videoEndpoint,
-      videoProviderName: activeVideoProvider.name || 'Grok Imagine',
+      videoProviderName: activeVideoProvider.name || 'QuickRouter Sora 2',
       videoProviders,
       activeVideoProviderId,
       chatProviders,
