@@ -23,7 +23,7 @@ const {
   validateGeneratedMediaBuffer,
   generateMediaBuffer,
   pollMediaTask
-} = require('../lib/wuyin-media-provider');
+} = require('../lib/ai-media-provider');
 
 function jsonResponse(payload, status = 200) {
   return {
@@ -70,6 +70,39 @@ async function testImageFlow() {
   assert.ok(calls[1].url.includes('id=image_test'));
 }
 
+async function testQuickRouterDefaultImageFlow() {
+  const calls = [];
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+  const responses = [
+    jsonResponse({ data: [{ url: 'https://cdn.test/result.png' }] }),
+    { ok: true, status: 200, arrayBuffer: async () => png }
+  ];
+  const buffer = await generateMediaBuffer(async (url, options = {}) => {
+    calls.push({ url, options });
+    return responses.shift();
+  }, {
+    apiKey: 'secret',
+    pollIntervalMs: 800,
+    timeoutMs: 10000
+  }, 'image', {
+    prompt: 'blue glass city',
+    size: '4K',
+    aspectRatio: '21:9'
+  }, null, async () => {});
+
+  assert.deepStrictEqual(buffer, png);
+  assert.strictEqual(calls.length, 2);
+  assert.strictEqual(calls[0].url, 'https://api.quickrouter.ai/v1/images/generations');
+  assert.strictEqual(calls[0].options.headers.Authorization, 'Bearer secret');
+  assert.deepStrictEqual(JSON.parse(calls[0].options.body), {
+    model: 'gpt-image-1',
+    prompt: 'blue glass city',
+    n: 1,
+    size: '1536x1024'
+  });
+  assert.strictEqual(calls[1].url, 'https://cdn.test/result.png');
+}
+
 function testVideoBody() {
   const config = normalizeConfig({});
   const body = buildRequestBody('video', {
@@ -79,10 +112,10 @@ function testVideoBody() {
     urls: ['https://cdn.test/frame.jpg', 'file:///not-public.jpg']
   }, config);
   assert.deepStrictEqual(body, {
+    model: 'sora-2',
     prompt: 'slow camera orbit',
-    duration: '15',
-    aspect_ratio: '9:16',
-    image_urls: ['https://cdn.test/frame.jpg']
+    seconds: '12',
+    size: '720x1280'
   });
   assert.strictEqual(config.videoEndpoint, DEFAULT_VIDEO_ENDPOINT);
 }
@@ -421,7 +454,7 @@ async function testQuickRouterUnifiedVideoFlow() {
   assert.strictEqual(calls[2].url, 'https://cdn.test/generated.mp4');
 }
 
-function testInlineReferenceBody() {
+function testDefaultImageBody() {
   const config = normalizeConfig({});
   const dataUrl = 'data:image/webp;base64,UklGRg==';
   const body = buildRequestBody('image', {
@@ -431,10 +464,10 @@ function testInlineReferenceBody() {
     urls: [dataUrl, 'file:///not-allowed.webp']
   }, config);
   assert.deepStrictEqual(body, {
+    model: 'gpt-image-1',
     prompt: 'restyle this image',
-    size: '2K',
-    aspectRatio: '1:1',
-    urls: [dataUrl]
+    n: 1,
+    size: '1024x1024'
   });
 }
 
@@ -458,7 +491,7 @@ function testCorruptMediaIsRejected() {
 }
 
 async function main() {
-  await testImageFlow();
+  await testQuickRouterDefaultImageFlow();
   testVideoBody();
   await testQuickRouterKlingFlow();
   testQuickRouterTextBody();
@@ -469,7 +502,7 @@ async function main() {
   testOpenAiVideoRequest();
   testChatCompatibleImageRequest();
   await testQuickRouterUnifiedVideoFlow();
-  testInlineReferenceBody();
+  testDefaultImageBody();
   testNestedResultExtraction();
   testCorruptMediaIsRejected();
   process.stdout.write('AI media provider tests passed.\n');
