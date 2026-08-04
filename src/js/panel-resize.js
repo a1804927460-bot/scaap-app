@@ -13,6 +13,15 @@ const MAIN_VERTICAL_CHROME_PX = 28;
 const MIN_CENTER_COLUMN_PX = 260;
 const MIN_BOARD_ROW_PX = 220;
 const MIN_BOARD_VIEWPORT_PX = 280;
+const SIDEBAR_COMPACT_MAX_PX = 230;
+const SIDEBAR_MINIMAL_MAX_PX = 200;
+
+function updateSidebarDensity(sidebar) {
+  if (!sidebar) return;
+  const width = sidebar.getBoundingClientRect().width;
+  sidebar.classList.toggle('is-density-compact', width <= SIDEBAR_COMPACT_MAX_PX);
+  sidebar.classList.toggle('is-density-minimal', width <= SIDEBAR_MINIMAL_MAX_PX);
+}
 
 function readPanelSize(mainApp, target) {
   const limits = PANEL_LIMITS[target];
@@ -143,6 +152,13 @@ function initPanelResize() {
   restorePanelLayout(mainApp);
   clampPanelLayout(mainApp);
 
+  const sidebar = document.getElementById('sidebar');
+  updateSidebarDensity(sidebar);
+  if (sidebar && typeof ResizeObserver !== 'undefined') {
+    const sidebarDensityObserver = new ResizeObserver(() => updateSidebarDensity(sidebar));
+    sidebarDensityObserver.observe(sidebar);
+  }
+
   document.querySelectorAll('.resize-handle').forEach((handle) => {
     if (handle.classList.contains('resize-handle-corner')) return;
     const target = handle.dataset.target;
@@ -271,6 +287,7 @@ function initPanelResize() {
     resizeFrame = requestAnimationFrame(() => {
       resizeFrame = 0;
       clampPanelLayout(mainApp);
+      updateSidebarDensity(sidebar);
       document.querySelectorAll('.resize-handle[data-target]').forEach((handle) => {
         const target = handle.dataset.target;
         if (!PANEL_LIMITS[target]) return;

@@ -169,6 +169,8 @@
   align-items: center;
   gap: 12px;
   width: 100%;
+  min-width: 0;
+  overflow: hidden;
   text-align: left;
   padding: 0 4px 18px;
   border-radius: var(--radius-sm);
@@ -184,6 +186,9 @@
   object-fit: contain;
 }
 .brand-word {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
   font-family: var(--font-display);
   font-weight: 900;
   font-stretch: expanded;
@@ -191,6 +196,8 @@
   letter-spacing: 0;
   line-height: 1;
   color: var(--title-accent);
+  text-overflow: clip;
+  white-space: nowrap;
 }
 [data-theme="dark"] .brand-word, [data-theme="dark"] .brand-dot { color: var(--brand-blue-bright); }
 .brand-dot { color: var(--title-accent); }
@@ -231,7 +238,9 @@
 .search-box:focus-within { border-color: var(--accent); }
 .search-icon { color: var(--text-tertiary); flex-shrink: 0; }
 #search-input {
-  width: 100%;
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
   border: none;
   background: none;
   color: var(--text-primary);
@@ -456,6 +465,68 @@
 .account-footer-copy strong, .account-popover-head strong { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .account-footer-copy small { color: var(--text-tertiary); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .account-settings-btn { width: 36px; height: 36px; flex: 0 0 36px; display: grid; place-items: center; color: var(--text-secondary); border-radius: 7px; }
+
+/* Panel-width density is toggled from panel-resize.js. Normal typography stays
+   untouched; only a deliberately narrowed sidebar sheds secondary space. */
+.sidebar.is-density-compact .sidebar-brand {
+  gap: 8px;
+  padding-inline: 2px;
+}
+.sidebar.is-density-compact .brand-mark {
+  width: 36px;
+  height: 36px;
+  flex-basis: 36px;
+}
+.sidebar.is-density-compact .brand-word { font-size: 23px; }
+.sidebar.is-density-compact .search-box {
+  gap: 6px;
+  padding: 8px 9px;
+}
+.sidebar.is-density-compact #search-input,
+.sidebar.is-density-compact .folder-item-name,
+.sidebar.is-density-compact .file-item-name { font-size: 13px; }
+.sidebar.is-density-compact .file-list-header { padding-inline: 2px; }
+.sidebar.is-density-compact .folder-item,
+.sidebar.is-density-compact .file-item { padding-inline: 7px; }
+.sidebar.is-density-compact #subfolder-list {
+  margin-left: 10px;
+  padding-left: 8px;
+}
+.sidebar.is-density-compact .account-footer-main { gap: 7px; }
+.sidebar.is-density-compact .account-avatar {
+  width: 36px;
+  height: 36px;
+  flex-basis: 36px;
+  font-size: 16px;
+}
+.sidebar.is-density-compact .account-settings-btn {
+  width: 32px;
+  height: 32px;
+  flex-basis: 32px;
+}
+
+.sidebar.is-density-minimal .sidebar-brand { justify-content: center; }
+.sidebar.is-density-minimal .brand-mark {
+  width: 34px;
+  height: 34px;
+  flex-basis: 34px;
+}
+.sidebar.is-density-minimal .brand-word,
+.sidebar.is-density-minimal .account-footer-copy,
+.sidebar.is-density-minimal .subfolder-section-label { display: none; }
+.sidebar.is-density-minimal .account-footer {
+  justify-content: space-between;
+  padding-inline: 0;
+}
+.sidebar.is-density-minimal .account-footer-main {
+  flex: 0 0 auto;
+  padding-inline: 2px;
+}
+.sidebar.is-density-minimal .file-list-empty {
+  padding-inline: 2px;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
 
 .settings-popover {
   position: absolute;
