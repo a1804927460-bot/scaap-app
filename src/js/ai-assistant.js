@@ -4,6 +4,7 @@ const AiAssistant = {
   config: null,
   kind: 'chat',
   busy: false,
+  activeTasks: 0,
   messages: [],
   attachments: [],
   sessions: [],
@@ -249,7 +250,7 @@ function startAiDynamicPrompt() {
 }
 
 async function addPastedAssistantImage(file) {
-  if (!file || AiAssistant.busy || AiAssistant.attachments.length >= assistantAttachmentLimit()) return;
+  if (!file || AiAssistant.attachments.length >= assistantAttachmentLimit()) return;
   const dataUrl = await new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ''));
@@ -367,7 +368,7 @@ function renderAssistantModels() {
   const selected = providers.find((provider) => provider.id === select.value) || providers[0];
   picker.hidden = !selected;
   label.textContent = selected ? selected.name : t('No provider configured', '未配置服务商');
-  document.getElementById('ai-assistant-submit').disabled = AiAssistant.busy || !selected;
+  document.getElementById('ai-assistant-submit').disabled = !selected;
   menu.querySelectorAll('.ai-model-picker-option').forEach((option) => {
     const active = selected && option.dataset.value === selected.id;
     option.classList.toggle('is-active', active);
@@ -498,7 +499,6 @@ function appendAssistantMessageAttachments(row, attachments) {
 }
 
 async function uploadAssistantImages() {
-  if (AiAssistant.busy) return;
   const paths = await window.messsAPI.pickFiles();
   if (!paths || !paths.length) return;
   const imagePaths = paths.filter((filePath) =>
@@ -686,18 +686,21 @@ function appendAssistantMedia(files, kind) {
 }
 
 function setAssistantBusy(busy) {
-  AiAssistant.busy = busy;
+  AiAssistant.activeTasks = Math.max(0, AiAssistant.activeTasks + (busy ? 1 : -1));
+  AiAssistant.busy = AiAssistant.activeTasks > 0;
   const form = document.getElementById('ai-assistant-form');
   form.querySelectorAll('button, textarea, select').forEach((control) => {
-    control.disabled = busy;
+    if (control.id === 'ai-assistant-submit') return;
+    control.disabled = false;
   });
-  document.getElementById('ai-assistant-submit').classList.toggle('is-busy', busy);
-  if (!busy) renderAssistantModels();
+  document.getElementById('ai-assistant-submit').classList.toggle('is-busy', AiAssistant.busy);
+  renderAssistantModels();
 }
 
 async function submitAssistantMessage() {
-  if (AiAssistant.busy) return;
   const input = document.getElementById('ai-assistant-input');
+  const submittedKind = AiAssistant.kind;
+  const submittedProvider = selectedAssistantProvider();
   const attachments = AiAssistant.attachments.map((attachment) => ({ ...attachment }));
   const submittedMediaOptions = {
     aspectRatio: document.getElementById('ai-assistant-ratio').value,
@@ -711,15 +714,14 @@ async function submitAssistantMessage() {
     return;
   }
   if (!prompt) prompt = t('Describe this image.', '请分析这张图片。');
-  if (AiAssistant.kind !== 'chat') {
-    const provider = selectedAssistantProvider();
+  if (submittedKind !== 'chat') {
     const creditAccess = await window.MesssCredits.ensure({
-      kind: AiAssistant.kind,
-      imageProviderId: AiAssistant.kind === 'image' && provider ? provider.id : null,
-      videoProviderId: AiAssistant.kind === 'video' && provider ? provider.id : null,
+      kind: submittedKind,
+      imageProviderId: submittedKind === 'image' && submittedProvider ? submittedProvider.id : null,
+      videoProviderId: submittedKind === 'video' && submittedProvider ? submittedProvider.id : null,
       count: submittedMediaOptions.count,
       duration: submittedMediaOptions.duration,
-      resolution: AiAssistant.kind === 'video'
+      resolution: submittedKind === 'video'
         ? submittedMediaOptions.size
         : undefined
     });
@@ -749,34 +751,33 @@ async function submitAssistantMessage() {
   }
 
   setAssistantBusy(true);
-  const model = document.getElementById('ai-assistant-model');
-  const modelName = model.selectedOptions[0] ? model.selectedOptions[0].textContent : 'OpenAI Compatible';
-  const modelNameZh = model.selectedOptions[0] ? model.selectedOptions[0].textContent : t('OpenAI Compatible', 'OpenAI 兼容');
+  const modelName = submittedProvider ? submittedProvider.name : 'OpenAI Compatible';
+  const modelNameZh = submittedProvider ? submittedProvider.name : t('OpenAI Compatible', 'OpenAI 兼容');
   const pending = appendAssistantText(
     'assistant',
-    AiAssistant.kind === 'chat'
+    submittedKind === 'chat'
       ? t('Thinking...', '思考中...')
-      : t(`Using ${modelName} to generate ${AiAssistant.kind === 'video' ? 'video' : 'image'}...`, `正在使用 ${modelNameZh} 生成${AiAssistant.kind === 'video' ? '视频' : '图片'}...`),
+      : t(`Using ${modelName} to generate ${submittedKind === 'video' ? 'video' : 'image'}...`, `正在使用 ${modelNameZh} 生成${submittedKind === 'video' ? '视频' : '图片'}...`),
     'is-pending'
   );
   const startedAt = Date.now();
   const progress = setInterval(() => {
     const seconds = Math.floor((Date.now() - startedAt) / 1000);
     pending.querySelector('.ai-assistant-message-body').textContent =
-      AiAssistant.kind === 'chat'
+      submittedKind === 'chat'
         ? t(`Thinking... ${seconds}s`, `思考中... ${seconds} 秒`)
         : t(`Using ${modelName} for ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`, `正在使用 ${modelNameZh} 生成 ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`);
   }, 1000);
 
   try {
-    if (AiAssistant.kind === 'chat') {
+    if (submittedKind === 'chat') {
       const response = await window.messsAPI.chatWithAi({
         prompt,
         messages: AiAssistant.messages,
         attachmentFileIds: attachments.filter((item) => !item.attachmentToken).map((item) => item.id),
         attachmentTokens: attachments.map((item) => item.attachmentToken).filter(Boolean),
-        chatProviderId: model.selectedOptions[0] && model.selectedOptions[0].dataset.providerId,
-        chatModel: model.selectedOptions[0] && model.selectedOptions[0].dataset.model
+        chatProviderId: submittedProvider && submittedProvider.providerId,
+        chatModel: submittedProvider && submittedProvider.model
       });
       if (!response || !response.ok) {
         throw new Error((response && response.message) || t('AI chat failed.', 'AI 对话失败。'));
@@ -787,11 +788,11 @@ async function submitAssistantMessage() {
       appendAssistantText('assistant', response.text);
     } else {
       const request = {
-        kind: AiAssistant.kind,
+        kind: submittedKind,
         prompt,
         aspectRatio: submittedMediaOptions.aspectRatio,
         size: submittedMediaOptions.size,
-        resolution: AiAssistant.kind === 'video'
+        resolution: submittedKind === 'video'
           ? submittedMediaOptions.size
           : undefined,
         count: submittedMediaOptions.count,
@@ -799,8 +800,8 @@ async function submitAssistantMessage() {
         referenceFileIds: attachments.filter((item) => !item.attachmentToken).map((item) => item.id),
         attachmentTokens: attachments.map((item) => item.attachmentToken).filter(Boolean),
         urls: [],
-        imageProviderId: AiAssistant.kind === 'image' ? model.value : null,
-        videoProviderId: AiAssistant.kind === 'video' ? model.value : null,
+        imageProviderId: submittedKind === 'image' && submittedProvider ? submittedProvider.id : null,
+        videoProviderId: submittedKind === 'video' && submittedProvider ? submittedProvider.id : null,
         canvasId: activeCanvasId(),
         folderId: AppState.activeFolderId && AppState.activeFolderId !== 'default'
           ? AppState.activeFolderId
@@ -823,10 +824,10 @@ async function submitAssistantMessage() {
       renderFolderGridIfActive();
       if (response.unlocked && response.unlocked.length) await refreshAchievements();
       pending.remove();
-      appendAssistantMedia(files, AiAssistant.kind);
+      appendAssistantMedia(files, submittedKind);
       AiAssistant.messages.push({
         role: 'assistant',
-        content: AiAssistant.kind === 'video'
+        content: submittedKind === 'video'
           ? t('Video generated and saved to the library.', '视频已生成并保存到资料库。')
           : t(`${files.length} image${files.length === 1 ? '' : 's'} generated and saved to the library.`, `${files.length} 张图片已生成并保存到资料库。`)
       });
@@ -928,7 +929,7 @@ function initAiAssistant() {
   });
   document.querySelector('.ai-assistant-mode').addEventListener('click', (event) => {
     const button = event.target.closest('[data-assistant-kind]');
-    if (button && !AiAssistant.busy) setAssistantKind(button.dataset.assistantKind);
+    if (button) setAssistantKind(button.dataset.assistantKind);
   });
   document.getElementById('ai-assistant-upload').addEventListener('click', () => {
     uploadAssistantImages().catch((err) => {
