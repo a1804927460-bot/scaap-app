@@ -265,11 +265,11 @@ function scheduleMountedImageQuality(delay = BOARD_QUALITY_SETTLE_MS) {
 
 function markBoardInteraction() {
   Board.interactingUntil = Date.now() + BOARD_QUALITY_SETTLE_MS;
-  scheduleMountedImageQuality(BOARD_QUALITY_SETTLE_MS + 20);
+  scheduleMountedImageQuality(BOARD_QUALITY_SETTLE_MS);
 }
 
-function syncMountedImageQuality() {
-  if (Board.isPanning || Date.now() < Board.interactingUntil) {
+function syncMountedImageQuality(force = false) {
+  if (!force && (Board.isPanning || Date.now() < Board.interactingUntil)) {
     scheduleMountedImageQuality();
     return;
   }
@@ -319,14 +319,69 @@ function applyBoardTransform() {
   Board.transformFrame = requestAnimationFrame(() => {
     Board.transformFrame = 0;
     const canvas = document.getElementById('board-canvas');
+    canvas.classList.add('is-transforming');
     canvas.style.transform = boardTransform();
     canvas.style.setProperty('--board-label-scale', String(Math.min(7, Math.max(1, 1 / Board.zoom))));
     document.getElementById('board-zoom-label').textContent = Math.round(Board.zoom * 100) + '%';
     updateInfiniteGrid();
     markBoardInteraction();
+    if (!Board.qualityFrame) {
+      Board.qualityFrame = requestAnimationFrame(() => {
+        Board.qualityFrame = 0;
+        syncMountedImageQuality(true);
+      });
+    }
+    clearTimeout(Board.transformSettleTimer);
+    Board.transformSettleTimer = window.setTimeout(() => {
+      canvas.classList.remove('is-transforming');
+      syncMountedImageQuality(true);
+    }, BOARD_QUALITY_SETTLE_MS + 30);
     scheduleBoardReconcile();
     scheduleBoardViewportSave();
   });
+}
+
+function setBoardZoomTarget(screenPoint, factor) {
+  const target = Board.zoomTarget || {
+    panX: Board.panX,
+    panY: Board.panY,
+    zoom: Board.zoom
+  };
+  Board.zoomTarget = BoardEngine.zoomAtPoint(
+    target,
+    screenPoint,
+    factor,
+    { min: BOARD_ZOOM_MIN, max: BOARD_ZOOM_MAX }
+  );
+  if (!Board.zoomFrame) {
+    Board.zoomLastTime = 0;
+    Board.zoomFrame = requestAnimationFrame(stepBoardZoom);
+  }
+}
+
+function stepBoardZoom(now) {
+  Board.zoomFrame = 0;
+  const target = Board.zoomTarget;
+  if (!target) return;
+  const elapsed = Board.zoomLastTime ? Math.min(48, now - Board.zoomLastTime) : 16;
+  Board.zoomLastTime = now;
+  const blend = 1 - Math.exp(-elapsed / 54);
+  Board.panX += (target.panX - Board.panX) * blend;
+  Board.panY += (target.panY - Board.panY) * blend;
+  Board.zoom += (target.zoom - Board.zoom) * blend;
+  applyBoardTransform();
+
+  const settled = Math.abs(target.zoom - Board.zoom) < 0.0005 &&
+    Math.abs(target.panX - Board.panX) < 0.12 &&
+    Math.abs(target.panY - Board.panY) < 0.12;
+  if (settled) {
+    Object.assign(Board, target);
+    Board.zoomTarget = null;
+    Board.zoomLastTime = 0;
+    applyBoardTransform();
+    return;
+  }
+  Board.zoomFrame = requestAnimationFrame(stepBoardZoom);
 }
 
 function clientToBoardCoords(clientX, clientY) {
@@ -1498,39 +1553,35 @@ function initBoardCanvas() {
     e.preventDefault();
     markBoardInteraction();
     const rect = viewport.getBoundingClientRect();
-    const next = BoardEngine.zoomAtPoint(
-      Board,
+    setBoardZoomTarget(
       { x: e.clientX - rect.left, y: e.clientY - rect.top },
-      e.deltaY > 0 ? 0.92 : (1 / 0.92),
-      { min: BOARD_ZOOM_MIN, max: BOARD_ZOOM_MAX }
+      Math.exp(-Math.max(-120, Math.min(120, e.deltaY)) * 0.0019)
     );
-    Board.panX = next.panX;
-    Board.panY = next.panY;
-    Board.zoom = next.zoom;
-    applyBoardTransform();
   }, { passive: false });
+
+  viewport.addEventListener('paste', (event) => {
+    const hasImage = [...(event.clipboardData && event.clipboardData.items || [])]
+      .some((item) => item.kind === 'file' && /^image\//i.test(item.type));
+    if (!hasImage || BoardClipboard.items.length) return;
+    event.preventDefault();
+    pasteExternalImageToBoard().catch((err) => {
+      showToast(err && err.message ? err.message : t('Could not paste the image', '无法粘贴图片'));
+    });
+  });
 
   document.getElementById('board-zoom-in').addEventListener('click', () => {
     const rect = viewport.getBoundingClientRect();
-    const next = BoardEngine.zoomAtPoint(
-      Board,
+    setBoardZoomTarget(
       { x: rect.width / 2, y: rect.height / 2 },
-      1.2,
-      { min: BOARD_ZOOM_MIN, max: BOARD_ZOOM_MAX }
+      1.2
     );
-    Object.assign(Board, next);
-    applyBoardTransform();
   });
   document.getElementById('board-zoom-out').addEventListener('click', () => {
     const rect = viewport.getBoundingClientRect();
-    const next = BoardEngine.zoomAtPoint(
-      Board,
+    setBoardZoomTarget(
       { x: rect.width / 2, y: rect.height / 2 },
-      1 / 1.2,
-      { min: BOARD_ZOOM_MIN, max: BOARD_ZOOM_MAX }
+      1 / 1.2
     );
-    Object.assign(Board, next);
-    applyBoardTransform();
   });
   document.getElementById('board-fit-all').addEventListener('click', locateBoardImages);
   document.getElementById('board-fullscreen-toggle').addEventListener('click', toggleBoardFullscreen);

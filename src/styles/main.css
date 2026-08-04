@@ -2489,10 +2489,10 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   height: 1px;
   overflow: visible;
   transform-origin: 0 0;
-  will-change: transform;
   backface-visibility: hidden;
   z-index: 2;
 }
+.board-canvas.is-transforming { will-change: transform; }
 .board-overview-canvas {
   position: absolute;
   inset: 0;
@@ -2561,6 +2561,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   filter: none;
   transition: opacity 220ms cubic-bezier(.22, 1, .36, 1);
 }
+.board-canvas.is-transforming .board-image-layer { transform: translateZ(0); }
 .board-item-video {
   min-width: 0;
   padding: 0;
