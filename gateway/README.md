@@ -30,6 +30,8 @@ Authorization: Bearer <short-lived-supabase-access-token>
 QuickRouter is the built-in relay. Store its key as the sealed Railway variable
 `QUICKROUTER_API_KEY`. The temporary aliases `QUICK_API_KEY` and `Quick_API_KEY`
 are accepted during migration, but the canonical name is recommended.
+MiniMax H3 uses its own sealed Railway variable, `MINIMAX_API_KEY`. It is never
+written to `runtime.json`, GitHub, the desktop settings, or gateway responses.
 
 Use `AI_PROVIDERS_JSON` to register additional relays without rebuilding the
 desktop app. The registry supports up to 100 chat, image, and video entries. It

@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { generateMediaBuffer } = require('../../lib/ai-media-provider');
 const { requestChat, discoverChatModels } = require('../../lib/ai-chat-provider');
+const { PROVIDER_CATALOG_VERSION, providerCatalog } = require('../../lib/provider-catalog');
 
 const QUICKROUTER_BASE_URL = 'https://api.quickrouter.ai';
 const DEFAULT_RESULT_ENDPOINT = `${QUICKROUTER_BASE_URL}/v1/videos`;
@@ -26,32 +27,10 @@ function safeServerEndpoint(value) {
 }
 
 function builtinProviders() {
-  return [
-    {
-      id: 'image-1', kind: 'image', name: 'QuickRouter GPT Image',
-      endpoint: process.env.QUICKROUTER_IMAGE_ENDPOINT || `${QUICKROUTER_BASE_URL}/v1/images/generations?model=gpt-image-1`,
-      resultEndpoint: DEFAULT_RESULT_ENDPOINT,
-      keyEnv: 'QUICKROUTER_API_KEY'
-    },
-    {
-      id: 'video-1', kind: 'video', name: 'QuickRouter Sora 2',
-      endpoint: process.env.QUICKROUTER_VIDEO_ENDPOINT || `${QUICKROUTER_BASE_URL}/v1/videos?model=sora-2`,
-      resultEndpoint: DEFAULT_RESULT_ENDPOINT,
-      keyEnv: 'QUICKROUTER_API_KEY'
-    },
-    {
-      id: 'video-2', kind: 'video', name: 'QuickRouter Veo 3.1 Fast',
-      endpoint: `${QUICKROUTER_BASE_URL}/v1/video/create?model=veo3.1-fast`,
-      resultEndpoint: `${QUICKROUTER_BASE_URL}/v1/video/query`,
-      keyEnv: 'QUICKROUTER_API_KEY'
-    },
-    {
-      id: 'chat-1', kind: 'chat', name: process.env.QUICKROUTER_CHAT_NAME || 'QuickRouter Chat',
-      endpoint: process.env.QUICKROUTER_CHAT_ENDPOINT || `${QUICKROUTER_BASE_URL}/v1`,
-      models: String(process.env.QUICKROUTER_CHAT_MODELS || 'gemini-2.5-pro,gemini-2.5-flash,deepseek-chat').split(',').map((value) => value.trim()).filter(Boolean),
-      keyEnv: 'QUICKROUTER_API_KEY'
-    }
-  ];
+  return providerCatalog().map((provider) => ({
+    ...provider,
+    resultEndpoint: provider.resultEndpoint || DEFAULT_RESULT_ENDPOINT
+  }));
 }
 
 function configuredProviders() {
@@ -75,6 +54,9 @@ function configuredProviders() {
       endpoint,
       resultEndpoint: safeServerEndpoint(raw.resultEndpoint) || DEFAULT_RESULT_ENDPOINT,
       models: Array.isArray(raw.models) ? raw.models.map(String).map((v) => v.trim()).filter(Boolean).slice(0, 30) : [],
+      model: String(raw.model || '').trim().slice(0, 120),
+      protocol: String(raw.protocol || '').trim().slice(0, 40),
+      capabilities: raw.capabilities && typeof raw.capabilities === 'object' ? raw.capabilities : null,
       keyEnv
     });
   }
@@ -93,9 +75,12 @@ function providerApiKey(provider) {
 export function publicProviderConfig() {
   const providers = configuredProviders().filter((provider) => Boolean(providerApiKey(provider)));
   return {
+    catalogVersion: PROVIDER_CATALOG_VERSION,
     providers: providers.map(({ keyEnv, endpoint, resultEndpoint, ...provider }) => provider)
   };
 }
+
+export const catalogVersion = PROVIDER_CATALOG_VERSION;
 
 function providerFor(kind, id) {
   const candidates = configuredProviders().filter((provider) => provider.kind === kind);
@@ -111,16 +96,84 @@ function providerFor(kind, id) {
 
 export async function generateMedia(kind, body, signal) {
   const provider = providerFor(kind, String(body.providerId || ''));
+  if (kind === 'video' && provider.protocol === 'minimax-video-v2') {
+    return generateMiniMaxVideo(provider, body, signal);
+  }
   const config = {
     apiKey: provider.apiKey,
     resultEndpoint: provider.resultEndpoint,
     imageEndpoint: kind === 'image' ? provider.endpoint : undefined,
+    imageModel: kind === 'image' ? provider.model : undefined,
     videoEndpoint: kind === 'video' ? provider.endpoint : undefined,
     maxDownloadBytes: kind === 'video' ? 256 * 1024 * 1024 : 64 * 1024 * 1024,
     timeoutMs: 20 * 60_000,
     pollIntervalMs: 2_000
   };
   return generateMediaBuffer(fetch, config, kind, body, signal);
+}
+
+async function responseJson(response) {
+  const text = await response.text();
+  let payload = {};
+  try { payload = text ? JSON.parse(text) : {}; } catch (error) {}
+  if (!response.ok) {
+    const message = payload && payload.error && payload.error.message || payload.message || `MiniMax request failed (HTTP ${response.status}).`;
+    throw Object.assign(new Error(String(message)), { status: response.status });
+  }
+  return payload;
+}
+
+function delayWithSignal(ms, signal) {
+  if (signal && signal.aborted) return Promise.reject(signal.reason || new Error('Aborted'));
+  return new Promise((resolve, reject) => {
+    const finish = () => {
+      if (signal) signal.removeEventListener('abort', abort);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    const abort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', abort);
+      reject(signal.reason || new Error('Aborted'));
+    };
+    if (signal) signal.addEventListener('abort', abort, { once: true });
+  });
+}
+
+async function generateMiniMaxVideo(provider, body, signal) {
+  const urls = Array.isArray(body.urls) ? body.urls.filter(Boolean).slice(0, 2) : [];
+  const ratio = urls.length ? 'adaptive' : (provider.capabilities.ratios.includes(body.aspectRatio) ? body.aspectRatio : '16:9');
+  const resolution = provider.capabilities.resolutions.includes(body.resolution) ? body.resolution : '768P';
+  const duration = Math.max(4, Math.min(15, Math.round(Number(body.duration) || 6)));
+  const content = [{ type: 'text', text: String(body.prompt || '').trim() }];
+  urls.forEach((url, index) => content.push({
+    type: 'image_url',
+    image_url: { url: String(url) },
+    role: index === 0 ? 'first_frame' : 'last_frame'
+  }));
+  const headers = { Authorization: `Bearer ${provider.apiKey}`, 'Content-Type': 'application/json' };
+  const created = await responseJson(await fetch(provider.endpoint, {
+    method: 'POST', headers, signal,
+    body: JSON.stringify({ model: provider.model || 'MiniMax-H3', content, resolution, duration, ratio, aigc_watermark: false })
+  }));
+  const taskId = String(created.task_id || '');
+  if (!taskId) throw new Error('MiniMax did not return a task ID.');
+  const deadline = Date.now() + 20 * 60_000;
+  let mediaUrl = '';
+  while (Date.now() < deadline) {
+    await delayWithSignal(2_000, signal);
+    const result = await responseJson(await fetch(`${provider.resultEndpoint}/${encodeURIComponent(taskId)}`, { headers: { Authorization: headers.Authorization }, signal }));
+    const task = result && result.task || {};
+    const status = String(task.status || '').toLowerCase();
+    if (status === 'succeeded') { mediaUrl = String(task.content && task.content.url || ''); break; }
+    if (['failed', 'cancelled'].includes(status)) throw new Error(`MiniMax video generation ${status}.`);
+  }
+  if (!mediaUrl) throw new Error('MiniMax video generation timed out.');
+  const download = await fetch(mediaUrl, { signal });
+  if (!download.ok) throw Object.assign(new Error(`Could not download MiniMax video (HTTP ${download.status}).`), { status: download.status });
+  const length = Number(download.headers.get('content-length')) || 0;
+  if (length > 256 * 1024 * 1024) throw Object.assign(new Error('MiniMax video is too large.'), { status: 413 });
+  return Buffer.from(await download.arrayBuffer());
 }
 
 export async function chat(body, signal) {

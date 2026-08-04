@@ -1,11 +1,11 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { authenticate } from './auth.js';
-import { chat, generateMedia, models, publicProviderConfig } from './providers.js';
+import { catalogVersion, chat, generateMedia, models, publicProviderConfig } from './providers.js';
 import { reserveUsage, settleUsage } from './usage.js';
 
 const port = Math.max(1, Number(process.env.PORT) || 3000);
-const maxBodyBytes = 22 * 1024 * 1024;
+const maxBodyBytes = 70 * 1024 * 1024;
 const rateBuckets = new Map();
 const allowedOrigins = new Set(String(process.env.ALLOWED_ORIGINS || '').split(',').map((v) => v.trim()).filter(Boolean));
 const secretPatterns = [
@@ -81,7 +81,7 @@ function validateBody(body, kind) {
       throw Object.assign(new Error('Reference images must be sanitized data URLs or HTTPS URLs.'), { status: 400, code: 'unsafe-reference' });
     }
   }
-  if (encodedBytes > 20 * 1024 * 1024) throw Object.assign(new Error('Reference images exceed 20 MB.'), { status: 413, code: 'attachments-too-large' });
+  if (encodedBytes > 50 * 1024 * 1024) throw Object.assign(new Error('Reference images exceed the upstream request limit.'), { status: 413, code: 'attachments-too-large' });
   return {
     prompt,
     providerId: String(body.providerId || '').slice(0, 64),
@@ -89,6 +89,7 @@ function validateBody(body, kind) {
     messages,
     urls,
     size: ['1K', '2K', '4K', 'original'].includes(body.size) ? body.size : '1K',
+    resolution: ['768P', '2K'].includes(body.resolution) ? body.resolution : '768P',
     aspectRatio: String(body.aspectRatio || 'auto').slice(0, 16),
     duration: Math.max(1, Math.min(30, Number(body.duration) || 6)),
     sourceWidth: Math.max(0, Math.min(16384, Number(body.sourceWidth) || 0)),
@@ -100,7 +101,7 @@ async function handle(request, response) {
   const requestId = crypto.randomUUID();
   response.setHeader('X-Request-Id', requestId);
   const url = new URL(request.url, 'http://gateway.local');
-  if (request.method === 'GET' && url.pathname === '/healthz') return send(response, 200, { ok: true });
+  if (request.method === 'GET' && url.pathname === '/healthz') return send(response, 200, { ok: true, catalogVersion });
   const origin = String(request.headers.origin || '');
   if (origin && !allowedOrigins.has(origin)) return send(response, 403, { code: 'origin-denied', message: 'Browser origin is not allowed.' });
 
@@ -150,9 +151,18 @@ const server = http.createServer((request, response) => {
   handle(request, response).catch((error) => {
     const status = Number(error.status) || (error.name === 'AbortError' ? 499 : 500);
     const code = String(error.code || (status >= 500 ? 'gateway-error' : 'bad-request'));
+    const safeMessages = {
+      'quota-not-configured': 'AI quota service is not configured.',
+      'quota-service-failed': 'AI quota check is temporarily unavailable.',
+      'provider-not-configured': 'The selected AI model is not configured on the server.',
+      'provider-secret-missing': 'The selected AI model is missing its server credential.'
+    };
     // Do not log prompts, attachments, authorization headers, or upstream bodies.
     console.error(JSON.stringify({ level: 'error', requestId: response.getHeader('X-Request-Id'), code, status }));
-    if (!response.headersSent) send(response, status, { code, message: status >= 500 ? 'The AI gateway could not complete this request.' : error.message });
+    if (!response.headersSent) send(response, status, {
+      code,
+      message: safeMessages[code] || (status >= 500 ? 'The AI gateway could not complete this request.' : error.message)
+    });
   });
 });
 
