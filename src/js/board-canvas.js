@@ -2431,6 +2431,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
           <button type="button" class="ai-options-toggle" aria-haspopup="true"></button>
         </div>
         <div class="ai-composer-submit-wrap">
+          <span class="ai-credit-estimate" aria-live="polite" hidden></span>
           <span class="ai-generation-status"></span>
           <button type="submit" class="ai-composer-submit" aria-label="开始生成">
             <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 19V5"/><path d="M6 11l6-6 6 6"/></svg>
@@ -2477,6 +2478,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   const optionsPanel = pop.querySelector('.ai-options-panel');
   const ratioGrid = pop.querySelector('.ai-ratio-grid');
   const status = pop.querySelector('.ai-generation-status');
+  const creditEstimate = pop.querySelector('.ai-credit-estimate');
   const submit = pop.querySelector('.ai-composer-submit');
   const close = pop.querySelector('.ai-composer-close');
   const providers = getConfiguredImageProviders(aiConfig);
@@ -2487,6 +2489,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   let count = 1;
   let duration = Number(aiConfig.videoDuration) || 6;
   const boardReferences = new Map();
+  let creditQuoteRevision = 0;
 
   function setOptionsOpen(open) {
     optionsPanel.hidden = !open;
@@ -2614,6 +2617,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     pop.querySelector('.ai-count-value').textContent = t(`x ${count}`, `× ${count}`);
     pop.querySelector('.ai-resolution-hint').textContent = `≈ ${px}`;
     pop.querySelector('.ai-duration-value').textContent = t(`${duration}s`, `${duration} 秒`);
+    refreshCreditEstimateLanguage();
     optionsToggle.textContent = kind === 'video'
       ? t(`${ratio} · ${size} · ${duration}s`, `${ratio} · ${size} · ${duration} 秒`)
       : `${ratio === 'auto' || ratio === 'adaptive' ? autoLabel : ratio} · ${size} · ${t(`x${count}`, `×${count}`)}`;
@@ -2681,6 +2685,61 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     return providers.find((provider) => provider.id === modelSelect.value) || null;
   }
 
+  function renderCreditEstimate(totalCredits) {
+    const total = Math.max(0, Math.ceil(Number(totalCredits) || 0));
+    if (!total) {
+      delete creditEstimate.dataset.credits;
+      creditEstimate.hidden = true;
+      creditEstimate.textContent = '';
+      creditEstimate.removeAttribute('title');
+      creditEstimate.removeAttribute('aria-busy');
+      return;
+    }
+    creditEstimate.dataset.credits = String(total);
+    creditEstimate.hidden = false;
+    creditEstimate.removeAttribute('aria-busy');
+    creditEstimate.textContent = t(`${total} credits`, `${total} 积分`);
+    creditEstimate.title = t(`Estimated usage: ${total} credits`, `预计消耗 ${total} 积分`);
+  }
+
+  function refreshCreditEstimateLanguage() {
+    const total = Number(creditEstimate.dataset.credits);
+    if (Number.isFinite(total) && total > 0 && !creditEstimate.hidden) {
+      creditEstimate.textContent = t(`${total} credits`, `${total} 积分`);
+      creditEstimate.title = t(`Estimated usage: ${total} credits`, `预计消耗 ${total} 积分`);
+    }
+  }
+
+  function updateCreditEstimate() {
+    const provider = kind === 'video' ? selectedVideoProvider() : selectedImageProvider();
+    const quoteApi = window.messsAPI && window.messsAPI.quoteMediaCredits;
+    const revision = ++creditQuoteRevision;
+    if (!provider || typeof quoteApi !== 'function') {
+      renderCreditEstimate(0);
+      return;
+    }
+    creditEstimate.hidden = false;
+    creditEstimate.setAttribute('aria-busy', 'true');
+    creditEstimate.textContent = t('Calculating…', '计算中…');
+    creditEstimate.title = t('Calculating estimated usage', '正在计算预计消耗');
+    const request = {
+      kind,
+      providerId: provider.id,
+      imageProviderId: kind === 'image' ? provider.id : null,
+      videoProviderId: kind === 'video' ? provider.id : null,
+      count: kind === 'image' ? count : undefined,
+      resolution: kind === 'video' ? size : undefined,
+      duration: kind === 'video' ? duration : undefined
+    };
+    Promise.resolve(quoteApi.call(window.messsAPI, request)).then((pricing) => {
+      if (revision !== creditQuoteRevision) return;
+      renderCreditEstimate(pricing && pricing.totalCredits);
+    }).catch(() => {
+      if (revision !== creditQuoteRevision) return;
+      renderCreditEstimate(0);
+    });
+  }
+
   function selectedImageCapabilities() {
     const provider = selectedImageProvider();
     return provider && provider.capabilities && typeof provider.capabilities === 'object'
@@ -2739,6 +2798,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     syncSegments();
     updateSummary();
     refreshLanguage();
+    updateCreditEstimate();
   }
 
   function renderRatios() {
@@ -2840,6 +2900,11 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     modelPickerMenu.hidden = isOpen;
     modelPickerTrigger.setAttribute('aria-expanded', String(!isOpen));
   });
+  modelSelect.addEventListener('change', () => {
+    const selected = [...modelSelect.options].find((option) => option.value === modelSelect.value);
+    if (selected) modelPickerLabel.textContent = selected.textContent;
+    syncGenerationOptions();
+  });
   pop.addEventListener('click', (event) => {
     if (!modelPicker.contains(event.target)) {
       modelPickerMenu.hidden = true;
@@ -2863,6 +2928,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     syncSegments();
     updateSummary();
     refreshLanguage();
+    updateCreditEstimate();
     setOptionsOpen(true);
   });
   pop.querySelector('[data-option="count"]').addEventListener('click', (event) => {
@@ -2872,12 +2938,14 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     syncSegments();
     updateSummary();
     refreshLanguage();
+    updateCreditEstimate();
     setOptionsOpen(true);
   });
   pop.querySelector('.ai-duration-range').addEventListener('input', (event) => {
     duration = Number(event.target.value);
     pop.querySelector('.ai-duration-value').textContent = `${duration} 秒`;
     updateSummary();
+    updateCreditEstimate();
   });
 
   pop.querySelector('.ai-duration-range').addEventListener('input', refreshLanguage);
@@ -2947,6 +3015,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     pop.querySelector('.ai-duration-range').value = String(duration);
     updateSummary();
     refreshLanguage();
+    updateCreditEstimate();
   };
   pop._hasBoardReference = (fileId) => boardReferences.has(fileId);
   pop._toggleBoardReference = toggleBoardReference;

@@ -3505,6 +3505,15 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .ai-options-toggle { padding: 0 9px; background: var(--bg-surface-2); }
 .ai-options-toggle:hover,
 .ai-options-toggle.is-active { color: var(--text-primary); background: var(--bg-surface-2); }
+.ai-credit-estimate {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+  transition: opacity 140ms ease;
+}
+.ai-credit-estimate[aria-busy="true"] { opacity: .62; }
 .ai-generation-status { color: var(--text-tertiary); font-size: 10.5px; white-space: nowrap; }
 .ai-composer-submit {
   width: 42px;

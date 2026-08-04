@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const {
   POINTS_PER_CNY,
   quoteMediaCredits,
@@ -60,5 +62,23 @@ assert.strictEqual(quoteMediaCredits({
 const publicPricing = publicCreditPricing();
 assert.strictEqual(publicPricing.image['image-5'], 8);
 assert.strictEqual(publicPricing.video['video-1']['768P'], 10);
+
+const boardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'board-canvas.js'), 'utf8');
+const boardStyles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles', 'main.css'), 'utf8');
+assert.match(
+  boardSource,
+  /class="ai-credit-estimate"[\s\S]*?function updateCreditEstimate\(\)[\s\S]*?quoteMediaCredits[\s\S]*?totalCredits/,
+  'The generation composer must display the authoritative media-credit quote.'
+);
+assert.match(
+  boardSource,
+  /kind,[\s\S]*?providerId: provider\.id,[\s\S]*?count: kind === 'image' \? count[\s\S]*?resolution: kind === 'video' \? size[\s\S]*?duration: kind === 'video' \? duration/,
+  'Credit quotes must use the selected model, image count, video resolution and duration.'
+);
+assert.match(
+  boardStyles,
+  /\.ai-credit-estimate\s*\{[\s\S]*?white-space:\s*nowrap;/,
+  'The composer credit estimate must remain legible beside the submit button.'
+);
 
 process.stdout.write('Credit pricing tests passed.\n');
