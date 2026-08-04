@@ -35,6 +35,22 @@ jobs:
       - name: Install gateway dependencies
         run: npm --prefix gateway install
 
+      - name: Bundle document preview tools
+        shell: pwsh
+        run: |
+          choco install libreoffice-fresh imagemagick.app --no-progress -y
+          $libreOffice = Join-Path $env:ProgramFiles 'LibreOffice'
+          $imageMagick = Get-ChildItem -Directory $env:ProgramFiles |
+            Where-Object Name -Like 'ImageMagick-*' |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not (Test-Path (Join-Path $libreOffice 'program\soffice.exe'))) { throw 'LibreOffice was not installed.' }
+          if (-not $imageMagick -or -not (Test-Path (Join-Path $imageMagick.FullName 'magick.exe'))) { throw 'ImageMagick was not installed.' }
+          Remove-Item build-resources/tools/libreoffice -Recurse -Force
+          Remove-Item build-resources/tools/imagemagick -Recurse -Force
+          Copy-Item $libreOffice build-resources/tools/libreoffice -Recurse
+          Copy-Item $imageMagick.FullName build-resources/tools/imagemagick -Recurse
+
       - name: Set release version and runtime config
         shell: pwsh
         run: |
@@ -71,3 +87,11 @@ jobs:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
+
+      - name: Verify updater artifacts
+        shell: pwsh
+        run: |
+          if (-not (Test-Path release/latest.yml)) { throw 'latest.yml was not generated.' }
+          $installer = Get-ChildItem release -Filter 'Messs-*-Setup.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Windows installer was not generated.' }
+          Write-Host "Verified $($installer.Name) and latest.yml"

@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { generateMediaBuffer } = require('../../lib/ai-media-provider');
 const { requestChat, discoverChatModels } = require('../../lib/ai-chat-provider');
+const { providerCatalog } = require('../../lib/provider-catalog');
 
 const QUICKROUTER_BASE_URL = 'https://api.quickrouter.ai';
 const DEFAULT_RESULT_ENDPOINT = `${QUICKROUTER_BASE_URL}/v1/videos`;
@@ -26,58 +27,10 @@ function safeServerEndpoint(value) {
 }
 
 function builtinProviders() {
-  return [
-    {
-      id: 'image-1', kind: 'image', name: 'Nano Banana Pro',
-      endpoint: `${QUICKROUTER_BASE_URL}/v1beta/models/gemini-3-pro-image:generateContent`,
-      resultEndpoint: DEFAULT_RESULT_ENDPOINT,
-      keyEnv: 'QUICKROUTER_API_KEY'
-    },
-    {
-      id: 'image-2', kind: 'image', name: 'Nano Banana ProSE',
-      endpoint: `${QUICKROUTER_BASE_URL}/v1beta/models/gemini-3-pro-image-preview:generateContent`,
-      resultEndpoint: DEFAULT_RESULT_ENDPOINT,
-      keyEnv: 'QUICKROUTER_API_KEY'
-    },
-    {
-      id: 'image-3', kind: 'image', name: 'Seedream5.0lite',
-      endpoint: `${QUICKROUTER_BASE_URL}/v1/images/generations?model=seedream-5.0-lite`,
-      resultEndpoint: DEFAULT_RESULT_ENDPOINT,
-      keyEnv: 'QUICKROUTER_API_KEY'
-    },
-    {
-      id: 'video-1', kind: 'video', name: 'QuickRouter Sora 2',
-      endpoint: process.env.QUICKROUTER_VIDEO_ENDPOINT || `${QUICKROUTER_BASE_URL}/v1/videos?model=sora-2`,
-      resultEndpoint: DEFAULT_RESULT_ENDPOINT,
-      keyEnv: 'QUICKROUTER_API_KEY'
-    },
-    {
-      id: 'video-2', kind: 'video', name: 'QuickRouter Veo 3.1 Fast',
-      endpoint: `${QUICKROUTER_BASE_URL}/v1/video/create?model=veo3.1-fast`,
-      resultEndpoint: `${QUICKROUTER_BASE_URL}/v1/video/query`,
-      keyEnv: 'QUICKROUTER_API_KEY'
-    },
-    {
-      id: 'video-3', kind: 'video', name: 'MiniMax-H3',
-      endpoint: 'https://api.minimaxi.com/v2/video_generation',
-      resultEndpoint: 'https://api.minimaxi.com/v2/query/video_generation',
-      protocol: 'minimax-video-v2',
-      capabilities: { resolutions: ['768P', '2K'], durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], ratios: ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'] },
-      keyEnv: 'MINIMAX_API_KEY'
-    },
-    {
-      id: 'chat-1', kind: 'chat', name: 'Gemini 3 Pro Preview',
-      endpoint: `${QUICKROUTER_BASE_URL}/v1beta/models/gemini-3-pro-preview:generateContent`,
-      models: ['gemini-3-pro-preview'],
-      keyEnv: 'QUICKROUTER_API_KEY'
-    },
-    {
-      id: 'chat-2', kind: 'chat', name: 'DeepSeek V4 Pro',
-      endpoint: `${QUICKROUTER_BASE_URL}/v1/chat/completions?model=deepseek-v4-pro`,
-      models: ['deepseek-v4-pro'],
-      keyEnv: 'QUICKROUTER_API_KEY'
-    }
-  ];
+  return providerCatalog().map((provider) => ({
+    ...provider,
+    resultEndpoint: provider.resultEndpoint || DEFAULT_RESULT_ENDPOINT
+  }));
 }
 
 function configuredProviders() {
@@ -101,6 +54,7 @@ function configuredProviders() {
       endpoint,
       resultEndpoint: safeServerEndpoint(raw.resultEndpoint) || DEFAULT_RESULT_ENDPOINT,
       models: Array.isArray(raw.models) ? raw.models.map(String).map((v) => v.trim()).filter(Boolean).slice(0, 30) : [],
+      model: String(raw.model || '').trim().slice(0, 120),
       protocol: String(raw.protocol || '').trim().slice(0, 40),
       capabilities: raw.capabilities && typeof raw.capabilities === 'object' ? raw.capabilities : null,
       keyEnv
@@ -146,6 +100,7 @@ export async function generateMedia(kind, body, signal) {
     apiKey: provider.apiKey,
     resultEndpoint: provider.resultEndpoint,
     imageEndpoint: kind === 'image' ? provider.endpoint : undefined,
+    imageModel: kind === 'image' ? provider.model : undefined,
     videoEndpoint: kind === 'video' ? provider.endpoint : undefined,
     maxDownloadBytes: kind === 'video' ? 256 * 1024 * 1024 : 64 * 1024 * 1024,
     timeoutMs: 20 * 60_000,
@@ -196,7 +151,7 @@ async function generateMiniMaxVideo(provider, body, signal) {
   const headers = { Authorization: `Bearer ${provider.apiKey}`, 'Content-Type': 'application/json' };
   const created = await responseJson(await fetch(provider.endpoint, {
     method: 'POST', headers, signal,
-    body: JSON.stringify({ model: 'MiniMax-H3', content, resolution, duration, ratio, aigc_watermark: false })
+    body: JSON.stringify({ model: provider.model || 'MiniMax-H3', content, resolution, duration, ratio, aigc_watermark: false })
   }));
   const taskId = String(created.task_id || '');
   if (!taskId) throw new Error('MiniMax did not return a task ID.');

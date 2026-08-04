@@ -219,7 +219,13 @@ function buildAndShowSimpleMenu(items, x, y, menuId = 'simple-context-menu') {
   for (const item of items) {
     const li = document.createElement('li');
     li.className = 'context-menu-item' + (item.danger ? ' is-danger' : '');
-    li.textContent = item.label;
+    if (item.icon) {
+      li.classList.add('has-icon');
+      li.innerHTML = `<span class="context-menu-icon">${buildIconSvg(item.icon)}</span><span></span>`;
+      li.lastElementChild.textContent = item.label;
+    } else {
+      li.textContent = item.label;
+    }
     li.addEventListener('click', () => { menu.remove(); item.action(); });
     menu.appendChild(li);
   }
@@ -249,6 +255,26 @@ function showBoardItemContextMenu(item, x, y) {
   ];
 
   if (item.fileId) {
+    const file = AppState.files.find((entry) => entry.id === item.fileId);
+    const isGenerated = !!(file && (file.aiGeneration || file.sourceFolder === 'AI Generated'));
+    if (isGenerated && isImageExt(file.ext)) {
+      items.push({
+        label: t('Send to Photoshop', '发送到 Photoshop'),
+        action: async () => {
+          const result = await window.messsAPI.sendToCreativeApp(item.fileId, 'photoshop');
+          if (!result || !result.ok) showToast(t('Photoshop was not found on this device.', '未在本机找到 Photoshop。'));
+        }
+      });
+    }
+    if (isGenerated && isVideoExt(file.ext)) {
+      items.push({
+        label: t('Send to After Effects', '发送到 After Effects'),
+        action: async () => {
+          const result = await window.messsAPI.sendToCreativeApp(item.fileId, 'after-effects');
+          if (!result || !result.ok) showToast(t('After Effects was not found on this device.', '未在本机找到 After Effects。'));
+        }
+      });
+    }
     items.push(
       { label: t('Open Default App', '用默认应用打开'), action: () => window.messsAPI.openFileExternally(item.fileId) },
       { label: t('Show in Folder', '在文件夹中显示'), action: () => window.messsAPI.revealFile(item.fileId) }

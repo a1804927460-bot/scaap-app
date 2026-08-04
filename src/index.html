@@ -44,7 +44,7 @@
         </div>
         <p id="activation-error" class="activation-error" role="alert" hidden>Invalid activation code.</p>
       </form>
-      <small>Development v0.0.1</small>
+      <small>Development v0.0.2</small>
     </section>
   </div>
 
@@ -57,7 +57,7 @@
           <span class="start-btn-icon">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
           </span>
-          <span class="start-btn-label">Start</span>
+          <span class="start-btn-label">START</span>
         </button>
       </div>
     </section>
@@ -66,12 +66,13 @@
       <div id="resize-handle-sidebar" class="resize-handle resize-handle-v" data-target="sidebar" role="separator" aria-orientation="vertical" aria-label="Resize sidebar"></div>
       <div id="resize-handle-preview" class="resize-handle resize-handle-h" data-target="preview" role="separator" aria-orientation="horizontal" aria-label="Resize preview"></div>
       <div id="resize-handle-stats" class="resize-handle resize-handle-v" data-target="stats" role="separator" aria-orientation="vertical" aria-label="Resize AI panel"></div>
+      <div id="resize-corner-left" class="resize-handle resize-handle-corner" data-targets="sidebar,preview" role="separator" aria-label="Resize sidebar and upper panels"></div>
+      <div id="resize-corner-right" class="resize-handle resize-handle-corner" data-targets="stats,preview" role="separator" aria-label="Resize AI and upper panels"></div>
 
       <aside id="sidebar" class="sidebar">
-        <button id="sidebar-brand-btn" class="sidebar-brand" title="Back to start" aria-label="Back to start">
+        <button id="sidebar-brand-btn" class="sidebar-brand" title="Restore default layout" aria-label="Restore default layout">
+          <img class="brand-mark" src="assets/logo-mark.png" alt="" draggable="false" />
           <span class="brand-word">Messs<span class="brand-dot">.</span></span>
-          <span class="brand-tagline">Resolve your confusion</span>
-          <span class="brand-version">Dev v0.0.1</span>
         </button>
 
         <div class="search-box">
@@ -82,17 +83,11 @@
         <div class="file-list-header">
           <span class="file-list-label" data-i18n-en="Files" data-i18n-zh="文件">Files</span>
           <div class="file-list-header-actions">
-            <button id="import-btn" class="icon-btn-sm" title="Import files" aria-label="Import files">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+            <button id="import-btn" class="icon-btn-sm" title="Upload files" aria-label="Upload files">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 20h14"/></svg>
             </button>
-            <button id="import-folder-btn" class="icon-btn-sm" title="Import folder" aria-label="Import folder">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="9.5" y1="13.5" x2="14.5" y2="13.5"/></svg>
-            </button>
-            <button id="add-folder-btn" class="icon-btn-sm" title="Add folder" aria-label="Add folder">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            </button>
-            <button id="collapse-sidebar-btn" class="icon-btn-sm" title="Collapse sidebar" aria-label="Collapse sidebar">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>
+            <button id="import-folder-btn" class="icon-btn-sm" title="Upload folder" aria-label="Upload folder">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/><path d="M12 16v-6"/><path d="m9.5 2.5 2.5-2.5 2.5 2.5" transform="translate(0 10)"/></svg>
             </button>
           </div>
         </div>
@@ -122,7 +117,7 @@
           </button>
         </div>
 
-        <div id="settings-popover" class="settings-popover" hidden>
+        <div id="account-popover" class="settings-popover account-popover" hidden>
           <div class="account-popover-head">
             <span id="account-popover-avatar" class="account-avatar account-avatar-lg">M</span>
             <span><strong id="account-popover-name">Messs user</strong><small id="account-popover-email">Sign in to sync your account</small></span>
@@ -132,6 +127,9 @@
             <p id="account-plan-note">No plan · purchased credits only</p>
             <button id="account-plan-open" class="account-plan-button" type="button">View Plans</button>
           </div>
+        </div>
+
+        <div id="settings-popover" class="settings-popover" hidden>
           <div class="settings-popover-title" data-i18n-en="Appearance" data-i18n-zh="外观">Appearance</div>
           <div class="theme-switch" role="group" aria-label="Theme">
             <button class="theme-opt" data-theme-choice="light">
@@ -150,7 +148,7 @@
             <button class="language-opt" data-language-choice="zh">中文</button>
           </div>
 
-          <div class="account-update-block settings-section-spaced">
+          <div class="account-update-block settings-section-spaced" hidden aria-hidden="true">
             <div class="account-menu-row account-update-toggle-row">
               <span class="account-menu-icon">↻</span>
               <span><strong id="account-update-title">Automatic updates</strong><small id="account-update-status">Checking update status...</small></span>
@@ -233,6 +231,10 @@
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
             </button>
           </header>
+          <div class="ai-assistant-compact" aria-hidden="true">
+            <h2>Messs resolves your confusion.</h2>
+            <p>What should we solve today?</p>
+          </div>
           <div class="ai-assistant-shell">
             <aside class="ai-chat-history-sidebar" aria-label="Chat history">
               <button id="ai-chat-new" class="ai-chat-new" type="button">
@@ -508,7 +510,7 @@
           <button id="ai-provider-manager-close" class="icon-btn-sm" type="button" title="Close" aria-label="Close">x</button>
         </header>
         <div class="ai-provider-manager-body">
-          <section class="ai-provider-section">
+          <section class="ai-provider-section storage-settings-section">
             <div class="ai-provider-section-heading">
               <div><strong>Storage</strong></div>
             </div>
@@ -520,7 +522,7 @@
           <section class="ai-provider-section software-update-section">
             <div class="ai-provider-section-heading">
               <div><strong>Software Update</strong><small>Signed releases are checked securely</small></div>
-              <span id="software-update-version">v0.0.1</span>
+              <span id="software-update-version">v0.0.2</span>
             </div>
             <div class="software-update-settings">
               <label><span><strong>Automatic updates</strong><small>Download updates and install after restart</small></span><input id="software-auto-update-toggle" type="checkbox" checked></label>
@@ -529,15 +531,16 @@
           </section>
 
           <section class="ai-provider-section activation-settings-section">
-            <div class="ai-provider-section-heading">
-              <div><strong>Activation</strong><small>Development access control</small></div>
-              <span id="activation-settings-status">Not activated</span>
+            <div class="activation-redemption-copy">
+              <strong>Redemption code</strong>
+              <small>Serial codes and gift credits</small>
             </div>
             <form id="activation-settings-form" class="activation-settings-form">
-              <input id="activation-settings-code" type="password" autocomplete="off" spellcheck="false" placeholder="Activation code" />
-              <button class="pill-btn pill-btn-ghost" type="submit">Verify</button>
+              <input id="activation-settings-code" type="password" autocomplete="off" spellcheck="false" placeholder="Enter redemption code" />
+              <button type="submit">Redeem</button>
             </form>
-            <p id="activation-settings-note" class="activation-settings-note">Activation is required before this testing build can be used.</p>
+            <span id="activation-settings-status" hidden>Not activated</span>
+            <p id="activation-settings-note" class="activation-settings-note" hidden></p>
           </section>
 
           <section class="ai-provider-section cloud-security-section">
@@ -576,7 +579,7 @@
             <div id="ai-chat-provider-slots" class="ai-image-provider-slots ai-chat-provider-slots"></div>
           </section>
 
-          <section class="ai-provider-section direct-ai-provider-section">
+          <section class="ai-provider-section direct-ai-provider-section is-provider-api-config" aria-hidden="true">
             <div class="ai-provider-section-heading">
               <div><strong>Image Generation API</strong><small>URL protocol is detected automatically</small></div>
               <span id="ai-provider-count">1 / 10</span>
@@ -587,7 +590,7 @@
             <div id="ai-image-provider-slots" class="ai-image-provider-slots"></div>
           </section>
 
-          <section class="ai-provider-section direct-ai-provider-section">
+          <section class="ai-provider-section direct-ai-provider-section is-provider-api-config" aria-hidden="true">
             <div class="ai-provider-section-heading">
               <div><strong>Video Generation API</strong><small>URL protocol is detected automatically</small></div>
               <span id="ai-video-provider-count">1 / 10</span>
@@ -598,7 +601,7 @@
             <div id="ai-video-provider-slots" class="ai-image-provider-slots"></div>
           </section>
 
-          <section class="ai-provider-section ai-provider-shared-key direct-ai-provider-section">
+          <section class="ai-provider-section ai-provider-shared-key direct-ai-provider-section is-provider-api-config" aria-hidden="true">
             <label>
               <span>Shared Media API Key</span>
               <input id="ai-api-key" type="password" autocomplete="new-password">
@@ -606,24 +609,12 @@
             <div id="ai-api-key-state" class="ai-api-key-state"></div>
           </section>
 
-          <section class="ai-provider-section">
-            <div class="ai-provider-section-heading">
-              <div><strong>Preview Tools</strong></div>
-            </div>
-            <div id="tool-status-list" class="tool-status-list"></div>
-            <button id="tool-status-refresh-btn" class="pill-btn pill-btn-ghost pill-btn-block" type="button">Check Again</button>
-          </section>
         </div>
         <footer id="ai-provider-manager-footer" class="ai-provider-manager-footer">
-          <button id="ai-api-key-clear" class="pill-btn pill-btn-ghost" type="button">Clear All Keys</button>
-          <button id="ai-service-save" class="pill-btn" type="button">Save API Settings</button>
+          <button id="ai-service-save" class="pill-btn" type="button">Save Settings</button>
         </footer>
       </section>
     </div>
-
-    <button id="expand-sidebar-btn" class="expand-sidebar-btn" title="Expand sidebar" aria-label="Expand sidebar" hidden>
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>
-    </button>
 
     <div id="detail-overlay" class="detail-overlay" hidden>
       <div class="detail-panel">
@@ -695,10 +686,46 @@
       <p>Coming soon.</p>
     </div>
   </div>
-  <div id="section-market" class="app-section section-placeholder">
-    <div class="section-placeholder-inner">
-      <span class="section-placeholder-name">Market</span>
-      <p>Coming soon.</p>
+  <div id="section-market" class="app-section market-section">
+    <div class="market-shell">
+      <header class="market-header">
+        <div class="market-heading">
+          <span class="market-kicker">Messs Market</span>
+          <h1>Plugins, presets and templates</h1>
+        </div>
+        <label class="market-search" for="market-search-input">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+          <input id="market-search-input" type="search" autocomplete="off" placeholder="Search market" />
+        </label>
+      </header>
+      <div class="market-toolbar">
+        <div id="market-categories" class="market-categories" role="tablist" aria-label="Market categories">
+          <button class="is-active" type="button" data-market-category="all" aria-selected="true">All</button>
+          <button type="button" data-market-category="plugin" aria-selected="false">Plugins</button>
+          <button type="button" data-market-category="preset" aria-selected="false">Presets</button>
+          <button type="button" data-market-category="template" aria-selected="false">Templates</button>
+        </div>
+        <label class="market-sort-label">Sort
+          <select id="market-sort">
+            <option value="featured">Featured</option>
+            <option value="newest">Newest</option>
+            <option value="name">Name</option>
+          </select>
+        </label>
+      </div>
+      <main id="market-grid" class="market-grid" aria-live="polite"></main>
+      <div id="market-empty" class="market-empty" hidden>No matching items.</div>
+    </div>
+    <div id="market-detail-overlay" class="market-detail-overlay" hidden>
+      <section class="market-detail" role="dialog" aria-modal="true" aria-labelledby="market-detail-title">
+        <button id="market-detail-close" class="icon-btn-sm market-detail-close" type="button" aria-label="Close">x</button>
+        <div id="market-detail-visual" class="market-detail-visual"></div>
+        <span id="market-detail-category" class="market-detail-category"></span>
+        <h2 id="market-detail-title"></h2>
+        <p id="market-detail-description"></p>
+        <div class="market-detail-meta"><span>Messs Studio</span><span id="market-detail-version"></span></div>
+        <button id="market-detail-action" class="market-detail-action" type="button" disabled>Coming soon</button>
+      </section>
     </div>
   </div>
   <div id="section-workshop" class="app-section section-placeholder">
@@ -711,6 +738,7 @@
   <script src="js/store-client.js"></script>
   <script src="js/confirm-dialog.js"></script>
   <script src="js/titlebar.js"></script>
+  <script src="js/market.js"></script>
   <script src="js/theme.js"></script>
   <script src="js/start-screen.js"></script>
   <script src="js/context-menu.js"></script>

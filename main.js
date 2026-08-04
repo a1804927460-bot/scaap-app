@@ -24,11 +24,16 @@ const {
   generateMediaBuffer
 } = require('./lib/ai-media-provider');
 const { requestChat, discoverChatModels } = require('./lib/ai-chat-provider');
+const { PROVIDER_CATALOG_VERSION, providerCatalog, catalogProvider } = require('./lib/provider-catalog');
 const { loadRuntimeConfig } = require('./lib/runtime-config');
 const { SupabaseAuth, createPkcePair } = require('./lib/supabase-auth');
 const { AiGatewayClient } = require('./lib/ai-gateway-client');
 const { assertSafeLocalFile, sanitizeAiRequest } = require('./lib/privacy-guard');
 const { activate: activateApp, getActivationStatus } = require('./lib/activation');
+
+const DEFAULT_CATALOG_IMAGE = providerCatalog('image')[0];
+const DEFAULT_CATALOG_VIDEO = providerCatalog('video')[0];
+const DEFAULT_CATALOG_CHAT = providerCatalog('chat')[0];
 
 if (process.env.MESSS_DISABLE_GPU === '1') {
   app.disableHardwareAcceleration();
@@ -76,6 +81,16 @@ let updaterState = {
   message: null
 };
 const transientAiAttachments = new Map();
+
+function writeStartupDiagnostic(stage, detail = '') {
+  const diagnosticPath = String(process.env.MESSS_DIAGNOSTIC_LOG || '').trim();
+  if (!diagnosticPath || !path.isAbsolute(diagnosticPath)) return;
+  try {
+    fs.appendFileSync(diagnosticPath, `${stage}${detail ? `: ${detail}` : ''}\n`, 'utf8');
+  } catch (error) {}
+}
+
+writeStartupDiagnostic('main-loaded');
 
 function createStoreWithFallback() {
   const candidates = [
@@ -270,6 +285,15 @@ function setupAutoUpdater() {
   updaterState.enabled = store.data.settings.autoUpdateEnabled !== false;
   autoUpdater.autoDownload = updaterState.enabled;
   autoUpdater.autoInstallOnAppQuit = updaterState.enabled;
+  const publishInfo = getPublishInfo();
+  if (publishInfo) {
+    autoUpdater.setFeedURL({
+      provider: 'github',
+      owner: publishInfo.owner,
+      repo: publishInfo.repo,
+      private: false
+    });
+  }
 
   autoUpdater.on('checking-for-update', () => setUpdaterState({ status: 'checking', message: null }));
   autoUpdater.on('update-available', (info) => setUpdaterState({
@@ -389,6 +413,7 @@ function createWindow() {
     height: 900,
     minWidth: 1040,
     minHeight: 680,
+    icon: app.isPackaged ? process.execPath : path.join(__dirname, 'build-resources', 'icon.png'),
     backgroundColor: '#080A0D',
     frame: false, // We draw our own top bar (see src/index.html #app-titlebar) so it
                    // always matches the app's theme instead of the OS's default chrome.
@@ -735,17 +760,38 @@ async function sanitizeImageForAi(input) {
     error.code = 'privacy-sanitizer-unavailable';
     throw error;
   }
-  const source = Buffer.isBuffer(input) ? input : Buffer.from(input);
-  if (!source.length || source.length > 20 * 1024 * 1024) {
-    const error = new Error('The image is empty or exceeds the 20 MB attachment limit.');
-    error.code = 'attachment-too-large';
+  const source = Buffer.isBuffer(input) ? input : String(input || '');
+  if ((Buffer.isBuffer(source) && !source.length) || (!Buffer.isBuffer(source) && !source)) {
+    const error = new Error('The image is empty.');
+    error.code = 'invalid-attachment';
     throw error;
   }
-  const buffer = await sharp(source, { failOn: 'error', limitInputPixels: 64 * 1024 * 1024 })
-    .rotate()
-    .resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true })
-    .webp({ quality: 84, effort: 3 })
-    .toBuffer();
+  // Local files are passed to sharp by path so even very large originals are
+  // decoded as a stream instead of being copied wholesale into Node memory.
+  // The generated attachment is bounded by dimensions, not source file size.
+  const pipeline = sharp(source, {
+    failOn: 'error',
+    limitInputPixels: 512 * 1024 * 1024,
+    sequentialRead: true
+  })
+    .rotate();
+  const targets = [
+    { edge: 2048, quality: 84 },
+    { edge: 1792, quality: 72 },
+    { edge: 1536, quality: 62 },
+    { edge: 1280, quality: 54 },
+    { edge: 1024, quality: 48 },
+    { edge: 768, quality: 42 }
+  ];
+  let buffer = null;
+  for (const target of targets) {
+    buffer = await pipeline.clone()
+      .resize({ width: target.edge, height: target.edge, fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: target.quality, effort: 3 })
+      .toBuffer();
+    // Fourteen references still remain below the transport's 20 MB ceiling.
+    if (buffer.length <= 1_250_000) break;
+  }
   return `data:image/webp;base64,${buffer.toString('base64')}`;
 }
 
@@ -755,7 +801,7 @@ async function fileToSafeAiDataUrl(id) {
   assertSafeLocalFile(file);
   const ext = String(file.ext || path.extname(file.name)).toLowerCase();
   if (!preview.isImageExt(ext)) return null;
-  return sanitizeImageForAi(await fs.promises.readFile(file.storedPath));
+  return sanitizeImageForAi(file.storedPath);
 }
 
 async function resolveAiReferenceUrls(request, fileIdField) {
@@ -851,6 +897,28 @@ function clearAllAiApiKeys() {
   try { fs.rmSync(getAiSecretPath(), { force: true }); } catch (err) {}
 }
 
+function findAdobeExecutable(target) {
+  if (process.platform !== 'win32') return '';
+  const adobeRoot = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Adobe');
+  let directories = [];
+  try {
+    directories = fs.readdirSync(adobeRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  } catch (error) {
+    return '';
+  }
+  const prefix = target === 'after-effects' ? 'Adobe After Effects' : 'Adobe Photoshop';
+  const executable = target === 'after-effects' ? path.join('Support Files', 'AfterFX.exe') : 'Photoshop.exe';
+  for (const directory of directories) {
+    if (!directory.toLowerCase().startsWith(prefix.toLowerCase())) continue;
+    const candidate = path.join(adobeRoot, directory, executable);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return '';
+}
+
 function normalizeProviderEndpoint(value) {
   const text = String(value || '').trim();
   if (!text) return '';
@@ -865,7 +933,7 @@ function normalizeProviderEndpoint(value) {
 function deriveProviderName(endpoint) {
   try {
     const host = new URL(String(endpoint || '').trim()).hostname.toLowerCase();
-    if (host.includes('quickrouter')) return 'QuickRouter';
+    if (host.includes('quickrouter')) return 'AI Service';
     if (host.includes('openai')) return 'OpenAI';
     if (host.includes('anthropic')) return 'Claude';
     if (host.includes('generativelanguage') || host.includes('googleapis')) return 'Gemini';
@@ -887,8 +955,11 @@ function normalizeImageProviders(value, fallbackEndpoint) {
     );
     return {
       id: `image-${index + 1}`,
-      name: String(saved.name || (index === 0 ? 'QuickRouter GPT Image' : endpoint ? deriveProviderName(endpoint) : '')).trim().slice(0, 40),
-      endpoint
+      name: String(saved.name || (index === 0 ? DEFAULT_CATALOG_IMAGE.name : endpoint ? deriveProviderName(endpoint) : '')).trim().slice(0, 40),
+      endpoint,
+      model: String(saved.model || '').trim().slice(0, 120),
+      protocol: String(saved.protocol || '').trim().slice(0, 40),
+      capabilities: saved.capabilities && typeof saved.capabilities === 'object' ? saved.capabilities : null
     };
   });
 }
@@ -902,8 +973,12 @@ function normalizeVideoProviders(value, fallbackEndpoint, fallbackName) {
     );
     return {
       id: `video-${index + 1}`,
-      name: String(saved.name || (index === 0 ? fallbackName || 'QuickRouter Sora 2' : endpoint ? deriveProviderName(endpoint) : '')).trim().slice(0, 40),
-      endpoint
+      name: String(saved.name || (index === 0 ? fallbackName || DEFAULT_CATALOG_VIDEO.name : endpoint ? deriveProviderName(endpoint) : '')).trim().slice(0, 40),
+      endpoint,
+      model: String(saved.model || '').trim().slice(0, 120),
+      protocol: String(saved.protocol || '').trim().slice(0, 40),
+      capabilities: saved.capabilities && typeof saved.capabilities === 'object' ? saved.capabilities : null,
+      resultEndpoint: normalizeProviderEndpoint(saved.resultEndpoint)
     };
   });
 }
@@ -930,9 +1005,9 @@ function normalizeChatProviders(value, legacy = {}) {
   const legacyEndpoint = normalizeProviderEndpoint(legacy.endpoint);
   const legacyProvider = {
     id: 'chat-1',
-    name: String(legacy.name || (legacyEndpoint ? deriveProviderName(legacyEndpoint) : 'OpenAI Compatible')).trim().slice(0, 40) || 'OpenAI Compatible',
+    name: String(legacy.name || (legacyEndpoint ? deriveProviderName(legacyEndpoint) : DEFAULT_CATALOG_CHAT.name)).trim().slice(0, 40) || DEFAULT_CATALOG_CHAT.name,
     endpoint: legacyEndpoint,
-    models: normalizeChatModels(legacy.model, 'gpt-4o-mini')
+    models: normalizeChatModels(legacy.model, DEFAULT_CATALOG_CHAT.models[0])
   };
   const effectiveSource = !hasConfiguredSource && legacyEndpoint ? [legacyProvider] : source;
   return Array.from({ length: 10 }, (_, index) => {
@@ -942,7 +1017,8 @@ function normalizeChatProviders(value, legacy = {}) {
       id: `chat-${index + 1}`,
       name: String(saved.name || (endpoint ? deriveProviderName(endpoint) : '')).trim().slice(0, 40),
       endpoint,
-      models: normalizeChatModels(saved.models || saved.model, index === 0 ? 'gpt-4o-mini' : '')
+      models: normalizeChatModels(saved.models || saved.model, index === 0 ? DEFAULT_CATALOG_CHAT.models[0] : ''),
+      protocol: String(saved.protocol || '').trim().slice(0, 40)
     };
   });
 }
@@ -993,12 +1069,39 @@ function getAiMediaConfig() {
     activeImageProviderId,
     videoProviders,
     activeVideoProviderId,
-    videoProviderName: activeVideoProvider.name || 'QuickRouter Sora 2',
+    videoProviderName: activeVideoProvider.name || DEFAULT_CATALOG_VIDEO.name,
     chatProviders,
     activeChatProviderId,
     chatProviderName: activeChatProvider.name || String(saved.chatProviderName || 'Messs AI').trim().slice(0, 40) || 'Messs AI',
     chatEndpoint: activeChatProvider.endpoint,
-    chatModel: activeChatProvider.models[0] || 'gpt-4o-mini'
+    chatModel: activeChatProvider.models[0] || DEFAULT_CATALOG_CHAT.models[0]
+  };
+}
+
+function aiProviderRequiresActivation(kind, providerId) {
+  const config = getAiMediaConfig();
+  const normalizedKind = kind === 'video' ? 'video' : kind === 'chat' ? 'chat' : 'image';
+  const activeId = normalizedKind === 'video'
+    ? config.activeVideoProviderId
+    : normalizedKind === 'chat'
+      ? config.activeChatProviderId
+      : config.activeImageProviderId;
+  const provider = catalogProvider(String(providerId || activeId || '').trim());
+  return !(provider && provider.kind === normalizedKind && provider.requiresActivation === false);
+}
+
+function applyAiProviderVisibility(config) {
+  const activated = getActivationStatus(store.data.settings).activated;
+  const decorate = (kind, providers) => (Array.isArray(providers) ? providers : []).map((provider) => ({
+    ...provider,
+    available: activated || !aiProviderRequiresActivation(kind, provider.id)
+  }));
+  return {
+    ...config,
+    providerVisibilityEnforced: true,
+    imageProviders: decorate('image', config.imageProviders),
+    videoProviders: decorate('video', config.videoProviders),
+    chatProviders: decorate('chat', config.chatProviders)
   };
 }
 
@@ -1036,7 +1139,7 @@ async function getPublicAiMediaConfig() {
     hasChatApiKey: gatewayMode || hasUsableKey('chat'),
     hasApiKey: gatewayMode || !!fallbackKey
   };
-  if (!gatewayMode || !cloudSession.authenticated) return result;
+  if (!gatewayMode || !cloudSession.authenticated) return applyAiProviderVisibility(result);
   try {
     const remote = await aiGateway.getConfig();
     const providers = Array.isArray(remote && remote.providers) ? remote.providers : [];
@@ -1058,7 +1161,7 @@ async function getPublicAiMediaConfig() {
     const imageProviders = cloudProviders('image');
     const videoProviders = cloudProviders('video');
     const chatProviders = cloudProviders('chat');
-    return {
+    return applyAiProviderVisibility({
       ...result,
       ...(imageProviders.length ? {
         imageProviders,
@@ -1082,9 +1185,9 @@ async function getPublicAiMediaConfig() {
         chatEndpoint: gatewayEndpoint,
         chatModel: chatProviders[0].models[0] || result.chatModel
       } : {})
-    };
+    });
   } catch (error) {
-    return result;
+    return applyAiProviderVisibility(result);
   }
 }
 
@@ -1122,6 +1225,7 @@ async function generateAiMediaBuffer(kind, prompt, options = {}) {
       );
       if (selected) {
         config.imageEndpoint = selected.endpoint;
+        config.imageModel = selected.model || '';
         config.apiKey = getSavedAiApiKey(selected.id);
       }
     }
@@ -1512,6 +1616,34 @@ function registerIpcHandlers() {
     return result;
   });
 
+  ipcMain.handle('ai:exportChat', async (_evt, value = {}) => {
+    const title = String(value.title || 'Conversation').trim().slice(0, 80) || 'Conversation';
+    const messages = Array.isArray(value.messages)
+      ? value.messages.slice(0, 100).map((message) => ({
+        role: message && message.role === 'assistant' ? 'assistant' : 'user',
+        content: String(message && message.content || '').slice(0, 20000)
+      }))
+      : [];
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Export conversation',
+      defaultPath: `${canvasFolderName(title)}.md`,
+      filters: [{ name: 'Markdown', extensions: ['md'] }]
+    });
+    if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+    const markdown = [
+      `# ${title}`,
+      '',
+      ...messages.flatMap((message) => [
+        `## ${message.role === 'assistant' ? 'Messs AI' : 'You'}`,
+        '',
+        message.content,
+        ''
+      ])
+    ].join('\n');
+    await fs.promises.writeFile(result.filePath, markdown, 'utf8');
+    return { ok: true, filePath: result.filePath };
+  });
+
   ipcMain.handle('settings:setLanguage', (_evt, language) => {
     store.data.settings.language = language === 'zh' ? 'zh' : 'en';
     store.scheduleSave();
@@ -1634,19 +1766,19 @@ function registerIpcHandlers() {
       videoDuration: next.videoDuration
     });
     store.data.settings.aiMedia = {
-      providerDefaultsVersion: 2,
+      providerDefaultsVersion: PROVIDER_CATALOG_VERSION,
       imageEndpoint: normalized.imageEndpoint,
       imageProviders,
       activeImageProviderId,
       videoEndpoint: normalized.videoEndpoint,
-      videoProviderName: activeVideoProvider.name || 'QuickRouter Sora 2',
+      videoProviderName: activeVideoProvider.name || DEFAULT_CATALOG_VIDEO.name,
       videoProviders,
       activeVideoProviderId,
       chatProviders,
       activeChatProviderId,
       chatProviderName: activeChatProvider.name || 'Messs AI',
       chatEndpoint: activeChatProvider.endpoint,
-      chatModel: activeChatProvider.models[0] || 'gpt-4o-mini',
+      chatModel: activeChatProvider.models[0] || DEFAULT_CATALOG_CHAT.models[0],
       resultEndpoint: normalized.resultEndpoint,
       imageSize: normalized.imageSize,
       imageAspectRatio: normalized.imageAspectRatio,
@@ -1755,7 +1887,9 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('ai:generateMedia', async (_evt, request = {}) => {
-    if (!getActivationStatus(store.data.settings).activated) {
+    const requestedKind = request.kind === 'video' ? 'video' : 'image';
+    const requestedProviderId = requestedKind === 'video' ? request.videoProviderId : request.imageProviderId;
+    if (aiProviderRequiresActivation(requestedKind, requestedProviderId) && !getActivationStatus(store.data.settings).activated) {
       return { ok: false, reason: 'activation-required', message: 'Activate Messs in Settings before using AI.' };
     }
     let safeRequest;
@@ -1866,7 +2000,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('ai:chat', async (_evt, request = {}) => {
-    if (!getActivationStatus(store.data.settings).activated) {
+    if (aiProviderRequiresActivation('chat', request.chatProviderId) && !getActivationStatus(store.data.settings).activated) {
       return { ok: false, reason: 'activation-required', message: 'Activate Messs in Settings before using AI.' };
     }
     let safeRequest;
@@ -2281,6 +2415,25 @@ function registerIpcHandlers() {
     return true;
   });
 
+  ipcMain.handle('shell:sendToCreativeApp', (_evt, id, target) => {
+    const f = store.getFile(id);
+    const normalizedTarget = target === 'after-effects' ? 'after-effects' : 'photoshop';
+    if (!f || !f.aiGeneration) return { ok: false, reason: 'not-ai-media' };
+    const executable = findAdobeExecutable(normalizedTarget);
+    if (!executable) return { ok: false, reason: 'not-installed' };
+    try {
+      const child = spawn(executable, [f.storedPath], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true
+      });
+      child.unref();
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, reason: 'launch-failed', message: error.message };
+    }
+  });
+
   ipcMain.handle('clipboard:copyFile', (_evt, id) => {
     const f = store.getFile(id);
     if (!f) return false;
@@ -2526,9 +2679,12 @@ function registerIpcHandlers() {
 }
 
 app.whenReady().then(() => {
+  writeStartupDiagnostic('ready');
   store = createStoreWithFallback();
+  writeStartupDiagnostic('store-ready');
   membershipService = createMembershipService(store);
   runtimeConfig = loadRuntimeConfig(__dirname, { packaged: app.isPackaged });
+  writeStartupDiagnostic('runtime-ready');
   supabaseAuth = new SupabaseAuth({
     fetchImpl: appFetch,
     safeStorage,
@@ -2559,6 +2715,7 @@ app.whenReady().then(() => {
   });
   if (app.isPackaged && runtimeConfig.gatewayConfigured) clearAllAiApiKeys();
   ensureCanvasState();
+  writeStartupDiagnostic('canvas-state-ready');
   previewCacheDir = path.join(app.getPath('userData'), 'previewCache');
   previewTmpDir = path.join(app.getPath('temp'), 'messs-preview-tmp');
   thumbCacheDir = path.join(app.getPath('userData'), 'thumbCache');
@@ -2636,7 +2793,9 @@ app.whenReady().then(() => {
   });
 
   registerIpcHandlers();
+  writeStartupDiagnostic('ipc-ready');
   createWindow();
+  writeStartupDiagnostic('window-created');
   startSession();
   runDailyDesktopChecks();
   setTimeout(setupAutoUpdater, 3000); // give the window time to paint first.
@@ -2648,6 +2807,11 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+}).catch((error) => {
+  const message = error && error.stack ? error.stack : String(error || 'Unknown startup error');
+  console.error('Application startup failed:', message);
+  writeStartupDiagnostic('startup-failed', message);
+  app.exit(1);
 });
 
 app.on('window-all-closed', () => {

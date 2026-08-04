@@ -598,8 +598,8 @@ function canvasAgentPrompt(prompt) {
 function activeCanvasAgentProvider() {
   const config = CanvasWorkspace.config || {};
   const providers = Array.isArray(config.chatProviders) ? config.chatProviders : [];
-  const provider = providers.find((entry) => entry.id === config.activeChatProviderId && entry.endpoint) ||
-    providers.find((entry) => entry && entry.endpoint);
+  const provider = providers.find((entry) => entry.available !== false && entry.id === config.activeChatProviderId && entry.endpoint) ||
+    providers.find((entry) => entry && entry.available !== false && entry.endpoint);
   if (!provider) return { providerId: null, model: config.chatModel || null };
   const models = Array.isArray(provider.models) ? provider.models.filter(Boolean) : [];
   return {

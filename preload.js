@@ -129,6 +129,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   importFiles: (filePaths, folderId, canvasId) => ipcRenderer.invoke('files:import', filePaths, folderId, canvasId),
   generateAiMedia: (request) => ipcRenderer.invoke('ai:generateMedia', request),
   chatWithAi: (request) => ipcRenderer.invoke('ai:chat', request),
+  exportAiChat: (session) => ipcRenderer.invoke('ai:exportChat', session),
   preparePastedAiImage: (request) => ipcRenderer.invoke('ai:preparePastedImage', request),
   getPreview: (id) => ipcRenderer.invoke('files:getPreview', id),
   readFileAsDataUrl: (id) => ipcRenderer.invoke('files:readDataUrl', id),
@@ -151,6 +152,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   openFileExternally: (id) => ipcRenderer.invoke('shell:openExternal', id),
   openInFileManager: (id) => ipcRenderer.invoke('shell:openInFileManager', id),
   openWithOtherApp: (id) => ipcRenderer.invoke('shell:openWithOtherApp', id),
+  sendToCreativeApp: (id, target) => ipcRenderer.invoke('shell:sendToCreativeApp', id, target),
   copyFileToClipboard: (id) => ipcRenderer.invoke('clipboard:copyFile', id),
   copyFilePath: (id) => ipcRenderer.invoke('clipboard:copyPath', id),
 

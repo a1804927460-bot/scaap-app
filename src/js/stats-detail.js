@@ -76,6 +76,14 @@ const ASSISTANT_ICON_EXPAND = '<svg viewBox="0 0 24 24" width="15" height="15" f
 const ASSISTANT_ICON_COMPRESS = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 3v4a2 2 0 0 1-2 2H3"/><path d="M21 9h-4a2 2 0 0 1-2-2V3"/><path d="M3 15h4a2 2 0 0 1 2 2v4"/><path d="M15 21v-4a2 2 0 0 1 2-2h4"/></svg>';
 let assistantPanelAnchor = null;
 
+function updateAssistantCompactState() {
+  const panel = document.getElementById('ai-assistant-panel');
+  if (!panel) return;
+  const host = panel.closest('.stats-panel');
+  const compact = !!host && !panel.classList.contains('is-fullscreen') && host.clientHeight < 270;
+  panel.classList.toggle('is-compact', compact);
+}
+
 function setAssistantFullscreen(expanded) {
   const panel = document.getElementById('ai-assistant-panel');
   const button = document.getElementById('ai-assistant-history');
@@ -94,6 +102,7 @@ function setAssistantFullscreen(expanded) {
   button.setAttribute('aria-label', button.title);
   button.setAttribute('aria-pressed', String(expanded));
   button.innerHTML = expanded ? ASSISTANT_ICON_COMPRESS : ASSISTANT_ICON_EXPAND;
+  updateAssistantCompactState();
 }
 
 function refreshStatsLanguage() {
@@ -104,6 +113,12 @@ function refreshStatsLanguage() {
 }
 
 function initStatsDetail() {
+  const statsPanel = document.querySelector('.stats-panel');
+  if (statsPanel && typeof ResizeObserver !== 'undefined') {
+    const compactObserver = new ResizeObserver(updateAssistantCompactState);
+    compactObserver.observe(statsPanel);
+  }
+  updateAssistantCompactState();
   document.getElementById('ai-assistant-history').addEventListener('click', () => {
     const panel = document.getElementById('ai-assistant-panel');
     setAssistantFullscreen(!panel.classList.contains('is-fullscreen'));

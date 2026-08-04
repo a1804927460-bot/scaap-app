@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('assert');
+const { catalogProvider } = require('../lib/provider-catalog');
 const {
   DEFAULT_IMAGE_ENDPOINT,
   DEFAULT_VIDEO_ENDPOINT,
@@ -82,6 +83,7 @@ async function testQuickRouterDefaultImageFlow() {
     return responses.shift();
   }, {
     apiKey: 'secret',
+    imageEndpoint: 'https://api.quickrouter.ai/v1/images/generations',
     pollIntervalMs: 800,
     timeoutMs: 10000
   }, 'image', {
@@ -293,7 +295,7 @@ function testGeminiImageBody() {
     resolveGeminiMediaEndpoint(
       'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image:generateContent'
     ),
-    'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent'
+    'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image:generateContent'
   );
 }
 
@@ -330,7 +332,7 @@ async function testQuickRouterNativeGeminiImageFlow() {
   assert.strictEqual(calls.length, 1);
   assert.strictEqual(
     calls[0].url,
-    'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent'
+    'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image:generateContent'
   );
   assert.deepStrictEqual(JSON.parse(calls[0].options.body).generationConfig.imageConfig, {
     aspectRatio: '16:9',
@@ -464,11 +466,103 @@ function testDefaultImageBody() {
     urls: [dataUrl, 'file:///not-allowed.webp']
   }, config);
   assert.deepStrictEqual(body, {
-    model: 'gpt-image-1',
-    prompt: 'restyle this image',
-    n: 1,
-    size: '1024x1024'
+    contents: [{
+      role: 'user',
+      parts: [
+        { text: 'restyle this image' },
+        { inlineData: { mimeType: 'image/webp', data: 'UklGRg==' } }
+      ]
+    }],
+    generationConfig: {
+      responseModalities: ['TEXT', 'IMAGE'],
+      imageConfig: { aspectRatio: '1:1', imageSize: '2K' }
+    }
   });
+}
+
+async function testNanoBanana2NativeGeminiImageFlow() {
+  const provider = catalogProvider('image-5');
+  assert.ok(provider);
+  assert.strictEqual(provider.name, 'Nano banana2');
+  assert.strictEqual(provider.protocol, 'gemini-image');
+  assert.strictEqual(
+    provider.endpoint,
+    'https://api.quickrouter.ai/v1beta/models/gemini-3.1-flash-image:generateContent'
+  );
+
+  const calls = [];
+  const pngBase64 = 'iVBORw==';
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    return jsonResponse({
+      candidates: [{
+        content: {
+          role: 'model',
+          parts: [{ inlineData: { mimeType: 'image/png', data: pngBase64 } }]
+        },
+        finishReason: 'STOP'
+      }],
+      modelVersion: 'gemini-3.1-flash-image'
+    });
+  };
+  const config = normalizeConfig({
+    apiKey: 'secret',
+    imageEndpoint: provider.endpoint
+  });
+  const buffer = await generateMediaBuffer(fetchImpl, config, 'image', {
+    prompt: 'editorial product photograph',
+    size: '2K',
+    aspectRatio: '3:4',
+    urls: ['data:image/png;base64,iVBORw0KGgo=']
+  });
+
+  assert.deepStrictEqual(buffer, Buffer.from(pngBase64, 'base64'));
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].url, provider.endpoint);
+  const body = JSON.parse(calls[0].options.body);
+  assert.strictEqual(body.contents[0].parts[0].text, 'editorial product photograph');
+  assert.strictEqual(body.contents[0].parts[1].inlineData.mimeType, 'image/png');
+  assert.deepStrictEqual(body.generationConfig.imageConfig, {
+    aspectRatio: '3:4',
+    clarity: '2K'
+  });
+}
+
+async function testMidjourneyFlow() {
+  const calls = [];
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xdb]);
+  const responses = [
+    jsonResponse({ code: 1, description: 'success', result: 'mj-task-1' }),
+    jsonResponse({ id: 'mj-task-1', status: 'SUCCESS', imageUrl: 'https://cdn.test/midjourney.jpg' }),
+    { ok: true, status: 200, arrayBuffer: async () => jpeg }
+  ];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    return responses.shift();
+  };
+  const config = normalizeConfig({
+    apiKey: 'secret',
+    imageEndpoint: 'https://api.quickrouter.ai/mj/submit/imagine',
+    pollIntervalMs: 800,
+    timeoutMs: 10000
+  });
+  const buffer = await generateMediaBuffer(fetchImpl, config, 'image', {
+    prompt: 'editorial portrait',
+    urls: ['data:image/png;base64,iVBORw0KGgo=']
+  }, null, async () => {});
+
+  assert.deepStrictEqual(buffer, jpeg);
+  assert.strictEqual(detectMediaProtocol(config.imageEndpoint), 'midjourney-imagine');
+  assert.strictEqual(calls[0].url, 'https://api.quickrouter.ai/mj/submit/imagine');
+  assert.deepStrictEqual(JSON.parse(calls[0].options.body), {
+    botType: 'MID_JOURNEY',
+    prompt: 'editorial portrait',
+    base64Array: ['iVBORw0KGgo='],
+    notifyHook: '',
+    state: ''
+  });
+  assert.strictEqual(calls[1].url, 'https://api.quickrouter.ai/mj/task/mj-task-1/fetch');
+  assert.strictEqual(calls[2].url, 'https://cdn.test/midjourney.jpg');
 }
 
 function testNestedResultExtraction() {
@@ -499,6 +593,8 @@ async function main() {
   await testOpenAiImageFlow();
   testGeminiImageBody();
   await testQuickRouterNativeGeminiImageFlow();
+  await testNanoBanana2NativeGeminiImageFlow();
+  await testMidjourneyFlow();
   testOpenAiVideoRequest();
   testChatCompatibleImageRequest();
   await testQuickRouterUnifiedVideoFlow();

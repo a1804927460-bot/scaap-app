@@ -68,6 +68,12 @@ function renderChildFolderSection() {
   breadcrumb.hidden = !context.backLabel;
   if (context.backLabel) breadcrumbLabel.textContent = context.backLabel;
   subList.hidden = context.siblings.length === 0;
+  if (context.siblings.length) {
+    const label = document.createElement('li');
+    label.className = 'subfolder-section-label';
+    label.textContent = folderText('Subfolders', '子文件夹');
+    subList.appendChild(label);
+  }
   for (const sub of context.siblings) {
     subList.appendChild(buildFolderItem(sub, true));
   }
@@ -87,10 +93,19 @@ function activeFolderNavContext() {
 
   if (activeFolder.parentId) {
     const parent = AppState.folders.find((f) => f.id === activeFolder.parentId);
-    return { backLabel: `${folderText('Back to', '返回')} ${parent ? parent.name : folderText('Parent', '上级')}`, siblings: [] };
+    return {
+      backLabel: `${folderText('Back to', '返回')} ${parent ? parent.name : folderText('Parent', '上级')}`,
+      siblings: [activeFolder]
+    };
   }
 
   const children = childFoldersOf(activeFolder.id);
+  if (activeFolder.isImported) {
+    return {
+      backLabel: folderText('Back to Library', '返回资料库'),
+      siblings: [activeFolder, ...children]
+    };
+  }
   if (children.length === 0) return null;
   return { backLabel: activeFolder.name, siblings: children };
 }
@@ -411,16 +426,6 @@ function navigateFolderUp() {
 }
 
 function initFolders() {
-  document.getElementById('add-folder-btn').addEventListener('click', async () => {
-    const contextId = currentFolderContextId();
-    const activeFolder = contextId ? AppState.folders.find((f) => f.id === contextId) : null;
-    const parentId = activeFolder && !activeFolder.isImported ? activeFolder.id : null;
-
-    const folder = await window.messsAPI.createFolder(undefined, parentId);
-    AppState.folders.push(folder);
-    renderFolderList();
-  });
-
   document.getElementById('folder-breadcrumb-back').addEventListener('click', (e) => {
     e.stopPropagation();
     navigateFolderUp();

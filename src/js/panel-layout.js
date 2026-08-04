@@ -4,7 +4,7 @@ const PANEL_LAYOUT_ORDER_KEY = 'messs.panel-order.v1';
 const PANEL_LAYOUT_TARGETS = [
   { id: 'sidebar', selector: '#sidebar', handle: '.sidebar-brand' },
   { id: 'preview', selector: '.preview-panel', handle: '.panel-header' },
-  { id: 'stats', selector: '.stats-panel', handle: '.ai-assistant-header' },
+  { id: 'stats', selector: '.stats-panel', handle: '.ai-assistant-header, .ai-assistant-compact' },
   { id: 'board', selector: '#board-panel', handle: '.panel-header' }
 ];
 
@@ -34,6 +34,30 @@ function savePanelOrder() {
   try {
     localStorage.setItem(PANEL_LAYOUT_ORDER_KEY, JSON.stringify(value));
   } catch (err) {}
+}
+
+function resetPanelLayout() {
+  const main = document.getElementById('main-app');
+  try {
+    localStorage.removeItem(PANEL_LAYOUT_ORDER_KEY);
+    localStorage.removeItem('messs.panel-layout.v2');
+  } catch (err) {}
+
+  PANEL_LAYOUT_TARGETS.forEach(({ id, selector }) => {
+    const panel = document.querySelector(selector);
+    if (panel) panel.style.gridArea = id;
+  });
+  if (main && typeof PANEL_LIMITS !== 'undefined') {
+    Object.values(PANEL_LIMITS).forEach((limits) => {
+      main.style.removeProperty(limits.cssVar);
+    });
+    if (typeof clampPanelLayout === 'function') clampPanelLayout(main);
+  }
+  if (typeof setSidebarCollapsed === 'function') setSidebarCollapsed(false);
+  if (window.messsAPI && typeof window.messsAPI.setSidebarCollapsed === 'function') {
+    window.messsAPI.setSidebarCollapsed(false);
+  }
+  window.dispatchEvent(new Event('resize'));
 }
 
 function panelFromElement(element) {
@@ -76,7 +100,7 @@ function initPanelLayout() {
   const main = document.getElementById('main-app');
   if (!main) return;
 
-  PANEL_LAYOUT_TARGETS.forEach(({ selector, id }) => {
+  PANEL_LAYOUT_TARGETS.forEach(({ selector, id, handle }) => {
     const panel = document.querySelector(selector);
     if (!panel) return;
     let timer = 0;
@@ -87,32 +111,34 @@ function initPanelLayout() {
     let startX = 0;
     let startY = 0;
 
+    function beginDrag(clientX, clientY) {
+      if (dragging || pointerId === null || !sourcePanel) return;
+      dragging = true;
+      sourcePanel.classList.add('is-layout-dragging');
+      main.classList.add('is-layout-dragging');
+      const title = sourcePanel.querySelector('.panel-title, .brand-word, .ai-assistant-title, .ai-assistant-header strong');
+      dragGhost = createPanelDragGhost(sourcePanel, (title && title.textContent.trim()) || id);
+      movePanelDragGhost(dragGhost, clientX, clientY);
+      if (panel.setPointerCapture) panel.setPointerCapture(pointerId);
+    }
+
     panel.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0 || isPanelLayoutControl(event.target)) return;
+      if (event.button !== 0 || isPanelLayoutControl(event.target) || !event.target.closest(handle)) return;
       pointerId = event.pointerId;
       sourcePanel = panel;
       startX = event.clientX;
       startY = event.clientY;
-      timer = window.setTimeout(() => {
-        dragging = true;
-        sourcePanel.classList.add('is-layout-dragging');
-        main.classList.add('is-layout-dragging');
-        const title = sourcePanel.querySelector('.panel-title, .sidebar-logo, .ai-assistant-title');
-        dragGhost = createPanelDragGhost(sourcePanel, (title && title.textContent.trim()) || id);
-        movePanelDragGhost(dragGhost, event.clientX, event.clientY);
-        if (panel.setPointerCapture) panel.setPointerCapture(pointerId);
-      }, 180);
+      timer = window.setTimeout(() => beginDrag(startX, startY), 180);
     });
 
     panel.addEventListener('pointermove', (event) => {
       if (event.pointerId !== pointerId) return;
       if (!dragging) {
-        if (Math.hypot(event.clientX - startX, event.clientY - startY) > 7) {
+        if (Math.hypot(event.clientX - startX, event.clientY - startY) > 5) {
           clearTimeout(timer);
-          pointerId = null;
-          sourcePanel = null;
+          beginDrag(event.clientX, event.clientY);
         }
-        return;
+        if (!dragging) return;
       }
       event.preventDefault();
       movePanelDragGhost(dragGhost, event.clientX, event.clientY);
@@ -134,6 +160,7 @@ function initPanelLayout() {
         savePanelOrder();
       }
       if (sourcePanel) sourcePanel.classList.remove('is-layout-dragging');
+      if (dragging && sourcePanel) sourcePanel.dataset.layoutDraggedAt = String(Date.now());
       main.classList.remove('is-layout-dragging');
       if (dragGhost) {
         dragGhost.remove();

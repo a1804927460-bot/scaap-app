@@ -29,7 +29,7 @@ function renderUpdaterState(state) {
     if (element) element.textContent = text;
   });
   const version = document.getElementById('software-update-version');
-  if (version) version.textContent = `v${latestUpdaterState.currentVersion || '0.0.1'}`;
+  if (version) version.textContent = `v${latestUpdaterState.currentVersion || '0.0.2'}`;
   ['auto-update-toggle', 'software-auto-update-toggle'].forEach((id) => {
     const toggle = document.getElementById(id);
     if (toggle) toggle.checked = latestUpdaterState.enabled !== false;

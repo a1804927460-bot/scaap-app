@@ -87,8 +87,12 @@ function clampPanelLayout(mainApp) {
     PANEL_LIMITS.sidebar.min + PANEL_LIMITS.stats.min,
     mainApp.clientWidth - MAIN_HORIZONTAL_CHROME_PX - MIN_CENTER_COLUMN_PX
   );
-  let sidebarSize = Math.max(PANEL_LIMITS.sidebar.min, readPanelSize(mainApp, 'sidebar'));
-  let statsSize = Math.max(PANEL_LIMITS.stats.min, readPanelSize(mainApp, 'stats'));
+  const originalSidebarSize = readPanelSize(mainApp, 'sidebar');
+  const originalStatsSize = readPanelSize(mainApp, 'stats');
+  const originalPreviewSize = readPanelSize(mainApp, 'preview');
+  const originalAgentSize = readPanelSize(mainApp, 'agent');
+  let sidebarSize = Math.max(PANEL_LIMITS.sidebar.min, originalSidebarSize);
+  let statsSize = Math.max(PANEL_LIMITS.stats.min, originalStatsSize);
 
   if (sidebarSize + statsSize > horizontalAvailable) {
     let overflow = sidebarSize + statsSize - horizontalAvailable;
@@ -104,10 +108,12 @@ function clampPanelLayout(mainApp) {
     if (overflow > 0) statsSize -= Math.min(statsRoom, overflow);
   }
 
-  writePanelSize(mainApp, 'sidebar', sidebarSize);
-  writePanelSize(mainApp, 'stats', statsSize);
-  writePanelSize(mainApp, 'preview', clampPanelSize(mainApp, 'preview', readPanelSize(mainApp, 'preview')));
-  writePanelSize(mainApp, 'agent', clampPanelSize(mainApp, 'agent', readPanelSize(mainApp, 'agent')));
+  const previewSize = clampPanelSize(mainApp, 'preview', originalPreviewSize);
+  const agentSize = clampPanelSize(mainApp, 'agent', originalAgentSize);
+  if (Math.abs(sidebarSize - originalSidebarSize) > 0.5) writePanelSize(mainApp, 'sidebar', sidebarSize);
+  if (Math.abs(statsSize - originalStatsSize) > 0.5) writePanelSize(mainApp, 'stats', statsSize);
+  if (Math.abs(previewSize - originalPreviewSize) > 0.5) writePanelSize(mainApp, 'preview', previewSize);
+  if (Math.abs(agentSize - originalAgentSize) > 0.5) writePanelSize(mainApp, 'agent', agentSize);
 }
 
 function updateSeparatorValue(handle, value) {
@@ -124,6 +130,7 @@ function initPanelResize() {
   clampPanelLayout(mainApp);
 
   document.querySelectorAll('.resize-handle').forEach((handle) => {
+    if (handle.classList.contains('resize-handle-corner')) return;
     const target = handle.dataset.target;
     const limits = PANEL_LIMITS[target];
     if (!limits) return;
@@ -178,6 +185,46 @@ function initPanelResize() {
     });
   });
 
+  document.querySelectorAll('.resize-handle-corner').forEach((handle) => {
+    const [horizontalTarget, verticalTarget] = String(handle.dataset.targets || '').split(',');
+    if (!PANEL_LIMITS[horizontalTarget] || verticalTarget !== 'preview') return;
+    handle.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      const pointerId = event.pointerId;
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startHorizontal = readPanelSize(mainApp, horizontalTarget);
+      const startPreview = readPanelSize(mainApp, 'preview');
+      handle.classList.add('is-active');
+      mainApp.classList.add('is-resizing-panel');
+      handle.setPointerCapture(pointerId);
+
+      const resizeRunner = createLatestFrameRunner((point) => {
+        const horizontalDelta = (point.clientX - startX) * PANEL_LIMITS[horizontalTarget].direction;
+        writePanelSize(mainApp, horizontalTarget, clampPanelSize(mainApp, horizontalTarget, startHorizontal + horizontalDelta));
+        writePanelSize(mainApp, 'preview', clampPanelSize(mainApp, 'preview', startPreview + point.clientY - startY));
+      });
+      const move = (moveEvent) => {
+        if (moveEvent.pointerId === pointerId) resizeRunner.push({ clientX: moveEvent.clientX, clientY: moveEvent.clientY });
+      };
+      const finish = (endEvent) => {
+        if (endEvent.pointerId !== pointerId) return;
+        resizeRunner.flush();
+        handle.classList.remove('is-active');
+        mainApp.classList.remove('is-resizing-panel');
+        handle.removeEventListener('pointermove', move);
+        handle.removeEventListener('pointerup', finish);
+        handle.removeEventListener('pointercancel', finish);
+        if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
+        persistPanelLayout(mainApp);
+      };
+      handle.addEventListener('pointermove', move);
+      handle.addEventListener('pointerup', finish);
+      handle.addEventListener('pointercancel', finish);
+    });
+  });
+
   let resizeFrame = 0;
   window.addEventListener('resize', () => {
     if (resizeFrame) cancelAnimationFrame(resizeFrame);
@@ -192,7 +239,6 @@ function initPanelResize() {
           max: getPanelMaximum(mainApp, target)
         });
       });
-      persistPanelLayout(mainApp);
     });
   });
 }

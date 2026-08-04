@@ -46,6 +46,13 @@ function initSectionTabs() {
   document.querySelectorAll('.section-tab').forEach((tab) => {
     tab.addEventListener('click', () => {
       const section = tab.dataset.section;
+      const assistant = document.getElementById('ai-assistant-panel');
+      if (assistant && assistant.classList.contains('is-fullscreen') && typeof setAssistantFullscreen === 'function') {
+        setAssistantFullscreen(false);
+      }
+      if (typeof isBoardFullscreen === 'function' && isBoardFullscreen() && typeof exitBoardFullscreen === 'function') {
+        exitBoardFullscreen();
+      }
       document.querySelectorAll('.section-tab').forEach((t) => {
         const isActive = t === tab;
         t.classList.toggle('is-active', isActive);

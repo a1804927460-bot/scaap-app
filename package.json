@@ -1,16 +1,20 @@
 {
   "name": "messs",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Messs. — Resolve your confusion. A file preview & organizing desktop app.",
   "main": "main.js",
   "author": "Messs.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/a1804927460-bot/messs-app.git"
+  },
   "license": "UNLICENSED",
   "private": true,
   "scripts": {
     "postinstall": "node scripts/ensure-canvas-stub.js",
-    "test": "node scripts/test-activation.js && node scripts/test-ai-media-provider.js && node scripts/test-ai-chat-provider.js && node scripts/test-gateway-providers.mjs && node scripts/test-board-engine.js && node scripts/test-membership-service.js && node scripts/test-privacy-guard.js && node scripts/test-security-clients.js && npm --prefix gateway run check",
-    "start": "node ../messs-app/node_modules/electron/cli.js .",
-    "build:dev": "node ../messs-app/node_modules/electron-builder/cli.js --config electron-builder.dev.yml",
+    "test": "node scripts/test-activation.js && node scripts/test-ai-media-provider.js && node scripts/test-ai-chat-provider.js && node scripts/test-gateway-providers.mjs && node scripts/test-board-engine.js && node scripts/test-thumbnails.js && node scripts/test-membership-service.js && node scripts/test-privacy-guard.js && node scripts/test-security-clients.js && npm --prefix gateway run check",
+    "start": "electron .",
+    "build:dev": "electron-builder --config electron-builder.dev.yml",
     "release:win": "electron-builder --config electron-builder.release.yml --win --publish always"
   },
   "dependencies": {

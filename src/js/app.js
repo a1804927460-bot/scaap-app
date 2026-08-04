@@ -17,7 +17,8 @@ function bootstrapMainApp(initial) {
   renderFolderList();
   renderBoard();
   renderTopStats();
-  setSidebarCollapsed(!!initial.sidebarCollapsed);
+  setSidebarCollapsed(false);
+  window.messsAPI.setSidebarCollapsed(false);
 
   initFolders();
   initSidebar();

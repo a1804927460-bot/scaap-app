@@ -2,8 +2,8 @@
 
 function renderActivationStatus(status) {
   const activated = !!(status && status.activated);
-  document.body.classList.toggle('is-activation-locked', !activated);
-  document.getElementById('activation-overlay').hidden = activated;
+  document.body.classList.remove('is-activation-locked');
+  document.getElementById('activation-overlay').hidden = true;
   const settingsStatus = document.getElementById('activation-settings-status');
   const settingsNote = document.getElementById('activation-settings-note');
   if (settingsStatus) {
@@ -13,7 +13,7 @@ function renderActivationStatus(status) {
   if (settingsNote) {
     settingsNote.textContent = activated
       ? 'This device is authorized for the development build.'
-      : 'Activation is required before this testing build can be used.';
+      : 'Enter an activation code here when one is required.';
   }
   return activated;
 }
@@ -38,6 +38,10 @@ async function submitActivation(input, button, error) {
       return false;
     }
     renderActivationStatus(result);
+    const config = typeof refreshAiMediaSettings === 'function'
+      ? await refreshAiMediaSettings()
+      : await window.messsAPI.getAiMediaConfig();
+    document.dispatchEvent(new CustomEvent('messs:ai-config-updated', { detail: config }));
     return true;
   } finally {
     button.disabled = false;
@@ -45,20 +49,11 @@ async function submitActivation(input, button, error) {
 }
 
 async function initActivation(initialStatus) {
-  const overlay = document.getElementById('activation-overlay');
-  const form = document.getElementById('activation-form');
-  const input = document.getElementById('activation-code');
-  const button = document.getElementById('activation-submit');
-  const error = document.getElementById('activation-error');
   const settingsForm = document.getElementById('activation-settings-form');
   const settingsInput = document.getElementById('activation-settings-code');
   const settingsButton = settingsForm.querySelector('button');
   const settingsNote = document.getElementById('activation-settings-note');
 
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    await submitActivation(input, button, error);
-  });
   settingsForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const ok = await submitActivation(settingsInput, settingsButton, settingsNote);
@@ -66,8 +61,5 @@ async function initActivation(initialStatus) {
   });
 
   const status = initialStatus || await window.messsAPI.getActivationStatus();
-  if (!renderActivationStatus(status)) {
-    overlay.hidden = false;
-    window.setTimeout(() => input.focus(), 0);
-  }
+  renderActivationStatus(status);
 }

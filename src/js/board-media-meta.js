@@ -35,6 +35,19 @@ function appendBoardMediaMeta(element, file) {
   return meta;
 }
 
+function formatBoardFileSize(file) {
+  const fileSize = Number(file && file.sizeBytes);
+  if (!Number.isFinite(fileSize) || fileSize < 0) return t('Size unavailable', '大小未知');
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = fileSize;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+
 let generatedMediaDetailKeyHandler = null;
 
 function appendGeneratedMediaDetailsControl(element, file) {
@@ -139,6 +152,14 @@ function showGeneratedMediaDetails(file, anchorElement) {
     const size = document.createElement('span');
     size.textContent = `${t('Quality', '画质')} ${generation.size}`;
     chips.appendChild(size);
+  }
+  const fileSize = document.createElement('span');
+  fileSize.textContent = `${t('File', '大小')} ${formatBoardFileSize(file)}`;
+  chips.appendChild(fileSize);
+  if (generation.kind === 'video' && generation.duration) {
+    const duration = document.createElement('span');
+    duration.textContent = `${t('Duration', '时长')} ${generation.duration}s`;
+    chips.appendChild(duration);
   }
 
   const referenceList = overlay.querySelector('.generated-media-reference-list');

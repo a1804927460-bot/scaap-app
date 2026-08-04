@@ -17,7 +17,7 @@ function persistAiChatHistory() {
   try {
     const sessions = AiAssistant.sessions
       .slice()
-      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+      .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || new Date(b.updatedAt) - new Date(a.updatedAt))
       .slice(0, 30);
     localStorage.setItem(AI_CHAT_HISTORY_KEY, JSON.stringify(sessions));
   } catch (err) {
@@ -30,6 +30,7 @@ function loadAiChatHistory() {
     const value = JSON.parse(localStorage.getItem(AI_CHAT_HISTORY_KEY) || '[]');
     AiAssistant.sessions = Array.isArray(value)
       ? value.filter((session) => session && session.id && Array.isArray(session.messages))
+        .map((session) => ({ ...session, pinned: !!session.pinned }))
       : [];
   } catch (err) {
     AiAssistant.sessions = [];
@@ -48,6 +49,7 @@ function ensureAiChatSession(title) {
     title: String(title || t('New conversation', '新对话')).slice(0, 64),
     createdAt: now,
     updatedAt: now,
+    pinned: false,
     messages: []
   };
   AiAssistant.sessions.unshift(session);
@@ -78,19 +80,122 @@ function renderAiChatHistory() {
   list.innerHTML = '';
   const sessions = AiAssistant.sessions
     .slice()
-    .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || new Date(b.updatedAt) - new Date(a.updatedAt));
   empty.hidden = sessions.length > 0;
   sessions.forEach((session) => {
+    const entry = document.createElement('div');
+    entry.className = 'ai-chat-history-entry';
+    entry.dataset.sessionId = session.id;
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'ai-chat-history-item';
     button.classList.toggle('is-active', session.id === AiAssistant.activeSessionId);
-    button.dataset.sessionId = session.id;
-    button.innerHTML = '<span></span>';
+    button.innerHTML = session.pinned
+      ? '<svg class="ai-chat-history-pin" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m14 4 6 6-3 1-4 4-1 4-2-2-2-2 4-1 4-4z"/></svg><span></span>'
+      : '<span></span>';
     button.querySelector('span').textContent = session.title || t('New conversation', '新对话');
     button.addEventListener('click', () => loadAiChatSession(session.id));
-    list.appendChild(button);
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'ai-chat-history-more';
+    more.title = t('Conversation actions', '对话操作');
+    more.setAttribute('aria-label', more.title);
+    more.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>';
+    more.addEventListener('click', (event) => showAiChatSessionMenu(session.id, event.clientX, event.clientY));
+    entry.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      showAiChatSessionMenu(session.id, event.clientX, event.clientY);
+    });
+    entry.append(button, more);
+    list.appendChild(entry);
   });
+}
+
+function renameAiChatSession(sessionId) {
+  const session = AiAssistant.sessions.find((entry) => entry.id === sessionId);
+  const row = [...document.querySelectorAll('.ai-chat-history-entry')]
+    .find((entry) => entry.dataset.sessionId === sessionId);
+  const title = row && row.querySelector('.ai-chat-history-item span');
+  if (!session || !row || !title) return;
+  const input = document.createElement('input');
+  input.className = 'ai-chat-history-rename';
+  input.value = session.title || t('New conversation', '新对话');
+  title.replaceWith(input);
+  let finished = false;
+  const commit = () => {
+    if (finished) return;
+    finished = true;
+    const next = input.value.trim().slice(0, 64);
+    if (next) session.title = next;
+    session.updatedAt = new Date().toISOString();
+    persistAiChatHistory();
+    renderAiChatHistory();
+  };
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') commit();
+    if (event.key === 'Escape') {
+      finished = true;
+      renderAiChatHistory();
+    }
+  });
+  input.addEventListener('blur', commit, { once: true });
+  input.focus();
+  input.select();
+}
+
+async function deleteAiChatSession(sessionId) {
+  const session = AiAssistant.sessions.find((entry) => entry.id === sessionId);
+  if (!session) return;
+  const confirmed = await showConfirmDialog({
+    title: t('Delete conversation', '删除对话'),
+    message: t(`Delete "${session.title}"? This cannot be undone.`, `删除“${session.title}”？此操作无法撤销。`),
+    confirmLabel: t('Delete', '删除'),
+    danger: true
+  });
+  if (!confirmed) return;
+  AiAssistant.sessions = AiAssistant.sessions.filter((entry) => entry.id !== sessionId);
+  if (AiAssistant.activeSessionId === sessionId) startNewAiChat();
+  persistAiChatHistory();
+  renderAiChatHistory();
+}
+
+async function exportAiChatSession(sessionId) {
+  const session = AiAssistant.sessions.find((entry) => entry.id === sessionId);
+  if (!session) return;
+  const result = await window.messsAPI.exportAiChat(session);
+  if (result && result.ok) showToast(t('Conversation exported', '对话已导出'), 'AI');
+}
+
+function showAiChatSessionMenu(sessionId, x, y) {
+  const session = AiAssistant.sessions.find((entry) => entry.id === sessionId);
+  if (!session || typeof buildAndShowSimpleMenu !== 'function') return;
+  buildAndShowSimpleMenu([
+    {
+      label: session.pinned ? t('Unpin', '取消置顶') : t('Pin', '置顶'),
+      icon: 'M14 4l6 6-3 1-4 4-1 4-2-2-2-2 4-1 4-4z',
+      action: () => {
+        session.pinned = !session.pinned;
+        persistAiChatHistory();
+        renderAiChatHistory();
+      }
+    },
+    {
+      label: t('Rename', '重命名'),
+      icon: 'M4 20h4L19 9l-4-4L4 16v4zM13 7l4 4',
+      action: () => renameAiChatSession(sessionId)
+    },
+    {
+      label: t('Export', '导出'),
+      icon: 'M12 3v12M7 10l5 5 5-5M5 21h14',
+      action: () => exportAiChatSession(sessionId)
+    },
+    {
+      label: t('Delete', '删除'),
+      icon: 'M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14',
+      danger: true,
+      action: () => deleteAiChatSession(sessionId)
+    }
+  ], x, y, 'ai-chat-session-menu');
 }
 
 function loadAiChatSession(sessionId) {
@@ -178,7 +283,7 @@ function configuredAssistantProviders(kind) {
     }];
     const options = [];
     chatProviders.forEach((provider) => {
-      if (!provider || !provider.name || !provider.endpoint) return;
+      if (!provider || provider.available === false || !provider.name || !provider.endpoint) return;
       const models = Array.isArray(provider.models) && provider.models.length
         ? provider.models
         : [provider.model || 'gpt-4o-mini'];
@@ -195,6 +300,7 @@ function configuredAssistantProviders(kind) {
       });
     });
     if (options.length) return options;
+    if (config.providerVisibilityEnforced) return [];
   }
   return [{
     id: 'chat',
@@ -256,6 +362,7 @@ function renderAssistantModels() {
   const selected = providers.find((provider) => provider.id === select.value) || providers[0];
   picker.hidden = !selected;
   label.textContent = selected ? selected.name : t('No provider configured', '未配置服务商');
+  document.getElementById('ai-assistant-submit').disabled = AiAssistant.busy || !selected;
   menu.querySelectorAll('.ai-model-picker-option').forEach((option) => {
     const active = selected && option.dataset.value === selected.id;
     option.classList.toggle('is-active', active);

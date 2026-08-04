@@ -107,9 +107,15 @@ button {
   color: inherit;
   cursor: pointer;
   transform-origin: center;
+  transition: color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out),
+              transform var(--dur-fast) var(--ease-out);
 }
 
 button:active:not(:disabled) { transform: scale(0.95); }
+button:disabled { cursor: default; opacity: .5; }
+button svg { transition: transform var(--dur-fast) var(--ease-out); }
+button:not(:disabled):hover > svg { transform: translateY(-.5px); }
 
 input { font-family: inherit; }
 

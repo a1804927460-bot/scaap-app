@@ -1,7 +1,6 @@
 appId: com.messs.desktop
 productName: Messs
 electronVersion: 43.2.0
-electronDist: ../messs-app/node_modules/electron/dist
 asar: true
 directories:
   output: release-dev
@@ -10,6 +9,7 @@ files:
   - preload.js
   - package.json
   - config/runtime.json
+  - config/provider-catalog.json
   - lib/**/*
   - src/**/*
   - vendor/**/*

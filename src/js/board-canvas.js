@@ -8,7 +8,9 @@ const BOARD_MOUNTS_PER_FRAME = 8;
 const BOARD_MEDIA_MOUNTS_PER_FRAME = 2;
 const BOARD_DOM_ITEM_LIMIT = 320;
 const BOARD_OVERVIEW_ITEM_THRESHOLD = 180;
-const BOARD_FULL_IMAGE_LIMIT = 24;
+const BOARD_FULL_IMAGE_LIMIT = 6;
+const BOARD_FULL_IMAGE_MIN_SCREEN_WIDTH = 720;
+const BOARD_QUALITY_SETTLE_MS = 160;
 const BOARD_VIEW_STORAGE_KEY = 'messs.board.viewport.v2';
 const BOARD_OVERVIEW_DPR = 1;
 const BOARD_OVERVIEW_IMAGE_LIMIT = 240;
@@ -22,6 +24,8 @@ const Board = {
   transformFrame: 0,
   reconcileFrame: 0,
   mountFrame: 0,
+  qualityTimer: 0,
+  interactingUntil: 0,
   persistTimer: 0,
   spatialIndex: BoardEngine.createSpatialIndex(400),
   mounted: new Map(),
@@ -196,15 +200,33 @@ function transitionBoardImageQuality(element, quality) {
   next.src = quality === 'full' ? next.dataset.fullSrc : next.dataset.thumbSrc;
 }
 
+function scheduleMountedImageQuality(delay = BOARD_QUALITY_SETTLE_MS) {
+  clearTimeout(Board.qualityTimer);
+  Board.qualityTimer = window.setTimeout(() => {
+    Board.qualityTimer = 0;
+    syncMountedImageQuality();
+  }, delay);
+}
+
+function markBoardInteraction() {
+  Board.interactingUntil = Date.now() + BOARD_QUALITY_SETTLE_MS;
+  scheduleMountedImageQuality(BOARD_QUALITY_SETTLE_MS + 20);
+}
+
 function syncMountedImageQuality() {
+  if (Board.isPanning || Date.now() < Board.interactingUntil) {
+    scheduleMountedImageQuality();
+    return;
+  }
   const detailCandidates = [];
   for (const [id, element] of Board.mounted) {
     const image = activeBoardImage(element);
     const item = Board.itemsById.get(id);
     if (!image || !item) continue;
     const isVisible = Board.visibleIds.has(id);
-    const isLargeOnScreen = (item.width || 220) * Board.zoom >= 520;
-    if (boardZoomBucket() === 'detail' && (item.selected || (isVisible && isLargeOnScreen))) {
+    const screenWidth = (item.width || 220) * Board.zoom;
+    const isLargeOnScreen = screenWidth >= BOARD_FULL_IMAGE_MIN_SCREEN_WIDTH;
+    if (boardZoomBucket() === 'detail' && isVisible && isLargeOnScreen) {
       detailCandidates.push({
         id,
         image,
@@ -234,7 +256,7 @@ function applyBoardTransform() {
     canvas.style.setProperty('--board-label-scale', String(Math.min(7, Math.max(1, 1 / Board.zoom))));
     document.getElementById('board-zoom-label').textContent = Math.round(Board.zoom * 100) + '%';
     updateInfiniteGrid();
-    syncMountedImageQuality();
+    markBoardInteraction();
     scheduleBoardReconcile();
     scheduleBoardViewportSave();
   });
@@ -380,13 +402,13 @@ function removeBoardItemsForFile(fileId) {
     resolves (cached so repeat renders are instant). */
 function renderBoardItemContent(content, f, item) {
   if (isImageExt(f.ext)) {
-    const quality = item.selected ? 'full' : 'thumb';
+    const quality = 'thumb';
     const stack = document.createElement('div');
     stack.className = 'board-image-stack';
     stack.dataset.pendingQuality = '';
     const img = document.createElement('img');
     img.className = 'board-image-layer is-active';
-    img.src = quality === 'full' ? f.url : (f.thumbUrl || f.url);
+    img.src = f.thumbUrl || f.url;
     img.dataset.fullSrc = f.url;
     img.dataset.thumbSrc = f.thumbUrl || f.url;
     img.dataset.quality = quality;
@@ -682,15 +704,7 @@ function buildAiPlaceholderElement(item) {
   el.style.height = item.height + 'px';
   el.style.zIndex = item.zIndex || 1;
   el.dataset.boardId = item.id;
-  el.innerHTML = `
-    <div class="ai-pending-visual" aria-hidden="true">
-      <span></span><span></span><span></span>
-    </div>
-    <div class="ai-pending-copy">
-      <strong>${item.kind === 'video' ? '正在生成视频' : '正在生成图片'}</strong>
-      <small>${escapeHtml(item.modelName || 'QuickRouter GPT Image')}</small>
-    </div>
-  `;
+  el.innerHTML = '<div class="ai-pending-visual" aria-hidden="true"></div>';
   makeBoardItemDraggable(el, item);
   return el;
 }
@@ -704,15 +718,7 @@ function buildAiPlaceholderElementLocalized(item) {
   el.style.height = item.height + 'px';
   el.style.zIndex = item.zIndex || 1;
   el.dataset.boardId = item.id;
-  el.innerHTML = `
-    <div class="ai-pending-visual" aria-hidden="true">
-      <span></span><span></span><span></span>
-    </div>
-    <div class="ai-pending-copy">
-      <strong>${item.kind === 'video' ? t('Generating video', '正在生成视频') : t('Generating image', '正在生成图片')}</strong>
-      <small>${escapeHtml(item.modelName || t('AI model', 'AI 模型'))}</small>
-    </div>
-  `;
+  el.innerHTML = '<div class="ai-pending-visual" aria-hidden="true"></div>';
   makeBoardItemDraggable(el, item);
   return el;
 }
@@ -740,7 +746,8 @@ function createBoardItemElement(item) {
   }
   el.style.zIndex = item.zIndex || 1;
   el.dataset.boardId = item.id;
-  if (isImage || isVideo) appendBoardMediaMeta(el, f);
+  const isGeneratedMedia = !!(f.aiGeneration || f.sourceFolder === 'AI Generated');
+  if ((isImage || isVideo) && !isGeneratedMedia) appendBoardMediaMeta(el, f);
   el.addEventListener('click', (e) => {
     if (e.ctrlKey || e.metaKey || e.shiftKey) {
       e.stopPropagation();
@@ -764,7 +771,7 @@ function createBoardItemElement(item) {
   content.className = 'board-item-content';
   el.appendChild(content);
   renderBoardItemContent(content, f, item);
-  if (isImage && (f.aiGeneration || f.sourceFolder === 'AI Generated')) {
+  if ((isImage || isVideo) && isGeneratedMedia) {
     appendGeneratedMediaDetailsControl(el, f);
   }
 
@@ -846,7 +853,7 @@ function processBoardMountQueue() {
   if (Board.mountQueue.size) {
     Board.mountFrame = requestAnimationFrame(processBoardMountQueue);
   }
-  syncMountedImageQuality();
+  scheduleMountedImageQuality();
 }
 
 function queueBoardMounts(ids, visibleRect) {
@@ -947,13 +954,14 @@ function syncBoardSelectionClasses() {
   document.querySelectorAll('#board-canvas .board-item').forEach((element) => {
     element.classList.toggle('is-selected', selectedIds.has(element.dataset.boardId));
   });
-  syncMountedImageQuality();
+  scheduleMountedImageQuality(0);
 }
 
 function makeBoardItemDraggable(el, item) {
   el.addEventListener('mousedown', (e) => {
     if (e.target.classList.contains('board-resize-handle')) return;
     e.stopPropagation();
+    markBoardInteraction();
     el.classList.add('is-dragging');
     const startClientX = e.clientX;
     const startClientY = e.clientY;
@@ -995,11 +1003,13 @@ function makeBoardItemDraggable(el, item) {
     });
     function onMove(ev) {
       if (Math.hypot(ev.clientX - startClientX, ev.clientY - startClientY) > 4) moved = true;
+      markBoardInteraction();
       moveRunner.push({ clientX: ev.clientX, clientY: ev.clientY });
     }
     function onUp() {
       moveRunner.flush();
       if (moved) Board.lastDragEndedAt = Date.now();
+      markBoardInteraction();
       el.classList.remove('is-dragging');
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
@@ -1037,6 +1047,7 @@ function addResizeHandles(el, item) {
       e.stopPropagation();
       e.preventDefault();
       el.classList.add('is-resizing');
+      markBoardInteraction();
 
     const startClientX = e.clientX;
       const startClientY = e.clientY;
@@ -1076,6 +1087,7 @@ function addResizeHandles(el, item) {
         el.style.top = item.y + 'px';
       });
       function onMove(ev) {
+        markBoardInteraction();
         resizeRunner.push({
           clientX: ev.clientX,
           clientY: ev.clientY,
@@ -1085,6 +1097,7 @@ function addResizeHandles(el, item) {
       function onUp() {
         resizeRunner.flush();
         el.classList.remove('is-resizing');
+        markBoardInteraction();
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
         updateBoardItemIndex(item);
@@ -1227,7 +1240,8 @@ function initBoardCanvas() {
     if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
       if (!selectedBoardImageItems().length) return;
       e.preventDefault();
-      showBoardQuickGenerate();
+      closeBoardQuickGenerate();
+      void openAiComposerForSelection('image');
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
       e.preventDefault();
       AppState.boardItems.forEach((item) => { item.selected = true; });
@@ -1301,6 +1315,7 @@ function initBoardCanvas() {
     if (e.button === 1 || (e.button === 0 && e.altKey)) {
       e.preventDefault();
       Board.isPanning = true;
+      markBoardInteraction();
       Board.panStart = { x: e.clientX, y: e.clientY, panX: Board.panX, panY: Board.panY };
       viewport.classList.add('is-panning');
       return;
@@ -1316,15 +1331,18 @@ function initBoardCanvas() {
     if (!Board.isPanning) return;
     Board.panX = Board.panStart.panX + (e.clientX - Board.panStart.x);
     Board.panY = Board.panStart.panY + (e.clientY - Board.panStart.y);
+    markBoardInteraction();
     applyBoardTransform();
   });
   document.addEventListener('mouseup', () => {
     Board.isPanning = false;
+    markBoardInteraction();
     viewport.classList.remove('is-panning');
   });
 
   viewport.addEventListener('wheel', (e) => {
     e.preventDefault();
+    markBoardInteraction();
     const rect = viewport.getBoundingClientRect();
     const next = BoardEngine.zoomAtPoint(
       Board,
@@ -1780,6 +1798,21 @@ function refreshBoardLanguage() {
 let aiImagePopoverClickCloser = null;
 let aiImagePopoverKeyCloser = null;
 let aiImageGenerating = false;
+let aiMediaConfigPromise = null;
+
+function loadAiMediaConfigCached() {
+  if (!aiMediaConfigPromise) {
+    aiMediaConfigPromise = window.messsAPI.getAiMediaConfig().catch((error) => {
+      aiMediaConfigPromise = null;
+      throw error;
+    });
+  }
+  return aiMediaConfigPromise;
+}
+
+document.addEventListener('messs:ai-config-updated', (event) => {
+  aiMediaConfigPromise = event.detail ? Promise.resolve(event.detail) : null;
+});
 
 function setAiImageButtonsActive(active) {
   ['board-ai-generate', 'board-tool-ai-image', 'board-tool-ai-video'].forEach((id) => {
@@ -2047,24 +2080,26 @@ const AI_IMAGE_RATIOS = ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:
 
 function getConfiguredImageProviders(aiConfig) {
   const providers = Array.isArray(aiConfig.imageProviders)
-    ? aiConfig.imageProviders.filter((provider) => provider && provider.name && provider.endpoint)
+    ? aiConfig.imageProviders.filter((provider) => provider && provider.available !== false && provider.name && provider.endpoint)
     : [];
   if (providers.length) return providers;
+  if (aiConfig.providerVisibilityEnforced) return [];
   return [{
     id: 'image-1',
-    name: 'QuickRouter GPT Image',
+    name: 'Nano Banana Pro',
     endpoint: aiConfig.imageEndpoint
   }];
 }
 
 function getConfiguredVideoProviders(aiConfig) {
   const providers = Array.isArray(aiConfig.videoProviders)
-    ? aiConfig.videoProviders.filter((provider) => provider && provider.name && provider.endpoint)
+    ? aiConfig.videoProviders.filter((provider) => provider && provider.available !== false && provider.name && provider.endpoint)
     : [];
   if (providers.length) return providers;
+  if (aiConfig.providerVisibilityEnforced) return [];
   return [{
     id: 'video-1',
-    name: aiConfig.videoProviderName || 'QuickRouter Sora 2',
+    name: aiConfig.videoProviderName || 'MiniMax H3',
     endpoint: aiConfig.videoEndpoint
   }];
 }
@@ -2451,6 +2486,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     });
     const selected = options.find((provider) => provider.id === modelSelect.value) || options[0];
     modelPickerLabel.textContent = selected ? selected.name : t('No model configured', '未配置模型');
+    submit.disabled = aiImageGenerating || !selected;
     modelPickerMenu.querySelectorAll('.ai-model-picker-option').forEach((option) => {
       const active = selected && option.dataset.value === selected.id;
       option.classList.toggle('is-active', active);
@@ -2909,6 +2945,7 @@ async function submitBoardQuickGeneration(kind, promptText) {
       : getConfiguredImageProviders(config);
     const activeId = kind === 'video' ? config.activeVideoProviderId : config.activeImageProviderId;
     const provider = providers.find((entry) => entry.id === activeId) || providers[0];
+    if (!provider) return;
     const original = sourceImageGenerationOptions();
     const urls = await boardSelectionReferenceData();
     const referenceFileIds = selectedBoardImageItems().map((item) => item.fileId);
@@ -3131,17 +3168,34 @@ async function showAiImagePopover(initialKind = 'image') {
     return;
   }
 
+  const anchor = document.getElementById('board-panel');
+  const loading = document.createElement('div');
+  loading.id = 'ai-image-popover';
+  loading.className = 'ai-image-popover ai-composer ai-composer-loading' + (isBoardFullscreen() ? '' : ' is-panel-popover');
+  loading.dataset.kind = initialKind;
+  loading.innerHTML = `
+    <button type="button" class="ai-composer-close" title="${t('Close', '关闭')}" aria-label="${t('Close', '关闭')}">x</button>
+    <div class="ai-composer-loading-body" role="status">
+      <span class="ai-composer-loading-dot" aria-hidden="true"></span>
+      <span>${t('Loading generation tools...', '正在加载生成工具...')}</span>
+    </div>
+  `;
+  loading.querySelector('.ai-composer-close').addEventListener('click', closeAiImagePopover);
+  anchor.appendChild(loading);
+  setAiImageButtonsActive(true);
+
   let config;
   try {
-    config = await window.messsAPI.getAiMediaConfig();
+    config = await loadAiMediaConfigCached();
   } catch (err) {
+    loading.remove();
+    setAiImageButtonsActive(false);
     showToast('无法读取 AI 接口设置', 'AI');
     return;
   }
+  if (!loading.isConnected || document.getElementById('ai-image-popover') !== loading) return;
   const pop = buildAiComposer(config, initialKind);
-  const anchor = document.getElementById('board-panel');
-  anchor.appendChild(pop);
-  setAiImageButtonsActive(true);
+  loading.replaceWith(pop);
 
   const textarea = pop.querySelector('.ai-composer-prompt');
   setTimeout(() => textarea.focus(), 0);
@@ -3166,6 +3220,7 @@ async function showAiImagePopover(initialKind = 'image') {
 }
 
 function initBoardBottomBar() {
+  void loadAiMediaConfigCached();
   document.getElementById('board-ai-generate').addEventListener('click', () => showAiImagePopover('image'));
 
   document.getElementById('board-theme-toggle').addEventListener('click', async () => {

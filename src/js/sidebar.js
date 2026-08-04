@@ -8,21 +8,27 @@ let isSidebarListHovered = false;
 let importProgressHideTimer = null;
 let sidebarDragGhost = null;
 
+function appendFileThumbnail(container, file, alt = '') {
+  const image = document.createElement('img');
+  image.src = file.thumbUrl || file.url;
+  image.loading = 'lazy';
+  image.alt = alt;
+  image.addEventListener('error', () => {
+    image.remove();
+    container.textContent = fileIconLabel(file.ext);
+  }, { once: true });
+  container.appendChild(image);
+  return image;
+}
+
 function createSidebarDragGhost(file, count) {
   if (sidebarDragGhost) sidebarDragGhost.remove();
   const ghost = document.createElement('div');
   ghost.className = 'sidebar-drag-ghost';
-  if (isImageExt(file.ext)) {
-    const image = document.createElement('img');
-    image.src = file.thumbUrl || file.url;
-    image.alt = '';
-    ghost.appendChild(image);
-  } else {
-    const icon = document.createElement('div');
-    icon.className = 'file-item-icon';
-    icon.textContent = fileIconLabel(file.ext);
-    ghost.appendChild(icon);
-  }
+  const icon = document.createElement('div');
+  icon.className = 'file-item-icon';
+  appendFileThumbnail(icon, file);
+  ghost.appendChild(icon);
   const label = document.createElement('span');
   label.textContent = count > 1 ? t(`${count} files`, `${count} 个文件`) : file.name;
   ghost.appendChild(label);
@@ -72,12 +78,22 @@ function renderFileList(files) {
   const list = document.getElementById('file-list');
   const empty = document.getElementById('file-list-empty');
   list.innerHTML = '';
+  const nested = currentFolderContextId() !== null;
+  list.classList.toggle('is-folder-contents', nested);
+  empty.classList.toggle('is-folder-contents', nested);
 
   if (!files.length) {
     empty.hidden = false;
     return;
   }
   empty.hidden = true;
+
+  if (nested) {
+    const contentLabel = document.createElement('li');
+    contentLabel.className = 'file-content-section-label';
+    contentLabel.textContent = t('Folder contents', '文件夹内容');
+    list.appendChild(contentLabel);
+  }
 
   if (currentFolderContextId() === null) {
     const badge = document.createElement('li');
@@ -106,16 +122,7 @@ function buildFileItem(f) {
 
   const icon = document.createElement('div');
   icon.className = 'file-item-icon';
-  if (isImageExt(f.ext)) {
-    const img = document.createElement('img');
-    img.src = f.thumbUrl || f.url;
-    img.loading = 'lazy';
-    img.alt = '';
-    icon.appendChild(img);
-  } else {
-    icon.textContent = fileIconLabel(f.ext);
-    icon.style.fontSize = '9px';
-  }
+  appendFileThumbnail(icon, f);
 
   const meta = document.createElement('div');
   meta.className = 'file-item-meta';
@@ -240,15 +247,34 @@ function initSidebar() {
     if (res) mergeImportedDirectoryResult(res);
   });
 
-  document.getElementById('collapse-sidebar-btn').addEventListener('click', toggleSidebarCollapsed);
-  document.getElementById('expand-sidebar-btn').addEventListener('click', toggleSidebarCollapsed);
-  document.getElementById('sidebar-brand-btn').addEventListener('click', goBackToStartScreen);
+  document.getElementById('sidebar-brand-btn').addEventListener('click', (event) => {
+    const draggedAt = Number(event.currentTarget.closest('.sidebar').dataset.layoutDraggedAt || 0);
+    if (Date.now() - draggedAt < 450) return;
+    resetPanelLayout();
+    showToast(t('Default layout restored', '已恢复默认布局'), 'Messs');
+  });
+
+  document.getElementById('sidebar-brand-btn').addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    buildAndShowSimpleMenu([
+      {
+        label: t('Return home', '\u8fd4\u56de\u9996\u9875'),
+        icon: 'M3 11l9-7 9 7;M5 10v10h14V10;M9 20v-6h6v6',
+        action: () => goBackToStartScreen()
+      },
+      {
+        label: t('Sponsor', '\u8d5e\u52a9'),
+        icon: 'M12 21s-8-4.8-8-11a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 20 10c0 6.2-8 11-8 11z',
+        action: () => showToast(t('Sponsorship is coming soon.', '\u8d5e\u52a9\u529f\u80fd\u5f85\u5b9a\u3002'), 'Messs')
+      }
+    ], event.clientX, event.clientY, 'brand-context-menu');
+  });
 
   initLanguageSettings();
   initSidebarDropZone();
   initLibraryPathSettings();
   initAiMediaSettings();
-  initToolStatusPanel();
   initImportProgress();
   initSidebarMultiSelectShortcuts();
 }
@@ -320,7 +346,7 @@ function refreshApiSettingsLanguage() {
   setChatProviderColumnLabels();
   setText('#ai-provider-manager-title', 'More Settings', '更多设置');
   setTitleAndLabel('#ai-provider-manager-close', 'Close', '关闭');
-  setText('.ai-provider-section:nth-of-type(1) strong', 'Storage', '存储');
+  setText('.storage-settings-section .ai-provider-section-heading strong', 'Storage', '存储');
   setText('#library-path-add-btn', 'Add Mirror Location', '添加镜像位置');
   setText('.ai-provider-chat-section .ai-provider-section-heading strong', 'Chat API', '对话 API');
   setText('.ai-provider-chat-section .ai-provider-section-heading small', 'Automatic protocol detection', '自动识别接口协议');
@@ -344,7 +370,7 @@ function refreshStaticLanguage() {
   setText('.start-subtitle', 'Resolve your confusion', '解决你的混乱');
   setText('.start-btn-label', 'Start', '开始');
   setTitleAndLabel('#start-btn', 'Start', '开始');
-  setTitleAndLabel('#sidebar-brand-btn', 'Back to start', '返回首页');
+  setTitleAndLabel('#sidebar-brand-btn', 'Restore default layout', '恢复默认布局');
   setText('.brand-tagline', 'Resolve your confusion', '解决你的混乱');
 
   setAttr('#search-input', 'placeholder', 'Search files', '搜索文件');
@@ -362,7 +388,7 @@ function refreshStaticLanguage() {
   setButtonTailText('.theme-opt[data-theme-choice="light"]', 'Light', '浅色');
   setButtonTailText('.theme-opt[data-theme-choice="dark"]', 'Dark', '深色');
   setText('#ai-provider-manager-open strong', 'More Settings', '更多设置');
-  setText('#ai-provider-summary', 'AI API, storage, tools', 'AI 接口、存储、工具');
+  setText('#ai-provider-summary', 'Account, updates, storage, tools', '账号、更新、存储、工具');
 
   setText('.preview-panel .panel-title', 'Preview Canvas', '预览画布');
   setTitleAndLabel('#preview-back-btn', 'Back', '返回');
@@ -434,16 +460,18 @@ function refreshStaticLanguage() {
 
   setText('#ai-provider-manager-title', 'More Settings', '更多设置');
   setTitleAndLabel('#ai-provider-manager-close', 'Close', '关闭');
-  setText('.ai-provider-section:nth-of-type(1) strong', 'Storage', '存储');
+  setText('.storage-settings-section .ai-provider-section-heading strong', 'Storage', '存储');
   setText('#library-path-add-btn', 'Add Mirror Location', '添加镜像位置');
   setText('.ai-provider-chat-grid label:nth-child(1) span', 'Profile Name', '配置名称');
   setText('.ai-provider-chat-grid label:nth-child(2) span', 'Base URL', 'Base URL');
   setText('.ai-provider-chat-grid label:nth-child(3) span', 'Model', '模型');
   setText('.ai-provider-chat-grid label:nth-child(4) span', 'API Key', 'API Key');
-  setText('.ai-provider-section:nth-of-type(3) strong', 'Image Generation API', '图片生成 API');
-  setText('.ai-provider-section:nth-of-type(3) small', 'URL protocol is detected automatically', '自动识别 URL 协议');
-  setText('.ai-provider-section:nth-of-type(4) strong', 'Video Generation API', '视频生成 API');
-  setText('.ai-provider-section:nth-of-type(4) small', 'URL protocol is detected automatically', '自动识别 URL 协议');
+  setText('.software-update-section .ai-provider-section-heading strong', 'Software Update', '软件更新');
+  setText('.activation-redemption-copy strong', 'Redemption code', '兑换码');
+  setText('.activation-redemption-copy small', 'Serial codes and gift credits', '序列码与礼品积分');
+  setAttr('#activation-settings-code', 'placeholder', 'Enter redemption code', '输入兑换码');
+  setText('#activation-settings-form button', 'Redeem', '兑换');
+  setText('.cloud-security-section .ai-provider-section-heading strong', 'Cloud Account', '云端账号');
   document.querySelectorAll('.ai-provider-columns').forEach((row) => {
     const labels = isZh()
       ? ['默认', '连接名称', 'Base URL 或请求 URL（自动识别）', 'API Key']
@@ -452,10 +480,10 @@ function refreshStaticLanguage() {
   });
   setChatProviderColumnLabels();
   setText('.ai-provider-shared-key label span', 'Shared Media API Key', '共享媒体 API Key');
-  setText('.ai-provider-section:nth-of-type(5) strong', 'Preview Tools', '预览工具');
+  setText('.preview-tools-section .ai-provider-section-heading strong', 'Preview Tools', '预览工具');
   setText('#tool-status-refresh-btn', 'Check Again', '重新检测');
   setText('#ai-api-key-clear', 'Clear All Keys', '清除全部密钥');
-  setText('#ai-service-save', 'Save API Settings', '保存 API 设置');
+  setText('#ai-service-save', 'Save Settings', '保存设置');
 
   setText('#detail-overlay h2', 'Usage', '使用情况');
   setTitleAndLabel('#detail-close', 'Close', '关闭');
@@ -524,6 +552,12 @@ function applyLanguageChoice(language, options = {}) {
     if (next) node.setAttribute('placeholder', next);
   });
   refreshStaticLanguage();
+  setText('.start-btn-label', 'START', 'START');
+  setTitleAndLabel('#start-btn', 'Start', 'Start');
+  setTitleAndLabel('#import-btn', 'Upload files', '\u4e0a\u4f20\u6587\u4ef6');
+  setTitleAndLabel('#import-folder-btn', 'Upload folder', '\u4e0a\u4f20\u6587\u4ef6\u5939');
+  setText('.ai-assistant-compact h2', 'Messs resolves your confusion.', 'Messs \u5e2e\u4f60\u7406\u6e05\u6df7\u4e71\u3002');
+  setText('.ai-assistant-compact p', 'What should we solve today?', '\u4eca\u5929\u8981\u89e3\u51b3\u4ec0\u4e48\uff1f');
   refreshApiSettingsLanguage();
   if (options.rerender !== false) refreshLanguageDependentViews();
   document.dispatchEvent(new CustomEvent('messs:language-changed', { detail: { language: lang } }));
@@ -667,10 +701,10 @@ function setSidebarCollapsed(collapsed) {
   document.getElementById('main-app').classList.toggle('sidebar-collapsed', collapsed);
   document.getElementById('sidebar').classList.toggle('is-collapsed', collapsed);
   const expandBtn = document.getElementById('expand-sidebar-btn');
-  if (collapsed) {
+  if (expandBtn && collapsed) {
     expandBtn.hidden = false;
     requestAnimationFrame(() => expandBtn.classList.add('is-visible'));
-  } else {
+  } else if (expandBtn) {
     expandBtn.classList.remove('is-visible');
     setTimeout(() => { expandBtn.hidden = true; }, 220);
   }
@@ -837,7 +871,7 @@ function renderChatProviderSlots(providers, activeProviderId) {
   const list = Array.isArray(providers) ? providers : [];
   Array.from({ length: 10 }, (_, index) => list[index] || {
     id: `chat-${index + 1}`,
-    name: index === 0 ? 'QuickRouter' : '',
+    name: index === 0 ? 'Messs AI' : '',
     endpoint: '',
     models: index === 0 ? ['gemini-2.5-pro', 'gemini-2.5-flash'] : []
   }).forEach((provider, index) => {
@@ -1033,7 +1067,7 @@ function renderCloudSecurity(config) {
     item.hidden = configured || !(config && config.directAiAllowed);
   });
   const footer = document.getElementById('ai-provider-manager-footer');
-  if (footer) footer.hidden = configured || !(config && config.directAiAllowed);
+  if (footer) footer.hidden = false;
   signedOut.hidden = authenticated;
   signedIn.hidden = !authenticated;
   section.classList.toggle('is-ready', authenticated);
@@ -1113,10 +1147,16 @@ async function submitCloudAccount(action) {
 async function refreshAiMediaSettings() {
   const config = await window.messsAPI.getAiMediaConfig();
   renderCloudSecurity(config);
-  renderAiProviderSlots('ai-image-provider-slots', 'image', config.imageProviders, config.activeImageProviderId, 'QuickRouter GPT Image', config.imageEndpoint);
-  renderAiProviderSlots('ai-video-provider-slots', 'video', config.videoProviders, config.activeVideoProviderId, config.videoProviderName || 'QuickRouter Sora 2', config.videoEndpoint);
+  renderAiProviderSlots('ai-image-provider-slots', 'image', config.imageProviders, config.activeImageProviderId, 'Nano Banana Pro', config.imageEndpoint);
+  renderAiProviderSlots('ai-video-provider-slots', 'video', config.videoProviders, config.activeVideoProviderId, config.videoProviderName || 'MiniMax H3', config.videoEndpoint);
   if (document.getElementById('ai-chat-provider-slots')) {
     renderChatProviderSlots(config.chatProviders, config.activeChatProviderId);
+    const chatSection = document.querySelector('.ai-provider-chat-section');
+    if (chatSection) {
+      chatSection.hidden = !config.chatProviders.some((provider) =>
+        provider && provider.available !== false && provider.name && provider.endpoint
+      );
+    }
     document.getElementById('ai-api-key').value = '';
     document.getElementById('ai-api-key').placeholder = config.hasApiKey
       ? t('Saved securely; leave blank to keep it', '已安全保存，留空则保持不变')
@@ -1131,8 +1171,8 @@ async function refreshAiMediaSettings() {
   }
 
   const hasChatEndpoint = !!String(config.chatEndpoint || '').trim();
-  document.getElementById('ai-chat-provider-name').value = hasChatEndpoint ? (config.chatProviderName || 'OpenAI Compatible') : 'QuickRouter';
-  document.getElementById('ai-chat-endpoint').value = hasChatEndpoint ? config.chatEndpoint : 'https://api.quickrouter.ai/v1';
+  document.getElementById('ai-chat-provider-name').value = hasChatEndpoint ? (config.chatProviderName || 'Messs AI') : 'Messs AI';
+  document.getElementById('ai-chat-endpoint').value = hasChatEndpoint ? config.chatEndpoint : '';
   document.getElementById('ai-chat-model').value = hasChatEndpoint ? (config.chatModel || 'gpt-4o-mini') : 'gemini-2.5-pro';
   document.getElementById('ai-chat-api-key').value = '';
   document.getElementById('ai-chat-api-key').placeholder = config.hasOwnChatApiKey
@@ -1331,26 +1371,16 @@ async function initAiMediaSettings() {
       const config = await window.messsAPI.setAiMediaConfig(collectAiMediaSettings());
       await refreshAiMediaSettings();
       document.dispatchEvent(new CustomEvent('messs:ai-config-updated', { detail: config }));
-      showToast(t('AI API settings saved', 'AI API 设置已保存'), 'AI');
+      showToast(t('Settings saved', '设置已保存'), 'Messs');
       closeAiProviderManager();
     } catch (err) {
       showToast(err && err.message ? err.message : t('Could not save AI settings', '无法保存 AI 设置'), 'AI');
     } finally {
       button.disabled = false;
-      button.textContent = t('Save API Settings', '保存 API 设置');
+      button.textContent = t('Save Settings', '保存设置');
     }
   });
 
-  document.getElementById('ai-api-key-clear').addEventListener('click', async () => {
-    const config = await window.messsAPI.setAiMediaConfig(collectAiMediaSettings({
-      clearAllApiKeys: true,
-      apiKey: '',
-      chatApiKey: ''
-    }));
-    await refreshAiMediaSettings();
-    document.dispatchEvent(new CustomEvent('messs:ai-config-updated', { detail: config }));
-    showToast(t('All AI API keys cleared', '所有 AI API Key 已清除'), 'AI');
-  });
 }
 
 const TOOL_LABELS = {

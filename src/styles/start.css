@@ -44,9 +44,9 @@
   font-family: var(--font-display);
   font-weight: 900;
   font-stretch: expanded;
-  font-size: clamp(56px, 11vw, 128px);
+  font-size: 108px;
   line-height: 1;
-  letter-spacing: -0.09em;
+  letter-spacing: 0;
   color: var(--brand-blue-bright);
   text-shadow: 0 0 60px rgba(44, 123, 224, 0.35);
 }
@@ -76,7 +76,7 @@
   font-family: var(--font-display);
   font-weight: 700;
   font-stretch: expanded;
-  font-size: clamp(15px, 1.6vw, 20px);
+  font-size: 19px;
   letter-spacing: 0;
   color: var(--brand-blue-bright);
   opacity: 0.92;
@@ -144,6 +144,16 @@
 .start-btn:focus-visible .start-btn-label {
   opacity: 1;
   transform: scale(1);
+}
+
+@media (max-width: 1280px), (max-height: 760px) {
+  .start-title { font-size: 82px; }
+  .start-subtitle { margin: 12px 0 38px; font-size: 17px; }
+}
+
+@media (min-width: 2200px) and (min-height: 1100px) {
+  .start-title { font-size: 128px; }
+  .start-subtitle { font-size: 21px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

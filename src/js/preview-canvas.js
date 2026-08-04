@@ -123,6 +123,7 @@ function renderVideoPreview(id, result) {
   video.style.maxWidth = '100%';
   video.style.maxHeight = '100%';
   video.style.borderRadius = 'var(--radius-sm)';
+  video.addEventListener('dblclick', openFullscreenPreview);
   video.addEventListener('error', () => handleVideoPlaybackFailure(id, result, video), { once: true });
   stage.appendChild(video);
   setPreviewPanelState('video');
@@ -160,6 +161,7 @@ async function handleVideoPlaybackFailure(id, result, videoEl) {
   video.style.maxWidth = '100%';
   video.style.maxHeight = '100%';
   video.style.borderRadius = 'var(--radius-sm)';
+  video.addEventListener('dblclick', openFullscreenPreview);
   video.addEventListener('error', () => renderUnsupportedPreview(id, { ...result, reason: 'render-failed' }), { once: true });
   stage.appendChild(video);
 }
@@ -769,15 +771,7 @@ function buildFolderGridItem(f) {
 
   const thumb = document.createElement('div');
   thumb.className = 'folder-grid-thumb';
-  if (isImageExt(f.ext)) {
-    const img = document.createElement('img');
-    img.src = f.thumbUrl || f.url;
-    img.loading = 'lazy';
-    img.alt = f.name;
-    thumb.appendChild(img);
-  } else {
-    thumb.textContent = fileIconLabel(f.ext);
-  }
+  appendFileThumbnail(thumb, f, f.name);
 
   const name = document.createElement('div');
   name.className = 'folder-grid-name';
@@ -949,25 +943,42 @@ function initPreviewCanvas() {
 function openFullscreenPreview() {
   if (!AppState.activeFileId) return;
   const stage = document.getElementById('preview-stage');
-  const img = stage.querySelector('img');
-  if (!img) return;
+  const media = stage.querySelector('img, video');
+  if (!media) return;
   const overlay = document.getElementById('fullscreen-overlay');
   const fsStage = document.getElementById('fullscreen-stage');
   fsStage.innerHTML = '';
-  fsStage.appendChild(img.cloneNode());
+  const clone = media.cloneNode(true);
+  if (clone.tagName === 'VIDEO') {
+    clone.controls = true;
+    clone.muted = media.muted;
+    clone.addEventListener('loadedmetadata', () => {
+      clone.currentTime = media.currentTime || 0;
+      if (!media.paused) clone.play().catch(() => {});
+    }, { once: true });
+  }
+  fsStage.appendChild(clone);
   overlay.hidden = false;
+}
+
+function closeFullscreenPreview() {
+  const overlay = document.getElementById('fullscreen-overlay');
+  const video = document.querySelector('#fullscreen-stage video');
+  if (video) video.pause();
+  document.getElementById('fullscreen-stage').innerHTML = '';
+  overlay.hidden = true;
 }
 
 function initFullscreenOverlay() {
   document.getElementById('fullscreen-close').addEventListener('click', () => {
-    document.getElementById('fullscreen-overlay').hidden = true;
+    closeFullscreenPreview();
   });
   document.getElementById('fullscreen-overlay').addEventListener('click', (e) => {
-    if (e.target.id === 'fullscreen-overlay') e.currentTarget.hidden = true;
+    if (e.target.id === 'fullscreen-overlay') closeFullscreenPreview();
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      document.getElementById('fullscreen-overlay').hidden = true;
+      closeFullscreenPreview();
       document.getElementById('detail-overlay').hidden = true;
       if (!(typeof isDoodleActive === 'function' && isDoodleActive())) {
         exitBoardFullscreen();

@@ -1,6 +1,6 @@
 {
   "name": "messs-ai-gateway",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "type": "module",
   "engines": {
@@ -11,6 +11,7 @@
     "check": "node --check src/server.js && node --check src/auth.js && node --check src/providers.js && node --check src/usage.js"
   },
   "dependencies": {
-    "jose": "^6.1.0"
+    "jose": "^6.1.0",
+    "messs": "file:.."
   }
 }
