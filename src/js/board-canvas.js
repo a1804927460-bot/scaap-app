@@ -1759,7 +1759,11 @@ function buildMiniVideoPlayer(result, f) {
     if (video.dataset.triedTranscode) return;
     video.dataset.triedTranscode = '1';
     const res = await window.messsAPI.transcodeVideo(f.id);
-    if (res.ok) video.src = res.url;
+    if (res.ok) {
+      video.src = res.url;
+      video.load();
+      video.play().catch(() => {});
+    }
   }, { once: true });
 
   return wrap;
@@ -2206,6 +2210,23 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
 }
 
 const AI_IMAGE_RATIOS = ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9'];
+const MINIMAX_VIDEO_RESOLUTIONS = ['768P', '2K'];
+const MINIMAX_TEXT_VIDEO_RATIOS = ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
+
+function supportedMiniMaxResolution(value, capabilities = {}) {
+  const supported = Array.isArray(capabilities.resolutions) && capabilities.resolutions.length
+    ? capabilities.resolutions.map((entry) => String(entry || '').trim().toUpperCase())
+      .filter((entry) => MINIMAX_VIDEO_RESOLUTIONS.includes(entry))
+    : MINIMAX_VIDEO_RESOLUTIONS;
+  const requested = String(value || '').trim().toUpperCase();
+  return supported.includes(requested) ? requested : (supported[0] || '768P');
+}
+
+function supportedMiniMaxAspectRatio(value, hasFrameReference) {
+  if (hasFrameReference) return 'adaptive';
+  const requested = String(value || '').trim();
+  return MINIMAX_TEXT_VIDEO_RATIOS.includes(requested) ? requested : '16:9';
+}
 
 function getConfiguredImageProviders(aiConfig) {
   const providers = Array.isArray(aiConfig.imageProviders)
@@ -3151,13 +3172,20 @@ async function submitBoardQuickGeneration(kind, promptText) {
     const original = sourceImageGenerationOptions();
     const urls = await boardSelectionReferenceData();
     const referenceFileIds = selectedBoardImageItems().map((item) => item.fileId);
+    const isVideo = kind === 'video';
+    const videoResolution = isVideo
+      ? supportedMiniMaxResolution(null, provider.capabilities || {})
+      : undefined;
     await generateAiMediaForBoardV3({
       kind,
       prompt: promptText,
-      size: 'original',
+      size: isVideo ? videoResolution : 'original',
+      resolution: videoResolution,
       count: 1,
       duration: Number(config.videoDuration) || 6,
-      aspectRatio: original.aspectRatio,
+      aspectRatio: isVideo
+        ? supportedMiniMaxAspectRatio(original.aspectRatio, referenceFileIds.length > 0)
+        : original.aspectRatio,
       sourceWidth: original.sourceWidth,
       sourceHeight: original.sourceHeight,
       imageProviderId: kind === 'image' && provider ? provider.id : null,
@@ -3219,13 +3247,20 @@ async function retryGeneratedMediaFromDetails(file) {
   }
   try {
     const references = await generatedReferenceData(generation.referenceFileIds);
+    const isVideo = generation.kind === 'video';
+    const videoResolution = isVideo
+      ? supportedMiniMaxResolution(generation.resolution || generation.size)
+      : undefined;
     await generateAiMediaForBoardV3({
-      kind: generation.kind === 'video' ? 'video' : 'image',
+      kind: isVideo ? 'video' : 'image',
       prompt: generation.prompt,
-      size: generation.size || '1K',
+      size: isVideo ? videoResolution : (generation.size || '1K'),
+      resolution: videoResolution,
       count: 1,
       duration: Number(generation.duration) || 6,
-      aspectRatio: generation.aspectRatio || 'auto',
+      aspectRatio: isVideo
+        ? supportedMiniMaxAspectRatio(generation.aspectRatio, references.referenceFileIds.length > 0)
+        : (generation.aspectRatio || 'auto'),
       sourceWidth: file.sourceWidth || null,
       sourceHeight: file.sourceHeight || null,
       imageProviderId: generation.kind === 'video' ? null : generation.providerId,

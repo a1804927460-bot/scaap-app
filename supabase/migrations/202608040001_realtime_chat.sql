@@ -38,6 +38,8 @@ create unique index chat_friend_requests_pending_pair_uidx
   on public.chat_friend_requests (pair_low, pair_high) where status = 'pending';
 create index if not exists chat_friend_requests_recipient_idx
   on public.chat_friend_requests (recipient_id, created_at desc);
+create index if not exists chat_friend_requests_sender_idx
+  on public.chat_friend_requests (sender_id, created_at desc);
 
 create table if not exists public.chat_friendships (
   user_low uuid not null references public.chat_profiles(id) on delete cascade,
@@ -46,6 +48,8 @@ create table if not exists public.chat_friendships (
   primary key (user_low, user_high),
   check (user_low < user_high)
 );
+create index if not exists chat_friendships_user_high_idx
+  on public.chat_friendships (user_high, user_low);
 
 create table if not exists public.chat_conversations (
   id uuid primary key default gen_random_uuid(),
@@ -57,6 +61,8 @@ create table if not exists public.chat_conversations (
   unique (direct_user_low, direct_user_high),
   check (direct_user_low < direct_user_high)
 );
+create index if not exists chat_conversations_direct_user_high_idx
+  on public.chat_conversations (direct_user_high, direct_user_low);
 
 create table if not exists public.chat_conversation_members (
   conversation_id uuid not null references public.chat_conversations(id) on delete cascade,
@@ -79,7 +85,6 @@ create table if not exists public.chat_messages (
   image_width integer,
   image_height integer,
   created_at timestamptz not null default now(),
-  unique (sender_id, client_message_id),
   check (body is null or char_length(body) <= 8000),
   check (
     (kind = 'text' and body is not null and char_length(btrim(body)) > 0 and image_path is null)
@@ -89,12 +94,27 @@ create table if not exists public.chat_messages (
   check (image_width is null or image_width > 0),
   check (image_height is null or image_height > 0)
 );
+do $$
+begin
+  if exists (
+    select 1 from public.chat_messages
+    group by client_message_id having count(*) > 1
+  ) then
+    raise exception 'Duplicate chat client message IDs must be resolved before schema v2';
+  end if;
+end $$;
+alter table public.chat_messages
+  drop constraint if exists chat_messages_sender_id_client_message_id_key;
+create unique index if not exists chat_messages_client_message_id_uidx
+  on public.chat_messages (client_message_id);
 create index if not exists chat_messages_conversation_created_idx
   on public.chat_messages (conversation_id, created_at desc, id desc);
+create index if not exists chat_messages_sender_idx
+  on public.chat_messages (sender_id);
 
 create or replace function public.make_messs_id(p_id uuid)
 returns text language sql immutable strict
-as $$ select 'MSS-' || upper(substr(replace(p_id::text, '-', ''), 1, 12)) $$;
+as $$ select 'MSS-' || upper(substr(replace(p_id::text, '-', ''), 1, 16)) $$;
 
 create or replace function public.sync_chat_profile_from_auth()
 returns trigger
@@ -190,19 +210,29 @@ drop policy if exists chat_members_select_member on public.chat_conversation_mem
 create policy chat_members_select_member on public.chat_conversation_members for select to authenticated
 using (user_id = (select auth.uid()));
 
-create or replace function public.is_chat_conversation_member(p_conversation_id uuid, p_user_id uuid)
+-- Remove the development helper and any policies that depended on its
+-- caller-controlled user id. The replacement is bound to auth.uid(), so it
+-- cannot be used as a conversation-membership oracle for arbitrary users.
+drop policy if exists chat_images_select_members on storage.objects;
+drop policy if exists chat_images_insert_owner on storage.objects;
+drop policy if exists chat_images_update_owner on storage.objects;
+drop policy if exists chat_images_delete_orphan_owner on storage.objects;
+drop function if exists public.is_chat_conversation_member(uuid, uuid);
+
+create or replace function public.is_chat_conversation_member(p_conversation_id uuid)
 returns boolean
 language sql
 stable
 security definer
-set search_path = public, pg_temp
+set search_path = pg_catalog, public, pg_temp
 as $$
-  select exists (
+  select auth.uid() is not null and exists (
     select 1 from public.chat_conversation_members
-    where conversation_id = p_conversation_id and user_id = p_user_id
+    where conversation_id = p_conversation_id and user_id = auth.uid()
   )
 $$;
-revoke all on function public.is_chat_conversation_member(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.is_chat_conversation_member(uuid) from public, anon, authenticated;
+grant execute on function public.is_chat_conversation_member(uuid) to authenticated;
 
 drop policy if exists chat_messages_select_member on public.chat_messages;
 create policy chat_messages_select_member on public.chat_messages for select to authenticated
@@ -331,27 +361,58 @@ create or replace function public.send_chat_message(
 returns public.chat_messages
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = pg_catalog, public, storage, pg_temp
 as $$
-declare v_message public.chat_messages%rowtype;
+declare
+  v_message public.chat_messages%rowtype;
+  v_extension text;
+  v_expected_path text;
 begin
   if auth.uid() is null then raise exception 'Authentication required'; end if;
+  if p_kind is null or p_kind not in ('text', 'image') then raise exception 'Invalid message kind'; end if;
   if not exists (select 1 from public.chat_conversation_members where conversation_id = p_conversation_id and user_id = auth.uid()) then
     raise exception 'Conversation access denied';
   end if;
-  if p_kind = 'image' and (
-    p_image_path is null
-    or p_image_path not like p_conversation_id::text || '/' || auth.uid()::text || '/' || p_client_message_id::text || '.%'
-  ) then raise exception 'Invalid image object path'; end if;
+  if p_kind = 'text' then
+    if p_image_path is not null or p_image_mime is not null
+      or p_image_width is not null or p_image_height is not null then
+      raise exception 'Text messages cannot contain image metadata';
+    end if;
+  else
+    v_extension := case p_image_mime
+      when 'image/jpeg' then '.jpg'
+      when 'image/png' then '.png'
+      when 'image/webp' then '.webp'
+      when 'image/gif' then '.gif'
+      when 'image/avif' then '.avif'
+      when 'image/tiff' then '.tiff'
+      when 'image/bmp' then '.bmp'
+      else null
+    end;
+    v_expected_path := p_conversation_id::text || '/' || auth.uid()::text || '/'
+      || p_client_message_id::text || v_extension;
+    if coalesce(p_body, '') <> '' or v_extension is null
+      or p_image_path is distinct from v_expected_path then
+      raise exception 'Invalid image object path or MIME type';
+    end if;
+    if not exists (
+      select 1 from storage.objects o
+      where o.bucket_id = 'chat-images' and o.name = p_image_path
+    ) then raise exception 'Image object not found'; end if;
+  end if;
   insert into public.chat_messages (
     client_message_id, conversation_id, sender_id, kind, body,
     image_path, image_mime, image_width, image_height
   ) values (
     p_client_message_id, p_conversation_id, auth.uid(), p_kind, p_body,
     p_image_path, p_image_mime, p_image_width, p_image_height
-  ) on conflict (sender_id, client_message_id) do nothing;
+  ) on conflict (client_message_id) do nothing;
   select * into v_message from public.chat_messages
-    where sender_id = auth.uid() and client_message_id = p_client_message_id;
+    where client_message_id = p_client_message_id;
+  if not found then raise exception 'Message insert failed'; end if;
+  if v_message.sender_id is distinct from auth.uid() then
+    raise exception 'Client message ID belongs to another sender';
+  end if;
   if v_message.conversation_id is distinct from p_conversation_id
     or v_message.kind is distinct from p_kind
     or coalesce(v_message.body, '') is distinct from coalesce(p_body, '')
@@ -388,7 +449,12 @@ as $$
         'direction', case when r.sender_id = auth.uid() then 'outgoing' else 'incoming' end,
         'status', r.status,
         'created_at', r.created_at,
-        'profile', to_jsonb(p)
+        'profile', to_jsonb(p) || jsonb_build_object(
+          'email', case when exists (
+            select 1 from public.chat_friendships f
+            where (f.user_low, f.user_high) = (least(auth.uid(), p.id), greatest(auth.uid(), p.id))
+          ) then p.email else '' end
+        )
       ) order by r.created_at desc)
       from public.chat_friend_requests r
       join public.chat_profiles p on p.id = case when r.sender_id = auth.uid() then r.recipient_id else r.sender_id end
@@ -418,25 +484,167 @@ returns jsonb
 language sql
 stable
 security definer
-set search_path = public, storage, pg_catalog, pg_temp
+set search_path = pg_catalog, public, storage, pg_temp
 as $$
-  select jsonb_build_object(
-    'schema_version', 1,
-    'rpc_ready', to_regprocedure('public.chat_bootstrap()') is not null
-      and to_regprocedure('public.search_chat_profile(text)') is not null
-      and to_regprocedure('public.send_chat_friend_request(uuid)') is not null
-      and to_regprocedure('public.respond_chat_friend_request(uuid,text)') is not null
-      and to_regprocedure('public.create_chat_direct_conversation(uuid)') is not null
-      and to_regprocedure('public.send_chat_message(uuid,uuid,text,text,text,text,integer,integer)') is not null,
-    'messages_ready', to_regclass('public.chat_messages') is not null,
-    'image_storage', exists (select 1 from storage.buckets where id = 'chat-images'),
-    'realtime', exists (
-      select 1 from pg_publication_tables
-      where pubname = 'supabase_realtime'
-        and schemaname = 'public'
-        and tablename = 'chat_messages'
+with
+required_tables(relname) as (values
+  ('chat_profiles'), ('chat_friend_requests'), ('chat_friendships'),
+  ('chat_conversations'), ('chat_conversation_members'), ('chat_messages')
+),
+required_rpcs(sig) as (values
+  ('public.chat_service_status()'), ('public.chat_bootstrap()'),
+  ('public.search_chat_profile(text)'),
+  ('public.send_chat_friend_request(uuid)'),
+  ('public.respond_chat_friend_request(uuid,text)'),
+  ('public.create_chat_direct_conversation(uuid)'),
+  ('public.send_chat_message(uuid,uuid,text,text,text,text,integer,integer)')
+),
+required_public_policies(relname, policyname) as (values
+  ('chat_profiles', 'chat_profiles_select_visible'),
+  ('chat_friend_requests', 'chat_friend_requests_select_involved'),
+  ('chat_friendships', 'chat_friendships_select_involved'),
+  ('chat_conversations', 'chat_conversations_select_member'),
+  ('chat_conversation_members', 'chat_members_select_member'),
+  ('chat_messages', 'chat_messages_select_member')
+),
+required_storage_policies(policyname, cmd) as (values
+  ('chat_images_select_members', 'SELECT'),
+  ('chat_images_insert_owner', 'INSERT'),
+  ('chat_images_delete_orphan_owner', 'DELETE')
+),
+required_realtime(relname) as (values
+  ('chat_messages'), ('chat_friend_requests'),
+  ('chat_friendships'), ('chat_conversation_members')
+),
+table_state as (
+  select required.relname, c.oid, c.relrowsecurity, c.relforcerowsecurity
+  from required_tables required
+  left join pg_catalog.pg_class c
+    on c.relnamespace = 'public'::regnamespace
+    and c.relname = required.relname and c.relkind in ('r', 'p')
+),
+table_check as (
+  select
+    count(oid) = (select count(*) from required_tables) as present,
+    coalesce(bool_and(coalesce(relrowsecurity, false) and coalesce(relforcerowsecurity, false)), false) as rls,
+    coalesce(bool_and(
+      oid is not null
+      and coalesce(has_table_privilege('authenticated', oid, 'SELECT'), false)
+      and not coalesce(has_table_privilege('authenticated', oid, 'INSERT'), false)
+      and not coalesce(has_table_privilege('authenticated', oid, 'UPDATE'), false)
+      and not coalesce(has_table_privilege('authenticated', oid, 'DELETE'), false)
+      and not coalesce(has_table_privilege('anon', oid, 'SELECT'), false)
+      and not coalesce(has_table_privilege('anon', oid, 'INSERT'), false)
+      and not coalesce(has_table_privilege('anon', oid, 'UPDATE'), false)
+      and not coalesce(has_table_privilege('anon', oid, 'DELETE'), false)
+    ), false) as grants
+  from table_state
+),
+rpc_check as (
+  select coalesce(bool_and(
+    case when to_regprocedure(sig) is null then false else
+      coalesce(has_function_privilege('authenticated', to_regprocedure(sig), 'EXECUTE'), false)
+      and not coalesce(has_function_privilege('anon', to_regprocedure(sig), 'EXECUTE'), false)
+    end
+  ), false) as ok
+  from required_rpcs
+),
+helper_check as (
+  select
+    case when to_regprocedure('public.is_chat_conversation_member(uuid)') is null then false else
+      to_regprocedure('public.is_chat_conversation_member(uuid,uuid)') is null
+      and coalesce(has_function_privilege(
+        'authenticated', to_regprocedure('public.is_chat_conversation_member(uuid)'), 'EXECUTE'
+      ), false)
+      and not coalesce(has_function_privilege(
+        'anon', to_regprocedure('public.is_chat_conversation_member(uuid)'), 'EXECUTE'
+      ), false)
+    end as ok
+),
+global_id_check as (
+  select exists (
+    select 1 from pg_catalog.pg_index i
+    where i.indrelid = to_regclass('public.chat_messages')
+      and i.indisunique and i.indisvalid and i.indisready
+      and i.indpred is null and i.indexprs is null and i.indnkeyatts = 1
+      and pg_catalog.pg_get_indexdef(i.indexrelid, 1, true) = 'client_message_id'
+  ) as ok
+),
+public_policy_check as (
+  select not exists (
+    select 1 from required_public_policies expected
+    left join pg_catalog.pg_policies p
+      on p.schemaname = 'public' and p.tablename = expected.relname
+      and p.policyname = expected.policyname
+    where p.policyname is null or p.permissive <> 'PERMISSIVE' or p.cmd <> 'SELECT'
+      or not ('authenticated'::name = any (p.roles)) or p.qual is null
+  ) and not exists (
+    select 1 from pg_catalog.pg_policies p
+    join required_tables required on required.relname = p.tablename
+    where p.schemaname = 'public'
+      and not exists (
+        select 1 from required_public_policies expected
+        where expected.relname = p.tablename and expected.policyname = p.policyname
+      )
+  ) as ok
+),
+bucket_check as (
+  select coalesce(bool_and(
+    b.public = false and b.file_size_limit = 52428800
+    and b.allowed_mime_types @> array[
+      'image/jpeg','image/png','image/webp','image/gif',
+      'image/avif','image/tiff','image/bmp'
+    ]::text[]
+    and b.allowed_mime_types <@ array[
+      'image/jpeg','image/png','image/webp','image/gif',
+      'image/avif','image/tiff','image/bmp'
+    ]::text[]
+  ), false) as ok
+  from storage.buckets b where b.id = 'chat-images'
+),
+storage_policy_check as (
+  select not exists (
+    select 1 from required_storage_policies expected
+    left join pg_catalog.pg_policies p
+      on p.schemaname = 'storage' and p.tablename = 'objects'
+      and p.policyname = expected.policyname
+    where p.policyname is null or p.permissive <> 'PERMISSIVE' or p.cmd <> expected.cmd
+      or not ('authenticated'::name = any (p.roles))
+      or (expected.cmd = 'INSERT' and p.with_check is null)
+      or (expected.cmd in ('SELECT', 'DELETE') and p.qual is null)
+  ) and not exists (
+    select 1 from pg_catalog.pg_policies p
+    where p.schemaname = 'storage' and p.tablename = 'objects'
+      and p.policyname like 'chat_images_%'
+      and not exists (
+        select 1 from required_storage_policies expected where expected.policyname = p.policyname
+      )
+  ) as ok
+),
+realtime_check as (
+  select not exists (
+    select 1 from required_realtime required
+    where not exists (
+      select 1 from pg_catalog.pg_publication_tables p
+      where p.pubname = 'supabase_realtime' and p.schemaname = 'public'
+        and p.tablename = required.relname
     )
-  )
+  ) as ok
+)
+select jsonb_build_object(
+  'schema_version', 2,
+  'rpc_ready', rpc_check.ok,
+  'messages_ready', table_check.present and table_check.rls and table_check.grants
+    and public_policy_check.ok and global_id_check.ok,
+  'image_storage', bucket_check.ok and storage_policy_check.ok and helper_check.ok,
+  'realtime', realtime_check.ok,
+  'rls_ready', table_check.present and table_check.rls,
+  'grants_ready', table_check.present and table_check.grants and rpc_check.ok and helper_check.ok,
+  'policies_ready', public_policy_check.ok and storage_policy_check.ok,
+  'client_message_ids_global', global_id_check.ok
+)
+from table_check, rpc_check, helper_check, global_id_check,
+  public_policy_check, bucket_check, storage_policy_check, realtime_check
 $$;
 
 revoke all on function public.search_chat_profile(text) from public, anon;
@@ -459,36 +667,49 @@ grant select on public.chat_profiles, public.chat_friend_requests, public.chat_f
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (
-  'chat-images', 'chat-images', false, null,
+  'chat-images', 'chat-images', false, 52428800,
   array['image/jpeg','image/png','image/webp','image/gif','image/avif','image/tiff','image/bmp']
 )
-on conflict (id) do update set public = false, file_size_limit = null, allowed_mime_types = excluded.allowed_mime_types;
+on conflict (id) do update set
+  public = false,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
 
 drop policy if exists chat_images_select_members on storage.objects;
+drop policy if exists chat_images_insert_owner on storage.objects;
+drop policy if exists chat_images_update_owner on storage.objects;
+drop policy if exists chat_images_delete_orphan_owner on storage.objects;
+
 create policy chat_images_select_members on storage.objects for select to authenticated
 using (
   bucket_id = 'chat-images'
-  and (storage.foldername(name))[1] ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
-  and public.is_chat_conversation_member(((storage.foldername(name))[1])::uuid, auth.uid())
+  and case when name ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(jpg|png|webp|gif|avif|tiff|bmp)$'
+    then public.is_chat_conversation_member(((storage.foldername(name))[1])::uuid)
+    else false
+  end
 );
 
-drop policy if exists chat_images_insert_owner on storage.objects;
 create policy chat_images_insert_owner on storage.objects for insert to authenticated
 with check (
   bucket_id = 'chat-images'
-  and (storage.foldername(name))[2] = auth.uid()::text
-  and (storage.foldername(name))[1] ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
-  and public.is_chat_conversation_member(((storage.foldername(name))[1])::uuid, auth.uid())
+  and case when name ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(jpg|png|webp|gif|avif|tiff|bmp)$'
+    then (storage.foldername(name))[2] = (select auth.uid())::text
+      and public.is_chat_conversation_member(((storage.foldername(name))[1])::uuid)
+    else false
+  end
 );
 
-drop policy if exists chat_images_update_owner on storage.objects;
-create policy chat_images_update_owner on storage.objects for update to authenticated
-using (bucket_id = 'chat-images' and (storage.foldername(name))[2] = auth.uid()::text)
-with check (
+create policy chat_images_delete_orphan_owner on storage.objects for delete to authenticated
+using (
   bucket_id = 'chat-images'
-  and (storage.foldername(name))[2] = auth.uid()::text
-  and (storage.foldername(name))[1] ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
-  and public.is_chat_conversation_member(((storage.foldername(name))[1])::uuid, auth.uid())
+  and case when name ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(jpg|png|webp|gif|avif|tiff|bmp)$'
+    then (storage.foldername(name))[2] = (select auth.uid())::text
+      and public.is_chat_conversation_member(((storage.foldername(name))[1])::uuid)
+      and not exists (
+        select 1 from public.chat_messages m where m.image_path = storage.objects.name
+      )
+    else false
+  end
 );
 
 -- Idempotently add only the tables needed for realtime notifications.

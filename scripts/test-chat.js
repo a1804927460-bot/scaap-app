@@ -82,6 +82,24 @@ function message(clientId, conversationId, createdAt, extra = {}) {
     assert.deepStrictEqual(older.messages.map((item) => item.clientId), [ids[0]]);
     assert.ok(!Object.prototype.hasOwnProperty.call(newest.messages[0], 'localImagePath'));
 
+    // A remote row cannot reuse another sender's client UUID to replace a
+    // message already stored under that identity. A different server row is
+    // rejected for the same reason once the local row has a server identity.
+    const protectedId = '00000000-0000-4000-8000-000000000010';
+    const protectedServerId = '00000000-0000-4000-8000-000000000011';
+    local.upsertMessage(message(protectedId, CONVERSATION_A, stamp, {
+      serverId: protectedServerId,
+      body: 'original'
+    }));
+    local.upsertMessage(message(protectedId, CONVERSATION_A, stamp, {
+      serverId: '00000000-0000-4000-8000-000000000012',
+      senderId: FRIEND_ID,
+      body: 'collision'
+    }));
+    assert.strictEqual(local.getMessage(protectedId).senderId, USER_ID);
+    assert.strictEqual(local.getMessage(protectedId).serverId, protectedServerId);
+    assert.strictEqual(local.getMessage(protectedId).body, 'original');
+
     // A journaled event is recoverable before the delayed snapshot checkpoint,
     // which models an abrupt restart after accepting a message/outbox item.
     const queuedId = '00000000-0000-4000-8000-000000000004';
@@ -255,6 +273,73 @@ function message(clientId, conversationId, createdAt, extra = {}) {
     assert.strictEqual(checked.imageStorageReady, true);
     assert.strictEqual(checked.realtimeConfigured, true);
 
+    // Image uploads are immutable. RPC failures request cleanup for an object
+    // uploaded by this attempt without replacing the original send error.
+    const imageMessage = {
+      ...message('20000000-0000-4000-8000-000000000001', CONVERSATION_A, stamp, {
+        status: 'queued', kind: 'image', body: '', imageMime: 'image/png', imageWidth: 32, imageHeight: 24
+      })
+    };
+    const imageFile = path.join(root, 'outbox-image.png');
+    fs.writeFileSync(imageFile, Buffer.from('image-bytes'));
+    const uploadOptions = [];
+    const cleanupPaths = [];
+    const imageBucket = {
+      upload: async (_objectPath, _bytes, options) => {
+        uploadOptions.push(options);
+        return { data: { path: _objectPath }, error: null };
+      },
+      remove: async (paths) => { cleanupPaths.push(paths); return { data: [], error: null }; }
+    };
+    await assert.rejects(
+      () => dependencyService._sendOutboxItem({
+        storage: { from: (bucket) => { assert.strictEqual(bucket, 'chat-images'); return imageBucket; } },
+        rpc: async () => ({ data: null, error: { code: 'P0001', message: 'RPC rejected' } })
+      }, { message: imageMessage, localImagePath: imageFile }),
+      /RPC rejected/
+    );
+    assert.strictEqual(uploadOptions[0].upsert, false);
+    assert.deepStrictEqual(cleanupPaths, [[
+      `${CONVERSATION_A}/${USER_ID}/${imageMessage.clientId}.png`
+    ]]);
+
+    let retryRpcCalled = false;
+    const retried = await dependencyService._sendOutboxItem({
+      storage: { from: () => ({
+        upload: async () => ({ data: null, error: { statusCode: 409, message: 'The resource already exists' } }),
+        remove: async () => { throw new Error('successful retries must not clean up'); }
+      }) },
+      rpc: async () => {
+        retryRpcCalled = true;
+        return {
+          data: {
+            id: '20000000-0000-4000-8000-000000000002',
+            client_message_id: imageMessage.clientId,
+            conversation_id: imageMessage.conversationId,
+            sender_id: imageMessage.senderId,
+            kind: 'image', body: null,
+            image_path: `${CONVERSATION_A}/${USER_ID}/${imageMessage.clientId}.png`,
+            image_mime: 'image/png', image_width: 32, image_height: 24,
+            created_at: stamp
+          },
+          error: null
+        };
+      }
+    }, { message: imageMessage, localImagePath: imageFile });
+    assert.strictEqual(retryRpcCalled, true);
+    assert.strictEqual(retried.status, 'sent');
+
+    await assert.rejects(
+      () => dependencyService._sendOutboxItem({
+        storage: { from: () => ({
+          upload: async () => ({ data: { path: 'uploaded' }, error: null }),
+          remove: async () => { throw new Error('cleanup failed'); }
+        }) },
+        rpc: async () => ({ data: null, error: { code: 'P0001', message: 'original send failure' } })
+      }, { message: imageMessage, localImagePath: imageFile }),
+      /original send failure/
+    );
+
     local.flushCheckpoint();
     restarted.flushCheckpoint();
     await service.close();
@@ -275,16 +360,39 @@ function message(clientId, conversationId, createdAt, extra = {}) {
   assert.match(migration, /alter table public\.chat_messages enable row level security/i);
   assert.match(migration, /force row level security/i);
   assert.match(migration, /values\s*\(\s*'chat-images',\s*'chat-images',\s*false/i);
-  assert.match(migration, /unique \(sender_id, client_message_id\)/i);
+  assert.match(migration, /chat_messages_client_message_id_uidx[\s\S]*?\(client_message_id\)/i);
+  assert.match(migration, /duplicate chat client message ids must be resolved before schema v2/i);
+  assert.doesNotMatch(migration, /unique \(sender_id, client_message_id\)/i);
+  assert.match(migration, /on conflict \(client_message_id\) do nothing/i);
+  assert.match(migration, /sender_id is distinct from auth\.uid\(\)[\s\S]*?belongs to another sender/i);
   assert.match(migration, /lower\(p\.email\) = lower\(btrim\(p_query\)\)/i);
   assert.doesNotMatch(migration, /lower\(p\.email\)\s+(?:i?like)/i);
   assert.match(migration, /using \(user_id = \(select auth\.uid\(\)\)\)/i);
-  assert.match(migration, /create or replace function public\.is_chat_conversation_member/i);
+  assert.match(migration, /create or replace function public\.is_chat_conversation_member\(p_conversation_id uuid\)/i);
+  assert.doesNotMatch(migration, /create or replace function public\.is_chat_conversation_member\(p_conversation_id uuid,\s*p_user_id uuid\)/i);
+  assert.match(migration, /grant execute on function public\.is_chat_conversation_member\(uuid\) to authenticated/i);
+  assert.match(migration, /revoke all on function public\.is_chat_conversation_member\(uuid\) from public, anon, authenticated/i);
   assert.match(migration, /client message id was already used with different content/i);
   assert.match(migration, /pg_advisory_xact_lock/i);
   assert.match(migration, /create or replace function public\.chat_service_status\(\)/i);
-  assert.match(migration, /'schema_version',\s*1/i);
+  assert.match(migration, /'schema_version',\s*2/i);
   assert.match(migration, /grant execute on function public\.chat_service_status\(\) to authenticated/i);
+  assert.match(migration, /file_size_limit\s*=\s*excluded\.file_size_limit/i);
+  assert.match(migration, /'chat-images',\s*'chat-images',\s*false,\s*52428800/i);
+  for (const mime of ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif', 'image/tiff', 'image/bmp']) {
+    assert.ok(migration.includes(`'${mime}'`), `missing chat image MIME ${mime}`);
+  }
+  assert.match(migration, /create policy chat_images_insert_owner[\s\S]*?for insert to authenticated/i);
+  assert.match(migration, /create policy chat_images_delete_orphan_owner[\s\S]*?for delete to authenticated/i);
+  assert.match(migration, /not exists \([\s\S]*?chat_messages m where m\.image_path = storage\.objects\.name/i);
+  assert.doesNotMatch(migration, /create policy chat_images_[^\r\n]+[\s\S]{0,80}?for update/i);
+  assert.match(migration, /required_realtime\(relname\)[\s\S]*?'chat_messages'[\s\S]*?'chat_friend_requests'[\s\S]*?'chat_friendships'[\s\S]*?'chat_conversation_members'/i);
+  assert.match(migration, /substr\(replace\(p_id::text, '-', ''\), 1, 16\)/i);
+
+  const serviceSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'chat-service.js'), 'utf8');
+  assert.match(serviceSource, /const CHAT_SCHEMA_VERSION = 2/);
+  assert.match(serviceSource, /upsert:\s*false/);
+  assert.match(serviceSource, /await imageBucket\.remove\(\[uploadedImagePath\]\)/);
 
   const mainSource = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   assert.match(mainSource, /if \(supabaseAuth\.getPublicSession\(\)\.authenticated\) \{\s*chatService\.initialize\(\)/);

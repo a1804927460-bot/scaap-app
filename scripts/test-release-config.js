@@ -24,6 +24,15 @@ assert.match(builder, /private:\s*false/);
 assert.match(workflow, /secrets\.RELEASES_TOKEN/);
 assert.match(workflow, /secrets\.CSC_LINK/);
 assert.match(workflow, /secrets\.CSC_KEY_PASSWORD/);
+assert.match(pkg.scripts['release:win'], /--publish never/);
+assert.doesNotMatch(pkg.scripts['release:win'], /--publish always/);
+assert.match(workflow, /Get-AuthenticodeSignature/);
+assert.match(workflow, /signature\.Status -ne 'Valid'/);
+assert.match(workflow, /gh release (?:create|upload)/);
+assert.ok(
+  workflow.indexOf('Verify updater artifacts') < workflow.indexOf('Publish verified updater artifacts'),
+  'Updater artifacts must be verified before publication.'
+);
 assert.match(main, /owner:\s*'a1804927460-bot'/);
 assert.match(main, /repo:\s*'messs-releases'/);
 assert.match(html, /class="ai-provider-section cloud-security-section" hidden aria-hidden="true"/);
