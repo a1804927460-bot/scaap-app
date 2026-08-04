@@ -1930,7 +1930,10 @@ function refreshBoardLanguage() {
 
 let aiImagePopoverClickCloser = null;
 let aiImagePopoverKeyCloser = null;
-let aiImageGenerating = false;
+// Generation requests are independent. Keep a count instead of a global
+// boolean so a second image/video request can start while the first one is
+// still waiting on the provider.
+let aiImageGenerating = 0;
 let aiMediaConfigPromise = null;
 
 function loadAiMediaConfigCached() {
@@ -2157,8 +2160,7 @@ function buildAiImagePopover(aiConfig) {
   return pop;
 }
 async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) {
-  if (aiImageGenerating) return;
-  aiImageGenerating = true;
+  aiImageGenerating += 1;
   submitBtn.disabled = true;
   cancelBtn.disabled = true;
   controls.forEach((control) => { control.disabled = true; });
@@ -2201,7 +2203,7 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
     showToast(err && err.message ? err.message : 'AI 生成失败。', 'AI');
   } finally {
     clearInterval(progressTimer);
-    aiImageGenerating = false;
+    aiImageGenerating = Math.max(0, aiImageGenerating - 1);
     submitBtn.disabled = false;
     cancelBtn.disabled = false;
     controls.forEach((control) => { control.disabled = false; });
@@ -2661,7 +2663,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     });
     const selected = options.find((provider) => provider.id === modelSelect.value) || options[0];
     modelPickerLabel.textContent = selected ? selected.name : t('No model configured', '未配置模型');
-    submit.disabled = aiImageGenerating || !selected;
+    // A running request must not disable a newly opened composer. Each
+    // submission owns its own request and placeholder state.
+    submit.disabled = !selected;
     modelPickerMenu.querySelectorAll('.ai-model-picker-option').forEach((option) => {
       const active = selected && option.dataset.value === selected.id;
       option.classList.toggle('is-active', active);
@@ -2953,8 +2957,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
 }
 
 async function generateAiMediaForBoardV2(request, pop, status, submit) {
-  if (aiImageGenerating) return;
-  aiImageGenerating = true;
+  aiImageGenerating += 1;
   const controls = [...pop.querySelectorAll('button, textarea, select, input')];
   controls.forEach((control) => { control.disabled = true; });
   const placeholders = createAiPlaceholders(request);
@@ -2998,7 +3001,7 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
     showToast(err && err.message ? err.message : 'AI 生成失败。', 'AI');
   } finally {
     clearInterval(progressTimer);
-    aiImageGenerating = false;
+    aiImageGenerating = Math.max(0, aiImageGenerating - 1);
     controls.forEach((control) => { control.disabled = false; });
     status.textContent = '';
     submit.disabled = false;
@@ -3006,10 +3009,9 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
 }
 
 async function generateAiMediaForBoardV3(request) {
-  if (aiImageGenerating) return;
   const creditAccess = await window.MesssCredits.ensure(request);
   if (!creditAccess.ok) return;
-  aiImageGenerating = true;
+  aiImageGenerating += 1;
   const targetCanvasId = activeCanvasId();
   const generationRequest = { ...request, canvasId: targetCanvasId };
   const placeholders = createAiPlaceholders(generationRequest);
@@ -3066,7 +3068,7 @@ async function generateAiMediaForBoardV3(request) {
     removeAiPlaceholders(placeholders);
     showToast(err && err.message ? err.message : t('AI generation failed.', 'AI 生成失败。'), 'AI');
   } finally {
-    aiImageGenerating = false;
+    aiImageGenerating = Math.max(0, aiImageGenerating - 1);
   }
 }
 
@@ -3160,7 +3162,7 @@ async function boardSelectionReferenceData() {
 }
 
 async function submitBoardQuickGeneration(kind, promptText) {
-  if (aiImageGenerating || !promptText) return;
+  if (!promptText) return;
   try {
     const config = await window.messsAPI.getAiMediaConfig();
     const providers = kind === 'video'
