@@ -11,7 +11,7 @@ const BOARD_OVERVIEW_ITEM_THRESHOLD = 180;
 const BOARD_FULL_IMAGE_LIMIT = 6;
 const BOARD_THUMBNAIL_MAX_EDGE = 400;
 const BOARD_FULL_IMAGE_MIN_SCREEN_EDGE = 340;
-const BOARD_QUALITY_SETTLE_MS = 160;
+const BOARD_QUALITY_SETTLE_MS = 90;
 const BOARD_VIEW_STORAGE_KEY = 'messs.board.viewport.v2';
 const BOARD_OVERVIEW_DPR = 1;
 const BOARD_OVERVIEW_IMAGE_LIMIT = 240;
@@ -23,10 +23,15 @@ const Board = {
   isPanning: false,
   panStart: null,
   transformFrame: 0,
+  transformSettleTimer: 0,
+  zoomFrame: 0,
+  zoomTarget: null,
+  zoomLastTime: 0,
   reconcileFrame: 0,
   mountFrame: 0,
   qualityTimer: 0,
   qualityIdle: 0,
+  qualityFrame: 0,
   interactingUntil: 0,
   persistTimer: 0,
   spatialIndex: BoardEngine.createSpatialIndex(400),
@@ -1956,11 +1961,22 @@ function refreshBoardLanguage() {
 
 let aiImagePopoverClickCloser = null;
 let aiImagePopoverKeyCloser = null;
-// Generation requests are independent. Keep a count instead of a global
-// boolean so a second image/video request can start while the first one is
-// still waiting on the provider.
-let aiImageGenerating = 0;
+const aiMediaTasks = new Map();
 let aiMediaConfigPromise = null;
+
+function beginAiMediaTask(request) {
+  const taskId = `ai-task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  aiMediaTasks.set(taskId, {
+    id: taskId,
+    kind: request && request.kind === 'video' ? 'video' : 'image',
+    startedAt: Date.now()
+  });
+  return taskId;
+}
+
+function finishAiMediaTask(taskId) {
+  aiMediaTasks.delete(taskId);
+}
 
 function loadAiMediaConfigCached() {
   if (!aiMediaConfigPromise) {
@@ -2224,7 +2240,7 @@ function buildAiImagePopover(aiConfig) {
   return pop;
 }
 async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) {
-  aiImageGenerating += 1;
+  const taskId = beginAiMediaTask(request);
   submitBtn.disabled = true;
   cancelBtn.disabled = true;
   controls.forEach((control) => { control.disabled = true; });
@@ -2267,7 +2283,7 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
     showToast(err && err.message ? err.message : 'AI 生成失败。', 'AI');
   } finally {
     clearInterval(progressTimer);
-    aiImageGenerating = Math.max(0, aiImageGenerating - 1);
+    finishAiMediaTask(taskId);
     submitBtn.disabled = false;
     cancelBtn.disabled = false;
     controls.forEach((control) => { control.disabled = false; });
@@ -3090,7 +3106,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
 }
 
 async function generateAiMediaForBoardV2(request, pop, status, submit) {
-  aiImageGenerating += 1;
+  const taskId = beginAiMediaTask(request);
   const controls = [...pop.querySelectorAll('button, textarea, select, input')];
   controls.forEach((control) => { control.disabled = true; });
   const placeholders = createAiPlaceholders(request);
@@ -3134,7 +3150,7 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
     showToast(err && err.message ? err.message : 'AI 生成失败。', 'AI');
   } finally {
     clearInterval(progressTimer);
-    aiImageGenerating = Math.max(0, aiImageGenerating - 1);
+    finishAiMediaTask(taskId);
     controls.forEach((control) => { control.disabled = false; });
     status.textContent = '';
     submit.disabled = false;
@@ -3144,7 +3160,7 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
 async function generateAiMediaForBoardV3(request) {
   const creditAccess = await window.MesssCredits.ensure(request);
   if (!creditAccess.ok) return;
-  aiImageGenerating += 1;
+  const taskId = beginAiMediaTask(request);
   const targetCanvasId = activeCanvasId();
   const generationRequest = { ...request, canvasId: targetCanvasId };
   const placeholders = createAiPlaceholders(generationRequest);
@@ -3201,7 +3217,7 @@ async function generateAiMediaForBoardV3(request) {
     removeAiPlaceholders(placeholders);
     showToast(err && err.message ? err.message : t('AI generation failed.', 'AI 生成失败。'), 'AI');
   } finally {
-    aiImageGenerating = Math.max(0, aiImageGenerating - 1);
+    finishAiMediaTask(taskId);
   }
 }
 

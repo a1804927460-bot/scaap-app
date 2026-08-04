@@ -19,7 +19,7 @@ assert.doesNotMatch(
 );
 assert.match(
   boardSource,
-  /aiImageGenerating \+= 1;[\s\S]*?aiImageGenerating = Math\.max\(0, aiImageGenerating - 1\);/,
+  /const aiMediaTasks = new Map\(\);[\s\S]*?beginAiMediaTask\(request\)[\s\S]*?finishAiMediaTask\(taskId\)/,
   'Canvas generation must track independent in-flight tasks.'
 );
 
