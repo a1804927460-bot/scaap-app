@@ -50,6 +50,66 @@ function formatBoardFileSize(file) {
 
 let generatedMediaDetailKeyHandler = null;
 
+const BOARD_IMAGE_TOOL_ICONS = {
+  details: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v6"></path><path d="M12 7h.01"></path></svg>',
+  fullscreen: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3H5a2 2 0 0 0-2 2v3"></path><path d="M16 3h3a2 2 0 0 1 2 2v3"></path><path d="M8 21H5a2 2 0 0 1-2-2v-3"></path><path d="M16 21h3a2 2 0 0 0 2-2v-3"></path></svg>',
+  more: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>'
+};
+
+function appendBoardImageToolbar(element, file, item) {
+  const toolbar = document.createElement('div');
+  toolbar.className = 'board-image-toolbar';
+  toolbar.setAttribute('role', 'toolbar');
+  toolbar.setAttribute('aria-label', t('Image actions', '图片操作'));
+  ['pointerdown', 'mousedown', 'click'].forEach((eventName) => {
+    toolbar.addEventListener(eventName, (event) => event.stopPropagation());
+  });
+
+  const actions = [
+    {
+      key: 'details',
+      title: t('Image details', '图片详情'),
+      run: () => showGeneratedMediaDetails(file, element)
+    },
+    {
+      key: 'fullscreen',
+      title: t('View large image', '查看大图'),
+      run: () => {
+        if (typeof openFileFullscreenPreview === 'function') {
+          openFileFullscreenPreview(file);
+          return;
+        }
+        selectFileForPreview(file.id);
+      }
+    },
+    {
+      key: 'more',
+      title: t('More actions', '更多操作'),
+      run: (button) => {
+        const rect = button.getBoundingClientRect();
+        showBoardItemContextMenu(item, rect.right, rect.bottom + 6);
+      }
+    }
+  ];
+
+  actions.forEach((action) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `board-image-toolbar-button is-${action.key}`;
+    button.title = action.title;
+    button.setAttribute('aria-label', action.title);
+    button.innerHTML = BOARD_IMAGE_TOOL_ICONS[action.key];
+    ['pointerdown', 'mousedown', 'click'].forEach((eventName) => {
+      button.addEventListener(eventName, (event) => event.stopPropagation());
+    });
+    button.addEventListener('click', () => action.run(button));
+    toolbar.appendChild(button);
+  });
+
+  element.appendChild(toolbar);
+  return toolbar;
+}
+
 function appendGeneratedMediaDetailsControl(element, file) {
   const button = document.createElement('button');
   button.type = 'button';
@@ -71,29 +131,75 @@ function appendGeneratedMediaDetailsControl(element, file) {
   return button;
 }
 
-function closeGeneratedMediaDetails() {
-  const overlay = document.getElementById('generated-media-detail-overlay');
-  if (overlay) {
+function closeGeneratedMediaDetails(immediate = false) {
+  document.querySelectorAll('.generated-media-detail-overlay').forEach((overlay) => {
+    overlay.removeAttribute('id');
     overlay.classList.remove('is-visible');
-    window.setTimeout(() => overlay.remove(), 180);
-  }
+    overlay.style.pointerEvents = 'none';
+    if (immediate === true) {
+      overlay.remove();
+    } else if (!overlay.dataset.isClosing) {
+      overlay.dataset.isClosing = 'true';
+      window.setTimeout(() => overlay.remove(), 180);
+    }
+  });
   if (generatedMediaDetailKeyHandler) {
     document.removeEventListener('keydown', generatedMediaDetailKeyHandler);
     generatedMediaDetailKeyHandler = null;
   }
 }
 
+function formatBoardAspectRatio(file, generation) {
+  const recorded = String(generation && generation.aspectRatio || '').trim();
+  if (recorded && recorded !== 'auto') return recorded;
+  const width = Number(file && file.sourceWidth);
+  const height = Number(file && file.sourceHeight);
+  if (!(width > 0 && height > 0)) return '';
+  const ratio = width / height;
+  const commonRatios = [
+    ['1:1', 1], ['5:4', 5 / 4], ['4:3', 4 / 3], ['3:2', 3 / 2],
+    ['16:10', 16 / 10], ['16:9', 16 / 9], ['21:9', 21 / 9],
+    ['4:5', 4 / 5], ['3:4', 3 / 4], ['2:3', 2 / 3], ['9:16', 9 / 16]
+  ];
+  const nearest = commonRatios.reduce((best, entry) => (
+    Math.abs(entry[1] - ratio) < Math.abs(best[1] - ratio) ? entry : best
+  ));
+  if (Math.abs(nearest[1] - ratio) / ratio < 0.015) return nearest[0];
+  return ratio >= 1 ? `${ratio.toFixed(2)}:1` : `1:${(1 / ratio).toFixed(2)}`;
+}
+
+function boardGenerationModelLabel(generation) {
+  const model = String(generation && generation.modelName || '').trim();
+  const provider = String(
+    generation && (generation.providerName || generation.providerId) || ''
+  ).trim();
+  const safeProvider = /quick\s*router/i.test(provider) ? '' : provider;
+  if (model && safeProvider && safeProvider !== model) return `${model} · ${safeProvider}`;
+  return model || safeProvider;
+}
+
 function showGeneratedMediaDetails(file, anchorElement) {
-  closeGeneratedMediaDetails();
+  closeGeneratedMediaDetails(true);
   const generation = file.aiGeneration || {};
   const prompt = String(generation.prompt || '').trim();
-  const references = (generation.referenceFileIds || [])
+  const referenceIds = Array.isArray(generation.referenceFileIds)
+    ? generation.referenceFileIds
+    : [];
+  const references = referenceIds
     .map((id) => AppState.files.find((entry) => entry.id === id))
     .filter(Boolean);
-  const referenceCount = Math.max(references.length, Number(generation.referenceCount) || 0);
-  const dimensions = Number(file.sourceWidth) > 0 && Number(file.sourceHeight) > 0
+  const referenceCount = Math.max(
+    referenceIds.length,
+    references.length,
+    Number(generation.referenceCount) || 0
+  );
+  const hasDimensions = Number(file.sourceWidth) > 0 && Number(file.sourceHeight) > 0;
+  const dimensions = hasDimensions
     ? `${Math.round(file.sourceWidth)} x ${Math.round(file.sourceHeight)}`
-    : t('Size unavailable', '尺寸未知');
+    : '';
+  const aspectRatio = formatBoardAspectRatio(file, generation);
+  const modelLabel = boardGenerationModelLabel(generation);
+  const isGenerated = !!(file.aiGeneration || file.sourceFolder === 'AI Generated');
 
   const overlay = document.createElement('div');
   overlay.id = 'generated-media-detail-overlay';
@@ -112,14 +218,14 @@ function showGeneratedMediaDetails(file, anchorElement) {
       </header>
       <div class="generated-media-detail-model"></div>
       <div class="generated-media-detail-chips"></div>
-      <section class="generated-media-detail-section">
+      <section class="generated-media-detail-section" data-media-section="prompt">
         <div class="generated-media-detail-section-heading">
           <strong>${t('Prompt', '提示词')}</strong>
           <button type="button" class="generated-media-prompt-copy">${t('Copy', '复制')}</button>
         </div>
         <p class="generated-media-detail-prompt"></p>
       </section>
-      <section class="generated-media-detail-section">
+      <section class="generated-media-detail-section" data-media-section="references">
         <div class="generated-media-detail-section-heading">
           <strong>${t('References', '参考图')}</strong>
           <span class="generated-media-reference-count"></span>
@@ -135,32 +241,45 @@ function showGeneratedMediaDetails(file, anchorElement) {
 
   overlay.querySelector('.generated-media-detail-type').textContent =
     generation.kind === 'video' ? t('VIDEO', '视频') : t('IMAGE', '图片');
-  overlay.querySelector('.generated-media-detail-dimensions').textContent = ` · ${dimensions}`;
-  overlay.querySelector('.generated-media-detail-model').textContent =
-    generation.modelName || t('Earlier AI generation', '早期 AI 生成结果');
-  overlay.querySelector('.generated-media-edit').textContent = t('Edit image', '编辑图片');
-  overlay.querySelector('.generated-media-detail-prompt').textContent =
-    prompt || t('Generation details were not recorded for this earlier result.', '此早期生成结果未记录提示词。');
+  const dimensionsElement = overlay.querySelector('.generated-media-detail-dimensions');
+  dimensionsElement.textContent = dimensions ? ` · ${dimensions}` : '';
+  dimensionsElement.hidden = !dimensions;
+  const modelElement = overlay.querySelector('.generated-media-detail-model');
+  modelElement.textContent = modelLabel ? `${t('Model', '模型')} · ${modelLabel}` : '';
+  modelElement.hidden = !modelLabel;
+  const editButton = overlay.querySelector('.generated-media-edit');
+  editButton.textContent = t('Edit image', '编辑图片');
+  editButton.hidden = !isGenerated || !prompt || generation.kind === 'video';
+  const promptSection = overlay.querySelector('[data-media-section="prompt"]');
+  promptSection.hidden = !prompt;
+  overlay.querySelector('.generated-media-detail-prompt').textContent = prompt;
+  const referenceSection = overlay.querySelector('[data-media-section="references"]');
+  referenceSection.hidden = !referenceCount;
   overlay.querySelector('.generated-media-reference-count').textContent =
     String(referenceCount).padStart(2, '0');
 
   const chips = overlay.querySelector('.generated-media-detail-chips');
-  const aspect = document.createElement('span');
-  aspect.textContent = `${t('Aspect', '比例')} ${generation.aspectRatio || 'auto'}`;
-  chips.appendChild(aspect);
+  if (aspectRatio) {
+    const aspect = document.createElement('span');
+    aspect.textContent = `${t('Aspect', '比例')} ${aspectRatio}`;
+    chips.appendChild(aspect);
+  }
   if (generation.size) {
     const size = document.createElement('span');
     size.textContent = `${t('Quality', '画质')} ${generation.size}`;
     chips.appendChild(size);
   }
-  const fileSize = document.createElement('span');
-  fileSize.textContent = `${t('File', '大小')} ${formatBoardFileSize(file)}`;
-  chips.appendChild(fileSize);
+  if (Number.isFinite(Number(file.sizeBytes)) && Number(file.sizeBytes) >= 0) {
+    const fileSize = document.createElement('span');
+    fileSize.textContent = `${t('File', '大小')} ${formatBoardFileSize(file)}`;
+    chips.appendChild(fileSize);
+  }
   if (generation.kind === 'video' && generation.duration) {
     const duration = document.createElement('span');
     duration.textContent = `${t('Duration', '时长')} ${generation.duration}s`;
     chips.appendChild(duration);
   }
+  chips.hidden = !chips.childElementCount;
 
   const referenceList = overlay.querySelector('.generated-media-reference-list');
   references.forEach((reference) => {
@@ -184,13 +303,6 @@ function showGeneratedMediaDetails(file, anchorElement) {
     missing.textContent = `+${referenceCount - references.length}`;
     referenceList.appendChild(missing);
   }
-  if (!referenceCount) {
-    const empty = document.createElement('span');
-    empty.className = 'generated-media-reference-empty';
-    empty.textContent = t('No reference image', '无参考图');
-    referenceList.appendChild(empty);
-  }
-
   overlay.querySelector('.generated-media-detail-close').addEventListener('click', closeGeneratedMediaDetails);
   overlay.querySelector('.generated-media-prompt-copy').disabled = !prompt;
   overlay.querySelector('.generated-media-prompt-copy').addEventListener('click', async () => {
@@ -201,6 +313,7 @@ function showGeneratedMediaDetails(file, anchorElement) {
 
   const retry = overlay.querySelector('.generated-media-retry');
   const remix = overlay.querySelector('.generated-media-remix');
+  overlay.querySelector('.generated-media-detail-footer').hidden = !isGenerated || !prompt;
   retry.disabled = !prompt;
   remix.disabled = !prompt;
   retry.addEventListener('click', async () => {
@@ -226,6 +339,10 @@ function showGeneratedMediaDetails(file, anchorElement) {
   });
 
   document.body.appendChild(overlay);
+  overlay.querySelector('.generated-media-detail-panel').setAttribute(
+    'aria-label',
+    `${t('Image details', '图片详情')}: ${file.name || t('Image', '图片')}`
+  );
   positionGeneratedMediaDetailsPanel(overlay, anchorElement);
   generatedMediaDetailKeyHandler = (event) => {
     if (event.key === 'Escape') closeGeneratedMediaDetails();

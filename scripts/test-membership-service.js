@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('assert');
+const crypto = require('crypto');
 const {
   LOCAL_MODE,
   SERVER_MODE,
@@ -26,29 +27,67 @@ const options = {
 };
 
 const migrated = normalizeMembershipState(undefined);
-assert.strictEqual(migrated.schemaVersion, 1);
+assert.strictEqual(migrated.schemaVersion, 2);
 assert.strictEqual(migrated.mode, LOCAL_MODE);
 assert.strictEqual(migrated.account.status, 'guest');
 assert.strictEqual(migrated.plan.id, 'free');
-assert.strictEqual(migrated.credits.balance, null);
+assert.strictEqual(migrated.credits.balance, 0);
+assert.strictEqual(migrated.credits.reserved, 0);
 assert.strictEqual(migrated.credits.isAuthoritative, false);
-assert.strictEqual(migrated.entitlements['ai.chat'].enabled, true);
-assert.strictEqual(migrated.entitlements['ai.image'].metering, 'unmetered');
+assert.strictEqual(migrated.entitlements['ai.chat'].metering, 'unmetered');
+assert.strictEqual(migrated.entitlements['ai.image'].metering, 'credits');
+assert.strictEqual(migrated.entitlements['ai.video'].metering, 'credits');
+
+const legacy = normalizeMembershipState({
+  schemaVersion: 1,
+  credits: { balance: null },
+  entitlements: {
+    'ai.chat': { enabled: true, metering: 'credits', unit: 'request' },
+    'ai.image': { enabled: true, metering: 'unmetered', unit: 'image' },
+    'ai.video': { enabled: true, metering: 'unmetered', unit: 'video' }
+  }
+});
+assert.strictEqual(legacy.credits.balance, 0);
+assert.strictEqual(legacy.entitlements['ai.chat'].metering, 'unmetered');
+assert.strictEqual(legacy.entitlements['ai.image'].metering, 'credits');
+assert.strictEqual(legacy.entitlements['ai.video'].metering, 'credits');
 
 const store = makeStore({
+  schemaVersion: 1,
   entitlements: {
-    'ai.video': { enabled: false, metering: 'credits', unit: 'video' }
+    'ai.video': { enabled: true, metering: 'unmetered', unit: 'video' }
   }
 });
 const service = createMembershipService(store, options);
-const snapshot = service.getSnapshot();
+let snapshot = service.getSnapshot();
 assert.strictEqual(snapshot.mode, LOCAL_MODE);
 assert.strictEqual(snapshot.usage.totalEvents, 0);
+assert.strictEqual(snapshot.credits.balance, 0);
 assert.strictEqual(service.checkFeature('ai.chat').allowed, true);
 assert.strictEqual(service.checkFeature('ai.image').allowed, true);
-assert.strictEqual(service.checkFeature('ai.video').allowed, false);
-assert.strictEqual(service.checkFeature('ai.video').reason, 'not-entitled');
+assert.strictEqual(service.checkFeature('ai.video').allowed, true);
 assert.strictEqual(service.checkFeature('unknown').reason, 'unknown-feature');
+
+const blockedImage = service.beginUsage('ai.image', { estimatedCredits: 12 });
+assert.strictEqual(blockedImage.ok, false);
+assert.strictEqual(blockedImage.reason, 'insufficient-credits');
+assert.strictEqual(blockedImage.requiredCredits, 12);
+assert.strictEqual(blockedImage.availableCredits, 0);
+assert.strictEqual(service.getSnapshot().usage.totalEvents, 0);
+
+const grant = {
+  id: 'beta-credit-1',
+  codeHash: crypto.createHash('sha256').update('beta-credit-1').digest('hex'),
+  credits: 100
+};
+const redeemed = service.redeemGrant(grant);
+assert.strictEqual(redeemed.ok, true);
+assert.strictEqual(redeemed.creditsAdded, 100);
+assert.strictEqual(redeemed.snapshot.credits.balance, 100);
+const duplicate = service.redeemGrant(grant);
+assert.strictEqual(duplicate.ok, false);
+assert.strictEqual(duplicate.reason, 'already-redeemed');
+assert.strictEqual(duplicate.snapshot.credits.balance, 100);
 
 const started = service.beginUsage('ai.image', {
   estimatedCredits: 12,
@@ -65,7 +104,10 @@ assert.deepStrictEqual(started.event.metadata, {
   providerId: 'image-1',
   requestedCount: 2
 });
-assert.strictEqual(service.getSnapshot().usage.pendingCount, 1);
+snapshot = service.getSnapshot();
+assert.strictEqual(snapshot.credits.balance, 100);
+assert.strictEqual(snapshot.credits.reserved, 12);
+assert.strictEqual(snapshot.usage.pendingCount, 1);
 
 const succeeded = service.finishUsage(started.usageId, {
   status: 'succeeded',
@@ -74,23 +116,46 @@ const succeeded = service.finishUsage(started.usageId, {
 });
 assert.strictEqual(succeeded.status, 'succeeded');
 assert.strictEqual(succeeded.resultUnits, 2);
-assert.strictEqual(succeeded.settledCredits, 0);
-assert.strictEqual(service.getSnapshot().usage.pendingCount, 0);
+assert.strictEqual(succeeded.settledCredits, 12);
+snapshot = service.getSnapshot();
+assert.strictEqual(snapshot.credits.balance, 88);
+assert.strictEqual(snapshot.credits.reserved, 0);
+assert.strictEqual(snapshot.usage.pendingCount, 0);
 assert.strictEqual(
   service.finishUsage(started.usageId, { status: 'failed' }).status,
   'succeeded',
   'Settling an event must be idempotent.'
 );
 
-const failed = service.beginUsage('ai.chat', { metadata: { messageCount: 3 } });
-const failedResult = service.finishUsage(failed.usageId, {
+const failedVideo = service.beginUsage('ai.video', { estimatedCredits: 16 });
+assert.strictEqual(failedVideo.ok, true);
+assert.strictEqual(service.getSnapshot().credits.reserved, 16);
+const failedResult = service.finishUsage(failedVideo.usageId, {
   status: 'failed',
   failureCode: 'timeout'
 });
 assert.strictEqual(failedResult.status, 'failed');
-assert.strictEqual(failedResult.failureCode, 'timeout');
+assert.strictEqual(failedResult.settledCredits, 0);
+assert.strictEqual(service.getSnapshot().credits.balance, 88);
+assert.strictEqual(service.getSnapshot().credits.reserved, 0);
+
+// Chat remains free even at a zero balance.
+store.data.membership.credits.balance = 0;
+const freeChat = service.beginUsage('ai.chat', {
+  estimatedCredits: 999,
+  metadata: { messageCount: 3 }
+});
+assert.strictEqual(freeChat.ok, true);
+assert.strictEqual(service.getSnapshot().credits.reserved, 0);
+const freeChatResult = service.finishUsage(freeChat.usageId, {
+  status: 'succeeded',
+  settledCredits: 999
+});
+assert.strictEqual(freeChatResult.settledCredits, 0);
+assert.strictEqual(service.getSnapshot().credits.balance, 0);
 
 const interruptedStore = makeStore({
+  credits: { balance: 20, reserved: 8 },
   usageEvents: [{
     id: 'usage-interrupted',
     feature: 'ai.video',
@@ -102,6 +167,8 @@ const interruptedStore = makeStore({
 });
 const recoveredService = createMembershipService(interruptedStore, options);
 assert.strictEqual(recoveredService.getSnapshot().usage.pendingCount, 0);
+assert.strictEqual(recoveredService.getSnapshot().credits.balance, 20);
+assert.strictEqual(recoveredService.getSnapshot().credits.reserved, 0);
 assert.strictEqual(interruptedStore.data.membership.usageEvents[0].status, 'failed');
 assert.strictEqual(interruptedStore.data.membership.usageEvents[0].failureCode, 'app-restarted');
 
@@ -110,7 +177,6 @@ for (let index = 0; index < MAX_USAGE_EVENTS + 10; index += 1) {
 }
 assert.strictEqual(store.data.membership.usageEvents.length, MAX_USAGE_EVENTS);
 
-store.data.membership.credits.balance = 999999;
 const serverSnapshot = service.applyServerSnapshot({
   account: {
     id: 'user-1',
@@ -134,8 +200,8 @@ const serverSnapshot = service.applyServerSnapshot({
   },
   entitlements: {
     'ai.chat': { enabled: true, metering: 'credits', unit: 'request' },
-    'ai.image': { enabled: true, metering: 'credits', unit: 'image' },
-    'ai.video': { enabled: false, metering: 'credits', unit: 'video' }
+    'ai.image': { enabled: true, metering: 'unmetered', unit: 'image' },
+    'ai.video': { enabled: false, metering: 'unmetered', unit: 'video' }
   },
   sync: {
     revision: 'membership-revision-7'
@@ -146,7 +212,9 @@ assert.strictEqual(serverSnapshot.account.id, 'user-1');
 assert.strictEqual(serverSnapshot.credits.balance, 42);
 assert.strictEqual(serverSnapshot.credits.isAuthoritative, true);
 assert.strictEqual(store.data.membership.credits.balance, 42);
-assert.strictEqual(service.checkFeature('ai.chat').requiresServerReservation, true);
+assert.strictEqual(service.checkFeature('ai.chat').entitlement.metering, 'unmetered');
+assert.strictEqual(service.checkFeature('ai.image').entitlement.metering, 'credits');
+assert.strictEqual(service.checkFeature('ai.image').requiresServerReservation, true);
 assert.strictEqual(service.checkFeature('ai.video').allowed, false);
 assert.strictEqual(store.data.membership.usageEvents.length, MAX_USAGE_EVENTS);
 

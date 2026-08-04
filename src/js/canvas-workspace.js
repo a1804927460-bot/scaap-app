@@ -328,6 +328,7 @@ function showCanvasWorkspace() {
 function switchCanvas(canvasId, options = {}) {
   const next = AppState.canvases.find((canvas) => canvas.id === canvasId);
   if (!next) return;
+  if (typeof pauseAllBoardMedia === 'function') pauseAllBoardMedia();
   const panel = document.getElementById('board-panel');
   if (
     panel &&

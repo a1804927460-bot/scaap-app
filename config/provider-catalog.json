@@ -1,5 +1,5 @@
 {
-  "version": 9,
+  "version": 10,
   "providers": [
     {
       "id": "image-1",
@@ -7,6 +7,10 @@
       "name": "Nano Banana Pro",
       "endpoint": "https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image:generateContent",
       "protocol": "gemini-image",
+      "capabilities": {
+        "sizes": ["1K", "2K", "4K"],
+        "ratios": ["auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
+      },
       "keyEnv": "QUICKROUTER_API_KEY"
     },
     {
@@ -15,6 +19,10 @@
       "name": "Nanobanana Pro SE",
       "endpoint": "https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent",
       "protocol": "gemini-image",
+      "capabilities": {
+        "sizes": ["1K", "2K", "4K"],
+        "ratios": ["auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
+      },
       "keyEnv": "QUICKROUTER_API_KEY"
     },
     {
@@ -24,6 +32,10 @@
       "endpoint": "https://api.quickrouter.ai/v1/images/generations",
       "model": "doubao-seedream-5-0-260128",
       "protocol": "openai-image",
+      "capabilities": {
+        "sizes": ["2K", "4K"],
+        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
+      },
       "keyEnv": "QUICKROUTER_API_KEY"
     },
     {
@@ -32,6 +44,10 @@
       "name": "Midjourney",
       "endpoint": "https://api.quickrouter.ai/mj/submit/imagine",
       "protocol": "midjourney-imagine",
+      "capabilities": {
+        "sizes": ["1K"],
+        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
+      },
       "keyEnv": "QUICKROUTER_API_KEY"
     },
     {
@@ -40,6 +56,10 @@
       "name": "Nano banana2",
       "endpoint": "https://api.quickrouter.ai/v1beta/models/gemini-3.1-flash-image:generateContent",
       "protocol": "gemini-image",
+      "capabilities": {
+        "sizes": ["1K", "2K", "4K"],
+        "ratios": ["auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
+      },
       "keyEnv": "QUICKROUTER_API_KEY"
     },
     {
@@ -54,7 +74,9 @@
       "capabilities": {
         "resolutions": ["768P", "2K"],
         "durations": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-        "ratios": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]
+        "ratios": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "frameReferenceRatios": ["adaptive"],
+        "maxReferenceImages": 2
       },
       "keyEnv": "MINIMAX_API_KEY"
     },

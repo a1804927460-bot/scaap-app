@@ -277,6 +277,9 @@ function initSidebar() {
   initAiMediaSettings();
   initImportProgress();
   initSidebarMultiSelectShortcuts();
+  document.addEventListener('messs:membership-updated', (event) => {
+    renderMembershipBalance(event.detail);
+  });
 }
 
 function initSidebarMultiSelectShortcuts() {
@@ -382,6 +385,7 @@ function refreshStaticLanguage() {
   setTitleAndLabel('#import-btn', 'Import files', '导入文件');
   setTitleAndLabel('#import-folder-btn', 'Import folder', '导入文件夹');
   setTitleAndLabel('#settings-btn', 'Settings', '设置');
+  setTitleAndLabel('#account-popover-avatar', 'Change profile image', '更换头像');
 
   setText('.settings-popover-title:not(.settings-section-spaced)', 'Appearance', '外观');
   setText('.settings-popover-title.settings-section-spaced', 'Language', '语言');
@@ -788,14 +792,14 @@ function describeMediaEndpoint(endpoint, kind) {
   return t('Custom async', '自定义异步');
 }
 
-function renderAiProviderSlots(containerId, kind, providers, activeProviderId, fallbackName, fallbackEndpoint) {
+function renderAiProviderSlots(containerId, kind, providers, activeProviderId, fallbackName, fallbackEndpoint, allowFallback = true) {
   const slots = document.getElementById(containerId);
   slots.innerHTML = '';
   const list = Array.isArray(providers) ? providers : [];
   Array.from({ length: 10 }, (_, index) => list[index] || {
     id: `${kind}-${index + 1}`,
-    name: index === 0 ? fallbackName : '',
-    endpoint: index === 0 ? fallbackEndpoint : ''
+    name: index === 0 && allowFallback ? fallbackName : '',
+    endpoint: index === 0 && allowFallback ? fallbackEndpoint : ''
   }).forEach((provider, index) => {
     const row = document.createElement('div');
     row.className = 'ai-provider-slot';
@@ -864,16 +868,16 @@ function renderAiProviderSlots(containerId, kind, providers, activeProviderId, f
   });
 }
 
-function renderChatProviderSlots(providers, activeProviderId) {
+function renderChatProviderSlots(providers, activeProviderId, allowFallback = true) {
   const slots = document.getElementById('ai-chat-provider-slots');
   if (!slots) return;
   slots.innerHTML = '';
   const list = Array.isArray(providers) ? providers : [];
   Array.from({ length: 10 }, (_, index) => list[index] || {
     id: `chat-${index + 1}`,
-    name: index === 0 ? 'Messs AI' : '',
+    name: index === 0 && allowFallback ? 'Messs AI' : '',
     endpoint: '',
-    models: index === 0 ? ['gemini-2.5-pro', 'gemini-2.5-flash'] : []
+    models: index === 0 && allowFallback ? ['gemini-2.5-pro', 'gemini-2.5-flash'] : []
   }).forEach((provider, index) => {
     const row = document.createElement('div');
     row.className = 'ai-provider-slot ai-chat-provider-slot';
@@ -1016,12 +1020,62 @@ function updateAiChatConfigHint() {
     );
 }
 
+function renderAccountAvatars(initial, dataUrl) {
+  ['account-footer-avatar', 'account-popover-avatar'].forEach((id) => {
+    const element = document.getElementById(id);
+    if (!element) return;
+    element.dataset.fallbackInitial = initial;
+    element.replaceChildren();
+    if (dataUrl) {
+      const image = document.createElement('img');
+      image.src = dataUrl;
+      image.alt = '';
+      image.draggable = false;
+      element.appendChild(image);
+      element.classList.add('has-image');
+    } else {
+      element.textContent = initial;
+      element.classList.remove('has-image');
+    }
+  });
+}
+
+async function chooseAccountAvatar() {
+  const button = document.getElementById('account-popover-avatar');
+  if (!button || button.disabled || typeof window.messsAPI.chooseProfileAvatar !== 'function') return;
+  button.disabled = true;
+  try {
+    const result = await window.messsAPI.chooseProfileAvatar();
+    if (!result || !result.ok) {
+      if (result && result.reason !== 'cancelled') {
+        showToast(t('Could not update the profile image.', '无法更新头像。'), 'Messs');
+      }
+      return;
+    }
+    const dataUrl = result.dataUrl || await window.messsAPI.getProfileAvatar();
+    renderAccountAvatars(button.dataset.fallbackInitial || 'M', dataUrl);
+    showToast(t('Profile image updated.', '头像已更新。'), 'Messs');
+  } catch (error) {
+    showToast(error && error.message ? error.message : t('Could not update the profile image.', '无法更新头像。'), 'Messs');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function renderAccountSummary(config) {
   const session = config && config.cloudSession || {};
   const email = session.user && session.user.email || '';
   const authenticated = !!session.authenticated;
   let membership = null;
-  try { membership = await window.messsAPI.getMembershipSnapshot(); } catch (error) {}
+  let avatarDataUrl = null;
+  try {
+    [membership, avatarDataUrl] = await Promise.all([
+      window.messsAPI.getMembershipSnapshot().catch(() => null),
+      typeof window.messsAPI.getProfileAvatar === 'function'
+        ? window.messsAPI.getProfileAvatar().catch(() => null)
+        : Promise.resolve(null)
+    ]);
+  } catch (error) {}
   const displayName = authenticated
     ? ((membership && membership.account && membership.account.displayName) || email.split('@')[0] || 'Messs user')
     : t('Messs user', 'Messs 用户');
@@ -1030,9 +1084,8 @@ async function renderAccountSummary(config) {
     ? Number(membership.credits.balance)
     : 0;
   const initial = (displayName.trim()[0] || 'M').toUpperCase();
+  renderAccountAvatars(initial, avatarDataUrl);
   const values = {
-    'account-footer-avatar': initial,
-    'account-popover-avatar': initial,
     'account-footer-name': displayName,
     'account-popover-name': displayName,
     'account-popover-email': authenticated ? email : t('Sign in to sync your account', '登录后同步账户'),
@@ -1048,6 +1101,20 @@ async function renderAccountSummary(config) {
   const signOut = document.getElementById('account-sign-out');
   if (google) google.hidden = authenticated;
   if (signOut) signOut.hidden = !authenticated;
+}
+
+function renderMembershipBalance(membership) {
+  if (!membership) return;
+  const plan = membership.plan && membership.plan.name || t('Free', '免费');
+  const balance = Number.isFinite(Number(membership.credits && membership.credits.balance))
+    ? Number(membership.credits.balance)
+    : 0;
+  const footerMeta = document.getElementById('account-footer-meta');
+  const creditCount = document.getElementById('account-credit-count');
+  const planBadge = document.getElementById('account-plan-badge');
+  if (footerMeta) footerMeta.textContent = `${plan} · ${balance.toLocaleString()} ${t('credits', '积分')}`;
+  if (creditCount) creditCount.textContent = balance.toLocaleString();
+  if (planBadge) planBadge.textContent = plan;
 }
 
 function renderCloudSecurity(config) {
@@ -1147,10 +1214,11 @@ async function submitCloudAccount(action) {
 async function refreshAiMediaSettings() {
   const config = await window.messsAPI.getAiMediaConfig();
   renderCloudSecurity(config);
-  renderAiProviderSlots('ai-image-provider-slots', 'image', config.imageProviders, config.activeImageProviderId, 'Nano Banana Pro', config.imageEndpoint);
-  renderAiProviderSlots('ai-video-provider-slots', 'video', config.videoProviders, config.activeVideoProviderId, config.videoProviderName || 'MiniMax H3', config.videoEndpoint);
+  const allowLegacyProviderFallback = config.providerVisibilityEnforced !== true;
+  renderAiProviderSlots('ai-image-provider-slots', 'image', config.imageProviders, config.activeImageProviderId, 'Nano Banana Pro', config.imageEndpoint, allowLegacyProviderFallback);
+  renderAiProviderSlots('ai-video-provider-slots', 'video', config.videoProviders, config.activeVideoProviderId, config.videoProviderName || 'MiniMax H3', config.videoEndpoint, allowLegacyProviderFallback);
   if (document.getElementById('ai-chat-provider-slots')) {
-    renderChatProviderSlots(config.chatProviders, config.activeChatProviderId);
+    renderChatProviderSlots(config.chatProviders, config.activeChatProviderId, allowLegacyProviderFallback);
     const chatSection = document.querySelector('.ai-provider-chat-section');
     if (chatSection) {
       chatSection.hidden = true;
@@ -1345,6 +1413,7 @@ async function initAiMediaSettings() {
   document.getElementById('account-plan-open').addEventListener('click', () => {
     showToast(t('Plans will be available before the public release.', '套餐将在正式发布前开放。'), 'Messs');
   });
+  document.getElementById('account-popover-avatar').addEventListener('click', chooseAccountAvatar);
   document.getElementById('ai-image-provider-slots').addEventListener('input', updateAiProviderCount);
   document.getElementById('ai-video-provider-slots').addEventListener('input', updateAiProviderCount);
   document.getElementById('ai-chat-provider-slots').addEventListener('input', () => {

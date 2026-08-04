@@ -142,9 +142,24 @@ function delayWithSignal(ms, signal) {
 
 async function generateMiniMaxVideo(provider, body, signal) {
   const urls = Array.isArray(body.urls) ? body.urls.filter(Boolean).slice(0, 2) : [];
-  const ratio = urls.length ? 'adaptive' : (provider.capabilities.ratios.includes(body.aspectRatio) ? body.aspectRatio : '16:9');
-  const resolution = provider.capabilities.resolutions.includes(body.resolution) ? body.resolution : '768P';
-  const duration = Math.max(4, Math.min(15, Math.round(Number(body.duration) || 6)));
+  const capabilities = provider.capabilities && typeof provider.capabilities === 'object'
+    ? provider.capabilities
+    : {};
+  const ratio = String(body.aspectRatio || '');
+  const resolution = String(body.resolution || '').toUpperCase();
+  const duration = Number(body.duration);
+  const validRatios = urls.length
+    ? (Array.isArray(capabilities.frameReferenceRatios) ? capabilities.frameReferenceRatios : ['adaptive'])
+    : (Array.isArray(capabilities.ratios) ? capabilities.ratios : []);
+  if (!validRatios.includes(ratio)) {
+    throw Object.assign(new Error('The MiniMax H3 aspect ratio is invalid for this generation mode.'), { status: 400, code: 'invalid-aspect-ratio' });
+  }
+  if (!Array.isArray(capabilities.resolutions) || !capabilities.resolutions.includes(resolution)) {
+    throw Object.assign(new Error('MiniMax H3 resolution must be 768P or 2K.'), { status: 400, code: 'invalid-resolution' });
+  }
+  if (!Number.isInteger(duration) || duration < 4 || duration > 15) {
+    throw Object.assign(new Error('MiniMax H3 duration must be a whole number from 4 to 15 seconds.'), { status: 400, code: 'invalid-duration' });
+  }
   const content = [{ type: 'text', text: String(body.prompt || '').trim() }];
   urls.forEach((url, index) => content.push({
     type: 'image_url',

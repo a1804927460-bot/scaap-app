@@ -249,7 +249,7 @@ function startAiDynamicPrompt() {
 }
 
 async function addPastedAssistantImage(file) {
-  if (!file || AiAssistant.busy || AiAssistant.attachments.length >= 4) return;
+  if (!file || AiAssistant.busy || AiAssistant.attachments.length >= assistantAttachmentLimit()) return;
   const dataUrl = await new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ''));
@@ -268,6 +268,7 @@ async function addPastedAssistantImage(file) {
     dataUrl: prepared.dataUrl
   }];
   renderAssistantAttachments();
+  renderAssistantRatios();
 }
 
 function configuredAssistantProviders(kind) {
@@ -275,12 +276,16 @@ function configuredAssistantProviders(kind) {
   if (kind === 'image') return getConfiguredImageProviders(config);
   if (kind === 'video') return getConfiguredVideoProviders(config);
   if (kind === 'chat') {
-    const chatProviders = Array.isArray(config.chatProviders) ? config.chatProviders : [{
-      id: 'chat-1',
-      name: config.chatProviderName || 'OpenAI Compatible',
-      endpoint: config.chatEndpoint || '',
-      models: [config.chatModel || 'gpt-4o-mini']
-    }];
+    const chatProviders = Array.isArray(config.chatProviders)
+      ? config.chatProviders
+      : config.providerVisibilityEnforced
+        ? []
+        : [{
+          id: 'chat-1',
+          name: config.chatProviderName || 'OpenAI Compatible',
+          endpoint: config.chatEndpoint || '',
+          models: [config.chatModel || 'gpt-4o-mini']
+        }];
     const options = [];
     chatProviders.forEach((provider) => {
       if (!provider || provider.available === false || !provider.name || !provider.endpoint) return;
@@ -294,7 +299,7 @@ function configuredAssistantProviders(kind) {
           id: `${provider.id}::${modelId}`,
           providerId: provider.id,
           model: modelId,
-          name: `${provider.name} · ${modelId}`,
+          name: modelId,
           endpoint: provider.endpoint
         });
       });
@@ -383,15 +388,42 @@ function assistantVideoCapabilities() {
     : {};
 }
 
+function assistantImageCapabilities() {
+  const provider = selectedAssistantProvider();
+  return provider && provider.capabilities && typeof provider.capabilities === 'object'
+    ? provider.capabilities
+    : {};
+}
+
+function assistantHasMediaAttachments() {
+  return AiAssistant.attachments.length > 0;
+}
+
+function assistantAttachmentLimit() {
+  if (AiAssistant.kind !== 'video') return 4;
+  const maximum = Number(assistantVideoCapabilities().maxReferenceImages);
+  return Number.isFinite(maximum) && maximum > 0 ? Math.floor(maximum) : 2;
+}
+
 function syncAssistantMediaOptions() {
   const isVideo = AiAssistant.kind === 'video';
-  const capabilities = isVideo ? assistantVideoCapabilities() : {};
+  const capabilities = isVideo ? assistantVideoCapabilities() : assistantImageCapabilities();
+  if (isVideo) {
+    const maximum = Number(capabilities.maxReferenceImages);
+    const limit = Number.isFinite(maximum) && maximum > 0 ? Math.floor(maximum) : 2;
+    if (AiAssistant.attachments.length > limit) {
+      AiAssistant.attachments = AiAssistant.attachments.slice(0, limit);
+      renderAssistantAttachments();
+    }
+  }
   const sizeWrap = document.getElementById('ai-assistant-size-wrap');
   const sizeSelect = document.getElementById('ai-assistant-size');
   const durationSelect = document.getElementById('ai-assistant-duration');
-  const resolutions = isVideo && Array.isArray(capabilities.resolutions)
-    ? capabilities.resolutions
-    : ['1K', '2K', '4K'];
+  const resolutions = isVideo
+    ? (Array.isArray(capabilities.resolutions) ? capabilities.resolutions : ['768P', '2K'])
+    : (Array.isArray(capabilities.sizes) && capabilities.sizes.length
+      ? capabilities.sizes
+      : ['1K', '2K', '4K']);
   const durations = isVideo && Array.isArray(capabilities.durations) && capabilities.durations.length
     ? capabilities.durations
     : [6, 8, 10, 15];
@@ -442,6 +474,7 @@ function renderAssistantAttachments() {
     remove.addEventListener('click', () => {
       AiAssistant.attachments = AiAssistant.attachments.filter((entry) => entry.id !== attachment.id);
       renderAssistantAttachments();
+      renderAssistantRatios();
     });
     item.append(image, name, remove);
     container.appendChild(item);
@@ -491,7 +524,8 @@ async function uploadAssistantImages() {
   )];
   renderFileList(currentFileListScope());
   renderFolderGridIfActive();
-  const remaining = Math.max(0, 4 - AiAssistant.attachments.length);
+  const limit = assistantAttachmentLimit();
+  const remaining = Math.max(0, limit - AiAssistant.attachments.length);
   const attachments = (await Promise.all(imported.slice(0, remaining).map(async (file) => ({
     id: file.id,
     name: file.name,
@@ -499,20 +533,27 @@ async function uploadAssistantImages() {
   })))).filter((attachment) => attachment.dataUrl);
   AiAssistant.attachments = [...AiAssistant.attachments, ...attachments];
   renderAssistantAttachments();
+  renderAssistantRatios();
   if (result.unlocked && result.unlocked.length) await refreshAchievements();
   if (imported.length > attachments.length) {
-    showToast(t('Up to 4 images can be attached at once.', '一次最多可附加 4 张图片。'), 'AI');
+    showToast(t(`Up to ${limit} images can be attached at once.`, `一次最多可附加 ${limit} 张图片。`), 'AI');
   }
 }
 
 function renderAssistantRatios() {
   const select = document.getElementById('ai-assistant-ratio');
-  const capabilities = AiAssistant.kind === 'video' ? assistantVideoCapabilities() : {};
+  const capabilities = AiAssistant.kind === 'video' ? assistantVideoCapabilities() : assistantImageCapabilities();
   const ratios = AiAssistant.kind === 'video'
-    ? (Array.isArray(capabilities.ratios) && capabilities.ratios.length
+    ? (assistantHasMediaAttachments()
+      ? (Array.isArray(capabilities.frameReferenceRatios) && capabilities.frameReferenceRatios.length
+        ? capabilities.frameReferenceRatios
+        : ['adaptive'])
+      : (Array.isArray(capabilities.ratios) && capabilities.ratios.length
+        ? capabilities.ratios
+        : ['16:9', '9:16']))
+    : (Array.isArray(capabilities.ratios) && capabilities.ratios.length
       ? capabilities.ratios
-      : ['16:9', '9:16'])
-    : AI_IMAGE_RATIOS;
+      : AI_IMAGE_RATIOS);
   const config = AiAssistant.config || {};
   const selected = AiAssistant.kind === 'video'
     ? (config.videoAspectRatio || '16:9')
@@ -521,10 +562,11 @@ function renderAssistantRatios() {
   ratios.forEach((ratio) => {
     const option = document.createElement('option');
     option.value = ratio;
-    option.textContent = ratio === 'auto' ? t('Auto', '自动') : ratio;
+    option.textContent = ratio === 'auto' || ratio === 'adaptive' ? t('Auto', '自动') : ratio;
     select.appendChild(option);
   });
   select.value = ratios.includes(selected) ? selected : ratios[0];
+  select.disabled = ratios.length < 2;
   refreshAssistantOptionSummary();
 }
 
@@ -561,6 +603,11 @@ function setAssistantKind(kind) {
 
   const isMedia = AiAssistant.kind !== 'chat';
   const isVideo = AiAssistant.kind === 'video';
+  const attachmentLimit = assistantAttachmentLimit();
+  if (AiAssistant.attachments.length > attachmentLimit) {
+    AiAssistant.attachments = AiAssistant.attachments.slice(0, attachmentLimit);
+    renderAssistantAttachments();
+  }
   document.getElementById('ai-assistant-options-toggle').hidden = !isMedia;
   document.getElementById('ai-assistant-count-wrap').hidden = isVideo;
   document.getElementById('ai-assistant-duration-wrap').hidden = !isVideo;
@@ -652,15 +699,36 @@ async function submitAssistantMessage() {
   if (AiAssistant.busy) return;
   const input = document.getElementById('ai-assistant-input');
   const attachments = AiAssistant.attachments.map((attachment) => ({ ...attachment }));
+  const submittedMediaOptions = {
+    aspectRatio: document.getElementById('ai-assistant-ratio').value,
+    size: document.getElementById('ai-assistant-size').value,
+    count: Number(document.getElementById('ai-assistant-count').value),
+    duration: Number(document.getElementById('ai-assistant-duration').value)
+  };
   let prompt = input.value.trim();
   if (!prompt && !attachments.length) {
     input.focus();
     return;
   }
   if (!prompt) prompt = t('Describe this image.', '请分析这张图片。');
+  if (AiAssistant.kind !== 'chat') {
+    const provider = selectedAssistantProvider();
+    const creditAccess = await window.MesssCredits.ensure({
+      kind: AiAssistant.kind,
+      imageProviderId: AiAssistant.kind === 'image' && provider ? provider.id : null,
+      videoProviderId: AiAssistant.kind === 'video' && provider ? provider.id : null,
+      count: submittedMediaOptions.count,
+      duration: submittedMediaOptions.duration,
+      resolution: AiAssistant.kind === 'video'
+        ? submittedMediaOptions.size
+        : undefined
+    });
+    if (!creditAccess.ok) return;
+  }
   input.value = '';
   AiAssistant.attachments = [];
   renderAssistantAttachments();
+  renderAssistantRatios();
   ensureAiChatSession(prompt);
   const userRow = appendAssistantText('user', prompt);
   appendAssistantMessageAttachments(userRow, attachments);
@@ -721,13 +789,13 @@ async function submitAssistantMessage() {
       const request = {
         kind: AiAssistant.kind,
         prompt,
-        aspectRatio: document.getElementById('ai-assistant-ratio').value,
-        size: document.getElementById('ai-assistant-size').value,
+        aspectRatio: submittedMediaOptions.aspectRatio,
+        size: submittedMediaOptions.size,
         resolution: AiAssistant.kind === 'video'
-          ? document.getElementById('ai-assistant-size').value
+          ? submittedMediaOptions.size
           : undefined,
-        count: Number(document.getElementById('ai-assistant-count').value),
-        duration: Number(document.getElementById('ai-assistant-duration').value),
+        count: submittedMediaOptions.count,
+        duration: submittedMediaOptions.duration,
         referenceFileIds: attachments.filter((item) => !item.attachmentToken).map((item) => item.id),
         attachmentTokens: attachments.map((item) => item.attachmentToken).filter(Boolean),
         urls: [],
@@ -739,6 +807,7 @@ async function submitAssistantMessage() {
           : null
       };
       const response = await window.messsAPI.generateAiMedia(request);
+      if (response && response.membership) window.MesssCredits.publish(response.membership);
       const files = response && Array.isArray(response.files)
         ? response.files
         : (response && response.file ? [response.file] : []);
@@ -897,7 +966,7 @@ function initAiAssistant() {
       .filter((file) => /^image\//i.test(file.type));
     if (!images.length) return;
     event.preventDefault();
-    for (const file of images.slice(0, Math.max(0, 4 - AiAssistant.attachments.length))) {
+    for (const file of images.slice(0, Math.max(0, assistantAttachmentLimit() - AiAssistant.attachments.length))) {
       await addPastedAssistantImage(file);
     }
   });

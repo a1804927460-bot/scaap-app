@@ -9,7 +9,8 @@ const BOARD_MEDIA_MOUNTS_PER_FRAME = 2;
 const BOARD_DOM_ITEM_LIMIT = 320;
 const BOARD_OVERVIEW_ITEM_THRESHOLD = 180;
 const BOARD_FULL_IMAGE_LIMIT = 6;
-const BOARD_FULL_IMAGE_MIN_SCREEN_WIDTH = 720;
+const BOARD_THUMBNAIL_MAX_EDGE = 400;
+const BOARD_FULL_IMAGE_MIN_SCREEN_EDGE = 340;
 const BOARD_QUALITY_SETTLE_MS = 160;
 const BOARD_VIEW_STORAGE_KEY = 'messs.board.viewport.v2';
 const BOARD_OVERVIEW_DPR = 1;
@@ -25,6 +26,7 @@ const Board = {
   reconcileFrame: 0,
   mountFrame: 0,
   qualityTimer: 0,
+  qualityIdle: 0,
   interactingUntil: 0,
   persistTimer: 0,
   spatialIndex: BoardEngine.createSpatialIndex(400),
@@ -41,6 +43,7 @@ const Board = {
   overviewCanvas: null,
   overviewImageCache: new Map(),
   overviewImagePending: new Map(),
+  failedFullImageSources: new Set(),
   resizeObserver: null
 };
 
@@ -171,17 +174,34 @@ function transitionBoardImageQuality(element, quality) {
   if (!stack || !active || active.dataset.quality === quality) return;
   if (stack.dataset.pendingQuality === quality) return;
 
+  const source = quality === 'full' ? active.dataset.fullSrc : active.dataset.thumbSrc;
+  const activeSource = active.dataset.quality === 'full'
+    ? active.dataset.fullSrc
+    : active.dataset.thumbSrc;
+  if (!source) return;
+  if (source === activeSource) {
+    active.dataset.quality = quality;
+    return;
+  }
+  if (quality === 'full' && Board.failedFullImageSources.has(source)) return;
+
   stack.querySelectorAll('.board-image-layer.is-pending').forEach((image) => image.remove());
   stack.dataset.pendingQuality = quality;
   const next = active.cloneNode(true);
   next.className = 'board-image-layer is-pending';
+  next.removeAttribute('src');
   next.dataset.quality = quality;
   next.decoding = 'async';
   next.fetchPriority = quality === 'full' ? 'high' : 'low';
   next.style.opacity = '0';
 
-  const finish = () => {
+  const finish = async () => {
     if (!next.isConnected || stack.dataset.pendingQuality !== quality) return;
+    if (typeof next.decode === 'function') {
+      try { await next.decode(); } catch (err) {}
+    }
+    if (!next.isConnected || stack.dataset.pendingQuality !== quality) return;
+    await new Promise((resolve) => requestAnimationFrame(resolve));
     next.style.opacity = '';
     next.classList.remove('is-pending');
     next.classList.add('is-active');
@@ -191,20 +211,50 @@ function transitionBoardImageQuality(element, quality) {
       if (active.parentNode === stack) active.remove();
     }, 240);
   };
-  next.addEventListener('load', () => requestAnimationFrame(finish), { once: true });
+  next.addEventListener('load', finish, { once: true });
   next.addEventListener('error', () => {
+    if (quality === 'full') Board.failedFullImageSources.add(source);
     if (next.parentNode === stack) next.remove();
     if (stack.dataset.pendingQuality === quality) stack.dataset.pendingQuality = '';
   }, { once: true });
   stack.appendChild(next);
-  next.src = quality === 'full' ? next.dataset.fullSrc : next.dataset.thumbSrc;
+  next.src = source;
+}
+
+function loadBoardPreview(fileId) {
+  if (BoardPreviewCache.has(fileId)) return Promise.resolve(BoardPreviewCache.get(fileId));
+  if (BoardPreviewPending.has(fileId)) return BoardPreviewPending.get(fileId);
+  const request = Promise.resolve(window.messsAPI.getPreview(fileId))
+    .then((result) => {
+      cacheBoardPreview(fileId, result);
+      BoardPreviewPending.delete(fileId);
+      return result;
+    })
+    .catch((error) => {
+      BoardPreviewPending.delete(fileId);
+      throw error;
+    });
+  BoardPreviewPending.set(fileId, request);
+  return request;
 }
 
 function scheduleMountedImageQuality(delay = BOARD_QUALITY_SETTLE_MS) {
   clearTimeout(Board.qualityTimer);
+  if (Board.qualityIdle && typeof cancelIdleCallback === 'function') {
+    cancelIdleCallback(Board.qualityIdle);
+  }
+  Board.qualityIdle = 0;
   Board.qualityTimer = window.setTimeout(() => {
     Board.qualityTimer = 0;
-    syncMountedImageQuality();
+    const run = () => {
+      Board.qualityIdle = 0;
+      syncMountedImageQuality();
+    };
+    if (typeof requestIdleCallback === 'function') {
+      Board.qualityIdle = requestIdleCallback(run, { timeout: 220 });
+    } else {
+      run();
+    }
   }, delay);
 }
 
@@ -223,15 +273,27 @@ function syncMountedImageQuality() {
     const image = activeBoardImage(element);
     const item = Board.itemsById.get(id);
     if (!image || !item) continue;
+    const file = Board.filesById.get(item.fileId);
     const isVisible = Board.visibleIds.has(id);
-    const screenWidth = (item.width || 220) * Board.zoom;
-    const isLargeOnScreen = screenWidth >= BOARD_FULL_IMAGE_MIN_SCREEN_WIDTH;
-    if (boardZoomBucket() === 'detail' && isVisible && isLargeOnScreen) {
+    const fullSource = image.dataset.fullSrc || '';
+    const thumbSource = image.dataset.thumbSrc || '';
+    const canUpgradeSource = !!fullSource && fullSource !== thumbSource &&
+      !Board.failedFullImageSources.has(fullSource);
+    const bounds = boardItemBounds(item);
+    const screenEdge = Math.max(bounds.w, bounds.h) * Board.zoom * Math.min(2, window.devicePixelRatio || 1);
+    const sourceEdge = Math.max(
+      Number(file && file.sourceWidth) || 0,
+      Number(file && file.sourceHeight) || 0
+    );
+    const fullResolutionUseful = canUpgradeSource &&
+      (sourceEdge === 0 || sourceEdge > BOARD_THUMBNAIL_MAX_EDGE) &&
+      screenEdge >= (item.selected ? 280 : BOARD_FULL_IMAGE_MIN_SCREEN_EDGE);
+    if (boardZoomBucket() === 'detail' && isVisible && fullResolutionUseful) {
       detailCandidates.push({
         id,
         image,
         priority: (item.selected ? 1000000 : 0) + (isVisible ? 10000 : 0) +
-          (item.width || 220) * (item.height || item.width || 220)
+          screenEdge
       });
     }
   }
@@ -343,10 +405,16 @@ async function addFilesToBoard(fileIds, x, y, options = {}) {
     const itemY = Math.round(y - 110 + row * 244);
     const exists = existingByFileId.get(fileId);
     const file = Board.filesById.get(fileId) || AppState.files.find((entry) => entry.id === fileId);
+    const sourceWidth = Number(file && file.sourceWidth);
+    const sourceHeight = Number(file && file.sourceHeight);
+    const hasMediaDimensions = !!file && (isImageExt(file.ext) || isVideoExt(file.ext)) &&
+      sourceWidth > 0 && sourceHeight > 0;
     let addCopy = false;
-    if (exists && options.promptDuplicates && file && isImageExt(file.ext)) {
+    if (exists && options.promptDuplicates && file && (isImageExt(file.ext) || isVideoExt(file.ext))) {
       addCopy = await showConfirmDialog({
-        title: t('Image already on canvas', '图片已在画布中'),
+        title: isVideoExt(file.ext)
+          ? t('Video already on canvas', '视频已在画布中')
+          : t('Image already on canvas', '图片已在画布中'),
         message: t(
           `"${file.name}" is already on this canvas. Add a copy?`,
           `“${file.name}”已经在当前画布中，是否添加副本？`
@@ -360,6 +428,10 @@ async function addFilesToBoard(fileIds, x, y, options = {}) {
     if (exists && !addCopy) {
       exists.x = itemX;
       exists.y = itemY;
+      if (hasMediaDimensions) {
+        exists.width = Number(exists.width) > 0 ? exists.width : 220;
+        exists.height = Math.max(1, Math.round(exists.width * sourceHeight / sourceWidth));
+      }
       changed.push(exists);
       continue;
     }
@@ -368,9 +440,13 @@ async function addFilesToBoard(fileIds, x, y, options = {}) {
       fileId,
       x: itemX,
       y: itemY,
+      width: 220,
       zIndex: AppState.boardItems.length + 1,
       canvasId: activeCanvasId()
     };
+    if (hasMediaDimensions) {
+      item.height = Math.max(1, Math.round(item.width * sourceHeight / sourceWidth));
+    }
     AppState.boardItems.push(item);
     canvasWorkspaceAddItem(item);
     existingByFileId.set(fileId, item);
@@ -403,14 +479,16 @@ function removeBoardItemsForFile(fileId) {
 function renderBoardItemContent(content, f, item) {
   if (isImageExt(f.ext)) {
     const quality = 'thumb';
+    const thumbSource = resolveImageDisplaySource(f, false);
+    const fullSource = resolveImageDisplaySource(f, true);
     const stack = document.createElement('div');
     stack.className = 'board-image-stack';
     stack.dataset.pendingQuality = '';
     const img = document.createElement('img');
     img.className = 'board-image-layer is-active';
-    img.src = f.thumbUrl || f.url;
-    img.dataset.fullSrc = f.url;
-    img.dataset.thumbSrc = f.thumbUrl || f.url;
+    img.src = thumbSource;
+    img.dataset.fullSrc = fullSource;
+    img.dataset.thumbSrc = thumbSource;
     img.dataset.quality = quality;
     img.loading = 'lazy';
     img.alt = f.name;
@@ -425,18 +503,39 @@ function renderBoardItemContent(content, f, item) {
   if (isVideoExt(f.ext)) {
     const preview = document.createElement('div');
     preview.className = 'board-video-thumbnail';
-    if (item.aspectRatio && item.aspectRatio !== 'auto') {
-      preview.style.aspectRatio = item.aspectRatio.replace(':', ' / ');
-    }
     const img = document.createElement('img');
     img.src = f.thumbUrl;
     img.loading = 'lazy';
     img.alt = f.name;
     img.draggable = false;
-    const badge = document.createElement('span');
+    const badge = document.createElement('button');
+    badge.type = 'button';
     badge.className = 'board-video-thumbnail-play';
+    badge.title = t('Play video', '播放视频');
+    badge.setAttribute('aria-label', badge.title);
     badge.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><polygon points="7 4 20 12 7 20"/></svg>';
     preview.append(img, badge);
+    badge.addEventListener('mousedown', (event) => event.stopPropagation());
+    badge.addEventListener('click', async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (preview.dataset.loading === '1') return;
+      preview.dataset.loading = '1';
+      badge.disabled = true;
+      try {
+        const result = await loadBoardPreview(f.id);
+        if (!preview.isConnected || !result || result.type !== 'video') return;
+        const player = buildMiniVideoPlayer(result, f);
+        content.replaceChildren(player);
+        const video = player.querySelector('video');
+        if (video) video.play().catch(() => {});
+      } catch (error) {
+        if (preview.isConnected) {
+          badge.disabled = false;
+          preview.dataset.loading = '';
+        }
+      }
+    });
     content.appendChild(preview);
     return;
   }
@@ -452,25 +551,13 @@ function renderBoardItemContent(content, f, item) {
   // decoders for dozens of tiny cards.
   if (boardZoomBucket() !== 'detail') return;
 
-  if (BoardPreviewCache.has(f.id)) {
-    applyBoardRichContent(content, f, BoardPreviewCache.get(f.id));
-    return;
-  }
-
-  let request = BoardPreviewPending.get(f.id);
-  if (!request) {
-    request = window.messsAPI.getPreview(f.id);
-    BoardPreviewPending.set(f.id, request);
-  }
-  request.then((result) => {
-    cacheBoardPreview(f.id, result);
-    BoardPreviewPending.delete(f.id);
+  loadBoardPreview(f.id).then((result) => {
     // The board may have re-rendered (or this item been removed) by the
     // time this resolves �?only touch the DOM if it's still around.
     if (document.body.contains(content)) {
       applyBoardRichContent(content, f, result);
     }
-  }).catch(() => { BoardPreviewPending.delete(f.id); });
+  }).catch(() => {});
 }
 
 function applyBoardRichContent(content, f, result) {
@@ -518,7 +605,7 @@ function boardItemBounds(item) {
   const width = Math.max(1, item.width || (measured && measured.w) || 220);
   let height = item.height || (measured && measured.h);
   const file = Board.filesById.get(item.fileId);
-  if (!height && file && isImageExt(file.ext) && file.sourceWidth && file.sourceHeight) {
+  if (file && (isImageExt(file.ext) || isVideoExt(file.ext)) && file.sourceWidth && file.sourceHeight) {
     height = width * file.sourceHeight / file.sourceWidth;
   }
   if (!height && file && isImageExt(file.ext)) height = width;
@@ -735,14 +822,19 @@ function createBoardItemElement(item) {
   const isVideo = isVideoExt(f.ext);
   el.className = 'board-item' +
     (isImage ? ' board-item-image' : '') +
+    (isVideo ? ' board-item-video' : '') +
     (isImage && typeof isAiComposerReference === 'function' && isAiComposerReference(item.fileId)
       ? ' is-ai-reference' : '') +
-    (item.selected ? ' is-selected' : '');
+    (item.selected ? ' is-selected' : '') +
+    (item.selected && AppState.boardItems.filter((boardItem) => boardItem.selected).length === 1
+      ? ' is-single-selection' : '');
   el.style.left = item.x + 'px';
   el.style.top = item.y + 'px';
   el.style.width = (item.width || 220) + 'px';
-  if (isImage && f.sourceWidth && f.sourceHeight) {
+  if ((isImage || isVideo) && f.sourceWidth && f.sourceHeight) {
     el.style.aspectRatio = `${f.sourceWidth} / ${f.sourceHeight}`;
+  } else if (item.height) {
+    el.style.height = `${item.height}px`;
   }
   el.style.zIndex = item.zIndex || 1;
   el.dataset.boardId = item.id;
@@ -771,7 +863,9 @@ function createBoardItemElement(item) {
   content.className = 'board-item-content';
   el.appendChild(content);
   renderBoardItemContent(content, f, item);
-  if ((isImage || isVideo) && isGeneratedMedia) {
+  if (isImage) {
+    appendBoardImageToolbar(el, f, item);
+  } else if (isVideo && isGeneratedMedia) {
     appendGeneratedMediaDetailsControl(el, f);
   }
 
@@ -924,6 +1018,7 @@ function reconcileBoardViewport(force = false) {
       element.style.visibility = '';
       element.style.pointerEvents = '';
     } else if (keepIds.has(id)) {
+      pauseBoardElementMedia(element);
       element.style.visibility = 'hidden';
       element.style.pointerEvents = 'none';
     } else {
@@ -951,16 +1046,40 @@ function renderBoard() {
 
 function syncBoardSelectionClasses() {
   const selectedIds = new Set(AppState.boardItems.filter((item) => item.selected).map((item) => item.id));
+  const hasSingleSelection = selectedIds.size === 1;
   document.querySelectorAll('#board-canvas .board-item').forEach((element) => {
-    element.classList.toggle('is-selected', selectedIds.has(element.dataset.boardId));
+    const selected = selectedIds.has(element.dataset.boardId);
+    element.classList.toggle('is-selected', selected);
+    element.classList.toggle('is-single-selection', selected && hasSingleSelection);
   });
   scheduleMountedImageQuality(0);
+}
+
+function pauseBoardElementMedia(element) {
+  if (!element) return;
+  element.querySelectorAll('video, audio').forEach((media) => {
+    if (!media.paused) media.pause();
+  });
+}
+
+function pauseAllBoardMedia() {
+  Board.mounted.forEach((element) => pauseBoardElementMedia(element));
+}
+
+function stopOtherBoardVideos(currentVideo) {
+  Board.mounted.forEach((element) => {
+    element.querySelectorAll('video').forEach((video) => {
+      if (video !== currentVideo && !video.paused) video.pause();
+    });
+  });
 }
 
 function makeBoardItemDraggable(el, item) {
   el.addEventListener('mousedown', (e) => {
     if (e.target.classList.contains('board-resize-handle')) return;
+    if (e.target.closest('.board-video-thumbnail-play, .mini-video-controls, .mini-audio-player')) return;
     e.stopPropagation();
+    pauseBoardElementMedia(el);
     markBoardInteraction();
     el.classList.add('is-dragging');
     const startClientX = e.clientX;
@@ -1046,6 +1165,7 @@ function addResizeHandles(el, item) {
     handle.addEventListener('mousedown', (e) => {
       e.stopPropagation();
       e.preventDefault();
+      pauseBoardElementMedia(el);
       el.classList.add('is-resizing');
       markBoardInteraction();
 
@@ -1229,6 +1349,9 @@ function initBoardCanvas() {
     scheduleBoardReconcile();
   });
   Board.resizeObserver.observe(viewport);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) pauseAllBoardMedia();
+  });
 
   document.addEventListener('keydown', (e) => {
     // Only act when the board canvas is actually the relevant context �?    // skip while typing in any input/textarea/contenteditable (search box,
@@ -1563,6 +1686,8 @@ function buildMiniVideoPlayer(result, f) {
 
   const video = document.createElement('video');
   video.src = result.url;
+  video.poster = f.thumbUrl || '';
+  video.preload = 'metadata';
   video.muted = true;
   video.loop = true;
   video.draggable = false;
@@ -1618,9 +1743,13 @@ function buildMiniVideoPlayer(result, f) {
 
   playBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (video.paused) video.play(); else video.pause();
+    if (video.paused) video.play().catch(() => {}); else video.pause();
   });
-  video.addEventListener('play', () => { iconPlay.hidden = true; iconPause.hidden = false; });
+  video.addEventListener('play', () => {
+    stopOtherBoardVideos(video);
+    iconPlay.hidden = true;
+    iconPause.hidden = false;
+  });
   video.addEventListener('pause', () => { iconPlay.hidden = false; iconPause.hidden = true; });
 
   // Don't let clicks on the controls bar start a board-item drag.
@@ -2149,10 +2278,12 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
     }
     const sourceWidth = Number(file.sourceWidth || file.width || 0);
     const sourceHeight = Number(file.sourceHeight || file.height || 0);
-    const ratio = BoardEngine.parseAspectRatio(
-      request.aspectRatio,
-      sourceWidth && sourceHeight ? sourceWidth / sourceHeight : placeholder.width / Math.max(1, placeholder.height)
-    );
+    const ratio = sourceWidth && sourceHeight
+      ? sourceWidth / sourceHeight
+      : BoardEngine.parseAspectRatio(
+        request.aspectRatio,
+        placeholder.width / Math.max(1, placeholder.height)
+      );
     const item = persistedItem || {
       // Keep the placeholder id so the main-process upsert replaces the
       // transient record instead of leaving an orphaned pending card that
@@ -2168,6 +2299,10 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
       zIndex: placeholder.zIndex,
       selected: index === 0
     };
+    if (sourceWidth > 0 && sourceHeight > 0) {
+      item.height = Math.max(1, Math.round(item.width * sourceHeight / sourceWidth));
+      item.aspectRatio = `${Math.round(sourceWidth)}:${Math.round(sourceHeight)}`;
+    }
     delete item.isAiPlaceholder;
     item.selected = index === 0;
     if (itemIndex < 0) AppState.allBoardItems.push(item);
@@ -2186,6 +2321,11 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
       24
     );
     missingFiles.forEach((file, index) => {
+      const sourceWidth = Number(file.sourceWidth || file.width || 0);
+      const sourceHeight = Number(file.sourceHeight || file.height || 0);
+      const sourceRatio = sourceWidth > 0 && sourceHeight > 0
+        ? sourceWidth / sourceHeight
+        : fallbackSize.width / fallbackSize.height;
       const item = {
         id: 'b_' + Math.random().toString(36).slice(2, 10),
         fileId: file.id,
@@ -2193,8 +2333,10 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
         x: fallbackPositions[index].x,
         y: fallbackPositions[index].y,
         width: fallbackSize.width,
-        height: fallbackSize.height,
-        aspectRatio: request.aspectRatio,
+        height: Math.max(1, Math.round(fallbackSize.width / sourceRatio)),
+        aspectRatio: sourceWidth > 0 && sourceHeight > 0
+          ? `${Math.round(sourceWidth)}:${Math.round(sourceHeight)}`
+          : request.aspectRatio,
         zIndex: AppState.allBoardItems.length + index + 1,
         selected: updates.length === 0 && index === 0
       };
@@ -2351,6 +2493,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       button.addEventListener('click', () => {
         boardReferences.delete(entry.fileId);
         renderBoardReferences();
+        if (kind === 'video' && !boardReferences.size) ratio = aiConfig.videoAspectRatio || '16:9';
+        syncGenerationOptions();
         syncAiComposerReferenceClasses();
       });
       referenceStrip.appendChild(button);
@@ -2361,9 +2505,15 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     if (boardReferences.has(fileId)) {
       boardReferences.delete(fileId);
       renderBoardReferences();
+      if (kind === 'video' && !boardReferences.size) ratio = aiConfig.videoAspectRatio || '16:9';
+      syncGenerationOptions();
+      syncAiComposerReferenceClasses();
       return;
     }
-    const limit = kind === 'video' ? 4 : 14;
+    const configuredLimit = Number(selectedVideoCapabilities().maxReferenceImages);
+    const limit = kind === 'video'
+      ? (Number.isFinite(configuredLimit) && configuredLimit > 0 ? Math.floor(configuredLimit) : 2)
+      : 14;
     if (boardReferences.size >= limit) {
       showToast(
         t(`Up to ${limit} reference images can be used.`, `最多可使用 ${limit} 张参考图。`),
@@ -2379,9 +2529,13 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       fileId: file.id,
       name: file.name,
       dataUrl,
-      thumbUrl: file.thumbUrl || file.url
+      thumbUrl: file.thumbUrl || file.url,
+      sourceWidth: Number(file.sourceWidth) || null,
+      sourceHeight: Number(file.sourceHeight) || null
     });
     renderBoardReferences();
+    syncGenerationOptions();
+    syncAiComposerReferenceClasses();
   }
 
   function setModeButtonLabel(button, label) {
@@ -2430,8 +2584,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     if (headings[1]) headings[1].textContent = t('Resolution', '分辨率');
     if (headings[2]) headings[2].textContent = t('Count', '数量');
     if (headings[3]) headings[3].textContent = t('Duration', '时长');
-    pop.querySelector('.ai-ratio-value').textContent = ratio === 'auto' ? autoLabel : ratio;
-    pop.querySelectorAll('.ai-ratio-grid button[data-value="auto"] small').forEach((label) => {
+    pop.querySelector('.ai-ratio-value').textContent = ratio === 'auto' || ratio === 'adaptive' ? autoLabel : ratio;
+    pop.querySelectorAll('.ai-ratio-grid button[data-value="auto"] small, .ai-ratio-grid button[data-value="adaptive"] small').forEach((label) => {
       label.textContent = autoLabel;
     });
     pop.querySelector('.ai-count-value').textContent = t(`x ${count}`, `× ${count}`);
@@ -2439,7 +2593,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     pop.querySelector('.ai-duration-value').textContent = t(`${duration}s`, `${duration} 秒`);
     optionsToggle.textContent = kind === 'video'
       ? t(`${ratio} · ${size} · ${duration}s`, `${ratio} · ${size} · ${duration} 秒`)
-      : `${ratio === 'auto' ? autoLabel : ratio} · ${size} · ${t(`x${count}`, `×${count}`)}`;
+      : `${ratio === 'auto' || ratio === 'adaptive' ? autoLabel : ratio} · ${size} · ${t(`x${count}`, `×${count}`)}`;
   }
 
   function renderModels() {
@@ -2498,6 +2652,17 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     return videoProviders.find((provider) => provider.id === modelSelect.value) || null;
   }
 
+  function selectedImageProvider() {
+    return providers.find((provider) => provider.id === modelSelect.value) || null;
+  }
+
+  function selectedImageCapabilities() {
+    const provider = selectedImageProvider();
+    return provider && provider.capabilities && typeof provider.capabilities === 'object'
+      ? provider.capabilities
+      : {};
+  }
+
   function selectedVideoCapabilities() {
     const provider = selectedVideoProvider();
     return provider && provider.capabilities && typeof provider.capabilities === 'object'
@@ -2506,10 +2671,24 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   }
 
   function syncGenerationOptions() {
-    const capabilities = kind === 'video' ? selectedVideoCapabilities() : {};
-    const resolutions = kind === 'video' && Array.isArray(capabilities.resolutions)
-      ? capabilities.resolutions
-      : ['1K', '2K', '4K'];
+    const capabilities = kind === 'video' ? selectedVideoCapabilities() : selectedImageCapabilities();
+    if (kind === 'video') {
+      const configuredLimit = Number(capabilities.maxReferenceImages);
+      const limit = Number.isFinite(configuredLimit) && configuredLimit > 0 ? Math.floor(configuredLimit) : 2;
+      if (boardReferences.size > limit) {
+        [...boardReferences.keys()].slice(limit).forEach((fileId) => boardReferences.delete(fileId));
+        renderBoardReferences();
+        syncAiComposerReferenceClasses();
+      }
+      if (boardReferences.size) ratio = 'adaptive';
+    }
+    const resolutions = kind === 'video'
+      ? (Array.isArray(capabilities.resolutions) && capabilities.resolutions.length
+        ? capabilities.resolutions
+        : ['768P', '2K'])
+      : (Array.isArray(capabilities.sizes) && capabilities.sizes.length
+        ? capabilities.sizes
+        : ['1K', '2K', '4K']);
     const durations = kind === 'video' && Array.isArray(capabilities.durations) && capabilities.durations.length
       ? capabilities.durations.map(Number).filter(Number.isFinite)
       : [6, 8, 10, 15];
@@ -2538,12 +2717,18 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   }
 
   function renderRatios() {
-    const capabilities = kind === 'video' ? selectedVideoCapabilities() : {};
+    const capabilities = kind === 'video' ? selectedVideoCapabilities() : selectedImageCapabilities();
     const ratios = kind === 'video'
-      ? (Array.isArray(capabilities.ratios) && capabilities.ratios.length
+      ? (boardReferences.size
+        ? (Array.isArray(capabilities.frameReferenceRatios) && capabilities.frameReferenceRatios.length
+          ? capabilities.frameReferenceRatios
+          : ['adaptive'])
+        : (Array.isArray(capabilities.ratios) && capabilities.ratios.length
+          ? capabilities.ratios
+          : ['16:9', '9:16']))
+      : (Array.isArray(capabilities.ratios) && capabilities.ratios.length
         ? capabilities.ratios
-        : ['16:9', '9:16'])
-      : AI_IMAGE_RATIOS;
+        : AI_IMAGE_RATIOS);
     if (!ratios.includes(ratio)) ratio = ratios[0];
     ratioGrid.innerHTML = '';
     ratios.forEach((value) => {
@@ -2551,10 +2736,12 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       button.type = 'button';
       button.dataset.value = value;
       button.className = ratio === value ? 'is-active' : '';
+      button.disabled = ratios.length === 1;
       const numeric = BoardEngine.parseAspectRatio(value, 1);
       const iconWidth = numeric >= 1 ? 25 : Math.round(25 * numeric);
       const iconHeight = numeric >= 1 ? Math.round(25 / numeric) : 25;
-      button.innerHTML = `<span class="ai-ratio-shape${value === 'auto' ? ' is-auto' : ''}" style="width:${iconWidth}px;height:${iconHeight}px"></span><small>${value === 'auto' ? '自动' : value}</small>`;
+      const automatic = value === 'auto' || value === 'adaptive';
+      button.innerHTML = `<span class="ai-ratio-shape${automatic ? ' is-auto' : ''}" style="width:${iconWidth}px;height:${iconHeight}px"></span><small>${automatic ? t('Auto', '自动') : value}</small>`;
       button.addEventListener('click', () => {
         ratio = value;
         renderRatios();
@@ -2563,7 +2750,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       });
       ratioGrid.appendChild(button);
     });
-    pop.querySelector('.ai-ratio-value').textContent = ratio === 'auto' ? '自动' : ratio;
+    pop.querySelector('.ai-ratio-value').textContent = ratio === 'auto' || ratio === 'adaptive' ? t('Auto', '自动') : ratio;
   }
 
   function syncSegments() {
@@ -2580,12 +2767,24 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
 
   function updateSummary() {
     optionsToggle.textContent = kind === 'video'
-      ? t(`${ratio} · ${size} · ${duration}s`, `${ratio} · ${size} · ${duration} 秒`)
-      : `${ratio === 'auto' ? t('Auto', '自动') : ratio} · ${size} · ${t(`x${count}`, `×${count}`)}`;
+      ? t(
+        `${ratio === 'adaptive' ? 'Auto' : ratio} · ${size} · ${duration}s`,
+        `${ratio === 'adaptive' ? '自动' : ratio} · ${size} · ${duration} 秒`
+      )
+      : `${ratio === 'auto' || ratio === 'adaptive' ? t('Auto', '自动') : ratio} · ${size} · ${t(`x${count}`, `×${count}`)}`;
   }
 
   function updateMode(nextKind) {
     kind = nextKind === 'video' ? 'video' : 'image';
+    if (kind === 'video') {
+      const configuredLimit = Number(selectedVideoCapabilities().maxReferenceImages);
+      const limit = Number.isFinite(configuredLimit) && configuredLimit > 0 ? Math.floor(configuredLimit) : 2;
+      if (boardReferences.size > limit) {
+        [...boardReferences.keys()].slice(limit).forEach((fileId) => boardReferences.delete(fileId));
+        renderBoardReferences();
+        syncAiComposerReferenceClasses();
+      }
+    }
     pop.dataset.kind = kind;
     pop.querySelectorAll('[data-ai-kind]').forEach((button) => {
       const active = button.dataset.aiKind === kind;
@@ -2684,7 +2883,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       resolution: kind === 'video' ? size : undefined,
       count,
       duration,
-      aspectRatio: ratio,
+      aspectRatio: kind === 'video' && boardReferences.size ? 'adaptive' : ratio,
       imageProviderId: kind === 'image' && selectedProvider ? selectedProvider.id : null,
       videoProviderId: kind === 'video' && selectedProvider ? selectedProvider.id : null,
       modelName: selectedProvider ? selectedProvider.name : (aiConfig.videoProviderName || '视频生成'),
@@ -2787,6 +2986,8 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
 
 async function generateAiMediaForBoardV3(request) {
   if (aiImageGenerating) return;
+  const creditAccess = await window.MesssCredits.ensure(request);
+  if (!creditAccess.ok) return;
   aiImageGenerating = true;
   const targetCanvasId = activeCanvasId();
   const generationRequest = { ...request, canvasId: targetCanvasId };
@@ -2807,6 +3008,7 @@ async function generateAiMediaForBoardV3(request) {
       zIndex: placeholder.zIndex
     }));
     const res = await window.messsAPI.generateAiMedia({ ...generationRequest, folderId, placements });
+    if (res && res.membership) window.MesssCredits.publish(res.membership);
     const files = res && Array.isArray(res.files) ? res.files : (res && res.file ? [res.file] : []);
     if (!res || !res.ok || !files.length) {
       const message = res && res.reason === 'missing-api-key'

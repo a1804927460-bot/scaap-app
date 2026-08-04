@@ -25,7 +25,7 @@ const { chat, generateMedia, publicProviderConfig } = await import('../gateway/s
 const config = publicProviderConfig();
 const ids = config.providers.map((provider) => provider.id);
 
-assert.equal(config.catalogVersion, 9);
+assert.equal(config.catalogVersion, 10);
 
 assert.ok(ids.includes('image-1'));
 assert.ok(ids.includes('video-1'));
@@ -167,5 +167,38 @@ assert.deepEqual(miniMaxBody, {
   aigc_watermark: false
 });
 assert.equal(miniMaxCalls[0].options.headers.Authorization, 'Bearer minimax-secret');
+
+await generateMedia('video', {
+  providerId: 'video-1',
+  prompt: 'animate between these frames',
+  resolution: '768P',
+  duration: 4,
+  aspectRatio: 'adaptive',
+  urls: ['https://cdn.example/first.png', 'https://cdn.example/last.png']
+});
+const frameRequest = miniMaxCalls
+  .map((call) => {
+    try { return { ...call, body: JSON.parse(call.options.body) }; } catch (error) { return null; }
+  })
+  .filter(Boolean)
+  .find((call) => call.body && call.body.content && call.body.content.length === 3);
+assert.ok(frameRequest);
+assert.equal(frameRequest.body.ratio, 'adaptive');
+assert.deepEqual(frameRequest.body.content.slice(1), [
+  { type: 'image_url', image_url: { url: 'https://cdn.example/first.png' }, role: 'first_frame' },
+  { type: 'image_url', image_url: { url: 'https://cdn.example/last.png' }, role: 'last_frame' }
+]);
+
+await assert.rejects(
+  generateMedia('video', {
+    providerId: 'video-1',
+    prompt: 'invalid frame ratio',
+    resolution: '768P',
+    duration: 4,
+    aspectRatio: '16:9',
+    urls: ['https://cdn.example/first.png']
+  }),
+  (error) => error && error.code === 'invalid-aspect-ratio'
+);
 
 process.stdout.write('gateway provider registry tests passed.\n');

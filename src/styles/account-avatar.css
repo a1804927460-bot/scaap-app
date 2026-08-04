@@ -1,0 +1,77 @@
+/* Account avatar and compact settings-row refinements live outside main.css. */
+.account-avatar {
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+}
+
+.account-avatar > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+  user-select: none;
+  pointer-events: none;
+}
+
+.account-avatar-edit {
+  position: relative;
+  cursor: pointer;
+  outline: none;
+}
+
+.account-avatar-edit::after {
+  content: '\270E';
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--bg-elevated);
+  border-radius: 50%;
+  background: var(--text-primary);
+  color: var(--bg-base);
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0;
+  transform: scale(.8);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.account-avatar-edit:hover::after,
+.account-avatar-edit:focus-visible::after {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.account-avatar-edit:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 58%, transparent);
+}
+
+.account-avatar-edit:disabled {
+  cursor: wait;
+  opacity: .72;
+}
+
+#ai-provider-manager-open {
+  min-height: 42px;
+  grid-template-columns: 28px minmax(0, 1fr) 16px;
+  padding: 5px 8px;
+}
+
+#ai-provider-manager-open .settings-nav-icon {
+  width: 26px;
+  height: 26px;
+}
+
+#ai-provider-manager-open > span:nth-child(2) {
+  display: block;
+}
+
+#ai-provider-manager-open strong {
+  font-size: 12px;
+  line-height: 1.2;
+}

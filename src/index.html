@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="styles/theme.css" />
   <link rel="stylesheet" href="styles/start.css" />
   <link rel="stylesheet" href="styles/main.css" />
+  <link rel="stylesheet" href="styles/account-avatar.css" />
+  <link rel="stylesheet" href="styles/chat.css" />
 </head>
 <body>
   <div id="app-titlebar" class="app-titlebar">
@@ -119,7 +121,7 @@
 
         <div id="account-popover" class="settings-popover account-popover" hidden>
           <div class="account-popover-head">
-            <span id="account-popover-avatar" class="account-avatar account-avatar-lg">M</span>
+            <button id="account-popover-avatar" class="account-avatar account-avatar-lg account-avatar-edit" type="button" title="Change profile image" aria-label="Change profile image">M</button>
             <span><strong id="account-popover-name">Messs user</strong><small id="account-popover-email">Sign in to sync your account</small></span>
           </div>
           <div class="account-plan-card">
@@ -161,7 +163,7 @@
             <span class="settings-nav-icon">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l1.7 5.1L19 10l-5.3 1.9L12 17l-1.7-5.1L5 10l5.3-1.9L12 3z"/><path d="M19 15l.9 2.6L22 18.5l-2.1.9L19 22l-.9-2.6-2.1-.9 2.1-.9L19 15z"/></svg>
             </span>
-            <span><strong>All Settings</strong><small id="ai-provider-summary">Account, AI, storage, tools</small></span>
+            <span><strong>All Settings</strong></span>
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
           </button>
           <button id="account-google-sign-in" class="account-menu-row account-auth-row" type="button">
@@ -522,7 +524,7 @@
           <section class="ai-provider-section software-update-section">
             <div class="ai-provider-section-heading">
               <div><strong>Software Update</strong><small>Signed releases are checked securely</small></div>
-              <span id="software-update-version">v0.0.3</span>
+              <span id="software-update-version">v0.0.4</span>
             </div>
             <div class="software-update-settings">
               <label><span><strong>Automatic updates</strong><small>Download updates and install after restart</small></span><input id="software-auto-update-toggle" type="checkbox" checked></label>
@@ -680,10 +682,97 @@
     </div>
   </div>
 
-  <div id="section-chat" class="app-section section-placeholder">
-    <div class="section-placeholder-inner">
-      <span class="section-placeholder-name">Chat</span>
-      <p>Coming soon.</p>
+  <div id="section-chat" class="app-section chat-section">
+    <div id="chat-shell" class="chat-shell" aria-label="Messs Chat">
+      <aside class="chat-people-panel">
+        <header class="chat-account-head">
+          <span id="chat-own-avatar" class="chat-avatar">M</span>
+          <span class="chat-account-copy">
+            <strong id="chat-own-name">Messs Chat</strong>
+            <small><span id="chat-connection-dot" class="chat-status-dot"></span><span id="chat-connection-text">Connecting</span></small>
+          </span>
+          <button id="chat-contacts-close" class="chat-icon-button chat-contacts-close" type="button" title="Close contacts" aria-label="Close contacts">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m15 18-6-6 6-6"/></svg>
+          </button>
+          <button id="chat-sync-btn" class="chat-icon-button" type="button" title="Sync" aria-label="Sync chat">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M6.1 9a7 7 0 0 1 11.4-2.4L20 9M4 15l2.5 2.4A7 7 0 0 0 17.9 15"/></svg>
+          </button>
+        </header>
+
+        <form id="chat-user-search-form" class="chat-user-search">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+          <input id="chat-user-search" type="search" autocomplete="off" placeholder="完整邮箱或 Messs ID" aria-label="Search users" />
+          <button type="submit">搜索</button>
+        </form>
+        <div id="chat-search-result" class="chat-search-result" hidden></div>
+
+        <section id="chat-requests-section" class="chat-list-section" hidden>
+          <div class="chat-list-heading"><span>好友请求</span><span id="chat-request-count" class="chat-count">0</span></div>
+          <div id="chat-request-list" class="chat-mini-list"></div>
+        </section>
+
+        <section class="chat-list-section chat-friends-section">
+          <div class="chat-list-heading"><span>好友</span><span id="chat-friend-count" class="chat-count">0</span></div>
+          <div id="chat-friend-list" class="chat-mini-list"></div>
+          <div id="chat-friend-empty" class="chat-list-empty">通过完整邮箱或 ID 添加好友</div>
+        </section>
+      </aside>
+
+      <aside class="chat-conversations-panel">
+        <header class="chat-panel-title">
+          <span><strong>消息</strong><small id="chat-own-id"></small></span>
+          <button id="chat-contacts-toggle" class="chat-icon-button chat-contacts-toggle" type="button" title="Contacts" aria-label="Open contacts">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg>
+          </button>
+        </header>
+        <div id="chat-conversation-list" class="chat-conversation-list"></div>
+        <div id="chat-conversation-empty" class="chat-conversation-empty">
+          <span class="chat-empty-icon">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 15a4 4 0 0 1-4 4H8l-4 3V7a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4z"/></svg>
+          </span>
+          <strong>还没有对话</strong><small>从好友列表开始聊天</small>
+        </div>
+      </aside>
+
+      <main class="chat-thread-panel">
+        <div id="chat-thread-empty" class="chat-thread-empty">
+          <span class="chat-empty-icon chat-empty-icon-lg">
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 12a8 8 0 0 1-8 8H6l-4 3V8a6 6 0 0 1 6-6h5a8 8 0 0 1 8 8z"/></svg>
+          </span>
+          <strong>选择一个对话</strong>
+          <small>文字和图片都会安全保存在云端与本机</small>
+        </div>
+        <section id="chat-thread" class="chat-thread" hidden>
+          <header class="chat-thread-head">
+            <button id="chat-mobile-back" class="chat-icon-button chat-mobile-back" type="button" aria-label="Back">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <span id="chat-thread-avatar" class="chat-avatar">M</span>
+            <span><strong id="chat-thread-name"></strong><small id="chat-thread-id"></small></span>
+          </header>
+          <div id="chat-message-list" class="chat-message-list">
+            <button id="chat-load-older" class="chat-load-older" type="button" hidden>查看更早消息</button>
+          </div>
+          <form id="chat-composer" class="chat-composer">
+            <button id="chat-image-btn" class="chat-icon-button chat-attach-button" type="button" title="Send image" aria-label="Send image">
+              <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m4 17 5-4 3 3 3-2 5 4"/></svg>
+            </button>
+            <textarea id="chat-message-input" rows="1" maxlength="8000" placeholder="输入消息…" aria-label="Message"></textarea>
+            <button id="chat-send-btn" class="chat-send-button" type="submit" aria-label="Send">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9"><path d="m5 12 14-7-4 14-3-6z"/><path d="m12 13 7-8"/></svg>
+            </button>
+          </form>
+        </section>
+      </main>
+
+      <div id="chat-auth-empty" class="chat-auth-empty" hidden>
+        <span class="chat-empty-icon chat-empty-icon-lg">
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10z"/><path d="M3 22a9 9 0 0 1 18 0"/></svg>
+        </span>
+        <strong>登录后开始聊天</strong>
+        <small>请在更多设置中登录 Messs 账号</small>
+        <button id="chat-open-settings" type="button">打开设置</button>
+      </div>
     </div>
   </div>
   <div id="section-market" class="app-section market-section">
@@ -737,7 +826,9 @@
 
   <script src="js/store-client.js"></script>
   <script src="js/confirm-dialog.js"></script>
+  <script src="js/credit-access.js"></script>
   <script src="js/titlebar.js"></script>
+  <script src="js/chat.js"></script>
   <script src="js/market.js"></script>
   <script src="js/theme.js"></script>
   <script src="js/start-screen.js"></script>

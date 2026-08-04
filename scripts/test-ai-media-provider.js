@@ -16,6 +16,8 @@ const {
   buildGeminiImageBody,
   resolveGeminiMediaEndpoint,
   buildRequestBody,
+  buildOpenAiImageBody,
+  buildOpenAiImageEditForm,
   buildQuickRouterUnifiedVideoBody,
   buildOpenAiChatImageBody,
   buildOpenAiVideoBody,
@@ -480,6 +482,38 @@ function testDefaultImageBody() {
   });
 }
 
+function testSeedreamSizeAndRatioMapping() {
+  const config = normalizeConfig({
+    imageEndpoint: 'https://api.quickrouter.ai/v1/images/generations',
+    imageModel: 'doubao-seedream-5-0-260128'
+  });
+  assert.deepStrictEqual(buildOpenAiImageBody({
+    prompt: 'wide editorial scene',
+    size: '2K',
+    aspectRatio: '16:9',
+    urls: []
+  }, config), {
+    model: 'doubao-seedream-5-0-260128',
+    prompt: 'wide editorial scene',
+    size: '2720x1536',
+    sequential_image_generation: 'disabled',
+    response_format: 'url',
+    watermark: false
+  });
+  const editBody = buildOpenAiImageBody({
+    prompt: 'restyle the portrait',
+    size: '4K',
+    aspectRatio: '9:16',
+    urls: ['https://cdn.test/reference.png']
+  }, config);
+  assert.strictEqual(editBody.size, '3072x5440');
+  assert.strictEqual(editBody.image, 'https://cdn.test/reference.png');
+  assert.strictEqual(
+    buildOpenAiImageEditForm({ urls: ['data:image/png;base64,iVBORw=='] }, config),
+    null
+  );
+}
+
 async function testNanoBanana2NativeGeminiImageFlow() {
   const provider = catalogProvider('image-5');
   assert.ok(provider);
@@ -548,6 +582,7 @@ async function testMidjourneyFlow() {
   });
   const buffer = await generateMediaBuffer(fetchImpl, config, 'image', {
     prompt: 'editorial portrait',
+    aspectRatio: '3:2',
     urls: ['data:image/png;base64,iVBORw0KGgo=']
   }, null, async () => {});
 
@@ -556,7 +591,7 @@ async function testMidjourneyFlow() {
   assert.strictEqual(calls[0].url, 'https://api.quickrouter.ai/mj/submit/imagine');
   assert.deepStrictEqual(JSON.parse(calls[0].options.body), {
     botType: 'MID_JOURNEY',
-    prompt: 'editorial portrait',
+    prompt: 'editorial portrait --ar 3:2',
     base64Array: ['iVBORw0KGgo='],
     notifyHook: '',
     state: ''
@@ -591,6 +626,7 @@ async function main() {
   testQuickRouterTextBody();
   await testQuickRouterFailureMessage();
   await testOpenAiImageFlow();
+  testSeedreamSizeAndRatioMapping();
   testGeminiImageBody();
   await testQuickRouterNativeGeminiImageFlow();
   await testNanoBanana2NativeGeminiImageFlow();

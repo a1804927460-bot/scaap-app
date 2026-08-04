@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "check": "node --check src/server.js && node --check src/auth.js && node --check src/providers.js && node --check src/usage.js"
+    "test": "node --test test/usage.test.mjs",
+    "check": "node --check src/server.js && node --check src/auth.js && node --check src/providers.js && node --check src/usage.js && npm test"
   },
   "dependencies": {
     "jose": "^6.1.0",

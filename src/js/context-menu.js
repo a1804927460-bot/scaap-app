@@ -246,6 +246,29 @@ function buildAndShowSimpleMenu(items, x, y, menuId = 'simple-context-menu') {
   return menu;
 }
 
+async function sendBoardMediaToCreativeApp(fileId, target) {
+  const appName = target === 'after-effects' ? 'After Effects' : 'Photoshop';
+  try {
+    const result = await window.messsAPI.sendToCreativeApp(fileId, target);
+    if (result && result.ok) {
+      showToast(result.message || t(`Sent to ${appName}.`, `已发送到 ${appName}。`));
+      return;
+    }
+    // The main process distinguishes missing source files, unsupported media,
+    // missing Adobe installs and actual launch failures. Surface that reason
+    // instead of reporting every failure as "not installed".
+    showToast((result && result.message) || t(
+      `Could not send this file to ${appName}.`,
+      `无法将这个文件发送到 ${appName}。`
+    ));
+  } catch (error) {
+    showToast(t(
+      `Could not send this file to ${appName}.`,
+      `无法将这个文件发送到 ${appName}。`
+    ));
+  }
+}
+
 function showBoardItemContextMenu(item, x, y) {
   const selected = AppState.boardItems.filter((boardItem) => boardItem.selected);
   const items = [
@@ -260,19 +283,13 @@ function showBoardItemContextMenu(item, x, y) {
     if (isGenerated && isImageExt(file.ext)) {
       items.push({
         label: t('Send to Photoshop', '发送到 Photoshop'),
-        action: async () => {
-          const result = await window.messsAPI.sendToCreativeApp(item.fileId, 'photoshop');
-          if (!result || !result.ok) showToast(t('Photoshop was not found on this device.', '未在本机找到 Photoshop。'));
-        }
+        action: () => sendBoardMediaToCreativeApp(item.fileId, 'photoshop')
       });
     }
     if (isGenerated && isVideoExt(file.ext)) {
       items.push({
         label: t('Send to After Effects', '发送到 After Effects'),
-        action: async () => {
-          const result = await window.messsAPI.sendToCreativeApp(item.fileId, 'after-effects');
-          if (!result || !result.ok) showToast(t('After Effects was not found on this device.', '未在本机找到 After Effects。'));
-        }
+        action: () => sendBoardMediaToCreativeApp(item.fileId, 'after-effects')
       });
     }
     items.push(

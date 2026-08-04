@@ -22,7 +22,21 @@ function readPanelSize(mainApp, target) {
 
 function writePanelSize(mainApp, target, value) {
   const limits = PANEL_LIMITS[target];
-  mainApp.style.setProperty(limits.cssVar, `${Math.round(value)}px`);
+  const normalized = Math.round(value * 2) / 2;
+  const previous = parseFloat(mainApp.style.getPropertyValue(limits.cssVar));
+  if (Number.isFinite(previous) && Math.abs(previous - normalized) < 0.25) return;
+  mainApp.style.setProperty(limits.cssVar, `${normalized}px`);
+}
+
+function lastCoalescedPointer(event) {
+  if (typeof event.getCoalescedEvents !== 'function') return event;
+  const points = event.getCoalescedEvents();
+  return points.length ? points[points.length - 1] : event;
+}
+
+function setPanelResizeCursor(mainApp, cursor) {
+  if (cursor) mainApp.dataset.resizeCursor = cursor;
+  else delete mainApp.dataset.resizeCursor;
 }
 
 function readStoredPanelLayout() {
@@ -148,40 +162,48 @@ function initPanelResize() {
       const isVertical = handle.classList.contains('resize-handle-v');
       const startPosition = isVertical ? event.clientX : event.clientY;
       const startSize = readPanelSize(mainApp, target);
+      const maximumSize = getPanelMaximum(mainApp, target);
       const pointerId = event.pointerId;
 
       handle.classList.add('is-active');
       mainApp.classList.add('is-resizing-panel');
+      setPanelResizeCursor(mainApp, isVertical ? 'col' : 'row');
       handle.setPointerCapture(pointerId);
 
       const resizeRunner = createLatestFrameRunner((point) => {
         const position = isVertical ? point.clientX : point.clientY;
         const delta = (position - startPosition) * limits.direction;
-        const nextSize = clampPanelSize(mainApp, target, startSize + delta);
+        const nextSize = Math.min(maximumSize, Math.max(limits.min, startSize + delta));
         writePanelSize(mainApp, target, nextSize);
-        refreshAriaValue();
       });
 
       function onPointerMove(moveEvent) {
         if (moveEvent.pointerId !== pointerId) return;
-        resizeRunner.push({ clientX: moveEvent.clientX, clientY: moveEvent.clientY });
+        const point = lastCoalescedPointer(moveEvent);
+        resizeRunner.push({ clientX: point.clientX, clientY: point.clientY });
       }
 
+      let finished = false;
       function finishResize(endEvent) {
-        if (endEvent.pointerId !== pointerId) return;
+        if (finished || endEvent.pointerId !== pointerId) return;
+        finished = true;
         resizeRunner.flush();
         handle.classList.remove('is-active');
         mainApp.classList.remove('is-resizing-panel');
+        setPanelResizeCursor(mainApp, '');
         handle.removeEventListener('pointermove', onPointerMove);
         handle.removeEventListener('pointerup', finishResize);
         handle.removeEventListener('pointercancel', finishResize);
+        handle.removeEventListener('lostpointercapture', finishResize);
         if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
+        refreshAriaValue();
         persistPanelLayout(mainApp);
       }
 
       handle.addEventListener('pointermove', onPointerMove);
       handle.addEventListener('pointerup', finishResize);
       handle.addEventListener('pointercancel', finishResize);
+      handle.addEventListener('lostpointercapture', finishResize);
     });
   });
 
@@ -196,32 +218,50 @@ function initPanelResize() {
       const startY = event.clientY;
       const startHorizontal = readPanelSize(mainApp, horizontalTarget);
       const startPreview = readPanelSize(mainApp, 'preview');
+      const maximumHorizontal = getPanelMaximum(mainApp, horizontalTarget);
+      const maximumPreview = getPanelMaximum(mainApp, 'preview');
       handle.classList.add('is-active');
       mainApp.classList.add('is-resizing-panel');
+      setPanelResizeCursor(mainApp, handle.id === 'resize-corner-right' ? 'nesw' : 'nwse');
       handle.setPointerCapture(pointerId);
 
       const resizeRunner = createLatestFrameRunner((point) => {
         const horizontalDelta = (point.clientX - startX) * PANEL_LIMITS[horizontalTarget].direction;
-        writePanelSize(mainApp, horizontalTarget, clampPanelSize(mainApp, horizontalTarget, startHorizontal + horizontalDelta));
-        writePanelSize(mainApp, 'preview', clampPanelSize(mainApp, 'preview', startPreview + point.clientY - startY));
+        const horizontalSize = Math.min(
+          maximumHorizontal,
+          Math.max(PANEL_LIMITS[horizontalTarget].min, startHorizontal + horizontalDelta)
+        );
+        const previewSize = Math.min(
+          maximumPreview,
+          Math.max(PANEL_LIMITS.preview.min, startPreview + point.clientY - startY)
+        );
+        writePanelSize(mainApp, horizontalTarget, horizontalSize);
+        writePanelSize(mainApp, 'preview', previewSize);
       });
       const move = (moveEvent) => {
-        if (moveEvent.pointerId === pointerId) resizeRunner.push({ clientX: moveEvent.clientX, clientY: moveEvent.clientY });
+        if (moveEvent.pointerId !== pointerId) return;
+        const point = lastCoalescedPointer(moveEvent);
+        resizeRunner.push({ clientX: point.clientX, clientY: point.clientY });
       };
+      let finished = false;
       const finish = (endEvent) => {
-        if (endEvent.pointerId !== pointerId) return;
+        if (finished || endEvent.pointerId !== pointerId) return;
+        finished = true;
         resizeRunner.flush();
         handle.classList.remove('is-active');
         mainApp.classList.remove('is-resizing-panel');
+        setPanelResizeCursor(mainApp, '');
         handle.removeEventListener('pointermove', move);
         handle.removeEventListener('pointerup', finish);
         handle.removeEventListener('pointercancel', finish);
+        handle.removeEventListener('lostpointercapture', finish);
         if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
         persistPanelLayout(mainApp);
       };
       handle.addEventListener('pointermove', move);
       handle.addEventListener('pointerup', finish);
       handle.addEventListener('pointercancel', finish);
+      handle.addEventListener('lostpointercapture', finish);
     });
   });
 

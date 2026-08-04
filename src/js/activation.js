@@ -11,38 +11,56 @@ function renderActivationStatus(status) {
     settingsStatus.classList.toggle('is-ready', activated);
   }
   if (settingsNote) {
-    settingsNote.textContent = activated
-      ? 'This device is authorized for the development build.'
-      : 'Enter an activation code here when one is required.';
+    settingsNote.textContent = status && status.cloudSyncRequired
+      ? 'Re-enter your redemption code to sync cloud access.'
+      : (activated ? 'Redemption verified.' : '');
+    settingsNote.hidden = !activated && !(status && status.cloudSyncRequired);
   }
   return activated;
 }
 
-async function submitActivation(input, button, error) {
+async function submitActivation(input, button, feedback) {
   const code = input.value.trim();
   if (!code) {
-    error.textContent = 'Enter the activation code.';
-    error.hidden = false;
+    feedback.textContent = 'Enter the activation code.';
+    feedback.hidden = false;
     input.focus();
     return false;
   }
   button.disabled = true;
-  error.hidden = true;
+  feedback.hidden = true;
   try {
     const result = await window.messsAPI.activateApp(code);
-    input.value = '';
     if (!result || !result.ok) {
-      error.textContent = 'Invalid activation code.';
-      error.hidden = false;
+      feedback.textContent = result && result.message
+        ? result.message
+        : 'Invalid activation code.';
+      feedback.hidden = false;
       input.focus();
       return false;
     }
+    input.value = '';
     renderActivationStatus(result);
+    if (result.membership && window.MesssCredits) {
+      window.MesssCredits.publish(result.membership);
+    }
     const config = typeof refreshAiMediaSettings === 'function'
       ? await refreshAiMediaSettings()
       : await window.messsAPI.getAiMediaConfig();
     document.dispatchEvent(new CustomEvent('messs:ai-config-updated', { detail: config }));
+    if (feedback) {
+      feedback.textContent = result.creditsAdded > 0
+        ? `${result.creditsAdded} points added.`
+        : (result.redemptionReason === 'already-redeemed' ? 'Code already redeemed on this device.' : 'Redemption verified.');
+      feedback.hidden = false;
+    }
     return true;
+  } catch (activationError) {
+    feedback.textContent = activationError && activationError.message
+      ? activationError.message
+      : 'Activation failed. Please try again.';
+    feedback.hidden = false;
+    return false;
   } finally {
     button.disabled = false;
   }
@@ -56,10 +74,12 @@ async function initActivation(initialStatus) {
 
   settingsForm.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const ok = await submitActivation(settingsInput, settingsButton, settingsNote);
-    if (ok) settingsNote.textContent = 'Activation verified for this device.';
+    await submitActivation(settingsInput, settingsButton, settingsNote);
   });
 
   const status = initialStatus || await window.messsAPI.getActivationStatus();
   renderActivationStatus(status);
+  if (typeof window.messsAPI.onActivationUpdated === 'function') {
+    window.messsAPI.onActivationUpdated((nextStatus) => renderActivationStatus(nextStatus));
+  }
 }

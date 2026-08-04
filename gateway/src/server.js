@@ -2,7 +2,15 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { authenticate } from './auth.js';
 import { catalogVersion, chat, generateMedia, models, publicProviderConfig } from './providers.js';
-import { reserveUsage, settleUsage } from './usage.js';
+import {
+  accountAllowsOverseas,
+  filterProviderConfigForAccount,
+  getUsageAccount,
+  providerRequiresActivation,
+  redeemUsageCode,
+  reserveUsage,
+  settleUsage
+} from './usage.js';
 
 const port = Math.max(1, Number(process.env.PORT) || 3000);
 const maxBodyBytes = 70 * 1024 * 1024;
@@ -15,6 +23,14 @@ const secretPatterns = [
   /\b(?:postgres|postgresql|mysql):\/\/[^\s:/]+:[^\s@]+@/i,
   /\bservice_role\b/i
 ];
+const imageSizes = new Set(['1K', '2K', '4K', 'original']);
+const imageRatios = new Set(['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9']);
+const miniMaxTextVideoRatios = new Set(['21:9', '16:9', '4:3', '1:1', '3:4', '9:16']);
+const miniMaxVideoResolutions = new Set(['768P', '2K']);
+
+function invalidOption(code, message) {
+  return Object.assign(new Error(message), { status: 400, code });
+}
 
 function send(response, status, payload, headers = {}) {
   const body = Buffer.isBuffer(payload) ? payload : Buffer.from(JSON.stringify(payload));
@@ -82,19 +98,66 @@ function validateBody(body, kind) {
     }
   }
   if (encodedBytes > 50 * 1024 * 1024) throw Object.assign(new Error('Reference images exceed the upstream request limit.'), { status: 413, code: 'attachments-too-large' });
+  const requestedSize = String(body.size || '').trim();
+  const requestedResolution = String(body.resolution || '').trim().toUpperCase();
+  const requestedRatio = String(body.aspectRatio || '').trim();
+  const requestedDuration = Number(body.duration);
+  if (kind === 'image') {
+    if (!imageSizes.has(requestedSize)) throw invalidOption('invalid-size', 'The selected image resolution is not supported.');
+    if (!imageRatios.has(requestedRatio)) throw invalidOption('invalid-aspect-ratio', 'The selected image aspect ratio is not supported.');
+  }
+  if (kind === 'video') {
+    if (!miniMaxVideoResolutions.has(requestedResolution)) {
+      throw invalidOption('invalid-resolution', 'MiniMax H3 resolution must be 768P or 2K.');
+    }
+    if (!Number.isInteger(requestedDuration) || requestedDuration < 4 || requestedDuration > 15) {
+      throw invalidOption('invalid-duration', 'MiniMax H3 duration must be a whole number from 4 to 15 seconds.');
+    }
+    const ratioIsValid = urls.length
+      ? requestedRatio === 'adaptive'
+      : miniMaxTextVideoRatios.has(requestedRatio);
+    if (!ratioIsValid) {
+      throw invalidOption(
+        'invalid-aspect-ratio',
+        urls.length
+          ? 'MiniMax H3 requires the adaptive ratio when first or last frame images are supplied.'
+          : 'The selected MiniMax H3 aspect ratio is not supported.'
+      );
+    }
+  }
   return {
     prompt,
     providerId: String(body.providerId || '').slice(0, 64),
     model: String(body.model || '').slice(0, 160),
     messages,
     urls,
-    size: ['1K', '2K', '4K', 'original'].includes(body.size) ? body.size : '1K',
-    resolution: ['768P', '2K'].includes(body.resolution) ? body.resolution : '768P',
-    aspectRatio: String(body.aspectRatio || 'auto').slice(0, 16),
-    duration: Math.max(1, Math.min(30, Number(body.duration) || 6)),
+    size: kind === 'image' ? requestedSize : '1K',
+    resolution: kind === 'video' ? requestedResolution : '768P',
+    aspectRatio: kind === 'chat' ? 'auto' : requestedRatio,
+    duration: kind === 'video' ? requestedDuration : Math.max(1, Math.min(30, Number(body.duration) || 6)),
     sourceWidth: Math.max(0, Math.min(16384, Number(body.sourceWidth) || 0)),
     sourceHeight: Math.max(0, Math.min(16384, Number(body.sourceHeight) || 0))
   };
+}
+
+function deniedReservation(response, reservation) {
+  const reason = String(reservation && reservation.reason || 'credit-service-failed');
+  const responses = {
+    'activation-required': [403, 'Activation is required for the selected AI model.'],
+    'insufficient-credits': [402, 'There are not enough credits for this generation.'],
+    'account-suspended': [403, 'This AI account is suspended.'],
+    'provider-not-allowed': [400, 'The selected AI provider is not allowed.'],
+    'pricing-mismatch': [409, 'AI pricing changed. Refresh the app and try again.'],
+    'request-id-conflict': [409, 'The request identifier conflicts with an earlier request.'],
+    'quota-exceeded': [402, 'The legacy daily AI quota has been reached.']
+  };
+  const [status, message] = responses[reason] || [503, 'The AI credit check could not be completed.'];
+  return send(response, status, {
+    code: reason,
+    message,
+    requiredCredits: Number(reservation && reservation.credits) || 0,
+    availableCredits: Math.max(0, Number(reservation && (reservation.availableCredits ?? reservation.available_credits)) || 0)
+  });
 }
 
 async function handle(request, response) {
@@ -110,9 +173,29 @@ async function handle(request, response) {
   const ip = String(request.headers['x-forwarded-for'] || request.socket.remoteAddress || '').split(',')[0].trim();
   if (!rateAllowed(user.id, ip)) return send(response, 429, { code: 'rate-limited', message: 'Too many requests. Please wait before trying again.' }, { 'Retry-After': '60' });
 
-  if (request.method === 'GET' && url.pathname === '/v1/config') return send(response, 200, publicProviderConfig());
+  if (request.method === 'GET' && url.pathname === '/v1/account') {
+    return send(response, 200, { account: await getUsageAccount(user.id) });
+  }
+  if (request.method === 'POST' && url.pathname === '/v1/account/redeem') {
+    const redemptionBody = await readJson(request);
+    const result = await redeemUsageCode(user.id, redemptionBody.code);
+    if (result.ok !== true) {
+      const reason = String(result.reason || 'invalid-redemption-code');
+      const status = reason === 'code-exhausted' ? 409 : 400;
+      return send(response, status, { code: reason, message: reason === 'code-exhausted' ? 'This redemption code has already been used.' : 'The redemption code is invalid.' });
+    }
+    return send(response, 200, { redemption: result, account: result.account || null });
+  }
+  if (request.method === 'GET' && url.pathname === '/v1/config') {
+    return send(response, 200, filterProviderConfigForAccount(publicProviderConfig(), await getUsageAccount(user.id)));
+  }
   if (request.method === 'GET' && url.pathname === '/v1/models') {
-    return send(response, 200, await models(url.searchParams.get('providerId')));
+    const requestedProviderId = String(url.searchParams.get('providerId') || 'chat-1').trim().toLowerCase();
+    const account = await getUsageAccount(user.id);
+    if (providerRequiresActivation(requestedProviderId === 'video-1' ? 'video' : 'chat', requestedProviderId) && !accountAllowsOverseas(account)) {
+      return send(response, 403, { code: 'activation-required', message: 'Activation is required for the selected AI model.' });
+    }
+    return send(response, 200, await models(requestedProviderId));
   }
 
   let kind;
@@ -122,8 +205,8 @@ async function handle(request, response) {
   if (!kind) return send(response, 404, { code: 'not-found', message: 'Route not found.' });
 
   const body = validateBody(await readJson(request), kind);
-  const reserved = await reserveUsage(user.id, kind, requestId);
-  if (!reserved) return send(response, 402, { code: 'quota-exceeded', message: 'Your daily AI quota has been reached.' });
+  const reservation = await reserveUsage(user.id, kind, requestId, body);
+  if (!reservation.ok) return deniedReservation(response, reservation);
   const startedAt = Date.now();
   const controller = new AbortController();
   request.once('aborted', () => controller.abort());
@@ -142,7 +225,19 @@ async function handle(request, response) {
       'Content-Type': kind === 'video' ? 'video/mp4' : 'application/octet-stream'
     });
   } catch (error) {
-    await settleUsage(requestId, 'failed', Date.now() - startedAt);
+    try {
+      await settleUsage(requestId, 'failed', Date.now() - startedAt);
+    } catch (settlementError) {
+      // Preserve the upstream failure for the client. The reservation remains
+      // locked (not spent) and reserve_ai_credits will release it after the
+      // stale-reservation window if the settlement service is unavailable.
+      console.error(JSON.stringify({
+        level: 'error',
+        requestId,
+        code: String(settlementError.code || 'credit-settlement-failed'),
+        status: Number(settlementError.status) || 503
+      }));
+    }
     throw error;
   }
 }
@@ -154,6 +249,11 @@ const server = http.createServer((request, response) => {
     const safeMessages = {
       'quota-not-configured': 'AI quota service is not configured.',
       'quota-service-failed': 'AI quota check is temporarily unavailable.',
+      'credit-service-not-configured': 'AI credit enforcement is not configured.',
+      'credit-schema-missing': 'AI credit enforcement has not been installed.',
+      'credit-service-failed': 'AI credit validation is temporarily unavailable.',
+      'credit-settlement-failed': 'AI credit settlement is temporarily unavailable.',
+      'redemption-service-failed': 'Code redemption is temporarily unavailable.',
       'provider-not-configured': 'The selected AI model is not configured on the server.',
       'provider-secret-missing': 'The selected AI model is missing its server credential.'
     };

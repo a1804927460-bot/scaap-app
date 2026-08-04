@@ -945,11 +945,40 @@ function openFullscreenPreview() {
   const stage = document.getElementById('preview-stage');
   const media = stage.querySelector('img, video');
   if (!media) return;
+  showFullscreenMedia(media);
+}
+
+function openFileFullscreenPreview(file) {
+  if (!file || !isImageExt(file.ext)) return;
+  const primarySource = resolveImageDisplaySource(file, true);
+  const fallbackSource = resolveImageDisplaySource(file, false);
+  if (!primarySource) return;
+  const image = document.createElement('img');
+  image.src = primarySource;
+  image.alt = file.name || '';
+  image.decoding = 'async';
+  image.fetchPriority = 'high';
+  showFullscreenMedia(image, {
+    fallbackSrc: fallbackSource !== primarySource ? fallbackSource : '',
+    onPrimaryImageError: () => {
+      if (typeof Board !== 'undefined' && Board.failedFullImageSources) {
+        Board.failedFullImageSources.add(primarySource);
+      }
+    }
+  });
+}
+
+function showFullscreenMedia(media, options = {}) {
   const overlay = document.getElementById('fullscreen-overlay');
   const fsStage = document.getElementById('fullscreen-stage');
   fsStage.innerHTML = '';
   const clone = media.cloneNode(true);
-  if (clone.tagName === 'VIDEO') {
+  if (clone.tagName === 'IMG' && options.fallbackSrc) {
+    clone.addEventListener('error', () => {
+      if (typeof options.onPrimaryImageError === 'function') options.onPrimaryImageError();
+      clone.src = options.fallbackSrc;
+    }, { once: true });
+  } else if (clone.tagName === 'VIDEO') {
     clone.controls = true;
     clone.muted = media.muted;
     clone.addEventListener('loadedmetadata', () => {

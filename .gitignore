@@ -2,8 +2,18 @@ node_modules/
 gateway/node_modules/
 release/
 release-dev/
+release-*/
 .qa-user-data/
 .codex-test-profile/
+runtime.json
+
+# One-off local diagnostics. These may reference local profiles or sessions.
+scripts/inspect-cloud-session.js
+scripts/migrate-cloud-session.js
+scripts/qa-gateway-account.js
+scripts/qa-runtime-state.js
+scripts/recover-library-from-qa.js
+scripts/session-envelope-helper.js
 
 # Secrets and local runtime overrides
 .env

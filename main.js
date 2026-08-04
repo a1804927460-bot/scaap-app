@@ -31,15 +31,39 @@ const { AiGatewayClient } = require('./lib/ai-gateway-client');
 const { normalizeGatewayCatalog, assertGatewayProvider } = require('./lib/gateway-catalog');
 const { assertSafeLocalFile, sanitizeAiRequest } = require('./lib/privacy-guard');
 const { activate: activateApp, getActivationStatus } = require('./lib/activation');
+const { quoteMediaCredits, publicCreditPricing } = require('./lib/credit-pricing');
+const { launchAdobeMedia } = require('./lib/adobe-launcher');
+const { ChatService } = require('./lib/chat-service');
+const { probeVideoMetadata } = require('./lib/media-metadata');
 
 const DEFAULT_CATALOG_IMAGE = providerCatalog('image')[0];
 const DEFAULT_CATALOG_VIDEO = providerCatalog('video')[0];
 const DEFAULT_CATALOG_CHAT = providerCatalog('chat')[0];
+const AI_IMAGE_SIZES = new Set(['1K', '2K', '4K', 'original']);
+const AI_IMAGE_RATIOS = new Set([
+  'auto', '1:1', '16:9', '9:16', '4:3', '3:4',
+  '3:2', '2:3', '5:4', '4:5', '21:9'
+]);
+const MINIMAX_TEXT_VIDEO_RATIOS = new Set(['21:9', '16:9', '4:3', '1:1', '3:4', '9:16']);
+const MINIMAX_VIDEO_RESOLUTIONS = new Set(['768P', '2K']);
 const PUBLIC_RELEASE = Object.freeze({
   provider: 'github',
   owner: 'a1804927460-bot',
   repo: 'messs-releases'
 });
+const WINDOW_BACKGROUND_COLORS = Object.freeze({
+  dark: '#080A0D',
+  light: '#FFFFFF'
+});
+
+function normalizeTheme(theme) {
+  return theme === 'light' ? 'light' : 'dark';
+}
+
+function setWindowBackgroundColor(theme) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.setBackgroundColor(WINDOW_BACKGROUND_COLORS[normalizeTheme(theme)]);
+}
 
 const qaRemoteDebugPort = String(process.env.MESSS_QA_REMOTE_DEBUG_PORT || '').trim();
 if (/^\d{4,5}$/.test(qaRemoteDebugPort)) {
@@ -76,8 +100,14 @@ let store;
 let membershipService;
 let runtimeConfig;
 let supabaseAuth;
+let chatService;
 let aiGateway;
 let gatewayCatalogCache = null;
+let gatewayAccountCache = null;
+let gatewayAccountCacheExpiresAt = 0;
+let gatewayAccountSyncPromise = null;
+let gatewayAccountSyncGeneration = 0;
+let gatewayAccountRetryAfter = 0;
 let usageTickInterval;
 let previewCacheDir;
 let previewTmpDir;
@@ -420,13 +450,16 @@ function listDesktopFilenames() {
 }
 
 function createWindow() {
+  const initialTheme = normalizeTheme(store && store.data && store.data.settings && store.data.settings.theme);
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1040,
     minHeight: 680,
     icon: app.isPackaged ? process.execPath : path.join(__dirname, 'build-resources', 'icon.png'),
-    backgroundColor: '#080A0D',
+    // Chromium can briefly expose the native surface during resize, maximize
+    // and DPI transitions. Keep that surface aligned with the persisted theme.
+    backgroundColor: WINDOW_BACKGROUND_COLORS[initialTheme],
     frame: false, // We draw our own top bar (see src/index.html #app-titlebar) so it
                    // always matches the app's theme instead of the OS's default chrome.
     webPreferences: {
@@ -533,6 +566,8 @@ function fileToPayload(f) {
     sizeBytes: f.sizeBytes,
     sourceWidth: f.sourceWidth || null,
     sourceHeight: f.sourceHeight || null,
+    sourceDuration: Number.isFinite(Number(f.sourceDuration)) ? Number(f.sourceDuration) : null,
+    mediaMetadataVersion: Number(f.mediaMetadataVersion) || null,
     mimeType: f.mimeType || 'application/octet-stream',
     archiveKind: f.archiveKind || 'file',
     fingerprint: f.fingerprint || null,
@@ -543,7 +578,9 @@ function fileToPayload(f) {
       providerId: f.aiGeneration.providerId,
       aspectRatio: f.aiGeneration.aspectRatio,
       size: f.aiGeneration.size,
+      resolution: f.aiGeneration.resolution || null,
       duration: f.aiGeneration.duration,
+      requestedDuration: f.aiGeneration.requestedDuration || null,
       referenceFileIds: Array.isArray(f.aiGeneration.referenceFileIds)
         ? [...f.aiGeneration.referenceFileIds]
         : [],
@@ -561,39 +598,55 @@ function fileToPayload(f) {
   };
 }
 
-async function readSourceImageDimensions(filePath, ext) {
+async function readSourceMediaMetadata(filePath, ext) {
   const normalizedExt = String(ext || '').toLowerCase();
-  if (!sharp || !preview.isImageExt(normalizedExt)) return null;
-  try {
-    const metadata = await sharp(filePath, { failOn: 'none' }).metadata();
-    if (!Number.isFinite(metadata.width) || !Number.isFinite(metadata.height)) return null;
-    return {
-      sourceWidth: metadata.width,
-      sourceHeight: metadata.height
-    };
-  } catch (err) {
-    return null;
+  if (preview.isVideoExt(normalizedExt)) {
+    return probeVideoMetadata(filePath);
   }
+  if (sharp && preview.isImageExt(normalizedExt)) {
+    try {
+      const metadata = await sharp(filePath, { failOn: 'none' }).metadata();
+      const autoWidth = Number(metadata.autoOrient && metadata.autoOrient.width);
+      const autoHeight = Number(metadata.autoOrient && metadata.autoOrient.height);
+      let width = autoWidth > 0 ? autoWidth : Number(metadata.width);
+      let height = autoHeight > 0 ? autoHeight : Number(metadata.height);
+      if (!(autoWidth > 0 && autoHeight > 0) && [5, 6, 7, 8].includes(Number(metadata.orientation))) {
+        [width, height] = [height, width];
+      }
+      if (!(width > 0 && height > 0)) return null;
+      return { sourceWidth: width, sourceHeight: height };
+    } catch (err) {
+      return null;
+    }
+  }
+  return null;
 }
 
-async function hydrateMissingImageDimensions() {
-  const candidates = store.data.files.filter((file) =>
-    !file.sourceWidth &&
-    !file.sourceHeight &&
-    preview.isImageExt(String(file.ext || path.extname(file.name)).toLowerCase()) &&
-    file.storedPath
-  );
+async function hydrateMissingMediaMetadata() {
+  const candidates = store.data.files.filter((file) => {
+    const ext = String(file.ext || path.extname(file.name)).toLowerCase();
+    const isVideo = preview.isVideoExt(ext);
+    const isImage = preview.isImageExt(ext);
+    const missingDimensions = !(Number(file.sourceWidth) > 0 && Number(file.sourceHeight) > 0);
+    // Earlier releases only probed still images. Re-probe video records once
+    // so old requested-ratio cards are corrected to the actual display size.
+    return (missingDimensions || (isVideo && file.mediaMetadataVersion !== 1)) &&
+      (isImage || isVideo) && file.storedPath;
+  });
   if (!candidates.length) return;
 
   let cursor = 0;
   const worker = async () => {
     while (cursor < candidates.length) {
       const file = candidates[cursor++];
-      const dimensions = await readSourceImageDimensions(
+      const dimensions = await readSourceMediaMetadata(
         file.storedPath,
         file.ext || path.extname(file.name)
       );
       if (dimensions) Object.assign(file, dimensions);
+      if (dimensions && preview.isVideoExt(String(file.ext || path.extname(file.name)).toLowerCase())) {
+        file.mediaMetadataVersion = 1;
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(8, candidates.length) }, worker));
@@ -734,7 +787,7 @@ async function importOneFile(originalPath, folderId, unlockedKeys, today, canvas
 
   const sourceFolder = path.basename(path.dirname(originalPath));
   const classification = classifyArchiveFile(name);
-  const sourceDimensions = await readSourceImageDimensions(storedPath, ext);
+  const sourceDimensions = await readSourceMediaMetadata(storedPath, ext);
   const record = {
     id,
     name,
@@ -744,6 +797,7 @@ async function importOneFile(originalPath, folderId, unlockedKeys, today, canvas
     sourceFolder,
     sizeBytes: stat.size,
     ...sourceDimensions,
+    ...(sourceDimensions && preview.isVideoExt(String(ext).toLowerCase()) ? { mediaMetadataVersion: 1 } : {}),
     ...classification,
     fingerprint: sourceFingerprint,
     folderId: folderId || null,
@@ -907,28 +961,6 @@ function saveAiApiKey(apiKey, secretId = 'default') {
 
 function clearAllAiApiKeys() {
   try { fs.rmSync(getAiSecretPath(), { force: true }); } catch (err) {}
-}
-
-function findAdobeExecutable(target) {
-  if (process.platform !== 'win32') return '';
-  const adobeRoot = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Adobe');
-  let directories = [];
-  try {
-    directories = fs.readdirSync(adobeRoot, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-  } catch (error) {
-    return '';
-  }
-  const prefix = target === 'after-effects' ? 'Adobe After Effects' : 'Adobe Photoshop';
-  const executable = target === 'after-effects' ? path.join('Support Files', 'AfterFX.exe') : 'Photoshop.exe';
-  for (const directory of directories) {
-    if (!directory.toLowerCase().startsWith(prefix.toLowerCase())) continue;
-    const candidate = path.join(adobeRoot, directory, executable);
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return '';
 }
 
 function normalizeProviderEndpoint(value) {
@@ -1103,18 +1135,183 @@ function aiProviderRequiresActivation(kind, providerId) {
 }
 
 function applyAiProviderVisibility(config) {
-  const activated = getActivationStatus(store.data.settings).activated;
-  const decorate = (kind, providers) => (Array.isArray(providers) ? providers : []).map((provider) => ({
-    ...provider,
-    available: activated || !aiProviderRequiresActivation(kind, provider.id)
-  }));
+  const activated = isAiActivationUnlocked();
+  const visible = (kind, providers) => (Array.isArray(providers) ? providers : [])
+    .filter((provider) => activated || !aiProviderRequiresActivation(kind, provider.id))
+    .map((provider) => ({ ...provider, available: true }));
+  const imageProviders = visible('image', config.imageProviders);
+  const videoProviders = visible('video', config.videoProviders);
+  const chatProviders = visible('chat', config.chatProviders);
   return {
     ...config,
     providerVisibilityEnforced: true,
-    imageProviders: decorate('image', config.imageProviders),
-    videoProviders: decorate('video', config.videoProviders),
-    chatProviders: decorate('chat', config.chatProviders)
+    activated,
+    imageProviders,
+    videoProviders,
+    chatProviders,
+    activeImageProviderId: imageProviders.some((provider) => provider.id === config.activeImageProviderId)
+      ? config.activeImageProviderId
+      : (imageProviders[0] ? imageProviders[0].id : null),
+    activeVideoProviderId: videoProviders.some((provider) => provider.id === config.activeVideoProviderId)
+      ? config.activeVideoProviderId
+      : (videoProviders[0] ? videoProviders[0].id : null),
+    activeChatProviderId: chatProviders.some((provider) => provider.id === config.activeChatProviderId)
+      ? config.activeChatProviderId
+      : (chatProviders[0] ? chatProviders[0].id : null),
+    imageEndpoint: imageProviders.length ? config.imageEndpoint : '',
+    chatEndpoint: chatProviders.length ? config.chatEndpoint : '',
+    chatModel: chatProviders.length ? config.chatModel : ''
   };
+}
+
+function hasAuthenticatedGatewaySession() {
+  const session = supabaseAuth && supabaseAuth.getPublicSession();
+  return Boolean(runtimeConfig && runtimeConfig.gatewayConfigured && session && session.authenticated && session.user);
+}
+
+function isAiActivationUnlocked() {
+  if (runtimeConfig && runtimeConfig.gatewayConfigured) {
+    const session = supabaseAuth && supabaseAuth.getPublicSession();
+    return Boolean(
+      session && session.authenticated && session.user && gatewayAccountCache &&
+      gatewayAccountCache.userId === session.user.id && gatewayAccountCache.overseasUnlocked === true
+    );
+  }
+  return getActivationStatus(store.data.settings).activated;
+}
+
+function activationStatusForRenderer() {
+  const local = getActivationStatus(store.data.settings);
+  const session = supabaseAuth && supabaseAuth.getPublicSession();
+  const cloudAuthoritative = Boolean(
+    hasAuthenticatedGatewaySession() && gatewayAccountCache && session && session.user &&
+    gatewayAccountCache.userId === session.user.id
+  );
+  const cloudUnlocked = cloudAuthoritative ? gatewayAccountCache.overseasUnlocked === true : null;
+  const gatewayMode = Boolean(runtimeConfig && runtimeConfig.gatewayConfigured);
+  return {
+    ...local,
+    activated: gatewayMode ? Boolean(cloudAuthoritative && cloudUnlocked) : local.activated,
+    localActivated: local.activated,
+    cloudAuthoritative,
+    cloudSyncRequired: cloudAuthoritative && local.activated && !cloudUnlocked
+  };
+}
+
+function applyGatewayAccount(account) {
+  if (!account || typeof account !== 'object') {
+    const error = new Error('The gateway returned an invalid credit account.');
+    error.code = 'credit-service-failed';
+    throw error;
+  }
+  const session = supabaseAuth.getPublicSession();
+  const previousAccount = gatewayAccountCache;
+  const balance = Math.max(0, Number(account.balance) || 0);
+  const reserved = Math.max(0, Math.min(balance, Number(account.reserved) || 0));
+  gatewayAccountCache = {
+    userId: session.user && session.user.id || null,
+    balance,
+    reserved,
+    overseasUnlocked: account.overseasUnlocked === true || account.overseas_unlocked === true,
+    membershipTier: String(account.membershipTier || account.membership_tier || 'free').slice(0, 40) || 'free',
+    updatedAt: account.updatedAt || account.updated_at || new Date().toISOString()
+  };
+  gatewayAccountCacheExpiresAt = Date.now() + 45_000;
+  gatewayAccountRetryAfter = 0;
+  if (!previousAccount || previousAccount.userId !== gatewayAccountCache.userId || previousAccount.overseasUnlocked !== gatewayAccountCache.overseasUnlocked) {
+    gatewayCatalogCache = null;
+  }
+  const membership = membershipService.applyServerSnapshot({
+    account: {
+      id: session.user && session.user.id || null,
+      status: 'authenticated',
+      email: session.user && session.user.email || null,
+      displayName: session.user && (session.user.displayName || session.user.display_name) || null
+    },
+    plan: {
+      id: gatewayAccountCache.membershipTier,
+      name: gatewayAccountCache.membershipTier === 'free' ? 'Free' : gatewayAccountCache.membershipTier,
+      tier: gatewayAccountCache.membershipTier
+    },
+    credits: {
+      balance,
+      reserved,
+      currency: 'points',
+      isAuthoritative: true,
+      updatedAt: gatewayAccountCache.updatedAt
+    },
+    sync: {
+      status: 'synced',
+      revision: `${balance}:${reserved}:${gatewayAccountCache.updatedAt}`
+    }
+  });
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('membership:updated', membership);
+    mainWindow.webContents.send('activation:updated', activationStatusForRenderer());
+  }
+  return membership;
+}
+
+function startGatewayAccountSync() {
+  if (gatewayAccountSyncPromise) return gatewayAccountSyncPromise;
+  const session = supabaseAuth.getPublicSession();
+  const expectedUserId = session && session.user && session.user.id;
+  const generation = gatewayAccountSyncGeneration;
+  let trackedPromise;
+  trackedPromise = aiGateway.getAccount()
+    .then((payload) => {
+      const liveSession = supabaseAuth.getPublicSession();
+      if (generation !== gatewayAccountSyncGeneration || !liveSession.authenticated || !liveSession.user || liveSession.user.id !== expectedUserId) {
+        return membershipService.getSnapshot();
+      }
+      return applyGatewayAccount(payload && payload.account ? payload.account : payload);
+    })
+    .finally(() => {
+      if (gatewayAccountSyncPromise === trackedPromise) gatewayAccountSyncPromise = null;
+    });
+  gatewayAccountSyncPromise = trackedPromise;
+  return trackedPromise;
+}
+
+async function syncGatewayAccount(options = {}) {
+  if (!hasAuthenticatedGatewaySession() || !aiGateway) return membershipService.getSnapshot();
+  const force = options.force === true;
+  const session = supabaseAuth.getPublicSession();
+  const hasCache = Boolean(gatewayAccountCache && gatewayAccountCache.userId === (session.user && session.user.id));
+  if (!force && !hasCache && gatewayAccountRetryAfter > Date.now()) {
+    return membershipService.getSnapshot();
+  }
+  if (!force && hasCache) {
+    if (gatewayAccountCacheExpiresAt <= Date.now() && !gatewayAccountSyncPromise) {
+      startGatewayAccountSync();
+      // Stale-while-revalidate: opening the AI panel should never wait up to
+      // the network timeout merely to refresh a balance that is already shown.
+      gatewayAccountSyncPromise.catch(() => {});
+    }
+    return membershipService.getSnapshot();
+  }
+  try {
+    return await startGatewayAccountSync();
+  } catch (error) {
+    gatewayAccountRetryAfter = Date.now() + 15_000;
+    if (options.throwOnError) throw error;
+    return membershipService.getSnapshot();
+  }
+}
+
+function clearGatewayAccount() {
+  gatewayAccountSyncGeneration += 1;
+  gatewayAccountCache = null;
+  gatewayAccountCacheExpiresAt = 0;
+  gatewayAccountRetryAfter = 0;
+  gatewayAccountSyncPromise = null;
+  if (!membershipService || !runtimeConfig || !runtimeConfig.gatewayConfigured) return;
+  membershipService.applyServerSnapshot({
+    account: { id: null, status: 'guest', email: null, displayName: null },
+    plan: { id: 'free', name: 'Free', tier: 'free' },
+    credits: { balance: 0, reserved: 0, currency: 'points', isAuthoritative: true, updatedAt: new Date().toISOString() },
+    sync: { status: 'stale', revision: null }
+  });
 }
 
 async function getPublicAiMediaConfig() {
@@ -1126,8 +1323,11 @@ async function getPublicAiMediaConfig() {
   const hasUsableKey = (id) => !!(savedKeys[id] || fallbackKey);
   const gatewayMode = Boolean(runtimeConfig && runtimeConfig.gatewayConfigured);
   const cloudSession = supabaseAuth ? supabaseAuth.getPublicSession() : { configured: false, authenticated: false, user: null };
+  if (gatewayMode && cloudSession.authenticated) await syncGatewayAccount({ background: true });
   const result = {
     ...publicConfig,
+    creditPricing: publicCreditPricing(),
+    membership: membershipService ? membershipService.getSnapshot() : null,
     gatewayMode,
     cloudConfigured: gatewayMode,
     directAiAllowed: Boolean(runtimeConfig && runtimeConfig.allowDirectAi),
@@ -1153,7 +1353,7 @@ async function getPublicAiMediaConfig() {
   };
   if (!gatewayMode || !cloudSession.authenticated) return applyAiProviderVisibility(result);
   try {
-    const remote = await getVerifiedGatewayCatalog(true);
+    const remote = await getVerifiedGatewayCatalog(false);
     const providers = remote.providers;
     const gatewayEndpoint = runtimeConfig.aiGatewayUrl;
     const cloudProviders = (kind) => providers
@@ -1205,12 +1405,14 @@ async function getPublicAiMediaConfig() {
 
 async function getVerifiedGatewayCatalog(force = false) {
   const now = Date.now();
-  if (!force && gatewayCatalogCache && gatewayCatalogCache.expiresAt > now) {
+  const session = supabaseAuth && supabaseAuth.getPublicSession();
+  const scope = `${session && session.user && session.user.id || 'guest'}:${isAiActivationUnlocked() ? 'overseas' : 'domestic'}`;
+  if (!force && gatewayCatalogCache && gatewayCatalogCache.scope === scope && gatewayCatalogCache.expiresAt > now) {
     return gatewayCatalogCache.value;
   }
   const remote = await aiGateway.getConfig();
   const value = normalizeGatewayCatalog(remote, runtimeConfig.aiGatewayUrl);
-  gatewayCatalogCache = { value, expiresAt: now + 60_000 };
+  gatewayCatalogCache = { value, scope, expiresAt: now + 60_000 };
   if (!value.compatible) assertGatewayProvider(value, 'image', 'image-1');
   return value;
 }
@@ -1412,7 +1614,7 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
   await fs.promises.mkdir(archiveDir, { recursive: true });
   const storedPath = path.join(archiveDir, `${id}.${extension}`);
   await fs.promises.writeFile(storedPath, buffer);
-  const sourceDimensions = await readSourceImageDimensions(storedPath, `.${extension}`);
+  const sourceDimensions = await readSourceMediaMetadata(storedPath, `.${extension}`);
   const referenceFileIds = Array.isArray(request.referenceFileIds)
     ? request.referenceFileIds
       .map((value) => String(value || '').trim())
@@ -1437,6 +1639,8 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
     sourceFolder: 'AI Generated',
     sizeBytes: buffer.length,
     ...sourceDimensions,
+    ...(mediaKind === 'video' && sourceDimensions ? { mediaMetadataVersion: 1 } : {}),
+    ...classifyArchiveFile(name),
     aiGeneration: {
       kind: mediaKind,
       prompt: String(prompt || '').trim().slice(0, 12000),
@@ -1447,7 +1651,12 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
       resolution: mediaKind === 'video'
         ? String(request.resolution || request.size || 'auto').trim().slice(0, 32)
         : null,
-      duration: mediaKind === 'video' ? Math.max(1, Number(request.duration) || 6) : null,
+      duration: mediaKind === 'video'
+        ? (Number(sourceDimensions && sourceDimensions.sourceDuration) > 0
+          ? Number(sourceDimensions.sourceDuration)
+          : Math.max(1, Number(request.duration) || 6))
+        : null,
+      requestedDuration: mediaKind === 'video' ? Math.max(1, Number(request.duration) || 6) : null,
       referenceFileIds,
       referenceCount,
       createdAt: new Date().toISOString()
@@ -1499,7 +1708,9 @@ function addGeneratedMediaBoardItem(record, request, placement, index) {
     y: Math.round(numberOr(placement.y, 0)),
     width: Math.round(width),
     height: Math.max(1, Math.round(width / ratio)),
-    aspectRatio: placement.aspectRatio || request.aspectRatio || 'auto',
+    aspectRatio: sourceRatio
+      ? `${Math.round(record.sourceWidth)}:${Math.round(record.sourceHeight)}`
+      : (placement.aspectRatio || request.aspectRatio || 'auto'),
     zIndex: Math.round(numberOr(placement.zIndex, store.data.boardItems.length + index + 1)),
     selected: index === 0
   };
@@ -1611,15 +1822,103 @@ async function importDirectoryPathAndNotify(dirPath, parentFolderId, canvasId) {
   };
 }
 
+function readProfileAvatarDataUrl() {
+  const avatarPath = String(store && store.data && store.data.settings && store.data.settings.profileAvatarPath || '').trim();
+  if (!avatarPath || !path.isAbsolute(avatarPath) || !fs.existsSync(avatarPath)) return null;
+  try {
+    const resolved = path.resolve(avatarPath);
+    const profileRoot = path.resolve(store.dir, 'profile') + path.sep;
+    if (!resolved.startsWith(profileRoot)) return null;
+    return `data:image/webp;base64,${fs.readFileSync(resolved).toString('base64')}`;
+  } catch (error) {
+    return null;
+  }
+}
+
+function invalidAiMediaOption(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function normalizeAiMediaGenerationRequest(request, kind) {
+  const normalized = { ...request };
+  if (kind === 'image') {
+    const size = String(request.size || '').trim();
+    const aspectRatio = String(request.aspectRatio || '').trim();
+    if (!AI_IMAGE_SIZES.has(size)) {
+      throw invalidAiMediaOption('invalid-size', 'The selected image resolution is not supported.');
+    }
+    if (!AI_IMAGE_RATIOS.has(aspectRatio)) {
+      throw invalidAiMediaOption('invalid-aspect-ratio', 'The selected image aspect ratio is not supported.');
+    }
+    normalized.size = size;
+    normalized.aspectRatio = aspectRatio;
+    return normalized;
+  }
+
+  const resolution = String(request.resolution || '').trim().toUpperCase();
+  const duration = Number(request.duration);
+  const aspectRatio = String(request.aspectRatio || '').trim();
+  const hasFrameReference = Array.isArray(request.urls) && request.urls.length > 0;
+  if (!MINIMAX_VIDEO_RESOLUTIONS.has(resolution)) {
+    throw invalidAiMediaOption('invalid-resolution', 'MiniMax H3 resolution must be 768P or 2K.');
+  }
+  if (!Number.isInteger(duration) || duration < 4 || duration > 15) {
+    throw invalidAiMediaOption('invalid-duration', 'MiniMax H3 duration must be a whole number from 4 to 15 seconds.');
+  }
+  if (hasFrameReference ? aspectRatio !== 'adaptive' : !MINIMAX_TEXT_VIDEO_RATIOS.has(aspectRatio)) {
+    throw invalidAiMediaOption(
+      'invalid-aspect-ratio',
+      hasFrameReference
+        ? 'MiniMax H3 uses the adaptive ratio when first or last frame images are supplied.'
+        : 'The selected MiniMax H3 aspect ratio is not supported.'
+    );
+  }
+  normalized.size = resolution;
+  normalized.resolution = resolution;
+  normalized.duration = duration;
+  normalized.aspectRatio = aspectRatio;
+  return normalized;
+}
+
+async function chooseProfileAvatar() {
+  if (!sharp) return { ok: false, reason: 'image-tools-unavailable' };
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose profile image',
+    properties: ['openFile'],
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'avif', 'heic', 'heif'] }]
+  });
+  if (result.canceled || !result.filePaths[0]) return { ok: false, reason: 'cancelled' };
+  const profileDir = path.join(store.dir, 'profile');
+  const avatarPath = path.join(profileDir, 'avatar.webp');
+  const temporaryPath = path.join(profileDir, `avatar-${crypto.randomUUID()}.tmp.webp`);
+  await fs.promises.mkdir(profileDir, { recursive: true });
+  try {
+    await sharp(result.filePaths[0], { failOn: 'none' })
+      .rotate()
+      .resize(256, 256, { fit: 'cover', position: 'attention' })
+      .webp({ quality: 88 })
+      .toFile(temporaryPath);
+    await fs.promises.copyFile(temporaryPath, avatarPath);
+    store.data.settings.profileAvatarPath = avatarPath;
+    store.scheduleSave();
+    return { ok: true, dataUrl: readProfileAvatarDataUrl() };
+  } finally {
+    await fs.promises.unlink(temporaryPath).catch(() => {});
+  }
+}
+
 function registerIpcHandlers() {
   ipcMain.handle('app:getInitialState', async () => {
     pruneMissingFiles();
-    await hydrateMissingImageDimensions();
+    await hydrateMissingMediaMetadata();
+    await syncGatewayAccount();
     return {
       theme: store.data.settings.theme,
       language: store.data.settings.language === 'zh' ? 'zh' : 'en',
       autoUpdateEnabled: store.data.settings.autoUpdateEnabled !== false,
-      activation: getActivationStatus(store.data.settings),
+      activation: activationStatusForRenderer(),
       viewMode: store.data.settings.viewMode,
       sidebarCollapsed: store.data.settings.sidebarCollapsed,
       defaultFolderName: store.data.settings.defaultFolderName,
@@ -1634,17 +1933,82 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('settings:setTheme', (_evt, theme) => {
-    store.data.settings.theme = theme === 'light' ? 'light' : 'dark';
+    store.data.settings.theme = normalizeTheme(theme);
+    setWindowBackgroundColor(store.data.settings.theme);
     store.scheduleSave();
     return store.data.settings.theme;
   });
 
-  ipcMain.handle('activation:getStatus', () => getActivationStatus(store.data.settings));
+  ipcMain.handle('activation:getStatus', async () => {
+    await syncGatewayAccount();
+    return activationStatusForRenderer();
+  });
 
-  ipcMain.handle('activation:activate', (_evt, code) => {
-    const result = activateApp(store.data.settings, code);
-    if (result.ok) store.scheduleSave();
-    return result;
+  ipcMain.handle('activation:activate', async (_evt, code) => {
+    if (runtimeConfig && runtimeConfig.gatewayConfigured) {
+      const normalizedCode = String(code || '').trim();
+      if (!normalizedCode || normalizedCode.length > 256) {
+        return { ok: false, reason: 'invalid-redemption-code', message: 'Enter a valid redemption code.' };
+      }
+      if (!hasAuthenticatedGatewaySession()) {
+        return {
+          ok: false,
+          reason: 'sign-in-required',
+          message: 'Sign in to your Messs account before redeeming this code.'
+        };
+      }
+      try {
+        // In production the server owns the redemption catalogue. Do not run
+        // the bundled beta-code allowlist first: future recharge/member codes
+        // must work without requiring an old desktop client update.
+        const cloudResult = await aiGateway.redeemCode(normalizedCode);
+        const redemption = cloudResult && cloudResult.redemption || {};
+        const membership = applyGatewayAccount(cloudResult && cloudResult.account || redemption.account);
+        store.data.settings.activation = {
+          schemaVersion: 2,
+          verifiedHash: null,
+          grantId: 'cloud-redemption',
+          activatedAt: new Date().toISOString(),
+          cloudRedeemed: true
+        };
+        store.scheduleSave();
+        gatewayCatalogCache = null;
+        // Force the next catalogue request to see the newly unlocked account;
+        // applyGatewayAccount already made the balance/activation UI current.
+        const status = activationStatusForRenderer();
+        return {
+          ok: true,
+          ...status,
+          creditsAdded: Math.max(0, Number(redemption.creditsAdded) || 0),
+          redemptionReason: redemption.reason === 'already-redeemed' ? 'already-redeemed' : null,
+          membership
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          reason: error && error.code || 'redemption-service-failed',
+          message: error && error.message || 'Could not redeem the code.'
+        };
+      }
+    }
+
+    // Direct/local development keeps the deterministic bundled allowlist.
+    const candidateSettings = {
+      activation: store.data.settings.activation && { ...store.data.settings.activation }
+    };
+    const result = activateApp(candidateSettings, code);
+    if (!result.ok) return result;
+    const redemption = result.grant ? membershipService.redeemGrant(result.grant) : null;
+    store.data.settings.activation = candidateSettings.activation;
+    store.scheduleSave();
+    return {
+      ...result,
+      ...activationStatusForRenderer(),
+      grant: undefined,
+      creditsAdded: redemption ? redemption.creditsAdded : 0,
+      redemptionReason: redemption && !redemption.ok ? redemption.reason : null,
+      membership: membershipService.getSnapshot()
+    };
   });
 
   ipcMain.handle('ai:exportChat', async (_evt, value = {}) => {
@@ -1684,22 +2048,101 @@ function registerIpcHandlers() {
   ipcMain.handle('auth:getSession', () => supabaseAuth.getPublicSession());
 
   ipcMain.handle('auth:signIn', async (_evt, credentials = {}) => {
-    return supabaseAuth.signIn(credentials.email, credentials.password);
+    const session = await supabaseAuth.signIn(credentials.email, credentials.password);
+    if (session && session.authenticated) {
+      clearGatewayAccount();
+      gatewayCatalogCache = null;
+      await chatService.initialize();
+      await syncGatewayAccount({ force: true });
+    }
+    return session;
   });
 
   ipcMain.handle('auth:signUp', async (_evt, credentials = {}) => {
-    return supabaseAuth.signUp(credentials.email, credentials.password);
+    const session = await supabaseAuth.signUp(credentials.email, credentials.password);
+    if (session && session.authenticated) {
+      clearGatewayAccount();
+      gatewayCatalogCache = null;
+      await chatService.initialize();
+      await syncGatewayAccount({ force: true });
+    }
+    return session;
   });
 
-  ipcMain.handle('auth:signInWithGoogle', () => signInWithGoogle());
+  ipcMain.handle('auth:signInWithGoogle', async () => {
+    const session = await signInWithGoogle();
+    if (session && session.authenticated) {
+      clearGatewayAccount();
+      gatewayCatalogCache = null;
+      await chatService.initialize();
+      await syncGatewayAccount({ force: true });
+    }
+    return session;
+  });
 
-  ipcMain.handle('auth:signOut', () => supabaseAuth.signOut());
+  ipcMain.handle('auth:signOut', async () => {
+    const session = await supabaseAuth.signOut();
+    if (chatService) await chatService.signOut();
+    clearGatewayAccount();
+    gatewayCatalogCache = null;
+    return session;
+  });
 
-  ipcMain.handle('membership:getSnapshot', () => membershipService.getSnapshot());
+  ipcMain.handle('chat:initialize', () => chatService.initialize());
+
+  ipcMain.handle('chat:sync', () => chatService.sync());
+
+  ipcMain.handle('chat:searchUser', (_evt, query) => chatService.searchUser(query));
+
+  ipcMain.handle('chat:sendFriendRequest', (_evt, targetId) => chatService.sendFriendRequest(targetId));
+
+  ipcMain.handle('chat:respondFriendRequest', (_evt, requestId, action) => {
+    return chatService.respondFriendRequest(requestId, action);
+  });
+
+  ipcMain.handle('chat:startConversation', (_evt, friendId) => chatService.startConversation(friendId));
+
+  ipcMain.handle('chat:getHistory', (_evt, conversationId, options = {}) => {
+    return chatService.getHistory(conversationId, options);
+  });
+
+  ipcMain.handle('chat:loadOlderRemote', (_evt, conversationId, options = {}) => {
+    return chatService.loadOlderRemote(conversationId, options);
+  });
+
+  ipcMain.handle('chat:sendText', (_evt, conversationId, body) => {
+    return chatService.sendText(conversationId, body);
+  });
+
+  ipcMain.handle('chat:sendImage', async (_evt, conversationId) => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Send an image',
+      properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif', 'tif', 'tiff', 'bmp'] }]
+    });
+    if (result.canceled || !result.filePaths[0]) return { ok: false, reason: 'cancelled' };
+    try { return await chatService.sendImage(conversationId, result.filePaths[0]); }
+    catch (error) { return { ok: false, reason: error.code || 'image-send-failed', message: error.message }; }
+  });
+
+  ipcMain.handle('chat:retryMessage', (_evt, clientId) => chatService.retryMessage(clientId));
+
+  ipcMain.handle('chat:getImageDataUrl', (_evt, clientId) => chatService.getImageDataUrl(clientId));
+
+  ipcMain.handle('membership:getSnapshot', async () => {
+    await syncGatewayAccount();
+    return membershipService.getSnapshot();
+  });
 
   ipcMain.handle('membership:checkFeature', (_evt, feature) => {
     return membershipService.checkFeature(String(feature || '').trim());
   });
+
+  ipcMain.handle('membership:quoteMedia', (_evt, request = {}) => quoteMediaCredits(request));
+
+  ipcMain.handle('profile:getAvatar', () => readProfileAvatarDataUrl());
+
+  ipcMain.handle('profile:chooseAvatar', () => chooseProfileAvatar());
 
   ipcMain.handle('settings:getLibraryPaths', () => {
     return {
@@ -1921,7 +2364,7 @@ function registerIpcHandlers() {
   ipcMain.handle('ai:generateMedia', async (_evt, request = {}) => {
     const requestedKind = request.kind === 'video' ? 'video' : 'image';
     const requestedProviderId = requestedKind === 'video' ? request.videoProviderId : request.imageProviderId;
-    if (aiProviderRequiresActivation(requestedKind, requestedProviderId) && !getActivationStatus(store.data.settings).activated) {
+    if (aiProviderRequiresActivation(requestedKind, requestedProviderId) && !isAiActivationUnlocked()) {
       return { ok: false, reason: 'activation-required', message: 'Activate Messs in Settings before using AI.' };
     }
     let safeRequest;
@@ -1938,8 +2381,26 @@ function registerIpcHandlers() {
     }
 
     const kind = request.kind === 'video' ? 'video' : 'image';
+    try {
+      request = normalizeAiMediaGenerationRequest(request, kind);
+    } catch (error) {
+      return {
+        ok: false,
+        reason: error.code || 'invalid-media-options',
+        message: error.message
+      };
+    }
     const count = kind === 'image' ? Math.max(1, Math.min(4, Number(request.count) || 1)) : 1;
+    const creditQuote = quoteMediaCredits({
+      kind,
+      imageProviderId: request.imageProviderId,
+      videoProviderId: request.videoProviderId,
+      count,
+      resolution: request.resolution,
+      duration: request.duration
+    });
     const usage = membershipService.beginUsage(`ai.${kind}`, {
+      estimatedCredits: creditQuote.totalCredits,
       metadata: {
         kind,
         requestedCount: count,
@@ -1949,10 +2410,24 @@ function registerIpcHandlers() {
         size: request.size || null,
         resolution: kind === 'video' ? request.resolution || null : null,
         duration: kind === 'video' ? Number(request.duration) || null : null,
-        referenceCount: Array.isArray(request.urls) ? request.urls.length : 0
+        referenceCount: Array.isArray(request.urls) ? request.urls.length : 0,
+        quotedCredits: creditQuote.totalCredits,
+        unitCredits: creditQuote.unitCredits
       }
     });
     if (!usage.ok) {
+      if (usage.reason === 'insufficient-credits') {
+        return {
+          ok: false,
+          reason: 'insufficient-credits',
+          requiredCredits: usage.requiredCredits,
+          availableCredits: usage.availableCredits,
+          membership: membershipService.getSnapshot(),
+          message: store.data.settings.language === 'zh'
+            ? `积分不足：本次需要 ${usage.requiredCredits} 积分，当前可用 ${usage.availableCredits} 积分。`
+            : `Not enough points. This request needs ${usage.requiredCredits}; ${usage.availableCredits} are available.`
+        };
+      }
       return {
         ok: false,
         reason: usage.reason || 'not-entitled',
@@ -2004,7 +2479,10 @@ function registerIpcHandlers() {
       membershipService.finishUsage(usage.usageId, {
         status: failures.length ? 'partial' : 'succeeded',
         resultUnits: files.length,
-        failedUnits: failures.length
+        failedUnits: failures.length,
+        settledCredits: kind === 'image'
+          ? creditQuote.unitCredits * files.length
+          : creditQuote.totalCredits
       });
       store.scheduleSave();
       return {
@@ -2013,7 +2491,9 @@ function registerIpcHandlers() {
         files,
         boardItems,
         failedCount: failures.length,
-        unlocked: [...unlockedKeys]
+        unlocked: [...unlockedKeys],
+        creditsCharged: kind === 'image' ? creditQuote.unitCredits * files.length : creditQuote.totalCredits,
+        membership: membershipService.getSnapshot()
       };
     } catch (err) {
       membershipService.finishUsage(usage.usageId, {
@@ -2026,13 +2506,14 @@ function registerIpcHandlers() {
       return {
         ok: false,
         reason: err && err.code ? err.code : 'generation-failed',
-        message: conciseAiErrorMessage(err, { kind: request.kind })
+        message: conciseAiErrorMessage(err, { kind: request.kind }),
+        membership: membershipService.getSnapshot()
       };
     }
   });
 
   ipcMain.handle('ai:chat', async (_evt, request = {}) => {
-    if (aiProviderRequiresActivation('chat', request.chatProviderId) && !getActivationStatus(store.data.settings).activated) {
+    if (aiProviderRequiresActivation('chat', request.chatProviderId) && !isAiActivationUnlocked()) {
       return { ok: false, reason: 'activation-required', message: 'Activate Messs in Settings before using AI.' };
     }
     let safeRequest;
@@ -2447,22 +2928,59 @@ function registerIpcHandlers() {
     return true;
   });
 
-  ipcMain.handle('shell:sendToCreativeApp', (_evt, id, target) => {
+  ipcMain.handle('shell:sendToCreativeApp', async (_evt, id, target) => {
     const f = store.getFile(id);
-    const normalizedTarget = target === 'after-effects' ? 'after-effects' : 'photoshop';
-    if (!f || !f.aiGeneration) return { ok: false, reason: 'not-ai-media' };
-    const executable = findAdobeExecutable(normalizedTarget);
-    if (!executable) return { ok: false, reason: 'not-installed' };
+    const language = store.data.settings.language === 'zh' ? 'zh' : 'en';
+    const normalizedTarget = target === 'photoshop' || target === 'after-effects' ? target : null;
+    const targetName = normalizedTarget === 'after-effects' ? 'After Effects' : 'Photoshop';
+    if (!normalizedTarget) {
+      return {
+        ok: false,
+        reason: 'invalid-target',
+        message: language === 'zh' ? '不支持这个 Adobe 应用。' : 'This Adobe application is not supported.'
+      };
+    }
+    if (!f) {
+      return {
+        ok: false,
+        reason: 'file-not-found',
+        message: language === 'zh' ? '找不到要发送的文件。' : 'The media file could not be found.'
+      };
+    }
+    // v0.0.3 generated-media records did not always include aiGeneration,
+    // while the renderer also recognises their stable source-folder marker.
+    // Keep the main-process permission check aligned with that UI contract.
+    if (!f.aiGeneration && f.sourceFolder !== 'AI Generated') {
+      return {
+        ok: false,
+        reason: 'not-ai-media',
+        message: language === 'zh' ? '仅支持发送 AI 生成的媒体。' : 'Only AI-generated media can be sent.'
+      };
+    }
+    const ext = path.extname(f.name || f.storedPath || '').toLowerCase();
+    const supported = normalizedTarget === 'photoshop' ? preview.isImageExt(ext) : preview.isVideoExt(ext);
+    if (!supported) {
+      return {
+        ok: false,
+        reason: 'unsupported-file-type',
+        message: language === 'zh'
+          ? `这个文件格式不能发送到 ${targetName}。`
+          : `This file type cannot be sent to ${targetName}.`
+      };
+    }
     try {
-      const child = spawn(executable, [f.storedPath], {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true
-      });
-      child.unref();
-      return { ok: true };
+      // Always pass the archived local file, never the renderer's messs-file://
+      // URL. spawn receives the executable and path as separate arguments, so
+      // spaces and Chinese characters do not need shell quoting.
+      return await launchAdobeMedia(normalizedTarget, f.storedPath, { language });
     } catch (error) {
-      return { ok: false, reason: 'launch-failed', message: error.message };
+      return {
+        ok: false,
+        reason: 'launch-failed',
+        message: language === 'zh'
+          ? `无法启动 ${targetName}：${error.message}`
+          : `Could not start ${targetName}: ${error.message}`
+      };
     }
   });
 
@@ -2724,6 +3242,20 @@ app.whenReady().then(() => {
     supabaseUrl: runtimeConfig.supabaseUrl,
     publishableKey: runtimeConfig.supabasePublishableKey
   });
+  chatService = new ChatService({
+    supabaseUrl: runtimeConfig.supabaseUrl,
+    publishableKey: runtimeConfig.supabasePublishableKey,
+    getAccessToken: () => supabaseAuth.getAccessToken(),
+    getPublicSession: () => supabaseAuth.getPublicSession(),
+    fetchImpl: appFetch,
+    sharp,
+    // Chat is part of the actual default library selected by Store fallback.
+    // It intentionally does not follow the optional custom mirror location.
+    localRoot: path.join(store.dir, 'chat'),
+    onEvent: (payload) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:event', payload);
+    }
+  });
 
   ipcMain.handle('updater:getState', () => publicUpdaterState());
 
@@ -2828,6 +3360,13 @@ app.whenReady().then(() => {
   writeStartupDiagnostic('ipc-ready');
   createWindow();
   writeStartupDiagnostic('window-created');
+  // A restored Messs account should start local-history attachment and cloud
+  // reconciliation without waiting for the user to open the Chat section.
+  if (supabaseAuth.getPublicSession().authenticated) {
+    chatService.initialize().catch((error) => {
+      console.warn('Chat startup initialization failed:', error && error.message || error);
+    });
+  }
   startSession();
   runDailyDesktopChecks();
   setTimeout(setupAutoUpdater, 3000); // give the window time to paint first.
@@ -2854,6 +3393,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   if (store) store.flushSync();
+  if (chatService) chatService.flushLocal();
 });
 
 setInterval(() => {

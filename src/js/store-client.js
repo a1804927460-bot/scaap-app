@@ -143,6 +143,22 @@ function isImageExt(ext) {
   return ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif', '.tif', '.tiff'].includes(ext);
 }
 
+const CONVERTED_IMAGE_PREVIEW_EXTENSIONS = new Set(['.tif', '.tiff']);
+
+function browserCanDecodeOriginalImage(ext) {
+  return !CONVERTED_IMAGE_PREVIEW_EXTENSIONS.has(String(ext || '').toLowerCase());
+}
+
+function resolveImageDisplaySource(file, preferFull = false) {
+  if (!file) return '';
+  const original = String(file.url || '');
+  const preview = String(file.thumbUrl || '');
+  if (preferFull && browserCanDecodeOriginalImage(file.ext)) {
+    return original || preview;
+  }
+  return preview || original;
+}
+
 function isVideoExt(ext) {
   return ['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi', '.wmv', '.flv', '.mpeg', '.mpg'].includes(ext);
 }

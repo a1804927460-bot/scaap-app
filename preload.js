@@ -104,11 +104,42 @@ contextBridge.exposeInMainWorld('messsAPI', {
   setLanguage: (language) => ipcRenderer.invoke('settings:setLanguage', language),
   getMembershipSnapshot: () => ipcRenderer.invoke('membership:getSnapshot'),
   checkMembershipFeature: (feature) => ipcRenderer.invoke('membership:checkFeature', feature),
+  quoteMediaCredits: (request) => ipcRenderer.invoke('membership:quoteMedia', request),
+  onMembershipUpdated: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('membership:updated', listener);
+    return () => ipcRenderer.removeListener('membership:updated', listener);
+  },
+  onActivationUpdated: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('activation:updated', listener);
+    return () => ipcRenderer.removeListener('activation:updated', listener);
+  },
+  getProfileAvatar: () => ipcRenderer.invoke('profile:getAvatar'),
+  chooseProfileAvatar: () => ipcRenderer.invoke('profile:chooseAvatar'),
   getCloudSession: () => ipcRenderer.invoke('auth:getSession'),
   signInCloud: (credentials) => ipcRenderer.invoke('auth:signIn', credentials),
   signUpCloud: (credentials) => ipcRenderer.invoke('auth:signUp', credentials),
   signInCloudWithGoogle: () => ipcRenderer.invoke('auth:signInWithGoogle'),
   signOutCloud: () => ipcRenderer.invoke('auth:signOut'),
+
+  initializeChat: () => ipcRenderer.invoke('chat:initialize'),
+  syncChat: () => ipcRenderer.invoke('chat:sync'),
+  searchChatUser: (query) => ipcRenderer.invoke('chat:searchUser', query),
+  sendChatFriendRequest: (targetId) => ipcRenderer.invoke('chat:sendFriendRequest', targetId),
+  respondChatFriendRequest: (requestId, action) => ipcRenderer.invoke('chat:respondFriendRequest', requestId, action),
+  startChatConversation: (friendId) => ipcRenderer.invoke('chat:startConversation', friendId),
+  getChatHistory: (conversationId, options) => ipcRenderer.invoke('chat:getHistory', conversationId, options),
+  loadOlderChatHistory: (conversationId, options) => ipcRenderer.invoke('chat:loadOlderRemote', conversationId, options),
+  sendChatText: (conversationId, body) => ipcRenderer.invoke('chat:sendText', conversationId, body),
+  sendChatImage: (conversationId) => ipcRenderer.invoke('chat:sendImage', conversationId),
+  retryChatMessage: (clientId) => ipcRenderer.invoke('chat:retryMessage', clientId),
+  getChatImageDataUrl: (clientId) => ipcRenderer.invoke('chat:getImageDataUrl', clientId),
+  onChatEvent: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('chat:event', listener);
+    return () => ipcRenderer.removeListener('chat:event', listener);
+  },
 
   getLibraryPaths: () => ipcRenderer.invoke('settings:getLibraryPaths'),
   pickCustomLibraryPath: () => ipcRenderer.invoke('settings:pickCustomLibraryPath'),
