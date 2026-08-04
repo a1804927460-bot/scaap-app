@@ -7,17 +7,17 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Semver version without v, for example 0.0.2"
+        description: "Semver version without v, for example 0.0.3"
         required: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   windows-release:
     runs-on: windows-latest
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
       MESSS_SUPABASE_URL: https://trmbhcniijedpmohkbzx.supabase.co
       MESSS_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
       MESSS_AI_GATEWAY_URL: ${{ vars.AI_GATEWAY_URL }}
@@ -57,26 +57,29 @@ jobs:
           $version = if ('${{ github.event_name }}' -eq 'workflow_dispatch') { '${{ inputs.version }}' } else { '${{ github.ref_name }}'.TrimStart('v') }
           if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw "Invalid semver: $version" }
           npm version $version --no-git-tag-version
-          $parts = '${{ github.repository }}'.Split('/', 2)
           npm pkg set repository.type=git "repository.url=https://github.com/${{ github.repository }}.git"
           $config = @{
             supabaseUrl = $env:MESSS_SUPABASE_URL
             supabasePublishableKey = $env:MESSS_SUPABASE_PUBLISHABLE_KEY
             aiGatewayUrl = $env:MESSS_AI_GATEWAY_URL
-            githubOwner = $parts[0]
-            githubRepo = $parts[1]
+            githubOwner = 'a1804927460-bot'
+            githubRepo = 'messs-releases'
           } | ConvertTo-Json
           Set-Content -LiteralPath config/runtime.json -Value $config -Encoding utf8
 
       - name: Validate release configuration
         env:
           SIGNING_CERT_PRESENT: ${{ secrets.CSC_LINK != '' }}
+          SIGNING_PASSWORD_PRESENT: ${{ secrets.CSC_KEY_PASSWORD != '' }}
         shell: pwsh
         run: |
           $config = Get-Content -Raw config/runtime.json | ConvertFrom-Json
           if (-not $config.supabasePublishableKey) { throw 'Repository variable SUPABASE_PUBLISHABLE_KEY is missing.' }
           if ($config.aiGatewayUrl -notmatch '^https://') { throw 'Repository variable AI_GATEWAY_URL must be HTTPS.' }
-          if ($env:SIGNING_CERT_PRESENT -ne 'true') { Write-Warning 'CSC_LINK is missing. Publishing an unsigned Windows build.' }
+          if ($config.githubOwner -ne 'a1804927460-bot' -or $config.githubRepo -ne 'messs-releases') { throw 'Public updater repository is misconfigured.' }
+          if (-not $env:GH_TOKEN) { throw 'RELEASES_TOKEN is missing.' }
+          if ($env:SIGNING_CERT_PRESENT -ne 'true') { throw 'CSC_LINK is missing.' }
+          if ($env:SIGNING_PASSWORD_PRESENT -ne 'true') { throw 'CSC_KEY_PASSWORD is missing.' }
 
       - name: Test
         run: npm test
@@ -86,7 +89,7 @@ jobs:
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: true
 
       - name: Verify updater artifacts
         shell: pwsh

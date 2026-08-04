@@ -1,6 +1,6 @@
 {
   "name": "messs",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Messs. — Resolve your confusion. A file preview & organizing desktop app.",
   "main": "main.js",
   "author": "Messs.",
@@ -12,7 +12,7 @@
   "private": true,
   "scripts": {
     "postinstall": "node scripts/ensure-canvas-stub.js",
-    "test": "node scripts/test-activation.js && node scripts/test-ai-media-provider.js && node scripts/test-ai-chat-provider.js && node scripts/test-gateway-providers.mjs && node scripts/test-board-engine.js && node scripts/test-thumbnails.js && node scripts/test-membership-service.js && node scripts/test-privacy-guard.js && node scripts/test-security-clients.js && npm --prefix gateway run check",
+    "test": "node scripts/test-activation.js && node scripts/test-ai-media-provider.js && node scripts/test-ai-chat-provider.js && node scripts/test-gateway-providers.mjs && node scripts/test-board-engine.js && node scripts/test-thumbnails.js && node scripts/test-membership-service.js && node scripts/test-privacy-guard.js && node scripts/test-security-clients.js && node scripts/test-release-config.js && npm --prefix gateway run check",
     "start": "electron .",
     "build:dev": "electron-builder --config electron-builder.dev.yml",
     "release:win": "electron-builder --config electron-builder.release.yml --win --publish always"

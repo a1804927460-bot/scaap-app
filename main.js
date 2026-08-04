@@ -34,6 +34,16 @@ const { activate: activateApp, getActivationStatus } = require('./lib/activation
 const DEFAULT_CATALOG_IMAGE = providerCatalog('image')[0];
 const DEFAULT_CATALOG_VIDEO = providerCatalog('video')[0];
 const DEFAULT_CATALOG_CHAT = providerCatalog('chat')[0];
+const PUBLIC_RELEASE = Object.freeze({
+  provider: 'github',
+  owner: 'a1804927460-bot',
+  repo: 'messs-releases'
+});
+
+const qaRemoteDebugPort = String(process.env.MESSS_QA_REMOTE_DEBUG_PORT || '').trim();
+if (/^\d{4,5}$/.test(qaRemoteDebugPort)) {
+  app.commandLine.appendSwitch('remote-debugging-port', qaRemoteDebugPort);
+}
 
 if (process.env.MESSS_DISABLE_GPU === '1') {
   app.disableHardwareAcceleration();
@@ -234,7 +244,7 @@ function getPublishInfo() {
   if (runtimeConfig && runtimeConfig.githubOwner && runtimeConfig.githubRepo) {
     return { provider: 'github', owner: runtimeConfig.githubOwner, repo: runtimeConfig.githubRepo };
   }
-  return null;
+  return PUBLIC_RELEASE;
 }
 
 function notifyUpdateDownloaded(info) {

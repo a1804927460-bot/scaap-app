@@ -2,6 +2,6 @@
   "supabaseUrl": "https://trmbhcniijedpmohkbzx.supabase.co",
   "supabasePublishableKey": "PASTE_YOUR_SUPABASE_PUBLISHABLE_KEY",
   "aiGatewayUrl": "https://YOUR-RAILWAY-SERVICE.up.railway.app",
-  "githubOwner": "YOUR_GITHUB_NAME",
-  "githubRepo": "YOUR_REPOSITORY"
+  "githubOwner": "a1804927460-bot",
+  "githubRepo": "messs-releases"
 }

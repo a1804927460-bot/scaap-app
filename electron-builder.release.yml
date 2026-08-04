@@ -40,4 +40,7 @@ nsis:
   createStartMenuShortcut: true
 publish:
   provider: github
+  owner: a1804927460-bot
+  repo: messs-releases
+  private: false
   releaseType: release

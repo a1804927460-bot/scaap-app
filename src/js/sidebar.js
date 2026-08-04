@@ -1153,9 +1153,8 @@ async function refreshAiMediaSettings() {
     renderChatProviderSlots(config.chatProviders, config.activeChatProviderId);
     const chatSection = document.querySelector('.ai-provider-chat-section');
     if (chatSection) {
-      chatSection.hidden = !config.chatProviders.some((provider) =>
-        provider && provider.available !== false && provider.name && provider.endpoint
-      );
+      chatSection.hidden = true;
+      chatSection.setAttribute('aria-hidden', 'true');
     }
     document.getElementById('ai-api-key').value = '';
     document.getElementById('ai-api-key').placeholder = config.hasApiKey
