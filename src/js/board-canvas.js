@@ -865,6 +865,7 @@ function createBoardItemElement(item) {
   renderBoardItemContent(content, f, item);
   if (isImage) {
     appendBoardImageToolbar(el, f, item);
+    appendBoardEditHint(el);
   } else if (isVideo && isGeneratedMedia) {
     appendGeneratedMediaDetailsControl(el, f);
   }
@@ -1053,6 +1054,24 @@ function syncBoardSelectionClasses() {
     element.classList.toggle('is-single-selection', selected && hasSingleSelection);
   });
   scheduleMountedImageQuality(0);
+}
+
+function appendBoardEditHint(element) {
+  const hint = document.createElement('button');
+  hint.type = 'button';
+  hint.className = 'board-edit-hint';
+  hint.title = t('Edit with AI', 'AI 编辑');
+  hint.setAttribute('aria-label', hint.title);
+  hint.innerHTML = `<kbd>Tab</kbd><span>${t('Edit', '编辑')}</span>`;
+  ['pointerdown', 'mousedown', 'click'].forEach((eventName) => {
+    hint.addEventListener(eventName, (event) => event.stopPropagation());
+  });
+  hint.addEventListener('click', () => {
+    closeBoardQuickGenerate();
+    void openAiComposerForSelection('image');
+  });
+  element.appendChild(hint);
+  return hint;
 }
 
 function pauseBoardElementMedia(element) {
@@ -1255,7 +1274,7 @@ function exitBoardFullscreen() {
   const fullscreenTitle = boardFullscreenToggleTitle();
   document.getElementById('board-fullscreen-toggle').title = fullscreenTitle;
   document.getElementById('board-fullscreen-toggle').setAttribute('aria-label', fullscreenTitle);
-  document.getElementById('board-bottom-bar').hidden = true;
+  document.getElementById('board-bottom-bar').hidden = false;
 }
 
 function toggleBoardFullscreen() {
@@ -1376,9 +1395,16 @@ function initBoardCanvas() {
       e.preventDefault();
       BoardClipboard.items = selected.map((item) => ({ ...item }));
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
-      if (!BoardClipboard.items.length) return;
       e.preventDefault();
-      pasteBoardClipboard();
+      if (BoardClipboard.items.length) {
+        pasteBoardClipboard();
+      } else {
+        pasteExternalImageToBoard().then((pasted) => {
+          if (!pasted) showToast(t('No image found on the clipboard', '剪贴板中没有图片'));
+        }).catch((err) => {
+          showToast(err && err.message ? err.message : t('Could not paste the image', '无法粘贴图片'));
+        });
+      }
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
       e.preventDefault();
       AppState.boardItems.forEach((item) => { item.selected = false; });
@@ -2016,6 +2042,44 @@ function boardViewportCenterCoords() {
   const viewport = document.getElementById('board-viewport');
   const rect = viewport.getBoundingClientRect();
   return clientToBoardCoords(rect.left + rect.width / 2, rect.top + rect.height / 2);
+}
+
+async function importFilesDirectlyToBoard(paths, placement = boardViewportCenterCoords()) {
+  const targetFolderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
+    ? AppState.activeFolderId
+    : null;
+  const result = await window.messsAPI.importFiles(paths, targetFolderId, activeCanvasId());
+  const imported = Array.isArray(result && result.imported) ? result.imported : [];
+  if (!imported.length) return imported;
+
+  AppState.files = [...imported, ...AppState.files.filter((file) => (
+    !imported.some((next) => next.id === file.id)
+  ))];
+  renderFileList(currentFileListScope());
+  renderFolderGridIfActive();
+  await addFilesToBoard(imported.map((file) => file.id), placement.x, placement.y);
+  if (result.unlocked && result.unlocked.length) await refreshAchievements();
+  showToast(
+    t(
+      `Imported ${imported.length} file${imported.length === 1 ? '' : 's'} to the canvas`,
+      `已导入 ${imported.length} 个文件到画布`
+    )
+  );
+  return imported;
+}
+
+async function pasteExternalImageToBoard(placement = boardViewportCenterCoords()) {
+  const result = await window.messsAPI.importClipboardImage({
+    canvasId: activeCanvasId(),
+    folderId: AppState.activeFolderId
+  });
+  if (!result || !result.ok || !result.file) return false;
+  const file = result.file;
+  AppState.files = [file, ...AppState.files.filter((entry) => entry.id !== file.id)];
+  renderFileList(currentFileListScope());
+  renderFolderGridIfActive();
+  await addFilesToBoard([file.id], placement.x, placement.y);
+  return true;
 }
 
 function buildAiImagePopover(aiConfig) {
@@ -3511,11 +3575,6 @@ async function showAiImagePopover(initialKind = 'image') {
   aiImagePopoverClickCloser = (e) => {
     if (pop.contains(e.target)) return;
     if (e.target.closest('#board-ai-generate, #board-tool-ai-image, #board-tool-ai-video')) return;
-    if (e.target.closest('#board-viewport')) {
-      if (aiImageGenerating) closeAiImagePopover();
-      return;
-    }
-    if (e.target.closest('#board-panel')) return;
     closeAiImagePopover();
   };
   aiImagePopoverKeyCloser = (e) => {
@@ -3555,7 +3614,7 @@ function initBoardBottomBar() {
 
   document.getElementById('board-tool-upload').addEventListener('click', async () => {
     const paths = await window.messsAPI.pickFiles();
-    if (paths && paths.length) await importFilePaths(paths);
+    if (paths && paths.length) await importFilesDirectlyToBoard(paths);
   });
 
   document.getElementById('board-tool-ai-image').addEventListener('click', () => showAiImagePopover('image'));

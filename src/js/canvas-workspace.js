@@ -297,6 +297,7 @@ function showCanvasLibrary() {
   library.hidden = false;
   workspace.hidden = true;
   document.getElementById('canvas-library-back').hidden = true;
+  document.getElementById('board-bottom-bar').hidden = true;
   document.getElementById('board-agent-panel').classList.add('is-hidden');
   document.getElementById('board-panel-title').textContent = t('All Canvases', '全部画布');
   if (typeof closeAiImagePopover === 'function') closeAiImagePopover();
@@ -312,6 +313,7 @@ function showCanvasWorkspace() {
   library.hidden = true;
   workspace.hidden = false;
   document.getElementById('canvas-library-back').hidden = false;
+  document.getElementById('board-bottom-bar').hidden = false;
   const active = activeCanvasRecord();
   document.getElementById('board-panel-title').textContent = active ? active.name : t('Integrated Canvas', '整合画布');
   requestAnimationFrame(() => {

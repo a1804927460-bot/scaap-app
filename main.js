@@ -2329,6 +2329,48 @@ function registerIpcHandlers() {
     return { token, dataUrl, name: String(request.name || 'Pasted image').slice(0, 160) };
   });
 
+  ipcMain.handle('clipboard:importImage', async (_evt, request = {}) => {
+    const image = clipboard.readImage();
+    if (!image || image.isEmpty()) return { ok: false, reason: 'empty' };
+
+    const png = image.toPNG();
+    if (!png || !png.length) return { ok: false, reason: 'empty' };
+
+    // Import through the same archive path as a dropped file so pasted images
+    // receive thumbnails, metadata, persistence, and normal canvas records.
+    const tempDir = path.join(app.getPath('temp'), 'messs-clipboard');
+    const tempPath = path.join(tempDir, `${crypto.randomUUID()}.png`);
+    await fs.promises.mkdir(tempDir, { recursive: true });
+    await fs.promises.writeFile(tempPath, png);
+
+    const folderId = request.folderId && request.folderId !== 'default'
+      ? String(request.folderId)
+      : null;
+    const canvasId = String(request.canvasId || '').trim() || null;
+    const unlockedKeys = new Set();
+    try {
+      const record = await importOneFile(
+        tempPath,
+        folderId,
+        unlockedKeys,
+        achievements.todayStr(),
+        canvasId
+      );
+      if (!record) return { ok: false, reason: 'invalid-image' };
+
+      const dimensions = image.getSize();
+      if (!(record.sourceWidth > 0) && dimensions.width > 0) record.sourceWidth = dimensions.width;
+      if (!(record.sourceHeight > 0) && dimensions.height > 0) record.sourceHeight = dimensions.height;
+      record.originalPath = 'Clipboard';
+      record.sourceFolder = 'Clipboard';
+      store.scheduleSave();
+      if (unlockedKeys.size > 0) notifyAchievements();
+      return { ok: true, file: fileToPayload(record) };
+    } finally {
+      try { await fs.promises.rm(tempPath, { force: true }); } catch (err) {}
+    }
+  });
+
   ipcMain.handle('dialog:pickFolderToImport', async (_evt, canvasId) => {
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ['openDirectory']

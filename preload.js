@@ -162,6 +162,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   chatWithAi: (request) => ipcRenderer.invoke('ai:chat', request),
   exportAiChat: (session) => ipcRenderer.invoke('ai:exportChat', session),
   preparePastedAiImage: (request) => ipcRenderer.invoke('ai:preparePastedImage', request),
+  importClipboardImage: (request) => ipcRenderer.invoke('clipboard:importImage', request),
   getPreview: (id) => ipcRenderer.invoke('files:getPreview', id),
   readFileAsDataUrl: (id) => ipcRenderer.invoke('files:readDataUrl', id),
   prepareAiAttachment: (id) => ipcRenderer.invoke('files:readDataUrl', id),

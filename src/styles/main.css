@@ -2672,6 +2672,47 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   opacity: 0;
   pointer-events: none;
 }
+.board-edit-hint {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 12px);
+  z-index: 8;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--bg-elevated) 96%, transparent);
+  color: var(--text-secondary);
+  box-shadow: var(--shadow-elevated);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) scale(var(--board-label-scale, 1)) translateY(-3px);
+  transform-origin: center top;
+  transition: opacity 140ms var(--ease-out), transform 180ms var(--ease-spring);
+}
+.board-edit-hint kbd {
+  min-width: 30px;
+  padding: 2px 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 700;
+}
+.board-item-image.is-selected.is-single-selection .board-edit-hint {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) scale(var(--board-label-scale, 1)) translateY(0);
+}
+.board-item.is-dragging .board-edit-hint,
+.board-item.is-resizing .board-edit-hint { opacity: 0; pointer-events: none; }
 
 .generated-media-detail-trigger {
   position: absolute;
