@@ -16,7 +16,7 @@ export async function reserveUsage(userId, kind, requestId) {
   const headers = serviceHeaders();
   if (!headers) {
     if (process.env.REQUIRE_DURABLE_QUOTA === 'true') {
-      throw Object.assign(new Error('Durable quota enforcement is not configured.'), { code: 'quota-not-configured' });
+      throw Object.assign(new Error('Durable quota enforcement is not configured.'), { code: 'quota-not-configured', status: 503 });
     }
     return true;
   }
@@ -25,7 +25,7 @@ export async function reserveUsage(userId, kind, requestId) {
     body: JSON.stringify({ p_user_id: userId, p_kind: kind, p_request_id: requestId }),
     signal: AbortSignal.timeout(5_000)
   });
-  if (!response.ok) throw Object.assign(new Error('Could not reserve AI quota.'), { code: 'quota-service-failed' });
+  if (!response.ok) throw Object.assign(new Error('Could not reserve AI quota.'), { code: 'quota-service-failed', status: 503 });
   return (await response.json()) === true;
 }
 

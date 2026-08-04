@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { generateMediaBuffer } = require('../../lib/ai-media-provider');
 const { requestChat, discoverChatModels } = require('../../lib/ai-chat-provider');
-const { providerCatalog } = require('../../lib/provider-catalog');
+const { PROVIDER_CATALOG_VERSION, providerCatalog } = require('../../lib/provider-catalog');
 
 const QUICKROUTER_BASE_URL = 'https://api.quickrouter.ai';
 const DEFAULT_RESULT_ENDPOINT = `${QUICKROUTER_BASE_URL}/v1/videos`;
@@ -75,9 +75,12 @@ function providerApiKey(provider) {
 export function publicProviderConfig() {
   const providers = configuredProviders().filter((provider) => Boolean(providerApiKey(provider)));
   return {
+    catalogVersion: PROVIDER_CATALOG_VERSION,
     providers: providers.map(({ keyEnv, endpoint, resultEndpoint, ...provider }) => provider)
   };
 }
+
+export const catalogVersion = PROVIDER_CATALOG_VERSION;
 
 function providerFor(kind, id) {
   const candidates = configuredProviders().filter((provider) => provider.kind === kind);

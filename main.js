@@ -28,6 +28,7 @@ const { PROVIDER_CATALOG_VERSION, providerCatalog, catalogProvider } = require('
 const { loadRuntimeConfig } = require('./lib/runtime-config');
 const { SupabaseAuth, createPkcePair } = require('./lib/supabase-auth');
 const { AiGatewayClient } = require('./lib/ai-gateway-client');
+const { normalizeGatewayCatalog, assertGatewayProvider } = require('./lib/gateway-catalog');
 const { assertSafeLocalFile, sanitizeAiRequest } = require('./lib/privacy-guard');
 const { activate: activateApp, getActivationStatus } = require('./lib/activation');
 
@@ -76,6 +77,7 @@ let membershipService;
 let runtimeConfig;
 let supabaseAuth;
 let aiGateway;
+let gatewayCatalogCache = null;
 let usageTickInterval;
 let previewCacheDir;
 let previewTmpDir;
@@ -1151,19 +1153,19 @@ async function getPublicAiMediaConfig() {
   };
   if (!gatewayMode || !cloudSession.authenticated) return applyAiProviderVisibility(result);
   try {
-    const remote = await aiGateway.getConfig();
-    const providers = Array.isArray(remote && remote.providers) ? remote.providers : [];
+    const remote = await getVerifiedGatewayCatalog(true);
+    const providers = remote.providers;
     const gatewayEndpoint = runtimeConfig.aiGatewayUrl;
     const cloudProviders = (kind) => providers
       .filter((provider) => provider && provider.kind === kind)
       .slice(0, 10)
       .map((provider) => ({
-        id: String(provider.id || '').slice(0, 64),
-        name: String(provider.name || provider.id || '').slice(0, 80),
+        id: provider.id,
+        name: provider.name,
         endpoint: gatewayEndpoint,
-        models: Array.isArray(provider.models) ? provider.models.slice(0, 30) : [],
-        capabilities: provider.capabilities && typeof provider.capabilities === 'object' ? provider.capabilities : null,
-        protocol: String(provider.protocol || ''),
+        models: provider.models,
+        capabilities: provider.capabilities,
+        protocol: provider.protocol,
         hasOwnApiKey: false,
         hasApiKey: true,
         cloudManaged: true
@@ -1201,6 +1203,23 @@ async function getPublicAiMediaConfig() {
   }
 }
 
+async function getVerifiedGatewayCatalog(force = false) {
+  const now = Date.now();
+  if (!force && gatewayCatalogCache && gatewayCatalogCache.expiresAt > now) {
+    return gatewayCatalogCache.value;
+  }
+  const remote = await aiGateway.getConfig();
+  const value = normalizeGatewayCatalog(remote, runtimeConfig.aiGatewayUrl);
+  gatewayCatalogCache = { value, expiresAt: now + 60_000 };
+  if (!value.compatible) assertGatewayProvider(value, 'image', 'image-1');
+  return value;
+}
+
+async function requireGatewayProvider(kind, providerId) {
+  const catalog = await getVerifiedGatewayCatalog();
+  return assertGatewayProvider(catalog, kind, providerId);
+}
+
 function assertAiTransportReady() {
   if (runtimeConfig && runtimeConfig.gatewayConfigured) return 'gateway';
   if (runtimeConfig && runtimeConfig.allowDirectAi) return 'direct';
@@ -1216,6 +1235,7 @@ async function generateAiMediaBuffer(kind, prompt, options = {}) {
   const timeout = setTimeout(() => controller.abort(), 20 * 60 * 1000);
   try {
     if (assertAiTransportReady() === 'gateway') {
+      await requireGatewayProvider(kind, kind === 'video' ? options.videoProviderId : options.imageProviderId);
       return await aiGateway.generateMedia(kind, {
         prompt,
         providerId: kind === 'video' ? options.videoProviderId : options.imageProviderId,
@@ -1274,6 +1294,7 @@ async function generateAiChatReply(prompt, messages, providerId, model) {
   const timeout = setTimeout(() => controller.abort(), 10 * 60 * 1000);
   try {
     if (assertAiTransportReady() === 'gateway') {
+      await requireGatewayProvider('chat', providerId);
       return await aiGateway.chat({
         prompt,
         messages,
@@ -1717,6 +1738,7 @@ function registerIpcHandlers() {
   ipcMain.handle('settings:discoverAiModels', async (_evt, request = {}) => {
     if (runtimeConfig.gatewayConfigured) {
       try {
+        await requireGatewayProvider('chat', String(request.providerId || 'chat-1'));
         return { ok: true, ...(await aiGateway.discoverModels(String(request.providerId || 'chat-1'))) };
       } catch (err) {
         return { ok: false, reason: err.code || 'model-discovery-failed', message: err.message, models: [] };
