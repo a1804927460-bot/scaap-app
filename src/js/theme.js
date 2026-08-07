@@ -10,7 +10,8 @@ function applyTheme(theme) {
 }
 
 function initTheme(initialTheme) {
-  applyTheme(initialTheme || 'dark');
+  const appliedTheme = initialTheme || 'dark';
+  applyTheme(appliedTheme);
 
   document.querySelectorAll('.theme-opt').forEach((btn) => {
     btn.addEventListener('click', async () => {

@@ -13,6 +13,9 @@ function initStartScreen(onStart) {
     setTimeout(() => {
       startScreen.hidden = true;
       document.documentElement.setAttribute('data-view', 'main');
+      if (window.messsAPI && typeof window.messsAPI.syncThemeSurface === 'function') {
+        window.messsAPI.syncThemeSurface(document.documentElement.getAttribute('data-theme') || 'dark');
+      }
       mainApp.hidden = false;
       requestAnimationFrame(() => {
         mainApp.classList.add('is-visible');
@@ -42,6 +45,9 @@ function showStartScreenAgain() {
   setTimeout(() => {
     mainApp.hidden = true;
     document.documentElement.setAttribute('data-view', 'start');
+    if (window.messsAPI && typeof window.messsAPI.syncThemeSurface === 'function') {
+      window.messsAPI.syncThemeSurface('dark');
+    }
     startScreen.hidden = false;
     startScreen.classList.remove('is-leaving');
     // Re-trigger the entrance animation from a clean state.

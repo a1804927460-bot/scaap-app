@@ -55,6 +55,7 @@ const WINDOW_BACKGROUND_COLORS = Object.freeze({
   dark: '#080A0D',
   light: '#FFFFFF'
 });
+const STARTUP_BACKGROUND_COLOR = WINDOW_BACKGROUND_COLORS.dark;
 
 function normalizeTheme(theme) {
   return theme === 'light' ? 'light' : 'dark';
@@ -450,16 +451,16 @@ function listDesktopFilenames() {
 }
 
 function createWindow() {
-  const initialTheme = normalizeTheme(store && store.data && store.data.settings && store.data.settings.theme);
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1040,
     minHeight: 680,
+    show: false,
     icon: app.isPackaged ? process.execPath : path.join(__dirname, 'build-resources', 'icon.png'),
-    // Chromium can briefly expose the native surface during resize, maximize
-    // and DPI transitions. Keep that surface aligned with the persisted theme.
-    backgroundColor: WINDOW_BACKGROUND_COLORS[initialTheme],
+    // The HTML shell always starts dark. Keep the native surface identical so
+    // Windows never exposes a white frame before Chromium's first paint.
+    backgroundColor: STARTUP_BACKGROUND_COLOR,
     frame: false, // We draw our own top bar (see src/index.html #app-titlebar) so it
                    // always matches the app's theme instead of the OS's default chrome.
     webPreferences: {
@@ -470,6 +471,12 @@ function createWindow() {
     }
   });
 
+  const revealWindow = () => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) mainWindow.show();
+  };
+  mainWindow.once('ready-to-show', revealWindow);
+  mainWindow.webContents.once('did-fail-load', revealWindow);
+  mainWindow.webContents.once('did-finish-load', () => setTimeout(revealWindow, 0));
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
   mainWindow.setMenu(null);
 
@@ -1910,6 +1917,11 @@ async function chooseProfileAvatar() {
 }
 
 function registerIpcHandlers() {
+  ipcMain.on('window:syncThemeSurface', (event, theme) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return;
+    setWindowBackgroundColor(theme);
+  });
+
   ipcMain.handle('app:getInitialState', async () => {
     pruneMissingFiles();
     await hydrateMissingMediaMetadata();

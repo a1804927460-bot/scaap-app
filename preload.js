@@ -100,6 +100,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   getInitialState: () => ipcRenderer.invoke('app:getInitialState'),
   getActivationStatus: () => ipcRenderer.invoke('activation:getStatus'),
   activateApp: (code) => ipcRenderer.invoke('activation:activate', code),
+  syncThemeSurface: (theme) => ipcRenderer.send('window:syncThemeSurface', theme),
   setTheme: (theme) => ipcRenderer.invoke('settings:setTheme', theme),
   setLanguage: (language) => ipcRenderer.invoke('settings:setLanguage', language),
   getMembershipSnapshot: () => ipcRenderer.invoke('membership:getSnapshot'),
