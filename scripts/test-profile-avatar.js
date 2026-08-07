@@ -18,6 +18,11 @@ assert.match(sidebarSource, /accountUserId && typeof window\.messsAPI\.getProfil
 assert.match(sidebarSource, /avatarButton\.disabled = !accountUserId/);
 assert.match(sidebarSource, /async function signOutCloudAccount\(\)[\s\S]*?activeAccountAvatarUserId = null;[\s\S]*?renderAccountAvatars\('M', null\);[\s\S]*?signOutCloud\(\)/);
 assert.match(indexSource, /id="account-popover-avatar"[^>]*disabled/);
+assert.match(indexSource, /class="account-avatar-edit-badge"[\s\S]*?<svg/);
+
+const avatarCssSource = fs.readFileSync(path.resolve(__dirname, '..', 'src', 'styles', 'account-avatar.css'), 'utf8');
+assert.doesNotMatch(avatarCssSource, /content:\s*['"]\\270E/);
+assert.match(avatarCssSource, /\.account-avatar-edit:disabled \+ \.account-avatar-edit-badge/);
 
 const storageRoot = path.resolve(__dirname, '..', '.profile-avatar-test-root');
 const signedOut = { authenticated: false, user: null };

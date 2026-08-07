@@ -121,7 +121,15 @@
 
         <div id="account-popover" class="settings-popover account-popover" hidden>
           <div class="account-popover-head">
-            <button id="account-popover-avatar" class="account-avatar account-avatar-lg account-avatar-edit" type="button" title="Change profile image" aria-label="Change profile image" disabled>M</button>
+            <span class="account-avatar-editor">
+              <button id="account-popover-avatar" class="account-avatar account-avatar-lg account-avatar-edit" type="button" title="Change profile image" aria-label="Change profile image" disabled>M</button>
+              <span class="account-avatar-edit-badge" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+              </span>
+            </span>
             <span><strong id="account-popover-name">Messs user</strong><small id="account-popover-email">Sign in to sync your account</small></span>
           </div>
           <div class="account-plan-card">

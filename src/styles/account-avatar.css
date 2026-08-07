@@ -19,32 +19,43 @@
   position: relative;
   cursor: pointer;
   outline: none;
+  transition: box-shadow 150ms ease, transform 150ms ease;
 }
 
-.account-avatar-edit::after {
-  content: '\270E';
+.account-avatar-editor {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  display: block;
+}
+
+.account-avatar-edit-badge {
   position: absolute;
-  right: -1px;
-  bottom: -1px;
-  width: 18px;
-  height: 18px;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
   display: grid;
   place-items: center;
-  border: 2px solid var(--bg-elevated);
   border-radius: 50%;
-  background: var(--text-primary);
-  color: var(--bg-base);
-  font-size: 9px;
-  line-height: 1;
-  opacity: 0;
-  transform: scale(.8);
-  transition: opacity 140ms ease, transform 140ms ease;
+  border: 1px solid var(--border-hairline);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  box-shadow: 0 0 0 2px var(--bg-elevated), 0 1px 3px rgba(0, 0, 0, .14);
+  pointer-events: none;
+  transition: color 150ms ease, opacity 150ms ease, transform 150ms ease;
 }
 
-.account-avatar-edit:not(:disabled):hover::after,
-.account-avatar-edit:not(:disabled):focus-visible::after {
-  opacity: 1;
-  transform: scale(1);
+.account-avatar-edit:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.account-avatar-edit:not(:disabled):hover + .account-avatar-edit-badge,
+.account-avatar-edit:not(:disabled):focus-visible + .account-avatar-edit-badge {
+  color: var(--accent);
+  transform: translateY(-1px);
 }
 
 .account-avatar-edit:focus-visible {
@@ -54,6 +65,11 @@
 .account-avatar-edit:disabled {
   cursor: default;
   opacity: 1;
+}
+
+.account-avatar-edit:disabled + .account-avatar-edit-badge {
+  visibility: hidden;
+  opacity: 0;
 }
 
 #ai-provider-manager-open {
