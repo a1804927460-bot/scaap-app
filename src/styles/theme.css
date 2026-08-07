@@ -25,7 +25,7 @@
   --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Helvetica, Arial, sans-serif;
 }
 
-/* -------- Dark theme (default; also the only theme for the start screen) -------- */
+/* -------- Dark theme (default) -------- */
 [data-theme="dark"] {
   --bg-base: #080A0D;
   --bg-elevated: #0E1115;
@@ -83,33 +83,6 @@
 
   --shadow-elevated: 0 20px 50px rgba(0, 0, 0, 0.10);
   --scrollbar-thumb: rgba(0, 0, 0, 0.14);
-}
-
-/* Keep the launch surface dark while the saved theme is loaded. The
-   persisted light/dark tokens apply normally after entering the main view. */
-html[data-view="start"] {
-  --bg-base: #080A0D;
-  --bg-elevated: #0E1115;
-  --bg-surface: #15191E;
-  --bg-surface-2: #20252B;
-  --border-hairline: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(72, 137, 232, 0.34);
-  --text-primary: #F4F6F8;
-  --text-secondary: #A7ADB6;
-  --text-tertiary: #707780;
-  --accent: #F5D84C;
-  --accent-soft: rgba(245, 216, 76, 0.14);
-  --accent-ink: #0A0C0F;
-  --accent-glow: rgba(245, 216, 76, 0.24);
-  --title-accent: #4A8BE8;
-  --selection-outline: #F5D84C;
-  --selection-handle: #FFF3A8;
-  --glow-color: rgba(44, 123, 224, 0.30);
-  --resize-handle-line: rgba(167, 173, 182, 0.10);
-  --resize-handle-hover: rgba(167, 173, 182, 0.30);
-  --resize-handle-active: rgba(74, 139, 232, 0.72);
-  --shadow-elevated: 0 20px 60px rgba(0, 0, 0, 0.62);
-  --scrollbar-thumb: rgba(112, 119, 128, 0.42);
 }
 
 html[data-view="start"] body { transition: none; }

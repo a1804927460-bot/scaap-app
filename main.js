@@ -56,7 +56,6 @@ const WINDOW_BACKGROUND_COLORS = Object.freeze({
   dark: '#080A0D',
   light: '#FFFFFF'
 });
-const STARTUP_BACKGROUND_COLOR = WINDOW_BACKGROUND_COLORS.dark;
 
 function normalizeTheme(theme) {
   return theme === 'light' ? 'light' : 'dark';
@@ -452,6 +451,7 @@ function listDesktopFilenames() {
 }
 
 function createWindow() {
+  const initialTheme = normalizeTheme(store && store.data && store.data.settings && store.data.settings.theme);
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -459,9 +459,9 @@ function createWindow() {
     minHeight: 680,
     show: false,
     icon: app.isPackaged ? process.execPath : path.join(__dirname, 'build-resources', 'icon.png'),
-    // The HTML shell always starts dark. Keep the native surface identical so
-    // Windows never exposes a white frame before Chromium's first paint.
-    backgroundColor: STARTUP_BACKGROUND_COLOR,
+    // Match Chromium's first paint to the persisted theme so Windows never
+    // exposes a differently colored native surface during startup.
+    backgroundColor: WINDOW_BACKGROUND_COLORS[initialTheme],
     frame: false, // We draw our own top bar (see src/index.html #app-titlebar) so it
                    // always matches the app's theme instead of the OS's default chrome.
     webPreferences: {
@@ -478,7 +478,9 @@ function createWindow() {
   mainWindow.once('ready-to-show', revealWindow);
   mainWindow.webContents.once('did-fail-load', revealWindow);
   mainWindow.webContents.once('did-finish-load', () => setTimeout(revealWindow, 0));
-  mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
+  mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'), {
+    query: { theme: initialTheme }
+  });
   mainWindow.setMenu(null);
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

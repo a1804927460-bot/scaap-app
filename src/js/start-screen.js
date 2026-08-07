@@ -46,7 +46,7 @@ function showStartScreenAgain() {
     mainApp.hidden = true;
     document.documentElement.setAttribute('data-view', 'start');
     if (window.messsAPI && typeof window.messsAPI.syncThemeSurface === 'function') {
-      window.messsAPI.syncThemeSurface('dark');
+      window.messsAPI.syncThemeSurface(document.documentElement.getAttribute('data-theme') || 'dark');
     }
     startScreen.hidden = false;
     startScreen.classList.remove('is-leaving');
