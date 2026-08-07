@@ -13,6 +13,7 @@
   }
 
   function createSpatialIndex(cellSize = 400) {
+    cellSize = Number.isFinite(cellSize) && cellSize > 0 ? cellSize : 400;
     const grid = new Map();
     const boundsById = new Map();
 
@@ -67,17 +68,53 @@
       });
     }
 
-    function query(rect) {
-      const candidates = new Set();
-      forEachCell(rect, (key) => {
-        const bucket = grid.get(key);
-        if (bucket) bucket.forEach((id) => candidates.add(id));
-      });
-      for (const id of [...candidates]) {
-        const bounds = boundsById.get(id);
-        if (!bounds || !intersects(bounds, rect)) candidates.delete(id);
+    function forEachMatch(rect, callback) {
+      const seen = new Set();
+      const range = cellRange(rect);
+      for (let x = range.minX; x <= range.maxX; x += 1) {
+        for (let y = range.minY; y <= range.maxY; y += 1) {
+          const bucket = grid.get(`${x}:${y}`);
+          if (!bucket) continue;
+          for (const id of bucket) {
+            if (seen.has(id)) continue;
+            seen.add(id);
+            const bounds = boundsById.get(id);
+            if (bounds && intersects(bounds, rect) && callback(id, bounds) === false) {
+              return;
+            }
+          }
+        }
       }
-      return candidates;
+    }
+
+    function queryLimited(rect, limit = Infinity) {
+      const normalizedLimit = Number.isFinite(limit)
+        ? Math.max(0, Math.floor(limit))
+        : Infinity;
+      const matches = new Set();
+      if (!normalizedLimit) return matches;
+      forEachMatch(rect, (id) => {
+        matches.add(id);
+        return matches.size < normalizedLimit;
+      });
+      return matches;
+    }
+
+    function query(rect) {
+      return queryLimited(rect);
+    }
+
+    function count(rect, stopAt = Infinity) {
+      const normalizedLimit = Number.isFinite(stopAt)
+        ? Math.max(0, Math.floor(stopAt))
+        : Infinity;
+      if (!normalizedLimit) return 0;
+      let matches = 0;
+      forEachMatch(rect, () => {
+        matches += 1;
+        return matches < normalizedLimit;
+      });
+      return matches;
     }
 
     function clear() {
@@ -89,6 +126,8 @@
       set,
       remove,
       query,
+      queryLimited,
+      count,
       clear,
       getBounds: (id) => boundsById.get(id) || null,
       get size() { return boundsById.size; },
@@ -114,41 +153,139 @@
     };
   }
 
-  function viewportRects(view, viewport) {
+  function viewportRects(view, viewport, options = {}) {
     const zoom = Math.max(0.0001, view.zoom);
     const worldW = Math.max(1, viewport.w) / zoom;
     const worldH = Math.max(1, viewport.h) / zoom;
     const x = -view.panX / zoom;
     const y = -view.panY / zoom;
-    const mountMargin = Math.max(worldW, worldH) * 0.3;
+    const mountMarginRatio = Number.isFinite(options.mountMarginRatio)
+      ? Math.max(0, options.mountMarginRatio)
+      : 0.3;
+    const keepMarginRatio = Number.isFinite(options.keepMarginRatio)
+      ? Math.max(mountMarginRatio, options.keepMarginRatio)
+      : Math.max(1, mountMarginRatio);
+    const mountMarginX = worldW * mountMarginRatio;
+    const mountMarginY = worldH * mountMarginRatio;
+    const keepMarginX = worldW * keepMarginRatio;
+    const keepMarginY = worldH * keepMarginRatio;
     return {
       visible: { x, y, w: worldW, h: worldH },
       mount: {
-        x: x - mountMargin,
-        y: y - mountMargin,
-        w: worldW + mountMargin * 2,
-        h: worldH + mountMargin * 2
+        x: x - mountMarginX,
+        y: y - mountMarginY,
+        w: worldW + mountMarginX * 2,
+        h: worldH + mountMarginY * 2
       },
       keep: {
-        x: x - worldW,
-        y: y - worldH,
-        w: worldW * 3,
-        h: worldH * 3
+        x: x - keepMarginX,
+        y: y - keepMarginY,
+        w: worldW + keepMarginX * 2,
+        h: worldH + keepMarginY * 2
       }
     };
   }
 
+  function resolveZoomLod(zoom, previous, thresholds = {}) {
+    const overviewEnter = Number.isFinite(thresholds.overviewEnter)
+      ? Math.max(0, thresholds.overviewEnter)
+      : 0.1;
+    const overviewExit = Math.max(
+      overviewEnter,
+      Number.isFinite(thresholds.overviewExit) ? thresholds.overviewExit : 0.14
+    );
+    const detailExit = Math.max(
+      overviewExit,
+      Number.isFinite(thresholds.detailExit) ? thresholds.detailExit : 0.38
+    );
+    const detailEnter = Math.max(
+      detailExit,
+      Number.isFinite(thresholds.detailEnter) ? thresholds.detailEnter : 0.46
+    );
+    const safeZoom = Number.isFinite(zoom) ? Math.max(0, zoom) : 1;
+
+    if (previous === 'overview') {
+      if (safeZoom <= overviewExit) return 'overview';
+      return safeZoom >= detailEnter ? 'detail' : 'compact';
+    }
+    if (previous === 'detail') {
+      if (safeZoom >= detailExit) return 'detail';
+      return safeZoom <= overviewEnter ? 'overview' : 'compact';
+    }
+    if (previous === 'compact') {
+      if (safeZoom <= overviewEnter) return 'overview';
+      if (safeZoom >= detailEnter) return 'detail';
+      return 'compact';
+    }
+
+    const thresholdEpsilon = 1e-12;
+    if (safeZoom <= (overviewEnter + overviewExit) / 2 + thresholdEpsilon) return 'overview';
+    if (safeZoom >= (detailExit + detailEnter) / 2 - thresholdEpsilon) return 'detail';
+    return 'compact';
+  }
+
+  function isOverDomBudget(candidateCount, wasOverBudget = false, thresholds = {}) {
+    const enter = Number.isFinite(thresholds.enter)
+      ? Math.max(1, Math.floor(thresholds.enter))
+      : 320;
+    const exit = Math.min(
+      enter,
+      Number.isFinite(thresholds.exit) ? Math.max(0, Math.floor(thresholds.exit)) : 240
+    );
+    const count = Number.isFinite(candidateCount) ? Math.max(0, candidateCount) : 0;
+    return wasOverBudget ? count > exit : count > enter;
+  }
+
+  function prioritizeIdsByViewport(ids, spatialIndex, visibleRect, limit = Infinity) {
+    const normalizedLimit = Number.isFinite(limit)
+      ? Math.max(0, Math.floor(limit))
+      : Infinity;
+    if (!normalizedLimit) return [];
+    const centerX = visibleRect.x + visibleRect.w / 2;
+    const centerY = visibleRect.y + visibleRect.h / 2;
+    const getBounds = typeof spatialIndex === 'function'
+      ? spatialIndex
+      : (id) => spatialIndex && spatialIndex.getBounds(id);
+    const candidates = [];
+
+    for (const id of ids) {
+      const bounds = getBounds(id);
+      if (!bounds) continue;
+      const itemCenterX = bounds.x + bounds.w / 2;
+      const itemCenterY = bounds.y + bounds.h / 2;
+      const dx = itemCenterX - centerX;
+      const dy = itemCenterY - centerY;
+      candidates.push({
+        id,
+        visibleRank: intersects(bounds, visibleRect) ? 0 : 1,
+        distance: dx * dx + dy * dy
+      });
+    }
+
+    candidates.sort((a, b) => (
+      a.visibleRank - b.visibleRank ||
+      a.distance - b.distance ||
+      String(a.id).localeCompare(String(b.id))
+    ));
+    return candidates.slice(0, normalizedLimit).map((entry) => entry.id);
+  }
+
   function hashSet(values) {
-    let hash = values.size | 0;
+    let sum = 0;
+    let xor = 0;
     for (const value of values) {
       const text = String(value);
-      let itemHash = 0;
+      let itemHash = 2166136261;
       for (let i = 0; i < text.length; i += 1) {
-        itemHash = (Math.imul(itemHash, 31) + text.charCodeAt(i)) | 0;
+        itemHash = Math.imul(itemHash ^ text.charCodeAt(i), 16777619);
       }
-      hash = (hash + itemHash) | 0;
+      itemHash ^= itemHash >>> 16;
+      itemHash = Math.imul(itemHash, 0x7feb352d);
+      itemHash ^= itemHash >>> 15;
+      sum = (sum + itemHash) | 0;
+      xor ^= ((itemHash << (itemHash & 15)) | (itemHash >>> (32 - (itemHash & 15))));
     }
-    return hash;
+    return `${values.size}:${sum >>> 0}:${xor >>> 0}`;
   }
 
   function parseAspectRatio(value, fallback = 1) {
@@ -211,6 +348,9 @@
     clampZoom,
     zoomAtPoint,
     viewportRects,
+    resolveZoomLod,
+    isOverDomBudget,
+    prioritizeIdsByViewport,
     hashSet,
     intersects,
     parseAspectRatio,

@@ -20,6 +20,8 @@ export const VIDEO_CREDITS_PER_SECOND = Object.freeze({
 const DURABLE_TIMEOUT_MS = 5_000;
 const VALID_RESERVE_REASONS = new Set([
   'reserved',
+  // Only accepted as a fail-closed response from the legacy credit RPC. The
+  // gateway makes one scoped migration attempt before exposing this denial.
   'activation-required',
   'insufficient-credits',
   'account-suspended',
@@ -51,32 +53,31 @@ function boundedInteger(value, fallback, minimum, maximum) {
 }
 
 export function providerRequiresActivation(kind, providerId) {
-  const normalizedKind = String(kind || '').trim().toLowerCase();
-  const normalizedProvider = String(providerId || '').trim().toLowerCase();
-  // MiniMax H3 is the only currently supported mainland provider. New and
-  // unknown providers default to locked until explicitly classified.
-  return !(normalizedKind === 'video' && (normalizedProvider || 'video-1') === 'video-1');
+  // Kept as a compatibility export for older desktop clients. Redemption
+  // codes now add credits only; model access is never activation-gated.
+  void kind;
+  void providerId;
+  return false;
 }
 
 export function accountAllowsOverseas(account) {
-  // null exists only in explicitly non-durable migration/development mode.
-  return account === null || Boolean(account && (account.overseasUnlocked === true || account.overseas_unlocked === true));
+  // The legacy account field may remain in persisted responses, but it no
+  // longer controls provider visibility or access.
+  void account;
+  return true;
 }
 
 export function filterProviderConfigForAccount(config, account) {
   const source = config && Array.isArray(config.providers) ? config.providers : [];
-  if (accountAllowsOverseas(account)) return { ...config, providers: source.slice() };
-  return {
-    ...config,
-    providers: source.filter((provider) => !providerRequiresActivation(provider && provider.kind, provider && provider.id))
-  };
+  void account;
+  return { ...config, providers: source.slice() };
 }
 
 export function quoteUsage(kind, request = {}) {
   const normalizedKind = String(kind || '').trim().toLowerCase();
   if (normalizedKind === 'chat') {
     const providerId = String(request.providerId || 'chat-1').trim().toLowerCase() || 'chat-1';
-    return { kind: 'chat', providerId, credits: 0, resolution: null, duration: null, requiresActivation: true };
+    return { kind: 'chat', providerId, credits: 0, resolution: null, duration: null, requiresActivation: false };
   }
   if (normalizedKind === 'image') {
     const providerId = String(request.providerId || 'image-1').trim().toLowerCase() || 'image-1';
@@ -89,7 +90,7 @@ export function quoteUsage(kind, request = {}) {
       credits: IMAGE_CREDITS[providerId],
       resolution: null,
       duration: null,
-      requiresActivation: true
+      requiresActivation: false
     };
   }
   if (normalizedKind === 'video') {
@@ -144,6 +145,40 @@ async function legacyReserve(headers, userId, kind, requestId, fetchImpl) {
   };
 }
 
+async function reserveCredits(headers, requestBody, fetchImpl) {
+  const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/reserve_ai_credits`, {
+    method: 'POST',
+    headers,
+    body: requestBody,
+    signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
+  });
+  return { response, payload: await responsePayload(response) };
+}
+
+async function openLegacyModelAccess(headers, userId, fetchImpl) {
+  const normalizedUserId = String(userId || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(normalizedUserId)) return false;
+  const accountUrl = new URL(`${supabaseUrl}/rest/v1/ai_credit_accounts`);
+  accountUrl.searchParams.set('user_id', `eq.${normalizedUserId}`);
+  accountUrl.searchParams.set('select', 'user_id,overseas_unlocked');
+  try {
+    const response = await fetchImpl(accountUrl.toString(), {
+      method: 'PATCH',
+      headers: { ...headers, Prefer: 'return=representation' },
+      body: JSON.stringify({ overseas_unlocked: true }),
+      signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
+    });
+    const payload = await responsePayload(response);
+    return response.ok
+      && Array.isArray(payload)
+      && payload.length === 1
+      && String(payload[0] && payload[0].user_id || '') === normalizedUserId
+      && payload[0].overseas_unlocked === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function reserveUsage(userId, kind, requestId, request = {}, fetchImpl = fetch) {
   const quote = quoteUsage(kind, request);
   const headers = serviceHeaders();
@@ -154,27 +189,37 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
     return { ok: true, reason: 'development-bypass', ...quote, developmentBypass: true };
   }
 
-  const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/reserve_ai_credits`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      p_user_id: userId,
-      p_kind: quote.kind,
-      p_provider_id: quote.providerId,
-      p_request_id: requestId,
-      p_resolution: quote.resolution,
-      p_duration: quote.duration,
-      p_expected_credits: quote.credits
-    }),
-    signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
+  const requestBody = JSON.stringify({
+    p_user_id: userId,
+    p_kind: quote.kind,
+    p_provider_id: quote.providerId,
+    p_request_id: requestId,
+    p_resolution: quote.resolution,
+    p_duration: quote.duration,
+    p_expected_credits: quote.credits
   });
-  const payload = await responsePayload(response);
+  let { response, payload } = await reserveCredits(headers, requestBody, fetchImpl);
   if (!response.ok) {
     if (isMissingCreditRpc(response, payload) && !durableRequired()) {
       return legacyReserve(headers, userId, quote.kind, requestId, fetchImpl);
     }
     const code = isMissingCreditRpc(response, payload) ? 'credit-schema-missing' : 'credit-service-failed';
     throw serviceError(code, 'Could not reserve AI credits.');
+  }
+
+  // Databases that have not received the open-access migration can still
+  // reject an otherwise valid quote with the retired activation gate. Update
+  // only this account and replay the identical server-authoritative request
+  // once; every response after that follows the normal fail-closed path.
+  if (payload && !Array.isArray(payload) && payload.ok === false && payload.reason === 'activation-required') {
+    const accessOpened = await openLegacyModelAccess(headers, userId, fetchImpl);
+    if (accessOpened) {
+      ({ response, payload } = await reserveCredits(headers, requestBody, fetchImpl));
+      if (!response.ok) {
+        const code = isMissingCreditRpc(response, payload) ? 'credit-schema-missing' : 'credit-service-failed';
+        throw serviceError(code, 'Could not reserve AI credits.');
+      }
+    }
   }
 
   const result = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};

@@ -135,6 +135,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   sendChatText: (conversationId, body) => ipcRenderer.invoke('chat:sendText', conversationId, body),
   sendChatImage: (conversationId) => ipcRenderer.invoke('chat:sendImage', conversationId),
   retryChatMessage: (clientId) => ipcRenderer.invoke('chat:retryMessage', clientId),
+  recallChatMessage: (clientId) => ipcRenderer.invoke('chat:recallMessage', clientId),
   getChatImageDataUrl: (clientId) => ipcRenderer.invoke('chat:getImageDataUrl', clientId),
   onChatEvent: (callback) => {
     const listener = (_event, payload) => callback(payload);

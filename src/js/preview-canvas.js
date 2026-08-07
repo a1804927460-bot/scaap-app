@@ -416,7 +416,7 @@ function renderBinaryPreview(id, result) {
       <span class="binary-ascii">${escapeHtml(row.ascii)}</span>
     </div>`).join('');
   const modified = result.modifiedAt
-    ? new Date(result.modifiedAt).toLocaleString(isZh() ? 'zh-CN' : 'en-US', { hour12: false })
+    ? new Date(result.modifiedAt).toLocaleString(appLocale(), { hour12: false })
     : '--';
   panel.innerHTML = `
     <header class="binary-header">

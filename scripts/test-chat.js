@@ -11,9 +11,11 @@ const {
   validateChatSearch,
   validateTextMessage,
   validateUuid,
+  normalizeMessage,
   normalizeBootstrap,
   publicFailure,
-  CHAT_SCHEMA_VERSION
+  CHAT_SCHEMA_VERSION,
+  CHAT_RECALL_SCHEMA_VERSION
 } = require('../lib/chat-service');
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
@@ -44,6 +46,44 @@ function message(clientId, conversationId, createdAt, extra = {}) {
   assert.throws(() => validateTextMessage('   '), /不能为空/);
   assert.strictEqual(validateUuid(USER_ID), USER_ID);
   assert.throws(() => validateUuid('../escape'), /无效/);
+  assert.deepStrictEqual(
+    normalizeMessage({
+      id: '33333333-3333-4333-8333-333333333333',
+      client_message_id: '44444444-4444-4444-8444-444444444444',
+      conversation_id: CONVERSATION_A,
+      sender_id: USER_ID,
+      kind: 'image',
+      body: 'must not survive',
+      image_path: 'private/image.png',
+      image_mime: 'image/png',
+      image_width: 100,
+      image_height: 100,
+      created_at: '2026-08-04T09:00:00.000Z',
+      updated_at: '2026-08-04T09:01:00.000Z',
+      recalled_at: '2026-08-04T09:01:00.000Z',
+      recalled_by: USER_ID
+    }),
+    {
+      clientId: '44444444-4444-4444-8444-444444444444',
+      serverId: '33333333-3333-4333-8333-333333333333',
+      conversationId: CONVERSATION_A,
+      senderId: USER_ID,
+      kind: 'image',
+      body: '',
+      imagePath: null,
+      imageMime: null,
+      imageWidth: null,
+      imageHeight: null,
+      createdAt: '2026-08-04T09:00:00.000Z',
+      updatedAt: '2026-08-04T09:01:00.000Z',
+      recalledAt: '2026-08-04T09:01:00.000Z',
+      recalledBy: USER_ID,
+      localCreatedAt: '2026-08-04T09:00:00.000Z',
+      status: 'recalled',
+      error: null,
+      localImagePath: null
+    }
+  );
   assert.strictEqual(normalizeBootstrap({ friends: [{ id: FRIEND_ID, relationship_status: 'friend' }] }).friends[0].relationshipStatus, 'friend');
   assert.deepStrictEqual(publicFailure(Object.assign(new Error('Could not find the function public.chat_bootstrap in the schema cache'), { code: 'PGRST202' })), {
     ok: false,
@@ -106,10 +146,27 @@ function message(clientId, conversationId, createdAt, extra = {}) {
     const queued = message(queuedId, CONVERSATION_A, '2026-08-04T10:00:01.000Z', { status: 'queued' });
     local.upsertMessage(queued);
     local.enqueue({ id: queuedId, type: 'message', message: queued, attempts: 0, nextAttemptAt: 0 });
+    const recalledId = '00000000-0000-4000-8000-000000000020';
+    const beforeRecall = message(recalledId, CONVERSATION_A, '2026-08-04T10:00:02.000Z', {
+      body: 'private content'
+    });
+    local.upsertMessage(beforeRecall);
+    local.upsertMessage({
+      ...beforeRecall,
+      body: '',
+      recalledAt: '2026-08-04T10:00:03.000Z',
+      recalledBy: USER_ID,
+      updatedAt: '2026-08-04T10:00:03.000Z',
+      status: 'recalled'
+    });
+    // A delayed pre-recall row cannot restore redacted content.
+    local.upsertMessage(beforeRecall);
     const restarted = new ChatLocalStore(root);
     restarted.useUser(USER_ID);
     assert.strictEqual(restarted.getMessage(queuedId).status, 'queued');
     assert.strictEqual(restarted.getOutbox().length, 1);
+    assert.strictEqual(restarted.getMessage(recalledId).status, 'recalled');
+    assert.strictEqual(restarted.getMessage(recalledId).body, '');
 
     // Images are copied into the versioned, per-user managed directory.
     const source = path.join(root, 'source.png');
@@ -117,6 +174,8 @@ function message(clientId, conversationId, createdAt, extra = {}) {
     const managed = await restarted.cacheImageFromFile(queuedId, source, '.png');
     assert.strictEqual(fs.readFileSync(managed, 'utf8'), 'image-bytes');
     assert.ok(managed.startsWith(path.join(root, 'users', USER_ID, 'images')));
+    assert.strictEqual(restarted.removeCachedImage(queuedId), 1);
+    assert.strictEqual(fs.existsSync(managed), false);
 
     // A failed thread blocks only its own later messages. A different
     // conversation continues flushing in the same pass.
@@ -194,6 +253,7 @@ function message(clientId, conversationId, createdAt, extra = {}) {
         schemaVersion: CHAT_SCHEMA_VERSION,
         rpcReady: true,
         messagesReady: true,
+        recallReady: false,
         imageStorageReady: false,
         realtimeConfigured: false,
         realtimeConnected: false
@@ -224,8 +284,12 @@ function message(clientId, conversationId, createdAt, extra = {}) {
       realtimeSubscribeTimeoutMs: 20
     });
     let realtimeCallback;
+    const realtimeRegistrations = [];
     const fakeChannel = {
-      on() { return this; },
+      on(type, filter, callback) {
+        realtimeRegistrations.push({ type, filter, callback });
+        return this;
+      },
       subscribe(callback) {
         realtimeCallback = callback;
         queueMicrotask(() => callback('TIMED_OUT'));
@@ -242,6 +306,11 @@ function message(clientId, conversationId, createdAt, extra = {}) {
     assert.strictEqual(await realtimeService._subscribe(), false);
     assert.strictEqual(realtimeService.cloud.realtimeConnected, false);
     assert.notStrictEqual(realtimeService.status, 'online');
+    assert.ok(realtimeRegistrations.some((entry) => (
+      entry.type === 'postgres_changes'
+      && entry.filter.table === 'chat_messages'
+      && entry.filter.event === 'UPDATE'
+    )));
     realtimeCallback('SUBSCRIBED');
     assert.strictEqual(realtimeService.status, 'online');
     assert.strictEqual(realtimeService.cloud.realtimeConnected, true);
@@ -255,14 +324,43 @@ function message(clientId, conversationId, createdAt, extra = {}) {
       fetchImpl: global.fetch
     });
     dependencyService.local.useUser(USER_ID);
+    const legacyChecked = await dependencyService.checkCloudDependencies({
+      rpc: async () => ({
+        data: {
+          schema_version: CHAT_SCHEMA_VERSION,
+          rpc_ready: true,
+          messages_ready: true,
+          image_storage: true,
+          realtime: true
+        },
+        error: null
+      })
+    });
+    assert.strictEqual(legacyChecked.recallReady, false);
+    assert.strictEqual(dependencyService.status, 'idle');
+    const legacyRecall = await dependencyService.recallMessage('50000000-0000-4000-8000-000000000099');
+    assert.strictEqual(legacyRecall.ok, false);
+    assert.strictEqual(legacyRecall.reason, 'recall-unavailable');
+    const legacyQuery = { selected: '', orderedBy: '' };
+    await dependencyService._loadRemoteMessages({
+      from: () => ({
+        select(columns) { legacyQuery.selected = columns; return this; },
+        order(column) { if (!legacyQuery.orderedBy) legacyQuery.orderedBy = column; return this; },
+        range: async () => ({ data: [], error: null })
+      })
+    }, null);
+    assert.strictEqual(legacyQuery.orderedBy, 'created_at');
+    assert.doesNotMatch(legacyQuery.selected, /recalled_at|updated_at/);
+
     const checked = await dependencyService.checkCloudDependencies({
       rpc: async (name) => {
         assert.strictEqual(name, 'chat_service_status');
         return {
           data: {
-            schema_version: CHAT_SCHEMA_VERSION,
+            schema_version: CHAT_RECALL_SCHEMA_VERSION,
             rpc_ready: true,
             messages_ready: true,
+            recall_ready: true,
             image_storage: true,
             realtime: true
           },
@@ -272,6 +370,95 @@ function message(clientId, conversationId, createdAt, extra = {}) {
     });
     assert.strictEqual(checked.imageStorageReady, true);
     assert.strictEqual(checked.realtimeConfigured, true);
+    assert.strictEqual(checked.recallReady, true);
+    const recallQuery = { selected: '', orderedBy: '' };
+    await dependencyService._loadRemoteMessages({
+      from: () => ({
+        select(columns) { recallQuery.selected = columns; return this; },
+        order(column) { if (!recallQuery.orderedBy) recallQuery.orderedBy = column; return this; },
+        range: async () => ({ data: [], error: null })
+      })
+    }, null);
+    assert.strictEqual(recallQuery.orderedBy, 'updated_at');
+    assert.match(recallQuery.selected, /updated_at,recalled_at,recalled_by/);
+
+    // Recall uses the immutable server message ID, is sender-only, redacts the
+    // durable local row, and removes both local and remote image copies.
+    dependencyService.local.applyBootstrap({
+      profile: { id: USER_ID, displayName: 'Alice' },
+      friends: [{ id: FRIEND_ID, displayName: 'Bob' }],
+      requests: [],
+      conversations: [{ id: CONVERSATION_A, other: { id: FRIEND_ID, displayName: 'Bob' } }]
+    });
+    const recallClientId = '50000000-0000-4000-8000-000000000001';
+    const recallServerId = '50000000-0000-4000-8000-000000000002';
+    const recallImagePath = `${CONVERSATION_A}/${USER_ID}/${recallClientId}.png`;
+    const recallLocalPath = await dependencyService.local.cacheImageFromFile(recallClientId, source, '.png');
+    dependencyService.local.upsertMessage(message(recallClientId, CONVERSATION_A, stamp, {
+      serverId: recallServerId,
+      kind: 'image',
+      body: '',
+      imagePath: recallImagePath,
+      imageMime: 'image/png',
+      imageWidth: 32,
+      imageHeight: 24,
+      localImagePath: recallLocalPath
+    }));
+    const recalledStoragePaths = [];
+    let recalledRpcCall = null;
+    dependencyService._ensureClient = async () => ({
+      rpc: async (name, parameters) => {
+        recalledRpcCall = { name, parameters };
+        return {
+          data: {
+            id: recallServerId,
+            client_message_id: recallClientId,
+            conversation_id: CONVERSATION_A,
+            sender_id: USER_ID,
+            kind: 'image',
+            body: null,
+            image_path: null,
+            image_mime: null,
+            image_width: null,
+            image_height: null,
+            created_at: stamp,
+            updated_at: '2026-08-04T10:01:00.000Z',
+            recalled_at: '2026-08-04T10:01:00.000Z',
+            recalled_by: USER_ID
+          },
+          error: null
+        };
+      },
+      storage: {
+        from: (bucket) => {
+          assert.strictEqual(bucket, 'chat-images');
+          return {
+            remove: async (paths) => {
+              recalledStoragePaths.push(paths);
+              return { data: [], error: null };
+            }
+          };
+        }
+      }
+    });
+    const recallResult = await dependencyService.recallMessage(recallClientId);
+    assert.strictEqual(recallResult.ok, true);
+    assert.deepStrictEqual(recalledRpcCall, {
+      name: 'recall_chat_message',
+      parameters: { p_message_id: recallServerId }
+    });
+    assert.deepStrictEqual(recalledStoragePaths, [[recallImagePath]]);
+    assert.strictEqual(fs.existsSync(recallLocalPath), false);
+    assert.strictEqual(dependencyService.local.getMessage(recallClientId).status, 'recalled');
+    assert.strictEqual(dependencyService.local.getMessage(recallClientId).imagePath, null);
+
+    const otherClientId = '50000000-0000-4000-8000-000000000003';
+    dependencyService.local.upsertMessage(message(otherClientId, CONVERSATION_A, stamp, {
+      senderId: FRIEND_ID
+    }));
+    const forbiddenRecall = await dependencyService.recallMessage(otherClientId);
+    assert.strictEqual(forbiddenRecall.ok, false);
+    assert.strictEqual(forbiddenRecall.reason, 'recall-forbidden');
 
     // Image uploads are immutable. RPC failures request cleanup for an object
     // uploaded by this attempt without replacing the original send error.
@@ -389,13 +576,46 @@ function message(clientId, conversationId, createdAt, extra = {}) {
   assert.match(migration, /required_realtime\(relname\)[\s\S]*?'chat_messages'[\s\S]*?'chat_friend_requests'[\s\S]*?'chat_friendships'[\s\S]*?'chat_conversation_members'/i);
   assert.match(migration, /substr\(replace\(p_id::text, '-', ''\), 1, 16\)/i);
 
+  const recallMigration = fs.readFileSync(
+    path.join(__dirname, '..', 'supabase', 'migrations', '202608080002_chat_message_recall.sql'),
+    'utf8'
+  );
+  assert.match(recallMigration, /add column if not exists updated_at timestamptz not null default now\(\)/i);
+  assert.match(recallMigration, /add column if not exists recalled_at timestamptz/i);
+  assert.match(recallMigration, /add column if not exists recalled_by uuid/i);
+  assert.match(recallMigration, /create or replace function public\.recall_chat_message\(p_message_id uuid\)/i);
+  assert.match(recallMigration, /v_message\.sender_id is distinct from auth\.uid\(\)[\s\S]*?only the sender can recall/i);
+  assert.match(recallMigration, /set[\s\S]*?body = null[\s\S]*?image_path = null[\s\S]*?recalled_at = now\(\)[\s\S]*?recalled_by = auth\.uid\(\)/i);
+  assert.match(recallMigration, /revoke all on function public\.recall_chat_message\(uuid\) from public, anon, authenticated/i);
+  assert.match(recallMigration, /grant execute on function public\.recall_chat_message\(uuid\) to authenticated/i);
+  assert.match(recallMigration, /'schema_version',\s*3/i);
+  assert.match(recallMigration, /'recall_ready'/i);
+
   const serviceSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'chat-service.js'), 'utf8');
   assert.match(serviceSource, /const CHAT_SCHEMA_VERSION = 2/);
+  assert.match(serviceSource, /const CHAT_RECALL_SCHEMA_VERSION = 3/);
   assert.match(serviceSource, /upsert:\s*false/);
   assert.match(serviceSource, /await imageBucket\.remove\(\[uploadedImagePath\]\)/);
+  assert.match(serviceSource, /event:\s*'UPDATE'[\s\S]*?table:\s*'chat_messages'/);
+  assert.match(serviceSource, /client\.rpc\('recall_chat_message'/);
+  assert.match(serviceSource, /CHAT_MESSAGE_COLUMNS_V3 = `\$\{CHAT_MESSAGE_COLUMNS_V2\},updated_at,recalled_at,recalled_by`/);
 
   const mainSource = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   assert.match(mainSource, /if \(supabaseAuth\.getPublicSession\(\)\.authenticated\) \{\s*chatService\.initialize\(\)/);
+  assert.match(mainSource, /ipcMain\.handle\('chat:recallMessage',[\s\S]*?chatService\.recallMessage\(clientId\)/);
+
+  const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+  assert.match(preloadSource, /recallChatMessage:\s*\(clientId\)\s*=>\s*ipcRenderer\.invoke\('chat:recallMessage', clientId\)/);
+
+  const chatUiSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'chat.js'), 'utf8');
+  assert.doesNotMatch(chatUiSource, /messsId/);
+  assert.match(chatUiSource, /bubble\.textContent = t\('Message recalled', '消息已撤回'\)/);
+  assert.match(chatUiSource, /window\.messsAPI\.recallChatMessage\(message\.clientId\)/);
+
+  const indexSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
+  const chatMarkup = indexSource.match(/<div id="section-chat"[\s\S]*?<div id="section-market"/i)[0];
+  assert.doesNotMatch(chatMarkup, /Messs ID|chat-own-id|chat-contacts-toggle|chat-contacts-close/i);
+  assert.match(chatMarkup, /chat-people-panel[\s\S]*chat-user-search-form[\s\S]*chat-conversations-panel[\s\S]*<\/aside>\s*<main class="chat-thread-panel"/i);
 
   process.stdout.write('Chat persistence and validation tests passed.\n');
 })().catch((error) => {

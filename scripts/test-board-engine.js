@@ -26,4 +26,95 @@ assert.strictEqual(
 );
 assert.strictEqual(engine.estimateRefreshRate(Array(90).fill(1000 / 238)), 240);
 
+const bufferedViewport = engine.viewportRects(
+  { panX: -400, panY: -200, zoom: 2 },
+  { w: 1000, h: 600 },
+  { mountMarginRatio: 0.5, keepMarginRatio: 1 }
+);
+assert.deepStrictEqual(bufferedViewport, {
+  visible: { x: 200, y: 100, w: 500, h: 300 },
+  mount: { x: -50, y: -50, w: 1000, h: 600 },
+  keep: { x: -300, y: -200, w: 1500, h: 900 }
+});
+assert.strictEqual(engine.intersects(
+  { x: -40, y: 0, w: 20, h: 20 },
+  bufferedViewport.mount
+), true);
+assert.strictEqual(engine.intersects(
+  { x: -280, y: 0, w: 20, h: 20 },
+  bufferedViewport.mount
+), false);
+assert.strictEqual(engine.intersects(
+  { x: -280, y: 0, w: 20, h: 20 },
+  bufferedViewport.keep
+), true);
+
+// LOD thresholds have separate enter/exit points, so small zoom jitter does
+// not repeatedly rebuild the mounted item set.
+assert.strictEqual(engine.resolveZoomLod(0.09, 'compact'), 'overview');
+assert.strictEqual(engine.resolveZoomLod(0.13, 'overview'), 'overview');
+assert.strictEqual(engine.resolveZoomLod(0.15, 'overview'), 'compact');
+assert.strictEqual(engine.resolveZoomLod(0.4, 'detail'), 'detail');
+assert.strictEqual(engine.resolveZoomLod(0.37, 'detail'), 'compact');
+assert.strictEqual(engine.resolveZoomLod(0.4, 'compact'), 'compact');
+assert.strictEqual(engine.resolveZoomLod(0.47, 'compact'), 'detail');
+assert.strictEqual(engine.resolveZoomLod(0.12), 'overview');
+assert.strictEqual(engine.resolveZoomLod(0.3), 'compact');
+assert.strictEqual(engine.resolveZoomLod(0.42), 'detail');
+
+assert.strictEqual(engine.isOverDomBudget(320, false), false);
+assert.strictEqual(engine.isOverDomBudget(321, false), true);
+assert.strictEqual(engine.isOverDomBudget(241, true), true);
+assert.strictEqual(engine.isOverDomBudget(240, true), false);
+
+const largeIndex = engine.createSpatialIndex(256);
+const largeIds = [];
+for (let row = 0; row < 100; row += 1) {
+  for (let column = 0; column < 100; column += 1) {
+    const id = `grid_${column}_${row}`;
+    largeIds.push(id);
+    largeIndex.set(id, {
+      x: column * 120,
+      y: row * 120,
+      w: 100,
+      h: 100
+    });
+  }
+}
+assert.strictEqual(largeIndex.size, 10000);
+assert.strictEqual(largeIndex.query({ x: 1200, y: 2400, w: 960, h: 720 }).size, 48);
+assert.strictEqual(largeIndex.count({ x: 0, y: 0, w: 12000, h: 12000 }, 321), 321);
+assert.strictEqual(largeIndex.queryLimited(
+  { x: 0, y: 0, w: 12000, h: 12000 },
+  320
+).size, 320);
+
+const domCandidates = engine.prioritizeIdsByViewport(
+  largeIds,
+  largeIndex,
+  { x: 0, y: 0, w: 1200, h: 1200 },
+  320
+);
+assert.strictEqual(domCandidates.length, 320);
+assert.strictEqual(new Set(domCandidates).size, 320);
+assert.strictEqual(domCandidates[0], 'grid_5_5');
+assert.ok(domCandidates.includes('grid_0_0'));
+assert.ok(!domCandidates.includes('grid_99_99'));
+
+largeIndex.remove('grid_10_20');
+assert.strictEqual(largeIndex.query({ x: 1200, y: 2400, w: 100, h: 100 }).size, 0);
+largeIndex.set('grid_10_20', { x: -500, y: -500, w: 100, h: 100 });
+assert.strictEqual(largeIndex.query({ x: -510, y: -510, w: 120, h: 120 }).has('grid_10_20'), true);
+
+// A stronger order-independent set fingerprint avoids stale virtualization
+// state for same-sized sets whose simple character sums collide.
+assert.strictEqual(
+  engine.hashSet(new Set(['grid_1_2', 'grid_2_1'])),
+  engine.hashSet(new Set(['grid_2_1', 'grid_1_2']))
+);
+assert.notStrictEqual(
+  engine.hashSet(new Set(['0', '3'])),
+  engine.hashSet(new Set(['1', '2']))
+);
+
 process.stdout.write('Board engine tests passed.\n');

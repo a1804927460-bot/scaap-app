@@ -1,28 +1,25 @@
 'use strict';
 
 function renderActivationStatus(status) {
-  const activated = !!(status && status.activated);
   document.body.classList.remove('is-activation-locked');
   document.getElementById('activation-overlay').hidden = true;
   const settingsStatus = document.getElementById('activation-settings-status');
   const settingsNote = document.getElementById('activation-settings-note');
   if (settingsStatus) {
-    settingsStatus.textContent = activated ? 'Activated' : 'Not activated';
-    settingsStatus.classList.toggle('is-ready', activated);
+    settingsStatus.hidden = true;
+    settingsStatus.textContent = '';
+    settingsStatus.classList.remove('is-ready');
   }
   if (settingsNote) {
-    settingsNote.textContent = status && status.cloudSyncRequired
-      ? 'Re-enter your redemption code to sync cloud access.'
-      : (activated ? 'Redemption verified.' : '');
-    settingsNote.hidden = !activated && !(status && status.cloudSyncRequired);
+    settingsNote.textContent = '';
+    settingsNote.hidden = true;
   }
-  return activated;
 }
 
 async function submitActivation(input, button, feedback) {
   const code = input.value.trim();
   if (!code) {
-    feedback.textContent = 'Enter the activation code.';
+    feedback.textContent = 'Enter a redemption code.';
     feedback.hidden = false;
     input.focus();
     return false;
@@ -34,7 +31,7 @@ async function submitActivation(input, button, feedback) {
     if (!result || !result.ok) {
       feedback.textContent = result && result.message
         ? result.message
-        : 'Invalid activation code.';
+        : 'Invalid redemption code.';
       feedback.hidden = false;
       input.focus();
       return false;
@@ -44,21 +41,17 @@ async function submitActivation(input, button, feedback) {
     if (result.membership && window.MesssCredits) {
       window.MesssCredits.publish(result.membership);
     }
-    const config = typeof refreshAiMediaSettings === 'function'
-      ? await refreshAiMediaSettings()
-      : await window.messsAPI.getAiMediaConfig();
-    document.dispatchEvent(new CustomEvent('messs:ai-config-updated', { detail: config }));
     if (feedback) {
       feedback.textContent = result.creditsAdded > 0
         ? `${result.creditsAdded} points added.`
-        : (result.redemptionReason === 'already-redeemed' ? 'Code already redeemed on this device.' : 'Redemption verified.');
+        : (result.redemptionReason === 'already-redeemed' ? 'Code already redeemed on this device.' : 'Code accepted.');
       feedback.hidden = false;
     }
     return true;
   } catch (activationError) {
     feedback.textContent = activationError && activationError.message
       ? activationError.message
-      : 'Activation failed. Please try again.';
+      : 'Redemption failed. Please try again.';
     feedback.hidden = false;
     return false;
   } finally {

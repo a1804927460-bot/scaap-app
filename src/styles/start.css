@@ -1,5 +1,5 @@
 /* ===========================================================
-   Start screen �?black background, blue wordmark, morphing play button
+   Start screen - theme-aware wordmark and morphing play button
    =========================================================== */
 
 .start-screen[hidden] {
@@ -47,11 +47,11 @@
   font-size: 108px;
   line-height: 1;
   letter-spacing: 0;
-  color: var(--brand-blue-bright);
-  text-shadow: 0 0 60px rgba(44, 123, 224, 0.35);
+  color: var(--accent);
+  text-shadow: 0 0 60px var(--accent-glow);
 }
 
-.start-title-dot { color: var(--brand-blue-bright); margin-left: 0.04em; }
+.start-title-dot { color: var(--accent); margin-left: 0.04em; }
 
 /* "sss." hover effect: hovering anywhere over these letters scales each one
    up by 10%, one after another, like a small ripple running left to right. */
@@ -78,7 +78,7 @@
   font-stretch: expanded;
   font-size: 19px;
   letter-spacing: 0;
-  color: var(--brand-blue-bright);
+  color: var(--accent);
   opacity: 0.92;
 }
 
@@ -92,9 +92,9 @@
   height: 64px;
   border-radius: var(--radius-pill);
   background: var(--bg-surface-2);
-  border: 1px solid var(--border-strong);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
-  cursor: pointer;
+  border: 1px solid var(--accent-soft);
+  box-shadow: 0 8px 30px var(--accent-glow);
+  cursor: var(--cursor-click);
   transition: width var(--dur-base) var(--ease-spring),
               background-color var(--dur-base) var(--ease-out),
               transform var(--dur-fast) var(--ease-out);

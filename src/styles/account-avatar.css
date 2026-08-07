@@ -17,7 +17,7 @@
 
 .account-avatar-edit {
   position: relative;
-  cursor: pointer;
+  cursor: var(--cursor-click);
   outline: none;
   transition: box-shadow 150ms ease, transform 150ms ease;
 }
@@ -63,7 +63,7 @@
 }
 
 .account-avatar-edit:disabled {
-  cursor: default;
+  cursor: var(--cursor-default);
   opacity: 1;
 }
 

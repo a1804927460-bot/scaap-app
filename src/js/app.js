@@ -7,7 +7,7 @@ function bootstrapMainApp(initial) {
   AppState.folders = initial.folders || [];
   AppState.defaultFolderName = initial.defaultFolderName || 'Library';
   AppState.boardItems = initial.boardItems || [];
-  AppState.language = initial.language === 'zh' ? 'zh' : 'en';
+  AppState.language = normalizeAppLanguage(initial.language);
   initCanvasWorkspace(initial);
   AppState.usage = initial.usage;
   AppState.achievements = initial.achievements;
@@ -37,6 +37,8 @@ function bootstrapMainApp(initial) {
 document.addEventListener('DOMContentLoaded', async () => {
   initTitlebar();
   const initial = await window.messsAPI.getInitialState();
+  AppState.language = normalizeAppLanguage(initial.language);
+  applyLanguageChoice(AppState.language, { rerender: false });
   initTheme(initial.theme);
   initUpdater();
   await initActivation(initial.activation);

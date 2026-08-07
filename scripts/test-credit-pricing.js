@@ -64,6 +64,8 @@ assert.strictEqual(publicPricing.image['image-5'], 8);
 assert.strictEqual(publicPricing.video['video-1']['768P'], 10);
 
 const boardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'board-canvas.js'), 'utf8');
+const assistantSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'ai-assistant.js'), 'utf8');
+const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
 const boardStyles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles', 'main.css'), 'utf8');
 assert.match(
   boardSource,
@@ -79,6 +81,21 @@ assert.match(
   boardStyles,
   /\.ai-credit-estimate\s*\{[\s\S]*?white-space:\s*nowrap;/,
   'The composer credit estimate must remain legible beside the submit button.'
+);
+assert.match(
+  indexHtml,
+  /id="ai-assistant-credit-estimate"[\s\S]*?id="ai-assistant-submit"/,
+  'The assistant must show its media quote next to the generation action.'
+);
+assert.match(
+  assistantSource,
+  /function updateAssistantCreditEstimate\(\)[\s\S]*?quoteMediaCredits[\s\S]*?imageProviderId:[\s\S]*?videoProviderId:[\s\S]*?count:[\s\S]*?resolution:[\s\S]*?duration:/,
+  'The assistant quote must react to the selected model, count, video resolution and duration.'
+);
+assert.match(
+  assistantSource,
+  /kind === 'chat'[\s\S]*?renderAssistantCreditEstimate\(0\)/,
+  'Chat must remain free and hide the media-credit quote.'
 );
 
 process.stdout.write('Credit pricing tests passed.\n');

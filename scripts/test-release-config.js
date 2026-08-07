@@ -43,6 +43,6 @@ assert.deepEqual(
   ['Nano Banana Pro', 'Nanobanana Pro SE', 'Seedream 5.0 Lite', 'Midjourney', 'Nano banana2']
 );
 assert.equal(catalog.providers.find((provider) => provider.name === 'MiniMax H3').requiresActivation, false);
-assert.equal(catalog.providers.filter((provider) => provider.kind === 'image').some((provider) => provider.requiresActivation === false), false);
+assert.equal(catalog.providers.every((provider) => provider.requiresActivation === false), true);
 
 console.log('Release configuration tests passed.');

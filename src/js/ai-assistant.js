@@ -9,7 +9,8 @@ const AiAssistant = {
   attachments: [],
   sessions: [],
   activeSessionId: null,
-  languageTimer: 0
+  languageTimer: 0,
+  creditQuoteRevision: 0
 };
 
 const AI_CHAT_HISTORY_KEY = 'messs.ai-chat-history.v1';
@@ -232,13 +233,13 @@ function startAiDynamicPrompt() {
   const element = document.getElementById('ai-assistant-dynamic-prompt');
   if (!element) return;
   const phrases = [
-    'What should we solve today?',
-    '今天要解决什么？',
-    '今日は何を解決しよう？',
-    '오늘 무엇을 해결할까요?'
+    t('What should we solve today?', '今天要解决什么？', '오늘 무엇을 해결할까요?'),
+    t('What would you like to create?', '你想创作什么？', '무엇을 만들고 싶으신가요?'),
+    t('Where should we begin?', '我们从哪里开始？', '어디서 시작할까요?')
   ];
   let index = 0;
   clearInterval(AiAssistant.languageTimer);
+  element.textContent = phrases[index];
   AiAssistant.languageTimer = setInterval(() => {
     element.classList.add('is-language-changing');
     setTimeout(() => {
@@ -338,10 +339,10 @@ function renderAssistantModels() {
     menuOption.className = 'ai-model-picker-option';
     menuOption.dataset.value = provider.id;
     menuOption.setAttribute('role', 'option');
-    menuOption.textContent = provider.name;
+    appendAiModelLabel(menuOption, provider);
     menuOption.addEventListener('click', () => {
       select.value = provider.id;
-      label.textContent = provider.name;
+      appendAiModelLabel(label, provider);
       menu.querySelectorAll('.ai-model-picker-option').forEach((item) => {
         const active = item === menuOption;
         item.classList.toggle('is-active', active);
@@ -368,18 +369,79 @@ function renderAssistantModels() {
   const selected = providers.find((provider) => provider.id === select.value) || providers[0];
   picker.hidden = !selected;
   label.textContent = selected ? selected.name : t('No provider configured', '未配置服务商');
+  if (selected) appendAiModelLabel(label, selected);
   document.getElementById('ai-assistant-submit').disabled = !selected;
   menu.querySelectorAll('.ai-model-picker-option').forEach((option) => {
     const active = selected && option.dataset.value === selected.id;
     option.classList.toggle('is-active', active);
     option.setAttribute('aria-selected', String(active));
   });
+  updateAssistantCreditEstimate();
 }
 
 function selectedAssistantProvider() {
   const select = document.getElementById('ai-assistant-model');
   return configuredAssistantProviders(AiAssistant.kind)
     .find((provider) => provider.id === (select && select.value)) || null;
+}
+
+function renderAssistantCreditEstimate(totalCredits) {
+  const estimate = document.getElementById('ai-assistant-credit-estimate');
+  if (!estimate) return;
+  const total = Math.max(0, Math.ceil(Number(totalCredits) || 0));
+  if (AiAssistant.kind === 'chat' || !total) {
+    delete estimate.dataset.credits;
+    estimate.hidden = true;
+    estimate.textContent = '';
+    estimate.removeAttribute('title');
+    estimate.removeAttribute('aria-busy');
+    return;
+  }
+  estimate.dataset.credits = String(total);
+  estimate.hidden = false;
+  estimate.removeAttribute('aria-busy');
+  estimate.textContent = t(`${total} credits`, `${total} \u79ef\u5206`);
+  estimate.title = t(`Estimated usage: ${total} credits`, `\u9884\u8ba1\u6d88\u8017 ${total} \u79ef\u5206`);
+}
+
+function refreshAssistantCreditEstimateLanguage() {
+  const estimate = document.getElementById('ai-assistant-credit-estimate');
+  if (!estimate || estimate.hidden) return;
+  const total = Number(estimate.dataset.credits);
+  if (Number.isFinite(total) && total > 0) renderAssistantCreditEstimate(total);
+}
+
+function updateAssistantCreditEstimate() {
+  const estimate = document.getElementById('ai-assistant-credit-estimate');
+  const provider = selectedAssistantProvider();
+  const kind = AiAssistant.kind;
+  const quoteApi = window.messsAPI && window.messsAPI.quoteMediaCredits;
+  const revision = ++AiAssistant.creditQuoteRevision;
+  if (!estimate || kind === 'chat' || !provider || typeof quoteApi !== 'function') {
+    renderAssistantCreditEstimate(0);
+    return;
+  }
+
+  estimate.hidden = false;
+  estimate.setAttribute('aria-busy', 'true');
+  estimate.textContent = t('Calculating...', '\u8ba1\u7b97\u4e2d...');
+  estimate.title = t('Calculating estimated usage', '\u6b63\u5728\u8ba1\u7b97\u9884\u8ba1\u6d88\u8017');
+  const request = {
+    kind,
+    providerId: provider.id,
+    imageProviderId: kind === 'image' ? provider.id : null,
+    videoProviderId: kind === 'video' ? provider.id : null,
+    count: kind === 'image' ? Number(document.getElementById('ai-assistant-count').value) : undefined,
+    resolution: kind === 'video' ? document.getElementById('ai-assistant-size').value : undefined,
+    duration: kind === 'video' ? Number(document.getElementById('ai-assistant-duration').value) : undefined
+  };
+  Promise.resolve(quoteApi.call(window.messsAPI, request)).then((pricing) => {
+    if (revision !== AiAssistant.creditQuoteRevision || kind !== AiAssistant.kind) return;
+    renderAssistantCreditEstimate(pricing && pricing.totalCredits);
+  }).catch(() => {
+    if (revision !== AiAssistant.creditQuoteRevision || kind !== AiAssistant.kind) return;
+    renderAssistantCreditEstimate(0);
+  });
 }
 
 function assistantVideoCapabilities() {
@@ -453,6 +515,7 @@ function syncAssistantMediaOptions() {
     : String(durations[0]);
   renderAssistantRatios();
   refreshAssistantOptionSummary();
+  updateAssistantCreditEstimate();
 }
 
 function renderAssistantAttachments() {
@@ -688,13 +751,9 @@ function appendAssistantMedia(files, kind) {
 function setAssistantBusy(busy) {
   AiAssistant.activeTasks = Math.max(0, AiAssistant.activeTasks + (busy ? 1 : -1));
   AiAssistant.busy = AiAssistant.activeTasks > 0;
-  const form = document.getElementById('ai-assistant-form');
-  form.querySelectorAll('button, textarea, select').forEach((control) => {
-    if (control.id === 'ai-assistant-submit') return;
-    control.disabled = false;
-  });
-  document.getElementById('ai-assistant-submit').classList.toggle('is-busy', AiAssistant.busy);
-  renderAssistantModels();
+  const submit = document.getElementById('ai-assistant-submit');
+  submit.classList.toggle('is-busy', AiAssistant.busy);
+  submit.disabled = !selectedAssistantProvider();
 }
 
 async function submitAssistantMessage() {
@@ -863,6 +922,7 @@ function refreshAssistantLanguage() {
     renderAssistantModels();
     renderAssistantRatios();
   }
+  refreshAssistantCreditEstimateLanguage();
   const upload = document.getElementById('ai-assistant-upload');
   if (upload) {
     upload.title = t('Add image', '添加图片');
@@ -977,7 +1037,10 @@ function initAiAssistant() {
     event.currentTarget.classList.toggle('is-active', !options.hidden);
   });
   ['ai-assistant-ratio', 'ai-assistant-size', 'ai-assistant-count', 'ai-assistant-duration'].forEach((id) => {
-    document.getElementById(id).addEventListener('change', refreshAssistantOptionSummary);
+    document.getElementById(id).addEventListener('change', () => {
+      refreshAssistantOptionSummary();
+      updateAssistantCreditEstimate();
+    });
   });
   document.getElementById('ai-assistant-model').addEventListener('change', syncAssistantMediaOptions);
   document.querySelector('.ai-assistant-quick-prompts').addEventListener('click', (event) => {

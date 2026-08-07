@@ -65,5 +65,10 @@ assert.deepEqual(assertGatewayProvider(current, 'chat', 'chat-1').models, [
   'gemini-3.1-flash-lite',
   'gemini-3.6-flash'
 ]);
+assert.equal(
+  require('../lib/provider-catalog').providerCatalog().every((provider) => provider.requiresActivation === false),
+  true,
+  'Every bundled AI provider must be available without an activation code.'
+);
 
 process.stdout.write('Provider catalog migration tests passed.\n');

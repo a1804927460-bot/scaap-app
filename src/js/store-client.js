@@ -25,14 +25,32 @@ function isZh() {
   return AppState.language === 'zh';
 }
 
-function t(en, zh) {
-  return isZh() ? zh : en;
+function isKo() {
+  return AppState.language === 'ko';
+}
+
+function normalizeAppLanguage(language) {
+  return window.MesssI18n
+    ? window.MesssI18n.normalizeLanguage(language)
+    : (language === 'zh' || language === 'ko' ? language : 'en');
+}
+
+function appLocale() {
+  return window.MesssI18n
+    ? window.MesssI18n.localeForLanguage(AppState.language)
+    : (isZh() ? 'zh-CN' : (isKo() ? 'ko-KR' : 'en-US'));
+}
+
+function t(en, zh, ko) {
+  if (isZh()) return zh;
+  if (isKo() && window.MesssI18n) return window.MesssI18n.translate('ko', en, ko);
+  return en;
 }
 
 function countText(count, singular, plural, zhUnit) {
-  return isZh()
-    ? `${count} ${zhUnit}`
-    : `${count} ${count === 1 ? singular : plural}`;
+  if (isZh()) return `${count} ${zhUnit}`;
+  const english = `${count} ${count === 1 ? singular : plural}`;
+  return isKo() && window.MesssI18n ? window.MesssI18n.translate('ko', english) : english;
 }
 
 function createLatestFrameRunner(callback) {
@@ -105,7 +123,7 @@ function beginRefreshRateSampling() {
 function formatDateTime(iso) {
   if (!iso) return '--';
   const d = new Date(iso);
-  return d.toLocaleString(AppState.language === 'zh' ? 'zh-CN' : 'en-US', {
+  return d.toLocaleString(appLocale(), {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -123,6 +141,11 @@ function formatDuration(totalSeconds) {
     if (m > 0) return `${m} 分钟 ${s % 60} 秒`;
     return `${s} 秒`;
   }
+  if (AppState.language === 'ko') {
+    if (h > 0) return `${h}시간 ${m}분`;
+    if (m > 0) return `${m}분 ${s % 60}초`;
+    return `${s}초`;
+  }
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${s % 60}s`;
   return `${s}s`;
@@ -132,7 +155,7 @@ function groupFilesByDay(files) {
   const groups = new Map();
   const sorted = [...files].sort((a, b) => new Date(b.importedAt) - new Date(a.importedAt));
   for (const f of sorted) {
-    const day = new Date(f.importedAt).toLocaleDateString(AppState.language === 'zh' ? 'zh-CN' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    const day = new Date(f.importedAt).toLocaleDateString(appLocale(), { year: 'numeric', month: 'long', day: 'numeric' });
     if (!groups.has(day)) groups.set(day, []);
     groups.get(day).push(f);
   }

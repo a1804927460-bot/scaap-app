@@ -38,5 +38,10 @@ assert.match(
   /activeTasks: 0[\s\S]*?AiAssistant\.activeTasks = Math\.max\(0, AiAssistant\.activeTasks \+ \(busy \? 1 : -1\)\)/,
   'The assistant must count independent in-flight tasks.'
 );
+assert.doesNotMatch(
+  assistantSource,
+  /setAssistantBusy\(busy\)[\s\S]{0,500}?submit\.disabled\s*=\s*AiAssistant\.busy/,
+  'A running assistant task must not disable the submit action for the next task.'
+);
 
 process.stdout.write('Concurrent media UI tests passed.\n');

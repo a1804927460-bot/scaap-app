@@ -53,6 +53,18 @@
 
   --shadow-elevated: 0 20px 60px rgba(0, 0, 0, 0.62);
   --scrollbar-thumb: rgba(112, 119, 128, 0.42);
+
+  --cursor-default: url('../assets/cursors/arrow-dark.svg') 4 3, default;
+  --cursor-click: url('../assets/cursors/click-dark.svg') 9 3, pointer;
+  --cursor-grab: url('../assets/cursors/hand-dark.svg') 10 3, grab;
+  --cursor-grabbing: url('../assets/cursors/grabbing-dark.svg') 10 8, grabbing;
+  --cursor-text: url('../assets/cursors/text-dark.svg') 12 12, text;
+  --cursor-col-resize: url('../assets/cursors/col-resize-dark.svg') 12 12, col-resize;
+  --cursor-row-resize: url('../assets/cursors/row-resize-dark.svg') 12 12, row-resize;
+  --cursor-nwse-resize: url('../assets/cursors/nwse-resize-dark.svg') 12 12, nwse-resize;
+  --cursor-nesw-resize: url('../assets/cursors/nesw-resize-dark.svg') 12 12, nesw-resize;
+  --cursor-crosshair: url('../assets/cursors/crosshair-dark.svg') 12 12, crosshair;
+  --cursor-wait: url('../assets/cursors/wait-dark.svg') 12 12, wait;
 }
 
 /* -------- Light theme -------- */
@@ -83,6 +95,18 @@
 
   --shadow-elevated: 0 20px 50px rgba(0, 0, 0, 0.10);
   --scrollbar-thumb: rgba(0, 0, 0, 0.14);
+
+  --cursor-default: url('../assets/cursors/arrow-light.svg') 4 3, default;
+  --cursor-click: url('../assets/cursors/click-light.svg') 9 3, pointer;
+  --cursor-grab: url('../assets/cursors/hand-light.svg') 10 3, grab;
+  --cursor-grabbing: url('../assets/cursors/grabbing-light.svg') 10 8, grabbing;
+  --cursor-text: url('../assets/cursors/text-light.svg') 12 12, text;
+  --cursor-col-resize: url('../assets/cursors/col-resize-light.svg') 12 12, col-resize;
+  --cursor-row-resize: url('../assets/cursors/row-resize-light.svg') 12 12, row-resize;
+  --cursor-nwse-resize: url('../assets/cursors/nwse-resize-light.svg') 12 12, nwse-resize;
+  --cursor-nesw-resize: url('../assets/cursors/nesw-resize-light.svg') 12 12, nesw-resize;
+  --cursor-crosshair: url('../assets/cursors/crosshair-light.svg') 12 12, crosshair;
+  --cursor-wait: url('../assets/cursors/wait-light.svg') 12 12, wait;
 }
 
 html[data-view="start"] body { transition: none; }
@@ -99,6 +123,7 @@ html, body {
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
   user-select: none;
+  cursor: var(--cursor-default);
 }
 
 body {
@@ -114,7 +139,7 @@ button {
   border: none;
   background: none;
   color: inherit;
-  cursor: pointer;
+  cursor: var(--cursor-click);
   transform-origin: center;
   transition: color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out),
               border-color var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out),
@@ -122,11 +147,50 @@ button {
 }
 
 button:active:not(:disabled) { transform: scale(0.95); }
-button:disabled { cursor: default; opacity: .5; }
+button:disabled { cursor: var(--cursor-default); opacity: .5; }
+button:disabled * { cursor: var(--cursor-default); }
 button svg { transition: transform var(--dur-fast) var(--ease-out); }
 button:not(:disabled):hover > svg { transform: translateY(-.5px); }
 
 input { font-family: inherit; }
+
+a[href],
+a[href] *,
+area[href],
+summary,
+summary *,
+select,
+select *,
+label[for],
+label[for] *,
+[role="button"]:not([aria-disabled="true"]),
+[role="button"]:not([aria-disabled="true"]) *,
+[role="link"]:not([aria-disabled="true"]),
+[role="link"]:not([aria-disabled="true"]) *,
+input:is([type="button"], [type="submit"], [type="reset"], [type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="color"]) {
+  cursor: var(--cursor-click);
+}
+
+button *,
+area[href] * {
+  cursor: inherit;
+}
+
+input:not([type]),
+input:is([type="text"], [type="search"], [type="email"], [type="password"], [type="url"], [type="tel"], [type="number"]),
+textarea,
+[contenteditable="true"] {
+  cursor: var(--cursor-text);
+}
+
+[draggable="true"],
+[draggable="true"] * { cursor: var(--cursor-grab); }
+[draggable="true"]:active,
+[draggable="true"]:active * { cursor: var(--cursor-grabbing); }
+[aria-busy="true"],
+[aria-busy="true"] * { cursor: var(--cursor-wait); }
+[aria-disabled="true"],
+[aria-disabled="true"] * { cursor: var(--cursor-default); }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 8px; }

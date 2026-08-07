@@ -45,19 +45,21 @@ test('gateway quote matches the desktop image table', () => {
   assert.throws(() => quoteUsage('image', { providerId: 'image-free-bypass' }), { code: 'provider-not-allowed' });
 });
 
-test('video quote clamps provider parameters and chat remains free', () => {
+test('video quote clamps provider parameters, chat remains free, and no provider requires activation', () => {
   assert.deepEqual(quoteUsage('video', { providerId: 'video-1', resolution: '2k', duration: 7 }), {
     kind: 'video', providerId: 'video-1', credits: 112, resolution: '2K', duration: 7, requiresActivation: false
   });
   assert.equal(quoteUsage('video', { providerId: 'video-1', resolution: '768P', duration: 1 }).credits, 40);
   assert.equal(quoteUsage('video', { providerId: 'video-1', resolution: '2K', duration: 99 }).credits, 240);
   assert.equal(quoteUsage('chat', { providerId: 'chat-1' }).credits, 0);
-  assert.equal(providerRequiresActivation('chat', 'chat-1'), true);
-  assert.equal(providerRequiresActivation('image', 'image-1'), true);
+  assert.equal(quoteUsage('chat', { providerId: 'chat-1' }).requiresActivation, false);
+  assert.equal(quoteUsage('image', { providerId: 'image-1' }).requiresActivation, false);
+  assert.equal(providerRequiresActivation('chat', 'chat-1'), false);
+  assert.equal(providerRequiresActivation('image', 'image-1'), false);
   assert.equal(providerRequiresActivation('video', 'video-1'), false);
 });
 
-test('provider config hides overseas models until the server account unlocks them', () => {
+test('provider config always exposes the complete catalog regardless of legacy activation state', () => {
   const config = {
     catalogVersion: 9,
     providers: [
@@ -69,7 +71,7 @@ test('provider config hides overseas models until the server account unlocks the
   };
   assert.deepEqual(
     filterProviderConfigForAccount(config, { overseasUnlocked: false }).providers.map((provider) => provider.id),
-    ['video-1']
+    ['image-1', 'image-5', 'chat-1', 'video-1']
   );
   assert.deepEqual(
     filterProviderConfigForAccount(config, { overseasUnlocked: true }).providers.map((provider) => provider.id),
@@ -111,19 +113,85 @@ test('reserve sends normalized server-authoritative pricing parameters', async (
   });
 });
 
-test('reserve exposes explicit activation and insufficient-credit denials', async () => {
+test('reserve exposes insufficient-credit denials', async () => {
   await withEnvironment({ SUPABASE_SECRET_KEY: 'legacy-service-role-token', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
-    const activation = await reserveUsage('u', 'image', 'r1', { providerId: 'image-1' }, async () =>
-      jsonResponse({ ok: false, reason: 'activation-required', credits: 16, availableCredits: 100 }));
-    assert.equal(activation.ok, false);
-    assert.equal(activation.reason, 'activation-required');
-
     const credits = await reserveUsage('u', 'video', 'r2', { providerId: 'video-1', duration: 6 }, async () =>
       jsonResponse({ ok: false, reason: 'insufficient-credits', credits: 60, availableCredits: 59 }));
     assert.equal(credits.ok, false);
     assert.equal(credits.reason, 'insufficient-credits');
     assert.equal(credits.credits, 60);
     assert.equal(credits.availableCredits, 59);
+  });
+});
+
+test('legacy activation denial opens only the current account and retries the identical reservation once', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
+    const userId = '00000000-0000-4000-8000-000000000011';
+    const requestId = '00000000-0000-4000-8000-000000000012';
+    const calls = [];
+    const result = await reserveUsage(userId, 'image', requestId, { providerId: 'image-1' }, async (url, options) => {
+      calls.push({ url, options, body: JSON.parse(options.body) });
+      if (calls.length === 1) {
+        return jsonResponse({ ok: false, reason: 'activation-required', credits: 16, availableCredits: 100 });
+      }
+      if (calls.length === 2) {
+        return jsonResponse([{ user_id: userId, overseas_unlocked: true }]);
+      }
+      return jsonResponse({ ok: true, reason: 'reserved', credits: 16, balance: 100, reserved: 16, availableCredits: 84 });
+    });
+
+    assert.equal(calls.length, 3);
+    assert.match(calls[0].url, /\/rpc\/reserve_ai_credits$/);
+    assert.equal(
+      calls[1].url,
+      `https://trmbhcniijedpmohkbzx.supabase.co/rest/v1/ai_credit_accounts?user_id=eq.${userId}&select=user_id%2Coverseas_unlocked`
+    );
+    assert.equal(calls[1].options.method, 'PATCH');
+    assert.equal(calls[1].options.headers.apikey, 'sb_secret_test');
+    assert.equal(calls[1].options.headers.Prefer, 'return=representation');
+    assert.deepEqual(calls[1].body, { overseas_unlocked: true });
+    assert.match(calls[2].url, /\/rpc\/reserve_ai_credits$/);
+    assert.equal(calls[0].options.body, calls[2].options.body);
+    assert.equal(result.ok, true);
+    assert.equal(result.availableCredits, 84);
+  });
+});
+
+test('failed legacy account update keeps the activation denial and does not retry reservation', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
+    const userId = '00000000-0000-4000-8000-000000000014';
+    const calls = [];
+    const result = await reserveUsage(userId, 'image', 'request-one', { providerId: 'image-2' }, async (url, options) => {
+      calls.push({ url, options });
+      return calls.length === 1
+        ? jsonResponse({ ok: false, reason: 'activation-required', credits: 7, availableCredits: 100 })
+        : jsonResponse({ message: 'synthetic update failure' }, 500);
+    });
+
+    assert.equal(calls.length, 2);
+    assert.match(calls[1].url, new RegExp(`ai_credit_accounts\\?user_id=eq\\.${userId}&select=`));
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'activation-required');
+    assert.equal(result.credits, 7);
+  });
+});
+
+test('legacy activation compatibility retries at most once when the old RPC still denies access', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
+    const userId = '00000000-0000-4000-8000-000000000013';
+    const calls = [];
+    const result = await reserveUsage(userId, 'chat', 'request-two', { providerId: 'chat-1' }, async (url) => {
+      calls.push(url);
+      if (calls.length === 2) return jsonResponse([{ user_id: userId, overseas_unlocked: true }]);
+      return jsonResponse({ ok: false, reason: 'activation-required', credits: 0, availableCredits: 100 });
+    });
+
+    assert.equal(calls.length, 3);
+    assert.match(calls[0], /\/rpc\/reserve_ai_credits$/);
+    assert.match(calls[1], /\/ai_credit_accounts\?/);
+    assert.match(calls[2], /\/rpc\/reserve_ai_credits$/);
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'activation-required');
   });
 });
 
@@ -169,6 +237,26 @@ test('credit migration atomically releases failed reservations', () => {
   assert.match(migration, /set reserved = reserved - charge, updated_at = now\(\)/i);
   assert.match(migration, /\(target_user_id, 'release', 0, -charge/i);
   assert.match(migration, /if account_record\.balance - account_record\.reserved < quoted_credits then/i);
+});
+
+test('forward migration opens model access while preserving server-authoritative credits', () => {
+  const migration = fs.readFileSync(new URL('../../supabase/migrations/202608080001_open_ai_model_access.sql', import.meta.url), 'utf8');
+  assert.match(migration, /create or replace function public\.reserve_ai_credits/i);
+  assert.match(migration, /if normalized_kind = 'chat'[\s\S]*?quoted_credits := 0/i);
+  assert.match(migration, /if account_record\.balance - account_record\.reserved < quoted_credits then/i);
+  assert.match(migration, /set reserved = reserved \+ quoted_credits, updated_at = now\(\)/i);
+  assert.doesNotMatch(migration, /activation-required/i);
+  assert.doesNotMatch(migration, /overseas_unlocked/i);
+});
+
+test('gateway config and model routes do not consult the legacy unlock flag', () => {
+  const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  const configRoute = server.match(/url\.pathname === '\/v1\/config'[\s\S]*?url\.pathname === '\/v1\/models'/i)?.[0] || '';
+  const modelsRoute = server.match(/url\.pathname === '\/v1\/models'[\s\S]*?\n  let kind;/i)?.[0] || '';
+  assert.match(configRoute, /publicProviderConfig\(\)/i);
+  assert.doesNotMatch(configRoute, /getUsageAccount|overseas|activation/i);
+  assert.match(modelsRoute, /await models\(requestedProviderId\)/i);
+  assert.doesNotMatch(modelsRoute, /getUsageAccount|overseas|activation/i);
 });
 
 test('durable mode fails closed when secret or credit schema is missing', async () => {

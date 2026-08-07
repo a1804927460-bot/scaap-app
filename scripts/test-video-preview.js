@@ -13,18 +13,38 @@ const boardStyles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles', 
 
 assert.match(
   boardSource,
-  /video\.addEventListener\('error',[\s\S]*?video\.src\s*=\s*res\.url;[\s\S]*?video\.load\(\);[\s\S]*?video\.play\(\)/,
-  'A failed native video must resume playback after its transcoded source is installed.'
+  /video\.addEventListener\('error',[\s\S]*?video\.src\s*=\s*res\.url;[\s\S]*?video\.load\(\);[\s\S]*?if \(wantsPreview\) video\.play\(\)/,
+  'A failed native video must resume hover playback after its transcoded source is installed.'
 );
 assert.match(
   boardSource,
-  /e\.target\.closest\('\.board-video-thumbnail-play, \.mini-video-controls, \.mini-audio-player'\)/,
-  'Player controls must not start a board-item drag.'
+  /if \(e\.button !== 0 \|\| e\.altKey\) return;/,
+  'Middle-button and Alt gestures must not start a board-item drag.'
 );
 assert.match(
   boardStyles,
   /\.mini-video-player video\s*\{[\s\S]*?pointer-events:\s*none;/,
   'The video surface must leave board dragging to the parent item.'
+);
+assert.match(
+  boardSource,
+  /content\.addEventListener\('mouseenter',[\s\S]*?_boardPlayPreview[\s\S]*?content\.addEventListener\('mouseleave',[\s\S]*?_boardStopPreview/,
+  'Canvas videos must play on hover and stop when the pointer leaves.'
+);
+assert.match(
+  boardSource,
+  /playerPromise\s*=\s*loadBoardPreview\(f\.id\)[\s\S]*?\.catch\(\(\)\s*=>\s*\{[\s\S]*?playerPromise\s*=\s*null;/,
+  'A transient preview failure must allow the next hover to retry.'
+);
+assert.match(
+  boardSource,
+  /createBoardVideoDurationBadge[\s\S]*?board-video-duration/,
+  'Canvas videos must render a duration badge.'
+);
+assert.doesNotMatch(
+  boardSource,
+  /appendBoardMediaMeta\(el, f\)/,
+  'Canvas media must not render filename, dimensions or file size labels outside the item.'
 );
 assert.match(
   boardSource,

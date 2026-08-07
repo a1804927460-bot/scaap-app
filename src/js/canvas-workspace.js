@@ -80,7 +80,7 @@ function relativeCanvasTime(value) {
   if (hours < 24) return t(`${hours}h ago`, `${hours} 小时前`);
   const days = Math.floor(hours / 24);
   if (days < 30) return t(`${days}d ago`, `${days} 天前`);
-  return new Date(time).toLocaleDateString(isZh() ? 'zh-CN' : 'en-US');
+  return new Date(time).toLocaleDateString(appLocale());
 }
 
 function canvasPreviewEntries(canvasId) {
@@ -588,7 +588,9 @@ function canvasAgentPrompt(prompt) {
     const file = AppState.files.find((entry) => entry.id === item.fileId);
     return file ? `${file.name} (${file.sourceWidth || '?'}x${file.sourceHeight || '?'})` : item.isNote ? 'Text note' : 'Canvas object';
   });
-  const locale = isZh() ? 'Reply in Simplified Chinese.' : 'Reply in English.';
+  const locale = isZh()
+    ? 'Reply in Simplified Chinese.'
+    : (isKo() ? 'Reply in Korean.' : 'Reply in English.');
   return [
     locale,
     `Canvas: ${active ? active.name : 'Untitled'}`,

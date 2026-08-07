@@ -15,7 +15,7 @@ const achievements = require('./lib/achievements');
 const preview = require('./lib/preview');
 const thumbnails = require('./lib/thumbnails');
 const { getDefaultLibraryRoot } = require('./lib/storage-paths');
-const { buildCfHDrop } = require('./lib/clipboard-files');
+const { buildCfHDrop, parseCfHDrop } = require('./lib/clipboard-files');
 const {
   DEFAULT_IMAGE_ENDPOINT,
   DEFAULT_VIDEO_ENDPOINT,
@@ -24,7 +24,7 @@ const {
   generateMediaBuffer
 } = require('./lib/ai-media-provider');
 const { requestChat, discoverChatModels } = require('./lib/ai-chat-provider');
-const { PROVIDER_CATALOG_VERSION, providerCatalog, catalogProvider } = require('./lib/provider-catalog');
+const { PROVIDER_CATALOG_VERSION, providerCatalog } = require('./lib/provider-catalog');
 const { loadRuntimeConfig } = require('./lib/runtime-config');
 const { SupabaseAuth, createPkcePair } = require('./lib/supabase-auth');
 const { AiGatewayClient } = require('./lib/ai-gateway-client');
@@ -36,6 +36,7 @@ const { launchAdobeMedia } = require('./lib/adobe-launcher');
 const { ChatService } = require('./lib/chat-service');
 const { probeVideoMetadata } = require('./lib/media-metadata');
 const { authenticatedUserId, profileAvatarPath } = require('./lib/profile-avatar');
+const { normalizeLanguage, translate: translateLanguage } = require('./lib/i18n');
 
 const DEFAULT_CATALOG_IMAGE = providerCatalog('image')[0];
 const DEFAULT_CATALOG_VIDEO = providerCatalog('video')[0];
@@ -59,6 +60,16 @@ const WINDOW_BACKGROUND_COLORS = Object.freeze({
 
 function normalizeTheme(theme) {
   return theme === 'light' ? 'light' : 'dark';
+}
+
+function currentLanguage() {
+  return normalizeLanguage(store && store.data && store.data.settings && store.data.settings.language);
+}
+
+function localizedMessage(en, zh, ko) {
+  const language = currentLanguage();
+  if (language === 'zh') return zh;
+  return translateLanguage(language, en, ko);
 }
 
 function setWindowBackgroundColor(theme) {
@@ -1132,30 +1143,16 @@ function getAiMediaConfig() {
   };
 }
 
-function aiProviderRequiresActivation(kind, providerId) {
-  const config = getAiMediaConfig();
-  const normalizedKind = kind === 'video' ? 'video' : kind === 'chat' ? 'chat' : 'image';
-  const activeId = normalizedKind === 'video'
-    ? config.activeVideoProviderId
-    : normalizedKind === 'chat'
-      ? config.activeChatProviderId
-      : config.activeImageProviderId;
-  const provider = catalogProvider(String(providerId || activeId || '').trim());
-  return !(provider && provider.kind === normalizedKind && provider.requiresActivation === false);
-}
-
 function applyAiProviderVisibility(config) {
-  const activated = isAiActivationUnlocked();
-  const visible = (kind, providers) => (Array.isArray(providers) ? providers : [])
-    .filter((provider) => activated || !aiProviderRequiresActivation(kind, provider.id))
+  const visible = (providers) => (Array.isArray(providers) ? providers : [])
     .map((provider) => ({ ...provider, available: true }));
-  const imageProviders = visible('image', config.imageProviders);
-  const videoProviders = visible('video', config.videoProviders);
-  const chatProviders = visible('chat', config.chatProviders);
+  const imageProviders = visible(config.imageProviders);
+  const videoProviders = visible(config.videoProviders);
+  const chatProviders = visible(config.chatProviders);
   return {
     ...config,
     providerVisibilityEnforced: true,
-    activated,
+    modelAccessRestricted: false,
     imageProviders,
     videoProviders,
     chatProviders,
@@ -1177,17 +1174,6 @@ function applyAiProviderVisibility(config) {
 function hasAuthenticatedGatewaySession() {
   const session = supabaseAuth && supabaseAuth.getPublicSession();
   return Boolean(runtimeConfig && runtimeConfig.gatewayConfigured && session && session.authenticated && session.user);
-}
-
-function isAiActivationUnlocked() {
-  if (runtimeConfig && runtimeConfig.gatewayConfigured) {
-    const session = supabaseAuth && supabaseAuth.getPublicSession();
-    return Boolean(
-      session && session.authenticated && session.user && gatewayAccountCache &&
-      gatewayAccountCache.userId === session.user.id && gatewayAccountCache.overseasUnlocked === true
-    );
-  }
-  return getActivationStatus(store.data.settings).activated;
 }
 
 function activationStatusForRenderer() {
@@ -1416,7 +1402,7 @@ async function getPublicAiMediaConfig() {
 async function getVerifiedGatewayCatalog(force = false) {
   const now = Date.now();
   const session = supabaseAuth && supabaseAuth.getPublicSession();
-  const scope = `${session && session.user && session.user.id || 'guest'}:${isAiActivationUnlocked() ? 'overseas' : 'domestic'}`;
+  const scope = String(session && session.user && session.user.id || 'guest');
   if (!force && gatewayCatalogCache && gatewayCatalogCache.scope === scope && gatewayCatalogCache.expiresAt > now) {
     return gatewayCatalogCache.value;
   }
@@ -1491,7 +1477,11 @@ async function generateAiMediaBuffer(kind, prompt, options = {}) {
     );
   } catch (err) {
     if (err && err.name === 'AbortError') {
-      const timeoutError = new Error('AI 生成等待超时，请稍后重试。');
+      const timeoutError = new Error(localizedMessage(
+        'AI generation timed out. Please try again.',
+        'AI 生成等待超时，请稍后重试。',
+        'AI 생성 시간이 초과되었습니다. 다시 시도하세요.'
+      ));
       timeoutError.code = 'timeout';
       throw timeoutError;
     }
@@ -1537,7 +1527,11 @@ async function generateAiChatReply(prompt, messages, providerId, model) {
     return await requestChat(appFetch, config, { prompt, messages }, controller.signal);
   } catch (err) {
     if (err && err.name === 'AbortError') {
-      const timeoutError = new Error('AI 对话等待超时，请稍后重试。');
+      const timeoutError = new Error(localizedMessage(
+        'AI chat timed out. Please try again.',
+        'AI 对话等待超时，请稍后重试。',
+        'AI 채팅 시간이 초과되었습니다. 다시 시도하세요.'
+      ));
       timeoutError.code = 'timeout';
       throw timeoutError;
     }
@@ -1552,20 +1546,46 @@ function conciseAiErrorMessage(error, context = {}) {
   if (/no available channel for model|no channel available|model.*not.*available/i.test(raw)) {
     const model = String(context.model || '').trim();
     return model
-      ? `当前中转站没有可用于“${model}”的通道。请在设置中保存接口，让软件自动读取可用模型后重新选择。`
-      : '当前中转站没有可用的模型通道。请在设置中保存接口，让软件自动读取可用模型后重新选择。';
+      ? localizedMessage(
+        `No channel is available for “${model}”. Save the API connection in Settings, refresh the model list, and choose again.`,
+        `当前中转站没有可用于“${model}”的通道。请在设置中保存接口，让软件自动读取可用模型后重新选择。`,
+        `“${model}”에 사용할 수 있는 채널이 없습니다. 설정에서 API 연결을 저장하고 모델 목록을 새로 고친 뒤 다시 선택하세요.`
+      )
+      : localizedMessage(
+        'No model channel is currently available. Save the API connection in Settings, refresh the model list, and choose again.',
+        '当前中转站没有可用的模型通道。请在设置中保存接口，让软件自动读取可用模型后重新选择。',
+        '현재 사용할 수 있는 모델 채널이 없습니다. 설정에서 API 연결을 저장하고 모델 목록을 새로 고친 뒤 다시 선택하세요.'
+      );
   }
   if (/\b(?:401|403)\b|invalid api key|unauthorized|authentication/i.test(raw)) {
-    return 'API Key 无效、已过期或没有当前模型权限，请检查接口对应的密钥。';
+    return localizedMessage(
+      'The API key is invalid, expired, or lacks access to this model. Check the key for this connection.',
+      'API Key 无效、已过期或没有当前模型权限，请检查接口对应的密钥。',
+      'API 키가 올바르지 않거나 만료되었거나 이 모델에 대한 권한이 없습니다. 이 연결의 키를 확인하세요.'
+    );
   }
   if (/\b404\b|not found/i.test(raw)) {
-    return '接口地址未找到。请填写 API Base URL 或完整请求 URL，软件会自动补全标准路径。';
+    return localizedMessage(
+      'The API endpoint was not found. Enter an API Base URL or full request URL; the app will complete standard paths automatically.',
+      '接口地址未找到。请填写 API Base URL 或完整请求 URL，软件会自动补全标准路径。',
+      'API 엔드포인트를 찾을 수 없습니다. API Base URL 또는 전체 요청 URL을 입력하면 앱이 표준 경로를 자동으로 완성합니다.'
+    );
   }
   if (/returned a webpage|网页而不是 json/i.test(raw)) {
-    return '当前地址是网站页面，不是 API。请填写控制台提供的 Base URL 或请求 URL。';
+    return localizedMessage(
+      'This address is a website page, not an API. Enter the Base URL or request URL from the provider console.',
+      '当前地址是网站页面，不是 API。请填写控制台提供的 Base URL 或请求 URL。',
+      '이 주소는 API가 아니라 웹사이트 페이지입니다. 공급자 콘솔의 Base URL 또는 요청 URL을 입력하세요.'
+    );
   }
-  const taskId = error && error.taskId ? `（任务 ID：${error.taskId}）` : '';
-  const message = raw || (context.kind === 'chat' ? 'AI 对话失败，请稍后重试。' : 'AI 生成失败，请稍后重试。');
+  const taskId = error && error.taskId ? localizedMessage(
+    ` (Task ID: ${error.taskId})`,
+    `（任务 ID：${error.taskId}）`,
+    ` (작업 ID: ${error.taskId})`
+  ) : '';
+  const message = raw || (context.kind === 'chat'
+    ? localizedMessage('AI chat failed. Please try again.', 'AI 对话失败，请稍后重试。', 'AI 채팅에 실패했습니다. 다시 시도하세요.')
+    : localizedMessage('AI generation failed. Please try again.', 'AI 生成失败，请稍后重试。', 'AI 생성에 실패했습니다. 다시 시도하세요.'));
   return `${message.slice(0, 360)}${taskId}`;
 }
 
@@ -1943,7 +1963,7 @@ function registerIpcHandlers() {
     await syncGatewayAccount();
     return {
       theme: store.data.settings.theme,
-      language: store.data.settings.language === 'zh' ? 'zh' : 'en',
+      language: currentLanguage(),
       autoUpdateEnabled: store.data.settings.autoUpdateEnabled !== false,
       activation: activationStatusForRenderer(),
       viewMode: store.data.settings.viewMode,
@@ -2067,7 +2087,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('settings:setLanguage', (_evt, language) => {
-    store.data.settings.language = language === 'zh' ? 'zh' : 'en';
+    store.data.settings.language = normalizeLanguage(language);
     store.scheduleSave();
     return store.data.settings.language;
   });
@@ -2154,6 +2174,8 @@ function registerIpcHandlers() {
 
   ipcMain.handle('chat:retryMessage', (_evt, clientId) => chatService.retryMessage(clientId));
 
+  ipcMain.handle('chat:recallMessage', (_evt, clientId) => chatService.recallMessage(clientId));
+
   ipcMain.handle('chat:getImageDataUrl', (_evt, clientId) => chatService.getImageDataUrl(clientId));
 
   ipcMain.handle('membership:getSnapshot', async () => {
@@ -2227,7 +2249,11 @@ function registerIpcHandlers() {
       return {
         ok: false,
         reason: err && err.code ? err.code : 'model-discovery-failed',
-        message: err && err.message ? err.message : '无法自动读取模型列表。',
+        message: err && err.message ? err.message : localizedMessage(
+          'Could not load the model list automatically.',
+          '无法自动读取模型列表。',
+          '모델 목록을 자동으로 불러오지 못했습니다.'
+        ),
         models: []
       };
     }
@@ -2357,18 +2383,26 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('clipboard:importImage', async (_evt, request = {}) => {
-    const image = clipboard.readImage();
-    if (!image || image.isEmpty()) return { ok: false, reason: 'empty' };
+    const filePaths = process.platform === 'win32'
+      ? parseCfHDrop(clipboard.readBuffer('CF_HDROP'))
+      : [];
+    const copiedImagePath = filePaths.find((filePath) => (
+      preview.isImageExt(path.extname(filePath).toLowerCase()) && fs.existsSync(filePath)
+    ));
+    const image = copiedImagePath ? null : clipboard.readImage();
+    if (!copiedImagePath && (!image || image.isEmpty())) return { ok: false, reason: 'empty' };
 
-    const png = image.toPNG();
-    if (!png || !png.length) return { ok: false, reason: 'empty' };
+    const png = copiedImagePath ? null : image.toPNG();
+    if (!copiedImagePath && (!png || !png.length)) return { ok: false, reason: 'empty' };
 
     // Import through the same archive path as a dropped file so pasted images
     // receive thumbnails, metadata, persistence, and normal canvas records.
     const tempDir = path.join(app.getPath('temp'), 'messs-clipboard');
-    const tempPath = path.join(tempDir, `${crypto.randomUUID()}.png`);
-    await fs.promises.mkdir(tempDir, { recursive: true });
-    await fs.promises.writeFile(tempPath, png);
+    const tempPath = copiedImagePath || path.join(tempDir, `${crypto.randomUUID()}.png`);
+    if (!copiedImagePath) {
+      await fs.promises.mkdir(tempDir, { recursive: true });
+      await fs.promises.writeFile(tempPath, png);
+    }
 
     const folderId = request.folderId && request.folderId !== 'default'
       ? String(request.folderId)
@@ -2385,16 +2419,18 @@ function registerIpcHandlers() {
       );
       if (!record) return { ok: false, reason: 'invalid-image' };
 
-      const dimensions = image.getSize();
-      if (!(record.sourceWidth > 0) && dimensions.width > 0) record.sourceWidth = dimensions.width;
-      if (!(record.sourceHeight > 0) && dimensions.height > 0) record.sourceHeight = dimensions.height;
+      const dimensions = image ? image.getSize() : null;
+      if (dimensions && !(record.sourceWidth > 0) && dimensions.width > 0) record.sourceWidth = dimensions.width;
+      if (dimensions && !(record.sourceHeight > 0) && dimensions.height > 0) record.sourceHeight = dimensions.height;
       record.originalPath = 'Clipboard';
       record.sourceFolder = 'Clipboard';
       store.scheduleSave();
       if (unlockedKeys.size > 0) notifyAchievements();
       return { ok: true, file: fileToPayload(record) };
     } finally {
-      try { await fs.promises.rm(tempPath, { force: true }); } catch (err) {}
+      if (!copiedImagePath) {
+        try { await fs.promises.rm(tempPath, { force: true }); } catch (err) {}
+      }
     }
   });
 
@@ -2431,11 +2467,6 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('ai:generateMedia', async (_evt, request = {}) => {
-    const requestedKind = request.kind === 'video' ? 'video' : 'image';
-    const requestedProviderId = requestedKind === 'video' ? request.videoProviderId : request.imageProviderId;
-    if (aiProviderRequiresActivation(requestedKind, requestedProviderId) && !isAiActivationUnlocked()) {
-      return { ok: false, reason: 'activation-required', message: 'Activate Messs in Settings before using AI.' };
-    }
     let safeRequest;
     try {
       const urls = await resolveAiReferenceUrls(request, 'referenceFileIds');
@@ -2446,7 +2477,11 @@ function registerIpcHandlers() {
     request = safeRequest;
     const prompt = String(request.prompt || '').trim();
     if (!prompt) {
-      return { ok: false, reason: 'empty-prompt', message: '请输入生成提示词。' };
+      return {
+        ok: false,
+        reason: 'empty-prompt',
+        message: localizedMessage('Enter a generation prompt.', '请输入生成提示词。', '생성 프롬프트를 입력하세요.')
+      };
     }
 
     const kind = request.kind === 'video' ? 'video' : 'image';
@@ -2492,17 +2527,21 @@ function registerIpcHandlers() {
           requiredCredits: usage.requiredCredits,
           availableCredits: usage.availableCredits,
           membership: membershipService.getSnapshot(),
-          message: store.data.settings.language === 'zh'
-            ? `积分不足：本次需要 ${usage.requiredCredits} 积分，当前可用 ${usage.availableCredits} 积分。`
-            : `Not enough points. This request needs ${usage.requiredCredits}; ${usage.availableCredits} are available.`
+          message: localizedMessage(
+            `Not enough points. This request needs ${usage.requiredCredits}; ${usage.availableCredits} are available.`,
+            `积分不足：本次需要 ${usage.requiredCredits} 积分，当前可用 ${usage.availableCredits} 积分。`,
+            `포인트가 부족합니다. 이 요청에는 ${usage.requiredCredits}포인트가 필요하며 현재 ${usage.availableCredits}포인트를 사용할 수 있습니다.`
+          )
         };
       }
       return {
         ok: false,
         reason: usage.reason || 'not-entitled',
-        message: store.data.settings.language === 'zh'
-          ? '当前会员方案不包含此 AI 功能。'
-          : 'This AI feature is not included in the current plan.'
+        message: localizedMessage(
+          'This AI feature is not included in the current plan.',
+          '当前会员方案不包含此 AI 功能。',
+          '현재 요금제에는 이 AI 기능이 포함되어 있지 않습니다.'
+        )
       };
     }
 
@@ -2582,9 +2621,6 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('ai:chat', async (_evt, request = {}) => {
-    if (aiProviderRequiresActivation('chat', request.chatProviderId) && !isAiActivationUnlocked()) {
-      return { ok: false, reason: 'activation-required', message: 'Activate Messs in Settings before using AI.' };
-    }
     let safeRequest;
     try {
       const urls = await resolveAiReferenceUrls(request, 'attachmentFileIds');
@@ -2599,7 +2635,11 @@ function registerIpcHandlers() {
     }
     request = safeRequest;
     const prompt = String(request.prompt || '').trim();
-    if (!prompt) return { ok: false, reason: 'empty-prompt', message: '请输入消息。' };
+    if (!prompt) return {
+      ok: false,
+      reason: 'empty-prompt',
+      message: localizedMessage('Enter a message.', '请输入消息。', '메시지를 입력하세요.')
+    };
     const usage = membershipService.beginUsage('ai.chat', {
       metadata: {
         providerId: String(request.chatProviderId || '').trim() || null,
@@ -2611,9 +2651,11 @@ function registerIpcHandlers() {
       return {
         ok: false,
         reason: usage.reason || 'not-entitled',
-        message: store.data.settings.language === 'zh'
-          ? '当前会员方案不包含 AI 对话。'
-          : 'AI chat is not included in the current plan.'
+        message: localizedMessage(
+          'AI chat is not included in the current plan.',
+          '当前会员方案不包含 AI 对话。',
+          '현재 요금제에는 AI 채팅이 포함되어 있지 않습니다.'
+        )
       };
     }
 
@@ -2999,21 +3041,21 @@ function registerIpcHandlers() {
 
   ipcMain.handle('shell:sendToCreativeApp', async (_evt, id, target) => {
     const f = store.getFile(id);
-    const language = store.data.settings.language === 'zh' ? 'zh' : 'en';
+    const language = currentLanguage();
     const normalizedTarget = target === 'photoshop' || target === 'after-effects' ? target : null;
     const targetName = normalizedTarget === 'after-effects' ? 'After Effects' : 'Photoshop';
     if (!normalizedTarget) {
       return {
         ok: false,
         reason: 'invalid-target',
-        message: language === 'zh' ? '不支持这个 Adobe 应用。' : 'This Adobe application is not supported.'
+        message: localizedMessage('This Adobe application is not supported.', '不支持这个 Adobe 应用。', '이 Adobe 앱은 지원되지 않습니다.')
       };
     }
     if (!f) {
       return {
         ok: false,
         reason: 'file-not-found',
-        message: language === 'zh' ? '找不到要发送的文件。' : 'The media file could not be found.'
+        message: localizedMessage('The media file could not be found.', '找不到要发送的文件。', '보낼 미디어 파일을 찾을 수 없습니다.')
       };
     }
     // v0.0.3 generated-media records did not always include aiGeneration,
@@ -3023,7 +3065,7 @@ function registerIpcHandlers() {
       return {
         ok: false,
         reason: 'not-ai-media',
-        message: language === 'zh' ? '仅支持发送 AI 生成的媒体。' : 'Only AI-generated media can be sent.'
+        message: localizedMessage('Only AI-generated media can be sent.', '仅支持发送 AI 生成的媒体。', 'AI로 생성한 미디어만 보낼 수 있습니다.')
       };
     }
     const ext = path.extname(f.name || f.storedPath || '').toLowerCase();
@@ -3032,9 +3074,11 @@ function registerIpcHandlers() {
       return {
         ok: false,
         reason: 'unsupported-file-type',
-        message: language === 'zh'
-          ? `这个文件格式不能发送到 ${targetName}。`
-          : `This file type cannot be sent to ${targetName}.`
+        message: localizedMessage(
+          `This file type cannot be sent to ${targetName}.`,
+          `这个文件格式不能发送到 ${targetName}。`,
+          `이 파일 형식은 ${targetName}(으)로 보낼 수 없습니다.`
+        )
       };
     }
     try {
@@ -3046,9 +3090,11 @@ function registerIpcHandlers() {
       return {
         ok: false,
         reason: 'launch-failed',
-        message: language === 'zh'
-          ? `无法启动 ${targetName}：${error.message}`
-          : `Could not start ${targetName}: ${error.message}`
+        message: localizedMessage(
+          `Could not start ${targetName}: ${error.message}`,
+          `无法启动 ${targetName}：${error.message}`,
+          `${targetName}을(를) 시작하지 못했습니다: ${error.message}`
+        )
       };
     }
   });
@@ -3204,7 +3250,7 @@ function registerIpcHandlers() {
   ipcMain.handle('folders:create', (_evt, name, parentId) => {
     const folder = {
       id: crypto.randomUUID(),
-      name: name && name.trim() ? name.trim() : (store.data.settings.language === 'zh' ? '新建文件夹' : 'New Folder'),
+      name: name && name.trim() ? name.trim() : localizedMessage('New Folder', '新建文件夹', '새 폴더'),
       createdAt: new Date().toISOString(),
       parentId: parentId || null
     };

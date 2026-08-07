@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const { activate, getActivationStatus, verifyActivationCode } = require('../lib/activation');
 const { ACTIVATION_SCHEMA_VERSION, BETA_GRANTS } = require('../lib/redemption-codes');
 
@@ -34,5 +36,19 @@ BETA_GRANTS.forEach((entry) => {
   assert.match(entry.hash, /^[a-f0-9]{64}$/);
   assert.equal(entry.credits, 100);
 });
+
+const mainSource = fs.readFileSync(path.resolve(__dirname, '../main.js'), 'utf8');
+const activationSource = fs.readFileSync(path.resolve(__dirname, '../src/js/activation.js'), 'utf8');
+const indexHtml = fs.readFileSync(path.resolve(__dirname, '../src/index.html'), 'utf8');
+assert.doesNotMatch(mainSource, /aiProviderRequiresActivation|isAiActivationUnlocked/);
+assert.doesNotMatch(mainSource, /reason:\s*'activation-required'/);
+assert.match(mainSource, /modelAccessRestricted:\s*false/);
+assert.doesNotMatch(activationSource, /refreshAiMediaSettings|getAiMediaConfig|messs:ai-config-updated/);
+assert.doesNotMatch(activationSource, /Activated|Not activated|Activation failed|Enter the activation code/);
+assert.match(activationSource, /creditsAdded[\s\S]*?points added/);
+assert.match(indexHtml, /class="ai-provider-section preferences-settings-section"/);
+assert.match(indexHtml, /class="ai-provider-section storage-settings-section" hidden aria-hidden="true"/);
+assert.match(indexHtml, /id="ai-provider-manager-footer" class="ai-provider-manager-footer" hidden aria-hidden="true"/);
+assert.match(indexHtml, /class="theme-switch preference-choice-switch"[\s\S]*?class="language-switch preference-choice-switch"[\s\S]*?class="ai-provider-section software-update-section"[\s\S]*?class="ai-provider-section activation-settings-section"/);
 
 console.log('Activation tests passed.');

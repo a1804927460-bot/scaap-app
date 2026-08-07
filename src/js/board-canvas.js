@@ -7,6 +7,8 @@ const BOARD_ZOOM_MAX = 32;
 const BOARD_MOUNTS_PER_FRAME = 8;
 const BOARD_MEDIA_MOUNTS_PER_FRAME = 2;
 const BOARD_DOM_ITEM_LIMIT = 320;
+const BOARD_DOM_ITEM_EXIT_LIMIT = 240;
+const BOARD_DOM_RETAIN_LIMIT = BOARD_DOM_ITEM_LIMIT;
 const BOARD_OVERVIEW_ITEM_THRESHOLD = 180;
 const BOARD_FULL_IMAGE_LIMIT = 6;
 const BOARD_THUMBNAIL_MAX_EDGE = 400;
@@ -31,7 +33,6 @@ const Board = {
   mountFrame: 0,
   qualityTimer: 0,
   qualityIdle: 0,
-  qualityFrame: 0,
   interactingUntil: 0,
   persistTimer: 0,
   spatialIndex: BoardEngine.createSpatialIndex(400),
@@ -43,20 +44,23 @@ const Board = {
   lastMountHash: null,
   lastKeepHash: null,
   lastZoomBucket: null,
+  zoomLod: null,
+  densityOverview: false,
   lastDragEndedAt: 0,
   visibleIds: new Set(),
   overviewCanvas: null,
   overviewImageCache: new Map(),
   overviewImagePending: new Map(),
   failedFullImageSources: new Set(),
-  resizeObserver: null
+  resizeObserver: null,
+  clipboardPastePromise: null
 };
 
 // In-app clipboard for board items (Ctrl+C/V) �?intentionally separate from
 // the OS clipboard. Copies the item's data (file reference, position, size,
 // or note text) so pasting creates a new independent board item, offset
 // slightly so repeated pastes don't stack exactly on top of each other.
-const BoardClipboard = { items: [] };
+const BoardClipboard = { items: [], preferInternal: false };
 
 function pasteBoardClipboard(atX, atY) {
   const offset = 28;
@@ -102,9 +106,8 @@ function boardTransform() {
 }
 
 function boardZoomBucket() {
-  if (Board.zoom < 0.12) return 'overview';
-  if (Board.zoom < 0.42) return 'compact';
-  return 'detail';
+  Board.zoomLod = BoardEngine.resolveZoomLod(Board.zoom, Board.zoomLod);
+  return Board.zoomLod;
 }
 
 function updateInfiniteGrid() {
@@ -268,8 +271,8 @@ function markBoardInteraction() {
   scheduleMountedImageQuality(BOARD_QUALITY_SETTLE_MS);
 }
 
-function syncMountedImageQuality(force = false) {
-  if (!force && (Board.isPanning || Date.now() < Board.interactingUntil)) {
+function syncMountedImageQuality() {
+  if (Board.isPanning || Board.zoomFrame || Date.now() < Board.interactingUntil) {
     scheduleMountedImageQuality();
     return;
   }
@@ -325,16 +328,10 @@ function applyBoardTransform() {
     document.getElementById('board-zoom-label').textContent = Math.round(Board.zoom * 100) + '%';
     updateInfiniteGrid();
     markBoardInteraction();
-    if (!Board.qualityFrame) {
-      Board.qualityFrame = requestAnimationFrame(() => {
-        Board.qualityFrame = 0;
-        syncMountedImageQuality(true);
-      });
-    }
     clearTimeout(Board.transformSettleTimer);
     Board.transformSettleTimer = window.setTimeout(() => {
       canvas.classList.remove('is-transforming');
-      syncMountedImageQuality(true);
+      scheduleMountedImageQuality(0);
     }, BOARD_QUALITY_SETTLE_MS + 30);
     scheduleBoardReconcile();
     scheduleBoardViewportSave();
@@ -532,6 +529,32 @@ function removeBoardItemsForFile(fileId) {
   renderBoard();
 }
 
+function boardVideoDurationSeconds(file) {
+  const sourceDuration = Number(file && file.sourceDuration);
+  if (sourceDuration > 0) return sourceDuration;
+  const generatedDuration = Number(file && file.aiGeneration && (
+    file.aiGeneration.duration || file.aiGeneration.requestedDuration
+  ));
+  return generatedDuration > 0 ? generatedDuration : 0;
+}
+
+function formatBoardVideoDuration(seconds) {
+  const rounded = Math.max(0, Math.round(Number(seconds) || 0));
+  if (rounded < 60) return `${rounded}s`;
+  const minutes = Math.floor(rounded / 60);
+  const remainder = rounded % 60;
+  return `${minutes}:${String(remainder).padStart(2, '0')}`;
+}
+
+function createBoardVideoDurationBadge(file) {
+  const badge = document.createElement('span');
+  badge.className = 'board-video-duration';
+  const duration = boardVideoDurationSeconds(file);
+  badge.textContent = duration > 0 ? formatBoardVideoDuration(duration) : '--';
+  badge.hidden = !(duration > 0);
+  return badge;
+}
+
 /** Fills a board item's content area. Images render immediately (the URL is
     already known); everything else shows a placeholder icon right away,
     then upgrades in place to a real thumbnail/player once getPreview()
@@ -568,35 +591,37 @@ function renderBoardItemContent(content, f, item) {
     img.loading = 'lazy';
     img.alt = f.name;
     img.draggable = false;
-    const badge = document.createElement('button');
-    badge.type = 'button';
-    badge.className = 'board-video-thumbnail-play';
-    badge.title = t('Play video', '播放视频');
-    badge.setAttribute('aria-label', badge.title);
-    badge.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><polygon points="7 4 20 12 7 20"/></svg>';
-    preview.append(img, badge);
-    badge.addEventListener('mousedown', (event) => event.stopPropagation());
-    badge.addEventListener('click', async (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (preview.dataset.loading === '1') return;
-      preview.dataset.loading = '1';
-      badge.disabled = true;
-      try {
-        const result = await loadBoardPreview(f.id);
-        if (!preview.isConnected || !result || result.type !== 'video') return;
-        const player = buildMiniVideoPlayer(result, f);
-        content.replaceChildren(player);
-        const video = player.querySelector('video');
-        if (video) video.play().catch(() => {});
-      } catch (error) {
-        if (preview.isConnected) {
-          badge.disabled = false;
-          preview.dataset.loading = '';
-        }
-      }
-    });
+    preview.append(img, createBoardVideoDurationBadge(f));
     content.appendChild(preview);
+
+    let hovering = false;
+    let playerPromise = null;
+    content.addEventListener('mouseenter', () => {
+      hovering = true;
+      if (!playerPromise) {
+        playerPromise = loadBoardPreview(f.id).then((result) => {
+          if (!content.isConnected || !result || result.type !== 'video') return null;
+          const player = buildMiniVideoPlayer(result, f);
+          content.replaceChildren(player);
+          return player;
+        }).catch(() => {
+          playerPromise = null;
+          return null;
+        });
+      }
+      playerPromise.then((player) => {
+        if (hovering && player && typeof player._boardPlayPreview === 'function') {
+          player._boardPlayPreview();
+        }
+      });
+    });
+    content.addEventListener('mouseleave', () => {
+      hovering = false;
+      if (!playerPromise) return;
+      playerPromise.then((player) => {
+        if (player && typeof player._boardStopPreview === 'function') player._boardStopPreview();
+      });
+    });
     return;
   }
 
@@ -712,6 +737,62 @@ function destroyMountedBoardItem(id) {
 function clearMountedBoardItems() {
   Board.mountQueue.clear();
   for (const id of [...Board.mounted.keys()]) destroyMountedBoardItem(id);
+}
+
+function isMountableBoardItem(id) {
+  const item = Board.itemsById.get(id);
+  if (!item) return false;
+  return !!(item.isAiPlaceholder || item.isNote || item.isDoodle || Board.filesById.has(item.fileId));
+}
+
+function isBoardElementPaintReady(element) {
+  if (!element) return false;
+  return [...element.querySelectorAll('.board-image-layer.is-active, .board-video-thumbnail > img')]
+    .every((image) => image.complete);
+}
+
+function visibleBoardDomReady() {
+  for (const id of Board.visibleIds) {
+    if (!isMountableBoardItem(id)) continue;
+    if (!isBoardElementPaintReady(Board.mounted.get(id))) return false;
+  }
+  return true;
+}
+
+function syncBoardOverviewFallback(viewportRect) {
+  if (!Board.overviewCanvas || Board.lastZoomBucket === 'overview') return;
+  if (visibleBoardDomReady()) {
+    Board.overviewCanvas.hidden = true;
+    return;
+  }
+  const viewport = document.getElementById('board-viewport');
+  const rect = viewportRect || (viewport && viewport.getBoundingClientRect());
+  if (rect && rect.width && rect.height) drawBoardOverview(Board.visibleIds, rect);
+}
+
+function observeBoardElementPaintReady(element) {
+  element.querySelectorAll('img').forEach((image) => {
+    if (image.complete) return;
+    const settle = () => syncBoardOverviewFallback();
+    image.addEventListener('load', settle, { once: true });
+    image.addEventListener('error', settle, { once: true });
+  });
+}
+
+function syncMountedRichContentForLod(previousBucket, nextBucket) {
+  if (!previousBucket || previousBucket === nextBucket ||
+      previousBucket === 'overview' || nextBucket === 'overview') return;
+  for (const [id, element] of Board.mounted) {
+    const item = Board.itemsById.get(id);
+    const file = item && Board.filesById.get(item.fileId);
+    if (!file || isImageExt(file.ext) || isVideoExt(file.ext)) continue;
+    const content = element.querySelector('.board-item-content');
+    if (!content) continue;
+    cleanupBoardElement(element);
+    content.replaceChildren();
+    renderBoardItemContent(content, file, item);
+    observeBoardElementPaintReady(element);
+  }
 }
 
 function ensureBoardOverviewCanvas() {
@@ -899,7 +980,6 @@ function createBoardItemElement(item) {
   el.style.zIndex = item.zIndex || 1;
   el.dataset.boardId = item.id;
   const isGeneratedMedia = !!(f.aiGeneration || f.sourceFolder === 'AI Generated');
-  if ((isImage || isVideo) && !isGeneratedMedia) appendBoardMediaMeta(el, f);
   el.addEventListener('click', (e) => {
     if (e.ctrlKey || e.metaKey || e.shiftKey) {
       e.stopPropagation();
@@ -990,6 +1070,7 @@ function processBoardMountQueue() {
     if (!element) continue;
     canvas.appendChild(element);
     Board.mounted.set(id, element);
+    observeBoardElementPaintReady(element);
     mountedThisFrame += 1;
     if (isMedia) mountedMediaThisFrame += 1;
 
@@ -1008,20 +1089,17 @@ function processBoardMountQueue() {
   if (Board.mountQueue.size) {
     Board.mountFrame = requestAnimationFrame(processBoardMountQueue);
   }
+  syncBoardOverviewFallback();
   scheduleMountedImageQuality();
 }
 
 function queueBoardMounts(ids, visibleRect) {
-  const centerX = visibleRect.x + visibleRect.w / 2;
-  const centerY = visibleRect.y + visibleRect.h / 2;
-  const ordered = [...ids].filter((id) => !Board.mounted.has(id)).sort((a, b) => {
-    const aa = Board.spatialIndex.getBounds(a);
-    const bb = Board.spatialIndex.getBounds(b);
-    if (!aa || !bb) return 0;
-    const da = Math.abs(aa.x + aa.w / 2 - centerX) + Math.abs(aa.y + aa.h / 2 - centerY);
-    const db = Math.abs(bb.x + bb.w / 2 - centerX) + Math.abs(bb.y + bb.h / 2 - centerY);
-    return da - db;
-  });
+  const ordered = BoardEngine.prioritizeIdsByViewport(
+    [...ids].filter((id) => !Board.mounted.has(id)),
+    Board.spatialIndex,
+    visibleRect,
+    BOARD_DOM_ITEM_LIMIT
+  );
   ordered.forEach((id) => Board.mountQueue.add(id));
   if (Board.mountQueue.size && !Board.mountFrame) {
     Board.mountFrame = requestAnimationFrame(processBoardMountQueue);
@@ -1034,12 +1112,23 @@ function reconcileBoardViewport(force = false) {
   const rect = viewport.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
 
-  const regions = BoardEngine.viewportRects(Board, { w: rect.width, h: rect.height });
-  const mountIds = Board.spatialIndex.query(regions.mount);
+  const regions = BoardEngine.viewportRects(
+    Board,
+    { w: rect.width, h: rect.height },
+    { mountMarginRatio: 0.45, keepMarginRatio: 1 }
+  );
   const zoomBucket = boardZoomBucket();
-  const useOverview =
-    (zoomBucket === 'overview' && AppState.boardItems.length > BOARD_OVERVIEW_ITEM_THRESHOLD) ||
-    mountIds.size > BOARD_DOM_ITEM_LIMIT;
+  const densityProbeLimit = Board.densityOverview
+    ? BOARD_DOM_ITEM_EXIT_LIMIT + 1
+    : BOARD_DOM_ITEM_LIMIT + 1;
+  const mountCandidateCount = Board.spatialIndex.count(regions.mount, densityProbeLimit);
+  Board.densityOverview = BoardEngine.isOverDomBudget(
+    mountCandidateCount,
+    Board.densityOverview,
+    { enter: BOARD_DOM_ITEM_LIMIT, exit: BOARD_DOM_ITEM_EXIT_LIMIT }
+  );
+  const useOverview = Board.densityOverview ||
+    (zoomBucket === 'overview' && AppState.boardItems.length > BOARD_OVERVIEW_ITEM_THRESHOLD);
   const effectiveBucket = useOverview
     ? 'overview'
     : (zoomBucket === 'overview' ? 'compact' : zoomBucket);
@@ -1048,28 +1137,47 @@ function reconcileBoardViewport(force = false) {
   viewportClass.classList.toggle('is-board-compact', effectiveBucket === 'compact');
 
   if (effectiveBucket !== Board.lastZoomBucket) {
-    clearMountedBoardItems();
+    const previousBucket = Board.lastZoomBucket;
     Board.lastZoomBucket = effectiveBucket;
+    syncMountedRichContentForLod(previousBucket, effectiveBucket);
     force = true;
   }
 
   if (useOverview) {
-    clearMountedBoardItems();
     const visibleIds = Board.spatialIndex.query(regions.visible);
     Board.visibleIds = visibleIds;
+    // Paint the lightweight representation before removing DOM nodes so a
+    // density/zoom LOD transition never exposes a blank frame.
     drawBoardOverview(visibleIds, rect);
+    clearMountedBoardItems();
     Board.lastMountHash = null;
     Board.lastKeepHash = null;
     return;
   }
 
-  if (Board.overviewCanvas) Board.overviewCanvas.hidden = true;
-  const keepIds = Board.spatialIndex.query(regions.keep);
+  const mountIds = Board.spatialIndex.queryLimited(regions.mount, BOARD_DOM_ITEM_LIMIT);
   const visibleIds = Board.spatialIndex.query(regions.visible);
   Board.visibleIds = visibleIds;
+  const keepCandidates = [];
+  for (const id of Board.mounted.keys()) {
+    const bounds = Board.spatialIndex.getBounds(id);
+    if (!mountIds.has(id) && bounds && BoardEngine.intersects(bounds, regions.keep)) {
+      keepCandidates.push(id);
+    }
+  }
+  const retainBudget = Math.max(0, BOARD_DOM_RETAIN_LIMIT - mountIds.size);
+  const retainedIds = new Set(BoardEngine.prioritizeIdsByViewport(
+    keepCandidates,
+    Board.spatialIndex,
+    regions.visible,
+    retainBudget
+  ));
   const mountHash = BoardEngine.hashSet(mountIds);
-  const keepHash = BoardEngine.hashSet(keepIds);
-  if (!force && mountHash === Board.lastMountHash && keepHash === Board.lastKeepHash) return;
+  const keepHash = BoardEngine.hashSet(retainedIds);
+  if (!force && mountHash === Board.lastMountHash && keepHash === Board.lastKeepHash) {
+    syncBoardOverviewFallback(rect);
+    return;
+  }
   Board.lastMountHash = mountHash;
   Board.lastKeepHash = keepHash;
   Board.mountQueue.clear();
@@ -1078,7 +1186,7 @@ function reconcileBoardViewport(force = false) {
     if (mountIds.has(id)) {
       element.style.visibility = '';
       element.style.pointerEvents = '';
-    } else if (keepIds.has(id)) {
+    } else if (retainedIds.has(id)) {
       pauseBoardElementMedia(element);
       element.style.visibility = 'hidden';
       element.style.pointerEvents = 'none';
@@ -1087,6 +1195,7 @@ function reconcileBoardViewport(force = false) {
     }
   }
   queueBoardMounts(mountIds, regions.visible);
+  syncBoardOverviewFallback(rect);
 }
 
 function scheduleBoardReconcile() {
@@ -1155,8 +1264,11 @@ function stopOtherBoardVideos(currentVideo) {
 
 function makeBoardItemDraggable(el, item) {
   el.addEventListener('mousedown', (e) => {
+    // Middle-button and Alt+left gestures always belong to canvas panning,
+    // even when they begin over an image or video.
+    if (e.button !== 0 || e.altKey) return;
     if (e.target.classList.contains('board-resize-handle')) return;
-    if (e.target.closest('.board-video-thumbnail-play, .mini-video-controls, .mini-audio-player')) return;
+    if (e.target.closest('.mini-audio-player')) return;
     e.stopPropagation();
     pauseBoardElementMedia(el);
     markBoardInteraction();
@@ -1317,6 +1429,17 @@ function isBoardFullscreen() {
   return document.getElementById('board-panel').classList.contains('is-fullscreen');
 }
 
+function isBoardWorkspaceActive() {
+  const section = document.getElementById('section-messs');
+  const panel = document.getElementById('board-panel');
+  const workspace = document.getElementById('board-workspace-body');
+  return !!(
+    section && section.classList.contains('is-active') &&
+    panel && !panel.classList.contains('is-canvas-library') &&
+    workspace && !workspace.hidden
+  );
+}
+
 function enterBoardFullscreen() {
   document.getElementById('board-panel').classList.add('is-fullscreen');
   document.getElementById('board-fullscreen-icon').outerHTML = ICON_COMPRESS.replace('<svg ', '<svg id="board-fullscreen-icon" ');
@@ -1431,13 +1554,17 @@ function initBoardCanvas() {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) pauseAllBoardMedia();
   });
+  window.addEventListener('blur', () => {
+    BoardClipboard.items = [];
+    BoardClipboard.preferInternal = false;
+  });
 
   document.addEventListener('keydown', (e) => {
     // Only act when the board canvas is actually the relevant context �?    // skip while typing in any input/textarea/contenteditable (search box,
     // rename fields, the document editor, etc.).
     const tag = document.activeElement && document.activeElement.tagName;
     const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || (document.activeElement && document.activeElement.isContentEditable);
-    if (isEditable) return;
+    if (isEditable || !isBoardWorkspaceActive()) return;
 
     if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
       if (!selectedBoardImageItems().length) return;
@@ -1454,13 +1581,18 @@ function initBoardCanvas() {
       if (!selected.length) return;
       e.preventDefault();
       BoardClipboard.items = selected.map((item) => ({ ...item }));
+      BoardClipboard.preferInternal = true;
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
       e.preventDefault();
-      if (BoardClipboard.items.length) {
+      if (BoardClipboard.preferInternal && BoardClipboard.items.length) {
         pasteBoardClipboard();
       } else {
         pasteExternalImageToBoard().then((pasted) => {
-          if (!pasted) showToast(t('No image found on the clipboard', '剪贴板中没有图片'));
+          if (!pasted && BoardClipboard.items.length) {
+            pasteBoardClipboard();
+          } else if (!pasted) {
+            showToast(t('No image found on the clipboard', '剪贴板中没有图片'));
+          }
         }).catch((err) => {
           showToast(err && err.message ? err.message : t('Could not paste the image', '无法粘贴图片'));
         });
@@ -1489,6 +1621,16 @@ function initBoardCanvas() {
   });
 
   viewport.addEventListener('mousedown', (e) => {
+    const isPanGesture = e.button === 1 || (e.button === 0 && e.altKey);
+    if (isPanGesture) {
+      e.preventDefault();
+      e.stopPropagation();
+      Board.isPanning = true;
+      markBoardInteraction();
+      Board.panStart = { x: e.clientX, y: e.clientY, panX: Board.panX, panY: Board.panY };
+      viewport.classList.add('is-panning');
+      return;
+    }
     if (e.target.closest('.board-item')) return;
 
     // While the doodle/eraser tool is active, all mouse interaction on the
@@ -1521,21 +1663,14 @@ function initBoardCanvas() {
     // box-select now instead, see below), since middle-click and Alt+drag
     // are the more standard "move the canvas" gestures in design tools and
     // don't collide with selecting things.
-    if (e.button === 1 || (e.button === 0 && e.altKey)) {
-      e.preventDefault();
-      Board.isPanning = true;
-      markBoardInteraction();
-      Board.panStart = { x: e.clientX, y: e.clientY, panX: Board.panX, panY: Board.panY };
-      viewport.classList.add('is-panning');
-      return;
-    }
+    // Pan gestures are handled before this selection branch.
 
     // Plain left-click-drag on empty space now box-selects directly �?no
     // modifier key needed, since panning moved to Alt+drag/middle-click above.
     if (e.button === 0) {
       startBoxSelect(e);
     }
-  });
+  }, true);
   document.addEventListener('mousemove', (e) => {
     if (!Board.isPanning) return;
     Board.panX = Board.panStart.panX + (e.clientX - Board.panStart.x);
@@ -1562,7 +1697,7 @@ function initBoardCanvas() {
   viewport.addEventListener('paste', (event) => {
     const hasImage = [...(event.clipboardData && event.clipboardData.items || [])]
       .some((item) => item.kind === 'file' && /^image\//i.test(item.type));
-    if (!hasImage || BoardClipboard.items.length) return;
+    if (!hasImage || BoardClipboard.preferInternal) return;
     event.preventDefault();
     pasteExternalImageToBoard().catch((err) => {
       showToast(err && err.message ? err.message : t('Could not paste the image', '无法粘贴图片'));
@@ -1774,68 +1909,34 @@ function buildMiniVideoPlayer(result, f) {
   video.loop = true;
   video.draggable = false;
   video.playsInline = true;
-  wrap.appendChild(video);
+  const durationBadge = createBoardVideoDurationBadge(f);
+  wrap.append(video, durationBadge);
 
-  const controls = document.createElement('div');
-  controls.className = 'mini-video-controls';
-  controls.innerHTML = `
-    <button class="mini-video-play" aria-label="${t('Play/Pause', '播放/暂停')}">
-      <svg class="mvp-icon-play" viewBox="0 0 24 24" width="11" height="11" fill="currentColor"><polygon points="6 4 20 12 6 20"/></svg>
-      <svg class="mvp-icon-pause" viewBox="0 0 24 24" width="11" height="11" fill="currentColor" hidden><rect x="5" y="4" width="5" height="16"/><rect x="14" y="4" width="5" height="16"/></svg>
-    </button>
-    <input type="range" class="mini-video-seek" min="0" max="1000" value="0" step="1" />
-    <span class="mini-video-time">0:00</span>
-  `;
-  wrap.appendChild(controls);
-
-  const playBtn = controls.querySelector('.mini-video-play');
-  const iconPlay = controls.querySelector('.mvp-icon-play');
-  const iconPause = controls.querySelector('.mvp-icon-pause');
-  const seekEl = controls.querySelector('.mini-video-seek');
-  const timeLabel = controls.querySelector('.mini-video-time');
-
-  let duration = 0;
-  let isScrubbing = false;
+  let wantsPreview = false;
   const abortController = new AbortController();
+  wrap._boardPlayPreview = () => {
+    wantsPreview = true;
+    stopOtherBoardVideos(video);
+    video.play().catch(() => {});
+  };
+  wrap._boardStopPreview = () => {
+    wantsPreview = false;
+    video.pause();
+    try { video.currentTime = 0; } catch (error) {}
+  };
   wrap._boardCleanup = () => {
     abortController.abort();
-    video.pause();
+    wrap._boardStopPreview();
     video.removeAttribute('src');
     video.load();
   };
 
-  video.addEventListener('loadedmetadata', () => { if (isFinite(video.duration)) duration = video.duration; });
-  video.addEventListener('timeupdate', () => {
-    if (isScrubbing || !duration) return;
-    seekEl.value = String(Math.round((video.currentTime / duration) * 1000));
-    timeLabel.textContent = formatTime(video.currentTime);
+  video.addEventListener('loadedmetadata', () => {
+    if (!Number.isFinite(video.duration) || video.duration <= 0) return;
+    durationBadge.textContent = formatBoardVideoDuration(video.duration);
+    durationBadge.hidden = false;
+    if (wantsPreview) video.play().catch(() => {});
   });
-  seekEl.addEventListener('input', () => {
-    isScrubbing = true;
-    if (duration) timeLabel.textContent = formatTime((seekEl.value / 1000) * duration);
-  });
-  function commitSeek() {
-    if (!isScrubbing) return;
-    if (duration) video.currentTime = (seekEl.value / 1000) * duration;
-  }
-  document.addEventListener('mouseup', commitSeek, { signal: abortController.signal });
-  seekEl.addEventListener('keyup', commitSeek);
-  seekEl.addEventListener('change', commitSeek);
-  video.addEventListener('seeked', () => { isScrubbing = false; });
-
-  playBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (video.paused) video.play().catch(() => {}); else video.pause();
-  });
-  video.addEventListener('play', () => {
-    stopOtherBoardVideos(video);
-    iconPlay.hidden = true;
-    iconPause.hidden = false;
-  });
-  video.addEventListener('pause', () => { iconPlay.hidden = false; iconPause.hidden = true; });
-
-  // Don't let clicks on the controls bar start a board-item drag.
-  controls.addEventListener('mousedown', (e) => e.stopPropagation());
 
   video.addEventListener('error', async () => {
     if (video.dataset.triedTranscode) return;
@@ -1844,7 +1945,7 @@ function buildMiniVideoPlayer(result, f) {
     if (res.ok) {
       video.src = res.url;
       video.load();
-      video.play().catch(() => {});
+      if (wantsPreview) video.play().catch(() => {});
     }
   }, { once: true });
 
@@ -2782,10 +2883,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       option.className = 'ai-model-picker-option';
       option.dataset.value = provider.id;
       option.setAttribute('role', 'option');
-      option.textContent = provider.name;
+      appendAiModelLabel(option, provider);
       option.addEventListener('click', () => {
         modelSelect.value = provider.id;
-        modelPickerLabel.textContent = provider.name;
+        appendAiModelLabel(modelPickerLabel, provider);
         modelPickerMenu.querySelectorAll('.ai-model-picker-option').forEach((item) => {
           item.classList.toggle('is-active', item === option);
           item.setAttribute('aria-selected', String(item === option));
@@ -2798,6 +2899,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     });
     const selected = options.find((provider) => provider.id === modelSelect.value) || options[0];
     modelPickerLabel.textContent = selected ? selected.name : t('No model configured', '未配置模型');
+    if (selected) appendAiModelLabel(modelPickerLabel, selected);
     // A running request must not disable a newly opened composer. Each
     // submission owns its own request and placeholder state.
     submit.disabled = !selected;

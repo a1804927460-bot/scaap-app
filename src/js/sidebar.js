@@ -310,9 +310,7 @@ function initSidebarMultiSelectShortcuts() {
 
 function setText(selector, en, zh) {
   const el = document.querySelector(selector);
-  if (el) el.textContent = selector === '.start-subtitle' || selector === '.brand-tagline'
-    ? en
-    : t(en, zh);
+  if (el) el.textContent = t(en, zh);
 }
 
 function setAttr(selector, attr, en, zh) {
@@ -329,20 +327,24 @@ function setTitleAndLabel(selector, en, zh) {
 }
 
 function setButtonTailText(selector, en, zh) {
-  const el = document.querySelector(selector);
-  if (!el) return;
   const value = ` ${t(en, zh)}`;
-  const textNode = [...el.childNodes].reverse().find((node) =>
-    node.nodeType === Node.TEXT_NODE && node.textContent.trim()
-  );
-  if (textNode) textNode.textContent = value;
-  else el.appendChild(document.createTextNode(value));
+  document.querySelectorAll(selector).forEach((el) => {
+    const textNode = [...el.childNodes].reverse().find((node) =>
+      node.nodeType === Node.TEXT_NODE && node.textContent.trim()
+    );
+    if (textNode) textNode.textContent = value;
+    else el.appendChild(document.createTextNode(value));
+  });
 }
 
 function setChatProviderColumnLabels() {
-  const labels = isZh()
-    ? ['\u9ed8\u8ba4', '\u8fde\u63a5\u540d\u79f0', 'Base URL', '\u6a21\u578b', 'API Key']
-    : ['Default', 'Connection name', 'Base URL', 'Models', 'API Key'];
+  const labels = [
+    t('Default', '\u9ed8\u8ba4'),
+    t('Connection name', '\u8fde\u63a5\u540d\u79f0'),
+    'Base URL',
+    t('Models', '\u6a21\u578b'),
+    'API Key'
+  ];
   document.querySelectorAll('.ai-chat-provider-columns span').forEach((span, index) => {
     span.textContent = labels[index] || span.textContent;
   });
@@ -391,11 +393,10 @@ function refreshStaticLanguage() {
   setTitleAndLabel('#account-popover-avatar', 'Change profile image', '更换头像');
 
   setText('.settings-popover-title:not(.settings-section-spaced)', 'Appearance', '外观');
-  setText('.settings-popover-title.settings-section-spaced', 'Language', '语言');
   setButtonTailText('.theme-opt[data-theme-choice="light"]', 'Light', '浅色');
   setButtonTailText('.theme-opt[data-theme-choice="dark"]', 'Dark', '深色');
   setText('#ai-provider-manager-open strong', 'More Settings', '更多设置');
-  setText('#ai-provider-summary', 'Account, updates, storage, tools', '账号、更新、存储、工具');
+  setText('#ai-provider-summary', 'Theme, language, updates, redemption', '主题、语言、更新、兑换');
 
   setText('.preview-panel .panel-title', 'Preview Canvas', '预览画布');
   setTitleAndLabel('#preview-back-btn', 'Back', '返回');
@@ -467,6 +468,13 @@ function refreshStaticLanguage() {
 
   setText('#ai-provider-manager-title', 'More Settings', '更多设置');
   setTitleAndLabel('#ai-provider-manager-close', 'Close', '关闭');
+  setText('.preferences-settings-section .ai-provider-section-heading strong', 'Preferences', '偏好设置');
+  setText('.preference-settings-row:nth-child(1) .preference-settings-copy strong', 'Appearance', '外观');
+  setText('.preference-settings-row:nth-child(1) .preference-settings-copy small', 'Choose the app theme', '选择软件主题');
+  setText('.preference-settings-row:nth-child(2) .preference-settings-copy strong', 'Language', '语言');
+  setText('.preference-settings-row:nth-child(2) .preference-settings-copy small', 'Interface language', '界面语言');
+  setAttr('.preferences-settings-section .theme-switch', 'aria-label', 'Appearance', '外观');
+  setAttr('.preferences-settings-section .language-switch', 'aria-label', 'Language', '语言');
   setText('.storage-settings-section .ai-provider-section-heading strong', 'Storage', '存储');
   setText('#library-path-add-btn', 'Add Mirror Location', '添加镜像位置');
   setText('.ai-provider-chat-grid label:nth-child(1) span', 'Profile Name', '配置名称');
@@ -474,15 +482,21 @@ function refreshStaticLanguage() {
   setText('.ai-provider-chat-grid label:nth-child(3) span', 'Model', '模型');
   setText('.ai-provider-chat-grid label:nth-child(4) span', 'API Key', 'API Key');
   setText('.software-update-section .ai-provider-section-heading strong', 'Software Update', '软件更新');
+  setText('.software-update-settings > label strong', 'Automatic updates', '自动更新');
+  setText('.software-update-settings > label small', 'Download updates and install after restart', '自动下载，重启后安装');
+  setText('#software-check-update-btn', 'Check Now', '立即检查');
   setText('.activation-redemption-copy strong', 'Redemption code', '兑换码');
-  setText('.activation-redemption-copy small', 'Serial codes and gift credits', '序列码与礼品积分');
+  setText('.activation-redemption-copy small', 'Add points to this account', '为当前账号添加积分');
   setAttr('#activation-settings-code', 'placeholder', 'Enter redemption code', '输入兑换码');
   setText('#activation-settings-form button', 'Redeem', '兑换');
   setText('.cloud-security-section .ai-provider-section-heading strong', 'Cloud Account', '云端账号');
   document.querySelectorAll('.ai-provider-columns').forEach((row) => {
-    const labels = isZh()
-      ? ['默认', '连接名称', 'Base URL 或请求 URL（自动识别）', 'API Key']
-      : ['Default', 'Connection name', 'Base URL or request URL (auto-detect)', 'API Key'];
+    const labels = [
+      t('Default', '默认'),
+      t('Connection name', '连接名称'),
+      t('Base URL or request URL (auto-detect)', 'Base URL 或请求 URL（自动识别）'),
+      'API Key'
+    ];
     row.querySelectorAll('span').forEach((span, index) => { span.textContent = labels[index] || span.textContent; });
   });
   setChatProviderColumnLabels();
@@ -541,9 +555,9 @@ function refreshLanguageDependentViews() {
 }
 
 function applyLanguageChoice(language, options = {}) {
-  const lang = language === 'zh' ? 'zh' : 'en';
+  const lang = normalizeAppLanguage(language);
   AppState.language = lang;
-  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : (lang === 'ko' ? 'ko' : 'en');
   document.documentElement.dataset.language = lang;
   document.querySelectorAll('.language-opt').forEach((btn) => {
     const active = btn.dataset.languageChoice === lang;
@@ -551,11 +565,15 @@ function applyLanguageChoice(language, options = {}) {
     btn.setAttribute('aria-pressed', String(active));
   });
   document.querySelectorAll('[data-i18n-en]').forEach((node) => {
-    const next = lang === 'zh' ? node.dataset.i18nZh : node.dataset.i18nEn;
+    const next = t(node.dataset.i18nEn, node.dataset.i18nZh, node.dataset.i18nKo);
     if (next) node.textContent = next;
   });
   document.querySelectorAll('[data-i18n-placeholder-en]').forEach((node) => {
-    const next = lang === 'zh' ? node.dataset.i18nPlaceholderZh : node.dataset.i18nPlaceholderEn;
+    const next = t(
+      node.dataset.i18nPlaceholderEn,
+      node.dataset.i18nPlaceholderZh,
+      node.dataset.i18nPlaceholderKo
+    );
     if (next) node.setAttribute('placeholder', next);
   });
   refreshStaticLanguage();
@@ -566,6 +584,7 @@ function applyLanguageChoice(language, options = {}) {
   setText('.ai-assistant-compact h2', 'Messs resolves your confusion.', 'Messs \u5e2e\u4f60\u7406\u6e05\u6df7\u4e71\u3002');
   setText('.ai-assistant-compact p', 'What should we solve today?', '\u4eca\u5929\u8981\u89e3\u51b3\u4ec0\u4e48\uff1f');
   refreshApiSettingsLanguage();
+  if (typeof refreshTitlebarLanguage === 'function') refreshTitlebarLanguage();
   if (options.rerender !== false) refreshLanguageDependentViews();
   document.dispatchEvent(new CustomEvent('messs:language-changed', { detail: { language: lang } }));
 }
@@ -574,7 +593,7 @@ function initLanguageSettings() {
   applyLanguageChoice(AppState.language || 'en', { rerender: false });
   document.querySelectorAll('.language-opt').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const choice = btn.dataset.languageChoice === 'zh' ? 'zh' : 'en';
+      const choice = normalizeAppLanguage(btn.dataset.languageChoice);
       applyLanguageChoice(choice);
       if (typeof window.messsAPI.setLanguage === 'function') {
         await window.messsAPI.setLanguage(choice);
@@ -1115,8 +1134,8 @@ async function renderAccountSummary(config) {
     'account-footer-name': displayName,
     'account-popover-name': displayName,
     'account-popover-email': authenticated ? email : t('Sign in to sync your account', '登录后同步账户'),
-    'account-footer-meta': `${plan} · ${balance.toLocaleString()} ${t('credits', '积分')}`,
-    'account-credit-count': balance.toLocaleString(),
+    'account-footer-meta': `${plan} · ${balance.toLocaleString(appLocale())} ${t('credits', '积分')}`,
+    'account-credit-count': balance.toLocaleString(appLocale()),
     'account-plan-badge': plan
   };
   Object.entries(values).forEach(([id, value]) => {
@@ -1139,8 +1158,8 @@ function renderMembershipBalance(membership) {
   const footerMeta = document.getElementById('account-footer-meta');
   const creditCount = document.getElementById('account-credit-count');
   const planBadge = document.getElementById('account-plan-badge');
-  if (footerMeta) footerMeta.textContent = `${plan} · ${balance.toLocaleString()} ${t('credits', '积分')}`;
-  if (creditCount) creditCount.textContent = balance.toLocaleString();
+  if (footerMeta) footerMeta.textContent = `${plan} · ${balance.toLocaleString(appLocale())} ${t('credits', '积分')}`;
+  if (creditCount) creditCount.textContent = balance.toLocaleString(appLocale());
   if (planBadge) planBadge.textContent = plan;
 }
 

@@ -3,10 +3,7 @@ import crypto from 'node:crypto';
 import { authenticate } from './auth.js';
 import { catalogVersion, chat, generateMedia, models, publicProviderConfig } from './providers.js';
 import {
-  accountAllowsOverseas,
-  filterProviderConfigForAccount,
   getUsageAccount,
-  providerRequiresActivation,
   redeemUsageCode,
   reserveUsage,
   settleUsage
@@ -143,7 +140,6 @@ function validateBody(body, kind) {
 function deniedReservation(response, reservation) {
   const reason = String(reservation && reservation.reason || 'credit-service-failed');
   const responses = {
-    'activation-required': [403, 'Activation is required for the selected AI model.'],
     'insufficient-credits': [402, 'There are not enough credits for this generation.'],
     'account-suspended': [403, 'This AI account is suspended.'],
     'provider-not-allowed': [400, 'The selected AI provider is not allowed.'],
@@ -187,14 +183,10 @@ async function handle(request, response) {
     return send(response, 200, { redemption: result, account: result.account || null });
   }
   if (request.method === 'GET' && url.pathname === '/v1/config') {
-    return send(response, 200, filterProviderConfigForAccount(publicProviderConfig(), await getUsageAccount(user.id)));
+    return send(response, 200, publicProviderConfig());
   }
   if (request.method === 'GET' && url.pathname === '/v1/models') {
     const requestedProviderId = String(url.searchParams.get('providerId') || 'chat-1').trim().toLowerCase();
-    const account = await getUsageAccount(user.id);
-    if (providerRequiresActivation(requestedProviderId === 'video-1' ? 'video' : 'chat', requestedProviderId) && !accountAllowsOverseas(account)) {
-      return send(response, 403, { code: 'activation-required', message: 'Activation is required for the selected AI model.' });
-    }
     return send(response, 200, await models(requestedProviderId));
   }
 

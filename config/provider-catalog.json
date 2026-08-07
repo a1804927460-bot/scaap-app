@@ -1,5 +1,5 @@
 {
-  "version": 10,
+  "version": 11,
   "providers": [
     {
       "id": "image-1",
@@ -7,6 +7,7 @@
       "name": "Nano Banana Pro",
       "endpoint": "https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image:generateContent",
       "protocol": "gemini-image",
+      "requiresActivation": false,
       "capabilities": {
         "sizes": ["1K", "2K", "4K"],
         "ratios": ["auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
@@ -19,6 +20,7 @@
       "name": "Nanobanana Pro SE",
       "endpoint": "https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent",
       "protocol": "gemini-image",
+      "requiresActivation": false,
       "capabilities": {
         "sizes": ["1K", "2K", "4K"],
         "ratios": ["auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
@@ -32,6 +34,7 @@
       "endpoint": "https://api.quickrouter.ai/v1/images/generations",
       "model": "doubao-seedream-5-0-260128",
       "protocol": "openai-image",
+      "requiresActivation": false,
       "capabilities": {
         "sizes": ["2K", "4K"],
         "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
@@ -44,6 +47,7 @@
       "name": "Midjourney",
       "endpoint": "https://api.quickrouter.ai/mj/submit/imagine",
       "protocol": "midjourney-imagine",
+      "requiresActivation": false,
       "capabilities": {
         "sizes": ["1K"],
         "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
@@ -56,6 +60,7 @@
       "name": "Nano banana2",
       "endpoint": "https://api.quickrouter.ai/v1beta/models/gemini-3.1-flash-image:generateContent",
       "protocol": "gemini-image",
+      "requiresActivation": false,
       "capabilities": {
         "sizes": ["1K", "2K", "4K"],
         "ratios": ["auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
@@ -87,6 +92,7 @@
       "endpoint": "https://api.quickrouter.ai/v1beta",
       "models": ["gemini-3.1-flash-lite", "gemini-3.6-flash"],
       "protocol": "gemini",
+      "requiresActivation": false,
       "keyEnv": "QUICKROUTER_API_KEY"
     }
   ]

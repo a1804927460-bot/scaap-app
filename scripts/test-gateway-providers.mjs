@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const { PROVIDER_CATALOG_VERSION } = require('../lib/provider-catalog');
 
 process.env.Quick_API_KEY = 'quickrouter-secret';
 process.env.MINIMAX_API_KEY = 'minimax-secret';
@@ -25,7 +29,7 @@ const { chat, generateMedia, publicProviderConfig } = await import('../gateway/s
 const config = publicProviderConfig();
 const ids = config.providers.map((provider) => provider.id);
 
-assert.equal(config.catalogVersion, 10);
+assert.equal(config.catalogVersion, PROVIDER_CATALOG_VERSION);
 
 assert.ok(ids.includes('image-1'));
 assert.ok(ids.includes('video-1'));
