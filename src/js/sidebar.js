@@ -7,6 +7,9 @@ let lastClickedSidebarId = null;
 let isSidebarListHovered = false;
 let importProgressHideTimer = null;
 let sidebarDragGhost = null;
+let activeAccountAvatarUserId = null;
+let accountSummaryRenderGeneration = 0;
+let accountAvatarLoadGeneration = 0;
 
 function appendFileThumbnail(container, file, alt = '') {
   const image = document.createElement('img');
@@ -1042,40 +1045,61 @@ function renderAccountAvatars(initial, dataUrl) {
 
 async function chooseAccountAvatar() {
   const button = document.getElementById('account-popover-avatar');
-  if (!button || button.disabled || typeof window.messsAPI.chooseProfileAvatar !== 'function') return;
+  const accountUserId = button && button.dataset.accountUserId || '';
+  if (!button || !accountUserId || button.disabled || typeof window.messsAPI.chooseProfileAvatar !== 'function') return;
+  const avatarLoadGeneration = ++accountAvatarLoadGeneration;
+  const fallbackInitial = button.dataset.fallbackInitial || 'M';
   button.disabled = true;
   try {
     const result = await window.messsAPI.chooseProfileAvatar();
+    if (avatarLoadGeneration !== accountAvatarLoadGeneration || activeAccountAvatarUserId !== accountUserId) return;
     if (!result || !result.ok) {
-      if (result && result.reason !== 'cancelled') {
+      if (result && !['cancelled', 'auth-required', 'account-changed'].includes(result.reason)) {
         showToast(t('Could not update the profile image.', '无法更新头像。'), 'Messs');
       }
       return;
     }
     const dataUrl = result.dataUrl || await window.messsAPI.getProfileAvatar();
-    renderAccountAvatars(button.dataset.fallbackInitial || 'M', dataUrl);
+    if (avatarLoadGeneration !== accountAvatarLoadGeneration || activeAccountAvatarUserId !== accountUserId) return;
+    renderAccountAvatars(fallbackInitial, dataUrl);
     showToast(t('Profile image updated.', '头像已更新。'), 'Messs');
   } catch (error) {
     showToast(error && error.message ? error.message : t('Could not update the profile image.', '无法更新头像。'), 'Messs');
   } finally {
-    button.disabled = false;
+    button.disabled = !activeAccountAvatarUserId || button.dataset.accountUserId !== activeAccountAvatarUserId;
   }
 }
 
 async function renderAccountSummary(config) {
+  const summaryRenderGeneration = ++accountSummaryRenderGeneration;
+  const avatarLoadGeneration = ++accountAvatarLoadGeneration;
   const session = config && config.cloudSession || {};
   const email = session.user && session.user.email || '';
   const authenticated = !!session.authenticated;
+  const accountUserId = authenticated && session.user && String(session.user.id || '').trim() || '';
+  const previousAccountUserId = activeAccountAvatarUserId;
+  activeAccountAvatarUserId = accountUserId || null;
+  const fallbackName = authenticated ? (email.split('@')[0] || 'Messs user') : t('Messs user', 'Messs 用户');
+  const fallbackInitial = (fallbackName.trim()[0] || 'M').toUpperCase();
+  const avatarButton = document.getElementById('account-popover-avatar');
+  if (avatarButton) {
+    avatarButton.dataset.accountUserId = accountUserId;
+    avatarButton.disabled = !accountUserId;
+  }
+  if (!accountUserId || previousAccountUserId !== activeAccountAvatarUserId) {
+    renderAccountAvatars(fallbackInitial, null);
+  }
   let membership = null;
   let avatarDataUrl = null;
   try {
     [membership, avatarDataUrl] = await Promise.all([
       window.messsAPI.getMembershipSnapshot().catch(() => null),
-      typeof window.messsAPI.getProfileAvatar === 'function'
+      accountUserId && typeof window.messsAPI.getProfileAvatar === 'function'
         ? window.messsAPI.getProfileAvatar().catch(() => null)
         : Promise.resolve(null)
     ]);
   } catch (error) {}
+  if (summaryRenderGeneration !== accountSummaryRenderGeneration || activeAccountAvatarUserId !== (accountUserId || null)) return;
   const displayName = authenticated
     ? ((membership && membership.account && membership.account.displayName) || email.split('@')[0] || 'Messs user')
     : t('Messs user', 'Messs 用户');
@@ -1084,7 +1108,9 @@ async function renderAccountSummary(config) {
     ? Number(membership.credits.balance)
     : 0;
   const initial = (displayName.trim()[0] || 'M').toUpperCase();
-  renderAccountAvatars(initial, avatarDataUrl);
+  if (avatarLoadGeneration === accountAvatarLoadGeneration) {
+    renderAccountAvatars(initial, avatarDataUrl);
+  }
   const values = {
     'account-footer-name': displayName,
     'account-popover-name': displayName,
@@ -1099,6 +1125,7 @@ async function renderAccountSummary(config) {
   });
   const google = document.getElementById('account-google-sign-in');
   const signOut = document.getElementById('account-sign-out');
+  if (avatarButton) avatarButton.disabled = !accountUserId;
   if (google) google.hidden = authenticated;
   if (signOut) signOut.hidden = !authenticated;
 }
@@ -1179,6 +1206,15 @@ async function signInCloudWithGoogle(button) {
 }
 
 async function signOutCloudAccount() {
+  ++accountSummaryRenderGeneration;
+  ++accountAvatarLoadGeneration;
+  activeAccountAvatarUserId = null;
+  const avatarButton = document.getElementById('account-popover-avatar');
+  if (avatarButton) {
+    avatarButton.dataset.accountUserId = '';
+    avatarButton.disabled = true;
+  }
+  renderAccountAvatars('M', null);
   await window.messsAPI.signOutCloud();
   const config = await refreshAiMediaSettings();
   document.dispatchEvent(new CustomEvent('messs:ai-config-updated', { detail: config }));

@@ -41,8 +41,8 @@
   transition: opacity 140ms ease, transform 140ms ease;
 }
 
-.account-avatar-edit:hover::after,
-.account-avatar-edit:focus-visible::after {
+.account-avatar-edit:not(:disabled):hover::after,
+.account-avatar-edit:not(:disabled):focus-visible::after {
   opacity: 1;
   transform: scale(1);
 }
@@ -52,8 +52,8 @@
 }
 
 .account-avatar-edit:disabled {
-  cursor: wait;
-  opacity: .72;
+  cursor: default;
+  opacity: 1;
 }
 
 #ai-provider-manager-open {

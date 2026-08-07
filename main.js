@@ -35,6 +35,7 @@ const { quoteMediaCredits, publicCreditPricing } = require('./lib/credit-pricing
 const { launchAdobeMedia } = require('./lib/adobe-launcher');
 const { ChatService } = require('./lib/chat-service');
 const { probeVideoMetadata } = require('./lib/media-metadata');
+const { authenticatedUserId, profileAvatarPath } = require('./lib/profile-avatar');
 
 const DEFAULT_CATALOG_IMAGE = providerCatalog('image')[0];
 const DEFAULT_CATALOG_VIDEO = providerCatalog('video')[0];
@@ -1830,12 +1831,14 @@ async function importDirectoryPathAndNotify(dirPath, parentFolderId, canvasId) {
 }
 
 function readProfileAvatarDataUrl() {
-  const avatarPath = String(store && store.data && store.data.settings && store.data.settings.profileAvatarPath || '').trim();
-  if (!avatarPath || !path.isAbsolute(avatarPath) || !fs.existsSync(avatarPath)) return null;
+  const session = supabaseAuth && supabaseAuth.getPublicSession();
+  const avatarPath = profileAvatarPath(store.dir, session);
+  if (!avatarPath || !fs.existsSync(avatarPath)) return null;
   try {
     const resolved = path.resolve(avatarPath);
-    const profileRoot = path.resolve(store.dir, 'profile') + path.sep;
-    if (!resolved.startsWith(profileRoot)) return null;
+    const accountsRoot = path.resolve(store.dir, 'profile', 'accounts');
+    const relative = path.relative(accountsRoot, resolved);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null;
     return `data:image/webp;base64,${fs.readFileSync(resolved).toString('base64')}`;
   } catch (error) {
     return null;
@@ -1890,6 +1893,10 @@ function normalizeAiMediaGenerationRequest(request, kind) {
 }
 
 async function chooseProfileAvatar() {
+  const session = supabaseAuth && supabaseAuth.getPublicSession();
+  const accountUserId = authenticatedUserId(session);
+  const avatarPath = profileAvatarPath(store.dir, session);
+  if (!accountUserId || !avatarPath) return { ok: false, reason: 'auth-required' };
   if (!sharp) return { ok: false, reason: 'image-tools-unavailable' };
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Choose profile image',
@@ -1897,8 +1904,10 @@ async function chooseProfileAvatar() {
     filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'avif', 'heic', 'heif'] }]
   });
   if (result.canceled || !result.filePaths[0]) return { ok: false, reason: 'cancelled' };
-  const profileDir = path.join(store.dir, 'profile');
-  const avatarPath = path.join(profileDir, 'avatar.webp');
+  if (authenticatedUserId(supabaseAuth.getPublicSession()) !== accountUserId) {
+    return { ok: false, reason: 'account-changed' };
+  }
+  const profileDir = path.dirname(avatarPath);
   const temporaryPath = path.join(profileDir, `avatar-${crypto.randomUUID()}.tmp.webp`);
   await fs.promises.mkdir(profileDir, { recursive: true });
   try {
@@ -1907,9 +1916,13 @@ async function chooseProfileAvatar() {
       .resize(256, 256, { fit: 'cover', position: 'attention' })
       .webp({ quality: 88 })
       .toFile(temporaryPath);
-    await fs.promises.copyFile(temporaryPath, avatarPath);
-    store.data.settings.profileAvatarPath = avatarPath;
-    store.scheduleSave();
+    if (authenticatedUserId(supabaseAuth.getPublicSession()) !== accountUserId) {
+      return { ok: false, reason: 'account-changed' };
+    }
+    if (authenticatedUserId(supabaseAuth.getPublicSession()) !== accountUserId) {
+      return { ok: false, reason: 'account-changed' };
+    }
+    await fs.promises.rename(temporaryPath, avatarPath);
     return { ok: true, dataUrl: readProfileAvatarDataUrl() };
   } finally {
     await fs.promises.unlink(temporaryPath).catch(() => {});
