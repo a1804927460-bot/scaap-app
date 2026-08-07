@@ -80,18 +80,24 @@ jobs:
           if ($config.aiGatewayUrl -notmatch '^https://') { throw 'Repository variable AI_GATEWAY_URL must be HTTPS.' }
           if ($config.githubOwner -ne 'a1804927460-bot' -or $config.githubRepo -ne 'messs-releases') { throw 'Public updater repository is misconfigured.' }
           if (-not $env:GH_TOKEN) { throw 'RELEASES_TOKEN is missing.' }
-          if ($env:SIGNING_CERT_PRESENT -ne 'true') { throw 'CSC_LINK is missing.' }
-          if ($env:SIGNING_PASSWORD_PRESENT -ne 'true') { throw 'CSC_KEY_PASSWORD is missing.' }
+          if ($env:SIGNING_CERT_PRESENT -ne $env:SIGNING_PASSWORD_PRESENT) {
+            throw 'CSC_LINK and CSC_KEY_PASSWORD must be configured together.'
+          }
+          $signingEnabled = $env:SIGNING_CERT_PRESENT -eq 'true'
+          "MESSS_SIGNING_ENABLED=$($signingEnabled.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
+          if (-not $signingEnabled) {
+            Write-Warning 'Publishing an unsigned internal build because no code-signing certificate is configured.'
+          }
 
       - name: Test
         run: npm test
 
-      - name: Build signed Windows update
+      - name: Build Windows update
         run: npm run release:win
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          CSC_IDENTITY_AUTO_DISCOVERY: true
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
 
       - name: Verify updater artifacts
         shell: pwsh
@@ -102,8 +108,12 @@ jobs:
           $blockmap = Get-Item "$($installer.FullName).blockmap" -ErrorAction SilentlyContinue
           if (-not $blockmap) { throw 'Windows installer blockmap was not generated.' }
           $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
-          if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate) {
-            throw "Installer Authenticode signature is not valid: $($signature.Status)"
+          if ($env:MESSS_SIGNING_ENABLED -eq 'true') {
+            if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate) {
+              throw "Installer Authenticode signature is not valid: $($signature.Status)"
+            }
+          } elseif ($signature.Status -ne 'NotSigned') {
+            throw "Unsigned build has an unexpected Authenticode state: $($signature.Status)"
           }
           $manifest = Get-Content -Raw release/latest.yml
           if ($manifest -notmatch "(?m)^version:\s*$([regex]::Escape($env:MESSS_RELEASE_VERSION))\s*$") {
@@ -114,7 +124,7 @@ jobs:
           }
           "MESSS_INSTALLER_PATH=$($installer.FullName)" >> $env:GITHUB_ENV
           "MESSS_BLOCKMAP_PATH=$($blockmap.FullName)" >> $env:GITHUB_ENV
-          Write-Host "Verified signed $($installer.Name), $($blockmap.Name), and latest.yml"
+          Write-Host "Verified $($installer.Name), $($blockmap.Name), latest.yml, and signing state $($signature.Status)"
 
       - name: Publish verified updater artifacts
         shell: pwsh

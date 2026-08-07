@@ -28,6 +28,9 @@ assert.match(pkg.scripts['release:win'], /--publish never/);
 assert.doesNotMatch(pkg.scripts['release:win'], /--publish always/);
 assert.match(workflow, /Get-AuthenticodeSignature/);
 assert.match(workflow, /signature\.Status -ne 'Valid'/);
+assert.match(workflow, /MESSS_SIGNING_ENABLED/);
+assert.match(workflow, /signature\.Status -ne 'NotSigned'/);
+assert.match(workflow, /CSC_LINK and CSC_KEY_PASSWORD must be configured together/);
 assert.match(workflow, /gh release (?:create|upload)/);
 assert.ok(
   workflow.indexOf('Verify updater artifacts') < workflow.indexOf('Publish verified updater artifacts'),
