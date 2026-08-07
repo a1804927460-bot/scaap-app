@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 
 const root = path.resolve(__dirname, '..');
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
@@ -37,7 +38,21 @@ assert.match(preload, /syncThemeSurface:\s*\(theme\)\s*=>\s*ipcRenderer\.send\('
 assert.ok(indexHtml.indexOf('<script src="js/startup-theme.js"></script>') < indexHtml.indexOf('<link rel="stylesheet" href="styles/theme.css"'), 'startup theme must run before CSS');
 assert.match(startupThemeJs, /new URLSearchParams\(window\.location\.search\)\.get\('theme'\)/);
 assert.match(startupThemeJs, /dataset\.theme\s*=\s*startupTheme\s*===\s*'light'\s*\?\s*'light'\s*:\s*'dark'/);
-assert.doesNotMatch(themeCss, /html\[data-view="start"\]\s*\{[\s\S]*?--bg-base:/);
+const evaluateStartupTheme = (search) => {
+  const document = { documentElement: { dataset: {} } };
+  vm.runInNewContext(startupThemeJs, {
+    document,
+    URLSearchParams,
+    window: { location: { search } }
+  });
+  return document.documentElement.dataset.theme;
+};
+assert.strictEqual(evaluateStartupTheme('?theme=light'), 'light');
+assert.strictEqual(evaluateStartupTheme('?theme=dark'), 'dark');
+assert.strictEqual(evaluateStartupTheme('?theme=LIGHT'), 'dark');
+assert.strictEqual(evaluateStartupTheme(''), 'dark');
+assert.doesNotMatch(themeCss, /html\[data-view="start"\]\s*\{[^}]*--bg-base:/);
+assert.match(themeCss, /html\[data-view="start"\]\s+body\s*\{\s*transition:\s*none;/);
 assert.doesNotMatch(themeJs, /syncThemeSurface\(appliedTheme\)/);
 assert.match(startScreenJs, /setAttribute\('data-view',\s*'main'\);[\s\S]*?syncThemeSurface\(document\.documentElement\.getAttribute\('data-theme'\)/);
 assert.match(startScreenJs, /setAttribute\('data-view',\s*'start'\);[\s\S]*?syncThemeSurface\(document\.documentElement\.getAttribute\('data-theme'\)/);

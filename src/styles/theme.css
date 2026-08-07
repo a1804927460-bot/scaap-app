@@ -55,7 +55,7 @@
   --scrollbar-thumb: rgba(112, 119, 128, 0.42);
 }
 
-/* -------- Light theme (main app only) �?black text on white -------- */
+/* -------- Light theme -------- */
 [data-theme="light"] {
   --bg-base: #ffffff;
   --bg-elevated: #ffffff;
