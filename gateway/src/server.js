@@ -338,6 +338,9 @@ async function handle(request, response) {
   if (request.method === 'GET' && url.pathname === '/healthz') {
     return send(response, 200, { ok: true, catalogVersion, asyncVideo: true });
   }
+  // Hyper3D needs a short-lived, capability-token-protected image relay. The
+  // relay contains no user identity or upstream credential, so it is the only
+  // public Butler endpoint; all task routes below still require Supabase auth.
   if (request.method === 'GET' && url.pathname.startsWith('/v1/tools/assets/')) {
     const match = /^\/v1\/tools\/assets\/([A-Za-z0-9_-]{43})$/.exec(url.pathname);
     if (!match) return send(response, 404, { code: 'tool-asset-not-found', message: 'Temporary image not found.' });
@@ -672,7 +675,12 @@ const server = http.createServer((request, response) => {
       'invalid-glb-result': 'The 3D result is invalid.',
       'three-d-result-invalid': 'The completed 3D task did not contain a GLB model.',
       'tool-public-url-not-configured': 'The public gateway URL is not configured.',
-      'tool-asset-capacity-exceeded': 'The temporary image relay is at capacity.'
+      'tool-asset-capacity-exceeded': 'The temporary tool relay is at capacity.',
+      'tool-disabled': 'This Butler tool is not enabled on the server.',
+      'tool-asset-not-found': 'Temporary tool asset not found.',
+      'three-d-task-not-found': 'The 3D task was not found.',
+      'three-d-task-not-ready': 'The 3D model is not ready to download.',
+      'three-d-generation-failed': '3D generation failed.'
     };
     // Do not log prompts, attachments, authorization headers, or upstream bodies.
     console.error(JSON.stringify({ level: 'error', requestId: response.getHeader('X-Request-Id'), code, status }));
