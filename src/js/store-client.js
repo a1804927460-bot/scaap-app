@@ -186,6 +186,20 @@ function isVideoExt(ext) {
   return ['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi', '.wmv', '.flv', '.mpeg', '.mpg'].includes(ext);
 }
 
+function isGlbFile(fileOrExt) {
+  if (!fileOrExt) return false;
+  if (typeof fileOrExt === 'string') {
+    return String(fileOrExt).trim().toLowerCase() === '.glb';
+  }
+  const ext = String(fileOrExt.ext || '').trim().toLowerCase();
+  const name = String(fileOrExt.name || '').trim().toLowerCase();
+  const mime = String(fileOrExt.mimeType || fileOrExt.mime || fileOrExt.contentType || '')
+    .trim()
+    .toLowerCase()
+    .split(';', 1)[0];
+  return ext === '.glb' || name.endsWith('.glb') || mime === 'model/gltf-binary';
+}
+
 function isAudioExt(ext) {
   return ['.mp3', '.wav', '.wave', '.ogg', '.oga', '.opus', '.m4a', '.m4b', '.aac', '.flac', '.aif', '.aiff', '.wma', '.amr', '.ape', '.alac', '.ac3', '.eac3', '.dts', '.caf', '.au', '.ra'].includes(ext);
 }
@@ -197,7 +211,7 @@ function isEditableExt(ext) {
 function fileIconLabel(ext) {
   const map = {
     '.pdf': 'PDF', '.doc': 'DOC', '.docx': 'DOC', '.xls': 'XLS', '.xlsx': 'XLS',
-    '.zip': 'ZIP', '.mp4': 'MOV', '.mov': 'MOV', '.mp3': 'MP3', '.txt': 'TXT'
+    '.zip': 'ZIP', '.mp4': 'MOV', '.mov': 'MOV', '.mp3': 'MP3', '.txt': 'TXT', '.glb': '3D'
   };
   return map[ext] || (ext ? ext.replace('.', '').slice(0, 4).toUpperCase() : 'FILE');
 }

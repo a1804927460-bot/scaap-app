@@ -25,7 +25,13 @@ process.env.AI_PROVIDERS_JSON = JSON.stringify([
   }
 ]);
 
-const { chat, generateMedia, publicProviderConfig } = await import('../gateway/src/providers.js');
+const {
+  chat,
+  createVideoTask,
+  generateMedia,
+  pollVideoTask,
+  publicProviderConfig
+} = await import('../gateway/src/providers.js');
 const config = publicProviderConfig();
 const ids = config.providers.map((provider) => provider.id);
 
@@ -35,6 +41,7 @@ assert.ok(ids.includes('image-1'));
 assert.ok(ids.includes('video-1'));
 assert.ok(ids.includes('video-1'));
 assert.ok(ids.includes('chat-1'));
+assert.ok(ids.includes('chat-2'));
 assert.ok(ids.includes('relay-2-image'));
 assert.ok(ids.includes('relay-2-chat'));
 assert.deepEqual(
@@ -48,6 +55,14 @@ assert.equal(config.providers.find((provider) => provider.id === 'image-3').mode
 assert.equal(config.providers.find((provider) => provider.id === 'image-4').name, 'Midjourney');
 assert.equal(config.providers.find((provider) => provider.id === 'image-5').name, 'Nano banana2');
 assert.equal(config.providers.find((provider) => provider.id === 'image-5').protocol, 'gemini-image');
+const gptImage2Provider = config.providers.find((provider) => provider.id === 'image-6');
+assert.equal(gptImage2Provider.name, 'GPT Image 2');
+assert.equal(gptImage2Provider.model, 'gpt-image-2');
+assert.equal(gptImage2Provider.protocol, 'openai-image');
+assert.deepEqual(gptImage2Provider.capabilities.sizes, ['1024x1024', '1536x1024', '1024x1536', 'auto']);
+assert.deepEqual(gptImage2Provider.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
+assert.deepEqual(gptImage2Provider.capabilities.referenceMimeTypes, ['image/png', 'image/jpeg', 'image/webp']);
+assert.equal(gptImage2Provider.capabilities.maxReferenceImageBytes, (25 * 1024 * 1024) - 1);
 assert.deepEqual(
   config.providers.find((provider) => provider.id === 'video-1').capabilities.resolutions,
   ['768P', '2K']
@@ -59,6 +74,13 @@ assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-1').m
   'gemini-3.1-flash-lite',
   'gemini-3.6-flash'
 ]);
+assert.equal(config.providers.find((provider) => provider.id === 'chat-2').name, 'AI Chat');
+assert.equal(config.providers.find((provider) => provider.id === 'chat-2').protocol, 'openai-chat');
+assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-2').models, [
+  'gpt-5.6-luna',
+  'doubao-seed-2-1-pro-260628',
+  'deepseek-v4-pro'
+]);
 
 const publicText = JSON.stringify(config);
 assert.equal(publicText.includes('quickrouter-secret'), false);
@@ -68,6 +90,7 @@ assert.equal(publicText.includes('RELAY_2_API_KEY'), false);
 assert.equal(publicText.includes('relay.example.com'), false);
 assert.equal(publicText.includes('quickrouter.ai'), false);
 assert.equal(publicText.includes('minimaxi.com'), false);
+assert.equal(publicText.includes('api.302.ai'), false);
 
 function jsonResponse(payload, status = 200) {
   return {
@@ -105,6 +128,46 @@ assert.equal(nanoCalls[0].options.headers.Authorization, 'Bearer quickrouter-sec
 const nanoBody = JSON.parse(nanoCalls[0].options.body);
 assert.deepEqual(nanoBody.generationConfig.imageConfig, { aspectRatio: '3:4', clarity: '2K' });
 
+const gptImageCalls = [];
+globalThis.fetch = async (url, options = {}) => {
+  gptImageCalls.push({ url: String(url), options });
+  return jsonResponse({ data: [{ b64_json: 'iVBORw==' }] });
+};
+const gptImage = await generateMedia('image', {
+  providerId: 'image-6',
+  prompt: 'minimal product photograph',
+  size: '1536x1024',
+  quality: 'high',
+  aspectRatio: '3:2',
+  urls: []
+});
+assert.deepEqual(gptImage, Buffer.from('iVBORw==', 'base64'));
+assert.equal(gptImageCalls[0].url, 'https://api.quickrouter.ai/v1/images/generations');
+assert.equal(gptImageCalls[0].options.headers.Authorization, 'Bearer quickrouter-secret');
+assert.deepEqual(JSON.parse(gptImageCalls[0].options.body), {
+  model: 'gpt-image-2',
+  prompt: 'minimal product photograph',
+  n: 1,
+  size: '1536x1024',
+  quality: 'high'
+});
+
+await generateMedia('image', {
+  providerId: 'image-6',
+  prompt: 'make the background blue',
+  size: '1024x1536',
+  quality: 'medium',
+  aspectRatio: '2:3',
+  urls: ['data:image/webp;base64,UklGRg==']
+});
+assert.equal(gptImageCalls[1].url, 'https://api.quickrouter.ai/v1/images/edits');
+assert.ok(gptImageCalls[1].options.body instanceof FormData);
+assert.equal(gptImageCalls[1].options.body.get('model'), 'gpt-image-2');
+assert.equal(gptImageCalls[1].options.body.get('size'), '1024x1536');
+assert.equal(gptImageCalls[1].options.body.get('quality'), 'medium');
+assert.equal(gptImageCalls[1].options.body.get('image').type, 'image/webp');
+assert.equal(gptImageCalls[1].options.headers['Content-Type'], undefined);
+
 const chatCalls = [];
 globalThis.fetch = async (url, options = {}) => {
   chatCalls.push({ url: String(url), options });
@@ -125,8 +188,30 @@ assert.equal(
 );
 assert.equal(JSON.parse(chatCalls[0].options.body).contents[0].parts[0].text, 'Hello');
 
+const advancedChatCalls = [];
+globalThis.fetch = async (url, options = {}) => {
+  advancedChatCalls.push({ url: String(url), options });
+  return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'Advanced chat reply' } }] });
+};
+for (const model of ['gpt-5.6-luna', 'doubao-seed-2-1-pro-260628', 'deepseek-v4-pro']) {
+  const reply = await chat({
+    providerId: 'chat-2',
+    model,
+    prompt: `Hello ${model}`,
+    messages: [{ role: 'user', content: `Hello ${model}` }]
+  });
+  assert.equal(reply, 'Advanced chat reply');
+}
+assert.equal(advancedChatCalls.length, 3);
+advancedChatCalls.forEach((call, index) => {
+  assert.equal(call.url, 'https://api.quickrouter.ai/v1/chat/completions');
+  assert.equal(call.options.headers.Authorization, 'Bearer quickrouter-secret');
+  const body = JSON.parse(call.options.body);
+  assert.equal(body.model, ['gpt-5.6-luna', 'doubao-seed-2-1-pro-260628', 'deepseek-v4-pro'][index]);
+  assert.equal(body.stream, false);
+});
+
 const miniMaxCalls = [];
-const miniMaxVideo = Buffer.from([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x70, 0x34, 0x32]);
 globalThis.fetch = async (url, options = {}) => {
   const value = String(url);
   miniMaxCalls.push({ url: value, options });
@@ -142,17 +227,9 @@ globalThis.fetch = async (url, options = {}) => {
       }
     });
   }
-  if (value === 'https://cdn.example/h3.mp4') {
-    return {
-      ok: true,
-      status: 200,
-      headers: { get: () => String(miniMaxVideo.length) },
-      arrayBuffer: async () => miniMaxVideo
-    };
-  }
   throw new Error(`Unexpected MiniMax URL: ${value}`);
 };
-const generatedVideo = await generateMedia('video', {
+const createdVideo = await createVideoTask({
   providerId: 'video-1',
   prompt: 'slow cinematic orbit',
   resolution: '2K',
@@ -160,7 +237,11 @@ const generatedVideo = await generateMedia('video', {
   aspectRatio: '16:9',
   urls: []
 });
-assert.deepEqual(generatedVideo, miniMaxVideo);
+assert.deepEqual(createdVideo, { providerId: 'video-1', taskId: 'h3-task-1' });
+assert.deepEqual(await pollVideoTask('video-1', createdVideo.taskId), {
+  status: 'succeeded',
+  resultUrl: 'https://cdn.example/h3.mp4'
+});
 const miniMaxBody = JSON.parse(miniMaxCalls[0].options.body);
 assert.deepEqual(miniMaxBody, {
   model: 'MiniMax-H3',
@@ -172,7 +253,7 @@ assert.deepEqual(miniMaxBody, {
 });
 assert.equal(miniMaxCalls[0].options.headers.Authorization, 'Bearer minimax-secret');
 
-await generateMedia('video', {
+await createVideoTask({
   providerId: 'video-1',
   prompt: 'animate between these frames',
   resolution: '768P',
@@ -194,7 +275,7 @@ assert.deepEqual(frameRequest.body.content.slice(1), [
 ]);
 
 await assert.rejects(
-  generateMedia('video', {
+  createVideoTask({
     providerId: 'video-1',
     prompt: 'invalid frame ratio',
     resolution: '768P',
@@ -203,6 +284,33 @@ await assert.rejects(
     urls: ['https://cdn.example/first.png']
   }),
   (error) => error && error.code === 'invalid-aspect-ratio'
+);
+
+globalThis.fetch = async () => ({
+  ok: false,
+  status: 429,
+  headers: { get: (name) => name.toLowerCase() === 'retry-after' ? '7' : null },
+  text: async () => JSON.stringify({ error: { code: '1008', message: 'Please slow down.' } })
+});
+await assert.rejects(
+  pollVideoTask('video-1', 'h3-task-rate-limited'),
+  (error) => error
+    && error.code === 'provider-rate-limited'
+    && error.retryable === true
+    && error.retryAfterMs === 7000
+    && error.upstreamCode === '1008'
+);
+
+await assert.rejects(
+  generateMedia('video', {
+    providerId: 'video-1',
+    prompt: 'legacy synchronous path',
+    resolution: '768P',
+    duration: 4,
+    aspectRatio: '16:9',
+    urls: []
+  }),
+  (error) => error && error.code === 'async-video-required'
 );
 
 process.stdout.write('gateway provider registry tests passed.\n');

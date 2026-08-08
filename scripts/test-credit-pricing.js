@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const {
   POINTS_PER_CNY,
+  IMAGE_QUALITY_PRICES,
   quoteMediaCredits,
   publicCreditPricing
 } = require('../lib/credit-pricing');
@@ -30,6 +31,27 @@ assert.strictEqual(quoteMediaCredits({
   imageProviderId: 'image-4',
   count: 99
 }).totalCredits, 16, 'Image count must be capped at four.');
+
+assert.deepStrictEqual(quoteMediaCredits({
+  kind: 'image',
+  imageProviderId: 'image-6',
+  quality: 'high',
+  count: 2
+}), {
+  kind: 'image',
+  providerId: 'image-6',
+  quality: 'high',
+  count: 2,
+  units: 2,
+  unit: 'image',
+  unitCredits: 28,
+  totalCredits: 56
+});
+assert.strictEqual(quoteMediaCredits({
+  kind: 'image',
+  imageProviderId: 'image-6',
+  quality: 'invalid'
+}).totalCredits, 12, 'Unknown GPT Image 2 quality must use the automatic-quality price.');
 
 assert.deepStrictEqual(quoteMediaCredits({
   kind: 'video',
@@ -61,6 +83,8 @@ assert.strictEqual(quoteMediaCredits({
 
 const publicPricing = publicCreditPricing();
 assert.strictEqual(publicPricing.image['image-5'], 8);
+assert.strictEqual(publicPricing.image['image-6'], 12);
+assert.deepStrictEqual(publicPricing.imageQuality['image-6'], IMAGE_QUALITY_PRICES['image-6']);
 assert.strictEqual(publicPricing.video['video-1']['768P'], 10);
 
 const boardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'board-canvas.js'), 'utf8');

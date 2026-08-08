@@ -4,6 +4,7 @@
    - image: shows the image directly
    - video / audio: native <video>/<audio> playback, no external tool needed
    - text: read-only display of the file's text content
+   - document-html: safe in-process Word fallback when LibreOffice is not available
    - pages: a rendered document (pdf/docx/pptx/xlsx/psd/tiff/...) shown page by page, with page nav
    - unsupported: format we can't render inline, with "open externally" / "reveal" fallbacks
 */
@@ -18,6 +19,11 @@ let previewFitScale = 1;
 let previewPanX = 0, previewPanY = 0;
 const PreviewDoc = { mode: 'static', pageUrls: [], currentPage: 1, pdfPath: null, totalPages: 1 };
 const AudioPreviewCleanup = { current: null };
+const VideoPreviewCleanup = { current: null };
+let videoPreviewEpoch = 0;
+let previewRequestEpoch = 0;
+const FullscreenPreviewCleanup = { current: null };
+const FullscreenPreviewState = { sourceVideo: null, cloneVideo: null };
 const PreviewPanCleanup = { current: null };
 const PreviewLanguageState = { unsupported: null };
 
@@ -51,7 +57,7 @@ function setPreviewPanelState(state) {
   // state: 'empty' | 'loading' | 'image' | 'video' | 'audio' | 'text' | 'binary' | 'pages' | 'unsupported' | 'folder-grid'
   document.getElementById('preview-empty').hidden = state !== 'empty';
   document.getElementById('preview-loading').hidden = state !== 'loading';
-  document.getElementById('preview-stage').hidden = !['image', 'pages', 'video', 'audio', 'text', 'binary'].includes(state);
+  document.getElementById('preview-stage').hidden = !['image', 'pages', 'video', 'audio', 'text', 'document-html', 'binary'].includes(state);
   document.getElementById('preview-unsupported').hidden = state !== 'unsupported';
   document.getElementById('preview-page-nav').hidden = state !== 'pages';
   document.getElementById('preview-folder-grid').hidden = state !== 'folder-grid';
@@ -60,7 +66,10 @@ function setPreviewPanelState(state) {
 }
 
 function clearPreview() {
+  videoPreviewEpoch += 1;
+  previewRequestEpoch += 1;
   if (AudioPreviewCleanup.current) { AudioPreviewCleanup.current(); AudioPreviewCleanup.current = null; }
+  if (VideoPreviewCleanup.current) { VideoPreviewCleanup.current(); VideoPreviewCleanup.current = null; }
   if (PreviewPanCleanup.current) { PreviewPanCleanup.current(); PreviewPanCleanup.current = null; }
   PreviewLanguageState.unsupported = null;
   AppState.activeFileId = null;
@@ -80,7 +89,10 @@ function clearPreview() {
 async function selectFileForPreview(id) {
   const f = AppState.files.find((x) => x.id === id);
   if (!f) return;
+  const requestEpoch = ++previewRequestEpoch;
+  videoPreviewEpoch += 1;
   if (AudioPreviewCleanup.current) { AudioPreviewCleanup.current(); AudioPreviewCleanup.current = null; }
+  if (VideoPreviewCleanup.current) { VideoPreviewCleanup.current(); VideoPreviewCleanup.current = null; }
   if (PreviewPanCleanup.current) { PreviewPanCleanup.current(); PreviewPanCleanup.current = null; }
   AppState.activeFileId = id;
 
@@ -99,7 +111,7 @@ async function selectFileForPreview(id) {
   const result = await window.messsAPI.getPreview(id);
 
   // The user may have clicked a different file while this was loading.
-  if (AppState.activeFileId !== id) return;
+  if (AppState.activeFileId !== id || requestEpoch !== previewRequestEpoch) return;
 
   const renderers = {
     image: renderImagePreview,
@@ -108,24 +120,164 @@ async function selectFileForPreview(id) {
     video: renderVideoPreview,
     audio: renderAudioPreview,
     text: renderTextPreview,
+    'document-html': renderDocumentHtmlPreview,
     binary: renderBinaryPreview
   };
   (renderers[result.type] || renderUnsupportedPreview)(id, result);
 }
 
+function createVideoPlayer(video, { fullscreen = false } = {}) {
+  const shell = document.createElement('div');
+  shell.className = `messs-video-player${fullscreen ? ' is-fullscreen-player' : ' is-inline-player'}`;
+  video.controls = false;
+  video.preload = 'metadata';
+  video.playsInline = true;
+  shell.appendChild(video);
+
+  const controls = document.createElement('div');
+  controls.className = 'video-control-capsule';
+  controls.innerHTML = `
+    <button type="button" class="video-control-btn video-play-toggle" title="${t('Play/Pause', '播放/暂停')}" aria-label="${t('Play/Pause', '播放/暂停')}">
+      <svg class="video-icon-play" viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="m7 4 13 8-13 8z"/></svg>
+      <svg class="video-icon-pause" viewBox="0 0 24 24" width="15" height="15" fill="currentColor" hidden><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+    </button>
+    <input class="video-seek" type="range" min="0" max="1000" value="0" step="1" aria-label="${t('Video progress', '视频进度')}" />
+    <span class="video-time-label"><span class="video-time-current">0:00</span><span aria-hidden="true">/</span><span class="video-time-total">--:--</span></span>
+    ${fullscreen ? `
+      <div class="video-volume-group">
+        <button type="button" class="video-control-btn video-mute-toggle" title="${t('Mute', '静音')}" aria-label="${t('Mute', '静音')}">
+          <svg class="video-icon-volume" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15 9a4 4 0 0 1 0 6"/><path d="M17.5 6.5a8 8 0 0 1 0 11"/></svg>
+          <svg class="video-icon-muted" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" hidden><path d="M11 5 6 9H3v6h3l5 4z"/><path d="m16 10 5 5M21 10l-5 5"/></svg>
+        </button>
+        <input class="video-volume" type="range" min="0" max="1" value="0.82" step="0.01" aria-label="${t('Volume', '音量')}" />
+      </div>` : ''}
+  `;
+  shell.appendChild(controls);
+
+  const controller = new AbortController();
+  const { signal } = controller;
+  const playButton = controls.querySelector('.video-play-toggle');
+  const playIcon = controls.querySelector('.video-icon-play');
+  const pauseIcon = controls.querySelector('.video-icon-pause');
+  const seek = controls.querySelector('.video-seek');
+  const currentLabel = controls.querySelector('.video-time-current');
+  const totalLabel = controls.querySelector('.video-time-total');
+  const muteButton = controls.querySelector('.video-mute-toggle');
+  const volume = controls.querySelector('.video-volume');
+  const volumeIcon = controls.querySelector('.video-icon-volume');
+  const mutedIcon = controls.querySelector('.video-icon-muted');
+  let lastVolume = 0.82;
+  let seeking = false;
+
+  video.volume = Math.min(1, Math.max(0, Number(video.volume) || lastVolume));
+  const duration = () => Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+  const setProgressFill = (fraction) => seek.style.setProperty('--video-progress', `${Math.max(0, Math.min(1, fraction)) * 100}%`);
+  const updatePosition = () => {
+    const total = duration();
+    if (!seeking) {
+      const fraction = total ? video.currentTime / total : 0;
+      seek.value = String(Math.round(fraction * 1000));
+      setProgressFill(fraction);
+      currentLabel.textContent = formatTime(video.currentTime);
+    }
+    totalLabel.textContent = total ? formatTime(total) : '--:--';
+  };
+  const updatePlayState = () => {
+    const playing = !video.paused && !video.ended;
+    playIcon.hidden = playing;
+    pauseIcon.hidden = !playing;
+    shell.classList.toggle('is-playing', playing);
+  };
+  const updateVolume = () => {
+    if (!muteButton) return;
+    const muted = video.muted || video.volume === 0;
+    volumeIcon.hidden = muted;
+    mutedIcon.hidden = !muted;
+    muteButton.classList.toggle('is-active', muted);
+    volume.value = String(muted ? 0 : video.volume);
+  };
+  const togglePlayback = () => {
+    if (video.paused || video.ended) video.play().catch(() => {});
+    else video.pause();
+  };
+
+  playButton.addEventListener('click', togglePlayback, { signal });
+  video.addEventListener('click', togglePlayback, { signal });
+  video.addEventListener('play', updatePlayState, { signal });
+  video.addEventListener('pause', updatePlayState, { signal });
+  video.addEventListener('ended', updatePlayState, { signal });
+  video.addEventListener('loadedmetadata', updatePosition, { signal });
+  video.addEventListener('durationchange', updatePosition, { signal });
+  video.addEventListener('timeupdate', updatePosition, { signal });
+  seek.addEventListener('pointerdown', () => { seeking = true; }, { signal });
+  seek.addEventListener('input', () => {
+    const total = duration();
+    const fraction = Number(seek.value) / 1000;
+    setProgressFill(fraction);
+    currentLabel.textContent = total ? formatTime(total * fraction) : '0:00';
+  }, { signal });
+  const commitSeek = () => {
+    if (!seeking) return;
+    const total = duration();
+    if (total) video.currentTime = total * Number(seek.value) / 1000;
+    seeking = false;
+    updatePosition();
+  };
+  seek.addEventListener('change', () => {
+    seeking = true;
+    commitSeek();
+  }, { signal });
+  document.addEventListener('pointerup', commitSeek, { signal });
+  document.addEventListener('pointercancel', commitSeek, { signal });
+
+  if (muteButton && volume) {
+    muteButton.addEventListener('click', () => {
+      if (video.muted || video.volume === 0) {
+        video.muted = false;
+        video.volume = lastVolume || 0.82;
+      } else {
+        lastVolume = video.volume;
+        video.muted = true;
+      }
+    }, { signal });
+    volume.addEventListener('input', () => {
+      video.muted = false;
+      video.volume = Number(volume.value);
+      if (video.volume > 0) lastVolume = video.volume;
+    }, { signal });
+    video.addEventListener('volumechange', updateVolume, { signal });
+    updateVolume();
+  }
+  updatePosition();
+  updatePlayState();
+
+  return {
+    shell,
+    signal,
+    cleanup() {
+      controller.abort();
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    }
+  };
+}
+
 function renderVideoPreview(id, result) {
+  const epoch = videoPreviewEpoch;
   const stage = document.getElementById('preview-stage');
   stage.innerHTML = '';
   const video = document.createElement('video');
   video.src = result.url;
-  video.controls = true;
   video.autoplay = false;
-  video.style.maxWidth = '100%';
-  video.style.maxHeight = '100%';
-  video.style.borderRadius = 'var(--radius-sm)';
-  video.addEventListener('dblclick', openFullscreenPreview);
-  video.addEventListener('error', () => handleVideoPlaybackFailure(id, result, video), { once: true });
-  stage.appendChild(video);
+  const player = createVideoPlayer(video);
+  video.addEventListener('dblclick', openFullscreenPreview, { signal: player.signal });
+  video.addEventListener('error', () => handleVideoPlaybackFailure(id, result, video, epoch), {
+    once: true,
+    signal: player.signal
+  });
+  VideoPreviewCleanup.current = player.cleanup;
+  stage.appendChild(player.shell);
   setPreviewPanelState('video');
 }
 
@@ -135,18 +287,20 @@ function renderVideoPreview(id, result) {
  * the main process to transcode it to a plain H.264 MP4 (cached after the
  * first time) and retry with that instead of giving up immediately.
  */
-async function handleVideoPlaybackFailure(id, result, videoEl) {
+async function handleVideoPlaybackFailure(id, result, videoEl, epoch) {
+  if (epoch !== videoPreviewEpoch || AppState.activeFileId !== id || !videoEl.isConnected) return;
   if (videoEl.dataset.triedTranscode) {
     renderUnsupportedPreview(id, { ...result, reason: 'render-failed' });
     return;
   }
   videoEl.dataset.triedTranscode = '1';
+  if (VideoPreviewCleanup.current) { VideoPreviewCleanup.current(); VideoPreviewCleanup.current = null; }
 
   const stage = document.getElementById('preview-stage');
   stage.innerHTML = `<div class="preview-empty-sub">${t('Video codec is being converted for preview...', '这个视频的编码格式比较特殊，正在转换为可以直接播放的格式...')}</div>`;
 
   const res = await window.messsAPI.transcodeVideo(id);
-  if (AppState.activeFileId !== id) return; // user moved on while we were transcoding
+  if (epoch !== videoPreviewEpoch || AppState.activeFileId !== id || !stage.isConnected) return;
 
   if (!res.ok) {
     const reason = res.reason === 'missing-tools' ? 'missing-tools' : 'render-failed';
@@ -157,20 +311,25 @@ async function handleVideoPlaybackFailure(id, result, videoEl) {
   stage.innerHTML = '';
   const video = document.createElement('video');
   video.src = res.url;
-  video.controls = true;
-  video.style.maxWidth = '100%';
-  video.style.maxHeight = '100%';
-  video.style.borderRadius = 'var(--radius-sm)';
-  video.addEventListener('dblclick', openFullscreenPreview);
-  video.addEventListener('error', () => renderUnsupportedPreview(id, { ...result, reason: 'render-failed' }), { once: true });
-  stage.appendChild(video);
+  const player = createVideoPlayer(video);
+  video.addEventListener('dblclick', openFullscreenPreview, { signal: player.signal });
+  video.addEventListener('error', () => {
+    if (epoch === videoPreviewEpoch && AppState.activeFileId === id && video.isConnected) {
+      renderUnsupportedPreview(id, { ...result, reason: 'render-failed' });
+    }
+  }, { once: true, signal: player.signal });
+  VideoPreviewCleanup.current = player.cleanup;
+  stage.appendChild(player.shell);
 }
 
 function formatTime(seconds) {
   if (!isFinite(seconds) || seconds < 0) return '0:00';
-  const m = Math.floor(seconds / 60);
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor(seconds / 60) % 60;
   const s = Math.floor(seconds % 60);
-  return `${m}:${String(s).padStart(2, '0')}`;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    : `${m}:${String(s).padStart(2, '0')}`;
 }
 
 function renderAudioPreview(id, result) {
@@ -378,6 +537,8 @@ async function handleAudioPlaybackFailure(id, result, audioEl) {
 function renderTextPreview(id, result) {
   const stage = document.getElementById('preview-stage');
   stage.innerHTML = '';
+  const shell = document.createElement('div');
+  shell.className = 'text-preview-shell';
   const pre = document.createElement('pre');
   pre.className = 'text-preview';
   if (result.content && result.content.trim().length > 0) {
@@ -386,8 +547,37 @@ function renderTextPreview(id, result) {
     pre.classList.add('is-empty');
     pre.textContent = t('(This file is empty.)', '（这个文件没有内容）');
   }
-  stage.appendChild(pre);
+  if (result.partial) {
+    const notice = document.createElement('div');
+    notice.className = 'text-preview-notice';
+    notice.textContent = t(
+      'Showing the first 2 MB of this file.',
+      '当前仅显示这个文件的前 2 MB。',
+      '이 파일의 처음 2MB만 표시됩니다.'
+    );
+    shell.appendChild(notice);
+  }
+  shell.appendChild(pre);
+  stage.appendChild(shell);
   setPreviewPanelState('text');
+}
+
+function renderDocumentHtmlPreview(id, result) {
+  const stage = document.getElementById('preview-stage');
+  stage.innerHTML = '';
+  const article = document.createElement('article');
+  article.className = 'document-html-preview';
+  article.setAttribute('aria-label', result.name || t('Document preview', '文档预览'));
+  // The main process sanitizes Mammoth output before it crosses the IPC
+  // boundary. Keep insertion in a dedicated article so document styles never
+  // leak into the rest of the application.
+  article.innerHTML = String(result.html || '');
+  if (!article.textContent.trim() && !article.querySelector('img, table')) {
+    article.textContent = t('(This document is empty.)', '（这个文档为空。）');
+    article.classList.add('is-empty');
+  }
+  stage.appendChild(article);
+  setPreviewPanelState('document-html');
 }
 
 function formatFileSize(bytes) {
@@ -971,20 +1161,34 @@ function openFileFullscreenPreview(file) {
 function showFullscreenMedia(media, options = {}) {
   const overlay = document.getElementById('fullscreen-overlay');
   const fsStage = document.getElementById('fullscreen-stage');
+  if (!overlay.hidden) closeFullscreenPreview();
   fsStage.innerHTML = '';
   const clone = media.cloneNode(true);
+  FullscreenPreviewState.sourceVideo = null;
+  FullscreenPreviewState.cloneVideo = null;
   if (clone.tagName === 'IMG' && options.fallbackSrc) {
     clone.addEventListener('error', () => {
       if (typeof options.onPrimaryImageError === 'function') options.onPrimaryImageError();
       clone.src = options.fallbackSrc;
     }, { once: true });
   } else if (clone.tagName === 'VIDEO') {
-    clone.controls = true;
+    const currentTime = Number(media.currentTime) || 0;
+    const wasPlaying = !media.paused && !media.ended;
     clone.muted = media.muted;
+    clone.volume = media.volume;
+    clone.playbackRate = media.playbackRate;
+    media.pause();
+    const player = createVideoPlayer(clone, { fullscreen: true });
+    FullscreenPreviewCleanup.current = player.cleanup;
+    FullscreenPreviewState.sourceVideo = media;
+    FullscreenPreviewState.cloneVideo = clone;
+    fsStage.appendChild(player.shell);
     clone.addEventListener('loadedmetadata', () => {
-      clone.currentTime = media.currentTime || 0;
-      if (!media.paused) clone.play().catch(() => {});
+      clone.currentTime = Math.min(currentTime, Number.isFinite(clone.duration) ? clone.duration : currentTime);
+      if (wasPlaying) clone.play().catch(() => {});
     }, { once: true });
+    overlay.hidden = false;
+    return;
   }
   fsStage.appendChild(clone);
   overlay.hidden = false;
@@ -992,8 +1196,19 @@ function showFullscreenMedia(media, options = {}) {
 
 function closeFullscreenPreview() {
   const overlay = document.getElementById('fullscreen-overlay');
-  const video = document.querySelector('#fullscreen-stage video');
-  if (video) video.pause();
+  const sourceVideo = FullscreenPreviewState.sourceVideo;
+  const cloneVideo = FullscreenPreviewState.cloneVideo;
+  if (sourceVideo && cloneVideo) {
+    const resume = !cloneVideo.paused && !cloneVideo.ended;
+    sourceVideo.currentTime = Number(cloneVideo.currentTime) || 0;
+    sourceVideo.muted = cloneVideo.muted;
+    sourceVideo.volume = cloneVideo.volume;
+    sourceVideo.playbackRate = cloneVideo.playbackRate;
+    if (resume) sourceVideo.play().catch(() => {});
+  }
+  if (FullscreenPreviewCleanup.current) { FullscreenPreviewCleanup.current(); FullscreenPreviewCleanup.current = null; }
+  FullscreenPreviewState.sourceVideo = null;
+  FullscreenPreviewState.cloneVideo = null;
   document.getElementById('fullscreen-stage').innerHTML = '';
   overlay.hidden = true;
 }
@@ -1006,12 +1221,34 @@ function initFullscreenOverlay() {
     if (e.target.id === 'fullscreen-overlay') closeFullscreenPreview();
   });
   document.addEventListener('keydown', (e) => {
+    const overlay = document.getElementById('fullscreen-overlay');
+    const fullscreenVideo = FullscreenPreviewState.cloneVideo;
     if (e.key === 'Escape') {
-      closeFullscreenPreview();
+      if (!overlay.hidden) {
+        e.preventDefault();
+        closeFullscreenPreview();
+        return;
+      }
       document.getElementById('detail-overlay').hidden = true;
       if (!(typeof isDoodleActive === 'function' && isDoodleActive())) {
         exitBoardFullscreen();
       }
+      return;
+    }
+    if (overlay.hidden || !fullscreenVideo) return;
+    if (e.target && e.target.closest && e.target.closest('button, input, textarea, select, [contenteditable="true"]')) return;
+    if (e.code === 'Space') {
+      e.preventDefault();
+      if (fullscreenVideo.paused) fullscreenVideo.play().catch(() => {});
+      else fullscreenVideo.pause();
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      const delta = e.key === 'ArrowLeft' ? -5 : 5;
+      fullscreenVideo.currentTime = Math.max(0, Math.min(fullscreenVideo.duration || Infinity, fullscreenVideo.currentTime + delta));
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      fullscreenVideo.muted = false;
+      fullscreenVideo.volume = Math.max(0, Math.min(1, fullscreenVideo.volume + (e.key === 'ArrowUp' ? .05 : -.05)));
     }
   });
 }

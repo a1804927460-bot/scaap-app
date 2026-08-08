@@ -64,36 +64,96 @@ function loadPdfjs() {
   return pdfjsLibPromise;
 }
 
-// Loaded PDF documents are cached by their file path for the life of the
-// window, so flipping between pages (or re-opening the same file) doesn't
-// re-parse the whole document every time.
+// Cache a small number of parsed PDFs, but bind each entry to the actual file
+// state. Office previews reuse the same converted.pdf path, so a path-only
+// cache would otherwise keep showing the document from before the last save.
+const MAX_CACHED_PDF_DOCUMENTS = 8;
 const pdfDocCache = new Map();
+function pdfFileSignature(pdfPath) {
+  const stat = fs.statSync(pdfPath, { bigint: true });
+  return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}`;
+}
+
+function disposeCachedPdf(entry) {
+  if (!entry || !entry.promise) return;
+  entry.disposeRequested = true;
+  if (entry.activeRenders > 0 || entry.disposed) return;
+  entry.disposed = true;
+  void entry.promise.then((doc) => {
+    if (doc && typeof doc.destroy === 'function') return doc.destroy();
+    return null;
+  }).catch(() => {});
+}
+
+function releaseCachedPdf(entry) {
+  if (!entry || entry.activeRenders <= 0) return;
+  entry.activeRenders -= 1;
+  if (entry.activeRenders === 0 && entry.disposeRequested) disposeCachedPdf(entry);
+}
+
 async function getPdfDocument(pdfPath) {
-  if (pdfDocCache.has(pdfPath)) return pdfDocCache.get(pdfPath);
-  const pdfjsLib = await loadPdfjs();
-  const data = new Uint8Array(fs.readFileSync(pdfPath));
-  const doc = await pdfjsLib.getDocument({ data, disableWorker: true }).promise;
-  pdfDocCache.set(pdfPath, doc);
-  return doc;
+  const signature = pdfFileSignature(pdfPath);
+  const cached = pdfDocCache.get(pdfPath);
+  let entry = cached;
+  if (cached && cached.signature === signature) {
+    pdfDocCache.delete(pdfPath);
+    pdfDocCache.set(pdfPath, cached);
+  } else {
+    if (cached) {
+      pdfDocCache.delete(pdfPath);
+      disposeCachedPdf(cached);
+    }
+
+    entry = {
+      signature,
+      activeRenders: 0,
+      disposeRequested: false,
+      disposed: false,
+      promise: loadPdfjs().then((pdfjsLib) => {
+        const data = new Uint8Array(fs.readFileSync(pdfPath));
+        return pdfjsLib.getDocument({ data, disableWorker: true }).promise;
+      })
+    };
+    pdfDocCache.set(pdfPath, entry);
+    while (pdfDocCache.size > MAX_CACHED_PDF_DOCUMENTS) {
+      const oldestPath = pdfDocCache.keys().next().value;
+      const oldest = pdfDocCache.get(oldestPath);
+      pdfDocCache.delete(oldestPath);
+      disposeCachedPdf(oldest);
+    }
+  }
+  entry.activeRenders += 1;
+  try {
+    return { pdf: await entry.promise, entry };
+  } catch (error) {
+    releaseCachedPdf(entry);
+    if (pdfDocCache.get(pdfPath) === entry) pdfDocCache.delete(pdfPath);
+    throw error;
+  }
 }
 
 async function renderPdfPage(pdfPath, pageNumber, scale) {
-  const pdf = await getPdfDocument(pdfPath);
-  const page = await pdf.getPage(pageNumber);
-  const viewport = page.getViewport({ scale: scale || 1.5 });
+  const lease = await getPdfDocument(pdfPath);
+  try {
+    const { pdf } = lease;
+    const page = await pdf.getPage(pageNumber);
+    const viewport = page.getViewport({ scale: scale || 1.5 });
 
-  const canvas = document.createElement('canvas');
-  canvas.width = viewport.width;
-  canvas.height = viewport.height;
-  const context = canvas.getContext('2d');
-  await page.render({ canvasContext: context, viewport }).promise;
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const context = canvas.getContext('2d');
+    await page.render({ canvasContext: context, viewport }).promise;
 
-  return {
-    dataUrl: canvas.toDataURL('image/png'),
-    totalPages: pdf.numPages,
-    width: viewport.width,
-    height: viewport.height
-  };
+    return {
+      dataUrl: canvas.toDataURL('image/png'),
+      totalPages: pdf.numPages,
+      width: viewport.width,
+      height: viewport.height
+    };
+  } finally {
+    releaseCachedPdf(lease.entry);
+  }
 }
 
 contextBridge.exposeInMainWorld('messsAPI', {
@@ -104,6 +164,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   setTheme: (theme) => ipcRenderer.invoke('settings:setTheme', theme),
   setLanguage: (language) => ipcRenderer.invoke('settings:setLanguage', language),
   getMembershipSnapshot: () => ipcRenderer.invoke('membership:getSnapshot'),
+  getUsageSummary: (range) => ipcRenderer.invoke('membership:getUsageSummary', range),
   checkMembershipFeature: (feature) => ipcRenderer.invoke('membership:checkFeature', feature),
   quoteMediaCredits: (request) => ipcRenderer.invoke('membership:quoteMedia', request),
   onMembershipUpdated: (callback) => {
@@ -163,6 +224,15 @@ contextBridge.exposeInMainWorld('messsAPI', {
   generateAiMedia: (request) => ipcRenderer.invoke('ai:generateMedia', request),
   chatWithAi: (request) => ipcRenderer.invoke('ai:chat', request),
   exportAiChat: (session) => ipcRenderer.invoke('ai:exportChat', session),
+  butler: Object.freeze({
+    removeBackground: (fileId) => ipcRenderer.invoke('butler:removeBackground', fileId),
+    create3d: (fileId, providerId) => ipcRenderer.invoke('butler:create3d', fileId, providerId),
+    get3dStatus: (taskToken, providerId) => ipcRenderer.invoke('butler:get3dStatus', taskToken, providerId),
+    download3d: (taskToken, providerId) => ipcRenderer.invoke('butler:download3d', taskToken, providerId),
+    upscaleVideo: (fileId, options) => ipcRenderer.invoke('butler:upscaleVideo', fileId, options),
+    getVideoToolStatus: (taskToken, modelId) => ipcRenderer.invoke('butler:getVideoToolStatus', taskToken, modelId),
+    downloadVideoToolResult: (taskToken, modelId) => ipcRenderer.invoke('butler:downloadVideoToolResult', taskToken, modelId)
+  }),
   preparePastedAiImage: (request) => ipcRenderer.invoke('ai:preparePastedImage', request),
   importClipboardImage: (request) => ipcRenderer.invoke('clipboard:importImage', request),
   getPreview: (id) => ipcRenderer.invoke('files:getPreview', id),

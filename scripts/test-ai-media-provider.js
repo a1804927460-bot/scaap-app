@@ -11,6 +11,7 @@ const {
   resolveQuickRouterKlingEndpoint,
   resolveQuickRouterUnifiedVideoEndpoint,
   resolveOpenAiImagesEndpoint,
+  resolveOpenAiImageEditsEndpoint,
   resolveOpenAiChatMediaEndpoint,
   resolveOpenAiVideosEndpoint,
   buildGeminiImageBody,
@@ -273,6 +274,99 @@ async function testOpenAiImageFlow() {
     n: 1,
     size: '1536x1024'
   });
+}
+
+async function testGptImage2FlowAndReferenceLimits() {
+  const provider = catalogProvider('image-6');
+  assert.ok(provider);
+  assert.strictEqual(provider.name, 'GPT Image 2');
+  assert.strictEqual(provider.model, 'gpt-image-2');
+  assert.strictEqual(provider.endpoint, 'https://api.quickrouter.ai/v1/images/generations');
+  assert.deepStrictEqual(provider.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
+
+  const config = normalizeConfig({
+    apiKey: 'server-only-secret',
+    imageEndpoint: provider.endpoint,
+    imageModel: provider.model
+  });
+  assert.deepStrictEqual(buildOpenAiImageBody({
+    prompt: 'clean product photograph',
+    size: '1536x1024',
+    quality: 'high'
+  }, config), {
+    model: 'gpt-image-2',
+    prompt: 'clean product photograph',
+    n: 1,
+    size: '1536x1024',
+    quality: 'high'
+  });
+  assert.strictEqual(
+    resolveOpenAiImageEditsEndpoint(provider.endpoint),
+    'https://api.quickrouter.ai/v1/images/edits'
+  );
+
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    return jsonResponse({ data: [{ b64_json: 'iVBORw==' }] });
+  };
+  const generated = await generateMediaBuffer(fetchImpl, config, 'image', {
+    prompt: 'clean product photograph',
+    size: '1024x1024',
+    quality: 'low',
+    aspectRatio: '1:1',
+    urls: []
+  });
+  const edited = await generateMediaBuffer(fetchImpl, config, 'image', {
+    prompt: 'turn the package blue',
+    size: '1024x1536',
+    quality: 'medium',
+    aspectRatio: '2:3',
+    urls: ['data:image/png;base64,iVBORw==']
+  });
+  assert.deepStrictEqual(generated, Buffer.from('iVBORw==', 'base64'));
+  assert.deepStrictEqual(edited, Buffer.from('iVBORw==', 'base64'));
+  assert.strictEqual(calls[0].url, 'https://api.quickrouter.ai/v1/images/generations');
+  assert.strictEqual(calls[0].options.headers.Authorization, 'Bearer server-only-secret');
+  assert.deepStrictEqual(JSON.parse(calls[0].options.body), {
+    model: 'gpt-image-2',
+    prompt: 'clean product photograph',
+    n: 1,
+    size: '1024x1024',
+    quality: 'low'
+  });
+  assert.strictEqual(calls[1].url, 'https://api.quickrouter.ai/v1/images/edits');
+  assert.strictEqual(calls[1].options.headers.Authorization, 'Bearer server-only-secret');
+  assert.strictEqual(calls[1].options.headers['Content-Type'], undefined);
+  assert.ok(calls[1].options.body instanceof FormData);
+  assert.strictEqual(calls[1].options.body.get('model'), 'gpt-image-2');
+  assert.strictEqual(calls[1].options.body.get('size'), '1024x1536');
+  assert.strictEqual(calls[1].options.body.get('quality'), 'medium');
+  assert.strictEqual(calls[1].options.body.getAll('image').length, 1);
+  assert.strictEqual(calls[1].options.body.get('image').type, 'image/png');
+
+  assert.throws(
+    () => buildOpenAiImageEditForm({
+      prompt: 'unsupported reference',
+      urls: ['data:image/gif;base64,R0lGODlh']
+    }, config),
+    (error) => error && error.code === 'invalid-reference-image' && error.status === 400
+  );
+  assert.throws(
+    () => buildOpenAiImageEditForm({
+      prompt: 'remote reference',
+      urls: ['https://cdn.test/reference.png']
+    }, config),
+    (error) => error && error.code === 'invalid-reference-image' && error.status === 400
+  );
+  const exactLimit = Buffer.alloc(25 * 1024 * 1024).toString('base64');
+  assert.throws(
+    () => buildOpenAiImageEditForm({
+      prompt: 'oversized reference',
+      urls: [`data:image/png;base64,${exactLimit}`]
+    }, config),
+    (error) => error && error.code === 'reference-image-too-large' && error.status === 413
+  );
 }
 
 function testGeminiImageBody() {
@@ -626,6 +720,7 @@ async function main() {
   testQuickRouterTextBody();
   await testQuickRouterFailureMessage();
   await testOpenAiImageFlow();
+  await testGptImage2FlowAndReferenceLimits();
   testSeedreamSizeAndRatioMapping();
   testGeminiImageBody();
   await testQuickRouterNativeGeminiImageFlow();

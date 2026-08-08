@@ -33,6 +33,88 @@ are accepted during migration, but the canonical name is recommended.
 MiniMax H3 uses its own sealed Railway variable, `MINIMAX_API_KEY`. It is never
 written to `runtime.json`, GitHub, the desktop settings, or gateway responses.
 
+## Butler tools
+
+Butler uses the 302 tool gateway for background removal, 3D generation, and
+Topaz video enhancement. Store the
+shared credential as the sealed Railway variable `AI302_KEY`. The compatibility
+alias `AI_302_API_KEY` is accepted during migration. The gateway applies the
+upstream authorization header internally; the credential is never sent to the
+desktop, returned by an API response, or written to logs.
+
+Every paid route is fail-closed behind an independent Railway flag. Missing,
+empty, or malformed values are treated as `false`:
+
+```text
+ENABLE_302_BACKGROUND_REMOVE=false
+ENABLE_302_HUNYUAN3D=false
+ENABLE_302_HYPER3D=false
+ENABLE_302_TOPAZ=false
+```
+
+Set `AI302_TASK_SECRET` to a separate, stable random secret. It encrypts and
+authenticates asynchronous 3D and video task tokens and binds each token and
+provider to its Supabase user. If
+it is omitted, the gateway derives the token key from `AI302_KEY`; a later 302
+key rotation would then invalidate outstanding 3D tasks, so the separate secret
+is recommended in production.
+
+All Butler routes require a valid Supabase session:
+
+```text
+POST /v1/tools/background/remove
+POST /v1/tools/3d/create
+POST /v1/tools/3d/status
+POST /v1/tools/3d/download
+POST /v1/tools/video/upscale
+POST /v1/tools/video/status
+POST /v1/tools/video/download
+```
+
+Background removal accepts JSON `{ "imageDataUrl": "data:image/..." }` and
+returns a validated transparent PNG. The 3D create route accepts
+`{ "providerId": "hunyuan3d|hyper3d", "imageDataUrl": "data:image/...", "prompt": "..." }`
+and returns an opaque task token. Status returns only a normalized state
+(`queued`, `processing`, `succeeded`, or `failed`) and never exposes the upstream
+job ID or model URL. Download returns a validated GLB binary after completion.
+Inputs, redirects, result hosts, byte sizes, PNG integrity, and GLB structure are
+checked before any result reaches the desktop.
+
+Apply `supabase/migrations/202608080005_butler_video_credits.sql` before enabling
+Topaz video enhancement. The gateway reserves the server-calculated retail
+points returned by the provider quote, settles completed jobs, and releases
+failed-job reservations.
+
+Hyper3D and Topaz require a public HTTPS URL for their bounded input relay. Configure
+`AI_GATEWAY_PUBLIC_URL` to the gateway's public origin. If omitted, Railway's
+`RAILWAY_PUBLIC_DOMAIN` is used automatically. The gateway strips image metadata
+and stores the bounded input in an in-memory, capability-token-protected relay.
+`GET /v1/tools/assets/<opaque-token>` is the only unauthenticated tool route; it
+returns only the corresponding media with `no-store` and `nosniff`.
+Run a single gateway instance while this in-memory relay is in use, or replace it
+with a shared private object store before scaling horizontally.
+
+## Background video jobs
+
+Apply `supabase/migrations/202608080003_async_video_jobs.sql` before deploying a
+gateway that contains the asynchronous MiniMax routes. Video generation uses
+three authenticated short requests:
+
+```text
+POST /v1/media/video/tasks/create
+POST /v1/media/video/tasks/status
+POST /v1/media/video/tasks/download
+```
+
+The create route reserves points and stores only hashed task credentials. A
+lease-based Railway worker polls MiniMax independently of the client connection,
+and finalizes the job and point charge atomically. The download route returns a
+validated temporary HTTPS result URL; the desktop downloads it without sending
+the user's Supabase bearer token to the media host. If the async schema is
+missing, the worker logs one `video-worker-disabled` event and stops polling
+until the service restarts. The legacy `POST /v1/media/video` route remains
+available for v0.0.5 clients while they migrate to these task routes.
+
 Use `AI_PROVIDERS_JSON` to register additional relays without rebuilding the
 desktop app. The registry supports up to 100 chat, image, and video entries. It
 contains only public endpoint metadata and the name of a Railway environment

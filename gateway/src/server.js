@@ -1,13 +1,45 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { authenticate } from './auth.js';
-import { catalogVersion, chat, generateMedia, models, publicProviderConfig } from './providers.js';
+import {
+  createThreeDTask,
+  createVideoUpscaleTask,
+  downloadThreeDModel,
+  downloadVideoUpscaleResult,
+  getAi302RelayAsset,
+  getThreeDStatus,
+  getVideoUpscaleStatus,
+  removeBackground
+} from './ai302-tools.js';
+import {
+  catalogVersion,
+  chat,
+  createVideoTask,
+  generateLegacyVideo,
+  generateMedia,
+  models,
+  pollVideoTask,
+  providerCapabilities,
+  publicProviderConfig
+} from './providers.js';
 import {
   getUsageAccount,
+  getUsageSummary,
   redeemUsageCode,
   reserveUsage,
+  reserveToolUsage,
+  settleToolUsage,
+  touchToolUsage,
   settleUsage
 } from './usage.js';
+import {
+  attachVideoTask,
+  finalizeVideoJob,
+  getVideoDownload,
+  getVideoJob,
+  startVideoJob,
+  startVideoJobWorker
+} from './video-jobs.js';
 
 const port = Math.max(1, Number(process.env.PORT) || 3000);
 const maxBodyBytes = 70 * 1024 * 1024;
@@ -25,8 +57,35 @@ const imageRatios = new Set(['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2',
 const miniMaxTextVideoRatios = new Set(['21:9', '16:9', '4:3', '1:1', '3:4', '9:16']);
 const miniMaxVideoResolutions = new Set(['768P', '2K']);
 
+// Paid 302 tools are staged independently from the desktop release. Missing
+// or malformed flags must never expose a paid upstream route.
+const AI302_FLAGS = Object.freeze({
+  background: 'ENABLE_302_BACKGROUND_REMOVE',
+  hunyuan3d: 'ENABLE_302_HUNYUAN3D',
+  hyper3d: 'ENABLE_302_HYPER3D',
+  topaz: 'ENABLE_302_TOPAZ'
+});
+
+function ai302Enabled(flag) {
+  return String(process.env[flag] || '').trim().toLowerCase() === 'true';
+}
+
+function disabledTool(response) {
+  return send(response, 503, {
+    code: 'tool-disabled',
+    message: 'This Butler tool is not enabled on the server.'
+  });
+}
+
 function invalidOption(code, message) {
   return Object.assign(new Error(message), { status: 400, code });
+}
+
+function base64DecodedBytes(value) {
+  const payload = String(value || '');
+  if (!payload) return 0;
+  const padding = payload.endsWith('==') ? 2 : (payload.endsWith('=') ? 1 : 0);
+  return Math.max(0, Math.floor((payload.length * 3) / 4) - padding);
 }
 
 function send(response, status, payload, headers = {}) {
@@ -56,8 +115,8 @@ async function readJson(request) {
   catch (error) { throw Object.assign(new Error('Request body must be valid JSON.'), { status: 400, code: 'invalid-json' }); }
 }
 
-function rateAllowed(userId, ip) {
-  const key = `${userId}:${ip}`;
+function rateAllowed(userId, ip, bucketName = 'default', maximum = null) {
+  const key = `${userId}:${ip}:${bucketName}`;
   const now = Date.now();
   const current = rateBuckets.get(key);
   if (!current || current.resetAt <= now) {
@@ -65,12 +124,17 @@ function rateAllowed(userId, ip) {
     return true;
   }
   current.count += 1;
-  return current.count <= Math.max(1, Number(process.env.REQUESTS_PER_MINUTE) || 30);
+  return current.count <= Math.max(1, Number(maximum) || Number(process.env.REQUESTS_PER_MINUTE) || 30);
 }
 
 function validateBody(body, kind) {
   const prompt = String(body.prompt || '').trim();
-  if (!prompt || prompt.length > 12_000) throw Object.assign(new Error('Prompt must contain 1 to 12000 characters.'), { status: 400, code: 'invalid-prompt' });
+  const providerId = String(body.providerId || '').trim().toLowerCase().slice(0, 64);
+  const capabilities = providerCapabilities(kind, providerId) || {};
+  const maxPromptLength = kind === 'video' ? 7_000 : 12_000;
+  if (!prompt || prompt.length > maxPromptLength) {
+    throw Object.assign(new Error(`Prompt must contain 1 to ${maxPromptLength} characters.`), { status: 400, code: 'invalid-prompt' });
+  }
   if (secretPatterns.some((pattern) => pattern.test(prompt))) {
     throw Object.assign(new Error('The request appears to contain a private credential.'), { status: 400, code: 'privacy-blocked' });
   }
@@ -84,24 +148,64 @@ function validateBody(body, kind) {
   if (messages.some((message) => secretPatterns.some((pattern) => pattern.test(message.content)))) {
     throw Object.assign(new Error('The conversation appears to contain a private credential.'), { status: 400, code: 'privacy-blocked' });
   }
-  const urls = Array.isArray(body.urls) ? body.urls.slice(0, 14) : [];
+  const configuredReferenceLimit = Number(capabilities.maxReferenceImages);
+  const maxReferenceImages = Number.isInteger(configuredReferenceLimit) && configuredReferenceLimit >= 0
+    ? Math.min(14, configuredReferenceLimit)
+    : 14;
+  if (Array.isArray(body.urls) && body.urls.length > maxReferenceImages) {
+    throw invalidOption('too-many-references', `The selected model accepts at most ${maxReferenceImages} reference images.`);
+  }
+  const urls = Array.isArray(body.urls) ? body.urls.slice(0, maxReferenceImages) : [];
+  const allowedReferenceMimeTypes = new Set(
+    Array.isArray(capabilities.referenceMimeTypes)
+      ? capabilities.referenceMimeTypes.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
+      : []
+  );
+  const maxReferenceImageBytes = Math.max(0, Number(capabilities.maxReferenceImageBytes) || 0);
   let encodedBytes = 0;
   for (const value of urls) {
     const url = String(value || '');
-    if (/^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(url)) {
-      encodedBytes += Math.ceil(url.length * 0.75);
+    const dataImage = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/i.exec(url);
+    if (dataImage) {
+      const mimeType = dataImage[1].toLowerCase();
+      if (allowedReferenceMimeTypes.size && !allowedReferenceMimeTypes.has(mimeType)) {
+        throw invalidOption('invalid-reference-format', 'The selected model accepts PNG, JPEG, or WebP reference images.');
+      }
+      const imageBytes = base64DecodedBytes(dataImage[2]);
+      if (maxReferenceImageBytes && imageBytes > maxReferenceImageBytes) {
+        throw Object.assign(new Error('Each reference image must be smaller than 25 MB.'), {
+          status: 413,
+          code: 'reference-image-too-large'
+        });
+      }
+      encodedBytes += imageBytes;
     } else if (!/^https:\/\//i.test(url)) {
       throw Object.assign(new Error('Reference images must be sanitized data URLs or HTTPS URLs.'), { status: 400, code: 'unsafe-reference' });
+    } else if (capabilities.referenceDataUrlsOnly === true) {
+      throw invalidOption('invalid-reference-format', 'The selected model requires sanitized PNG, JPEG, or WebP reference images.');
     }
   }
   if (encodedBytes > 50 * 1024 * 1024) throw Object.assign(new Error('Reference images exceed the upstream request limit.'), { status: 413, code: 'attachments-too-large' });
   const requestedSize = String(body.size || '').trim();
   const requestedResolution = String(body.resolution || '').trim().toUpperCase();
   const requestedRatio = String(body.aspectRatio || '').trim();
+  const requestedQuality = String(body.quality || 'auto').trim().toLowerCase();
   const requestedDuration = Number(body.duration);
   if (kind === 'image') {
-    if (!imageSizes.has(requestedSize)) throw invalidOption('invalid-size', 'The selected image resolution is not supported.');
-    if (!imageRatios.has(requestedRatio)) throw invalidOption('invalid-aspect-ratio', 'The selected image aspect ratio is not supported.');
+    const allowedSizes = Array.isArray(capabilities.sizes) && capabilities.sizes.length
+      ? new Set(capabilities.sizes.map(String))
+      : imageSizes;
+    const allowedRatios = Array.isArray(capabilities.ratios) && capabilities.ratios.length
+      ? new Set(capabilities.ratios.map(String))
+      : imageRatios;
+    const allowedQualities = Array.isArray(capabilities.qualities) && capabilities.qualities.length
+      ? new Set(capabilities.qualities.map((value) => String(value).toLowerCase()))
+      : null;
+    if (!allowedSizes.has(requestedSize)) throw invalidOption('invalid-size', 'The selected image resolution is not supported.');
+    if (!allowedRatios.has(requestedRatio)) throw invalidOption('invalid-aspect-ratio', 'The selected image aspect ratio is not supported.');
+    if (allowedQualities && !allowedQualities.has(requestedQuality)) {
+      throw invalidOption('invalid-quality', 'The selected image quality is not supported.');
+    }
   }
   if (kind === 'video') {
     if (!miniMaxVideoResolutions.has(requestedResolution)) {
@@ -124,11 +228,12 @@ function validateBody(body, kind) {
   }
   return {
     prompt,
-    providerId: String(body.providerId || '').slice(0, 64),
+    providerId,
     model: String(body.model || '').slice(0, 160),
     messages,
     urls,
     size: kind === 'image' ? requestedSize : '1K',
+    quality: kind === 'image' ? requestedQuality : null,
     resolution: kind === 'video' ? requestedResolution : '768P',
     aspectRatio: kind === 'chat' ? 'auto' : requestedRatio,
     duration: kind === 'video' ? requestedDuration : Math.max(1, Math.min(30, Number(body.duration) || 6)),
@@ -156,21 +261,119 @@ function deniedReservation(response, reservation) {
   });
 }
 
+function availableAccountCredits(account) {
+  if (!account || typeof account !== 'object' || Array.isArray(account)) return null;
+  const direct = Number(account.availableCredits ?? account.available_credits);
+  if (Number.isFinite(direct)) return Math.max(0, direct);
+  const balance = Number(account.balance);
+  const reserved = Number(account.reserved);
+  return Number.isFinite(balance) && Number.isFinite(reserved) ? Math.max(0, balance - reserved) : null;
+}
+
+function validUuid(value) {
+  return /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(String(value || '').trim());
+}
+
+function validTaskToken(value) {
+  return /^[A-Za-z0-9_-]{32,128}$/.test(String(value || '').trim());
+}
+
+function publicDownloadUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    const host = url.hostname.toLowerCase();
+    const bareHost = host.replace(/^\[|\]$/g, '');
+    if (url.protocol !== 'https:' || url.username || url.password) return '';
+    if (bareHost.includes(':')) return '';
+    if (bareHost === 'localhost' || bareHost.endsWith('.local') || bareHost === '0.0.0.0') return '';
+    if (/^(?:10|127|169\.254|192\.168)\./.test(bareHost)) return '';
+    const private172 = /^172\.(\d{1,3})\./.exec(bareHost);
+    if (private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31) return '';
+    return url.toString();
+  } catch (error) {
+    return '';
+  }
+}
+
+function publicVideoJob(job) {
+  const rawStatus = String(job && job.status || '').toLowerCase();
+  const status = rawStatus === 'starting'
+    ? 'creating'
+    : rawStatus === 'submitted'
+      ? 'queued'
+      : rawStatus === 'polling'
+        ? 'running'
+        : rawStatus;
+  return {
+    requestId: String(job && job.requestId || ''),
+    status,
+    retryAfterMs: ['creating', 'queued', 'running'].includes(status) ? 5_000 : 0,
+    creditsReserved: Math.max(0, Number(job && (job.credits ?? job.creditsReserved)) || 0),
+    ...(job && job.errorCode ? { errorCode: String(job.errorCode) } : {}),
+    ...(job && job.errorMessage ? { errorMessage: String(job.errorMessage) } : {})
+  };
+}
+
+async function attachVideoTaskWithRetry(requestId, providerTaskId) {
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const attached = await attachVideoTask(requestId, providerTaskId);
+      if (attached && attached.ok === true) return attached;
+      throw Object.assign(new Error('The provider task could not be persisted.'), {
+        code: String(attached && attached.reason || 'video-task-attach-failed'),
+        status: 503
+      });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
 async function handle(request, response) {
   const requestId = crypto.randomUUID();
   response.setHeader('X-Request-Id', requestId);
   const url = new URL(request.url, 'http://gateway.local');
-  if (request.method === 'GET' && url.pathname === '/healthz') return send(response, 200, { ok: true, catalogVersion });
+  if (request.method === 'GET' && url.pathname === '/healthz') {
+    return send(response, 200, { ok: true, catalogVersion, asyncVideo: true });
+  }
+  if (request.method === 'GET' && url.pathname.startsWith('/v1/tools/assets/')) {
+    const match = /^\/v1\/tools\/assets\/([A-Za-z0-9_-]{43})$/.exec(url.pathname);
+    if (!match) return send(response, 404, { code: 'tool-asset-not-found', message: 'Temporary image not found.' });
+    try {
+      const asset = getAi302RelayAsset(match[1]);
+      return send(response, 200, asset.buffer, {
+        'Content-Type': asset.mime,
+        'Content-Disposition': 'inline'
+      });
+    } catch (error) {
+      return send(response, 404, { code: 'tool-asset-not-found', message: 'Temporary image not found.' });
+    }
+  }
   const origin = String(request.headers.origin || '');
   if (origin && !allowedOrigins.has(origin)) return send(response, 403, { code: 'origin-denied', message: 'Browser origin is not allowed.' });
 
   const user = await authenticate(request);
   if (!user) return send(response, 401, { code: 'invalid-session', message: 'A valid Supabase session is required.' });
   const ip = String(request.headers['x-forwarded-for'] || request.socket.remoteAddress || '').split(',')[0].trim();
-  if (!rateAllowed(user.id, ip)) return send(response, 429, { code: 'rate-limited', message: 'Too many requests. Please wait before trying again.' }, { 'Retry-After': '60' });
+  const isVideoStatus = request.method === 'POST' && url.pathname === '/v1/media/video/tasks/status';
+  const isThreeDStatus = request.method === 'POST' && url.pathname === '/v1/tools/3d/status';
+  const isVideoToolStatus = request.method === 'POST' && url.pathname === '/v1/tools/video/status';
+  const statusBucket = isVideoStatus ? 'video-status'
+    : isThreeDStatus ? 'three-d-status'
+      : isVideoToolStatus ? 'video-tool-status' : 'default';
+  const statusMaximum = isVideoStatus || isThreeDStatus || isVideoToolStatus ? 180 : null;
+  if (!rateAllowed(user.id, ip, statusBucket, statusMaximum)) {
+    return send(response, 429, { code: 'rate-limited', message: 'Too many requests. Please wait before trying again.' }, { 'Retry-After': statusMaximum ? '10' : '60' });
+  }
 
   if (request.method === 'GET' && url.pathname === '/v1/account') {
     return send(response, 200, { account: await getUsageAccount(user.id) });
+  }
+  if (request.method === 'GET' && url.pathname === '/v1/usage/summary') {
+    const range = String(url.searchParams.get('range') || '7d').trim().toLowerCase();
+    return send(response, 200, { summary: await getUsageSummary(user.id, range) });
   }
   if (request.method === 'POST' && url.pathname === '/v1/account/redeem') {
     const redemptionBody = await readJson(request);
@@ -188,6 +391,204 @@ async function handle(request, response) {
   if (request.method === 'GET' && url.pathname === '/v1/models') {
     const requestedProviderId = String(url.searchParams.get('providerId') || 'chat-1').trim().toLowerCase();
     return send(response, 200, await models(requestedProviderId));
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/background/remove') {
+    if (!ai302Enabled(AI302_FLAGS.background)) return disabledTool(response);
+    const body = await readJson(request);
+    const png = await removeBackground({ imageDataUrl: body && body.imageDataUrl });
+    return send(response, 200, png, {
+      'Content-Type': 'image/png',
+      'Content-Disposition': 'attachment; filename="background-removed.png"'
+    });
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/3d/create') {
+    const body = await readJson(request);
+    const providerId = String(body && body.providerId || '').trim().toLowerCase();
+    const flag = AI302_FLAGS[providerId];
+    if (!flag || !ai302Enabled(flag)) return disabledTool(response);
+    const task = await createThreeDTask({
+      providerId,
+      imageDataUrl: body && body.imageDataUrl,
+      prompt: body && body.prompt,
+      userId: user.id
+    });
+    return send(response, 202, task);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/3d/status') {
+    if (!ai302Enabled(AI302_FLAGS.hunyuan3d) && !ai302Enabled(AI302_FLAGS.hyper3d)) return disabledTool(response);
+    const body = await readJson(request);
+    return send(response, 200, await getThreeDStatus({
+      taskToken: body && body.taskToken,
+      userId: user.id
+    }));
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/3d/download') {
+    if (!ai302Enabled(AI302_FLAGS.hunyuan3d) && !ai302Enabled(AI302_FLAGS.hyper3d)) return disabledTool(response);
+    const body = await readJson(request);
+    const glb = await downloadThreeDModel({
+      taskToken: body && body.taskToken,
+      userId: user.id
+    });
+    return send(response, 200, glb, {
+      'Content-Type': 'model/gltf-binary',
+      'Content-Disposition': 'attachment; filename="model.glb"'
+    });
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/video/upscale') {
+    if (!ai302Enabled(AI302_FLAGS.topaz)) return disabledTool(response);
+    const body = await readJson(request);
+    const modelId = String(body && body.modelId || 'topaz-video-upscale').trim().toLowerCase();
+    if (modelId !== 'topaz-video-upscale') {
+      throw invalidOption('invalid-video-tool', 'The selected video tool is not supported.');
+    }
+    const account = await getUsageAccount(user.id);
+    const availableCredits = availableAccountCredits(account);
+    if (availableCredits !== null && availableCredits <= 0) {
+      return deniedReservation(response, {
+        reason: 'insufficient-credits',
+        credits: 1,
+        availableCredits
+      });
+    }
+    const task = await createVideoUpscaleTask({
+      videoDataUrl: body && body.videoDataUrl,
+      toolOptions: body && body.options,
+      userId: user.id
+    }, {
+      reserveCredits: ({ requestId, providerId, credits, providerCost, resolution, duration }) => reserveToolUsage(
+        user.id,
+        requestId,
+        { providerId, credits, providerCost, resolution, duration }
+      )
+    });
+    return send(response, 202, task);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/video/status') {
+    if (!ai302Enabled(AI302_FLAGS.topaz)) return disabledTool(response);
+    const body = await readJson(request);
+    return send(response, 200, await getVideoUpscaleStatus({
+      taskToken: body && body.taskToken,
+      userId: user.id
+    }, {
+      touchCredits: ({ requestId }) => touchToolUsage(user.id, requestId),
+      settleCredits: ({ requestId, status, durationMs }) => settleToolUsage(
+        user.id,
+        requestId,
+        status,
+        durationMs
+      )
+    }));
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/video/download') {
+    if (!ai302Enabled(AI302_FLAGS.topaz)) return disabledTool(response);
+    const body = await readJson(request);
+    const video = await downloadVideoUpscaleResult({
+      taskToken: body && body.taskToken,
+      userId: user.id
+    }, {
+      touchCredits: ({ requestId }) => touchToolUsage(user.id, requestId),
+      settleCredits: ({ requestId, status, durationMs }) => settleToolUsage(
+        user.id,
+        requestId,
+        status,
+        durationMs
+      )
+    });
+    return send(response, 200, video, {
+      'Content-Type': 'video/mp4',
+      'Content-Disposition': 'attachment; filename="enhanced-video.mp4"'
+    });
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/media/video/tasks/create') {
+    const rawBody = await readJson(request);
+    const operationId = String(rawBody.operationId || '').trim();
+    const taskToken = String(rawBody.taskToken || '').trim();
+    if (!validUuid(operationId) || !validTaskToken(taskToken)) {
+      return send(response, 400, { code: 'invalid-video-operation', message: 'The video task identity is invalid.' });
+    }
+    const body = validateBody(rawBody, 'video');
+    const job = await startVideoJob({ userId: user.id, operationId, taskToken, body });
+    if (job.ok !== true) return deniedReservation(response, job);
+    if (!job.created) return send(response, 202, publicVideoJob(job));
+
+    const startedAt = Date.now();
+    try {
+      const providerTask = await createVideoTask(body);
+      await attachVideoTaskWithRetry(operationId, providerTask.taskId);
+      return send(response, 202, {
+        requestId: operationId,
+        status: 'queued',
+        retryAfterMs: 5_000,
+        creditsReserved: Math.max(0, Number(job.credits) || 0)
+      });
+    } catch (error) {
+      try {
+        await finalizeVideoJob({
+          requestId: operationId,
+          status: 'failed',
+          error,
+          durationMs: Date.now() - startedAt
+        });
+      } catch (finalizationError) {
+        console.error(JSON.stringify({
+          level: 'error',
+          requestId: operationId,
+          code: String(finalizationError.code || 'video-job-finalization-failed'),
+          status: Number(finalizationError.status) || 503
+        }));
+      }
+      throw error;
+    }
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/media/video/tasks/status') {
+    const body = await readJson(request);
+    if (!validTaskToken(body.taskToken)) {
+      return send(response, 404, { code: 'video-task-not-found', message: 'Video task not found.' });
+    }
+    const job = await getVideoJob(user.id, body.taskToken);
+    if (!job || job.ok !== true) {
+      return send(response, 404, { code: 'video-task-not-found', message: 'Video task not found.' });
+    }
+    return send(response, 200, publicVideoJob(job));
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/media/video/tasks/download') {
+    const body = await readJson(request);
+    if (!validTaskToken(body.taskToken)) {
+      return send(response, 404, { code: 'video-task-not-found', message: 'Video task not found.' });
+    }
+    const result = await getVideoDownload(user.id, body.taskToken);
+    if (!result || result.ok !== true) {
+      const notFound = result && result.reason === 'not-found';
+      return send(response, notFound ? 404 : 409, {
+        code: notFound ? 'video-task-not-found' : 'video-task-not-ready',
+        message: notFound ? 'Video task not found.' : 'The video is not ready to download.'
+      });
+    }
+    let downloadUrl = publicDownloadUrl(result.url);
+    if (result.providerId && result.providerTaskId) {
+      try {
+        const refreshed = await pollVideoTask(result.providerId, result.providerTaskId);
+        if (refreshed.status === 'succeeded' && publicDownloadUrl(refreshed.resultUrl)) {
+          downloadUrl = publicDownloadUrl(refreshed.resultUrl);
+        }
+      } catch (error) {
+        // The stored URL can still be used when a refresh request is temporarily unavailable.
+      }
+    }
+    if (!downloadUrl) {
+      return send(response, 502, { code: 'unsafe-media-url', message: 'The video provider returned an invalid download address.' });
+    }
+    return send(response, 200, { url: downloadUrl });
   }
 
   let kind;
@@ -211,7 +612,9 @@ async function handle(request, response) {
       await settleUsage(requestId, 'succeeded', Date.now() - startedAt);
       return send(response, 200, { text });
     }
-    const media = await generateMedia(kind, body, controller.signal);
+    const media = kind === 'video'
+      ? await generateLegacyVideo(body, controller.signal)
+      : await generateMedia(kind, body, controller.signal);
     await settleUsage(requestId, 'succeeded', Date.now() - startedAt);
     return send(response, 200, media, {
       'Content-Type': kind === 'video' ? 'video/mp4' : 'application/octet-stream'
@@ -245,9 +648,31 @@ const server = http.createServer((request, response) => {
       'credit-schema-missing': 'AI credit enforcement has not been installed.',
       'credit-service-failed': 'AI credit validation is temporarily unavailable.',
       'credit-settlement-failed': 'AI credit settlement is temporarily unavailable.',
+      'credit-settlement-conflict': 'This AI request was already settled with a different result.',
       'redemption-service-failed': 'Code redemption is temporarily unavailable.',
       'provider-not-configured': 'The selected AI model is not configured on the server.',
-      'provider-secret-missing': 'The selected AI model is missing its server credential.'
+      'provider-secret-missing': 'The selected AI model is missing its server credential.',
+      'video-job-service-not-configured': 'Background video generation is not configured.',
+      'video-job-schema-missing': 'Background video generation is being upgraded. Please try again shortly.',
+      'video-job-service-failed': 'Background video generation is temporarily unavailable.',
+      'video-job-finalization-failed': 'The video task could not be completed safely.',
+      'ai302-not-configured': 'The 302 tool gateway is not configured.',
+      'ai302-unavailable': 'The 302 tool service is temporarily unavailable.',
+      'ai302-upstream-error': 'The 302 tool service rejected the request.',
+      'ai302-invalid-response': 'The 302 tool service returned an invalid response.',
+      'unsafe-tool-result-url': 'The tool provider returned an unsafe download address.',
+      'tool-download-failed': 'The tool result could not be downloaded.',
+      'tool-result-too-large': 'The tool result exceeds the supported size.',
+      'invalid-video-result': 'The enhanced video result is invalid.',
+      'video-upscale-failed': 'Video enhancement failed.',
+      'video-tool-task-not-ready': 'The enhanced video is not ready yet.',
+      'video-tool-task-not-found': 'The video enhancement task was not found.',
+      'insufficient-credits': 'Not enough points are available for this request.',
+      'invalid-png-result': 'The background-removal result is invalid.',
+      'invalid-glb-result': 'The 3D result is invalid.',
+      'three-d-result-invalid': 'The completed 3D task did not contain a GLB model.',
+      'tool-public-url-not-configured': 'The public gateway URL is not configured.',
+      'tool-asset-capacity-exceeded': 'The temporary image relay is at capacity.'
     };
     // Do not log prompts, attachments, authorization headers, or upstream bodies.
     console.error(JSON.stringify({ level: 'error', requestId: response.getHeader('X-Request-Id'), code, status }));
@@ -257,6 +682,22 @@ const server = http.createServer((request, response) => {
     });
   });
 });
+
+const videoWorker = String(process.env.SUPABASE_SECRET_KEY || '').trim()
+  ? startVideoJobWorker({
+      pollVideoTask: (job) => pollVideoTask(job.providerId, job.providerTaskId),
+      onError: (error) => console.error(JSON.stringify({
+        level: 'error',
+        event: error && error.code === 'video-job-schema-missing'
+          ? 'video-worker-disabled'
+          : 'video-worker-cycle-failed',
+        code: String(error && error.code || 'video-job-worker-failed'),
+        status: Number(error && error.status) || 503
+      }))
+    })
+  : { stop() {} };
+
+server.once('close', () => videoWorker.stop());
 
 setInterval(() => {
   const now = Date.now();

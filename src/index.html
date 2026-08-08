@@ -2,7 +2,7 @@
 <html lang="en" data-theme="dark" data-view="start" data-language="en">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: messs-file: messs-preview: messs-thumb:; media-src 'self' messs-file: messs-transcode:; font-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: messs-file: messs-preview: messs-thumb:; media-src 'self' messs-file: messs-transcode:; font-src 'self'; connect-src messs-file:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none';" />
   <title>Messs. - Resolve your confusion</title>
   <script src="js/startup-theme.js"></script>
   <link rel="stylesheet" href="styles/theme.css" />
@@ -162,7 +162,14 @@
             <button id="check-update-btn" class="account-subtle-button" type="button">Check for Updates</button>
           </div>
 
-          <button id="ai-provider-manager-open" class="settings-nav-row settings-section-spaced" type="button">
+          <button id="usage-settings-open" class="settings-nav-row settings-section-spaced" type="button">
+            <span class="settings-nav-icon">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V9"/><path d="M10 19V5"/><path d="M16 19v-7"/><path d="M22 19H2"/></svg>
+            </span>
+            <span><strong>Usage</strong><small id="usage-shortcut-meta">View points and activity</small></span>
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+          </button>
+          <button id="ai-provider-manager-open" class="settings-nav-row" type="button">
             <span class="settings-nav-icon">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l1.7 5.1L19 10l-5.3 1.9L12 17l-1.7-5.1L5 10l5.3-1.9L12 3z"/><path d="M19 15l.9 2.6L22 18.5l-2.1.9L19 22l-.9-2.6-2.1-.9 2.1-.9L19 15z"/></svg>
             </span>
@@ -201,8 +208,8 @@
             <button id="preview-zoom-out" class="icon-btn-sm" title="Zoom out" aria-label="Zoom out">-</button>
             <span id="preview-zoom-label" class="zoom-label">100%</span>
             <button id="preview-zoom-in" class="icon-btn-sm" title="Zoom in" aria-label="Zoom in">+</button>
-            <button id="preview-fullscreen" class="icon-btn-sm" title="Fullscreen preview" aria-label="Fullscreen preview">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="6"/><line x1="21" y1="21" x2="14.65" y2="14.65"/><line x1="10" y1="7" x2="10" y2="13"/><line x1="7" y1="10" x2="13" y2="10"/></svg>
+            <button id="preview-fullscreen" class="icon-btn-sm" title="Enlarge preview" aria-label="Enlarge preview">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
             </button>
           </div>
         </header>
@@ -508,16 +515,20 @@
     </section>
 
     <div id="ai-provider-overlay" class="ai-provider-overlay" hidden>
-      <section class="ai-provider-manager" role="dialog" aria-modal="true" aria-labelledby="ai-provider-manager-title">
+      <section class="ai-provider-manager" data-settings-view="general" role="dialog" aria-modal="true" aria-labelledby="ai-provider-manager-title">
         <header class="ai-provider-manager-header">
-          <div>
+          <div class="settings-manager-heading">
             <h2 id="ai-provider-manager-title">More Settings</h2>
+            <nav class="settings-view-tabs" aria-label="Settings sections">
+              <button id="settings-view-general" class="settings-view-tab is-active" type="button" data-settings-view-target="general" aria-pressed="true">General</button>
+              <button id="settings-view-usage" class="settings-view-tab" type="button" data-settings-view-target="usage" aria-pressed="false">Usage</button>
+            </nav>
           </div>
           <button id="ai-provider-manager-close" class="icon-btn-sm" type="button" title="Close" aria-label="Close">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
           </button>
         </header>
-        <div class="ai-provider-manager-body">
+        <div id="settings-general-view" class="ai-provider-manager-body" data-settings-view-panel="general">
           <section class="ai-provider-section preferences-settings-section">
             <div class="ai-provider-section-heading">
               <div><strong>Preferences</strong></div>
@@ -565,19 +576,6 @@
               <label><span><strong>Automatic updates</strong><small>Download updates and install after restart</small></span><span class="switch-control" title="Automatic updates"><input id="software-auto-update-toggle" type="checkbox" checked><span></span></span></label>
               <div><span id="software-update-status">Checking update status...</span><button id="software-check-update-btn" class="pill-btn pill-btn-ghost" type="button">Check Now</button></div>
             </div>
-          </section>
-
-          <section class="ai-provider-section activation-settings-section">
-            <div class="activation-redemption-copy">
-              <strong>Redemption code</strong>
-              <small>Add points to this account</small>
-            </div>
-            <form id="activation-settings-form" class="activation-settings-form">
-              <input id="activation-settings-code" type="password" autocomplete="off" spellcheck="false" placeholder="Enter redemption code" />
-              <button type="submit">Redeem</button>
-            </form>
-            <span id="activation-settings-status" hidden>Not activated</span>
-            <p id="activation-settings-note" class="activation-settings-note" hidden></p>
           </section>
 
           <section class="ai-provider-section cloud-security-section" hidden aria-hidden="true">
@@ -647,9 +645,128 @@
           </section>
 
         </div>
-        <footer id="ai-provider-manager-footer" class="ai-provider-manager-footer" hidden aria-hidden="true">
+        <footer id="ai-provider-manager-footer" class="ai-provider-manager-footer" hidden aria-hidden="true" data-settings-view-panel="general">
           <button id="ai-service-save" class="pill-btn" type="button">Save Settings</button>
         </footer>
+
+        <section id="settings-usage-view" class="usage-settings-view" data-settings-view-panel="usage" hidden aria-labelledby="usage-page-title">
+          <div class="usage-page-toolbar">
+            <div>
+              <h3 id="usage-page-title">Usage</h3>
+              <p id="usage-period-label">Last 30 days</p>
+            </div>
+            <div id="usage-range-switch" class="usage-range-switch" role="group" aria-label="Usage period">
+              <button type="button" data-usage-range="7" aria-pressed="false">7 Days</button>
+              <button type="button" data-usage-range="30" class="is-active" aria-pressed="true">30 Days</button>
+              <button type="button" data-usage-range="all" aria-pressed="false">All</button>
+            </div>
+          </div>
+
+          <div id="usage-loading" class="usage-loading-state" role="status" aria-live="polite">
+            <span class="usage-spinner" aria-hidden="true"></span>
+            <span>Loading usage...</span>
+          </div>
+
+          <div id="usage-auth-state" class="usage-message-state" hidden>
+            <span class="usage-message-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+            </span>
+            <strong>Sign in to view usage</strong>
+            <small>Your points and generation history are linked to your account.</small>
+            <button id="usage-sign-in-btn" class="pill-btn" type="button">Sign In</button>
+          </div>
+
+          <div id="usage-error-state" class="usage-message-state" hidden>
+            <span class="usage-message-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 17h.01"/></svg>
+            </span>
+            <strong>Usage is unavailable</strong>
+            <small id="usage-error-message">Could not load your usage right now.</small>
+            <button id="usage-retry-btn" class="pill-btn pill-btn-ghost" type="button">Try Again</button>
+          </div>
+
+          <div id="usage-dashboard" class="usage-dashboard" hidden>
+            <section class="usage-balance-panel" aria-labelledby="usage-balance-label">
+              <div class="usage-balance-main">
+                <span id="usage-balance-label" class="usage-eyebrow">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="5"/><path d="M12.5 12.5 18 18"/><circle cx="18" cy="18" r="3"/></svg>
+                  Available points
+                </span>
+                <strong id="usage-balance-value">0</strong>
+                <div class="usage-balance-meta"><span id="usage-plan-tier">Free</span><span id="usage-reserved-wrap" hidden><b id="usage-reserved-value">0</b> reserved</span></div>
+              </div>
+              <div class="usage-balance-side">
+                <span>Total balance</span>
+                <strong id="usage-total-balance">0</strong>
+                <small>Points ready for image and video tools</small>
+              </div>
+            </section>
+
+            <div class="usage-metric-grid">
+              <section class="usage-metric">
+                <span>Consumed</span>
+                <strong><b id="usage-total-credits">0</b><small> points</small></strong>
+              </section>
+              <section class="usage-metric">
+                <span>Generation requests</span>
+                <strong id="usage-generation-count">0</strong>
+              </section>
+              <section class="usage-metric">
+                <span>Daily average</span>
+                <strong><b id="usage-daily-average">0</b><small> points</small></strong>
+              </section>
+            </div>
+
+            <div class="usage-dashboard-grid">
+              <section class="usage-data-panel usage-trend-panel" aria-labelledby="usage-trend-title">
+                <header><strong id="usage-trend-title">Daily points</strong><span id="usage-trend-peak">0 peak</span></header>
+                <div class="usage-chart-wrap">
+                  <svg id="usage-trend-chart" viewBox="0 0 720 220" preserveAspectRatio="none" role="img" aria-label="Daily points trend">
+                    <g class="usage-chart-grid" aria-hidden="true">
+                      <line x1="18" y1="30" x2="702" y2="30"/><line x1="18" y1="82" x2="702" y2="82"/><line x1="18" y1="134" x2="702" y2="134"/><line x1="18" y1="186" x2="702" y2="186"/>
+                    </g>
+                    <path id="usage-trend-area" class="usage-trend-area" d="" aria-hidden="true"/>
+                    <path id="usage-trend-line" class="usage-trend-line" d="" aria-hidden="true"/>
+                    <g id="usage-trend-points" class="usage-trend-points"></g>
+                  </svg>
+                  <div id="usage-trend-empty" class="usage-chart-empty" hidden>No usage in this period</div>
+                </div>
+                <div class="usage-chart-axis"><span id="usage-chart-from">-</span><span id="usage-chart-to">-</span></div>
+              </section>
+
+              <section class="usage-data-panel usage-types-panel" aria-labelledby="usage-types-title">
+                <header><strong id="usage-types-title">By type</strong><span id="usage-types-period">Last 30 days</span></header>
+                <div class="usage-types-content">
+                  <div id="usage-donut" class="usage-donut" role="img" aria-label="Points by type">
+                    <span><strong id="usage-donut-total">0</strong><small>points</small></span>
+                  </div>
+                  <div id="usage-type-list" class="usage-type-list"></div>
+                </div>
+                <div id="usage-types-empty" class="usage-inline-empty" hidden>No billed activity</div>
+              </section>
+
+              <section class="usage-data-panel usage-models-panel" aria-labelledby="usage-models-title">
+                <header><strong id="usage-models-title">Top models</strong><span id="usage-models-period">Last 30 days</span></header>
+                <div id="usage-model-list" class="usage-model-list"></div>
+                <div id="usage-models-empty" class="usage-inline-empty" hidden>No model usage in this period</div>
+              </section>
+            </div>
+
+          </div>
+
+          <section id="usage-redemption" class="ai-provider-section activation-settings-section" hidden>
+            <div class="activation-redemption-copy">
+              <strong>Redemption code</strong>
+              <small>Add points to this account</small>
+            </div>
+            <form id="activation-settings-form" class="activation-settings-form">
+              <input id="activation-settings-code" type="password" autocomplete="off" spellcheck="false" placeholder="Enter redemption code" />
+              <button type="submit">Redeem</button>
+            </form>
+            <span id="activation-settings-status" hidden>Not activated</span>
+            <p id="activation-settings-note" class="activation-settings-note" hidden></p>
+          </section>
+        </section>
       </section>
     </div>
 
@@ -674,7 +791,9 @@
     </div>
 
     <div id="fullscreen-overlay" class="fullscreen-overlay" hidden>
-      <button id="fullscreen-close" class="icon-btn-sm fullscreen-close" aria-label="Close fullscreen">x</button>
+      <button id="fullscreen-close" class="icon-btn-sm fullscreen-close" title="Close preview" aria-label="Close preview">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
       <div id="fullscreen-stage" class="fullscreen-stage"></div>
     </div>
 
@@ -852,9 +971,12 @@
   </div>
 
   <script src="../lib/i18n.js"></script>
+  <script src="vendor/model-viewer.bundle.js"></script>
   <script src="js/store-client.js"></script>
+  <script src="js/model-viewer.js"></script>
   <script src="js/confirm-dialog.js"></script>
   <script src="js/credit-access.js"></script>
+  <script src="js/usage-settings.js"></script>
   <script src="js/model-badges.js"></script>
   <script src="js/titlebar.js"></script>
   <script src="js/chat.js"></script>

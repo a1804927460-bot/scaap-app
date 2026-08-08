@@ -23,6 +23,11 @@ assert.match(
   'Canvas panning must be captured before media item drag handlers.'
 );
 assert.match(
+  boardSource,
+  /aiImagePopoverClickCloser = \(e\) => \{[\s\S]*?if \(pop\.contains\(e\.target\)\) return;[\s\S]*?if \(e\.target\.closest\('#board-canvas \.board-item-image'\)\) return;[\s\S]*?closeAiImagePopover\(\);/,
+  'Selecting or removing an image reference must keep the AI composer open while other outside clicks still close it.'
+);
+assert.match(
   mainSource,
   /parseCfHDrop\(clipboard\.readBuffer\('CF_HDROP'\)\)[\s\S]*?preview\.isImageExt/,
   'Copying an image file in another Windows app must import it from CF_HDROP.'

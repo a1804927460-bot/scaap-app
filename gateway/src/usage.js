@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { quoteTopazRetailCredits } from './tool-pricing.js';
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
 
@@ -10,7 +11,12 @@ export const IMAGE_CREDITS = Object.freeze({
   'image-2': 7,
   'image-3': 5,
   'image-4': 4,
-  'image-5': 8
+  'image-5': 8,
+  'image-6': 12
+});
+
+export const IMAGE_QUALITY_CREDITS = Object.freeze({
+  'image-6': Object.freeze({ low: 3, medium: 8, high: 28, auto: 12 })
 });
 
 export const VIDEO_CREDITS_PER_SECOND = Object.freeze({
@@ -84,11 +90,15 @@ export function quoteUsage(kind, request = {}) {
     if (!Object.hasOwn(IMAGE_CREDITS, providerId)) {
       throw Object.assign(new Error('The selected image provider is not allowed.'), { code: 'provider-not-allowed', status: 400 });
     }
+    const qualityRates = IMAGE_QUALITY_CREDITS[providerId];
+    const requestedQuality = String(request.quality || 'auto').trim().toLowerCase();
+    const quality = qualityRates && Object.hasOwn(qualityRates, requestedQuality) ? requestedQuality : 'auto';
     return {
       kind: 'image',
       providerId,
-      credits: IMAGE_CREDITS[providerId],
-      resolution: null,
+      credits: qualityRates ? qualityRates[quality] : IMAGE_CREDITS[providerId],
+      resolution: qualityRates ? quality : null,
+      ...(qualityRates ? { quality } : {}),
       duration: null,
       requiresActivation: false
     };
@@ -234,6 +244,7 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
     credits: Number.isFinite(Number(result.credits)) ? Number(result.credits) : quote.credits,
     providerId: quote.providerId,
     resolution: quote.resolution,
+    ...(quote.quality ? { quality: quote.quality } : {}),
     duration: quote.duration
   };
 }
@@ -290,6 +301,124 @@ export async function settleUsage(requestId, status, durationMs, fetchImpl = fet
     throw serviceError(code, 'Could not settle AI credits.');
   }
   if (!payload || payload.ok !== true) throw serviceError('credit-settlement-failed', 'The credit service rejected settlement.');
+  if (String(payload.status || '') !== normalizedStatus) {
+    throw serviceError(
+      'credit-settlement-conflict',
+      'The AI request was already settled with a different result.',
+      409
+    );
+  }
+  return payload;
+}
+
+export async function reserveToolUsage(userId, requestId, request = {}, fetchImpl = fetch) {
+  const providerId = String(request.providerId || '').trim().toLowerCase();
+  const credits = Math.round(Number(request.credits));
+  const providerCost = Math.round(Number(request.providerCost));
+  const resolution = String(request.resolution || '').trim().slice(0, 32) || null;
+  const duration = request.duration === null || request.duration === undefined
+    ? null
+    : boundedInteger(request.duration, 1, 1, 21_600);
+  let expectedCredits = -1;
+  try { expectedCredits = quoteTopazRetailCredits(providerCost); } catch (error) {}
+  if (providerId !== 'topaz-video-upscale' || !Number.isInteger(credits) || credits !== expectedCredits) {
+    throw serviceError('provider-not-allowed', 'The requested Butler tool usage is invalid.', 400);
+  }
+  const headers = serviceHeaders();
+  if (!headers) {
+    if (durableRequired()) {
+      throw serviceError('credit-service-not-configured', 'Durable credit enforcement is not configured.');
+    }
+    return {
+      ok: true,
+      reason: 'development-bypass',
+      providerId,
+      credits,
+      providerCost,
+      resolution,
+      duration,
+      developmentBypass: true
+    };
+  }
+  const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/reserve_ai_tool_credits`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      p_user_id: userId,
+      p_request_id: requestId,
+      p_provider_id: providerId,
+      p_credits: credits,
+      p_provider_cost: providerCost,
+      p_resolution: resolution,
+      p_duration: duration
+    }),
+    signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
+  });
+  const payload = await responsePayload(response);
+  if (!response.ok) {
+    const code = isMissingCreditRpc(response, payload) ? 'credit-schema-missing' : 'credit-service-failed';
+    throw serviceError(code, 'Could not reserve Butler tool credits.');
+  }
+  const result = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+  const reason = String(result.reason || '');
+  if (!['reserved', 'already-reserved', 'insufficient-credits', 'account-suspended', 'request-id-conflict'].includes(reason)) {
+    throw serviceError('credit-service-failed', 'The credit service returned an invalid Butler reservation.');
+  }
+  return {
+    ...result,
+    ok: result.ok === true,
+    reason,
+    providerId,
+    credits,
+    providerCost,
+    resolution,
+    duration
+  };
+}
+
+export async function touchToolUsage(userId, requestId, fetchImpl = fetch) {
+  const headers = serviceHeaders();
+  if (!headers) return { ok: !durableRequired(), reason: 'not-configured' };
+  const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/touch_ai_tool_credits`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ p_request_id: requestId, p_user_id: userId }),
+    signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
+  });
+  const payload = await responsePayload(response);
+  if (!response.ok) {
+    const code = isMissingCreditRpc(response, payload) ? 'credit-schema-missing' : 'credit-service-failed';
+    throw serviceError(code, 'Could not refresh Butler tool accounting.');
+  }
+  if (!payload || payload.ok !== true) {
+    throw serviceError('credit-service-failed', 'The credit service rejected the Butler task.');
+  }
+  return payload;
+}
+
+export async function settleToolUsage(userId, requestId, status, durationMs, fetchImpl = fetch) {
+  const headers = serviceHeaders();
+  if (!headers) return { ok: !durableRequired(), reason: 'not-configured', status };
+  const normalizedStatus = status === 'succeeded' ? 'succeeded' : 'failed';
+  const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/settle_ai_tool_credits`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      p_request_id: requestId,
+      p_user_id: userId,
+      p_status: normalizedStatus,
+      p_duration_ms: Math.max(0, Math.round(Number(durationMs) || 0))
+    }),
+    signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
+  });
+  const payload = await responsePayload(response);
+  if (!response.ok) {
+    const code = isMissingCreditRpc(response, payload) ? 'credit-schema-missing' : 'credit-settlement-failed';
+    throw serviceError(code, 'Could not settle Butler tool credits.');
+  }
+  if (!payload || payload.ok !== true || String(payload.status || '') !== normalizedStatus) {
+    throw serviceError('credit-settlement-failed', 'The credit service rejected Butler settlement.');
+  }
   return payload;
 }
 
@@ -314,6 +443,93 @@ export async function getUsageAccount(userId, fetchImpl = fetch) {
     throw serviceError('credit-service-failed', 'The credit service returned an invalid account.');
   }
   return payload;
+}
+
+function normalizeUsageRange(value) {
+  const normalized = String(value || '7d').trim().toLowerCase();
+  if (normalized === '7' || normalized === '7d') return '7d';
+  if (normalized === '30' || normalized === '30d') return '30d';
+  if (normalized === 'all') return 'all';
+  throw Object.assign(new Error('The usage range is invalid.'), { code: 'invalid-usage-range', status: 400 });
+}
+
+function nonnegativeNumber(value, integer = true) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return integer ? Math.round(parsed) : Math.round(parsed * 100) / 100;
+}
+
+function usageRows(value, maximum, rowMapper) {
+  return Array.isArray(value) ? value.slice(0, maximum).map(rowMapper) : [];
+}
+
+function publicUsageSummary(payload, fallbackRange) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw serviceError('usage-service-failed', 'The usage service returned an invalid response.');
+  }
+  const period = payload.period && typeof payload.period === 'object' ? payload.period : {};
+  const account = payload.account && typeof payload.account === 'object' ? payload.account : {};
+  const totals = payload.totals && typeof payload.totals === 'object' ? payload.totals : {};
+  const validDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? String(value) : '';
+  const usageCountRow = (row = {}) => ({
+    credits: nonnegativeNumber(row.credits),
+    generations: nonnegativeNumber(row.generations),
+    requests: nonnegativeNumber(row.requests)
+  });
+  return {
+    range: normalizeUsageRange(payload.range || fallbackRange),
+    timeZone: 'UTC',
+    period: {
+      from: validDate(period.from),
+      to: validDate(period.to),
+      days: Math.max(1, nonnegativeNumber(period.days))
+    },
+    account: {
+      balance: nonnegativeNumber(account.balance),
+      reserved: nonnegativeNumber(account.reserved),
+      availableCredits: nonnegativeNumber(account.availableCredits),
+      membershipTier: String(account.membershipTier || 'free').trim().slice(0, 40) || 'free'
+    },
+    totals: {
+      ...usageCountRow(totals),
+      averagePerDay: nonnegativeNumber(totals.averagePerDay, false)
+    },
+    byType: usageRows(payload.byType, 8, (row = {}) => ({
+      kind: String(row.kind || 'other').trim().toLowerCase().slice(0, 32) || 'other',
+      ...usageCountRow(row)
+    })),
+    daily: usageRows(payload.daily, 3660, (row = {}) => ({
+      date: validDate(row.date),
+      ...usageCountRow(row)
+    })).filter((row) => row.date),
+    byModel: usageRows(payload.byModel, 20, (row = {}) => ({
+      providerId: String(row.providerId || 'unknown').trim().toLowerCase().slice(0, 64) || 'unknown',
+      kind: String(row.kind || 'other').trim().toLowerCase().slice(0, 32) || 'other',
+      ...usageCountRow(row)
+    })),
+    updatedAt: String(payload.updatedAt || '').slice(0, 40)
+  };
+}
+
+export async function getUsageSummary(userId, range = '7d', fetchImpl = fetch) {
+  const normalizedRange = normalizeUsageRange(range);
+  const headers = serviceHeaders();
+  if (!headers) {
+    if (durableRequired()) throw serviceError('credit-service-not-configured', 'Durable usage reporting is not configured.');
+    return null;
+  }
+  const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/get_ai_usage_summary`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ p_user_id: userId, p_range: normalizedRange }),
+    signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
+  });
+  const payload = await responsePayload(response);
+  if (!response.ok) {
+    const code = isMissingCreditRpc(response, payload) ? 'credit-schema-missing' : 'usage-service-failed';
+    throw serviceError(code, 'Could not load AI usage.');
+  }
+  return publicUsageSummary(payload, normalizedRange);
 }
 
 export async function redeemUsageCode(userId, code, fetchImpl = fetch) {

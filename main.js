@@ -27,9 +27,9 @@ const { requestChat, discoverChatModels } = require('./lib/ai-chat-provider');
 const { PROVIDER_CATALOG_VERSION, providerCatalog } = require('./lib/provider-catalog');
 const { loadRuntimeConfig } = require('./lib/runtime-config');
 const { SupabaseAuth, createPkcePair } = require('./lib/supabase-auth');
-const { AiGatewayClient } = require('./lib/ai-gateway-client');
+const { AiGatewayClient, assertValidGlbBuffer } = require('./lib/ai-gateway-client');
 const { normalizeGatewayCatalog, assertGatewayProvider } = require('./lib/gateway-catalog');
-const { assertSafeLocalFile, sanitizeAiRequest } = require('./lib/privacy-guard');
+const { assertSafeLocalFile, assertPromptHasNoSecrets, sanitizeAiRequest } = require('./lib/privacy-guard');
 const { activate: activateApp, getActivationStatus } = require('./lib/activation');
 const { quoteMediaCredits, publicCreditPricing } = require('./lib/credit-pricing');
 const { launchAdobeMedia } = require('./lib/adobe-launcher');
@@ -41,7 +41,11 @@ const { normalizeLanguage, translate: translateLanguage } = require('./lib/i18n'
 const DEFAULT_CATALOG_IMAGE = providerCatalog('image')[0];
 const DEFAULT_CATALOG_VIDEO = providerCatalog('video')[0];
 const DEFAULT_CATALOG_CHAT = providerCatalog('chat')[0];
-const AI_IMAGE_SIZES = new Set(['1K', '2K', '4K', 'original']);
+const AI_IMAGE_SIZES = new Set([
+  '1K', '2K', '4K', 'original',
+  '1024x1024', '1536x1024', '1024x1536', 'auto'
+]);
+const AI_IMAGE_QUALITIES = new Set(['low', 'medium', 'high', 'auto']);
 const AI_IMAGE_RATIOS = new Set([
   'auto', '1:1', '16:9', '9:16', '4:3', '3:4',
   '3:2', '2:3', '5:4', '4:5', '21:9'
@@ -135,6 +139,22 @@ let updaterState = {
   message: null
 };
 const transientAiAttachments = new Map();
+const butler3dTasks = new Map();
+const butler3dDownloads = new Map();
+const butlerVideoTasks = new Map();
+const butlerVideoDownloads = new Map();
+const MAX_BUTLER_IMAGE_BYTES = Math.floor(7.5 * 1024 * 1024);
+const MAX_BUTLER_VIDEO_BYTES = 48 * 1024 * 1024;
+const MAX_BUTLER_VIDEO_OUTPUT_BYTES = 256 * 1024 * 1024;
+const MAX_BUTLER_PREVIEW_BYTES = 16 * 1024 * 1024;
+const BUTLER_VIDEO_TOOL_ID = 'topaz-video-upscale';
+const BUTLER_VIDEO_MIME_BY_EXTENSION = Object.freeze({
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm',
+  '.mkv': 'video/x-matroska'
+});
 
 function writeStartupDiagnostic(stage, detail = '') {
   const diagnosticPath = String(process.env.MESSS_DIAGNOSTIC_LOG || '').trim();
@@ -599,6 +619,7 @@ function fileToPayload(f) {
       providerId: f.aiGeneration.providerId,
       aspectRatio: f.aiGeneration.aspectRatio,
       size: f.aiGeneration.size,
+      quality: f.aiGeneration.quality || null,
       resolution: f.aiGeneration.resolution || null,
       duration: f.aiGeneration.duration,
       requestedDuration: f.aiGeneration.requestedDuration || null,
@@ -615,7 +636,8 @@ function fileToPayload(f) {
     // images (thumbnails.isThumbnailableExt gates that on the main-process
     // side too), but it's harmless to always include the URL since the
     // renderer only ever uses it where it already checks isImageExt.
-    thumbUrl: 'messs-thumb://' + f.id
+    thumbUrl: 'messs-thumb://' + f.id,
+    ...(ext === '.glb' ? { modelPreviewUrl: `messs-preview://${f.id}/model` } : {})
   };
 }
 
@@ -678,7 +700,7 @@ const MIME_BY_EXTENSION = {
   '.pdf': 'application/pdf', '.txt': 'text/plain', '.md': 'text/markdown',
   '.json': 'application/json', '.csv': 'text/csv', '.zip': 'application/zip',
   '.7z': 'application/x-7z-compressed', '.rar': 'application/vnd.rar',
-  '.tar': 'application/x-tar', '.gz': 'application/gzip'
+  '.tar': 'application/x-tar', '.gz': 'application/gzip', '.glb': 'model/gltf-binary'
 };
 const ARCHIVE_EXTENSIONS = new Set(['.zip', '.7z', '.rar', '.tar', '.gz', '.bz2', '.xz', '.zst', '.iso', '.dmg', '.img']);
 
@@ -737,11 +759,18 @@ function buildUnknownFilePreview(file) {
     const bytesRead = fs.readSync(fd, sample, 0, sample.length, 0);
     const content = sample.subarray(0, bytesRead);
     const nullBytes = content.reduce((count, byte) => count + (byte === 0 ? 1 : 0), 0);
-    const decoded = content.toString('utf8');
+    const decodedResult = preview.decodeTextBuffer(content);
+    const decoded = decodedResult.text;
     const replacementRatio = decoded.length ? (decoded.match(/\uFFFD/g) || []).length / decoded.length : 0;
-    const looksLikeText = nullBytes === 0 && replacementRatio < 0.01;
+    const controlRatio = decoded.length
+      ? (decoded.match(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g) || []).length / decoded.length
+      : 0;
+    const looksLikeText = nullBytes === 0 && replacementRatio < 0.03 && controlRatio < 0.02;
     if (looksLikeText) {
-      return { type: 'text', content: decoded, name: file.name, partial: stat.size > bytesRead };
+      return {
+        type: 'text', content: decoded, encoding: decodedResult.encoding,
+        name: file.name, partial: stat.size > bytesRead
+      };
     }
     const ext = path.extname(file.name).toLowerCase();
     return {
@@ -889,6 +918,345 @@ async function fileToSafeAiDataUrl(id) {
   const ext = String(file.ext || path.extname(file.name)).toLowerCase();
   if (!preview.isImageExt(ext)) return null;
   return sanitizeImageForAi(file.storedPath);
+}
+
+function orientedImageDimensions(metadata) {
+  let width = Number(metadata && metadata.width) || 0;
+  let height = Number(metadata && metadata.height) || 0;
+  if ([5, 6, 7, 8].includes(Number(metadata && metadata.orientation))) {
+    [width, height] = [height, width];
+  }
+  return { width, height };
+}
+
+async function sanitizeImageForButler(input, options = {}) {
+  if (!sharp) {
+    const error = new Error('Secure image sanitization is unavailable in this build.');
+    error.code = 'privacy-sanitizer-unavailable';
+    throw error;
+  }
+  const source = Buffer.isBuffer(input) ? input : String(input || '');
+  if ((Buffer.isBuffer(source) && !source.length) || (!Buffer.isBuffer(source) && !source)) {
+    const error = new Error('The image is empty.');
+    error.code = 'invalid-butler-image';
+    throw error;
+  }
+
+  const sharpOptions = {
+    failOn: 'error',
+    limitInputPixels: 512 * 1024 * 1024,
+    sequentialRead: true
+  };
+  let metadata;
+  try {
+    metadata = await sharp(source, sharpOptions).metadata();
+  } catch (cause) {
+    const error = new Error('The selected file is not a valid image.');
+    error.code = 'invalid-butler-image';
+    throw error;
+  }
+  const dimensions = orientedImageDimensions(metadata);
+  if (!(dimensions.width > 0 && dimensions.height > 0)) {
+    const error = new Error('The selected image dimensions are invalid.');
+    error.code = 'invalid-butler-image';
+    throw error;
+  }
+
+  let scale = Math.min(1, 5000 / Math.max(dimensions.width, dimensions.height));
+  if (options.requireModelDimensions && Math.min(dimensions.width, dimensions.height) * scale < 128) {
+    scale = 128 / Math.min(dimensions.width, dimensions.height);
+    if (Math.max(dimensions.width, dimensions.height) * scale > 5000) {
+      const error = new Error('The image aspect ratio is outside the supported 3D range.');
+      error.code = 'unsupported-image-dimensions';
+      throw error;
+    }
+  }
+
+  const baseWidth = Math.max(1, Math.round(dimensions.width * scale));
+  const baseHeight = Math.max(1, Math.round(dimensions.height * scale));
+  const attempts = [
+    { ratio: 1, quality: 94 },
+    { ratio: 1, quality: 84 },
+    { ratio: 1, quality: 72 },
+    { ratio: 0.82, quality: 82 },
+    { ratio: 0.66, quality: 76 },
+    { ratio: 0.5, quality: 70 },
+    { ratio: 0.38, quality: 62 }
+  ];
+  const pipeline = sharp(source, sharpOptions).rotate().flatten({ background: '#ffffff' });
+  for (const attempt of attempts) {
+    const width = Math.max(1, Math.round(baseWidth * attempt.ratio));
+    const height = Math.max(1, Math.round(baseHeight * attempt.ratio));
+    if (options.requireModelDimensions && Math.min(width, height) < 128) continue;
+    const buffer = await pipeline.clone()
+      .resize({ width, height, fit: 'fill' })
+      .jpeg({ quality: attempt.quality, chromaSubsampling: '4:4:4', mozjpeg: true })
+      .toBuffer();
+    if (buffer.length <= MAX_BUTLER_IMAGE_BYTES) {
+      return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+    }
+  }
+  const error = new Error('The sanitized image still exceeds the Butler upload size limit.');
+  error.code = 'butler-image-too-large';
+  throw error;
+}
+
+async function butlerSourceImage(fileId, options = {}) {
+  const normalizedId = String(fileId || '').trim();
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(normalizedId)) {
+    const error = new Error('The selected image could not be found.');
+    error.code = 'file-not-found';
+    throw error;
+  }
+  const file = store.getFile(normalizedId);
+  if (!file || !file.storedPath) {
+    const error = new Error('The selected image could not be found.');
+    error.code = 'file-not-found';
+    throw error;
+  }
+  let archivedPath;
+  try {
+    const [libraryRoot, sourcePath, sourceStat] = await Promise.all([
+      fs.promises.realpath(store.libraryDir),
+      fs.promises.realpath(file.storedPath),
+      fs.promises.lstat(file.storedPath)
+    ]);
+    const relative = path.relative(libraryRoot, sourcePath);
+    if (!sourceStat.isFile() || sourceStat.isSymbolicLink() || !relative || relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) {
+      const error = new Error('Only archived library images can be sent to Butler.');
+      error.code = 'privacy-blocked';
+      throw error;
+    }
+    archivedPath = sourcePath;
+  } catch (cause) {
+    if (cause && cause.code === 'privacy-blocked') throw cause;
+    const error = new Error('The archived image could not be read safely.');
+    error.code = 'file-not-found';
+    throw error;
+  }
+  assertSafeLocalFile(file);
+  const ext = String(file.ext || path.extname(file.name)).toLowerCase();
+  if (!preview.isImageExt(ext)) {
+    const error = new Error('Butler requires an image file.');
+    error.code = 'unsupported-file-type';
+    throw error;
+  }
+  return {
+    file,
+    imageDataUrl: await sanitizeImageForButler(archivedPath, options)
+  };
+}
+
+function validateButlerVideoBuffer(buffer, mimeType) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 12 || buffer.length > MAX_BUTLER_VIDEO_OUTPUT_BYTES) {
+    const error = new Error('The selected video is invalid or exceeds the supported size.');
+    error.code = buffer && buffer.length > MAX_BUTLER_VIDEO_OUTPUT_BYTES ? 'media-too-large' : 'invalid-butler-video';
+    throw error;
+  }
+  const isIsoMedia = buffer.toString('ascii', 4, 8) === 'ftyp';
+  const isEbml = buffer[0] === 0x1a && buffer[1] === 0x45 && buffer[2] === 0xdf && buffer[3] === 0xa3;
+  const expectsEbml = mimeType === 'video/webm' || mimeType === 'video/x-matroska';
+  if ((!isIsoMedia && !isEbml) || (expectsEbml && !isEbml) || (!expectsEbml && !isIsoMedia)) {
+    const error = new Error('The selected video container is not supported.');
+    error.code = 'invalid-butler-video';
+    throw error;
+  }
+  return true;
+}
+
+function evenVideoDimension(value) {
+  return Math.max(128, Math.round(Number(value) / 2) * 2);
+}
+
+function normalizeButlerVideoOptions(metadata, requested = {}) {
+  const sourceWidth = Math.round(Number(metadata && metadata.sourceWidth));
+  const sourceHeight = Math.round(Number(metadata && metadata.sourceHeight));
+  if (!(sourceWidth > 0 && sourceHeight > 0) || sourceWidth > 7680 || sourceHeight > 7680 || sourceWidth * sourceHeight > 33_177_600) {
+    const error = new Error('The source video dimensions are outside the supported range.');
+    error.code = 'unsupported-video-dimensions';
+    throw error;
+  }
+  const input = requested && typeof requested === 'object' && !Array.isArray(requested) ? requested : {};
+  const requestedOutput = input.output && typeof input.output === 'object' && !Array.isArray(input.output)
+    ? input.output
+    : {};
+  const requestedResolution = requestedOutput.resolution && typeof requestedOutput.resolution === 'object'
+    ? requestedOutput.resolution
+    : {};
+  const portrait = sourceHeight > sourceWidth;
+  const defaultBounds = portrait ? { width: 2160, height: 3840 } : { width: 3840, height: 2160 };
+  const boundWidth = Math.max(128, Math.min(7680, Math.round(Number(requestedResolution.width) || defaultBounds.width)));
+  const boundHeight = Math.max(128, Math.min(7680, Math.round(Number(requestedResolution.height) || defaultBounds.height)));
+  let scale = Math.max(1, Math.min(boundWidth / sourceWidth, boundHeight / sourceHeight));
+  scale = Math.max(scale, 128 / sourceWidth, 128 / sourceHeight);
+  const width = evenVideoDimension(sourceWidth * scale);
+  const height = evenVideoDimension(sourceHeight * scale);
+  if (width > 7680 || height > 7680 || width * height > 33_177_600) {
+    const error = new Error('The requested video output exceeds the 8K safety limit.');
+    error.code = 'unsupported-video-dimensions';
+    throw error;
+  }
+  const frameRate = Math.max(1, Math.min(240, Math.round(Number(requestedOutput.frameRate) || 30)));
+  const videoEncoder = ['H264', 'H265'].includes(String(requestedOutput.videoEncoder || '').trim())
+    ? String(requestedOutput.videoEncoder).trim()
+    : 'H264';
+  return {
+    modelId: BUTLER_VIDEO_TOOL_ID,
+    filters: [{ model: 'prob-4' }],
+    output: {
+      resolution: { width, height },
+      frameRate,
+      audioCodec: 'AAC',
+      audioTransfer: 'Copy',
+      videoEncoder,
+      videoProfile: 'Main',
+      dynamicCompressionLevel: 'High',
+      cropToFit: false,
+      container: 'mp4'
+    },
+    sourceDuration: Math.max(0, Math.min(21_600, Number(metadata && metadata.sourceDuration) || 0))
+  };
+}
+
+async function butlerSourceVideo(fileId, requestedOptions = {}) {
+  const normalizedId = String(fileId || '').trim();
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(normalizedId)) {
+    const error = new Error('The selected video could not be found.');
+    error.code = 'file-not-found';
+    throw error;
+  }
+  const file = store.getFile(normalizedId);
+  if (!file || !file.storedPath) {
+    const error = new Error('The selected video could not be found.');
+    error.code = 'file-not-found';
+    throw error;
+  }
+  let archivedPath;
+  let archivedStat;
+  try {
+    const [libraryRoot, sourcePath, sourceStat] = await Promise.all([
+      fs.promises.realpath(store.libraryDir),
+      fs.promises.realpath(file.storedPath),
+      fs.promises.lstat(file.storedPath)
+    ]);
+    const relative = path.relative(libraryRoot, sourcePath);
+    if (!sourceStat.isFile() || sourceStat.isSymbolicLink() || !relative || relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) {
+      const error = new Error('Only archived library videos can be sent to Butler.');
+      error.code = 'privacy-blocked';
+      throw error;
+    }
+    if (sourceStat.size <= 0 || sourceStat.size > MAX_BUTLER_VIDEO_BYTES) {
+      const error = new Error('The selected video exceeds the Butler upload size limit.');
+      error.code = 'butler-video-too-large';
+      throw error;
+    }
+    archivedPath = sourcePath;
+    archivedStat = sourceStat;
+  } catch (cause) {
+    if (cause && ['privacy-blocked', 'butler-video-too-large'].includes(cause.code)) throw cause;
+    const error = new Error('The archived video could not be read safely.');
+    error.code = 'file-not-found';
+    throw error;
+  }
+  assertSafeLocalFile(file);
+  const extension = String(file.ext || path.extname(file.name)).toLowerCase();
+  const mimeType = BUTLER_VIDEO_MIME_BY_EXTENSION[extension];
+  if (!mimeType) {
+    const error = new Error('Butler video enhancement requires MP4, MOV, WebM, or Matroska video.');
+    error.code = 'unsupported-video-type';
+    throw error;
+  }
+  const buffer = await fs.promises.readFile(archivedPath);
+  const currentStat = await fs.promises.lstat(archivedPath);
+  if (!currentStat.isFile() || currentStat.isSymbolicLink() || currentStat.size !== archivedStat.size || buffer.length !== archivedStat.size) {
+    const error = new Error('The archived video changed while it was being prepared.');
+    error.code = 'invalid-butler-video';
+    throw error;
+  }
+  validateButlerVideoBuffer(buffer, mimeType);
+  const probed = await probeVideoMetadata(archivedPath);
+  const metadata = {
+    sourceWidth: Number(probed && probed.sourceWidth) || Number(file.sourceWidth) || 0,
+    sourceHeight: Number(probed && probed.sourceHeight) || Number(file.sourceHeight) || 0,
+    sourceDuration: Number(probed && probed.sourceDuration) || Number(file.sourceDuration) || 0
+  };
+  const toolOptions = normalizeButlerVideoOptions(metadata, requestedOptions);
+  return {
+    file,
+    metadata,
+    toolOptions,
+    videoDataUrl: `data:${mimeType};base64,${buffer.toString('base64')}`
+  };
+}
+
+function normalizeButlerPreviewUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    const host = url.hostname.toLowerCase();
+    if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443') || url.hash) return '';
+    const is302File = host === 'file.302.ai' || host.endsWith('.file.302.ai');
+    const isTencentCos = host.endsWith('.cos.myqcloud.com')
+      || /\.cos\.[a-z0-9-]+\.myqcloud\.com$/.test(host)
+      || host.endsWith('.tencentcos.cn')
+      || /\.cos\.[a-z0-9-]+\.tencentcos\.cn$/.test(host);
+    return is302File || isTencentCos ? url.toString() : '';
+  } catch (error) {
+    return '';
+  }
+}
+
+async function readBoundedFetchBuffer(response, maximumBytes) {
+  const declaredLength = Number(response.headers && response.headers.get && response.headers.get('content-length')) || 0;
+  if (declaredLength > maximumBytes) throw new Error('preview-too-large');
+  if (!response.body || typeof response.body[Symbol.asyncIterator] !== 'function') {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > maximumBytes) throw new Error('preview-too-large');
+    return buffer;
+  }
+  const chunks = [];
+  let received = 0;
+  for await (const chunk of response.body) {
+    const part = Buffer.from(chunk);
+    received += part.length;
+    if (received > maximumBytes) {
+      try { await response.body.cancel(); } catch (error) {}
+      throw new Error('preview-too-large');
+    }
+    chunks.push(part);
+  }
+  return Buffer.concat(chunks, received);
+}
+
+async function downloadButlerPreview(previewUrl) {
+  let currentUrl = normalizeButlerPreviewUrl(previewUrl);
+  if (!currentUrl) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  if (typeof timer.unref === 'function') timer.unref();
+  try {
+    for (let redirects = 0; redirects <= 3; redirects += 1) {
+      const response = await appFetch(currentUrl, {
+        method: 'GET',
+        headers: { Accept: 'image/png,image/jpeg,image/webp' },
+        redirect: 'manual',
+        signal: controller.signal
+      });
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        if (redirects === 3) return null;
+        const location = response.headers && response.headers.get && response.headers.get('location');
+        currentUrl = location ? normalizeButlerPreviewUrl(new URL(location, currentUrl).toString()) : '';
+        if (!currentUrl) return null;
+        continue;
+      }
+      if (!response.ok) return null;
+      return readBoundedFetchBuffer(response, MAX_BUTLER_PREVIEW_BYTES);
+    }
+  } catch (error) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+  return null;
 }
 
 async function resolveAiReferenceUrls(request, fileIdField) {
@@ -1430,7 +1798,7 @@ function assertAiTransportReady() {
 
 async function generateAiMediaBuffer(kind, prompt, options = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20 * 60 * 1000);
+  const timeout = setTimeout(() => controller.abort(), kind === 'video' ? 22 * 60 * 1000 : 20 * 60 * 1000);
   try {
     if (assertAiTransportReady() === 'gateway') {
       await requireGatewayProvider(kind, kind === 'video' ? options.videoProviderId : options.imageProviderId);
@@ -1438,6 +1806,7 @@ async function generateAiMediaBuffer(kind, prompt, options = {}) {
         prompt,
         providerId: kind === 'video' ? options.videoProviderId : options.imageProviderId,
         size: options.size,
+        quality: options.quality,
         resolution: options.resolution,
         aspectRatio: options.aspectRatio,
         sourceWidth: options.sourceWidth,
@@ -1632,6 +2001,212 @@ function detectGeneratedVideoExtension(buffer) {
   return 'mp4';
 }
 
+function makeButlerOutputName(sourceFile, operation, extension) {
+  const sourceExt = path.extname(String(sourceFile && sourceFile.name || ''));
+  const cleanBase = path.basename(String(sourceFile && sourceFile.name || ''), sourceExt)
+    .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 64) || 'Image';
+  const suffix = operation === 'remove-background' ? 'Background Removed' : '3D';
+  const existingNames = new Set(store.data.files.map((file) => file.name));
+  let name = `${cleanBase} - ${suffix}.${extension}`;
+  let number = 2;
+  while (existingNames.has(name)) {
+    name = `${cleanBase} - ${suffix} (${number}).${extension}`;
+    number += 1;
+  }
+  return name;
+}
+
+async function sanitizeButlerBackgroundPng(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 24 || buffer.length > 64 * 1024 * 1024 ||
+      !buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
+    const error = new Error('The background service returned an invalid PNG image.');
+    error.code = buffer && buffer.length > 64 * 1024 * 1024 ? 'media-too-large' : 'invalid-background-image';
+    throw error;
+  }
+  if (!sharp) {
+    const error = new Error('Secure image validation is unavailable in this build.');
+    error.code = 'privacy-sanitizer-unavailable';
+    throw error;
+  }
+  try {
+    const pipeline = sharp(buffer, {
+      failOn: 'error',
+      limitInputPixels: 512 * 1024 * 1024,
+      sequentialRead: true
+    });
+    const metadata = await pipeline.metadata();
+    if (metadata.format !== 'png' || !metadata.hasAlpha || !(metadata.width > 0 && metadata.height > 0)) {
+      throw new Error('missing-alpha');
+    }
+    const canonical = await pipeline.png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer();
+    if (canonical.length > 64 * 1024 * 1024) {
+      const sizeError = new Error('The background removal result exceeds the download size limit.');
+      sizeError.code = 'media-too-large';
+      throw sizeError;
+    }
+    return canonical;
+  } catch (cause) {
+    if (cause && cause.code === 'media-too-large') throw cause;
+    const error = new Error('The background service returned an invalid transparent PNG image.');
+    error.code = 'invalid-background-image';
+    throw error;
+  }
+}
+
+async function addButlerOutputFile(buffer, sourceFile, operation) {
+  const isModel = operation === 'generate-3d';
+  if (isModel) assertValidGlbBuffer(buffer);
+  const extension = isModel ? 'glb' : 'png';
+  const id = crypto.randomUUID();
+  const name = makeButlerOutputName(sourceFile, operation, extension);
+  const canvas = store.data.canvases.find((entry) => entry.id === sourceFile.canvasId) || store.data.canvases[0];
+  const archiveDir = canvasStorageDir(canvas);
+  await fs.promises.mkdir(archiveDir, { recursive: true });
+  const storedPath = path.join(archiveDir, `${id}.${extension}`);
+  let record = null;
+  try {
+    await fs.promises.writeFile(storedPath, buffer, { mode: 0o600, flag: 'wx' });
+    const stat = await fs.promises.stat(storedPath);
+    const sourceDimensions = isModel ? null : await readSourceMediaMetadata(storedPath, '.png');
+    record = {
+      id,
+      name,
+      originalPath: `Butler ${operation}`,
+      storedPath,
+      importedAt: new Date().toISOString(),
+      sourceFolder: 'Butler',
+      sizeBytes: stat.size,
+      ...sourceDimensions,
+      ...(isModel
+        ? { mimeType: 'model/gltf-binary', archiveKind: 'model' }
+        : classifyArchiveFile(name)),
+      fingerprint: await makeFileFingerprint(storedPath, stat),
+      butlerOperation: {
+        kind: operation,
+        sourceFileId: sourceFile.id,
+        createdAt: new Date().toISOString()
+      },
+      folderId: sourceFile.folderId || null,
+      canvasId: canvas ? canvas.id : null
+    };
+    store.addFile(record);
+    await store.mirrorFileToCustomPathAsync(record);
+    store.scheduleSave();
+    return record;
+  } catch (error) {
+    if (record) store.removeFileById(record.id);
+    await fs.promises.rm(storedPath, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+function makeButlerVideoOutputName(sourceFile, extension) {
+  const sourceExt = path.extname(String(sourceFile && sourceFile.name || ''));
+  const cleanBase = path.basename(String(sourceFile && sourceFile.name || ''), sourceExt)
+    .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 64) || 'Video';
+  const existingNames = new Set(store.data.files.map((file) => file.name));
+  let name = `${cleanBase} - Enhanced.${extension}`;
+  let number = 2;
+  while (existingNames.has(name)) {
+    name = `${cleanBase} - Enhanced (${number}).${extension}`;
+    number += 1;
+  }
+  return name;
+}
+
+async function addButlerVideoOutputFile(buffer, sourceFile, operationDetails = {}) {
+  if (!Buffer.isBuffer(buffer) || buffer.length > MAX_BUTLER_VIDEO_OUTPUT_BYTES) {
+    const error = new Error('The enhanced video exceeds the safe download size.');
+    error.code = 'media-too-large';
+    throw error;
+  }
+  const extension = detectGeneratedVideoExtension(buffer);
+  const mimeType = extension === 'mov' ? 'video/quicktime' : extension === 'webm' ? 'video/webm' : 'video/mp4';
+  validateButlerVideoBuffer(buffer, mimeType);
+  const id = crypto.randomUUID();
+  const name = makeButlerVideoOutputName(sourceFile, extension);
+  const canvas = store.data.canvases.find((entry) => entry.id === sourceFile.canvasId) || store.data.canvases[0];
+  const archiveDir = canvasStorageDir(canvas);
+  await fs.promises.mkdir(archiveDir, { recursive: true });
+  const storedPath = path.join(archiveDir, `${id}.${extension}`);
+  let record = null;
+  try {
+    await fs.promises.writeFile(storedPath, buffer, { mode: 0o600, flag: 'wx' });
+    const stat = await fs.promises.stat(storedPath);
+    const sourceMetadata = await readSourceMediaMetadata(storedPath, `.${extension}`);
+    record = {
+      id,
+      name,
+      originalPath: 'Butler video-upscale',
+      storedPath,
+      importedAt: new Date().toISOString(),
+      sourceFolder: 'Butler',
+      sizeBytes: stat.size,
+      ...sourceMetadata,
+      ...(sourceMetadata ? { mediaMetadataVersion: 1 } : {}),
+      ...classifyArchiveFile(name),
+      fingerprint: await makeFileFingerprint(storedPath, stat),
+      butlerOperation: {
+        kind: 'video-upscale',
+        modelId: BUTLER_VIDEO_TOOL_ID,
+        sourceFileId: sourceFile.id || null,
+        output: operationDetails.output || null,
+        credits: Number.isFinite(Number(operationDetails.credits)) ? Number(operationDetails.credits) : null,
+        providerCost: Number.isFinite(Number(operationDetails.providerCost)) ? Number(operationDetails.providerCost) : null,
+        createdAt: new Date().toISOString()
+      },
+      folderId: sourceFile.folderId || null,
+      canvasId: canvas ? canvas.id : null
+    };
+    store.addFile(record);
+    await store.mirrorFileToCustomPathAsync(record);
+    store.scheduleSave();
+    return record;
+  } catch (error) {
+    if (record) store.removeFileById(record.id);
+    await fs.promises.rm(storedPath, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+async function writeButlerModelPreview(fileId, sourceFile, previewUrl) {
+  if (!sharp || !sourceFile || !sourceFile.storedPath) return false;
+  const cacheDir = path.join(previewCacheDir, fileId);
+  const outputPath = path.join(cacheDir, 'model-preview.png');
+  const temporaryPath = path.join(cacheDir, `.model-preview-${crypto.randomUUID()}.tmp.png`);
+  await fs.promises.mkdir(cacheDir, { recursive: true });
+  const remoteBuffer = await downloadButlerPreview(previewUrl);
+  const candidates = remoteBuffer ? [remoteBuffer, sourceFile.storedPath] : [sourceFile.storedPath];
+  try {
+    for (const candidate of candidates) {
+      try {
+        await sharp(candidate, {
+          failOn: 'error',
+          limitInputPixels: 512 * 1024 * 1024,
+          sequentialRead: true
+        })
+          .rotate()
+          .resize({ width: 1280, height: 1280, fit: 'inside', withoutEnlargement: true })
+          .png({ compressionLevel: 9, adaptiveFiltering: true })
+          .toFile(temporaryPath);
+        await fs.promises.rename(temporaryPath, outputPath);
+        return true;
+      } catch (error) {
+        await fs.promises.rm(temporaryPath, { force: true }).catch(() => {});
+      }
+    }
+  } finally {
+    await fs.promises.rm(temporaryPath, { force: true }).catch(() => {});
+  }
+  return false;
+}
+
 async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, request = {}) {
   const id = crypto.randomUUID();
   const mediaKind = kind === 'video' ? 'video' : 'image';
@@ -1678,6 +2253,9 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
       providerId: providerId.slice(0, 80) || null,
       aspectRatio: String(request.aspectRatio || 'auto').trim().slice(0, 32) || 'auto',
       size: String(request.size || 'auto').trim().slice(0, 32) || 'auto',
+      quality: mediaKind === 'image'
+        ? String(request.quality || 'auto').trim().toLowerCase().slice(0, 16)
+        : null,
       resolution: mediaKind === 'video'
         ? String(request.resolution || request.size || 'auto').trim().slice(0, 32)
         : null,
@@ -1878,13 +2456,18 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   if (kind === 'image') {
     const size = String(request.size || '').trim();
     const aspectRatio = String(request.aspectRatio || '').trim();
+    const quality = String(request.quality || 'auto').trim().toLowerCase();
     if (!AI_IMAGE_SIZES.has(size)) {
       throw invalidAiMediaOption('invalid-size', 'The selected image resolution is not supported.');
     }
     if (!AI_IMAGE_RATIOS.has(aspectRatio)) {
       throw invalidAiMediaOption('invalid-aspect-ratio', 'The selected image aspect ratio is not supported.');
     }
+    if (!AI_IMAGE_QUALITIES.has(quality)) {
+      throw invalidAiMediaOption('invalid-quality', 'The selected image quality is not supported.');
+    }
     normalized.size = size;
+    normalized.quality = quality;
     normalized.aspectRatio = aspectRatio;
     return normalized;
   }
@@ -1949,6 +2532,156 @@ async function chooseProfileAvatar() {
   } finally {
     await fs.promises.unlink(temporaryPath).catch(() => {});
   }
+}
+
+const BUTLER_3D_PROVIDERS = new Set(['hunyuan3d', 'hyper3d']);
+
+function normalizeButler3dProvider(value) {
+  const providerId = String(value || 'hunyuan3d').trim().toLowerCase();
+  if (!BUTLER_3D_PROVIDERS.has(providerId)) {
+    const error = new Error('The selected 3D provider is not supported.');
+    error.code = 'invalid-3d-provider';
+    throw error;
+  }
+  return providerId;
+}
+
+function normalizeButlerTaskToken(value) {
+  const taskToken = String(value || '').trim();
+  if (!/^[A-Za-z0-9._~-]{16,2048}$/.test(taskToken)) {
+    const error = new Error('The 3D task token is invalid.');
+    error.code = 'invalid-task-token';
+    throw error;
+  }
+  return taskToken;
+}
+
+function normalizeButler3dStatus(payload) {
+  const raw = String(payload && payload.status || '').trim().toLowerCase();
+  const status = raw === 'done' || raw === 'completed' || raw === 'success'
+    ? 'succeeded'
+    : raw === 'running' || raw === 'in_progress' || raw === 'in-progress'
+      ? 'processing'
+      : raw;
+  if (!['queued', 'processing', 'succeeded', 'failed'].includes(status)) {
+    const error = new Error('The 3D gateway returned an invalid task status.');
+    error.code = 'invalid-gateway-response';
+    throw error;
+  }
+  const retryAfterMs = ['succeeded', 'failed'].includes(status)
+    ? 0
+    : Math.max(1_500, Math.min(30_000, Number(payload && payload.retryAfterMs) || 5_000));
+  const previewUrl = normalizeButlerPreviewUrl(
+    payload && (payload.previewUrl || payload.previewImageUrl)
+  );
+  return {
+    status,
+    retryAfterMs,
+    ...(previewUrl ? { previewUrl } : {}),
+    ...(status === 'failed' ? { message: 'The 3D generation task failed.' } : {})
+  };
+}
+
+function rememberButler3dTask(taskToken, patch = {}) {
+  const previous = butler3dTasks.get(taskToken) || {};
+  butler3dTasks.delete(taskToken);
+  butler3dTasks.set(taskToken, { ...previous, ...patch, updatedAt: Date.now() });
+  while (butler3dTasks.size > 128) {
+    butler3dTasks.delete(butler3dTasks.keys().next().value);
+  }
+  return butler3dTasks.get(taskToken);
+}
+
+function normalizeButlerVideoModel(value) {
+  const modelId = String(value || BUTLER_VIDEO_TOOL_ID).trim().toLowerCase();
+  if (modelId !== BUTLER_VIDEO_TOOL_ID) {
+    const error = new Error('The selected video tool is not supported.');
+    error.code = 'invalid-video-tool';
+    throw error;
+  }
+  return modelId;
+}
+
+function normalizeButlerVideoTaskToken(value) {
+  const taskToken = String(value || '').trim();
+  if (!/^[A-Za-z0-9._~-]{16,4096}$/.test(taskToken)) {
+    const error = new Error('The video enhancement task is invalid.');
+    error.code = 'invalid-task-token';
+    throw error;
+  }
+  return taskToken;
+}
+
+function normalizeButlerVideoStatus(payload) {
+  const raw = String(payload && payload.status || '').trim().toLowerCase().replace(/[ -]+/g, '_');
+  const status = ['done', 'completed', 'complete', 'success'].includes(raw)
+    ? 'succeeded'
+    : ['running', 'in_progress', 'encoding', 'enhancing'].includes(raw)
+      ? 'processing'
+      : raw;
+  if (!['queued', 'processing', 'succeeded', 'failed'].includes(status)) {
+    const error = new Error('The video gateway returned an invalid task status.');
+    error.code = 'invalid-gateway-response';
+    throw error;
+  }
+  const retryAfterMs = ['succeeded', 'failed'].includes(status)
+    ? 0
+    : Math.max(1_500, Math.min(30_000, Number(payload && payload.retryAfterMs) || 5_000));
+  const progress = Math.max(0, Math.min(100, Math.round(Number(payload && payload.progress) || (status === 'succeeded' ? 100 : 0))));
+  const numeric = (key) => Number.isFinite(Number(payload && payload[key])) ? Number(payload[key]) : undefined;
+  return {
+    status,
+    progress,
+    retryAfterMs,
+    ...(numeric('credits') !== undefined ? { credits: numeric('credits') } : {}),
+    ...(numeric('providerCost') !== undefined ? { providerCost: numeric('providerCost') } : {}),
+    ...(numeric('creditsCharged') !== undefined ? { creditsCharged: numeric('creditsCharged') } : {}),
+    ...(numeric('creditsReleased') !== undefined ? { creditsReleased: numeric('creditsReleased') } : {}),
+    ...(numeric('availableCredits') !== undefined ? { availableCredits: numeric('availableCredits') } : {}),
+    ...(status === 'failed' ? { message: String(payload && payload.errorMessage || 'Video enhancement failed.') } : {})
+  };
+}
+
+function rememberButlerVideoTask(taskToken, patch = {}) {
+  const previous = butlerVideoTasks.get(taskToken) || {};
+  butlerVideoTasks.delete(taskToken);
+  butlerVideoTasks.set(taskToken, { ...previous, ...patch, updatedAt: Date.now() });
+  while (butlerVideoTasks.size > 128) {
+    butlerVideoTasks.delete(butlerVideoTasks.keys().next().value);
+  }
+  return butlerVideoTasks.get(taskToken);
+}
+
+function butlerFailure(error, fallbackMessage) {
+  const rawCode = String(error && error.code || 'butler-request-failed');
+  const reason = /^[a-z0-9-]{1,80}$/.test(rawCode) ? rawCode : 'butler-request-failed';
+  const knownMessages = {
+    'auth-required': 'Sign in to use Butler.',
+    'gateway-not-configured': 'Butler is not configured in this build.',
+    'gateway-timeout': 'Butler timed out. Please try again.',
+    'file-not-found': 'The selected image could not be found.',
+    'privacy-blocked': 'Only archived library images can be sent to Butler.',
+    'unsupported-file-type': 'Butler requires an image file.',
+    'unsupported-image-dimensions': 'The image proportions are outside the supported 3D range.',
+    'butler-image-too-large': 'The image could not be reduced to the supported upload size.',
+    'invalid-butler-image': 'The selected image could not be prepared safely.',
+    'invalid-3d-provider': 'The selected 3D provider is not supported.',
+    'invalid-task-token': 'The 3D task is invalid.',
+    'invalid-glb': 'The 3D provider returned an invalid model file.',
+    'invalid-background-image': 'The background service returned an invalid image.',
+    'unsupported-video-type': 'Video enhancement supports MP4, MOV, WebM, and Matroska files.',
+    'unsupported-video-dimensions': 'The video dimensions are outside the supported range.',
+    'butler-video-too-large': 'The video exceeds the Butler upload size limit.',
+    'invalid-butler-video': 'The selected video could not be prepared safely.',
+    'invalid-video-tool': 'The selected video tool is not supported.',
+    'video-tool-task-not-found': 'The video enhancement task was not found or has expired.',
+    'video-tool-task-not-ready': 'The enhanced video is not ready yet.',
+    'video-upscale-failed': 'Video enhancement failed.',
+    'insufficient-credits': 'There are not enough points for this video enhancement.',
+    'media-too-large': 'The generated result exceeds the safe download size.',
+    'rate-limited': 'Too many Butler requests. Please wait and try again.'
+  };
+  return { ok: false, reason, message: knownMessages[reason] || fallbackMessage };
 }
 
 function registerIpcHandlers() {
@@ -2181,6 +2914,23 @@ function registerIpcHandlers() {
   ipcMain.handle('membership:getSnapshot', async () => {
     await syncGatewayAccount();
     return membershipService.getSnapshot();
+  });
+
+  ipcMain.handle('membership:getUsageSummary', async (_evt, range = '7d') => {
+    const session = supabaseAuth.getPublicSession();
+    if (!session || !session.authenticated || !session.user) {
+      return { authenticated: false, summary: null };
+    }
+    const summary = await aiGateway.getUsageSummary(range);
+    return {
+      authenticated: true,
+      user: {
+        id: session.user.id,
+        email: session.user.email || null,
+        displayName: session.user.displayName || session.user.display_name || null
+      },
+      summary
+    };
   });
 
   ipcMain.handle('membership:checkFeature', (_evt, feature) => {
@@ -2466,6 +3216,263 @@ function registerIpcHandlers() {
     return { imported: importedNow, unlocked: Array.from(unlockedKeys) };
   });
 
+  ipcMain.handle('butler:removeBackground', async (_evt, fileId) => {
+    try {
+      if (!aiGateway || !aiGateway.isConfigured()) {
+        const error = new Error('Butler is not configured.');
+        error.code = 'gateway-not-configured';
+        throw error;
+      }
+      const source = await butlerSourceImage(fileId);
+      const responseBuffer = await aiGateway.removeBackground(source.imageDataUrl);
+      const pngBuffer = await sanitizeButlerBackgroundPng(responseBuffer);
+      const record = await addButlerOutputFile(pngBuffer, source.file, 'remove-background');
+      return { ok: true, file: fileToPayload(record) };
+    } catch (error) {
+      const failure = butlerFailure(error, 'Background removal failed. Please try again.');
+      console.error('Butler background removal failed:', failure.reason);
+      return failure;
+    }
+  });
+
+  ipcMain.handle('butler:create3d', async (_evt, fileId, requestedProviderId) => {
+    try {
+      if (!aiGateway || !aiGateway.isConfigured()) {
+        const error = new Error('Butler is not configured.');
+        error.code = 'gateway-not-configured';
+        throw error;
+      }
+      const providerId = normalizeButler3dProvider(requestedProviderId);
+      const source = await butlerSourceImage(fileId, { requireModelDimensions: true });
+      const fallbackPrompt = 'Create a detailed 3D model matching the reference image.';
+      const storedPrompt = String(source.file.aiGeneration && source.file.aiGeneration.prompt || '').trim();
+      const prompt = storedPrompt ? storedPrompt.slice(0, 1024) : fallbackPrompt;
+      assertPromptHasNoSecrets(prompt);
+      const payload = await aiGateway.create3d(providerId, source.imageDataUrl, prompt);
+      const taskToken = normalizeButlerTaskToken(payload && payload.taskToken);
+      const status = normalizeButler3dStatus(payload || { status: 'queued' });
+      rememberButler3dTask(taskToken, {
+        sourceFileId: source.file.id,
+        providerId,
+        previewUrl: status.previewUrl || ''
+      });
+      return { ok: true, taskToken, ...status };
+    } catch (error) {
+      const failure = butlerFailure(error, 'The 3D generation task could not be started.');
+      console.error('Butler 3D task creation failed:', failure.reason);
+      return failure;
+    }
+  });
+
+  ipcMain.handle('butler:get3dStatus', async (_evt, rawTaskToken, requestedProviderId) => {
+    try {
+      if (!aiGateway || !aiGateway.isConfigured()) {
+        const error = new Error('Butler is not configured.');
+        error.code = 'gateway-not-configured';
+        throw error;
+      }
+      const taskToken = normalizeButlerTaskToken(rawTaskToken);
+      const existing = butler3dTasks.get(taskToken) || null;
+      if (requestedProviderId !== undefined && requestedProviderId !== null && String(requestedProviderId).trim()) {
+        const providerId = normalizeButler3dProvider(requestedProviderId);
+        if (existing && existing.providerId && existing.providerId !== providerId) {
+          const error = new Error('The 3D task provider does not match.');
+          error.code = 'invalid-3d-provider';
+          throw error;
+        }
+      }
+      const payload = await aiGateway.get3dStatus(taskToken);
+      const status = normalizeButler3dStatus(payload);
+      rememberButler3dTask(taskToken, {
+        ...(status.previewUrl ? { previewUrl: status.previewUrl } : {}),
+        status: status.status
+      });
+      return { ok: true, ...status };
+    } catch (error) {
+      const failure = butlerFailure(error, 'The 3D task status could not be checked.');
+      console.error('Butler 3D status failed:', failure.reason);
+      return failure;
+    }
+  });
+
+  ipcMain.handle('butler:download3d', async (_evt, rawTaskToken, requestedProviderId) => {
+    let taskToken;
+    try {
+      if (!aiGateway || !aiGateway.isConfigured()) {
+        const error = new Error('Butler is not configured.');
+        error.code = 'gateway-not-configured';
+        throw error;
+      }
+      taskToken = normalizeButlerTaskToken(rawTaskToken);
+      const task = butler3dTasks.get(taskToken) || {};
+      if (requestedProviderId !== undefined && requestedProviderId !== null && String(requestedProviderId).trim()) {
+        const providerId = normalizeButler3dProvider(requestedProviderId);
+        if (task.providerId && task.providerId !== providerId) {
+          const error = new Error('The 3D task provider does not match.');
+          error.code = 'invalid-3d-provider';
+          throw error;
+        }
+      }
+      if (task.downloadedFileId) {
+        const existingFile = store.getFile(task.downloadedFileId);
+        if (existingFile) return { ok: true, file: fileToPayload(existingFile) };
+      }
+      if (butler3dDownloads.has(taskToken)) return await butler3dDownloads.get(taskToken);
+
+      const download = (async () => {
+        const buffer = await aiGateway.download3d(taskToken);
+        assertValidGlbBuffer(buffer);
+        const currentTask = butler3dTasks.get(taskToken) || task;
+        const sourceFile = store.getFile(currentTask.sourceFileId) || {
+          id: null,
+          name: 'Generated model',
+          folderId: null,
+          canvasId: store.data.canvases[0] && store.data.canvases[0].id
+        };
+        const record = await addButlerOutputFile(buffer, sourceFile, 'generate-3d');
+        if (currentTask.sourceFileId) {
+          await writeButlerModelPreview(record.id, sourceFile, currentTask.previewUrl).catch(() => false);
+        }
+        rememberButler3dTask(taskToken, {
+          ...currentTask,
+          downloadedFileId: record.id,
+          status: 'succeeded'
+        });
+        return { ok: true, file: fileToPayload(record) };
+      })();
+      butler3dDownloads.set(taskToken, download);
+      try {
+        return await download;
+      } finally {
+        butler3dDownloads.delete(taskToken);
+      }
+    } catch (error) {
+      const failure = butlerFailure(error, 'The 3D model could not be downloaded.');
+      console.error('Butler 3D download failed:', failure.reason);
+      return failure;
+    }
+  });
+
+  ipcMain.handle('butler:upscaleVideo', async (_evt, fileId, requestedOptions = {}) => {
+    try {
+      if (!aiGateway || !aiGateway.isConfigured()) {
+        const error = new Error('Butler is not configured.');
+        error.code = 'gateway-not-configured';
+        throw error;
+      }
+      const source = await butlerSourceVideo(fileId, requestedOptions);
+      const payload = await aiGateway.upscaleVideo(source.videoDataUrl, source.toolOptions);
+      const taskToken = normalizeButlerVideoTaskToken(payload && payload.taskToken);
+      const status = normalizeButlerVideoStatus(payload || { status: 'queued' });
+      rememberButlerVideoTask(taskToken, {
+        sourceFileId: source.file.id,
+        modelId: BUTLER_VIDEO_TOOL_ID,
+        output: source.toolOptions.output,
+        credits: status.credits,
+        providerCost: status.providerCost,
+        status: status.status
+      });
+      return { ok: true, taskToken, ...status };
+    } catch (error) {
+      const failure = butlerFailure(error, 'The video enhancement task could not be started.');
+      console.error('Butler video enhancement creation failed:', failure.reason);
+      return failure;
+    }
+  });
+
+  ipcMain.handle('butler:getVideoToolStatus', async (_evt, rawTaskToken, requestedModelId) => {
+    try {
+      if (!aiGateway || !aiGateway.isConfigured()) {
+        const error = new Error('Butler is not configured.');
+        error.code = 'gateway-not-configured';
+        throw error;
+      }
+      const taskToken = normalizeButlerVideoTaskToken(rawTaskToken);
+      const modelId = normalizeButlerVideoModel(requestedModelId);
+      const existing = butlerVideoTasks.get(taskToken) || {};
+      if (existing.modelId && existing.modelId !== modelId) {
+        const error = new Error('The video task model does not match.');
+        error.code = 'invalid-video-tool';
+        throw error;
+      }
+      const payload = await aiGateway.getVideoToolStatus(taskToken, modelId);
+      const status = normalizeButlerVideoStatus(payload);
+      rememberButlerVideoTask(taskToken, {
+        modelId,
+        status: status.status,
+        credits: status.credits !== undefined ? status.credits : existing.credits,
+        creditsCharged: status.creditsCharged !== undefined ? status.creditsCharged : existing.creditsCharged,
+        providerCost: status.providerCost !== undefined ? status.providerCost : existing.providerCost
+      });
+      if (['succeeded', 'failed'].includes(status.status) && runtimeConfig.gatewayConfigured) {
+        await syncGatewayAccount({ force: true });
+      }
+      return { ok: true, ...status };
+    } catch (error) {
+      const failure = butlerFailure(error, 'The video enhancement status could not be checked.');
+      console.error('Butler video enhancement status failed:', failure.reason);
+      return failure;
+    }
+  });
+
+  ipcMain.handle('butler:downloadVideoToolResult', async (_evt, rawTaskToken, requestedModelId) => {
+    let taskToken;
+    try {
+      if (!aiGateway || !aiGateway.isConfigured()) {
+        const error = new Error('Butler is not configured.');
+        error.code = 'gateway-not-configured';
+        throw error;
+      }
+      taskToken = normalizeButlerVideoTaskToken(rawTaskToken);
+      const modelId = normalizeButlerVideoModel(requestedModelId);
+      const task = butlerVideoTasks.get(taskToken) || {};
+      if (task.modelId && task.modelId !== modelId) {
+        const error = new Error('The video task model does not match.');
+        error.code = 'invalid-video-tool';
+        throw error;
+      }
+      if (task.downloadedFileId) {
+        const existingFile = store.getFile(task.downloadedFileId);
+        if (existingFile) return { ok: true, file: fileToPayload(existingFile) };
+      }
+      if (butlerVideoDownloads.has(taskToken)) return await butlerVideoDownloads.get(taskToken);
+
+      const download = (async () => {
+        const buffer = await aiGateway.downloadVideoToolResult(taskToken, modelId);
+        const currentTask = butlerVideoTasks.get(taskToken) || task;
+        const sourceFile = store.getFile(currentTask.sourceFileId) || {
+          id: null,
+          name: 'Enhanced video',
+          folderId: null,
+          canvasId: store.data.canvases[0] && store.data.canvases[0].id
+        };
+        const record = await addButlerVideoOutputFile(buffer, sourceFile, {
+          output: currentTask.output || null,
+          credits: currentTask.creditsCharged !== undefined ? currentTask.creditsCharged : currentTask.credits,
+          providerCost: currentTask.providerCost
+        });
+        rememberButlerVideoTask(taskToken, {
+          ...currentTask,
+          modelId,
+          downloadedFileId: record.id,
+          status: 'succeeded'
+        });
+        if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
+        return { ok: true, file: fileToPayload(record) };
+      })();
+      butlerVideoDownloads.set(taskToken, download);
+      try {
+        return await download;
+      } finally {
+        butlerVideoDownloads.delete(taskToken);
+      }
+    } catch (error) {
+      const failure = butlerFailure(error, 'The enhanced video could not be downloaded.');
+      console.error('Butler video enhancement download failed:', failure.reason);
+      return failure;
+    }
+  });
+
   ipcMain.handle('ai:generateMedia', async (_evt, request = {}) => {
     let safeRequest;
     try {
@@ -2500,6 +3507,7 @@ function registerIpcHandlers() {
       imageProviderId: request.imageProviderId,
       videoProviderId: request.videoProviderId,
       count,
+      quality: request.quality,
       resolution: request.resolution,
       duration: request.duration
     });
@@ -2512,6 +3520,7 @@ function registerIpcHandlers() {
         modelName: request.modelName || null,
         aspectRatio: request.aspectRatio || null,
         size: request.size || null,
+        quality: kind === 'image' ? request.quality || 'auto' : null,
         resolution: kind === 'video' ? request.resolution || null : null,
         duration: kind === 'video' ? Number(request.duration) || null : null,
         referenceCount: Array.isArray(request.urls) ? request.urls.length : 0,
@@ -2548,6 +3557,7 @@ function registerIpcHandlers() {
     try {
       const tasks = Array.from({ length: count }, () => generateAiMediaBuffer(kind, prompt, {
         size: request.size,
+        quality: request.quality,
         resolution: request.resolution,
         aspectRatio: request.aspectRatio,
         sourceWidth: request.sourceWidth,
@@ -2592,6 +3602,7 @@ function registerIpcHandlers() {
           ? creditQuote.unitCredits * files.length
           : creditQuote.totalCredits
       });
+      if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
       store.scheduleSave();
       return {
         ok: true,
@@ -2610,6 +3621,7 @@ function registerIpcHandlers() {
         failedUnits: count,
         failureCode: err && err.code ? err.code : 'generation-failed'
       });
+      if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
       console.error('AI media generation failed:', err && err.message ? err.message : err);
       return {
         ok: false,
@@ -2737,22 +3749,14 @@ function registerIpcHandlers() {
     if (!f) return { type: 'unsupported', reason: 'not-found' };
 
     const ext = path.extname(f.name).toLowerCase();
-    if (preview.isImageExt(ext)) {
+    if (preview.isImageExt(ext) && preview.browserCanDecodeImage(ext)) {
       return { type: 'image', url: 'messs-file://' + f.id, name: f.name };
     }
     if (preview.isVideoExt(ext)) {
-      const validation = await preview.validateVideoFile(f.storedPath);
-      if (!validation.ok || preview.needsVideoTranscode(ext)) {
-        const caps = await preview.getCapabilities();
-        if (!caps.hasFfmpeg) return { type: 'unsupported', reason: 'missing-tools', ext, name: f.name, missingTools: ['FFmpeg'] };
-        try {
-          await preview.transcodeVideoToWebCompatible(f.storedPath, previewCacheDir, f.id);
-          return { type: 'video', url: `messs-transcode://${f.id}`, name: f.name, transcoded: true, repairedPreview: !validation.ok };
-        } catch (err) {
-          console.error('Video preview conversion failed for', f.name, err.message);
-          return { type: 'unsupported', reason: 'render-failed', ext, name: f.name };
-        }
-      }
+      // Let Chromium try the original container first. If its codec is not
+      // supported, the renderer requests the cached FFmpeg fallback from
+      // files:transcodeVideo. This keeps opening a long MOV/MKV responsive
+      // and avoids doing expensive work for containers Chromium can decode.
       return { type: 'video', url: 'messs-file://' + f.id, name: f.name };
     }
     if (preview.isAudioExt(ext)) {
@@ -2760,8 +3764,8 @@ function registerIpcHandlers() {
     }
     if (preview.isTextExt(ext)) {
       try {
-        const content = fs.readFileSync(f.storedPath, 'utf-8');
-        return { type: 'text', content, name: f.name };
+        const textPreview = await preview.readTextPreview(f.storedPath);
+        return { type: 'text', name: f.name, ...textPreview };
       } catch (err) {
         return { type: 'unsupported', reason: 'render-failed', ext, name: f.name };
       }
@@ -2783,19 +3787,35 @@ function registerIpcHandlers() {
       return { type: 'pdf-js', path: f.storedPath, name: f.name };
     }
 
-    // Office documents: soffice converts to a (cached) PDF, which then goes
-    // through the exact same pdfjs-dist rendering path as a direct PDF.
+    // Office documents: the packaged/system LibreOffice conversion preserves
+    // pagination and layout. DOCX has a safe in-process fallback so a user can
+    // still read Word documents in development or when LibreOffice is absent.
     if (preview.isOfficeExt(ext)) {
-      if (!caps.hasSoffice) {
-        return { type: 'unsupported', reason: 'missing-tools', ext, name: f.name, missingTools: ['LibreOffice'] };
+      if (caps.hasSoffice) {
+        try {
+          const cacheDir = path.join(previewCacheDir, f.id);
+          const pdfPath = await preview.convertOfficeToPdfCached(f.storedPath, cacheDir, previewTmpDir);
+          return { type: 'pdf-js', path: pdfPath, name: f.name };
+        } catch (err) {
+          console.error('Office->PDF conversion failed for', f.name, err);
+        }
       }
+      if (ext === '.docx' && caps.hasDocxFallback) {
+        try {
+          const docxEditor = require('./lib/docx-editor');
+          const html = await docxEditor.docxToHtml(f.storedPath);
+          return { type: 'document-html', html, name: f.name, fallback: true };
+        } catch (err) {
+          console.error('DOCX fallback preview failed for', f.name, err);
+        }
+      }
+      // A binary inspector is still useful for unsupported office containers,
+      // and gives the user a real preview instead of a dead-end blank panel.
       try {
-        const cacheDir = path.join(previewCacheDir, f.id);
-        const pdfPath = await preview.convertOfficeToPdfCached(f.storedPath, cacheDir, previewTmpDir);
-        return { type: 'pdf-js', path: pdfPath, name: f.name };
+        const fallback = buildUnknownFilePreview(f);
+        return { ...fallback, officeFallback: true };
       } catch (err) {
-        console.error('Office->PDF conversion failed for', f.name, err);
-        return { type: 'unsupported', reason: 'render-failed', ext, name: f.name };
+        return { type: 'unsupported', reason: caps.hasSoffice ? 'render-failed' : 'missing-tools', ext, name: f.name, missingTools: ['LibreOffice'] };
       }
     }
 
@@ -2803,10 +3823,14 @@ function registerIpcHandlers() {
     if (preview.isPsdExt(ext) && !caps.hasImageMagick) {
       return { type: 'unsupported', reason: 'missing-tools', ext, name: f.name, missingTools: ['ImageMagick'] };
     }
+    if (preview.needsImageConversion(ext) && !caps.hasSharp && !caps.hasImageMagick) {
+      return { type: 'unsupported', reason: 'missing-tools', ext, name: f.name, missingTools: ['ImageMagick'] };
+    }
     try {
       const cacheDir = path.join(previewCacheDir, f.id);
       if (preview.isPsdExt(ext)) await preview.rasterizePsd(f.storedPath, cacheDir);
-      else await preview.rasterizeTiff(f.storedPath, cacheDir);
+      else if (preview.isTiffExt(ext)) await preview.rasterizeTiff(f.storedPath, cacheDir);
+      else await preview.rasterizeImageToPng(f.storedPath, cacheDir);
       return { type: 'pages', totalPages: 1, pageUrls: [`messs-preview://${f.id}/1`], name: f.name };
     } catch (err) {
       console.error('Preview render failed for', f.name, err);
@@ -3443,6 +4467,19 @@ app.whenReady().then(() => {
     // gone, but both are checked for safety / forward-compatibility).
     const rest = request.url.replace('messs-preview://', '');
     const [fileId, pageStr] = rest.split('/');
+    if (pageStr === 'model') {
+      const file = store.getFile(fileId);
+      if (!file || !/^[A-Za-z0-9_-]{1,128}$/.test(String(file.id || '')) || path.extname(file.name).toLowerCase() !== '.glb') {
+        return new Response('Not found', { status: 404 });
+      }
+      const modelPreviewPath = path.join(previewCacheDir, file.id, 'model-preview.png');
+      if (!fs.existsSync(modelPreviewPath)) return new Response('Not found', { status: 404 });
+      try {
+        return net.fetch(pathToFileURL(modelPreviewPath).toString());
+      } catch (err) {
+        return new Response('Read error', { status: 500 });
+      }
+    }
     const pageNumber = parseInt(pageStr, 10);
     if (!fileId || !pageNumber || pageNumber < 1) {
       return new Response('Bad request', { status: 400 });

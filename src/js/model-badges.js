@@ -1,9 +1,14 @@
 'use strict';
 
+const AI_MODEL_BADGE_ASSETS = Object.freeze({
+  seedream: 'assets/model-icons/doubao-seedream.ico'
+});
+
 function aiModelBadgeKind(provider = {}) {
   const id = String(provider.id || '').trim().toLowerCase();
   const name = String(provider.name || provider.model || '').trim();
   if (id === 'image-1' || /^nano\s+banana\s+pro$/i.test(name)) return 'banana-pro';
+  if (id === 'image-3' || /seedream/i.test(name) || /seedream/i.test(String(provider.model || ''))) return 'seedream';
   if (/^gpt(?:[\s-]|$)/i.test(name)) return 'gpt';
   return null;
 }
@@ -14,6 +19,16 @@ function createAiModelBadge(kind) {
   badge.setAttribute('aria-hidden', 'true');
   if (kind === 'banana-pro') {
     badge.textContent = '\uD83C\uDF4C';
+    return badge;
+  }
+  if (kind === 'seedream') {
+    const image = document.createElement('img');
+    image.src = AI_MODEL_BADGE_ASSETS.seedream;
+    image.alt = '';
+    image.draggable = false;
+    image.decoding = 'async';
+    image.setAttribute('aria-hidden', 'true');
+    badge.appendChild(image);
     return badge;
   }
   badge.innerHTML = `

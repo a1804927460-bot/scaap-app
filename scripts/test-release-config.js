@@ -31,6 +31,10 @@ assert.match(workflow, /signature\.Status -ne 'Valid'/);
 assert.match(workflow, /MESSS_SIGNING_ENABLED/);
 assert.match(workflow, /signature\.Status -ne 'NotSigned'/);
 assert.match(workflow, /CSC_LINK and CSC_KEY_PASSWORD must be configured together/);
+assert.match(workflow, /choco install libreoffice-fresh imagemagick\.app/);
+assert.match(workflow, /Copy-Item \$libreOffice build-resources\/tools\/libreoffice -Recurse/);
+assert.match(workflow, /Copy-Item \$imageMagick\.FullName build-resources\/tools\/imagemagick -Recurse/);
+assert.match(builder, /extraResources:[\s\S]*?from:\s*build-resources\/tools[\s\S]*?to:\s*tools/);
 assert.match(workflow, /gh release (?:create|upload)/);
 assert.ok(
   workflow.indexOf('Verify updater artifacts') < workflow.indexOf('Publish verified updater artifacts'),
@@ -43,7 +47,7 @@ assert.match(html, /class="ai-provider-section ai-provider-chat-section direct-a
 assert.ok(catalog.version >= 8);
 assert.deepEqual(
   catalog.providers.filter((provider) => provider.kind === 'image').map((provider) => provider.name),
-  ['Nano Banana Pro', 'Nanobanana Pro SE', 'Seedream 5.0 Lite', 'Midjourney', 'Nano banana2']
+  ['Nano Banana Pro', 'Nanobanana Pro SE', 'Seedream 5.0 Lite', 'Midjourney', 'Nano banana2', 'GPT Image 2']
 );
 assert.equal(catalog.providers.find((provider) => provider.name === 'MiniMax H3').requiresActivation, false);
 assert.equal(catalog.providers.every((provider) => provider.requiresActivation === false), true);

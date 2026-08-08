@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const { PROVIDER_CATALOG_VERSION } = require('../lib/provider-catalog');
 const { upgradeAiDefaults } = require('../lib/store');
 const {
@@ -27,11 +29,25 @@ upgradeAiDefaults(data);
 const media = data.settings.aiMedia;
 assert.deepEqual(
   media.imageProviders.filter((provider) => provider.name).map((provider) => provider.name),
-  ['Nano Banana Pro', 'Nanobanana Pro SE', 'Seedream 5.0 Lite', 'Midjourney', 'Nano banana2']
+  ['Nano Banana Pro', 'Nanobanana Pro SE', 'Seedream 5.0 Lite', 'Midjourney', 'Nano banana2', 'GPT Image 2']
 );
+const gptImage2 = media.imageProviders.find((provider) => provider.id === 'image-6');
+assert.ok(gptImage2);
+assert.equal(gptImage2.model, 'gpt-image-2');
+assert.deepEqual(gptImage2.capabilities.sizes, ['1024x1024', '1536x1024', '1024x1536', 'auto']);
+assert.deepEqual(gptImage2.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
 assert.equal(media.videoProviderName, 'MiniMax H3');
 assert.equal(media.chatProviderName, 'Messs AI');
 assert.equal(media.chatModel, 'gemini-3.1-flash-lite');
+const advancedChat = media.chatProviders.find((provider) => provider.id === 'chat-2');
+assert.ok(advancedChat);
+assert.equal(advancedChat.name, 'AI Chat');
+assert.equal(advancedChat.endpoint, 'https://api.quickrouter.ai/v1/chat/completions');
+assert.deepEqual(advancedChat.models, [
+  'gpt-5.6-luna',
+  'doubao-seed-2-1-pro-260628',
+  'deepseek-v4-pro'
+]);
 assert.equal(JSON.stringify(media).includes('QuickRouter'), false);
 
 const outdated = normalizeGatewayCatalog({
@@ -54,17 +70,29 @@ const current = normalizeGatewayCatalog({
   catalogVersion: PROVIDER_CATALOG_VERSION,
   providers: [
     { id: 'image-1', kind: 'image', name: 'legacy-name' },
+    { id: 'image-6', kind: 'image', name: 'legacy-gpt-image-name' },
     { id: 'video-1', kind: 'video', name: 'legacy-video' },
-    { id: 'chat-1', kind: 'chat', name: 'legacy-chat', models: ['wrong-model'] }
+    { id: 'chat-1', kind: 'chat', name: 'legacy-chat', models: ['wrong-model'] },
+    { id: 'chat-2', kind: 'chat', name: 'legacy-advanced-chat', models: ['wrong-model'] }
   ]
 }, 'https://gateway.example');
 assert.equal(current.compatible, true);
 assert.equal(assertGatewayProvider(current, 'image', 'image-1').name, 'Nano Banana Pro');
+assert.equal(assertGatewayProvider(current, 'image', 'image-6').name, 'GPT Image 2');
 assert.equal(assertGatewayProvider(current, 'video', 'video-1').name, 'MiniMax H3');
 assert.deepEqual(assertGatewayProvider(current, 'chat', 'chat-1').models, [
   'gemini-3.1-flash-lite',
   'gemini-3.6-flash'
 ]);
+assert.deepEqual(assertGatewayProvider(current, 'chat', 'chat-2').models, [
+  'gpt-5.6-luna',
+  'doubao-seed-2-1-pro-260628',
+  'deepseek-v4-pro'
+]);
+const assistantSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'ai-assistant.js'), 'utf8');
+assert.match(assistantSource, /'gpt-5\.6-luna': 'GPT-5\.6Luna'/);
+assert.match(assistantSource, /'doubao-seed-2-1-pro-260628': 'Doubao2\.1pro'/);
+assert.match(assistantSource, /'deepseek-v4-pro': 'DeepSeek-V4-Pro'/);
 assert.equal(
   require('../lib/provider-catalog').providerCatalog().every((provider) => provider.requiresActivation === false),
   true,

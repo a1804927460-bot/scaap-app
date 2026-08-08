@@ -8,8 +8,8 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test test/usage.test.mjs",
-    "check": "node --check src/server.js && node --check src/auth.js && node --check src/providers.js && node --check src/usage.js && npm test"
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check src/server.js && node --check src/auth.js && node --check src/ai302-tools.js && node --check src/tool-pricing.js && node --check src/providers.js && node --check src/usage.js && node --check src/video-jobs.js && npm test"
   },
   "dependencies": {
     "jose": "^6.1.0",

@@ -289,6 +289,11 @@ function configuredAssistantProviders(kind) {
           models: [config.chatModel || 'gpt-4o-mini']
         }];
     const options = [];
+    const displayNames = {
+      'gpt-5.6-luna': 'GPT-5.6Luna',
+      'doubao-seed-2-1-pro-260628': 'Doubao2.1pro',
+      'deepseek-v4-pro': 'DeepSeek-V4-Pro'
+    };
     chatProviders.forEach((provider) => {
       if (!provider || provider.available === false || !provider.name || !provider.endpoint) return;
       const models = Array.isArray(provider.models) && provider.models.length
@@ -301,7 +306,7 @@ function configuredAssistantProviders(kind) {
           id: `${provider.id}::${modelId}`,
           providerId: provider.id,
           model: modelId,
-          name: modelId,
+          name: displayNames[modelId] || modelId,
           endpoint: provider.endpoint
         });
       });

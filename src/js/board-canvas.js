@@ -583,6 +583,33 @@ function renderBoardItemContent(content, f, item) {
     return;
   }
 
+  if (isGlbFile(f)) {
+    const preview = document.createElement('div');
+    preview.className = 'board-model-thumbnail';
+    const previewSource = String(f.modelPreviewUrl || f.previewUrl || '');
+    if (previewSource) {
+      const image = document.createElement('img');
+      image.src = previewSource;
+      image.alt = f.name;
+      image.loading = 'lazy';
+      image.decoding = 'async';
+      image.draggable = false;
+      image.addEventListener('error', () => {
+        image.remove();
+        preview.classList.add('is-placeholder');
+      }, { once: true });
+      preview.appendChild(image);
+    } else {
+      preview.classList.add('is-placeholder');
+    }
+    const mark = document.createElement('span');
+    mark.className = 'board-model-thumbnail-mark';
+    mark.innerHTML = '<svg viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" stroke-width="1.45"><path d="m12 2 8 4.5v9L12 20l-8-4.5v-9L12 2Z"></path><path d="m4 6.5 8 4.5 8-4.5M12 11v9"></path></svg><strong>3D</strong>';
+    preview.appendChild(mark);
+    content.appendChild(preview);
+    return;
+  }
+
   if (isVideoExt(f.ext)) {
     const preview = document.createElement('div');
     preview.className = 'board-video-thumbnail';
@@ -747,7 +774,7 @@ function isMountableBoardItem(id) {
 
 function isBoardElementPaintReady(element) {
   if (!element) return false;
-  return [...element.querySelectorAll('.board-image-layer.is-active, .board-video-thumbnail > img')]
+  return [...element.querySelectorAll('.board-image-layer.is-active, .board-video-thumbnail > img, .board-model-thumbnail > img')]
     .every((image) => image.complete);
 }
 
@@ -785,7 +812,7 @@ function syncMountedRichContentForLod(previousBucket, nextBucket) {
   for (const [id, element] of Board.mounted) {
     const item = Board.itemsById.get(id);
     const file = item && Board.filesById.get(item.fileId);
-    if (!file || isImageExt(file.ext) || isVideoExt(file.ext)) continue;
+    if (!file || isImageExt(file.ext) || isVideoExt(file.ext) || isGlbFile(file)) continue;
     const content = element.querySelector('.board-item-content');
     if (!content) continue;
     cleanupBoardElement(element);
@@ -813,6 +840,7 @@ function boardOverviewColor(item) {
   if (!file) return '#7d8798';
   if (isVideoExt(file.ext)) return '#3d8fe8';
   if (isImageExt(file.ext)) return '#47a67c';
+  if (isGlbFile(file)) return '#9a7bd1';
   if (isAudioExt(file.ext)) return '#d76f55';
   return '#8a91a0';
 }
@@ -961,9 +989,11 @@ function createBoardItemElement(item) {
   const el = document.createElement('div');
   const isImage = isImageExt(f.ext);
   const isVideo = isVideoExt(f.ext);
+  const isModel = isGlbFile(f);
   el.className = 'board-item' +
     (isImage ? ' board-item-image' : '') +
     (isVideo ? ' board-item-video' : '') +
+    (isModel ? ' board-item-model' : '') +
     (isImage && typeof isAiComposerReference === 'function' && isAiComposerReference(item.fileId)
       ? ' is-ai-reference' : '') +
     (item.selected ? ' is-selected' : '') +
@@ -979,7 +1009,7 @@ function createBoardItemElement(item) {
   }
   el.style.zIndex = item.zIndex || 1;
   el.dataset.boardId = item.id;
-  const isGeneratedMedia = !!(f.aiGeneration || f.sourceFolder === 'AI Generated');
+  const hasMediaDetails = !!(f.aiGeneration || f.sourceFolder === 'AI Generated' || f.butlerOperation);
   el.addEventListener('click', (e) => {
     if (e.ctrlKey || e.metaKey || e.shiftKey) {
       e.stopPropagation();
@@ -1006,8 +1036,9 @@ function createBoardItemElement(item) {
   if (isImage) {
     appendBoardImageToolbar(el, f, item);
     appendBoardEditHint(el);
-  } else if (isVideo && isGeneratedMedia) {
-    appendGeneratedMediaDetailsControl(el, f);
+  } else if (isVideo) {
+    appendBoardVideoButlerToolbar(el, f, item);
+    if (hasMediaDetails) appendGeneratedMediaDetailsControl(el, f);
   }
 
   const name = document.createElement('div');
@@ -1021,6 +1052,12 @@ function createBoardItemElement(item) {
     el.addEventListener('dblclick', (e) => {
       e.stopPropagation();
       openDocumentEditor(f.id);
+    });
+  } else if (isModel) {
+    el.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof openBoardModelViewer === 'function') openBoardModelViewer(f);
     });
   }
 
@@ -3744,6 +3781,8 @@ async function showAiImagePopover(initialKind = 'image') {
   aiImagePopoverClickCloser = (e) => {
     if (pop.contains(e.target)) return;
     if (e.target.closest('#board-ai-generate, #board-tool-ai-image, #board-tool-ai-video')) return;
+    // Canvas images toggle AI reference state; they must not dismiss the active composer.
+    if (e.target.closest('#board-canvas .board-item-image')) return;
     closeAiImagePopover();
   };
   aiImagePopoverKeyCloser = (e) => {

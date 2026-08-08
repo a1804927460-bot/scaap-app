@@ -278,6 +278,7 @@ function initSidebar() {
   initSidebarDropZone();
   initLibraryPathSettings();
   initAiMediaSettings();
+  if (typeof initUsageSettings === 'function') initUsageSettings();
   initImportProgress();
   initSidebarMultiSelectShortcuts();
   document.addEventListener('messs:membership-updated', (event) => {
@@ -407,7 +408,7 @@ function refreshStaticLanguage() {
   setTitleAndLabel('#view-mode-list', 'List view', '列表视图');
   setTitleAndLabel('#preview-zoom-out', 'Zoom out', '缩小');
   setTitleAndLabel('#preview-zoom-in', 'Zoom in', '放大');
-  setTitleAndLabel('#preview-fullscreen', 'Fullscreen preview', '全屏预览');
+  setTitleAndLabel('#preview-fullscreen', 'Enlarge preview', '放大预览');
   setText('#preview-empty p:first-child', 'Drop files here to save them automatically.', '把文件拖到这里会自动保存。');
   setText('#preview-empty .preview-empty-sub', 'Or select an item from the sidebar to preview it.', '也可以从侧边栏选择文件进行预览。');
   setText('#preview-open-external', 'Open in Default App', '用默认应用打开');
@@ -510,7 +511,7 @@ function refreshStaticLanguage() {
   setTitleAndLabel('#detail-close', 'Close', '关闭');
   setText('.detail-time-block:nth-child(1) .detail-time-label', 'Total Time', '总时长');
   setText('.detail-time-block:nth-child(2) .detail-time-label', 'Last Run', '上次运行');
-  setTitleAndLabel('#fullscreen-close', 'Close fullscreen', '关闭全屏');
+  setTitleAndLabel('#fullscreen-close', 'Close preview', '关闭预览');
   setText('.update-banner-text', 'A new version has been downloaded. Restart to update.', '新版本已下载，重启即可更新。');
   setText('#update-install-btn', 'Restart Now', '立即重启');
   setTitleAndLabel('#update-dismiss-btn', 'Dismiss', '忽略');
@@ -1453,6 +1454,7 @@ async function initAiMediaSettings() {
 
   document.getElementById('ai-provider-manager-open').addEventListener('click', () => {
     document.getElementById('settings-popover').hidden = true;
+    if (typeof setSettingsView === 'function') setSettingsView('general');
     document.getElementById('ai-provider-overlay').hidden = false;
   });
   document.getElementById('ai-provider-manager-close').addEventListener('click', closeAiProviderManager);

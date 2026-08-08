@@ -5,10 +5,14 @@ import test from 'node:test';
 import {
   filterProviderConfigForAccount,
   getUsageAccount,
+  getUsageSummary,
   providerRequiresActivation,
   quoteUsage,
   redeemUsageCode,
+  reserveToolUsage,
   reserveUsage,
+  settleToolUsage,
+  touchToolUsage,
   settleUsage
 } from '../src/usage.js';
 
@@ -42,6 +46,12 @@ test('gateway quote matches the desktop image table', () => {
   assert.equal(quoteUsage('image', { providerId: 'image-3' }).credits, 5);
   assert.equal(quoteUsage('image', { providerId: 'image-4' }).credits, 4);
   assert.equal(quoteUsage('image', { providerId: 'image-5' }).credits, 8);
+  assert.deepEqual(quoteUsage('image', { providerId: 'image-6', quality: 'high' }), {
+    kind: 'image', providerId: 'image-6', credits: 28, resolution: 'high', quality: 'high', duration: null, requiresActivation: false
+  });
+  assert.equal(quoteUsage('image', { providerId: 'image-6', quality: 'low' }).credits, 3);
+  assert.equal(quoteUsage('image', { providerId: 'image-6', quality: 'medium' }).credits, 8);
+  assert.equal(quoteUsage('image', { providerId: 'image-6', quality: 'invalid' }).credits, 12);
   assert.throws(() => quoteUsage('image', { providerId: 'image-free-bypass' }), { code: 'provider-not-allowed' });
 });
 
@@ -52,6 +62,7 @@ test('video quote clamps provider parameters, chat remains free, and no provider
   assert.equal(quoteUsage('video', { providerId: 'video-1', resolution: '768P', duration: 1 }).credits, 40);
   assert.equal(quoteUsage('video', { providerId: 'video-1', resolution: '2K', duration: 99 }).credits, 240);
   assert.equal(quoteUsage('chat', { providerId: 'chat-1' }).credits, 0);
+  assert.equal(quoteUsage('chat', { providerId: 'chat-2' }).credits, 0);
   assert.equal(quoteUsage('chat', { providerId: 'chat-1' }).requiresActivation, false);
   assert.equal(quoteUsage('image', { providerId: 'image-1' }).requiresActivation, false);
   assert.equal(providerRequiresActivation('chat', 'chat-1'), false);
@@ -65,21 +76,22 @@ test('provider config always exposes the complete catalog regardless of legacy a
     providers: [
       { id: 'image-1', kind: 'image' },
       { id: 'image-5', kind: 'image' },
+      { id: 'image-6', kind: 'image' },
       { id: 'chat-1', kind: 'chat' },
       { id: 'video-1', kind: 'video' }
     ]
   };
   assert.deepEqual(
     filterProviderConfigForAccount(config, { overseasUnlocked: false }).providers.map((provider) => provider.id),
-    ['image-1', 'image-5', 'chat-1', 'video-1']
+    ['image-1', 'image-5', 'image-6', 'chat-1', 'video-1']
   );
   assert.deepEqual(
     filterProviderConfigForAccount(config, { overseasUnlocked: true }).providers.map((provider) => provider.id),
-    ['image-1', 'image-5', 'chat-1', 'video-1']
+    ['image-1', 'image-5', 'image-6', 'chat-1', 'video-1']
   );
   assert.deepEqual(
     filterProviderConfigForAccount(config, null).providers.map((provider) => provider.id),
-    ['image-1', 'image-5', 'chat-1', 'video-1']
+    ['image-1', 'image-5', 'image-6', 'chat-1', 'video-1']
   );
 });
 
@@ -121,6 +133,97 @@ test('reserve exposes insufficient-credit denials', async () => {
     assert.equal(credits.reason, 'insufficient-credits');
     assert.equal(credits.credits, 60);
     assert.equal(credits.availableCredits, 59);
+  });
+});
+
+test('Butler Topaz accounting converts provider cost to retail credits and preserves both values', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
+    const calls = [];
+    const fetchMock = async (url, options) => {
+      const body = JSON.parse(options.body);
+      calls.push({ url, body });
+      if (url.endsWith('/reserve_ai_tool_credits')) {
+        return jsonResponse({
+          ok: true, reason: 'reserved', credits: 63, providerCost: 21,
+          balance: 1000, reserved: 63, availableCredits: 937
+        });
+      }
+      if (url.endsWith('/touch_ai_tool_credits')) {
+        return jsonResponse({ ok: true, reason: 'touched', status: 'processing' });
+      }
+      return jsonResponse({
+        ok: true, reason: 'settled', status: 'succeeded',
+        creditsCharged: 63, creditsReleased: 0
+      });
+    };
+    const userId = '00000000-0000-4000-8000-000000000031';
+    const requestId = '00000000-0000-4000-8000-000000000032';
+    const reserved = await reserveToolUsage(userId, requestId, {
+      providerId: 'topaz-video-upscale',
+      providerCost: 21,
+      credits: 63,
+      resolution: '3840x2160',
+      duration: 13
+    }, fetchMock);
+    assert.equal(reserved.providerCost, 21);
+    assert.equal(reserved.credits, 63);
+    assert.equal(reserved.availableCredits, 937);
+    assert.deepEqual(calls[0].body, {
+      p_user_id: userId,
+      p_request_id: requestId,
+      p_provider_id: 'topaz-video-upscale',
+      p_credits: 63,
+      p_provider_cost: 21,
+      p_resolution: '3840x2160',
+      p_duration: 13
+    });
+
+    const touched = await touchToolUsage(userId, requestId, fetchMock);
+    assert.equal(touched.ok, true);
+    assert.deepEqual(calls[1].body, { p_request_id: requestId, p_user_id: userId });
+    const settled = await settleToolUsage(userId, requestId, 'succeeded', 1234.6, fetchMock);
+    assert.equal(settled.creditsCharged, 63);
+    assert.deepEqual(calls[2].body, {
+      p_request_id: requestId,
+      p_user_id: userId,
+      p_status: 'succeeded',
+      p_duration_ms: 1235
+    });
+
+    await assert.rejects(
+      () => reserveToolUsage(userId, requestId, {
+        providerId: 'topaz-video-upscale', providerCost: 21, credits: 21
+      }, fetchMock),
+      (error) => error && error.code === 'provider-not-allowed' && error.status === 400
+    );
+  });
+});
+
+test('GPT Image 2 reserves the selected quality price through the existing RPC parameter', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
+    let call;
+    const result = await reserveUsage(
+      '00000000-0000-4000-8000-000000000021',
+      'image',
+      '00000000-0000-4000-8000-000000000022',
+      { providerId: 'image-6', quality: 'medium' },
+      async (url, options) => {
+        call = { url, body: JSON.parse(options.body) };
+        return jsonResponse({ ok: true, reason: 'reserved', credits: 8, availableCredits: 92 });
+      }
+    );
+    assert.match(call.url, /\/rpc\/reserve_ai_credits$/);
+    assert.deepEqual(call.body, {
+      p_user_id: '00000000-0000-4000-8000-000000000021',
+      p_kind: 'image',
+      p_provider_id: 'image-6',
+      p_request_id: '00000000-0000-4000-8000-000000000022',
+      p_resolution: 'medium',
+      p_duration: null,
+      p_expected_credits: 8
+    });
+    assert.equal(result.quality, 'medium');
+    assert.equal(result.credits, 8);
   });
 });
 
@@ -239,6 +342,16 @@ test('credit migration atomically releases failed reservations', () => {
   assert.match(migration, /if account_record\.balance - account_record\.reserved < quoted_credits then/i);
 });
 
+test('settlement rejects an already-settled result with the opposite status', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
+    await assert.rejects(
+      () => settleUsage('00000000-0000-4000-8000-000000000005', 'succeeded', 20, async () =>
+        jsonResponse({ ok: true, reason: 'already-settled', status: 'failed', creditsCharged: 0 })),
+      (error) => error && error.code === 'credit-settlement-conflict' && error.status === 409
+    );
+  });
+});
+
 test('forward migration opens model access while preserving server-authoritative credits', () => {
   const migration = fs.readFileSync(new URL('../../supabase/migrations/202608080001_open_ai_model_access.sql', import.meta.url), 'utf8');
   assert.match(migration, /create or replace function public\.reserve_ai_credits/i);
@@ -249,10 +362,32 @@ test('forward migration opens model access while preserving server-authoritative
   assert.doesNotMatch(migration, /overseas_unlocked/i);
 });
 
+test('GPT Image 2 forward migration preserves async reservations and recomputes quality pricing', () => {
+  const migration = fs.readFileSync(new URL('../../supabase/migrations/202608080004_gpt_image_2_credits.sql', import.meta.url), 'utf8');
+  assert.match(migration, /create or replace function public\.reserve_ai_credits/i);
+  assert.match(migration, /normalized_provider = 'image-6'[\s\S]*?when 'low' then 3[\s\S]*?when 'medium' then 8[\s\S]*?when 'high' then 28[\s\S]*?else 12/i);
+  assert.match(migration, /p_expected_credits is not null and p_expected_credits <> quoted_credits/i);
+  assert.match(migration, /not exists \([\s\S]*?from public\.ai_video_jobs[\s\S]*?status in \('starting', 'submitted', 'polling'\)[\s\S]*?deadline_at > now\(\)/i);
+  assert.match(migration, /revoke all on function public\.reserve_ai_credits/i);
+  assert.match(migration, /grant execute on function public\.reserve_ai_credits[\s\S]*?to service_role/i);
+  assert.doesNotMatch(migration, /activation-required/i);
+});
+
+test('Butler video migration enforces retail pricing and keeps provider-cost audit data server-only', () => {
+  const migration = fs.readFileSync(new URL('../../supabase/migrations/202608080005_butler_video_credits.sql', import.meta.url), 'utf8');
+  assert.match(migration, /provider_cost integer not null/i);
+  assert.match(migration, /retail_credits integer not null/i);
+  assert.match(migration, /expected_credits integer := ceil\([\s\S]*?p_provider_cost[\s\S]*?0\.15 \* 10 \* 2/i);
+  assert.match(migration, /p_credits <> expected_credits/i);
+  assert.match(migration, /jsonb_build_object\('kind', 'video'[\s\S]*?'providerCost', p_provider_cost[\s\S]*?'retailCredits', p_credits/i);
+  assert.match(migration, /revoke all on table public\.ai_tool_jobs from public, anon, authenticated/i);
+  assert.match(migration, /grant execute on function public\.reserve_ai_tool_credits[\s\S]*?to service_role/i);
+});
+
 test('gateway config and model routes do not consult the legacy unlock flag', () => {
   const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
   const configRoute = server.match(/url\.pathname === '\/v1\/config'[\s\S]*?url\.pathname === '\/v1\/models'/i)?.[0] || '';
-  const modelsRoute = server.match(/url\.pathname === '\/v1\/models'[\s\S]*?\n  let kind;/i)?.[0] || '';
+  const modelsRoute = server.match(/if \(request\.method === 'GET' && url\.pathname === '\/v1\/models'\) \{[\s\S]*?\n  \}/i)?.[0] || '';
   assert.match(configRoute, /publicProviderConfig\(\)/i);
   assert.doesNotMatch(configRoute, /getUsageAccount|overseas|activation/i);
   assert.match(modelsRoute, /await models\(requestedProviderId\)/i);
@@ -305,4 +440,81 @@ test('redemption hashes the submitted code and account reads remain server-only'
     });
     assert.equal(account.overseasUnlocked, true);
   });
+});
+
+test('usage summary calls the service-only RPC and exposes only public retail fields', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
+    let call;
+    const summary = await getUsageSummary(
+      '00000000-0000-4000-8000-000000000041',
+      '30',
+      async (url, options) => {
+        call = { url, options, body: JSON.parse(options.body) };
+        return jsonResponse({
+          range: '30d',
+          timeZone: 'UTC',
+          period: { from: '2026-07-10', to: '2026-08-08', days: 30 },
+          account: { balance: 800, reserved: 20, availableCredits: 780, membershipTier: 'free', providerCost: 999 },
+          totals: { credits: 120, generations: 4, requests: 6, averagePerDay: 4, providerCost: 40 },
+          byType: [
+            { kind: 'image', credits: 40, generations: 3, requests: 3, providerCost: 12 },
+            { kind: 'video', credits: 80, generations: 1, requests: 1 }
+          ],
+          daily: [{ date: '2026-08-08', credits: 80, generations: 1, requests: 1, providerCost: 20 }],
+          byModel: [{ providerId: 'video-1', kind: 'video', credits: 80, generations: 1, requests: 1, providerCost: 20 }],
+          updatedAt: '2026-08-08T12:00:00.000Z',
+          providerCost: 999
+        });
+      }
+    );
+
+    assert.match(call.url, /\/rpc\/get_ai_usage_summary$/);
+    assert.deepEqual(call.body, {
+      p_user_id: '00000000-0000-4000-8000-000000000041',
+      p_range: '30d'
+    });
+    assert.equal(call.options.headers.apikey, 'sb_secret_test');
+    assert.equal(call.options.headers.Authorization, undefined);
+    assert.equal(summary.range, '30d');
+    assert.equal(summary.account.availableCredits, 780);
+    assert.equal(summary.totals.generations, 4);
+    assert.equal(summary.byModel[0].providerId, 'video-1');
+    assert.doesNotMatch(JSON.stringify(summary), /providerCost|provider_cost/i);
+  });
+});
+
+test('usage summary rejects invalid ranges before making a request', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test' }, async () => {
+    let called = false;
+    await assert.rejects(
+      () => getUsageSummary('user', 'year', async () => {
+        called = true;
+        return jsonResponse({});
+      }),
+      (error) => error && error.code === 'invalid-usage-range' && error.status === 400
+    );
+    assert.equal(called, false);
+  });
+});
+
+test('usage summary migration aggregates successful retail usage and is service-role only', () => {
+  const migration = fs.readFileSync(new URL('../../supabase/migrations/202608080006_ai_usage_summary.sql', import.meta.url), 'utf8');
+  assert.match(migration, /create or replace function public\.get_ai_usage_summary\s*\(/i);
+  assert.match(migration, /from public\.ai_usage/i);
+  assert.match(migration, /from public\.ai_credit_accounts/i);
+  assert.match(migration, /usage_row\.status = 'succeeded'/i);
+  assert.match(migration, /usage_row\.credits_charged/i);
+  assert.match(migration, /generate_series\(period_start, today_utc, interval '1 day'\)/i);
+  assert.match(migration, /revoke all on function public\.get_ai_usage_summary\(uuid, text\) from public, anon, authenticated/i);
+  assert.match(migration, /grant execute on function public\.get_ai_usage_summary\(uuid, text\) to service_role/i);
+  assert.doesNotMatch(migration, /provider_cost|providerCost/);
+});
+
+test('usage summary HTTP route remains behind authentication', () => {
+  const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  const authenticationAt = server.indexOf('const user = await authenticate(request)');
+  const usageRouteAt = server.indexOf("url.pathname === '/v1/usage/summary'");
+  assert.ok(authenticationAt >= 0);
+  assert.ok(usageRouteAt > authenticationAt);
+  assert.match(server.slice(usageRouteAt, usageRouteAt + 300), /getUsageSummary\(user\.id, range\)/);
 });
