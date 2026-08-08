@@ -174,25 +174,133 @@ function createBoardModelViewerOverlay(file) {
   return overlay;
 }
 
+const BOARD_MODEL_FORMATS = new Set(['glb', 'fbx', 'obj']);
+
+function boardModelFormat(file) {
+  if (!file) return '';
+  const extension = String(file.ext || '').trim().toLowerCase().replace(/^\./, '');
+  if (BOARD_MODEL_FORMATS.has(extension)) return extension;
+  const match = String(file.name || '').trim().toLowerCase().match(/\.([a-z0-9]+)$/);
+  if (match && BOARD_MODEL_FORMATS.has(match[1])) return match[1];
+  const mime = String(file.mimeType || file.mime || '').trim().toLowerCase().split(';', 1)[0];
+  if (mime === 'model/gltf-binary') return 'glb';
+  if (mime === 'model/vnd.autodesk.fbx' || mime === 'application/vnd.autodesk.fbx') return 'fbx';
+  if (mime === 'model/obj') return 'obj';
+  return '';
+}
+
+function isSupportedBoardModel(file) {
+  if (typeof isModelFile === 'function') return isModelFile(file);
+  return BOARD_MODEL_FORMATS.has(boardModelFormat(file));
+}
+
+function boardModelArrayBuffer(value) {
+  if (value instanceof ArrayBuffer) return value;
+  if (ArrayBuffer.isView(value)) {
+    return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+  }
+  if (value && value.type === 'Buffer' && Array.isArray(value.data)) {
+    return Uint8Array.from(value.data).buffer;
+  }
+  throw Object.assign(new Error('The 3D model data is invalid.'), { code: 'invalid-model-data' });
+}
+
+async function readBoardModelPayload(file) {
+  const fallbackFormat = boardModelFormat(file);
+  if (window.messsAPI && typeof window.messsAPI.readModelData === 'function' && file.id) {
+    const result = await window.messsAPI.readModelData(file.id);
+    if (!result || !result.ok) {
+      const error = new Error(result && result.message || 'The 3D model could not be read.');
+      error.code = result && result.reason || 'model-read-failed';
+      throw error;
+    }
+    const format = String(result.format || fallbackFormat).trim().toLowerCase();
+    if (!BOARD_MODEL_FORMATS.has(format)) {
+      throw Object.assign(new Error('This 3D model format is not supported.'), { code: 'unsupported-model-format' });
+    }
+    return { format, data: boardModelArrayBuffer(result.data) };
+  }
+
+  const url = String(file.url || (file.id ? `messs-file://${file.id}` : '')).trim();
+  if (!url) throw Object.assign(new Error('The 3D model could not be found.'), { code: 'file-not-found' });
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw Object.assign(new Error(`The 3D model could not be read (${response.status}).`), { code: 'model-read-failed' });
+  }
+  return { format: fallbackFormat, data: await response.arrayBuffer() };
+}
+
+function parseGlbModel(vendor, data) {
+  return new Promise((resolve, reject) => {
+    const loader = new vendor.GLTFLoader();
+    if (vendor.MeshoptDecoder) loader.setMeshoptDecoder(vendor.MeshoptDecoder);
+    loader.parse(data, '', (gltf) => {
+      resolve({ root: gltf.scene, animations: Array.isArray(gltf.animations) ? gltf.animations : [] });
+    }, reject);
+  });
+}
+
+async function parseBoardModel(vendor, payload) {
+  if (payload.format === 'glb') {
+    if (!vendor.GLTFLoader) {
+      throw Object.assign(new Error('The GLB loader is unavailable.'), { code: 'model-loader-unavailable' });
+    }
+    return parseGlbModel(vendor, payload.data);
+  }
+  if (payload.format === 'fbx') {
+    if (!vendor.FBXLoader) {
+      throw Object.assign(new Error('The FBX loader is unavailable.'), { code: 'model-loader-unavailable' });
+    }
+    const root = new vendor.FBXLoader().parse(payload.data, '');
+    return { root, animations: Array.isArray(root.animations) ? root.animations : [] };
+  }
+  if (payload.format === 'obj') {
+    if (!vendor.OBJLoader) {
+      throw Object.assign(new Error('The OBJ loader is unavailable.'), { code: 'model-loader-unavailable' });
+    }
+    const text = new TextDecoder('utf-8').decode(new Uint8Array(payload.data));
+    const root = new vendor.OBJLoader().parse(text);
+    return { root, animations: [] };
+  }
+  throw Object.assign(new Error('This 3D model format is not supported.'), { code: 'unsupported-model-format' });
+}
+
+function boardModelErrorMessage(error) {
+  const code = String(error && error.code || '');
+  if (code === 'model-too-large') {
+    return t('This 3D model is too large to preview safely.', '这个 3D 模型太大，无法安全预览。', '이 3D 모델은 안전하게 미리 보기에는 너무 큽니다.');
+  }
+  if (code === 'unsupported-model-format' || code === 'model-loader-unavailable') {
+    return t('This build cannot preview that 3D format.', '当前版本无法预览这种 3D 格式。', '현재 버전에서는 이 3D 형식을 미리 볼 수 없습니다.');
+  }
+  if (code === 'file-not-found' || code === 'model-changed') {
+    return t('This 3D model is no longer available.', '这个 3D 模型已无法读取。', '이 3D 모델을 더 이상 읽을 수 없습니다.');
+  }
+  return t('Could not preview this 3D model.', '无法预览这个 3D 模型。', '이 3D 모델을 미리 볼 수 없습니다.');
+}
+
 function openBoardModelViewer(file) {
-  if (!file || !isGlbFile(file)) return;
+  if (!file || !isSupportedBoardModel(file)) return;
   closeBoardModelViewer();
   const vendor = window.MesssModelViewerVendor;
   const overlay = createBoardModelViewerOverlay(file);
+  const format = boardModelFormat(file);
+  const mark = overlay.querySelector('.board-model-viewer-mark');
+  if (mark) mark.textContent = format ? format.toUpperCase() : '3D';
   document.body.appendChild(overlay);
   BoardModelViewer.overlay = overlay;
   const loadGeneration = BoardModelViewer.loadGeneration;
   const fail = (error) => {
     if (loadGeneration !== BoardModelViewer.loadGeneration || !BoardModelViewer.overlay) return;
     console.error('Could not load 3D model:', error);
-    setBoardModelViewerState('error', t('Could not preview this 3D model.', '无法预览这个 3D 模型。', '이 3D 모델을 미리 볼 수 없습니다.'));
+    setBoardModelViewerState('error', boardModelErrorMessage(error));
   };
-  if (!vendor || !vendor.THREE || !vendor.GLTFLoader || !vendor.OrbitControls) {
+  if (!vendor || !vendor.THREE || !vendor.OrbitControls) {
     fail(new Error('3D viewer bundle is unavailable'));
     return;
   }
   try {
-    const { THREE, GLTFLoader, OrbitControls, RoomEnvironment, MeshoptDecoder } = vendor;
+    const { THREE, OrbitControls, RoomEnvironment } = vendor;
     const stage = overlay.querySelector('.board-model-viewer-stage');
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
     renderer.domElement.className = 'board-model-viewer-canvas';
@@ -228,22 +336,24 @@ function openBoardModelViewer(file) {
     BoardModelViewer.resizeObserver.observe(stage);
     resizeBoardModelViewer();
     renderBoardModelFrame();
-    const loader = new GLTFLoader();
-    if (MeshoptDecoder) loader.setMeshoptDecoder(MeshoptDecoder);
-    loader.load(file.url || `messs-file://${file.id}`, (gltf) => {
+    setBoardModelViewerState('loading', t('Loading 3D model...', '正在加载 3D 模型...', '3D 모델을 불러오는 중...'));
+    void readBoardModelPayload(file).then((payload) => parseBoardModel(vendor, payload)).then(({ root, animations }) => {
       if (loadGeneration !== BoardModelViewer.loadGeneration || !BoardModelViewer.scene) {
-        disposeBoardModelObject(gltf.scene);
+        disposeBoardModelObject(root);
         return;
       }
-      BoardModelViewer.root = gltf.scene;
-      scene.add(gltf.scene);
-      frameBoardModel(gltf.scene, camera, controls, THREE);
-      if (Array.isArray(gltf.animations) && gltf.animations.length) {
-        BoardModelViewer.mixer = new THREE.AnimationMixer(gltf.scene);
-        gltf.animations.forEach((clip) => BoardModelViewer.mixer.clipAction(clip).play());
+      if (!root || !root.isObject3D) {
+        throw Object.assign(new Error('The model does not contain a valid scene.'), { code: 'invalid-model-data' });
+      }
+      BoardModelViewer.root = root;
+      scene.add(root);
+      frameBoardModel(root, camera, controls, THREE);
+      if (Array.isArray(animations) && animations.length) {
+        BoardModelViewer.mixer = new THREE.AnimationMixer(root);
+        animations.forEach((clip) => BoardModelViewer.mixer.clipAction(clip).play());
       }
       setBoardModelViewerState('ready');
-    }, undefined, fail);
+    }).catch(fail);
     BoardModelViewer.keyHandler = (event) => {
       if (event.key === 'Escape') closeBoardModelViewer();
     };

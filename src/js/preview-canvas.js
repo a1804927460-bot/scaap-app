@@ -54,10 +54,10 @@ function missingToolsMessage(missingTools) {
   );
 }
 function setPreviewPanelState(state) {
-  // state: 'empty' | 'loading' | 'image' | 'video' | 'audio' | 'text' | 'binary' | 'pages' | 'unsupported' | 'folder-grid'
+  // state: 'empty' | 'loading' | 'image' | 'video' | 'audio' | 'model' | 'text' | 'binary' | 'pages' | 'unsupported' | 'folder-grid'
   document.getElementById('preview-empty').hidden = state !== 'empty';
   document.getElementById('preview-loading').hidden = state !== 'loading';
-  document.getElementById('preview-stage').hidden = !['image', 'pages', 'video', 'audio', 'text', 'document-html', 'binary'].includes(state);
+  document.getElementById('preview-stage').hidden = !['image', 'pages', 'video', 'audio', 'model', 'text', 'document-html', 'binary'].includes(state);
   document.getElementById('preview-unsupported').hidden = state !== 'unsupported';
   document.getElementById('preview-page-nav').hidden = state !== 'pages';
   document.getElementById('preview-folder-grid').hidden = state !== 'folder-grid';
@@ -119,6 +119,7 @@ async function selectFileForPreview(id) {
     'pdf-js': renderPdfJsPreview,
     video: renderVideoPreview,
     audio: renderAudioPreview,
+    model: renderModelPreview,
     text: renderTextPreview,
     'document-html': renderDocumentHtmlPreview,
     binary: renderBinaryPreview
@@ -591,6 +592,32 @@ function formatFileSize(bytes) {
     unit = units[index];
   }
   return `${value >= 10 ? value.toFixed(1) : value.toFixed(2)} ${unit}`;
+}
+
+function renderModelPreview(id, result) {
+  const stage = document.getElementById('preview-stage');
+  const file = AppState.files.find((entry) => entry.id === id);
+  stage.innerHTML = '';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'model-preview-launch';
+  button.setAttribute('aria-label', t('Open 3D model', '打开 3D 模型', '3D 모델 열기'));
+  button.title = t('Open 3D model', '打开 3D 模型', '3D 모델 열기');
+  const format = String(result.format || (file && file.ext) || '3D').replace(/^\./, '').toUpperCase();
+  button.innerHTML = `
+    <span class="model-preview-orbit" aria-hidden="true">
+      <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.4">
+        <path d="m24 7 15 8.5v17L24 41 9 32.5v-17L24 7Z"></path>
+        <path d="m9 15.5 15 8.5 15-8.5M24 24v17"></path>
+      </svg>
+    </span>
+    <span class="model-preview-format">${escapeHtml(format)}</span>
+    <strong>${escapeHtml(result.name || file && file.name || t('3D model', '3D 模型', '3D 모델'))}</strong>`;
+  button.addEventListener('click', () => {
+    if (file && typeof openBoardModelViewer === 'function') openBoardModelViewer(file);
+  });
+  stage.appendChild(button);
+  setPreviewPanelState('model');
 }
 
 function renderBinaryPreview(id, result) {

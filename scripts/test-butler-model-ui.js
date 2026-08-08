@@ -31,6 +31,18 @@ assert.match(boardMedia, /event\.key === 'Escape'[\s\S]*closeBoardButlerMenu/, '
   assert.match(boardMedia, new RegExp(`${action}: Object\\.freeze`), `${action} must have an explicit bridge hook.`);
   assert.match(boardMedia, new RegExp(`BOARD_BUTLER_ICONS\\.${action}`), `${action} must have a semantic icon.`);
 });
+[
+  ['imageEdit', 'openBoardButlerImageEditPanel'],
+  ['imageLayer', 'openBoardButlerLayerPanel'],
+  ['imageUpscale', 'openBoardButlerUpscalePanel'],
+  ['eraseObject', 'openBoardButlerErasePanel']
+].forEach(([action, entryPoint]) => {
+  assert.match(
+    boardMedia,
+    new RegExp(`'${action}'[\\s\\S]{0,260}${entryPoint}`),
+    `${action} must execute from the selected-image Butler menu.`
+  );
+});
 assert.match(boardMedia, /Qwen-Image-Edit-Plus/, 'Image edit must identify the Qwen edit model.');
 assert.match(boardMedia, /numLayers:[\s\S]*Math\.max\(2[\s\S]*Math\.min\(8/, 'Layered images must expose a bounded 2-8 layer control.');
 assert.match(boardMedia, /maskDataUrl[\s\S]*maskWidth[\s\S]*maskHeight/, 'Erase must submit a real PNG mask with dimensions.');
@@ -46,6 +58,18 @@ assert.match(boardMedia, /filters:\s*\[\{ model: 'prob-4' \}\][\s\S]*audioTransf
 assert.match(boardCanvas, /appendBoardVideoButlerToolbar\(el, f, item\)/, 'Selected videos must expose the Butler capsule.');
 assert.match(preload, /upscaleVideo:[\s\S]*butler:upscaleVideo/, 'The isolated preload must expose video enhancement.');
 assert.match(preload, /getVideoToolStatus:[\s\S]*downloadVideoToolResult:/, 'The isolated preload must expose video polling and download.');
+[
+  ['editImage', 'butler:image-edit'],
+  ['layerImage', 'butler:image-layer'],
+  ['upscaleImage', 'butler:image-upscale'],
+  ['eraseObject', 'butler:image-erase']
+].forEach(([method, channel]) => {
+  assert.match(preload, new RegExp(`${method}:[^\\n]+${channel}`), `${method} must use its isolated Butler IPC channel.`);
+});
+assert.match(preload, /getImageToolStatus:[^\n]+butler:image-tool-status/, 'Image tools must expose asynchronous status polling.');
+assert.match(preload, /downloadImageToolResult:[^\n]+butler:image-tool-download/, 'Image tools must expose result download and archival.');
+assert.match(boardMedia, /task\.phase === 'queued'[\s\S]*task\.phase === 'downloading'[\s\S]*task\.phase === 'saving'/, 'Image tools must expose their asynchronous phases.');
+assert.match(boardMedia, /result\.result[\s\S]*result\.output/, 'Image tool results must accept archived files returned in nested task payloads.');
 assert.doesNotMatch(preload, /AI302_KEY|AI_302_API_KEY|server-only-302-key/, 'The renderer bridge must never contain the 302 credential.');
 assert.match(main, /async function butlerSourceVideo[\s\S]*realpath\(store\.libraryDir\)[\s\S]*isSymbolicLink/, 'Video enhancement must read only a real archived library file.');
 assert.match(main, /MAX_BUTLER_VIDEO_BYTES = 48 \* 1024 \* 1024[\s\S]*butler-video-too-large/, 'Video relay input must be bounded before base64 encoding.');
@@ -55,13 +79,20 @@ assert.match(main, /const butlerVideoTasks = new Map\(\)[\s\S]*const butlerVideo
 assert.match(main, /addButlerVideoOutputFile[\s\S]*butlerOperation:[\s\S]*kind: 'video-upscale'/, 'Enhanced videos must be archived with Butler provenance.');
 assert.match(main, /creditsCharged !== undefined \? currentTask\.creditsCharged : currentTask\.credits/, 'Enhanced videos must archive the settled charge when available.');
 
+assert.match(storeClient, /MODEL_FILE_EXTENSIONS = new Set\(\['\.glb', '\.fbx', '\.obj'\]\)/, 'GLB, FBX and OBJ must share model recognition.');
 assert.match(storeClient, /mime === 'model\/gltf-binary'/, 'GLB recognition must include the standard model MIME type.');
-assert.match(boardCanvas, /f\.modelPreviewUrl \|\| f\.previewUrl \|\| ''/, 'GLB cards must use only a static model preview image.');
+assert.match(boardCanvas, /if \(isModelFile\(f\)\)/, 'All supported model formats must use the model card.');
+assert.match(boardCanvas, /f\.modelPreviewUrl \|\| f\.previewUrl \|\| ''/, 'Model cards must use only a static model preview image.');
 assert.doesNotMatch(boardCanvas, /new\s+(?:THREE\.)?WebGLRenderer/, 'Board cards must never allocate a WebGL renderer.');
-assert.match(boardCanvas, /else if \(isModel\)[\s\S]*dblclick[\s\S]*openBoardModelViewer\(f\)/, 'Double-clicking a GLB card must open the viewer.');
+assert.match(boardCanvas, /else if \(isModel\)[\s\S]*dblclick[\s\S]*openBoardModelViewer\(f\)/, 'Double-clicking a model card must open the viewer.');
 
 assert.strictEqual((modelViewer.match(/new THREE\.WebGLRenderer/g) || []).length, 1, 'The app must have one model-viewer renderer allocation path.');
 assert.match(modelViewer, /new OrbitControls\(camera, renderer\.domElement\)/, 'The viewer must support orbit interaction.');
+assert.match(modelViewer, /new vendor\.GLTFLoader[\s\S]*new vendor\.FBXLoader[\s\S]*new vendor\.OBJLoader/, 'The viewer must parse GLB, FBX and OBJ with dedicated loaders.');
+assert.match(modelViewer, /window\.messsAPI\.readModelData\(file\.id\)/, 'Model parsing must use the isolated binary IPC instead of production custom-protocol fetches.');
+assert.match(preload, /readModelData:[^\n]+files:readModelData/, 'The isolated preload must expose model reads by file id only.');
+assert.match(main, /async function readArchivedModelData[\s\S]*realpath\(store\.libraryDir\)[\s\S]*MAX_MODEL_PREVIEW_BYTES/, 'Model preview reads must stay inside the archive and enforce a size limit.');
+assert.match(main, /ipcMain\.handle\('files:readModelData'/, 'The main process must own model binary reads.');
 assert.match(modelViewer, /window\.messsAPI\.exportFile\(file\.id\)/, 'The viewer download button must use the existing safe export IPC.');
 assert.match(modelViewer, /cancelAnimationFrame[\s\S]*disposeBoardModelObject[\s\S]*forceContextLoss\(\)/, 'Closing the viewer must release animation, scene resources and the WebGL context.');
 assert.match(styles, /\.board-model-viewer-overlay[\s\S]*place-items:\s*center/, 'The full-screen model dialog must be centered.');

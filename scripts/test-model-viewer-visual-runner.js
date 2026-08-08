@@ -53,6 +53,48 @@ function minimalTriangleGlb() {
   return Buffer.concat([header, jsonHeader, json, binaryHeader, binary]);
 }
 
+function minimalTriangleObj() {
+  return Buffer.from([
+    'o MesssTriangle',
+    'v -1 -1 0',
+    'v 1 -1 0',
+    'v 0 1 0',
+    'f 1 2 3',
+    ''
+  ].join('\n'), 'utf8');
+}
+
+function minimalTriangleFbx() {
+  return Buffer.from([
+    '; FBX 7.4.0 project file',
+    'FBXHeaderExtension:  {',
+    '\tFBXHeaderVersion: 1003',
+    '\tFBXVersion: 7400',
+    '\tCreator: "Messs visual test"',
+    '}',
+    'Objects:  {',
+    '\tGeometry: 1, "Geometry::MesssTriangle", "Mesh" {',
+    '\t\tGeometryVersion: 124',
+    '\t\tVertices: *9 {',
+    '\t\t\ta: -1,-1,0,1,-1,0,0,1,0',
+    '\t\t}',
+    '\t\tPolygonVertexIndex: *3 {',
+    '\t\t\ta: 0,1,-3',
+    '\t\t}',
+    '\t}',
+    '\tModel: 2, "Model::MesssTriangle", "Mesh" {',
+    '\t\tVersion: 232',
+    '\t\tShading: T',
+    '\t\tCulling: "CullingOff"',
+    '\t}',
+    '}',
+    'Connections:  {',
+    '\tC: "OO",1,2',
+    '}',
+    ''
+  ].join('\n'), 'utf8');
+}
+
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -330,17 +372,32 @@ async function run() {
   const styleUrl = pathToFileURL(path.join(root, 'src', 'styles', 'main.css')).href;
   const themeStyleUrl = pathToFileURL(path.join(root, 'src', 'styles', 'theme.css')).href;
   const boardMediaUrl = pathToFileURL(path.join(root, 'src', 'js', 'board-media-meta.js')).href;
-  const modelDataUrl = `data:model/gltf-binary;base64,${minimalTriangleGlb().toString('base64')}`;
+  const modelFixtures = {
+    glb: minimalTriangleGlb().toString('base64'),
+    fbx: minimalTriangleFbx().toString('base64'),
+    obj: minimalTriangleObj().toString('base64')
+  };
   fs.writeFileSync(htmlPath, `<!doctype html>
     <html data-theme="dark"><head><meta charset="utf-8"><link rel="stylesheet" href="${themeStyleUrl}"><link rel="stylesheet" href="${styleUrl}"></head>
     <body><script>
       window.t = (en) => en;
       window.showToast = () => {};
-      window.isGlbFile = (file) => file && file.ext === '.glb';
+      window.isModelFile = (file) => file && ['.glb', '.fbx', '.obj'].includes(file.ext);
       window.isVideoExt = (ext) => ext === '.mp4';
       window.AppState = { language: 'en', files: [], boardItems: [] };
+      const modelFixtures = ${JSON.stringify(modelFixtures)};
+      const decodeFixture = (base64) => {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+        return bytes;
+      };
       window.messsAPI = {
         exportFile: async () => ({ ok: true }),
+        readModelData: async (id) => {
+          const format = String(id).replace(/^fixture-/, '');
+          return { ok: true, format, data: decodeFixture(modelFixtures[format]) };
+        },
         butler: {
           removeBackground: async () => ({ ok: false }),
           create3d: async () => ({ ok: false }),
@@ -349,7 +406,7 @@ async function run() {
         }
       };
     </script><script src="${bundleUrl}"></script><script src="${controllerUrl}"></script><script src="${boardMediaUrl}"></script><script>
-      addEventListener('DOMContentLoaded', () => openBoardModelViewer({ id: 'fixture', name: 'fixture.glb', ext: '.glb', url: ${JSON.stringify(modelDataUrl)} }));
+      addEventListener('DOMContentLoaded', () => openBoardModelViewer({ id: 'fixture-glb', name: 'fixture.glb', ext: '.glb' }));
     </script></body></html>`, 'utf8');
 
   const window = new BrowserWindow({
@@ -400,11 +457,21 @@ async function run() {
   if (released.overlay || released.renderer !== null || released.animationFrame !== 0) {
     throw new Error(`Viewer resources were not released: ${JSON.stringify(released)}`);
   }
+  const formatPixels = {};
+  for (const format of ['fbx', 'obj']) {
+    await window.webContents.executeJavaScript(
+      `openBoardModelViewer({ id: 'fixture-${format}', name: 'fixture.${format}', ext: '.${format}' })`
+    );
+    await waitForViewerState(window, 'ready');
+    await wait(180);
+    formatPixels[format] = (await captureModelPixels(window, format)).modelPixels;
+    await window.webContents.executeJavaScript('closeBoardModelViewer()');
+  }
   await captureButlerLayout(window, 'desktop', 980, 720);
   await captureButlerLayout(window, 'compact', 520, 420);
   window.destroy();
   fs.rmSync(tempDir, { recursive: true, force: true });
-  process.stdout.write(`MODEL_VIEWER_VISUAL_OK desktop=${desktop.modelPixels} compact=${compact.modelPixels} rotation=${rotationDelta.toFixed(3)}\n`);
+  process.stdout.write(`MODEL_VIEWER_VISUAL_OK desktop=${desktop.modelPixels} compact=${compact.modelPixels} rotation=${rotationDelta.toFixed(3)} fbx=${formatPixels.fbx} obj=${formatPixels.obj}\n`);
 }
 
 app.whenReady().then(run).then(() => app.quit()).catch((error) => {

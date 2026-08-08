@@ -139,6 +139,8 @@ let updaterState = {
   message: null
 };
 const transientAiAttachments = new Map();
+const butlerImageTasks = new Map();
+const butlerImageDownloads = new Map();
 const butler3dTasks = new Map();
 const butler3dDownloads = new Map();
 const butlerVideoTasks = new Map();
@@ -147,6 +149,20 @@ const MAX_BUTLER_IMAGE_BYTES = Math.floor(7.5 * 1024 * 1024);
 const MAX_BUTLER_VIDEO_BYTES = 48 * 1024 * 1024;
 const MAX_BUTLER_VIDEO_OUTPUT_BYTES = 256 * 1024 * 1024;
 const MAX_BUTLER_PREVIEW_BYTES = 16 * 1024 * 1024;
+const MAX_MODEL_PREVIEW_BYTES = 256 * 1024 * 1024;
+const MODEL_FILE_EXTENSIONS = new Set(['.glb', '.fbx', '.obj']);
+const BUTLER_IMAGE_TOOL_IDS = new Set([
+  'qwen-image-edit-plus',
+  'qwen-image-layered',
+  'super-upscale-v2',
+  'erase'
+]);
+const BUTLER_IMAGE_TOOL_CREDITS = Object.freeze({
+  'qwen-image-edit-plus': 2,
+  'qwen-image-layered': 1,
+  'super-upscale-v2': 2,
+  erase: 1
+});
 const BUTLER_VIDEO_TOOL_ID = 'topaz-video-upscale';
 const BUTLER_VIDEO_MIME_BY_EXTENSION = Object.freeze({
   '.mp4': 'video/mp4',
@@ -700,7 +716,8 @@ const MIME_BY_EXTENSION = {
   '.pdf': 'application/pdf', '.txt': 'text/plain', '.md': 'text/markdown',
   '.json': 'application/json', '.csv': 'text/csv', '.zip': 'application/zip',
   '.7z': 'application/x-7z-compressed', '.rar': 'application/vnd.rar',
-  '.tar': 'application/x-tar', '.gz': 'application/gzip', '.glb': 'model/gltf-binary'
+  '.tar': 'application/x-tar', '.gz': 'application/gzip',
+  '.glb': 'model/gltf-binary', '.fbx': 'model/vnd.autodesk.fbx', '.obj': 'model/obj'
 };
 const ARCHIVE_EXTENSIONS = new Set(['.zip', '.7z', '.rar', '.tar', '.gz', '.bz2', '.xz', '.zst', '.iso', '.dmg', '.img']);
 
@@ -711,7 +728,8 @@ function classifyArchiveFile(name) {
   const archiveKind = ARCHIVE_EXTENSIONS.has(ext) ? 'archive'
     : preview.isImageExt(ext) ? 'image' : preview.isVideoExt(ext) ? 'video'
       : preview.isAudioExt(ext) ? 'audio' : preview.isTextExt(ext) ? 'text'
-        : preview.isPreviewableDocument(ext) ? 'document' : 'file';
+        : preview.isPreviewableDocument(ext) ? 'document'
+          : MODEL_FILE_EXTENSIONS.has(ext) ? 'model' : 'file';
   return { mimeType, archiveKind };
 }
 
@@ -786,6 +804,65 @@ function buildUnknownFilePreview(file) {
   } finally {
     fs.closeSync(fd);
   }
+}
+
+async function readArchivedModelData(fileId) {
+  const normalizedId = String(fileId || '').trim();
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(normalizedId)) {
+    const error = new Error('The selected 3D model could not be found.');
+    error.code = 'file-not-found';
+    throw error;
+  }
+  const file = store.getFile(normalizedId);
+  const extension = String(file && (file.ext || path.extname(file.name)) || '').trim().toLowerCase();
+  if (!file || !file.storedPath || !MODEL_FILE_EXTENSIONS.has(extension)) {
+    const error = new Error('Only GLB, FBX, and OBJ models can be previewed.');
+    error.code = file ? 'unsupported-model-format' : 'file-not-found';
+    throw error;
+  }
+
+  let archivedPath;
+  let archivedStat;
+  try {
+    const [libraryRoot, sourcePath, sourceStat] = await Promise.all([
+      fs.promises.realpath(store.libraryDir),
+      fs.promises.realpath(file.storedPath),
+      fs.promises.lstat(file.storedPath)
+    ]);
+    const relative = path.relative(libraryRoot, sourcePath);
+    if (!sourceStat.isFile() || sourceStat.isSymbolicLink() || !relative ||
+        relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) {
+      const error = new Error('Only archived library models can be previewed.');
+      error.code = 'privacy-blocked';
+      throw error;
+    }
+    if (sourceStat.size <= 0 || sourceStat.size > MAX_MODEL_PREVIEW_BYTES) {
+      const error = new Error('This 3D model is too large to preview safely.');
+      error.code = 'model-too-large';
+      throw error;
+    }
+    archivedPath = sourcePath;
+    archivedStat = sourceStat;
+  } catch (cause) {
+    if (cause && ['privacy-blocked', 'model-too-large'].includes(cause.code)) throw cause;
+    const error = new Error('The archived 3D model could not be read.');
+    error.code = 'file-not-found';
+    throw error;
+  }
+
+  const buffer = await fs.promises.readFile(archivedPath);
+  const currentStat = await fs.promises.lstat(archivedPath);
+  if (!currentStat.isFile() || currentStat.isSymbolicLink() ||
+      currentStat.size !== archivedStat.size || buffer.length !== archivedStat.size) {
+    const error = new Error('The 3D model changed while it was being loaded.');
+    error.code = 'model-changed';
+    throw error;
+  }
+  return {
+    format: extension.slice(1),
+    name: file.name,
+    data: buffer
+  };
 }
 
 async function makeFileFingerprint(filePath, stat) {
@@ -2008,7 +2085,14 @@ function makeButlerOutputName(sourceFile, operation, extension) {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 64) || 'Image';
-  const suffix = operation === 'remove-background' ? 'Background Removed' : '3D';
+  const suffix = ({
+    'remove-background': 'Background Removed',
+    'image-edit': 'Edited',
+    'image-layer': 'Layer',
+    'image-upscale': 'Upscaled',
+    'image-erase': 'Erased',
+    'generate-3d': '3D'
+  })[operation] || 'Processed';
   const existingNames = new Set(store.data.files.map((file) => file.name));
   let name = `${cleanBase} - ${suffix}.${extension}`;
   let number = 2;
@@ -2019,10 +2103,10 @@ function makeButlerOutputName(sourceFile, operation, extension) {
   return name;
 }
 
-async function sanitizeButlerBackgroundPng(buffer) {
+async function sanitizeButlerImagePng(buffer, { requireTransparency = false } = {}) {
   if (!Buffer.isBuffer(buffer) || buffer.length < 24 || buffer.length > 64 * 1024 * 1024 ||
       !buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
-    const error = new Error('The background service returned an invalid PNG image.');
+    const error = new Error('The image service returned an invalid PNG image.');
     error.code = buffer && buffer.length > 64 * 1024 * 1024 ? 'media-too-large' : 'invalid-background-image';
     throw error;
   }
@@ -2038,8 +2122,9 @@ async function sanitizeButlerBackgroundPng(buffer) {
       sequentialRead: true
     });
     const metadata = await pipeline.metadata();
-    if (metadata.format !== 'png' || !metadata.hasAlpha || !(metadata.width > 0 && metadata.height > 0)) {
-      throw new Error('missing-alpha');
+    if (metadata.format !== 'png' || !(metadata.width > 0 && metadata.height > 0) ||
+        (requireTransparency && !metadata.hasAlpha)) {
+      throw new Error(requireTransparency ? 'missing-alpha' : 'invalid-png');
     }
     const canonical = await pipeline.png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer();
     if (canonical.length > 64 * 1024 * 1024) {
@@ -2050,13 +2135,67 @@ async function sanitizeButlerBackgroundPng(buffer) {
     return canonical;
   } catch (cause) {
     if (cause && cause.code === 'media-too-large') throw cause;
-    const error = new Error('The background service returned an invalid transparent PNG image.');
+    const error = new Error(requireTransparency
+      ? 'The background service returned an invalid transparent PNG image.'
+      : 'The image service returned an invalid PNG image.');
     error.code = 'invalid-background-image';
     throw error;
   }
 }
 
-async function addButlerOutputFile(buffer, sourceFile, operation) {
+async function sanitizeButlerBackgroundPng(buffer) {
+  return sanitizeButlerImagePng(buffer, { requireTransparency: true });
+}
+
+async function sanitizeButlerMaskDataUrl(value) {
+  const match = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/i.exec(String(value || ''));
+  if (!match || !match[1] || match[1].length % 4 !== 0) {
+    const error = new Error('Draw an erase mask before starting.');
+    error.code = 'invalid-image-mask';
+    throw error;
+  }
+  const buffer = Buffer.from(match[1], 'base64');
+  if (!buffer.length || buffer.length > MAX_BUTLER_IMAGE_BYTES || buffer.toString('base64') !== match[1]) {
+    const error = new Error('The erase mask is invalid or too large.');
+    error.code = 'invalid-image-mask';
+    throw error;
+  }
+  if (!sharp) {
+    const error = new Error('Secure image validation is unavailable in this build.');
+    error.code = 'privacy-sanitizer-unavailable';
+    throw error;
+  }
+  try {
+    const pipeline = sharp(buffer, {
+      failOn: 'error',
+      limitInputPixels: 25_000_000,
+      sequentialRead: true
+    });
+    const metadata = await pipeline.metadata();
+    if (metadata.format !== 'png' || !(metadata.width > 0 && metadata.height > 0) ||
+        metadata.width > 5000 || metadata.height > 5000) {
+      throw new Error('invalid-mask');
+    }
+    const canonical = await pipeline
+      .removeAlpha()
+      .greyscale()
+      .threshold(1)
+      .png({ compressionLevel: 9, adaptiveFiltering: true })
+      .toBuffer();
+    if (!canonical.length || canonical.length > MAX_BUTLER_IMAGE_BYTES) throw new Error('invalid-mask');
+    return {
+      dataUrl: `data:image/png;base64,${canonical.toString('base64')}`,
+      width: metadata.width,
+      height: metadata.height
+    };
+  } catch (cause) {
+    const error = new Error('The erase mask could not be validated.');
+    error.code = 'invalid-image-mask';
+    throw error;
+  }
+}
+
+async function addButlerOutputFile(buffer, sourceFile, operation, operationDetails = {}) {
   const isModel = operation === 'generate-3d';
   if (isModel) assertValidGlbBuffer(buffer);
   const extension = isModel ? 'glb' : 'png';
@@ -2087,6 +2226,10 @@ async function addButlerOutputFile(buffer, sourceFile, operation) {
       butlerOperation: {
         kind: operation,
         sourceFileId: sourceFile.id,
+        ...(operationDetails.modelId ? { modelId: operationDetails.modelId } : {}),
+        ...(Number.isFinite(Number(operationDetails.credits))
+          ? { credits: Number(operationDetails.credits) }
+          : {}),
         createdAt: new Date().toISOString()
       },
       folderId: sourceFile.folderId || null,
@@ -2472,24 +2615,72 @@ function normalizeAiMediaGenerationRequest(request, kind) {
     return normalized;
   }
 
+  const videoConfig = getAiMediaConfig();
+  const providerId = String(request.videoProviderId || videoConfig.activeVideoProviderId || 'video-1').trim().toLowerCase();
+  const provider = videoConfig.videoProviders.find((entry) => entry.id === providerId)
+    || providerCatalog('video').find((entry) => entry.id === providerId)
+    || null;
+  if (!provider) {
+    throw invalidAiMediaOption('provider-not-allowed', 'The selected video model is not available.');
+  }
+  const capabilities = provider.capabilities && typeof provider.capabilities === 'object'
+    ? provider.capabilities
+    : {};
+  const supportedResolutions = new Set(
+    (Array.isArray(capabilities.resolutions) && capabilities.resolutions.length
+      ? capabilities.resolutions
+      : [...MINIMAX_VIDEO_RESOLUTIONS])
+      .map((value) => String(value || '').trim().toUpperCase())
+      .filter(Boolean)
+  );
+  const supportedDurations = new Set(
+    (Array.isArray(capabilities.durations) && capabilities.durations.length
+      ? capabilities.durations
+      : Array.from({ length: 12 }, (_value, index) => index + 4))
+      .map(Number)
+      .filter(Number.isInteger)
+  );
+  const textRatios = new Set(
+    (Array.isArray(capabilities.ratios) && capabilities.ratios.length
+      ? capabilities.ratios
+      : [...MINIMAX_TEXT_VIDEO_RATIOS])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  );
+  const frameRatios = new Set(
+    (Array.isArray(capabilities.frameReferenceRatios) && capabilities.frameReferenceRatios.length
+      ? capabilities.frameReferenceRatios
+      : ['adaptive'])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  );
   const resolution = String(request.resolution || '').trim().toUpperCase();
   const duration = Number(request.duration);
   const aspectRatio = String(request.aspectRatio || '').trim();
-  const hasFrameReference = Array.isArray(request.urls) && request.urls.length > 0;
-  if (!MINIMAX_VIDEO_RESOLUTIONS.has(resolution)) {
-    throw invalidAiMediaOption('invalid-resolution', 'MiniMax H3 resolution must be 768P or 2K.');
+  const referenceCount = Array.isArray(request.urls) ? request.urls.length : 0;
+  const hasFrameReference = referenceCount > 0;
+  const configuredReferenceLimit = Number(capabilities.maxReferenceImages);
+  const referenceLimit = Number.isInteger(configuredReferenceLimit) && configuredReferenceLimit >= 0
+    ? Math.min(14, configuredReferenceLimit)
+    : 2;
+  const providerName = String(provider.name || 'The selected video model').trim();
+  if (referenceCount > referenceLimit) {
+    throw invalidAiMediaOption('too-many-references', `${providerName} supports at most ${referenceLimit} reference images.`);
   }
-  if (!Number.isInteger(duration) || duration < 4 || duration > 15) {
-    throw invalidAiMediaOption('invalid-duration', 'MiniMax H3 duration must be a whole number from 4 to 15 seconds.');
+  if (!supportedResolutions.has(resolution)) {
+    throw invalidAiMediaOption('invalid-resolution', `${providerName} does not support the selected resolution.`);
   }
-  if (hasFrameReference ? aspectRatio !== 'adaptive' : !MINIMAX_TEXT_VIDEO_RATIOS.has(aspectRatio)) {
+  if (!Number.isInteger(duration) || !supportedDurations.has(duration)) {
+    throw invalidAiMediaOption('invalid-duration', `${providerName} does not support the selected duration.`);
+  }
+  const supportedRatios = hasFrameReference ? frameRatios : textRatios;
+  if (!supportedRatios.has(aspectRatio)) {
     throw invalidAiMediaOption(
       'invalid-aspect-ratio',
-      hasFrameReference
-        ? 'MiniMax H3 uses the adaptive ratio when first or last frame images are supplied.'
-        : 'The selected MiniMax H3 aspect ratio is not supported.'
+      `${providerName} does not support the selected aspect ratio${hasFrameReference ? ' with reference images' : ''}.`
     );
   }
+  normalized.videoProviderId = providerId;
   normalized.size = resolution;
   normalized.resolution = resolution;
   normalized.duration = duration;
@@ -2535,6 +2726,97 @@ async function chooseProfileAvatar() {
 }
 
 const BUTLER_3D_PROVIDERS = new Set(['hunyuan3d', 'hyper3d']);
+
+function normalizeButlerImageTool(value) {
+  const modelId = String(value || '').trim().toLowerCase();
+  if (!BUTLER_IMAGE_TOOL_IDS.has(modelId)) {
+    const error = new Error('The selected image tool is not supported.');
+    error.code = 'invalid-image-tool';
+    throw error;
+  }
+  return modelId;
+}
+
+function normalizeButlerImageOptions(modelId, requested = {}) {
+  const source = requested && typeof requested === 'object' && !Array.isArray(requested) ? requested : {};
+  if (modelId === 'qwen-image-edit-plus') {
+    const prompt = String(source.prompt || '').trim();
+    if (!prompt || Array.from(prompt).length > 1200) {
+      const error = new Error('Enter an image-edit prompt up to 1200 characters.');
+      error.code = 'invalid-prompt';
+      throw error;
+    }
+    assertPromptHasNoSecrets(prompt);
+    return { prompt };
+  }
+  if (modelId === 'qwen-image-layered') {
+    const prompt = String(source.prompt || '').trim();
+    if (Array.from(prompt).length > 800) {
+      const error = new Error('The layer prompt is too long.');
+      error.code = 'invalid-prompt';
+      throw error;
+    }
+    if (prompt) assertPromptHasNoSecrets(prompt);
+    return {
+      prompt,
+      numLayers: Math.max(2, Math.min(8, Math.round(Number(source.numLayers) || 4)))
+    };
+  }
+  if (modelId === 'super-upscale-v2') {
+    return {
+      scale: Math.max(2, Math.min(4, Math.round(Number(source.scale) || 3))),
+      detail: Math.max(1, Math.min(3, Math.round(Number(source.detail) || 2)))
+    };
+  }
+  return {
+    maskDataUrl: source.maskDataUrl,
+    maskWidth: Math.max(1, Math.min(5000, Math.round(Number(source.maskWidth) || 1))),
+    maskHeight: Math.max(1, Math.min(5000, Math.round(Number(source.maskHeight) || 1)))
+  };
+}
+
+function normalizeButlerImageStatus(payload) {
+  const raw = String(payload && payload.status || '').trim().toLowerCase().replace(/[ -]+/g, '_');
+  const status = ['done', 'completed', 'complete', 'success', 'ready'].includes(raw)
+    ? 'succeeded'
+    : ['running', 'in_progress', 'generating'].includes(raw)
+      ? 'processing'
+      : raw;
+  if (!['queued', 'processing', 'succeeded', 'failed'].includes(status)) {
+    const error = new Error('The image gateway returned an invalid task status.');
+    error.code = 'invalid-gateway-response';
+    throw error;
+  }
+  const numeric = (key) => Number.isFinite(Number(payload && payload[key])) ? Number(payload[key]) : undefined;
+  const resultCount = status === 'succeeded'
+    ? Math.max(1, Math.min(8, Math.round(Number(payload && payload.resultCount) || 1)))
+    : 0;
+  return {
+    status,
+    resultCount,
+    progress: Math.max(0, Math.min(100, Math.round(Number(payload && payload.progress) || (status === 'succeeded' ? 100 : 0)))),
+    retryAfterMs: ['succeeded', 'failed'].includes(status)
+      ? 0
+      : Math.max(1_500, Math.min(30_000, Number(payload && payload.retryAfterMs) || 5_000)),
+    ...(numeric('credits') !== undefined ? { credits: numeric('credits') } : {}),
+    ...(numeric('creditsCharged') !== undefined ? { creditsCharged: numeric('creditsCharged') } : {}),
+    ...(numeric('creditsReleased') !== undefined ? { creditsReleased: numeric('creditsReleased') } : {}),
+    ...(numeric('availableCredits') !== undefined ? { availableCredits: numeric('availableCredits') } : {}),
+    ...(status === 'failed'
+      ? { message: String(payload && payload.errorMessage || 'Image processing failed.') }
+      : {})
+  };
+}
+
+function rememberButlerImageTask(taskToken, patch = {}) {
+  const previous = butlerImageTasks.get(taskToken) || {};
+  butlerImageTasks.delete(taskToken);
+  butlerImageTasks.set(taskToken, { ...previous, ...patch, updatedAt: Date.now() });
+  while (butlerImageTasks.size > 256) {
+    butlerImageTasks.delete(butlerImageTasks.keys().next().value);
+  }
+  return butlerImageTasks.get(taskToken);
+}
 
 function normalizeButler3dProvider(value) {
   const providerId = String(value || 'hunyuan3d').trim().toLowerCase();
@@ -2665,6 +2947,11 @@ function butlerFailure(error, fallbackMessage) {
     'unsupported-image-dimensions': 'The image proportions are outside the supported 3D range.',
     'butler-image-too-large': 'The image could not be reduced to the supported upload size.',
     'invalid-butler-image': 'The selected image could not be prepared safely.',
+    'invalid-image-mask': 'Draw a valid erase mask before starting.',
+    'invalid-image-tool': 'The selected image tool is not supported.',
+    'image-tool-task-not-found': 'The image task was not found or has expired.',
+    'image-tool-task-not-ready': 'The processed image is not ready yet.',
+    'image-tool-failed': 'Image processing failed.',
     'invalid-3d-provider': 'The selected 3D provider is not supported.',
     'invalid-task-token': 'The 3D task is invalid.',
     'invalid-glb': 'The 3D provider returned an invalid model file.',
@@ -2677,7 +2964,7 @@ function butlerFailure(error, fallbackMessage) {
     'video-tool-task-not-found': 'The video enhancement task was not found or has expired.',
     'video-tool-task-not-ready': 'The enhanced video is not ready yet.',
     'video-upscale-failed': 'Video enhancement failed.',
-    'insufficient-credits': 'There are not enough points for this video enhancement.',
+    'insufficient-credits': 'There are not enough points for this Butler request.',
     'media-too-large': 'The generated result exceeds the safe download size.',
     'rate-limited': 'Too many Butler requests. Please wait and try again.'
   };
@@ -3235,6 +3522,220 @@ function registerIpcHandlers() {
     }
   });
 
+  ipcMain.handle('butler:image-edit', async (_evt, fileId, requestedOptions = {}) => {
+    try {
+      if (!aiGateway || !aiGateway.isConfigured()) {
+        const error = new Error('Butler is not configured.');
+        error.code = 'gateway-not-configured';
+        throw error;
+      }
+      const modelId = 'qwen-image-edit-plus';
+      const options = normalizeButlerImageOptions(modelId, requestedOptions);
+      const source = await butlerSourceImage(fileId);
+      const payload = await aiGateway.editImage(source.imageDataUrl, options);
+      const taskToken = normalizeButlerTaskToken(payload && payload.taskToken);
+      const status = normalizeButlerImageStatus(payload || { status: 'queued' });
+      rememberButlerImageTask(taskToken, {
+        sourceFileId: source.file.id,
+        modelId,
+        operation: 'image-edit',
+        resultCount: status.resultCount,
+        credits: status.credits !== undefined ? status.credits : BUTLER_IMAGE_TOOL_CREDITS[modelId],
+        status: status.status
+      });
+      return { ok: true, taskToken, ...status };
+    } catch (error) {
+      const failure = butlerFailure(error, 'The image edit task could not be started.');
+      console.error('Butler image edit failed:', failure.reason);
+      return failure;
+    }
+  });
+
+  ipcMain.handle('butler:image-layer', async (_evt, fileId, requestedOptions = {}) => {
+    try {
+      if (!aiGateway || !aiGateway.isConfigured()) {
+        const error = new Error('Butler is not configured.');
+        error.code = 'gateway-not-configured';
+        throw error;
+      }
+      const modelId = 'qwen-image-layered';
+      const options = normalizeButlerImageOptions(modelId, requestedOptions);
+      const source = await butlerSourceImage(fileId);
+      const payload = await aiGateway.layerImage(source.imageDataUrl, options);
+      const taskToken = normalizeButlerTaskToken(payload && payload.taskToken);
+      const status = normalizeButlerImageStatus(payload || { status: 'queued' });
+      rememberButlerImageTask(taskToken, {
+        sourceFileId: source.file.id,
+        modelId,
+        operation: 'image-layer',
+        resultCount: status.resultCount,
+        credits: status.credits !== undefined ? status.credits : BUTLER_IMAGE_TOOL_CREDITS[modelId],
+        status: status.status
+      });
+      return { ok: true, taskToken, ...status };
+    } catch (error) {
+      const failure = butlerFailure(error, 'The image layer task could not be started.');
+      console.error('Butler image layer failed:', failure.reason);
+      return failure;
+    }
+  });
+
+  ipcMain.handle('butler:image-upscale', async (_evt, fileId, requestedOptions = {}) => {
+    try {
+      if (!aiGateway || !aiGateway.isConfigured()) {
+        const error = new Error('Butler is not configured.');
+        error.code = 'gateway-not-configured';
+        throw error;
+      }
+      const modelId = 'super-upscale-v2';
+      const options = normalizeButlerImageOptions(modelId, requestedOptions);
+      const source = await butlerSourceImage(fileId);
+      const responseBuffer = await aiGateway.upscaleImage(source.imageDataUrl, options);
+      const pngBuffer = await sanitizeButlerImagePng(responseBuffer);
+      const record = await addButlerOutputFile(pngBuffer, source.file, 'image-upscale', {
+        modelId,
+        credits: BUTLER_IMAGE_TOOL_CREDITS[modelId]
+      });
+      if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
+      return { ok: true, file: fileToPayload(record) };
+    } catch (error) {
+      const failure = butlerFailure(error, 'The image could not be upscaled.');
+      console.error('Butler image upscale failed:', failure.reason);
+      return failure;
+    }
+  });
+
+  ipcMain.handle('butler:image-erase', async (_evt, fileId, requestedOptions = {}) => {
+    try {
+      if (!aiGateway || !aiGateway.isConfigured()) {
+        const error = new Error('Butler is not configured.');
+        error.code = 'gateway-not-configured';
+        throw error;
+      }
+      const modelId = 'erase';
+      const options = normalizeButlerImageOptions(modelId, requestedOptions);
+      const [source, mask] = await Promise.all([
+        butlerSourceImage(fileId),
+        sanitizeButlerMaskDataUrl(options.maskDataUrl)
+      ]);
+      const responseBuffer = await aiGateway.eraseObject(source.imageDataUrl, mask.dataUrl, {
+        maskWidth: mask.width,
+        maskHeight: mask.height
+      });
+      const pngBuffer = await sanitizeButlerImagePng(responseBuffer);
+      const record = await addButlerOutputFile(pngBuffer, source.file, 'image-erase', {
+        modelId,
+        credits: BUTLER_IMAGE_TOOL_CREDITS[modelId]
+      });
+      if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
+      return { ok: true, file: fileToPayload(record) };
+    } catch (error) {
+      const failure = butlerFailure(error, 'The selected object could not be erased.');
+      console.error('Butler object erase failed:', failure.reason);
+      return failure;
+    }
+  });
+
+  ipcMain.handle('butler:image-tool-status', async (_evt, rawTaskToken, requestedModelId) => {
+    try {
+      if (!aiGateway || !aiGateway.isConfigured()) {
+        const error = new Error('Butler is not configured.');
+        error.code = 'gateway-not-configured';
+        throw error;
+      }
+      const taskToken = normalizeButlerTaskToken(rawTaskToken);
+      const modelId = normalizeButlerImageTool(requestedModelId);
+      const existing = butlerImageTasks.get(taskToken) || {};
+      if (existing.modelId && existing.modelId !== modelId) {
+        const error = new Error('The image task model does not match.');
+        error.code = 'invalid-image-tool';
+        throw error;
+      }
+      const payload = await aiGateway.getImageToolStatus(taskToken, modelId);
+      const status = normalizeButlerImageStatus(payload);
+      rememberButlerImageTask(taskToken, {
+        modelId,
+        status: status.status,
+        resultCount: status.resultCount || existing.resultCount,
+        credits: status.credits !== undefined ? status.credits : existing.credits,
+        creditsCharged: status.creditsCharged !== undefined ? status.creditsCharged : existing.creditsCharged
+      });
+      if (['succeeded', 'failed'].includes(status.status) && runtimeConfig.gatewayConfigured) {
+        await syncGatewayAccount({ force: true });
+      }
+      return { ok: true, ...status };
+    } catch (error) {
+      const failure = butlerFailure(error, 'The image task status could not be checked.');
+      console.error('Butler image task status failed:', failure.reason);
+      return failure;
+    }
+  });
+
+  ipcMain.handle('butler:image-tool-download', async (_evt, rawTaskToken, requestedModelId) => {
+    let taskToken;
+    try {
+      if (!aiGateway || !aiGateway.isConfigured()) {
+        const error = new Error('Butler is not configured.');
+        error.code = 'gateway-not-configured';
+        throw error;
+      }
+      taskToken = normalizeButlerTaskToken(rawTaskToken);
+      const modelId = normalizeButlerImageTool(requestedModelId);
+      const task = butlerImageTasks.get(taskToken) || {};
+      if (task.modelId && task.modelId !== modelId) {
+        const error = new Error('The image task model does not match.');
+        error.code = 'invalid-image-tool';
+        throw error;
+      }
+      const existingFiles = Array.isArray(task.downloadedFileIds)
+        ? task.downloadedFileIds.map((id) => store.getFile(id)).filter(Boolean)
+        : [];
+      if (existingFiles.length) {
+        return { ok: true, files: existingFiles.map(fileToPayload) };
+      }
+      if (butlerImageDownloads.has(taskToken)) return await butlerImageDownloads.get(taskToken);
+
+      const download = (async () => {
+        const resultCount = Math.max(1, Math.min(8, Math.round(Number(task.resultCount) || 1)));
+        const buffers = await aiGateway.downloadImageToolResult(taskToken, modelId, resultCount);
+        const currentTask = butlerImageTasks.get(taskToken) || task;
+        const sourceFile = store.getFile(currentTask.sourceFileId) || {
+          id: null,
+          name: 'Processed image',
+          folderId: null,
+          canvasId: store.data.canvases[0] && store.data.canvases[0].id
+        };
+        const operation = currentTask.operation || (modelId === 'qwen-image-layered' ? 'image-layer' : 'image-edit');
+        const records = [];
+        for (const buffer of buffers) {
+          const pngBuffer = await sanitizeButlerImagePng(buffer);
+          records.push(await addButlerOutputFile(pngBuffer, sourceFile, operation, {
+            modelId,
+            credits: currentTask.creditsCharged !== undefined ? currentTask.creditsCharged : currentTask.credits
+          }));
+        }
+        rememberButlerImageTask(taskToken, {
+          ...currentTask,
+          modelId,
+          downloadedFileIds: records.map((record) => record.id),
+          status: 'succeeded'
+        });
+        if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
+        return { ok: true, files: records.map(fileToPayload) };
+      })();
+      butlerImageDownloads.set(taskToken, download);
+      try {
+        return await download;
+      } finally {
+        butlerImageDownloads.delete(taskToken);
+      }
+    } catch (error) {
+      const failure = butlerFailure(error, 'The processed image could not be downloaded.');
+      console.error('Butler image download failed:', failure.reason);
+      return failure;
+    }
+  });
+
   ipcMain.handle('butler:create3d', async (_evt, fileId, requestedProviderId) => {
     try {
       if (!aiGateway || !aiGateway.isConfigured()) {
@@ -3749,6 +4250,9 @@ function registerIpcHandlers() {
     if (!f) return { type: 'unsupported', reason: 'not-found' };
 
     const ext = path.extname(f.name).toLowerCase();
+    if (MODEL_FILE_EXTENSIONS.has(ext)) {
+      return { type: 'model', format: ext.slice(1), name: f.name };
+    }
     if (preview.isImageExt(ext) && preview.browserCanDecodeImage(ext)) {
       return { type: 'image', url: 'messs-file://' + f.id, name: f.name };
     }
@@ -3835,6 +4339,19 @@ function registerIpcHandlers() {
     } catch (err) {
       console.error('Preview render failed for', f.name, err);
       return { type: 'unsupported', reason: 'render-failed', ext, name: f.name };
+    }
+  });
+
+  ipcMain.handle('files:readModelData', async (_evt, id) => {
+    try {
+      return { ok: true, ...(await readArchivedModelData(id)) };
+    } catch (error) {
+      console.error('3D model preview read failed:', error && error.code ? error.code : error);
+      return {
+        ok: false,
+        reason: error && error.code ? error.code : 'model-read-failed',
+        message: error && error.message ? error.message : 'The 3D model could not be read.'
+      };
     }
   });
 

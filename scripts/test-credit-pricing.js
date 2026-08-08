@@ -6,6 +6,7 @@ const path = require('path');
 const {
   POINTS_PER_CNY,
   IMAGE_QUALITY_PRICES,
+  VIDEO_RATES,
   quoteMediaCredits,
   publicCreditPricing
 } = require('../lib/credit-pricing');
@@ -81,11 +82,43 @@ assert.strictEqual(quoteMediaCredits({
   duration: 0
 }).totalCredits, 40, 'Video billing must enforce the four-second minimum.');
 
+assert.deepStrictEqual(quoteMediaCredits({
+  kind: 'video',
+  videoProviderId: 'video-2',
+  resolution: '480P',
+  duration: 5
+}), {
+  kind: 'video',
+  providerId: 'video-2',
+  resolution: '480P',
+  duration: 5,
+  units: 5,
+  unit: 'second',
+  unitCredits: 3,
+  totalCredits: 15
+});
+
+assert.strictEqual(quoteMediaCredits({
+  kind: 'video',
+  videoProviderId: 'video-3',
+  resolution: '720P',
+  duration: 5
+}).totalCredits, 30);
+
+assert.strictEqual(quoteMediaCredits({
+  kind: 'video',
+  videoProviderId: 'video-2',
+  resolution: 'unsupported',
+  duration: 6
+}).totalCredits, 30, 'Unknown Seedance resolutions must use that provider\'s default 720P rate.');
+
 const publicPricing = publicCreditPricing();
 assert.strictEqual(publicPricing.image['image-5'], 8);
 assert.strictEqual(publicPricing.image['image-6'], 12);
 assert.deepStrictEqual(publicPricing.imageQuality['image-6'], IMAGE_QUALITY_PRICES['image-6']);
 assert.strictEqual(publicPricing.video['video-1']['768P'], 10);
+assert.deepStrictEqual(publicPricing.video['video-2'], VIDEO_RATES['video-2']);
+assert.deepStrictEqual(publicPricing.video['video-3'], VIDEO_RATES['video-3']);
 
 const boardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'board-canvas.js'), 'utf8');
 const assistantSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'ai-assistant.js'), 'utf8');

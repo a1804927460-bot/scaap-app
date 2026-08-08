@@ -1,18 +1,18 @@
 {
-  "version": 13,
+  "version": 15,
   "providers": [
     {
       "id": "image-1",
       "kind": "image",
       "name": "Nano Banana Pro",
-      "endpoint": "https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image:generateContent",
+      "endpoint": "https://api.302.ai/google/v1/models/gemini-3-pro-image-preview",
       "protocol": "gemini-image",
       "requiresActivation": false,
       "capabilities": {
         "sizes": ["1K", "2K", "4K"],
         "ratios": ["auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
       },
-      "keyEnv": "QUICKROUTER_API_KEY"
+      "keyEnv": "AI302_KEY"
     },
     {
       "id": "image-2",
@@ -103,6 +103,46 @@
         "maxReferenceImages": 2
       },
       "keyEnv": "MINIMAX_API_KEY"
+    },
+    {
+      "id": "video-2",
+      "kind": "video",
+      "name": "Seedance 2.0",
+      "endpoint": "https://api.302.ai/volcengine/api/v3/contents/generations/tasks",
+      "resultEndpoint": "https://api.302.ai/volcengine/api/v3/contents/generations/tasks",
+      "model": "doubao-seedance-2-0-260128",
+      "protocol": "seedance-video-v3",
+      "requiresActivation": false,
+      "capabilities": {
+        "resolutions": ["480P", "720P"],
+        "durations": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "ratios": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"],
+        "frameReferenceRatios": ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+        "maxReferenceImages": 9,
+        "referenceRole": "reference_image",
+        "generateAudio": true
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "video-3",
+      "kind": "video",
+      "name": "Seedance 2.5",
+      "endpoint": "https://api.302.ai/volcengine/api/v3/contents/generations/tasks",
+      "resultEndpoint": "https://api.302.ai/volcengine/api/v3/contents/generations/tasks",
+      "model": "doubao-seedance-2-5-260628",
+      "protocol": "seedance-video-v3",
+      "requiresActivation": false,
+      "capabilities": {
+        "resolutions": ["480P", "720P"],
+        "durations": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "ratios": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"],
+        "frameReferenceRatios": ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+        "maxReferenceImages": 9,
+        "referenceRole": "reference_image",
+        "generateAudio": true
+      },
+      "keyEnv": "AI302_KEY"
     },
     {
       "id": "chat-1",

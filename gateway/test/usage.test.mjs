@@ -15,6 +15,10 @@ import {
   touchToolUsage,
   settleUsage
 } from '../src/usage.js';
+import {
+  BUTLER_FIXED_RETAIL_CREDITS,
+  quoteButlerRetailCredits
+} from '../src/tool-pricing.js';
 
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -61,6 +65,13 @@ test('video quote clamps provider parameters, chat remains free, and no provider
   });
   assert.equal(quoteUsage('video', { providerId: 'video-1', resolution: '768P', duration: 1 }).credits, 40);
   assert.equal(quoteUsage('video', { providerId: 'video-1', resolution: '2K', duration: 99 }).credits, 240);
+  assert.deepEqual(quoteUsage('video', { providerId: 'video-2', resolution: '480p', duration: 5 }), {
+    kind: 'video', providerId: 'video-2', credits: 15, resolution: '480P', duration: 5, requiresActivation: false
+  });
+  assert.equal(quoteUsage('video', { providerId: 'video-2', resolution: 'unsupported', duration: 6 }).credits, 30);
+  assert.deepEqual(quoteUsage('video', { providerId: 'video-3', resolution: '720p', duration: 5 }), {
+    kind: 'video', providerId: 'video-3', credits: 30, resolution: '720P', duration: 5, requiresActivation: false
+  });
   assert.equal(quoteUsage('chat', { providerId: 'chat-1' }).credits, 0);
   assert.equal(quoteUsage('chat', { providerId: 'chat-2' }).credits, 0);
   assert.equal(quoteUsage('chat', { providerId: 'chat-1' }).requiresActivation, false);
@@ -194,6 +205,56 @@ test('Butler Topaz accounting converts provider cost to retail credits and prese
       () => reserveToolUsage(userId, requestId, {
         providerId: 'topaz-video-upscale', providerCost: 21, credits: 21
       }, fetchMock),
+      (error) => error && error.code === 'provider-not-allowed' && error.status === 400
+    );
+  });
+});
+
+test('Butler fixed-price tools use the server table and never accept caller pricing or provider cost', async () => {
+  assert.deepEqual(BUTLER_FIXED_RETAIL_CREDITS, {
+    'background-remove': 1,
+    'qwen-image-edit-plus': 2,
+    'qwen-image-layered': 1,
+    'super-upscale-v2': 2,
+    erase: 1,
+    hunyuan3d: 8,
+    hyper3d: 14
+  });
+  assert.equal(quoteButlerRetailCredits('HUNYUAN3D'), 8);
+  assert.throws(() => quoteButlerRetailCredits('unknown-tool'), { code: 'provider-not-allowed' });
+
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
+    const userId = '00000000-0000-4000-8000-000000000041';
+    const calls = [];
+    for (const [providerId, credits] of Object.entries(BUTLER_FIXED_RETAIL_CREDITS)) {
+      const requestId = crypto.randomUUID();
+      const result = await reserveToolUsage(userId, requestId, { providerId }, async (url, options) => {
+        calls.push({ url, body: JSON.parse(options.body) });
+        return jsonResponse({ ok: true, reason: 'reserved', credits, availableCredits: 100 - credits });
+      });
+      assert.equal(result.credits, credits);
+      assert.equal(result.providerCost, null);
+      assert.deepEqual(calls.at(-1).body, {
+        p_user_id: userId,
+        p_request_id: requestId,
+        p_provider_id: providerId,
+        p_credits: credits,
+        p_provider_cost: null,
+        p_resolution: null,
+        p_duration: null
+      });
+    }
+
+    await assert.rejects(
+      () => reserveToolUsage(userId, crypto.randomUUID(), {
+        providerId: 'hyper3d', credits: 1
+      }, async () => jsonResponse({ ok: true, reason: 'reserved' })),
+      (error) => error && error.code === 'provider-not-allowed' && error.status === 400
+    );
+    await assert.rejects(
+      () => reserveToolUsage(userId, crypto.randomUUID(), {
+        providerId: 'erase', credits: 1, providerCost: 1
+      }, async () => jsonResponse({ ok: true, reason: 'reserved' })),
       (error) => error && error.code === 'provider-not-allowed' && error.status === 400
     );
   });
@@ -381,6 +442,29 @@ test('Butler video migration enforces retail pricing and keeps provider-cost aud
   assert.match(migration, /p_credits <> expected_credits/i);
   assert.match(migration, /jsonb_build_object\('kind', 'video'[\s\S]*?'providerCost', p_provider_cost[\s\S]*?'retailCredits', p_credits/i);
   assert.match(migration, /revoke all on table public\.ai_tool_jobs from public, anon, authenticated/i);
+  assert.match(migration, /grant execute on function public\.reserve_ai_tool_credits[\s\S]*?to service_role/i);
+});
+
+test('Butler and Seedance forward migration independently enforces every retail price', () => {
+  const migration = fs.readFileSync(new URL('../../supabase/migrations/202608080008_butler_tool_credits.sql', import.meta.url), 'utf8');
+  assert.match(migration, /ai_usage_kind_check check \(kind in \('chat', 'image', 'video', '3d'\)\)/i);
+  assert.match(migration, /normalized_provider = 'video-2'[\s\S]*?when '480P' then 3 else 5 end/i);
+  assert.match(migration, /normalized_provider = 'video-3'[\s\S]*?when '480P' then 4 else 6 end/i);
+  assert.match(migration, /when 'background-remove' then 1/i);
+  assert.match(migration, /when 'qwen-image-edit-plus' then 2/i);
+  assert.match(migration, /when 'qwen-image-layered' then 1/i);
+  assert.match(migration, /when 'super-upscale-v2' then 2/i);
+  assert.match(migration, /when 'erase' then 1/i);
+  assert.match(migration, /when 'hunyuan3d' then 8/i);
+  assert.match(migration, /when 'hyper3d' then 14/i);
+  assert.match(migration, /when 'topaz-video-upscale'[\s\S]*?ceil\(p_provider_cost::numeric \* 0\.15 \* 10 \* 2\)/i);
+  assert.match(migration, /p_credits <> expected_credits/i);
+  assert.match(migration, /normalized_provider <> 'topaz-video-upscale' and p_provider_cost is not null/i);
+  assert.match(migration, /when normalized_provider in \('hunyuan3d', 'hyper3d'\) then '3d'/i);
+  assert.match(migration, /set reserved = greatest\(0, reserved - stale_record\.credits_reserved\)/i);
+  assert.match(migration, /settlement := public\.settle_ai_credits[\s\S]*?normalized_status/i);
+  assert.match(migration, /array\['chat', 'image', 'video', '3d'\]::text\[\]/i);
+  assert.match(migration, /revoke all on function public\.reserve_ai_tool_credits[\s\S]*?from public, anon, authenticated/i);
   assert.match(migration, /grant execute on function public\.reserve_ai_tool_credits[\s\S]*?to service_role/i);
 });
 

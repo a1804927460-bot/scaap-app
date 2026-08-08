@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark" data-view="start" data-language="en">
+<html lang="en" data-theme="dark" data-view="main" data-language="en">
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: messs-file: messs-preview: messs-thumb:; media-src 'self' messs-file: messs-transcode:; font-src 'self'; connect-src messs-file:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none';" />
@@ -52,7 +52,7 @@
   </div>
 
   <div id="section-messs" class="app-section is-active">
-    <section id="start-screen" class="start-screen">
+    <section id="start-screen" class="start-screen" hidden>
       <div class="start-content">
         <h1 class="start-title">M<span class="title-e">e</span><span class="sss-wrap"><span class="sss-char">s</span><span class="sss-char">s</span><span class="sss-char">s</span><span class="sss-char start-title-dot">.</span></span></h1>
         <p class="start-subtitle">Resolve your confusion</p>
@@ -65,7 +65,7 @@
       </div>
     </section>
 
-    <section id="main-app" class="main-app" hidden>
+    <section id="main-app" class="main-app is-visible">
       <div id="resize-handle-sidebar" class="resize-handle resize-handle-v" data-target="sidebar" role="separator" aria-orientation="vertical" aria-label="Resize sidebar"></div>
       <div id="resize-handle-preview" class="resize-handle resize-handle-h" data-target="preview" role="separator" aria-orientation="horizontal" aria-label="Resize preview"></div>
       <div id="resize-handle-stats" class="resize-handle resize-handle-v" data-target="stats" role="separator" aria-orientation="vertical" aria-label="Resize AI panel"></div>

@@ -10,6 +10,8 @@ const DEFAULT_RESULT_ENDPOINT = `${QUICKROUTER_BASE_URL}/v1/videos`;
 const PROVIDER_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const PROVIDER_KEY_ENV = /^[A-Z][A-Z0-9_]{1,80}$/;
 const MAX_PROVIDERS = 100;
+const ASYNC_VIDEO_PROTOCOLS = new Set(['minimax-video-v2', 'seedance-video-v3']);
+const TERMINAL_VIDEO_FAILURES = new Set(['failed', 'cancelled', 'expired']);
 
 function safeServerEndpoint(value) {
   try {
@@ -107,8 +109,8 @@ function providerFor(kind, id) {
 
 export async function generateMedia(kind, body, signal) {
   const provider = providerFor(kind, String(body.providerId || ''));
-  if (kind === 'video' && provider.protocol === 'minimax-video-v2') {
-    throw Object.assign(new Error('MiniMax video generation must use the asynchronous task API.'), {
+  if (kind === 'video' && ASYNC_VIDEO_PROTOCOLS.has(provider.protocol)) {
+    throw Object.assign(new Error('The selected video provider must use the asynchronous task API.'), {
       status: 409,
       code: 'async-video-required'
     });
@@ -151,43 +153,43 @@ export async function generateLegacyVideo(body, signal) {
     if (result.status === 'succeeded') {
       const resultUrl = safeServerEndpoint(result.resultUrl);
       if (!resultUrl) {
-        throw Object.assign(new Error('MiniMax returned an unsafe video URL.'), {
+        throw Object.assign(new Error('The video provider returned an unsafe video URL.'), {
           status: 502,
           code: 'unsafe-media-url'
         });
       }
-      const download = await fetch(resultUrl, { signal: miniMaxSignal(signal, 120_000) });
+      const download = await fetch(resultUrl, { signal: providerSignal(signal, 120_000) });
       if (!download.ok) {
-        throw Object.assign(new Error(`Could not download MiniMax video (HTTP ${download.status}).`), {
+        throw Object.assign(new Error(`Could not download the generated video (HTTP ${download.status}).`), {
           status: download.status,
           code: 'provider-download-failed'
         });
       }
       const advertisedBytes = Number(download.headers.get('content-length')) || 0;
       if (advertisedBytes > 256 * 1024 * 1024) {
-        throw Object.assign(new Error('MiniMax video is too large.'), { status: 413, code: 'media-too-large' });
+        throw Object.assign(new Error('The generated video is too large.'), { status: 413, code: 'media-too-large' });
       }
       const video = Buffer.from(await download.arrayBuffer());
       if (video.length > 256 * 1024 * 1024) {
-        throw Object.assign(new Error('MiniMax video is too large.'), { status: 413, code: 'media-too-large' });
+        throw Object.assign(new Error('The generated video is too large.'), { status: 413, code: 'media-too-large' });
       }
       return video;
     }
-    if (['failed', 'cancelled'].includes(result.status)) {
-      throw Object.assign(new Error(result.errorMessage || 'MiniMax video generation failed.'), {
+    if (TERMINAL_VIDEO_FAILURES.has(result.status)) {
+      throw Object.assign(new Error(result.errorMessage || 'Video generation failed.'), {
         status: 502,
         code: result.errorCode || 'video-generation-failed'
       });
     }
     await delayWithSignal(2_000, signal);
   }
-  throw Object.assign(new Error('MiniMax video generation timed out.'), {
+  throw Object.assign(new Error('Video generation timed out.'), {
     status: 504,
     code: 'video-generation-timeout'
   });
 }
 
-async function responseJson(response) {
+async function responseJson(response, providerName = 'Video provider') {
   const text = await response.text();
   let payload = {};
   try { payload = text ? JSON.parse(text) : {}; } catch (error) {}
@@ -195,20 +197,21 @@ async function responseJson(response) {
     const upstreamCode = String(
       payload && payload.error && payload.error.code
       || payload && payload.base_resp && payload.base_resp.status_code
+      || payload && payload.code
       || ''
     ).trim();
     const rawMessage = String(
       payload && payload.error && payload.error.message
       || payload && payload.base_resp && payload.base_resp.status_msg
       || payload && payload.message
-      || `MiniMax request failed (HTTP ${response.status}).`
+      || `${providerName} request failed (HTTP ${response.status}).`
     );
     const retryAfter = Number(response.headers && response.headers.get && response.headers.get('retry-after'));
     const retryable = response.status === 429 || response.status >= 500;
-    throw Object.assign(new Error(safeMiniMaxText(rawMessage, 'MiniMax request failed.')), {
+    throw Object.assign(new Error(safeProviderText(rawMessage, `${providerName} request failed.`)), {
       status: response.status,
       code: response.status === 429 ? 'provider-rate-limited' : (retryable ? 'provider-temporarily-unavailable' : 'provider-request-failed'),
-      upstreamCode: safeMiniMaxText(upstreamCode, ''),
+      upstreamCode: safeProviderText(upstreamCode, ''),
       retryable,
       retryAfterMs: Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(120_000, retryAfter * 1000) : 0
     });
@@ -216,44 +219,49 @@ async function responseJson(response) {
   return payload;
 }
 
-function safeMiniMaxText(value, fallback) {
+function safeProviderText(value, fallback) {
   const text = String(value || '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
   return text || fallback;
 }
 
-function miniMaxSignal(signal, timeoutMs = 25_000) {
+function providerSignal(signal, timeoutMs = 25_000) {
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 }
 
-function miniMaxHeaders(provider, includeJson = false) {
+function providerHeaders(provider, includeJson = false) {
   return {
     Authorization: `Bearer ${provider.apiKey}`,
     ...(includeJson ? { 'Content-Type': 'application/json' } : {})
   };
 }
 
-function normalizeMiniMaxTaskStatus(value) {
+function normalizeVideoTaskStatus(value) {
   const status = String(value || '').trim().toLowerCase();
   if (['succeeded', 'success', 'completed', 'complete'].includes(status)) return 'succeeded';
   if (['failed', 'failure', 'error'].includes(status)) return 'failed';
   if (['cancelled', 'canceled'].includes(status)) return 'cancelled';
+  if (status === 'expired') return 'expired';
   if (['processing', 'running', 'generating'].includes(status)) return 'running';
   return 'queued';
 }
 
-export async function createVideoTask(body, signal) {
-  const provider = providerFor('video', String(body.providerId || ''));
-  if (provider.protocol !== 'minimax-video-v2') {
-    throw Object.assign(new Error('The selected video provider does not support asynchronous tasks.'), {
-      status: 400,
-      code: 'async-video-not-supported'
-    });
-  }
-  const urls = Array.isArray(body.urls) ? body.urls.filter(Boolean).slice(0, 2) : [];
+function validatedVideoTaskInput(provider, body) {
   const capabilities = provider.capabilities && typeof provider.capabilities === 'object'
     ? provider.capabilities
     : {};
+  const submittedUrls = Array.isArray(body.urls) ? body.urls.filter(Boolean) : [];
+  const configuredLimit = Number(capabilities.maxReferenceImages);
+  const maxReferenceImages = Number.isInteger(configuredLimit) && configuredLimit >= 0
+    ? Math.min(14, configuredLimit)
+    : 2;
+  if (submittedUrls.length > maxReferenceImages) {
+    throw Object.assign(new Error(`${provider.name} accepts at most ${maxReferenceImages} reference images.`), {
+      status: 400,
+      code: 'too-many-references'
+    });
+  }
+  const urls = submittedUrls.slice(0, maxReferenceImages);
   const ratio = String(body.aspectRatio || '');
   const resolution = String(body.resolution || '').toUpperCase();
   const duration = Number(body.duration);
@@ -261,28 +269,48 @@ export async function createVideoTask(body, signal) {
     ? (Array.isArray(capabilities.frameReferenceRatios) ? capabilities.frameReferenceRatios : ['adaptive'])
     : (Array.isArray(capabilities.ratios) ? capabilities.ratios : []);
   if (!validRatios.includes(ratio)) {
-    throw Object.assign(new Error('The MiniMax H3 aspect ratio is invalid for this generation mode.'), { status: 400, code: 'invalid-aspect-ratio' });
+    throw Object.assign(new Error(`${provider.name} does not support this aspect ratio for the selected generation mode.`), {
+      status: 400,
+      code: 'invalid-aspect-ratio'
+    });
   }
-  if (!Array.isArray(capabilities.resolutions) || !capabilities.resolutions.includes(resolution)) {
-    throw Object.assign(new Error('MiniMax H3 resolution must be 768P or 2K.'), { status: 400, code: 'invalid-resolution' });
+  const validResolutions = Array.isArray(capabilities.resolutions)
+    ? capabilities.resolutions.map((value) => String(value).toUpperCase())
+    : [];
+  if (!validResolutions.includes(resolution)) {
+    throw Object.assign(new Error(`${provider.name} does not support this resolution.`), {
+      status: 400,
+      code: 'invalid-resolution'
+    });
   }
-  if (!Number.isInteger(duration) || duration < 4 || duration > 15) {
-    throw Object.assign(new Error('MiniMax H3 duration must be a whole number from 4 to 15 seconds.'), { status: 400, code: 'invalid-duration' });
+  const validDurations = Array.isArray(capabilities.durations)
+    ? capabilities.durations.map(Number).filter(Number.isInteger)
+    : [];
+  if (!Number.isInteger(duration) || (validDurations.length ? !validDurations.includes(duration) : duration < 4 || duration > 15)) {
+    throw Object.assign(new Error(`${provider.name} does not support this duration.`), {
+      status: 400,
+      code: 'invalid-duration'
+    });
   }
+  return { capabilities, duration, ratio, resolution, urls };
+}
+
+async function createMiniMaxVideoTask(provider, body, signal) {
+  const { duration, ratio, resolution, urls } = validatedVideoTaskInput(provider, body);
   const content = [{ type: 'text', text: String(body.prompt || '').trim() }];
   urls.forEach((url, index) => content.push({
     type: 'image_url',
     image_url: { url: String(url) },
     role: index === 0 ? 'first_frame' : 'last_frame'
   }));
-  const headers = miniMaxHeaders(provider, true);
+  const headers = providerHeaders(provider, true);
   const created = await responseJson(await fetch(provider.endpoint, {
-    method: 'POST', headers, signal: miniMaxSignal(signal),
+    method: 'POST', headers, signal: providerSignal(signal),
     body: JSON.stringify({ model: provider.model || 'MiniMax-H3', content, resolution, duration, ratio, aigc_watermark: false })
-  }));
+  }), provider.name);
   const taskId = String(created.task_id || '');
   if (!taskId || taskId.length > 256) {
-    throw Object.assign(new Error('MiniMax did not return a valid task ID.'), {
+    throw Object.assign(new Error(`${provider.name} did not return a valid task ID.`), {
       status: 502,
       code: 'provider-invalid-response',
       retryable: false
@@ -291,24 +319,65 @@ export async function createVideoTask(body, signal) {
   return { providerId: provider.id, taskId };
 }
 
-export async function pollVideoTask(providerId, taskId, signal) {
-  const provider = providerFor('video', String(providerId || ''));
-  if (provider.protocol !== 'minimax-video-v2') {
-    throw Object.assign(new Error('The selected video provider does not support task polling.'), {
-      status: 400,
-      code: 'async-video-not-supported'
+async function createSeedanceVideoTask(provider, body, signal) {
+  const { capabilities, duration, ratio, resolution, urls } = validatedVideoTaskInput(provider, body);
+  const content = [{ type: 'text', text: String(body.prompt || '').trim() }];
+  urls.forEach((url) => content.push({
+    type: 'image_url',
+    image_url: { url: String(url) },
+    role: String(capabilities.referenceRole || 'reference_image')
+  }));
+  const created = await responseJson(await fetch(provider.endpoint, {
+    method: 'POST',
+    headers: providerHeaders(provider, true),
+    signal: providerSignal(signal),
+    body: JSON.stringify({
+      model: provider.model,
+      content,
+      generate_audio: capabilities.generateAudio !== false,
+      ratio,
+      duration,
+      resolution: resolution.toLowerCase(),
+      watermark: false
+    })
+  }), provider.name);
+  const taskId = String(created.id || '').trim();
+  if (!taskId || taskId.length > 256) {
+    throw Object.assign(new Error(`${provider.name} did not return a valid task ID.`), {
+      status: 502,
+      code: 'provider-invalid-response',
+      retryable: false
     });
   }
+  return { providerId: provider.id, taskId };
+}
+
+export async function createVideoTask(body, signal) {
+  const provider = providerFor('video', String(body.providerId || ''));
+  if (provider.protocol === 'minimax-video-v2') return createMiniMaxVideoTask(provider, body, signal);
+  if (provider.protocol === 'seedance-video-v3') return createSeedanceVideoTask(provider, body, signal);
+  throw Object.assign(new Error('The selected video provider does not support asynchronous tasks.'), {
+    status: 400,
+    code: 'async-video-not-supported'
+  });
+}
+
+function validVideoTaskId(taskId) {
   const normalizedTaskId = String(taskId || '').trim();
   if (!normalizedTaskId || normalizedTaskId.length > 256) {
     throw Object.assign(new Error('The video task identifier is invalid.'), { status: 400, code: 'invalid-video-task' });
   }
+  return normalizedTaskId;
+}
+
+async function pollMiniMaxVideoTask(provider, taskId, signal) {
+  const normalizedTaskId = validVideoTaskId(taskId);
   const result = await responseJson(await fetch(
     `${provider.resultEndpoint}/${encodeURIComponent(normalizedTaskId)}`,
-    { headers: miniMaxHeaders(provider), signal: miniMaxSignal(signal) }
-  ));
+    { headers: providerHeaders(provider), signal: providerSignal(signal) }
+  ), provider.name);
   const task = result && result.task || {};
-  const status = normalizeMiniMaxTaskStatus(task.status);
+  const status = normalizeVideoTaskStatus(task.status);
   if (status === 'succeeded') {
     const resultUrl = String(task.content && task.content.url || '').trim();
     if (!resultUrl) {
@@ -320,15 +389,55 @@ export async function pollVideoTask(providerId, taskId, signal) {
     }
     return { status, resultUrl };
   }
-  if (status === 'failed' || status === 'cancelled') {
+  if (TERMINAL_VIDEO_FAILURES.has(status)) {
     const taskError = task.error && typeof task.error === 'object' ? task.error : {};
     return {
       status,
-      errorCode: safeMiniMaxText(taskError.code, `provider-${status}`),
-      errorMessage: safeMiniMaxText(taskError.message, `MiniMax video generation ${status}.`)
+      errorCode: safeProviderText(taskError.code, `provider-${status}`),
+      errorMessage: safeProviderText(taskError.message, `${provider.name} video generation ${status}.`)
     };
   }
   return { status };
+}
+
+async function pollSeedanceVideoTask(provider, taskId, signal) {
+  const normalizedTaskId = validVideoTaskId(taskId);
+  const result = await responseJson(await fetch(
+    `${provider.resultEndpoint}/${encodeURIComponent(normalizedTaskId)}`,
+    { headers: providerHeaders(provider), signal: providerSignal(signal) }
+  ), provider.name);
+  const status = normalizeVideoTaskStatus(result && result.status);
+  if (status === 'succeeded') {
+    const content = result && result.content && typeof result.content === 'object' ? result.content : {};
+    const resultUrl = String(content.video_url || content.url || '').trim();
+    if (!resultUrl) {
+      return {
+        status: 'failed',
+        errorCode: 'provider-result-missing',
+        errorMessage: `${provider.name} completed the task without a downloadable video.`
+      };
+    }
+    return { status, resultUrl };
+  }
+  if (TERMINAL_VIDEO_FAILURES.has(status)) {
+    const taskError = result && result.error && typeof result.error === 'object' ? result.error : {};
+    return {
+      status,
+      errorCode: safeProviderText(taskError.code || result && result.code, `provider-${status}`),
+      errorMessage: safeProviderText(taskError.message || result && result.message, `${provider.name} video generation ${status}.`)
+    };
+  }
+  return { status };
+}
+
+export async function pollVideoTask(providerId, taskId, signal) {
+  const provider = providerFor('video', String(providerId || ''));
+  if (provider.protocol === 'minimax-video-v2') return pollMiniMaxVideoTask(provider, taskId, signal);
+  if (provider.protocol === 'seedance-video-v3') return pollSeedanceVideoTask(provider, taskId, signal);
+  throw Object.assign(new Error('The selected video provider does not support task polling.'), {
+    status: 400,
+    code: 'async-video-not-supported'
+  });
 }
 
 export async function chat(body, signal) {

@@ -48,18 +48,28 @@ assert.doesNotMatch(
 );
 assert.match(
   boardSource,
-  /function supportedMiniMaxResolution[\s\S]*?\['768P', '2K'\]/,
-  'Board quick generation and retries must map video requests to a MiniMax resolution.'
+  /function supportedVideoResolution[\s\S]*?supportedVideoResolutions\(capabilities\)/,
+  'Board quick generation and retries must map video requests to the selected provider capabilities.'
 );
 assert.match(
   boardSource,
-  /submitBoardQuickGeneration[\s\S]*?resolution:\s*videoResolution[\s\S]*?supportedMiniMaxAspectRatio\(original\.aspectRatio, referenceFileIds\.length > 0\)/,
-  'Quick video generation must send a resolution and use the adaptive frame-reference ratio.'
+  /submitBoardQuickGeneration[\s\S]*?resolution:\s*videoResolution[\s\S]*?supportedVideoAspectRatio\(original\.aspectRatio, videoCapabilities, referenceFileIds\.length > 0\)/,
+  'Quick video generation must use the selected provider resolution and frame-reference ratios.'
 );
 assert.match(
   boardSource,
-  /retryGeneratedMediaFromDetails[\s\S]*?resolution:\s*videoResolution[\s\S]*?supportedMiniMaxAspectRatio\(generation\.aspectRatio, references\.referenceFileIds\.length > 0\)/,
-  'Video retries must repair legacy resolution and reference-ratio metadata.'
+  /retryGeneratedMediaFromDetails[\s\S]*?videoProvider[\s\S]*?resolution:\s*videoResolution[\s\S]*?supportedVideoAspectRatio\(generation\.aspectRatio, videoCapabilities, references\.referenceFileIds\.length > 0\)/,
+  'Video retries must repair metadata against the original provider capabilities.'
+);
+assert.match(
+  boardSource,
+  /'480P': '480p'[\s\S]*?'720P': '720p'/,
+  'Seedance resolutions must have accurate UI hints instead of falling through to the 4K label.'
+);
+assert.doesNotMatch(
+  boardSource,
+  /aspectRatio:\s*kind === 'video' && boardReferences\.size \? 'adaptive' : ratio/,
+  'Reference images must not force every video provider to the MiniMax adaptive ratio.'
 );
 
 async function main() {

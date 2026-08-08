@@ -1,12 +1,34 @@
 'use strict';
 /* Start screen <-> main app transition (Apple-style crossfade), both ways. */
 
-let mainAppEnteredOnce = false;
+let mainAppBootstrapped = false;
 
-function initStartScreen(onStart) {
+function initStartScreen(onStart, options = {}) {
   const startScreen = document.getElementById('start-screen');
   const mainApp = document.getElementById('main-app');
   const startBtn = document.getElementById('start-btn');
+
+  const invokeStart = () => {
+    if (mainAppBootstrapped) return;
+    mainAppBootstrapped = true;
+    if (typeof onStart === 'function') onStart();
+  };
+
+  // The normal launch path enters the app immediately. Keeping this in the
+  // start-screen module preserves the reverse transition used by the context
+  // menu and avoids a second, competing startup state machine.
+  if (options.enterImmediately === true) {
+    startScreen.hidden = true;
+    startScreen.classList.remove('is-leaving');
+    document.documentElement.setAttribute('data-view', 'main');
+    if (window.messsAPI && typeof window.messsAPI.syncThemeSurface === 'function') {
+      window.messsAPI.syncThemeSurface(document.documentElement.getAttribute('data-theme') || 'dark');
+    }
+    mainApp.hidden = false;
+    mainApp.classList.add('is-visible');
+    invokeStart();
+    return;
+  }
 
   function enterMainApp() {
     startScreen.classList.add('is-leaving');
@@ -20,13 +42,11 @@ function initStartScreen(onStart) {
       requestAnimationFrame(() => {
         mainApp.classList.add('is-visible');
       });
-      if (!mainAppEnteredOnce) {
-        mainAppEnteredOnce = true;
-        if (typeof onStart === 'function') onStart();
-      }
+      invokeStart();
     }, 560);
   }
 
+  if (!startBtn) return;
   startBtn.addEventListener('click', enterMainApp);
   startBtn.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {

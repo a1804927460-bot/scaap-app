@@ -436,6 +436,69 @@ async function testQuickRouterNativeGeminiImageFlow() {
   });
 }
 
+async function test302NanoBananaProFlow() {
+  const provider = catalogProvider('image-1');
+  assert.ok(provider);
+  assert.strictEqual(provider.name, 'Nano Banana Pro');
+  assert.strictEqual(provider.protocol, 'gemini-image');
+  assert.strictEqual(provider.keyEnv, 'AI302_KEY');
+  assert.strictEqual(
+    provider.endpoint,
+    'https://api.302.ai/google/v1/models/gemini-3-pro-image-preview'
+  );
+  assert.strictEqual(detectMediaProtocol(provider.endpoint), 'gemini-native');
+  assert.strictEqual(resolveGeminiMediaEndpoint(provider.endpoint), provider.endpoint);
+
+  const calls = [];
+  // Gemini's 16:9 4K output family is four times the dimensions of the
+  // 1376x768 1K response that exposed the ignored-resolution regression.
+  const png = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png);
+  png.write('IHDR', 12, 'ascii');
+  png.writeUInt32BE(5504, 16);
+  png.writeUInt32BE(3072, 20);
+  const responses = [
+    jsonResponse({
+      candidates: [{
+        content: {
+          role: 'model',
+          parts: [{ url: 'https://cdn.test/nano-banana-pro-4k.png' }]
+        },
+        finishReason: 'STOP'
+      }],
+      modelVersion: 'gemini-3-pro-image-preview'
+    }),
+    { ok: true, status: 200, arrayBuffer: async () => png }
+  ];
+  const buffer = await generateMediaBuffer(async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    return responses.shift();
+  }, normalizeConfig({
+    apiKey: 'server-only-302-key',
+    imageEndpoint: provider.endpoint
+  }), 'image', {
+    prompt: 'cinematic widescreen scene',
+    size: '4K',
+    aspectRatio: '16:9'
+  });
+
+  assert.deepStrictEqual(buffer, png);
+  assert.strictEqual(buffer.readUInt32BE(16), 5504);
+  assert.strictEqual(buffer.readUInt32BE(20), 3072);
+  assert.strictEqual(calls.length, 2);
+  assert.strictEqual(calls[0].url, provider.endpoint);
+  assert.strictEqual(calls[0].options.headers.Authorization, 'Bearer server-only-302-key');
+  assert.strictEqual(calls[0].options.headers['x-goog-api-key'], undefined);
+  assert.deepStrictEqual(JSON.parse(calls[0].options.body), {
+    contents: [{ role: 'user', parts: [{ text: 'cinematic widescreen scene' }] }],
+    generationConfig: {
+      responseModalities: ['TEXT', 'IMAGE'],
+      imageConfig: { aspectRatio: '16:9', imageSize: '4K' }
+    }
+  });
+  assert.strictEqual(calls[1].url, 'https://cdn.test/nano-banana-pro-4k.png');
+}
+
 function testOpenAiVideoRequest() {
   const config = normalizeConfig({
     videoEndpoint: 'https://api.quickrouter.ai/v1/videos?model=sora-2-pro'
@@ -724,6 +787,7 @@ async function main() {
   testSeedreamSizeAndRatioMapping();
   testGeminiImageBody();
   await testQuickRouterNativeGeminiImageFlow();
+  await test302NanoBananaProFlow();
   await testNanoBanana2NativeGeminiImageFlow();
   await testMidjourneyFlow();
   testOpenAiVideoRequest();

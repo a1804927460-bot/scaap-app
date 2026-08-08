@@ -12,6 +12,15 @@ import {
   removeBackground
 } from './ai302-tools.js';
 import {
+  downloadAi302ImageResult,
+  eraseImageObjects,
+  pollQwenImageEdit,
+  pollQwenImageLayered,
+  submitQwenImageEdit,
+  submitQwenImageLayered,
+  superUpscaleImage
+} from './ai302-image-tools.js';
+import {
   catalogVersion,
   chat,
   createVideoTask,
@@ -54,13 +63,14 @@ const secretPatterns = [
 ];
 const imageSizes = new Set(['1K', '2K', '4K', 'original']);
 const imageRatios = new Set(['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9']);
-const miniMaxTextVideoRatios = new Set(['21:9', '16:9', '4:3', '1:1', '3:4', '9:16']);
-const miniMaxVideoResolutions = new Set(['768P', '2K']);
+const defaultVideoRatios = new Set(['21:9', '16:9', '4:3', '1:1', '3:4', '9:16']);
+const defaultVideoResolutions = new Set(['768P', '2K']);
 
 // Paid 302 tools are staged independently from the desktop release. Missing
 // or malformed flags must never expose a paid upstream route.
 const AI302_FLAGS = Object.freeze({
   background: 'ENABLE_302_BACKGROUND_REMOVE',
+  image: 'ENABLE_302_IMAGE_TOOLS',
   hunyuan3d: 'ENABLE_302_HUNYUAN3D',
   hyper3d: 'ENABLE_302_HYPER3D',
   topaz: 'ENABLE_302_TOPAZ'
@@ -208,21 +218,32 @@ function validateBody(body, kind) {
     }
   }
   if (kind === 'video') {
-    if (!miniMaxVideoResolutions.has(requestedResolution)) {
-      throw invalidOption('invalid-resolution', 'MiniMax H3 resolution must be 768P or 2K.');
+    const allowedResolutions = Array.isArray(capabilities.resolutions) && capabilities.resolutions.length
+      ? new Set(capabilities.resolutions.map((value) => String(value).toUpperCase()))
+      : defaultVideoResolutions;
+    if (!allowedResolutions.has(requestedResolution)) {
+      throw invalidOption('invalid-resolution', 'The selected video model does not support this resolution.');
     }
-    if (!Number.isInteger(requestedDuration) || requestedDuration < 4 || requestedDuration > 15) {
-      throw invalidOption('invalid-duration', 'MiniMax H3 duration must be a whole number from 4 to 15 seconds.');
+    const allowedDurations = Array.isArray(capabilities.durations) && capabilities.durations.length
+      ? new Set(capabilities.durations.map(Number).filter(Number.isInteger))
+      : null;
+    if (!Number.isInteger(requestedDuration)
+      || (allowedDurations ? !allowedDurations.has(requestedDuration) : requestedDuration < 4 || requestedDuration > 15)) {
+      throw invalidOption('invalid-duration', 'The selected video model does not support this duration.');
     }
-    const ratioIsValid = urls.length
-      ? requestedRatio === 'adaptive'
-      : miniMaxTextVideoRatios.has(requestedRatio);
-    if (!ratioIsValid) {
+    const textRatios = Array.isArray(capabilities.ratios) && capabilities.ratios.length
+      ? new Set(capabilities.ratios.map(String))
+      : defaultVideoRatios;
+    const referenceRatios = Array.isArray(capabilities.frameReferenceRatios) && capabilities.frameReferenceRatios.length
+      ? new Set(capabilities.frameReferenceRatios.map(String))
+      : textRatios;
+    const allowedRatios = urls.length ? referenceRatios : textRatios;
+    if (!allowedRatios.has(requestedRatio)) {
       throw invalidOption(
         'invalid-aspect-ratio',
         urls.length
-          ? 'MiniMax H3 requires the adaptive ratio when first or last frame images are supplied.'
-          : 'The selected MiniMax H3 aspect ratio is not supported.'
+          ? 'The selected video model does not support this aspect ratio with reference images.'
+          : 'The selected video model does not support this aspect ratio.'
       );
     }
   }
@@ -268,6 +289,37 @@ function availableAccountCredits(account) {
   const balance = Number(account.balance);
   const reserved = Number(account.reserved);
   return Number.isFinite(balance) && Number.isFinite(reserved) ? Math.max(0, balance - reserved) : null;
+}
+
+async function reserveFixedTool(response, userId, providerId) {
+  const requestId = crypto.randomUUID();
+  const startedAt = Date.now();
+  const reservation = await reserveToolUsage(userId, requestId, { providerId });
+  if (!reservation || reservation.ok !== true) {
+    deniedReservation(response, reservation);
+    return null;
+  }
+  return { requestId, startedAt, reservation };
+}
+
+async function releaseFailedToolReservation(userId, usage) {
+  if (!usage) return;
+  try {
+    await settleToolUsage(userId, usage.requestId, 'failed', Date.now() - usage.startedAt);
+  } catch (error) {
+    console.error(JSON.stringify({
+      level: 'error',
+      event: 'tool-credit-release-failed',
+      code: String(error && error.code || 'credit-settlement-failed'),
+      status: Number(error && error.status) || 503
+    }));
+  }
+}
+
+function imageToolPoller(providerId) {
+  if (providerId === 'qwen-image-edit-plus') return pollQwenImageEdit;
+  if (providerId === 'qwen-image-layered') return pollQwenImageLayered;
+  throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
 }
 
 function validUuid(value) {
@@ -404,6 +456,175 @@ async function handle(request, response) {
       'Content-Type': 'image/png',
       'Content-Disposition': 'attachment; filename="background-removed.png"'
     });
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/image/edit') {
+    if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
+    const body = await readJson(request);
+    const modelId = String(body && body.modelId || '').trim().toLowerCase();
+    if (modelId !== 'qwen-image-edit-plus') {
+      throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
+    }
+    const usage = await reserveFixedTool(response, user.id, modelId);
+    if (!usage) return;
+    try {
+      const task = await submitQwenImageEdit({
+        imageDataUrl: body && body.imageDataUrl,
+        prompt: body && body.options && body.options.prompt,
+        toolOptions: body && body.options,
+        userId: user.id
+      }, { accountingRequestId: usage.requestId });
+      return send(response, 202, {
+        ...task,
+        credits: usage.reservation.credits,
+        availableCredits: usage.reservation.availableCredits ?? usage.reservation.available_credits
+      });
+    } catch (error) {
+      await releaseFailedToolReservation(user.id, usage);
+      throw error;
+    }
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/image/layer') {
+    if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
+    const body = await readJson(request);
+    const modelId = String(body && body.modelId || '').trim().toLowerCase();
+    if (modelId !== 'qwen-image-layered') {
+      throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
+    }
+    const usage = await reserveFixedTool(response, user.id, modelId);
+    if (!usage) return;
+    try {
+      const task = await submitQwenImageLayered({
+        imageDataUrl: body && body.imageDataUrl,
+        prompt: body && body.options && body.options.prompt,
+        numLayers: body && body.options && body.options.numLayers,
+        userId: user.id
+      }, { accountingRequestId: usage.requestId });
+      return send(response, 202, {
+        ...task,
+        credits: usage.reservation.credits,
+        availableCredits: usage.reservation.availableCredits ?? usage.reservation.available_credits
+      });
+    } catch (error) {
+      await releaseFailedToolReservation(user.id, usage);
+      throw error;
+    }
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/image/status') {
+    if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
+    const body = await readJson(request);
+    const modelId = String(body && body.modelId || '').trim().toLowerCase();
+    const poll = imageToolPoller(modelId);
+    const result = await poll({
+      taskToken: body && body.taskToken,
+      userId: user.id
+    }, {
+      touchCredits: ({ requestId }) => touchToolUsage(user.id, requestId),
+      settleCredits: ({ requestId, status, durationMs }) => settleToolUsage(
+        user.id,
+        requestId,
+        status,
+        durationMs
+      )
+    });
+    return send(response, 200, {
+      status: result.status,
+      retryAfterMs: result.retryAfterMs,
+      resultCount: Array.isArray(result.urls) ? result.urls.length : 0,
+      ...(result.creditsCharged !== undefined ? { creditsCharged: result.creditsCharged } : {}),
+      ...(result.creditsReleased !== undefined ? { creditsReleased: result.creditsReleased } : {})
+    });
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/image/download') {
+    if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
+    const body = await readJson(request);
+    const modelId = String(body && body.modelId || '').trim().toLowerCase();
+    const index = Number(body && body.index);
+    if (!Number.isInteger(index) || index < 0 || index >= 8) {
+      throw invalidOption('invalid-image-result-index', 'The selected image result is invalid.');
+    }
+    const poll = imageToolPoller(modelId);
+    const result = await poll({
+      taskToken: body && body.taskToken,
+      userId: user.id
+    }, {
+      touchCredits: ({ requestId }) => touchToolUsage(user.id, requestId),
+      settleCredits: ({ requestId, status, durationMs }) => settleToolUsage(
+        user.id,
+        requestId,
+        status,
+        durationMs
+      )
+    });
+    if (result.status !== 'succeeded') {
+      const error = new Error('The processed image is not ready yet.');
+      error.code = 'image-tool-task-not-ready';
+      error.status = 409;
+      throw error;
+    }
+    if (!Array.isArray(result.urls) || index >= result.urls.length) {
+      throw invalidOption('invalid-image-result-index', 'The selected image result is invalid.');
+    }
+    const png = await downloadAi302ImageResult(result.urls[index]);
+    return send(response, 200, png, {
+      'Content-Type': 'image/png',
+      'Content-Disposition': `attachment; filename="${modelId}-${index + 1}.png"`
+    });
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/image/upscale') {
+    if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
+    const body = await readJson(request);
+    const modelId = String(body && body.modelId || '').trim().toLowerCase();
+    if (modelId !== 'super-upscale-v2') {
+      throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
+    }
+    const usage = await reserveFixedTool(response, user.id, modelId);
+    if (!usage) return;
+    try {
+      const result = await superUpscaleImage({
+        imageDataUrl: body && body.imageDataUrl,
+        toolOptions: body && body.options
+      });
+      const png = await downloadAi302ImageResult(result.urls[0]);
+      await settleToolUsage(user.id, usage.requestId, 'succeeded', Date.now() - usage.startedAt);
+      return send(response, 200, png, {
+        'Content-Type': 'image/png',
+        'Content-Disposition': 'attachment; filename="super-upscaled.png"'
+      });
+    } catch (error) {
+      await releaseFailedToolReservation(user.id, usage);
+      throw error;
+    }
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/image/erase') {
+    if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
+    const body = await readJson(request);
+    const modelId = String(body && body.modelId || '').trim().toLowerCase();
+    if (modelId !== 'erase') {
+      throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
+    }
+    const usage = await reserveFixedTool(response, user.id, modelId);
+    if (!usage) return;
+    try {
+      const result = await eraseImageObjects({
+        imageDataUrl: body && body.imageDataUrl,
+        maskImageDataUrl: body && body.maskDataUrl
+      });
+      const png = await downloadAi302ImageResult(result.urls[0]);
+      await settleToolUsage(user.id, usage.requestId, 'succeeded', Date.now() - usage.startedAt);
+      return send(response, 200, png, {
+        'Content-Type': 'image/png',
+        'Content-Disposition': 'attachment; filename="erased.png"'
+      });
+    } catch (error) {
+      await releaseFailedToolReservation(user.id, usage);
+      throw error;
+    }
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/tools/3d/create') {
@@ -678,6 +899,12 @@ const server = http.createServer((request, response) => {
       'tool-asset-capacity-exceeded': 'The temporary tool relay is at capacity.',
       'tool-disabled': 'This Butler tool is not enabled on the server.',
       'tool-asset-not-found': 'Temporary tool asset not found.',
+      'invalid-image-tool': 'The selected image tool is not supported.',
+      'invalid-image-tool-options': 'The selected image tool options are invalid.',
+      'invalid-image-result-index': 'The selected image result is invalid.',
+      'invalid-mask-image': 'The object-removal mask is invalid.',
+      'image-tool-task-not-found': 'The image task was not found.',
+      'image-tool-task-not-ready': 'The processed image is not ready yet.',
       'three-d-task-not-found': 'The 3D task was not found.',
       'three-d-task-not-ready': 'The 3D model is not ready to download.',
       'three-d-generation-failed': '3D generation failed.'

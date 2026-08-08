@@ -538,6 +538,21 @@ function storeRelayAsset(image, options = {}) {
   };
 }
 
+export function storeAi302RelayAsset(asset, options = {}) {
+  const mime = String(asset && asset.mime || '').toLowerCase();
+  if (
+    !asset || !Buffer.isBuffer(asset.buffer) || !asset.buffer.length
+    || (!ALLOWED_IMAGE_MIME.has(mime) && !ALLOWED_VIDEO_MIME.has(mime))
+  ) {
+    throw toolError('invalid-relay-asset', 'The temporary relay asset is invalid.', 400);
+  }
+  return storeRelayAsset({ ...asset, mime }, options);
+}
+
+export function deleteAi302RelayAsset(token) {
+  deleteRelayAsset(String(token || ''));
+}
+
 export function getAi302RelayAsset(token, { now = Date.now() } = {}) {
   const normalized = String(token || '');
   if (!/^[A-Za-z0-9_-]{43}$/.test(normalized)) {
@@ -558,6 +573,8 @@ function safeAssetHost(hostname) {
   const host = hostname.toLowerCase();
   return host === 'file.302.ai'
     || host.endsWith('.file.302.ai')
+    || host === 'fal.media'
+    || host.endsWith('.fal.media')
     || host === 'topazlabs.com'
     || host.endsWith('.topazlabs.com')
     || host.endsWith('.cos.myqcloud.com')

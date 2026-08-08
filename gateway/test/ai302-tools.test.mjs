@@ -538,6 +538,12 @@ test('server keeps every paid 302 route behind an explicit default-off feature f
     assert.ok(guardAt > routeAt && guardAt < actionAt, `${route} must fail closed before ${action}`);
   };
   assert.match(server, /\/v1\/tools\/background\/remove/);
+  assert.match(server, /\/v1\/tools\/image\/edit/);
+  assert.match(server, /\/v1\/tools\/image\/layer/);
+  assert.match(server, /\/v1\/tools\/image\/status/);
+  assert.match(server, /\/v1\/tools\/image\/download/);
+  assert.match(server, /\/v1\/tools\/image\/upscale/);
+  assert.match(server, /\/v1\/tools\/image\/erase/);
   assert.match(server, /\/v1\/tools\/3d\/create/);
   assert.match(server, /\/v1\/tools\/3d\/status/);
   assert.match(server, /\/v1\/tools\/3d\/download/);
@@ -550,11 +556,18 @@ test('server keeps every paid 302 route behind an explicit default-off feature f
   assert.match(server, /\/v1\/tools\/video\/status/);
   assert.match(server, /\/v1\/tools\/video\/download/);
   assert.match(server, /ENABLE_302_BACKGROUND_REMOVE/);
+  assert.match(server, /ENABLE_302_IMAGE_TOOLS/);
   assert.match(server, /ENABLE_302_HUNYUAN3D/);
   assert.match(server, /ENABLE_302_HYPER3D/);
   assert.match(server, /ENABLE_302_TOPAZ/);
   assert.match(server, /String\(process\.env\[flag\] \|\| ''\)\.trim\(\)\.toLowerCase\(\) === 'true'/);
   assertGuardBefore('/v1/tools/background/remove', 'ai302Enabled(AI302_FLAGS.background)', 'removeBackground');
+  assertGuardBefore('/v1/tools/image/edit', 'ai302Enabled(AI302_FLAGS.image)', 'submitQwenImageEdit');
+  assertGuardBefore('/v1/tools/image/layer', 'ai302Enabled(AI302_FLAGS.image)', 'submitQwenImageLayered');
+  assertGuardBefore('/v1/tools/image/status', 'ai302Enabled(AI302_FLAGS.image)', 'imageToolPoller');
+  assertGuardBefore('/v1/tools/image/download', 'ai302Enabled(AI302_FLAGS.image)', 'imageToolPoller');
+  assertGuardBefore('/v1/tools/image/upscale', 'ai302Enabled(AI302_FLAGS.image)', 'superUpscaleImage');
+  assertGuardBefore('/v1/tools/image/erase', 'ai302Enabled(AI302_FLAGS.image)', 'eraseImageObjects');
   assertGuardBefore('/v1/tools/3d/create', 'ai302Enabled(flag)', 'createThreeDTask');
   assertGuardBefore('/v1/tools/3d/status', 'ai302Enabled(AI302_FLAGS.hunyuan3d)', 'getThreeDStatus');
   assertGuardBefore('/v1/tools/3d/download', 'ai302Enabled(AI302_FLAGS.hunyuan3d)', 'downloadThreeDModel');
@@ -563,6 +576,7 @@ test('server keeps every paid 302 route behind an explicit default-off feature f
   assertGuardBefore('/v1/tools/video/download', 'ai302Enabled(AI302_FLAGS.topaz)', 'downloadVideoUpscaleResult');
   for (const flag of [
     'ENABLE_302_BACKGROUND_REMOVE',
+    'ENABLE_302_IMAGE_TOOLS',
     'ENABLE_302_HUNYUAN3D',
     'ENABLE_302_HYPER3D',
     'ENABLE_302_TOPAZ'

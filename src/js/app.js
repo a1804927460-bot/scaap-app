@@ -42,5 +42,5 @@ document.addEventListener('DOMContentLoaded', async () => {
   initTheme(initial.theme);
   initUpdater();
   await initActivation(initial.activation);
-  initStartScreen(() => bootstrapMainApp(initial));
+  initStartScreen(() => bootstrapMainApp(initial), { enterImmediately: true });
 });

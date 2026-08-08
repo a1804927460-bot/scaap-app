@@ -278,6 +278,7 @@ test('provider errors are bounded and redact credential-like values', () => {
 
 test('migration enforces service-only jobs, atomic reserve/settle, leases, and active-job cleanup protection', () => {
   const migration = fs.readFileSync(new URL('../../supabase/migrations/202608080003_async_video_jobs.sql', import.meta.url), 'utf8');
+  const seedanceMigration = fs.readFileSync(new URL('../../supabase/migrations/202608080007_seedance_video_credits.sql', import.meta.url), 'utf8');
   assert.match(migration, /alter table public\.ai_video_jobs enable row level security/i);
   assert.match(migration, /revoke all on table public\.ai_video_jobs from public, anon, authenticated/i);
   assert.match(migration, /create or replace function public\.start_ai_video_job[\s\S]*?reservation := public\.reserve_ai_credits/i);
@@ -290,6 +291,8 @@ test('migration enforces service-only jobs, atomic reserve/settle, leases, and a
   assert.match(migration, /coalesce\(settlement->>'status', ''\) <> normalized_status[\s\S]*?credit settlement status mismatch/i);
   assert.match(migration, /get_ai_video_job_download[\s\S]*?usage_row\.status = 'succeeded'/i);
   assert.match(migration, /job\.lease_token is null[\s\S]*?job\.lease_token is distinct from p_lease_token[\s\S]*?job\.leased_until is null/i);
+  assert.match(seedanceMigration, /drop constraint if exists ai_video_jobs_resolution_check/i);
+  assert.match(seedanceMigration, /check \(resolution in \('480P', '720P', '768P', '2K'\)\)/i);
 });
 
 test('gateway exposes async task routes while preserving the v0.0.5 synchronous video route', () => {
@@ -302,4 +305,9 @@ test('gateway exposes async task routes while preserving the v0.0.5 synchronous 
   assert.match(server, /kind === 'video'[\s\S]*?generateLegacyVideo/);
   assert.doesNotMatch(server, /client-update-required/);
   assert.match(server, /video-job-schema-missing'[\s\S]*?video-worker-disabled/);
+  assert.match(server, /providerCapabilities\(kind, providerId\)/);
+  assert.match(server, /capabilities\.resolutions[\s\S]*?invalid-resolution/);
+  assert.match(server, /capabilities\.durations[\s\S]*?invalid-duration/);
+  assert.match(server, /capabilities\.frameReferenceRatios[\s\S]*?invalid-aspect-ratio/);
+  assert.doesNotMatch(server, /MiniMax H3 resolution must be/);
 });

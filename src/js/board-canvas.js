@@ -583,7 +583,7 @@ function renderBoardItemContent(content, f, item) {
     return;
   }
 
-  if (isGlbFile(f)) {
+  if (isModelFile(f)) {
     const preview = document.createElement('div');
     preview.className = 'board-model-thumbnail';
     const previewSource = String(f.modelPreviewUrl || f.previewUrl || '');
@@ -812,7 +812,7 @@ function syncMountedRichContentForLod(previousBucket, nextBucket) {
   for (const [id, element] of Board.mounted) {
     const item = Board.itemsById.get(id);
     const file = item && Board.filesById.get(item.fileId);
-    if (!file || isImageExt(file.ext) || isVideoExt(file.ext) || isGlbFile(file)) continue;
+    if (!file || isImageExt(file.ext) || isVideoExt(file.ext) || isModelFile(file)) continue;
     const content = element.querySelector('.board-item-content');
     if (!content) continue;
     cleanupBoardElement(element);
@@ -840,7 +840,7 @@ function boardOverviewColor(item) {
   if (!file) return '#7d8798';
   if (isVideoExt(file.ext)) return '#3d8fe8';
   if (isImageExt(file.ext)) return '#47a67c';
-  if (isGlbFile(file)) return '#9a7bd1';
+  if (isModelFile(file)) return '#9a7bd1';
   if (isAudioExt(file.ext)) return '#d76f55';
   return '#8a91a0';
 }
@@ -989,7 +989,7 @@ function createBoardItemElement(item) {
   const el = document.createElement('div');
   const isImage = isImageExt(f.ext);
   const isVideo = isVideoExt(f.ext);
-  const isModel = isGlbFile(f);
+  const isModel = isModelFile(f);
   el.className = 'board-item' +
     (isImage ? ' board-item-image' : '') +
     (isVideo ? ' board-item-video' : '') +
@@ -1304,6 +1304,11 @@ function makeBoardItemDraggable(el, item) {
     // Middle-button and Alt+left gestures always belong to canvas panning,
     // even when they begin over an image or video.
     if (e.button !== 0 || e.altKey) return;
+    // Toolbar controls and native form controls own their pointer gesture;
+    // they must never fall through to board-item dragging.
+    if (e.target.closest && e.target.closest(
+      '.board-image-toolbar, .board-edit-hint, .generated-media-detail-trigger, button, input, textarea, select, a'
+    )) return;
     if (e.target.classList.contains('board-resize-handle')) return;
     if (e.target.closest('.mini-audio-player')) return;
     e.stopPropagation();
@@ -2481,22 +2486,74 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
 }
 
 const AI_IMAGE_RATIOS = ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9'];
-const MINIMAX_VIDEO_RESOLUTIONS = ['768P', '2K'];
-const MINIMAX_TEXT_VIDEO_RATIOS = ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
+const DEFAULT_VIDEO_RESOLUTIONS = ['768P', '2K'];
+const DEFAULT_VIDEO_RATIOS = ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
 
-function supportedMiniMaxResolution(value, capabilities = {}) {
-  const supported = Array.isArray(capabilities.resolutions) && capabilities.resolutions.length
-    ? capabilities.resolutions.map((entry) => String(entry || '').trim().toUpperCase())
-      .filter((entry) => MINIMAX_VIDEO_RESOLUTIONS.includes(entry))
-    : MINIMAX_VIDEO_RESOLUTIONS;
+function normalizedCapabilityValues(values, fallback = []) {
+  const normalize = (source) => [...new Set(
+    source.map((entry) => String(entry || '').trim()).filter(Boolean)
+  )];
+  const configured = Array.isArray(values) ? normalize(values) : [];
+  return configured.length ? configured : normalize(fallback);
+}
+
+function supportedVideoResolutions(capabilities = {}) {
+  return normalizedCapabilityValues(capabilities.resolutions, DEFAULT_VIDEO_RESOLUTIONS)
+    .map((entry) => entry.toUpperCase());
+}
+
+function supportedVideoResolution(value, capabilities = {}) {
+  const supported = supportedVideoResolutions(capabilities);
   const requested = String(value || '').trim().toUpperCase();
   return supported.includes(requested) ? requested : (supported[0] || '768P');
 }
 
-function supportedMiniMaxAspectRatio(value, hasFrameReference) {
-  if (hasFrameReference) return 'adaptive';
+function supportedVideoRatios(capabilities = {}, hasFrameReference = false) {
+  return normalizedCapabilityValues(
+    hasFrameReference ? capabilities.frameReferenceRatios : capabilities.ratios,
+    hasFrameReference ? ['adaptive'] : DEFAULT_VIDEO_RATIOS
+  );
+}
+
+function supportedVideoAspectRatio(value, capabilities = {}, hasFrameReference = false) {
+  const supported = supportedVideoRatios(capabilities, hasFrameReference);
   const requested = String(value || '').trim();
-  return MINIMAX_TEXT_VIDEO_RATIOS.includes(requested) ? requested : '16:9';
+  if (supported.includes(requested)) return requested;
+  if (hasFrameReference && supported.includes('adaptive')) return 'adaptive';
+  if (supported.includes('16:9')) return '16:9';
+  return supported[0] || (hasFrameReference ? 'adaptive' : '16:9');
+}
+
+function supportedVideoDurations(capabilities = {}) {
+  const values = Array.isArray(capabilities.durations) && capabilities.durations.length
+    ? capabilities.durations
+    : [6, 8, 10, 15];
+  return [...new Set(values.map(Number).filter((value) => Number.isInteger(value) && value > 0))]
+    .sort((left, right) => left - right);
+}
+
+function supportedVideoDuration(value, capabilities = {}) {
+  const supported = supportedVideoDurations(capabilities);
+  const requested = Math.round(Number(value));
+  if (supported.includes(requested)) return requested;
+  if (!Number.isFinite(requested)) return supported[0] || 6;
+  return supported.reduce((nearest, candidate) => (
+    Math.abs(candidate - requested) < Math.abs(nearest - requested) ? candidate : nearest
+  ), supported[0] || 6);
+}
+
+function resolutionDisplayHint(value) {
+  const normalized = String(value || '').trim().toUpperCase();
+  const labels = {
+    '480P': '480p',
+    '720P': '720p',
+    '768P': '768p',
+    '1K': '1024 px',
+    '2K': '2048 px',
+    '4K': '4096 px',
+    'ORIGINAL': 'Original'
+  };
+  return labels[normalized] || normalized;
 }
 
 function getConfiguredImageProviders(aiConfig) {
@@ -2847,7 +2904,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const imageButton = pop.querySelector('[data-ai-kind="image"]');
     const videoButton = pop.querySelector('[data-ai-kind="video"]');
     const headings = pop.querySelectorAll('.ai-options-heading strong');
-    const px = size === '768P' ? '768p' : size === '1K' ? '1024 px' : size === '2K' ? '2048 px' : '4096 px';
+    const px = resolutionDisplayHint(size);
     const autoLabel = t('Auto', '自动');
 
     mode.setAttribute('aria-label', t('Generation type', '生成类型'));
@@ -3034,18 +3091,14 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
         renderBoardReferences();
         syncAiComposerReferenceClasses();
       }
-      if (boardReferences.size) ratio = 'adaptive';
+      ratio = supportedVideoAspectRatio(ratio, capabilities, boardReferences.size > 0);
     }
     const resolutions = kind === 'video'
-      ? (Array.isArray(capabilities.resolutions) && capabilities.resolutions.length
-        ? capabilities.resolutions
-        : ['768P', '2K'])
+      ? supportedVideoResolutions(capabilities)
       : (Array.isArray(capabilities.sizes) && capabilities.sizes.length
         ? capabilities.sizes
         : ['1K', '2K', '4K']);
-    const durations = kind === 'video' && Array.isArray(capabilities.durations) && capabilities.durations.length
-      ? capabilities.durations.map(Number).filter(Number.isFinite)
-      : [6, 8, 10, 15];
+    const durations = kind === 'video' ? supportedVideoDurations(capabilities) : [6, 8, 10, 15];
     if (!resolutions.includes(size)) size = resolutions[0];
     const sizeGroup = pop.querySelector('[data-option="size"]');
     sizeGroup.innerHTML = '';
@@ -3061,9 +3114,11 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const maximum = durations.length ? Math.max(...durations) : 15;
     durationRange.min = String(minimum);
     durationRange.max = String(maximum);
-    duration = Math.max(minimum, Math.min(maximum, Math.round(duration)));
+    duration = kind === 'video'
+      ? supportedVideoDuration(duration, capabilities)
+      : Math.max(minimum, Math.min(maximum, Math.round(duration)));
     durationRange.value = String(duration);
-    pop.querySelector('.ai-resolution-block').hidden = kind === 'video' && !capabilities.resolutions;
+    pop.querySelector('.ai-resolution-block').hidden = resolutions.length === 0;
     renderRatios();
     syncSegments();
     updateSummary();
@@ -3074,13 +3129,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   function renderRatios() {
     const capabilities = kind === 'video' ? selectedVideoCapabilities() : selectedImageCapabilities();
     const ratios = kind === 'video'
-      ? (boardReferences.size
-        ? (Array.isArray(capabilities.frameReferenceRatios) && capabilities.frameReferenceRatios.length
-          ? capabilities.frameReferenceRatios
-          : ['adaptive'])
-        : (Array.isArray(capabilities.ratios) && capabilities.ratios.length
-          ? capabilities.ratios
-          : ['16:9', '9:16']))
+      ? supportedVideoRatios(capabilities, boardReferences.size > 0)
       : (Array.isArray(capabilities.ratios) && capabilities.ratios.length
         ? capabilities.ratios
         : AI_IMAGE_RATIOS);
@@ -3116,7 +3165,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       button.classList.toggle('is-active', Number(button.dataset.value) === count);
     });
     pop.querySelector('.ai-count-value').textContent = `× ${count}`;
-    const sizeHint = size === '768P' ? '768p' : size === '1K' ? '1024 px' : size === '2K' ? '2048 px' : '4096 px';
+    const sizeHint = resolutionDisplayHint(size);
     pop.querySelector('.ai-resolution-hint').textContent = `≈ ${sizeHint}`;
   }
 
@@ -3212,7 +3261,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     setOptionsOpen(true);
   });
   pop.querySelector('.ai-duration-range').addEventListener('input', (event) => {
-    duration = Number(event.target.value);
+    duration = kind === 'video'
+      ? supportedVideoDuration(event.target.value, selectedVideoCapabilities())
+      : Number(event.target.value);
+    event.target.value = String(duration);
     pop.querySelector('.ai-duration-value').textContent = `${duration} 秒`;
     updateSummary();
     updateCreditEstimate();
@@ -3239,14 +3291,19 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     }
     const selectedProvider = (kind === 'image' ? providers : videoProviders)
       .find((provider) => provider.id === modelSelect.value);
+    const videoCapabilities = kind === 'video' && selectedProvider && selectedProvider.capabilities
+      ? selectedProvider.capabilities
+      : {};
     const request = {
       kind,
       prompt: text,
       size,
       resolution: kind === 'video' ? size : undefined,
       count,
-      duration,
-      aspectRatio: kind === 'video' && boardReferences.size ? 'adaptive' : ratio,
+      duration: kind === 'video' ? supportedVideoDuration(duration, videoCapabilities) : duration,
+      aspectRatio: kind === 'video'
+        ? supportedVideoAspectRatio(ratio, videoCapabilities, boardReferences.size > 0)
+        : ratio,
       imageProviderId: kind === 'image' && selectedProvider ? selectedProvider.id : null,
       videoProviderId: kind === 'video' && selectedProvider ? selectedProvider.id : null,
       modelName: selectedProvider ? selectedProvider.name : (aiConfig.videoProviderName || '视频生成'),
@@ -3265,13 +3322,6 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   };
   pop._applyGenerationPreset = (preset = {}) => {
     updateMode(preset.kind === 'video' ? 'video' : 'image');
-    ratio = String(preset.aspectRatio || ratio);
-    const presetSize = preset.resolution || preset.size;
-    size = ['768P', '1K', '2K', '4K', 'original'].includes(presetSize) ? presetSize : size;
-    count = Math.max(1, Math.min(4, Number(preset.count) || 1));
-    duration = Math.max(1, Number(preset.duration) || duration);
-    renderRatios();
-    syncSegments();
     const modelOption = [...modelSelect.options].find((entry) => entry.value === preset.providerId);
     if (modelOption) {
       modelSelect.value = modelOption.value;
@@ -3282,7 +3332,24 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
         entry.setAttribute('aria-selected', String(active));
       });
     }
-    pop.querySelector('.ai-duration-range').value = String(duration);
+    if (kind === 'video') {
+      const capabilities = selectedVideoCapabilities();
+      size = supportedVideoResolution(preset.resolution || preset.size, capabilities);
+      ratio = supportedVideoAspectRatio(
+        preset.aspectRatio || ratio,
+        capabilities,
+        boardReferences.size > 0
+      );
+      duration = supportedVideoDuration(preset.duration || duration, capabilities);
+    } else {
+      const capabilities = selectedImageCapabilities();
+      const imageSizes = normalizedCapabilityValues(capabilities.sizes, ['1K', '2K', '4K']);
+      const presetSize = String(preset.size || '');
+      if (imageSizes.includes(presetSize)) size = presetSize;
+      ratio = String(preset.aspectRatio || ratio);
+    }
+    count = Math.max(1, Math.min(4, Number(preset.count) || 1));
+    syncGenerationOptions();
     updateSummary();
     refreshLanguage();
     updateCreditEstimate();
@@ -3514,8 +3581,9 @@ async function submitBoardQuickGeneration(kind, promptText) {
     const urls = await boardSelectionReferenceData();
     const referenceFileIds = selectedBoardImageItems().map((item) => item.fileId);
     const isVideo = kind === 'video';
+    const videoCapabilities = isVideo && provider.capabilities ? provider.capabilities : {};
     const videoResolution = isVideo
-      ? supportedMiniMaxResolution(null, provider.capabilities || {})
+      ? supportedVideoResolution(null, videoCapabilities)
       : undefined;
     await generateAiMediaForBoardV3({
       kind,
@@ -3523,9 +3591,11 @@ async function submitBoardQuickGeneration(kind, promptText) {
       size: isVideo ? videoResolution : 'original',
       resolution: videoResolution,
       count: 1,
-      duration: Number(config.videoDuration) || 6,
+      duration: isVideo
+        ? supportedVideoDuration(config.videoDuration, videoCapabilities)
+        : Number(config.videoDuration) || 6,
       aspectRatio: isVideo
-        ? supportedMiniMaxAspectRatio(original.aspectRatio, referenceFileIds.length > 0)
+        ? supportedVideoAspectRatio(original.aspectRatio, videoCapabilities, referenceFileIds.length > 0)
         : original.aspectRatio,
       sourceWidth: original.sourceWidth,
       sourceHeight: original.sourceHeight,
@@ -3589,8 +3659,15 @@ async function retryGeneratedMediaFromDetails(file) {
   try {
     const references = await generatedReferenceData(generation.referenceFileIds);
     const isVideo = generation.kind === 'video';
+    const config = isVideo ? await window.messsAPI.getAiMediaConfig() : null;
+    const videoProvider = isVideo
+      ? getConfiguredVideoProviders(config || {}).find((provider) => provider.id === generation.providerId)
+      : null;
+    const videoCapabilities = videoProvider && videoProvider.capabilities
+      ? videoProvider.capabilities
+      : {};
     const videoResolution = isVideo
-      ? supportedMiniMaxResolution(generation.resolution || generation.size)
+      ? supportedVideoResolution(generation.resolution || generation.size, videoCapabilities)
       : undefined;
     await generateAiMediaForBoardV3({
       kind: isVideo ? 'video' : 'image',
@@ -3598,9 +3675,11 @@ async function retryGeneratedMediaFromDetails(file) {
       size: isVideo ? videoResolution : (generation.size || '1K'),
       resolution: videoResolution,
       count: 1,
-      duration: Number(generation.duration) || 6,
+      duration: isVideo
+        ? supportedVideoDuration(generation.duration, videoCapabilities)
+        : Number(generation.duration) || 6,
       aspectRatio: isVideo
-        ? supportedMiniMaxAspectRatio(generation.aspectRatio, references.referenceFileIds.length > 0)
+        ? supportedVideoAspectRatio(generation.aspectRatio, videoCapabilities, references.referenceFileIds.length > 0)
         : (generation.aspectRatio || 'auto'),
       sourceWidth: file.sourceWidth || null,
       sourceHeight: file.sourceHeight || null,

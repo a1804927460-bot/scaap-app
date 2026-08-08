@@ -186,10 +186,19 @@ function isVideoExt(ext) {
   return ['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi', '.wmv', '.flv', '.mpeg', '.mpg'].includes(ext);
 }
 
-function isGlbFile(fileOrExt) {
+const MODEL_FILE_EXTENSIONS = new Set(['.glb', '.fbx', '.obj']);
+const MODEL_MIME_TYPES = new Set([
+  'model/gltf-binary',
+  'model/vnd.autodesk.fbx',
+  'application/vnd.autodesk.fbx',
+  'model/obj',
+  'text/plain'
+]);
+
+function isModelFile(fileOrExt) {
   if (!fileOrExt) return false;
   if (typeof fileOrExt === 'string') {
-    return String(fileOrExt).trim().toLowerCase() === '.glb';
+    return MODEL_FILE_EXTENSIONS.has(String(fileOrExt).trim().toLowerCase());
   }
   const ext = String(fileOrExt.ext || '').trim().toLowerCase();
   const name = String(fileOrExt.name || '').trim().toLowerCase();
@@ -197,6 +206,18 @@ function isGlbFile(fileOrExt) {
     .trim()
     .toLowerCase()
     .split(';', 1)[0];
+  const nameExt = name.includes('.') ? `.${name.split('.').pop()}` : '';
+  return MODEL_FILE_EXTENSIONS.has(ext) || MODEL_FILE_EXTENSIONS.has(nameExt) ||
+    (MODEL_MIME_TYPES.has(mime) && (mime !== 'text/plain' || nameExt === '.obj'));
+}
+
+function isGlbFile(fileOrExt) {
+  if (!fileOrExt) return false;
+  if (typeof fileOrExt === 'string') return String(fileOrExt).trim().toLowerCase() === '.glb';
+  const ext = String(fileOrExt.ext || '').trim().toLowerCase();
+  const name = String(fileOrExt.name || '').trim().toLowerCase();
+  const mime = String(fileOrExt.mimeType || fileOrExt.mime || fileOrExt.contentType || '')
+    .trim().toLowerCase().split(';', 1)[0];
   return ext === '.glb' || name.endsWith('.glb') || mime === 'model/gltf-binary';
 }
 
@@ -211,7 +232,8 @@ function isEditableExt(ext) {
 function fileIconLabel(ext) {
   const map = {
     '.pdf': 'PDF', '.doc': 'DOC', '.docx': 'DOC', '.xls': 'XLS', '.xlsx': 'XLS',
-    '.zip': 'ZIP', '.mp4': 'MOV', '.mov': 'MOV', '.mp3': 'MP3', '.txt': 'TXT', '.glb': '3D'
+    '.zip': 'ZIP', '.mp4': 'MOV', '.mov': 'MOV', '.mp3': 'MP3', '.txt': 'TXT',
+    '.glb': '3D', '.fbx': '3D', '.obj': '3D'
   };
   return map[ext] || (ext ? ext.replace('.', '').slice(0, 4).toUpperCase() : 'FILE');
 }

@@ -146,6 +146,10 @@ function boardButlerStatusText(action, task) {
   }
   if (task.status === 'error') return t('Retry', '重试', '다시 시도');
   if (task.status === 'success') return t('Done', '完成', '완료');
+  if (task.phase === 'queued') return t('Queued', '排队中', '대기 중');
+  if (task.phase === 'downloading') return t('Downloading...', '下载中...', '다운로드 중...');
+  if (task.phase === 'saving') return t('Adding to canvas...', '正在加入画布...', '캔버스에 추가 중...');
+  if (task.phase === 'creating') return t('Starting...', '正在提交...', '시작 중...');
   if (action === 'removeBackground') {
     return t('Removing...', '处理中...', '처리 중...');
   }
@@ -290,11 +294,13 @@ function boardButlerApi() {
 }
 
 function boardButlerError(result, fallback) {
-  const message = result && typeof result.message === 'string' && result.message.trim()
-    ? result.message.trim()
-    : fallback;
+  const candidates = result && typeof result === 'object'
+    ? [result.message, result.errorMessage, result.error && result.error.message]
+    : [];
+  const supplied = candidates.find((value) => typeof value === 'string' && value.trim());
+  const message = supplied ? supplied.trim() : fallback;
   const error = new Error(message);
-  error.reason = result && result.reason;
+  error.reason = result && (result.reason || result.errorCode || result.code);
   return error;
 }
 
@@ -378,7 +384,10 @@ function normalizeBoardButlerJobStatus(value) {
 function boardButlerResultFiles(result) {
   if (!result || typeof result !== 'object') return [];
   if (Array.isArray(result.files)) return result.files.filter((file) => file && file.id);
-  return result.file && result.file.id ? [result.file] : [];
+  if (result.file && result.file.id) return [result.file];
+  if (result.result && result.result !== result) return boardButlerResultFiles(result.result);
+  if (result.output && result.output !== result) return boardButlerResultFiles(result.output);
+  return [];
 }
 
 async function resolveBoardButlerImageToolResult(api, hook, initialResult, state, fileId) {
@@ -414,6 +423,9 @@ async function resolveBoardButlerImageToolResult(api, hook, initialResult, state
     files = boardButlerResultFiles(result);
     if (files.length) return files;
     status = normalizeBoardButlerJobStatus(result.status);
+    if (Number.isFinite(Number(result.progress))) {
+      state.progress = Math.max(0, Math.min(100, Number(result.progress)));
+    }
     retryAfterMs = boardButlerPollDelay(result.retryAfterMs);
   }
   if (status !== 'succeeded') {
@@ -1355,7 +1367,10 @@ function appendBoardButlerTrigger(toolbar, file, item) {
   butler.setAttribute('aria-expanded', 'false');
   butler.innerHTML = `${BOARD_BUTLER_ICONS.trigger}<span>Butler</span>${BOARD_BUTLER_ICONS.caret}`;
   ['pointerdown', 'mousedown', 'click'].forEach((eventName) => {
-    butler.addEventListener(eventName, (event) => event.stopPropagation());
+    butler.addEventListener(eventName, (event) => {
+      event.stopPropagation();
+      if (eventName !== 'click') event.preventDefault();
+    });
   });
   butler.addEventListener('click', () => openBoardButlerMenu(butler, file, item));
   toolbar.appendChild(butler);
@@ -1366,10 +1381,15 @@ function appendBoardButlerTrigger(toolbar, file, item) {
 function appendBoardImageToolbar(element, file, item) {
   const toolbar = document.createElement('div');
   toolbar.className = 'board-image-toolbar';
+  toolbar.dataset.boardInteractive = 'true';
+  toolbar.draggable = false;
   toolbar.setAttribute('role', 'toolbar');
   toolbar.setAttribute('aria-label', t('Image actions', '图片操作'));
   ['pointerdown', 'mousedown', 'click'].forEach((eventName) => {
-    toolbar.addEventListener(eventName, (event) => event.stopPropagation());
+    toolbar.addEventListener(eventName, (event) => {
+      event.stopPropagation();
+      if (eventName !== 'click') event.preventDefault();
+    });
   });
 
   const actions = [
@@ -1395,11 +1415,16 @@ function appendBoardImageToolbar(element, file, item) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `board-image-toolbar-button is-${action.key}`;
+    button.dataset.boardInteractive = 'true';
+    button.draggable = false;
     button.title = action.title;
     button.setAttribute('aria-label', action.title);
     button.innerHTML = BOARD_IMAGE_TOOL_ICONS[action.key];
     ['pointerdown', 'mousedown', 'click'].forEach((eventName) => {
-      button.addEventListener(eventName, (event) => event.stopPropagation());
+      button.addEventListener(eventName, (event) => {
+        event.stopPropagation();
+        if (eventName !== 'click') event.preventDefault();
+      });
     });
     button.addEventListener('click', () => action.run(button));
     toolbar.appendChild(button);
@@ -1414,10 +1439,15 @@ function appendBoardVideoButlerToolbar(element, file, item) {
   if (!BOARD_BUTLER_VIDEO_EXTENSIONS.has(String(file && file.ext || '').toLowerCase())) return null;
   const toolbar = document.createElement('div');
   toolbar.className = 'board-image-toolbar board-video-butler-toolbar';
+  toolbar.dataset.boardInteractive = 'true';
+  toolbar.draggable = false;
   toolbar.setAttribute('role', 'toolbar');
   toolbar.setAttribute('aria-label', t('Video actions', '视频操作', '비디오 작업'));
   ['pointerdown', 'mousedown', 'click'].forEach((eventName) => {
-    toolbar.addEventListener(eventName, (event) => event.stopPropagation());
+    toolbar.addEventListener(eventName, (event) => {
+      event.stopPropagation();
+      if (eventName !== 'click') event.preventDefault();
+    });
   });
   appendBoardButlerTrigger(toolbar, file, item);
   element.appendChild(toolbar);

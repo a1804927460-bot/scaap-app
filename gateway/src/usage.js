@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { quoteTopazRetailCredits } from './tool-pricing.js';
+import { BUTLER_FIXED_RETAIL_CREDITS, quoteButlerRetailCredits } from './tool-pricing.js';
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
 
@@ -20,7 +20,15 @@ export const IMAGE_QUALITY_CREDITS = Object.freeze({
 });
 
 export const VIDEO_CREDITS_PER_SECOND = Object.freeze({
-  'video-1': Object.freeze({ '768P': 10, '2K': 16 })
+  'video-1': Object.freeze({ '768P': 10, '2K': 16 }),
+  'video-2': Object.freeze({ '480P': 3, '720P': 5 }),
+  'video-3': Object.freeze({ '480P': 4, '720P': 6 })
+});
+
+export const VIDEO_DEFAULT_RESOLUTIONS = Object.freeze({
+  'video-1': '768P',
+  'video-2': '720P',
+  'video-3': '720P'
 });
 
 const DURABLE_TIMEOUT_MS = 5_000;
@@ -109,7 +117,9 @@ export function quoteUsage(kind, request = {}) {
     if (!rates) {
       throw Object.assign(new Error('The selected video provider is not allowed.'), { code: 'provider-not-allowed', status: 400 });
     }
-    const resolution = String(request.resolution || '768P').trim().toUpperCase() === '2K' ? '2K' : '768P';
+    const requestedResolution = String(request.resolution || '').trim().toUpperCase();
+    const defaultResolution = VIDEO_DEFAULT_RESOLUTIONS[providerId];
+    const resolution = Object.hasOwn(rates, requestedResolution) ? requestedResolution : defaultResolution;
     const duration = boundedInteger(request.duration, 6, 4, 15);
     return {
       kind: 'video',
@@ -313,15 +323,27 @@ export async function settleUsage(requestId, status, durationMs, fetchImpl = fet
 
 export async function reserveToolUsage(userId, requestId, request = {}, fetchImpl = fetch) {
   const providerId = String(request.providerId || '').trim().toLowerCase();
-  const credits = Math.round(Number(request.credits));
-  const providerCost = Math.round(Number(request.providerCost));
+  const hasRequestedCredits = request.credits !== null && request.credits !== undefined;
+  const requestedCredits = hasRequestedCredits ? Number(request.credits) : null;
+  const isTopaz = providerId === 'topaz-video-upscale';
+  const hasProviderCost = request.providerCost !== null && request.providerCost !== undefined;
+  const providerCost = isTopaz && hasProviderCost ? Number(request.providerCost) : null;
   const resolution = String(request.resolution || '').trim().slice(0, 32) || null;
   const duration = request.duration === null || request.duration === undefined
     ? null
     : boundedInteger(request.duration, 1, 1, 21_600);
-  let expectedCredits = -1;
-  try { expectedCredits = quoteTopazRetailCredits(providerCost); } catch (error) {}
-  if (providerId !== 'topaz-video-upscale' || !Number.isInteger(credits) || credits !== expectedCredits) {
+  let credits;
+  try {
+    credits = quoteButlerRetailCredits(providerId, providerCost);
+  } catch (error) {
+    throw serviceError('provider-not-allowed', 'The requested Butler tool usage is invalid.', 400);
+  }
+  if (
+    (hasRequestedCredits && (!Number.isInteger(requestedCredits) || requestedCredits !== credits))
+    || (isTopaz && !hasProviderCost)
+    || (!isTopaz && hasProviderCost)
+    || (!isTopaz && !Object.hasOwn(BUTLER_FIXED_RETAIL_CREDITS, providerId))
+  ) {
     throw serviceError('provider-not-allowed', 'The requested Butler tool usage is invalid.', 400);
   }
   const headers = serviceHeaders();

@@ -26,6 +26,8 @@ const USAGE_MODEL_NAMES = Object.freeze({
   'image-5': 'Nano banana2',
   'image-6': 'GPT Image 2',
   'video-1': 'MiniMax H3',
+  'video-2': 'Seedance 2.0',
+  'video-3': 'Seedance 2.5',
   'chat-1': 'Messs AI',
   'chat-2': 'AI Chat',
   'topaz-video-upscale': 'Topaz Video AI',

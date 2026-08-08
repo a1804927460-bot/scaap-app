@@ -5,6 +5,7 @@ const require = createRequire(import.meta.url);
 const { PROVIDER_CATALOG_VERSION } = require('../lib/provider-catalog');
 
 process.env.Quick_API_KEY = 'quickrouter-secret';
+process.env.AI302_KEY = 'ai302-secret';
 process.env.MINIMAX_API_KEY = 'minimax-secret';
 process.env.RELAY_2_API_KEY = 'relay-two-secret';
 process.env.AI_PROVIDERS_JSON = JSON.stringify([
@@ -39,7 +40,8 @@ assert.equal(config.catalogVersion, PROVIDER_CATALOG_VERSION);
 
 assert.ok(ids.includes('image-1'));
 assert.ok(ids.includes('video-1'));
-assert.ok(ids.includes('video-1'));
+assert.ok(ids.includes('video-2'));
+assert.ok(ids.includes('video-3'));
 assert.ok(ids.includes('chat-1'));
 assert.ok(ids.includes('chat-2'));
 assert.ok(ids.includes('relay-2-image'));
@@ -69,6 +71,18 @@ assert.deepEqual(
 );
 assert.equal(config.providers.find((provider) => provider.id === 'video-1').name, 'MiniMax H3');
 assert.equal(config.providers.find((provider) => provider.id === 'video-1').model, 'MiniMax-H3');
+const seedance20Provider = config.providers.find((provider) => provider.id === 'video-2');
+const seedance25Provider = config.providers.find((provider) => provider.id === 'video-3');
+assert.equal(seedance20Provider.name, 'Seedance 2.0');
+assert.equal(seedance20Provider.model, 'doubao-seedance-2-0-260128');
+assert.equal(seedance20Provider.protocol, 'seedance-video-v3');
+assert.deepEqual(seedance20Provider.capabilities.resolutions, ['480P', '720P']);
+assert.equal(seedance20Provider.capabilities.maxReferenceImages, 9);
+assert.equal(seedance25Provider.name, 'Seedance 2.5');
+assert.equal(seedance25Provider.model, 'doubao-seedance-2-5-260628');
+assert.equal(seedance25Provider.protocol, 'seedance-video-v3');
+assert.deepEqual(seedance25Provider.capabilities.resolutions, ['480P', '720P']);
+assert.equal(seedance25Provider.capabilities.maxReferenceImages, 9);
 assert.equal(config.providers.find((provider) => provider.id === 'chat-1').name, 'Messs AI');
 assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-1').models, [
   'gemini-3.1-flash-lite',
@@ -84,13 +98,22 @@ assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-2').m
 
 const publicText = JSON.stringify(config);
 assert.equal(publicText.includes('quickrouter-secret'), false);
+assert.equal(publicText.includes('ai302-secret'), false);
 assert.equal(publicText.includes('relay-two-secret'), false);
 assert.equal(publicText.includes('minimax-secret'), false);
 assert.equal(publicText.includes('RELAY_2_API_KEY'), false);
+assert.equal(publicText.includes('AI302_KEY'), false);
 assert.equal(publicText.includes('relay.example.com'), false);
 assert.equal(publicText.includes('quickrouter.ai'), false);
 assert.equal(publicText.includes('minimaxi.com'), false);
 assert.equal(publicText.includes('api.302.ai'), false);
+
+const configuredAi302Key = process.env.AI302_KEY;
+delete process.env.AI302_KEY;
+const withoutAi302 = publicProviderConfig();
+assert.equal(withoutAi302.providers.some((provider) => provider.id === 'video-2'), false);
+assert.equal(withoutAi302.providers.some((provider) => provider.id === 'video-3'), false);
+process.env.AI302_KEY = configuredAi302Key;
 
 function jsonResponse(payload, status = 200) {
   return {
@@ -122,11 +145,12 @@ const nanoImage = await generateMedia('image', {
 assert.deepEqual(nanoImage, Buffer.from('iVBORw==', 'base64'));
 assert.equal(
   nanoCalls[0].url,
-  'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image:generateContent'
+  'https://api.302.ai/google/v1/models/gemini-3-pro-image-preview'
 );
-assert.equal(nanoCalls[0].options.headers.Authorization, 'Bearer quickrouter-secret');
+assert.equal(nanoCalls[0].options.headers.Authorization, 'Bearer ai302-secret');
+assert.equal(nanoCalls[0].options.headers['x-goog-api-key'], undefined);
 const nanoBody = JSON.parse(nanoCalls[0].options.body);
-assert.deepEqual(nanoBody.generationConfig.imageConfig, { aspectRatio: '3:4', clarity: '2K' });
+assert.deepEqual(nanoBody.generationConfig.imageConfig, { aspectRatio: '3:4', imageSize: '2K' });
 
 const gptImageCalls = [];
 globalThis.fetch = async (url, options = {}) => {
@@ -312,5 +336,147 @@ await assert.rejects(
   }),
   (error) => error && error.code === 'async-video-required'
 );
+
+const seedanceCalls = [];
+globalThis.fetch = async (url, options = {}) => {
+  const value = String(url);
+  seedanceCalls.push({ url: value, options });
+  if (value === 'https://api.302.ai/volcengine/api/v3/contents/generations/tasks'
+      && options.method === 'POST') {
+    const body = JSON.parse(options.body);
+    return jsonResponse({
+      id: body.model === 'doubao-seedance-2-0-260128'
+        ? 'seedance-20-task'
+        : 'seedance-25-task'
+    });
+  }
+  if (value.endsWith('/seedance-20-task')) {
+    return jsonResponse({
+      id: 'seedance-20-task',
+      status: 'succeeded',
+      content: { video_url: 'https://cdn.example/seedance-20.mp4' }
+    });
+  }
+  if (value.endsWith('/seedance-25-task')) {
+    return jsonResponse({ id: 'seedance-25-task', status: 'running' });
+  }
+  throw new Error(`Unexpected Seedance URL: ${value}`);
+};
+
+const createdSeedance20 = await createVideoTask({
+  providerId: 'video-2',
+  prompt: 'a precise product turntable shot',
+  resolution: '720P',
+  duration: 8,
+  aspectRatio: '16:9',
+  urls: ['https://cdn.example/front.png', 'https://cdn.example/side.png']
+});
+assert.deepEqual(createdSeedance20, { providerId: 'video-2', taskId: 'seedance-20-task' });
+assert.deepEqual(JSON.parse(seedanceCalls[0].options.body), {
+  model: 'doubao-seedance-2-0-260128',
+  content: [
+    { type: 'text', text: 'a precise product turntable shot' },
+    { type: 'image_url', image_url: { url: 'https://cdn.example/front.png' }, role: 'reference_image' },
+    { type: 'image_url', image_url: { url: 'https://cdn.example/side.png' }, role: 'reference_image' }
+  ],
+  generate_audio: true,
+  ratio: '16:9',
+  duration: 8,
+  resolution: '720p',
+  watermark: false
+});
+assert.equal(seedanceCalls[0].options.headers.Authorization, 'Bearer ai302-secret');
+assert.deepEqual(await pollVideoTask('video-2', 'seedance-20-task'), {
+  status: 'succeeded',
+  resultUrl: 'https://cdn.example/seedance-20.mp4'
+});
+
+const createdSeedance25 = await createVideoTask({
+  providerId: 'video-3',
+  prompt: 'cinematic city at dawn',
+  resolution: '480P',
+  duration: 4,
+  aspectRatio: 'adaptive',
+  urls: []
+});
+assert.deepEqual(createdSeedance25, { providerId: 'video-3', taskId: 'seedance-25-task' });
+const seedance25CreateCall = seedanceCalls.find((call) => {
+  try { return JSON.parse(call.options.body).model === 'doubao-seedance-2-5-260628'; } catch (error) { return false; }
+});
+assert.ok(seedance25CreateCall);
+assert.deepEqual(JSON.parse(seedance25CreateCall.options.body), {
+  model: 'doubao-seedance-2-5-260628',
+  content: [{ type: 'text', text: 'cinematic city at dawn' }],
+  generate_audio: true,
+  ratio: 'adaptive',
+  duration: 4,
+  resolution: '480p',
+  watermark: false
+});
+assert.deepEqual(await pollVideoTask('video-3', 'seedance-25-task'), { status: 'running' });
+
+await assert.rejects(
+  createVideoTask({
+    providerId: 'video-2',
+    prompt: 'unsupported resolution',
+    resolution: '1080P',
+    duration: 5,
+    aspectRatio: '16:9',
+    urls: []
+  }),
+  (error) => error && error.code === 'invalid-resolution'
+);
+await assert.rejects(
+  createVideoTask({
+    providerId: 'video-2',
+    prompt: 'too many references',
+    resolution: '720P',
+    duration: 5,
+    aspectRatio: '16:9',
+    urls: Array.from({ length: 10 }, (_value, index) => `https://cdn.example/reference-${index}.png`)
+  }),
+  (error) => error && error.code === 'too-many-references'
+);
+
+for (const upstreamStatus of ['failed', 'expired']) {
+  globalThis.fetch = async () => jsonResponse({
+    id: `seedance-${upstreamStatus}`,
+    status: upstreamStatus,
+    error: { code: `seedance-${upstreamStatus}`, message: `Task ${upstreamStatus}.` }
+  });
+  const result = await pollVideoTask('video-2', `seedance-${upstreamStatus}`);
+  assert.equal(result.status, upstreamStatus);
+  assert.equal(result.errorCode, `seedance-${upstreamStatus}`);
+  assert.equal(result.errorMessage, `Task ${upstreamStatus}.`);
+}
+
+globalThis.fetch = async () => ({
+  ok: false,
+  status: 429,
+  headers: { get: (name) => name.toLowerCase() === 'retry-after' ? '11' : null },
+  text: async () => JSON.stringify({ error: { code: 'rate_limit_exceeded', message: 'Try later.' } })
+});
+await assert.rejects(
+  pollVideoTask('video-3', 'seedance-rate-limited'),
+  (error) => error
+    && error.code === 'provider-rate-limited'
+    && error.retryable === true
+    && error.retryAfterMs === 11_000
+    && error.upstreamCode === 'rate_limit_exceeded'
+);
+
+for (const providerId of ['video-2', 'video-3']) {
+  await assert.rejects(
+    generateMedia('video', {
+      providerId,
+      prompt: 'legacy synchronous path',
+      resolution: '720P',
+      duration: 4,
+      aspectRatio: '16:9',
+      urls: []
+    }),
+    (error) => error && error.code === 'async-video-required'
+  );
+}
 
 process.stdout.write('gateway provider registry tests passed.\n');
