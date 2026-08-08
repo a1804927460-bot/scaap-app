@@ -8,6 +8,13 @@ import {
   reserveUsage,
   settleUsage
 } from './usage.js';
+import {
+  createThreeDTask,
+  downloadThreeDModel,
+  getAi302RelayAsset,
+  getThreeDStatus,
+  removeBackground
+} from './ai302-tools.js';
 
 const port = Math.max(1, Number(process.env.PORT) || 3000);
 const maxBodyBytes = 70 * 1024 * 1024;
@@ -24,6 +31,26 @@ const imageSizes = new Set(['1K', '2K', '4K', 'original']);
 const imageRatios = new Set(['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9']);
 const miniMaxTextVideoRatios = new Set(['21:9', '16:9', '4:3', '1:1', '3:4', '9:16']);
 const miniMaxVideoResolutions = new Set(['768P', '2K']);
+
+// Butler tools are deployed independently from the desktop release. Every
+// paid tool stays fail-closed until its server-side accounting and credential
+// are configured explicitly in Railway.
+const AI302_FLAGS = Object.freeze({
+  background: 'ENABLE_302_BACKGROUND_REMOVE',
+  hunyuan3d: 'ENABLE_302_HUNYUAN3D',
+  hyper3d: 'ENABLE_302_HYPER3D'
+});
+
+function ai302Enabled(flag) {
+  return String(process.env[flag] || '').trim().toLowerCase() === 'true';
+}
+
+function disabledTool(response) {
+  return send(response, 503, {
+    code: 'tool-disabled',
+    message: 'This Butler tool is not enabled on the server.'
+  });
+}
 
 function invalidOption(code, message) {
   return Object.assign(new Error(message), { status: 400, code });
@@ -161,6 +188,22 @@ async function handle(request, response) {
   response.setHeader('X-Request-Id', requestId);
   const url = new URL(request.url, 'http://gateway.local');
   if (request.method === 'GET' && url.pathname === '/healthz') return send(response, 200, { ok: true, catalogVersion });
+  // Hyper3D needs a short-lived, capability-token-protected image relay. The
+  // relay contains no user identity or upstream credential, so it is the only
+  // public Butler endpoint; all task routes below still require Supabase auth.
+  if (request.method === 'GET' && url.pathname.startsWith('/v1/tools/assets/')) {
+    const match = /^\/v1\/tools\/assets\/([A-Za-z0-9_-]{43})$/.exec(url.pathname);
+    if (!match) return send(response, 404, { code: 'tool-asset-not-found', message: 'Temporary image not found.' });
+    try {
+      const asset = getAi302RelayAsset(match[1]);
+      return send(response, 200, asset.buffer, {
+        'Content-Type': asset.mime,
+        'Content-Disposition': 'inline'
+      });
+    } catch (error) {
+      return send(response, 404, { code: 'tool-asset-not-found', message: 'Temporary image not found.' });
+    }
+  }
   const origin = String(request.headers.origin || '');
   if (origin && !allowedOrigins.has(origin)) return send(response, 403, { code: 'origin-denied', message: 'Browser origin is not allowed.' });
 
@@ -188,6 +231,52 @@ async function handle(request, response) {
   if (request.method === 'GET' && url.pathname === '/v1/models') {
     const requestedProviderId = String(url.searchParams.get('providerId') || 'chat-1').trim().toLowerCase();
     return send(response, 200, await models(requestedProviderId));
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/background/remove') {
+    if (!ai302Enabled(AI302_FLAGS.background)) return disabledTool(response);
+    const body = await readJson(request);
+    const png = await removeBackground({ imageDataUrl: body && body.imageDataUrl });
+    return send(response, 200, png, {
+      'Content-Type': 'image/png',
+      'Content-Disposition': 'attachment; filename="background-removed.png"'
+    });
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/3d/create') {
+    const body = await readJson(request);
+    const providerId = String(body && body.providerId || '').trim().toLowerCase();
+    const flag = AI302_FLAGS[providerId];
+    if (!flag || !ai302Enabled(flag)) return disabledTool(response);
+    const task = await createThreeDTask({
+      providerId,
+      imageDataUrl: body && body.imageDataUrl,
+      prompt: body && body.prompt,
+      userId: user.id
+    });
+    return send(response, 202, task);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/3d/status') {
+    if (!ai302Enabled(AI302_FLAGS.hunyuan3d) && !ai302Enabled(AI302_FLAGS.hyper3d)) return disabledTool(response);
+    const body = await readJson(request);
+    return send(response, 200, await getThreeDStatus({
+      taskToken: body && body.taskToken,
+      userId: user.id
+    }));
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/3d/download') {
+    if (!ai302Enabled(AI302_FLAGS.hunyuan3d) && !ai302Enabled(AI302_FLAGS.hyper3d)) return disabledTool(response);
+    const body = await readJson(request);
+    const glb = await downloadThreeDModel({
+      taskToken: body && body.taskToken,
+      userId: user.id
+    });
+    return send(response, 200, glb, {
+      'Content-Type': 'model/gltf-binary',
+      'Content-Disposition': 'attachment; filename="model.glb"'
+    });
   }
 
   let kind;
@@ -247,7 +336,20 @@ const server = http.createServer((request, response) => {
       'credit-settlement-failed': 'AI credit settlement is temporarily unavailable.',
       'redemption-service-failed': 'Code redemption is temporarily unavailable.',
       'provider-not-configured': 'The selected AI model is not configured on the server.',
-      'provider-secret-missing': 'The selected AI model is missing its server credential.'
+      'provider-secret-missing': 'The selected AI model is missing its server credential.',
+      'tool-disabled': 'This Butler tool is not enabled on the server.',
+      'ai302-not-configured': 'The 302 tool gateway is not configured on the server.',
+      'tool-asset-not-found': 'Temporary tool asset not found.',
+      'tool-download-failed': 'The tool result could not be downloaded.',
+      'ai302-invalid-response': 'The 302 tool service returned an invalid response.',
+      'invalid-png-result': 'The background-removal result is invalid.',
+      'invalid-glb-result': 'The 3D result is invalid.',
+      'three-d-result-invalid': 'The completed 3D task did not contain a GLB model.',
+      'three-d-task-not-found': 'The 3D task was not found.',
+      'three-d-task-not-ready': 'The 3D model is not ready to download.',
+      'three-d-generation-failed': '3D generation failed.',
+      'tool-public-url-not-configured': 'The public gateway URL is not configured.',
+      'tool-asset-capacity-exceeded': 'The temporary tool relay is at capacity.'
     };
     // Do not log prompts, attachments, authorization headers, or upstream bodies.
     console.error(JSON.stringify({ level: 'error', requestId: response.getHeader('X-Request-Id'), code, status }));

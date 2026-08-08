@@ -33,6 +33,21 @@ are accepted during migration, but the canonical name is recommended.
 MiniMax H3 uses its own sealed Railway variable, `MINIMAX_API_KEY`. It is never
 written to `runtime.json`, GitHub, the desktop settings, or gateway responses.
 
+## Butler / 302 tools
+
+The 302 implementation is deployed behind explicit Railway feature flags. The
+flags default to `false`; a missing flag or `AI302_KEY` fails closed before any
+paid upstream request. Background removal and 3D task routes are present for
+staged rollout, but they must not be enabled until their server-authoritative
+credit reservation and settlement migrations are installed. Topaz video
+enhancement is intentionally not exposed by this deployment because its
+current asynchronous lifecycle can create an upstream task before credits are
+reserved.
+
+Store `AI302_KEY` and the independent `AI302_TASK_SECRET` only as sealed
+Railway variables. Never copy either value into the Electron app or a public
+configuration file.
+
 Use `AI_PROVIDERS_JSON` to register additional relays without rebuilding the
 desktop app. The registry supports up to 100 chat, image, and video entries. It
 contains only public endpoint metadata and the name of a Railway environment
