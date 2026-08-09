@@ -224,7 +224,8 @@ test('Butler fixed-price tools use the server table and never accept caller pric
     'super-upscale-v2': 2,
     erase: 1,
     hunyuan3d: 8,
-    hyper3d: 14
+    hyper3d: 14,
+    tripo3d: 10
   });
   assert.equal(quoteButlerRetailCredits('HUNYUAN3D'), 8);
   assert.throws(() => quoteButlerRetailCredits('unknown-tool'), { code: 'provider-not-allowed' });
@@ -499,6 +500,15 @@ test('Butler and Seedance forward migration independently enforces every retail 
   assert.match(migration, /settlement := public\.settle_ai_credits[\s\S]*?normalized_status/i);
   assert.match(migration, /array\['chat', 'image', 'video', '3d'\]::text\[\]/i);
   assert.match(migration, /revoke all on function public\.reserve_ai_tool_credits[\s\S]*?from public, anon, authenticated/i);
+  assert.match(migration, /grant execute on function public\.reserve_ai_tool_credits[\s\S]*?to service_role/i);
+});
+
+test('Tripo3D forward migration adds durable fixed-price 3D accounting', () => {
+  const migration = fs.readFileSync(new URL('../../supabase/migrations/202608090002_tripo3d_credits.sql', import.meta.url), 'utf8');
+  assert.match(migration, /ai_tool_jobs_provider_supported[\s\S]*?'tripo3d'/i);
+  assert.match(migration, /normalized_provider in \('hunyuan3d', 'hyper3d', 'tripo3d'\) then '3d'/i);
+  assert.match(migration, /when 'tripo3d' then 10/i);
+  assert.match(migration, /p_credits <> expected_credits/i);
   assert.match(migration, /grant execute on function public\.reserve_ai_tool_credits[\s\S]*?to service_role/i);
 });
 

@@ -78,7 +78,7 @@ POST /v1/tools/video/download
 
 Background removal accepts JSON `{ "imageDataUrl": "data:image/..." }` and
 returns a validated transparent PNG. The 3D create route accepts
-`{ "providerId": "hunyuan3d|hyper3d", "imageDataUrl": "data:image/...", "prompt": "..." }`
+`{ "providerId": "hunyuan3d|hyper3d|tripo3d", "imageDataUrl": "data:image/...", "prompt": "..." }`
 and returns an opaque task token. Status returns only a normalized state
 (`queued`, `processing`, `succeeded`, or `failed`) and never exposes the upstream
 job ID or model URL. Download returns a validated GLB binary after completion.

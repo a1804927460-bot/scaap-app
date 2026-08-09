@@ -147,6 +147,10 @@ test('asset URLs reject non-provider hosts, credentials, ports, fragments, and I
     validateAssetUrl('https://hunyuan-prod-1258344699.cos.ap-guangzhou.tencentcos.cn/model.glb').hostname,
     'hunyuan-prod-1258344699.cos.ap-guangzhou.tencentcos.cn'
   );
+  assert.equal(
+    validateAssetUrl('https://tripo-data.rg1.data.tripo3d.com/task/model.glb?Policy=signed').hostname,
+    'tripo-data.rg1.data.tripo3d.com'
+  );
   for (const value of [
     'http://file.302.ai/model.glb',
     'https://file.302.ai.evil.test/model.glb',
@@ -270,7 +274,133 @@ test('Hyper3D receives a short-lived metadata-free image relay and uses the docu
   assert.deepEqual(status, { status: 'processing', retryAfterMs: 5000 });
 });
 
-test('both 3D providers download only validated GLB bytes and never return upstream URLs', async () => {
+test('Tripo3D uploads the image, creates a PBR task, polls, settles credits, and downloads GLB', async () => {
+  const input = rgbaPng({ metadata: true });
+  const output = glbFixture();
+  const calls = [];
+  const accountingRequestId = '00000000-0000-4000-8000-000000000077';
+  const created = await createThreeDTask({
+    providerId: 'tripo3d',
+    imageDataUrl: imageDataUrl(input),
+    prompt: 'Reference product model',
+    userId: 'tripo-owner'
+  }, {
+    apiKey: 'test-key',
+    taskSecret: 'tripo-task-secret',
+    accountingRequestId,
+    credits: 10,
+    now: 1_800_000_000_000,
+    fetchImpl: async (url, options) => {
+      calls.push({ url: String(url), options });
+      if (calls.length === 1) return jsonResponse({ code: 0, data: { image_token: 'private-image-token' } });
+      return jsonResponse({ code: 0, data: { task_id: 'private-tripo-task' } });
+    }
+  });
+  assert.equal(calls[0].url, 'https://api.302.ai/tripo3d/v2/openapi/upload');
+  const uploaded = calls[0].options.body.get('file');
+  assert.equal(uploaded.type, 'image/png');
+  assert.equal(Buffer.from(await uploaded.arrayBuffer()).includes(Buffer.from('private-metadata')), false);
+  assert.equal(calls[1].url, 'https://api.302.ai/tripo3d/v2/openapi/task');
+  assert.deepEqual(JSON.parse(calls[1].options.body), {
+    type: 'image_to_model',
+    model_version: 'v3.0-20250812',
+    file: { type: 'png', file_token: 'private-image-token' },
+    texture: true,
+    pbr: true,
+    texture_quality: 'standard',
+    geometry_quality: 'standard',
+    orientation: 'align_image'
+  });
+  assert.equal(created.credits, 10);
+  assert.equal(created.taskToken.includes('private-tripo-task'), false);
+
+  let touched = 0;
+  const processing = await getThreeDStatus({ taskToken: created.taskToken, userId: 'tripo-owner' }, {
+    apiKey: 'test-key', taskSecret: 'tripo-task-secret', now: 1_800_000_001_000,
+    touchCredits: async ({ requestId }) => {
+      assert.equal(requestId, accountingRequestId);
+      touched += 1;
+      return { ok: true };
+    },
+    settleCredits: async () => { throw new Error('processing tasks must not settle'); },
+    fetchImpl: async (url) => {
+      assert.equal(String(url), 'https://api.302.ai/tripo3d/v2/openapi/task/private-tripo-task');
+      return jsonResponse({ code: 0, data: { task_id: 'private-tripo-task', status: 'running', progress: 42 } });
+    }
+  });
+  assert.deepEqual(processing, { status: 'processing', retryAfterMs: 5000, credits: 10 });
+
+  let settled;
+  let downloadCall = 0;
+  const downloaded = await downloadThreeDModel({ taskToken: created.taskToken, userId: 'tripo-owner' }, {
+    apiKey: 'test-key', taskSecret: 'tripo-task-secret', now: 1_800_000_002_000,
+    touchCredits: async () => ({ ok: true }),
+    settleCredits: async (value) => {
+      settled = value;
+      return { ok: true, status: 'succeeded', creditsCharged: 10 };
+    },
+    fetchImpl: async (url, options) => {
+      downloadCall += 1;
+      if (downloadCall === 1) {
+        return jsonResponse({
+          code: 0,
+          data: {
+            task_id: 'private-tripo-task', status: 'success',
+            thumbnail: 'https://tripo-data.rg1.data.tripo3d.com/task/preview.webp?Policy=signed',
+            result: { pbr_model: { type: 'glb', url: 'https://tripo-data.rg1.data.tripo3d.com/task/model.glb?Policy=signed' } }
+          }
+        });
+      }
+      assert.equal(String(url), 'https://tripo-data.rg1.data.tripo3d.com/task/model.glb?Policy=signed');
+      assert.equal(options.headers.Authorization, undefined);
+      return new Response(output, { status: 200, headers: { 'Content-Type': 'model/gltf-binary' } });
+    }
+  });
+  assert.equal(touched, 1);
+  assert.deepEqual(settled, { requestId: accountingRequestId, status: 'succeeded', durationMs: 2000 });
+  assert.deepEqual(downloaded, output);
+});
+
+test('3D accounting is validated before any paid upstream request', async () => {
+  let upstreamCalls = 0;
+  await assert.rejects(
+    () => createThreeDTask({
+      providerId: 'tripo3d',
+      imageDataUrl: imageDataUrl(rgbaPng()),
+      userId: 'invalid-accounting-owner'
+    }, {
+      apiKey: 'test-key',
+      taskSecret: 'tripo-task-secret',
+      accountingRequestId: 'not-a-request-id',
+      credits: 10,
+      fetchImpl: async () => {
+        upstreamCalls += 1;
+        throw new Error('must not submit a paid request');
+      }
+    }),
+    { code: 'credit-service-failed' }
+  );
+  await assert.rejects(
+    () => createThreeDTask({
+      providerId: 'tripo3d',
+      imageDataUrl: imageDataUrl(rgbaPng()),
+      userId: 'invalid-accounting-owner'
+    }, {
+      apiKey: 'test-key',
+      taskSecret: 'tripo-task-secret',
+      accountingRequestId: '00000000-0000-4000-8000-000000000077',
+      credits: null,
+      fetchImpl: async () => {
+        upstreamCalls += 1;
+        throw new Error('must not submit a paid request');
+      }
+    }),
+    { code: 'credit-service-failed' }
+  );
+  assert.equal(upstreamCalls, 0);
+});
+
+test('3D providers download only validated GLB bytes and never return upstream URLs', async () => {
   const input = rgbaPng();
   const glb = glbFixture();
   const create = await createThreeDTask({
@@ -657,6 +787,7 @@ test('server enables paid 302 routes with the shared key unless a route is expli
   assert.match(server, /ENABLE_302_IMAGE_TOOLS/);
   assert.match(server, /ENABLE_302_HUNYUAN3D/);
   assert.match(server, /ENABLE_302_HYPER3D/);
+  assert.match(server, /ENABLE_302_TRIPO3D/);
   assert.match(server, /ENABLE_302_TOPAZ/);
   assert.match(server, /if \(configured === 'false'\) return false;/);
   assert.match(server, /if \(configured === 'true'\) return true;/);
@@ -669,6 +800,11 @@ test('server enables paid 302 routes with the shared key unless a route is expli
   assertGuardBefore('/v1/tools/image/upscale', 'ai302Enabled(AI302_FLAGS.image)', 'superUpscaleImage');
   assertGuardBefore('/v1/tools/image/erase', 'ai302Enabled(AI302_FLAGS.image)', 'eraseImageObjects');
   assertGuardBefore('/v1/tools/3d/create', 'ai302Enabled(flag)', 'createThreeDTask');
+  assert.match(
+    server,
+    /url\.pathname === '\/v1\/tools\/3d\/create'[\s\S]*?reserveFixedTool\(user\.id, providerId, requestId\)[\s\S]*?createThreeDTask/,
+    '3D credits must be reserved before any paid upstream request is submitted.'
+  );
   assertGuardBefore('/v1/tools/3d/status', 'ai302Enabled(AI302_FLAGS.hunyuan3d)', 'getThreeDStatus');
   assertGuardBefore('/v1/tools/3d/download', 'ai302Enabled(AI302_FLAGS.hunyuan3d)', 'downloadThreeDModel');
   assertGuardBefore('/v1/tools/video/upscale', 'ai302Enabled(AI302_FLAGS.topaz)', 'createVideoUpscaleTask');
@@ -679,6 +815,7 @@ test('server enables paid 302 routes with the shared key unless a route is expli
     'ENABLE_302_IMAGE_TOOLS',
     'ENABLE_302_HUNYUAN3D',
     'ENABLE_302_HYPER3D',
+    'ENABLE_302_TRIPO3D',
     'ENABLE_302_TOPAZ'
   ]) {
     assert.match(environment, new RegExp(`^${flag}=true$`, 'm'));

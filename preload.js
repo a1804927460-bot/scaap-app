@@ -244,6 +244,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   importClipboardImage: (request) => ipcRenderer.invoke('clipboard:importImage', request),
   getPreview: (id) => ipcRenderer.invoke('files:getPreview', id),
   readModelData: (id) => ipcRenderer.invoke('files:readModelData', id),
+  saveModelPreview: (id, dataUrl) => ipcRenderer.invoke('files:saveModelPreview', id, dataUrl),
   readFileAsDataUrl: (id) => ipcRenderer.invoke('files:readDataUrl', id),
   prepareAiAttachment: (id) => ipcRenderer.invoke('files:readDataUrl', id),
   transcodeVideo: (id) => ipcRenderer.invoke('files:transcodeVideo', id),

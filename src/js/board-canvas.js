@@ -606,21 +606,35 @@ function renderBoardItemContent(content, f, item) {
     const preview = document.createElement('div');
     preview.className = 'board-model-thumbnail';
     const previewSource = String(f.modelPreviewUrl || f.previewUrl || '');
-    if (previewSource) {
+    let previewRequested = false;
+    const installPreview = (source) => {
+      if (!source || !preview.isConnected && previewRequested) return;
+      preview.querySelector('img')?.remove();
       const image = document.createElement('img');
-      image.src = previewSource;
+      image.src = source;
       image.alt = f.name;
       image.loading = 'lazy';
       image.decoding = 'async';
       image.draggable = false;
+      image.addEventListener('load', () => preview.classList.remove('is-placeholder'), { once: true });
       image.addEventListener('error', () => {
         image.remove();
         preview.classList.add('is-placeholder');
+        requestPreview();
       }, { once: true });
-      preview.appendChild(image);
-    } else {
-      preview.classList.add('is-placeholder');
-    }
+      preview.prepend(image);
+    };
+    const requestPreview = () => {
+      if (previewRequested || typeof window.requestBoardModelPreview !== 'function') return;
+      previewRequested = true;
+      preview.classList.add('is-rendering');
+      window.requestBoardModelPreview(f).then((source) => {
+        if (source && preview.isConnected) installPreview(source);
+      }).catch(() => {}).finally(() => preview.classList.remove('is-rendering'));
+    };
+    preview.classList.add('is-placeholder');
+    if (previewSource) installPreview(previewSource);
+    else requestPreview();
     const mark = document.createElement('span');
     mark.className = 'board-model-thumbnail-mark';
     mark.innerHTML = '<svg viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" stroke-width="1.45"><path d="m12 2 8 4.5v9L12 20l-8-4.5v-9L12 2Z"></path><path d="m4 6.5 8 4.5 8-4.5M12 11v9"></path></svg><strong>3D</strong>';

@@ -654,7 +654,7 @@ function fileToPayload(f) {
     // side too), but it's harmless to always include the URL since the
     // renderer only ever uses it where it already checks isImageExt.
     thumbUrl: 'messs-thumb://' + f.id,
-    ...(ext === '.glb' ? { modelPreviewUrl: `messs-preview://${f.id}/model` } : {})
+    ...(MODEL_FILE_EXTENSIONS.has(ext) ? { modelPreviewUrl: `messs-preview://${f.id}/model` } : {})
   };
 }
 
@@ -864,6 +864,48 @@ async function readArchivedModelData(fileId) {
     name: file.name,
     data: buffer
   };
+}
+
+async function saveArchivedModelPreview(fileId, dataUrl) {
+  if (!sharp) {
+    const error = new Error('3D thumbnail rendering is unavailable.');
+    error.code = 'model-preview-unavailable';
+    throw error;
+  }
+  const normalizedId = String(fileId || '').trim();
+  const file = /^[A-Za-z0-9_-]{1,128}$/.test(normalizedId) ? store.getFile(normalizedId) : null;
+  const extension = String(file && (file.ext || path.extname(file.name)) || '').trim().toLowerCase();
+  if (!file || !MODEL_FILE_EXTENSIONS.has(extension)) {
+    const error = new Error('The selected 3D model could not be found.');
+    error.code = 'file-not-found';
+    throw error;
+  }
+  const match = /^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/.exec(String(dataUrl || ''));
+  if (!match || match[1].length > 12 * 1024 * 1024) {
+    const error = new Error('The 3D thumbnail is invalid.');
+    error.code = 'invalid-model-preview';
+    throw error;
+  }
+  const source = Buffer.from(match[1], 'base64');
+  if (!source.length || source.length > 8 * 1024 * 1024) {
+    const error = new Error('The 3D thumbnail is too large.');
+    error.code = 'invalid-model-preview';
+    throw error;
+  }
+  const cacheDir = path.join(previewCacheDir, normalizedId);
+  const outputPath = path.join(cacheDir, 'model-preview.png');
+  const temporaryPath = path.join(cacheDir, `.model-preview-${crypto.randomUUID()}.tmp.png`);
+  await fs.promises.mkdir(cacheDir, { recursive: true });
+  try {
+    await sharp(source, { failOn: 'error', limitInputPixels: 8 * 1024 * 1024 })
+      .resize({ width: 768, height: 768, fit: 'inside', withoutEnlargement: true })
+      .png({ compressionLevel: 9, adaptiveFiltering: true })
+      .toFile(temporaryPath);
+    await fs.promises.rename(temporaryPath, outputPath);
+  } finally {
+    await fs.promises.rm(temporaryPath, { force: true }).catch(() => {});
+  }
+  return `messs-preview://${normalizedId}/model?v=${Date.now()}`;
 }
 
 async function makeFileFingerprint(filePath, stat) {
@@ -2740,7 +2782,7 @@ async function chooseProfileAvatar() {
   }
 }
 
-const BUTLER_3D_PROVIDERS = new Set(['hunyuan3d', 'hyper3d']);
+const BUTLER_3D_PROVIDERS = new Set(['hunyuan3d', 'hyper3d', 'tripo3d']);
 
 function normalizeButlerImageTool(value) {
   const modelId = String(value || '').trim().toLowerCase();
@@ -3775,7 +3817,8 @@ function registerIpcHandlers() {
       rememberButler3dTask(taskToken, {
         sourceFileId: source.file.id,
         providerId,
-        previewUrl: status.previewUrl || ''
+        previewUrl: status.previewUrl || '',
+        credits: status.credits
       });
       return { ok: true, taskToken, ...status };
     } catch (error) {
@@ -3806,7 +3849,9 @@ function registerIpcHandlers() {
       const status = normalizeButler3dStatus(payload);
       rememberButler3dTask(taskToken, {
         ...(status.previewUrl ? { previewUrl: status.previewUrl } : {}),
-        status: status.status
+        status: status.status,
+        credits: status.credits !== undefined ? status.credits : existing && existing.credits,
+        creditsCharged: status.creditsCharged !== undefined ? status.creditsCharged : existing && existing.creditsCharged
       });
       return { ok: true, ...status };
     } catch (error) {
@@ -3850,7 +3895,10 @@ function registerIpcHandlers() {
           folderId: null,
           canvasId: store.data.canvases[0] && store.data.canvases[0].id
         };
-        const record = await addButlerOutputFile(buffer, sourceFile, 'generate-3d');
+        const record = await addButlerOutputFile(buffer, sourceFile, 'generate-3d', {
+          modelId: currentTask.providerId,
+          credits: currentTask.creditsCharged !== undefined ? currentTask.creditsCharged : currentTask.credits
+        });
         if (currentTask.sourceFileId) {
           await writeButlerModelPreview(record.id, sourceFile, currentTask.previewUrl).catch(() => false);
         }
@@ -4375,6 +4423,19 @@ function registerIpcHandlers() {
         ok: false,
         reason: error && error.code ? error.code : 'model-read-failed',
         message: error && error.message ? error.message : 'The 3D model could not be read.'
+      };
+    }
+  });
+
+  ipcMain.handle('files:saveModelPreview', async (_evt, id, dataUrl) => {
+    try {
+      return { ok: true, url: await saveArchivedModelPreview(id, dataUrl) };
+    } catch (error) {
+      console.error('3D model thumbnail save failed:', error && error.code ? error.code : error);
+      return {
+        ok: false,
+        reason: error && error.code ? error.code : 'model-preview-save-failed',
+        message: error && error.message ? error.message : 'The 3D thumbnail could not be saved.'
       };
     }
   });
@@ -5006,11 +5067,15 @@ app.whenReady().then(() => {
     // page-<n>.png / page-<n>.jpg exists (PSD/TIFF produce .png via
     // ImageMagick/sharp; nothing produces .jpg anymore now that Poppler is
     // gone, but both are checked for safety / forward-compatibility).
-    const rest = request.url.replace('messs-preview://', '');
-    const [fileId, pageStr] = rest.split('/');
+    let parsedUrl;
+    try { parsedUrl = new URL(request.url); } catch (error) {
+      return new Response('Bad request', { status: 400 });
+    }
+    const fileId = parsedUrl.hostname;
+    const pageStr = parsedUrl.pathname.replace(/^\//, '').split('/')[0];
     if (pageStr === 'model') {
       const file = store.getFile(fileId);
-      if (!file || !/^[A-Za-z0-9_-]{1,128}$/.test(String(file.id || '')) || path.extname(file.name).toLowerCase() !== '.glb') {
+      if (!file || !/^[A-Za-z0-9_-]{1,128}$/.test(String(file.id || '')) || !MODEL_FILE_EXTENSIONS.has(path.extname(file.name).toLowerCase())) {
         return new Response('Not found', { status: 404 });
       }
       const modelPreviewPath = path.join(previewCacheDir, file.id, 'model-preview.png');

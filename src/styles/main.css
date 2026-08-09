@@ -5037,6 +5037,13 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   background: #1a1d22;
 }
 .board-model-thumbnail.is-placeholder .board-model-thumbnail-mark svg { width: 25px; height: 25px; }
+.board-model-thumbnail.is-rendering .board-model-thumbnail-mark {
+  animation: board-model-preview-pulse 1.2s ease-in-out infinite;
+}
+@keyframes board-model-preview-pulse {
+  0%, 100% { opacity: .56; transform: scale(.96); }
+  50% { opacity: 1; transform: scale(1); }
+}
 .board-item-model { cursor: var(--cursor-grab); }
 .board-item-model.is-dragging { cursor: var(--cursor-grabbing); }
 .board-item-icon {
@@ -5215,6 +5222,8 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   touch-action: none;
 }
 .board-model-viewer-canvas:active { cursor: var(--cursor-grabbing); }
+.board-model-viewer-canvas.is-light-dragging,
+.board-model-viewer-canvas.is-light-dragging:active { cursor: var(--cursor-grabbing); }
 .board-model-viewer-status {
   position: absolute;
   inset: 0;

@@ -394,6 +394,18 @@ async function run() {
       };
       window.messsAPI = {
         exportFile: async () => ({ ok: true }),
+        saveModelPreview: async (id, dataUrl) => {
+          const format = String(id).replace(/^fixture-/, '');
+          const validPng = /^data:image\\/png;base64,[A-Za-z0-9+/]+=*$/.test(String(dataUrl || ''));
+          window.__savedModelPreviews = window.__savedModelPreviews || {};
+          window.__savedModelPreviews[format] = {
+            validPng,
+            length: String(dataUrl || '').length
+          };
+          return validPng
+            ? { ok: true, url: 'messs-preview://' + id + '/model?v=fixture' }
+            : { ok: false };
+        },
         readModelData: async (id) => {
           const format = String(id).replace(/^fixture-/, '');
           return { ok: true, format, data: decodeFixture(modelFixtures[format]) };
@@ -448,6 +460,45 @@ async function run() {
   const rotationDelta = Math.sqrt(after.reduce((sum, value, index) => sum + ((value - before[index]) ** 2), 0));
   if (!(rotationDelta > 0.01)) throw new Error(`OrbitControls did not rotate the camera (${rotationDelta}).`);
 
+  // Let the previous orbit gesture's damping settle before measuring whether
+  // the independent light gesture affects the camera.
+  await wait(1200);
+  const lightBefore = await window.webContents.executeJavaScript(
+    "window.MesssBoardModelViewer.keyLight.position.toArray()"
+  );
+  const cameraBeforeLightDrag = await window.webContents.executeJavaScript(
+    "window.MesssBoardModelViewer.camera.position.toArray()"
+  );
+  window.webContents.sendInputEvent({ type: 'mouseMove', x: startX, y: startY });
+  window.webContents.sendInputEvent({
+    type: 'mouseDown', x: startX, y: startY, button: 'right', clickCount: 1,
+    modifiers: ['shift']
+  });
+  window.webContents.sendInputEvent({
+    type: 'mouseMove', x: endX, y: endY, button: 'right', modifiers: ['shift']
+  });
+  window.webContents.sendInputEvent({
+    type: 'mouseUp', x: endX, y: endY, button: 'right', clickCount: 1,
+    modifiers: ['shift']
+  });
+  await wait(280);
+  const lightAfter = await window.webContents.executeJavaScript(
+    "window.MesssBoardModelViewer.keyLight.position.toArray()"
+  );
+  const cameraAfterLightDrag = await window.webContents.executeJavaScript(
+    "window.MesssBoardModelViewer.camera.position.toArray()"
+  );
+  const lightDelta = Math.sqrt(lightAfter.reduce(
+    (sum, value, index) => sum + ((value - lightBefore[index]) ** 2), 0
+  ));
+  const cameraLightDelta = Math.sqrt(cameraAfterLightDrag.reduce(
+    (sum, value, index) => sum + ((value - cameraBeforeLightDrag[index]) ** 2), 0
+  ));
+  if (!(lightDelta > 0.01)) throw new Error(`Shift + right-drag did not rotate the key light (${lightDelta}).`);
+  if (cameraLightDelta > 0.02) {
+    throw new Error(`Shift + right-drag moved the camera instead of only the light (${cameraLightDelta}).`);
+  }
+
   await window.webContents.executeJavaScript('closeBoardModelViewer()');
   const released = await window.webContents.executeJavaScript(`({
     overlay: !!document.querySelector('.board-model-viewer-overlay'),
@@ -458,6 +509,20 @@ async function run() {
     throw new Error(`Viewer resources were not released: ${JSON.stringify(released)}`);
   }
   const formatPixels = {};
+  const previewResults = {};
+  for (const format of ['glb', 'fbx', 'obj']) {
+    const previewUrl = await window.webContents.executeJavaScript(
+      `requestBoardModelPreview({ id: 'fixture-${format}', name: 'fixture.${format}', ext: '.${format}' })`
+    );
+    const previewRecord = await window.webContents.executeJavaScript(
+      `window.__savedModelPreviews?.${format} || null`
+    );
+    if (!previewRecord || !previewRecord.validPng || previewRecord.length < 256 ||
+        previewUrl !== `messs-preview://fixture-${format}/model?v=fixture`) {
+      throw new Error(`${format.toUpperCase()} thumbnail generation failed: ${JSON.stringify({ previewUrl, previewRecord })}`);
+    }
+    previewResults[format] = previewRecord.length;
+  }
   for (const format of ['fbx', 'obj']) {
     await window.webContents.executeJavaScript(
       `openBoardModelViewer({ id: 'fixture-${format}', name: 'fixture.${format}', ext: '.${format}' })`
@@ -471,7 +536,7 @@ async function run() {
   await captureButlerLayout(window, 'compact', 520, 420);
   window.destroy();
   fs.rmSync(tempDir, { recursive: true, force: true });
-  process.stdout.write(`MODEL_VIEWER_VISUAL_OK desktop=${desktop.modelPixels} compact=${compact.modelPixels} rotation=${rotationDelta.toFixed(3)} fbx=${formatPixels.fbx} obj=${formatPixels.obj}\n`);
+  process.stdout.write(`MODEL_VIEWER_VISUAL_OK desktop=${desktop.modelPixels} compact=${compact.modelPixels} rotation=${rotationDelta.toFixed(3)} light=${lightDelta.toFixed(3)} previews=${previewResults.glb},${previewResults.fbx},${previewResults.obj} fbx=${formatPixels.fbx} obj=${formatPixels.obj}\n`);
 }
 
 app.whenReady().then(run).then(() => app.quit()).catch((error) => {

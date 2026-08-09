@@ -14,6 +14,8 @@ const BoardModelViewer = {
   environmentTarget: null,
   environmentScene: null,
   pmremGenerator: null,
+  keyLight: null,
+  lightDragCleanup: null,
   keyHandler: null,
   loadGeneration: 0
 };
@@ -45,6 +47,7 @@ function closeBoardModelViewer() {
   if (BoardModelViewer.resizeObserver) BoardModelViewer.resizeObserver.disconnect();
   BoardModelViewer.resizeObserver = null;
   if (BoardModelViewer.controls) BoardModelViewer.controls.dispose();
+  if (BoardModelViewer.lightDragCleanup) BoardModelViewer.lightDragCleanup();
   if (BoardModelViewer.mixer && BoardModelViewer.root) {
     BoardModelViewer.mixer.stopAllAction();
     BoardModelViewer.mixer.uncacheRoot(BoardModelViewer.root);
@@ -73,7 +76,87 @@ function closeBoardModelViewer() {
   BoardModelViewer.environmentTarget = null;
   BoardModelViewer.environmentScene = null;
   BoardModelViewer.pmremGenerator = null;
+  BoardModelViewer.keyLight = null;
+  BoardModelViewer.lightDragCleanup = null;
   BoardModelViewer.keyHandler = null;
+}
+
+function createBoardWebglRenderer(THREE, options = {}) {
+  return new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance', ...options });
+}
+
+function installBoardModelLightDrag(canvas, light, controls, THREE) {
+  let drag = null;
+  const updateLight = () => {
+    if (!drag) return;
+    const radius = 8;
+    const horizontal = Math.cos(drag.elevation) * radius;
+    light.position.set(
+      Math.sin(drag.azimuth) * horizontal,
+      Math.sin(drag.elevation) * radius,
+      Math.cos(drag.azimuth) * horizontal
+    );
+    light.target.position.set(0, 0, 0);
+    light.target.updateMatrixWorld();
+  };
+  const onPointerDown = (event) => {
+    if (event.target !== canvas || !event.shiftKey || event.button !== 2) return;
+    const radius = Math.max(0.001, light.position.length());
+    drag = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      azimuth: Math.atan2(light.position.x, light.position.z),
+      elevation: Math.asin(THREE.MathUtils.clamp(light.position.y / radius, -1, 1))
+    };
+    controls.enabled = false;
+    canvas.classList.add('is-light-dragging');
+    canvas.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  const onPointerMove = (event) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const deltaX = event.clientX - drag.x;
+    const deltaY = event.clientY - drag.y;
+    drag.x = event.clientX;
+    drag.y = event.clientY;
+    drag.azimuth += deltaX * 0.012;
+    drag.elevation = THREE.MathUtils.clamp(drag.elevation - deltaY * 0.009, -1.35, 1.35);
+    updateLight();
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  const finish = (event) => {
+    if (!drag || (event && event.pointerId !== drag.pointerId)) return;
+    const pointerId = drag.pointerId;
+    drag = null;
+    controls.enabled = true;
+    canvas.classList.remove('is-light-dragging');
+    if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
+    if (event) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  };
+  const onContextMenu = (event) => {
+    if (event.shiftKey || drag) event.preventDefault();
+  };
+  // Capture before OrbitControls sees the gesture so Shift + right-drag moves
+  // only the light instead of panning the camera at the same time.
+  window.addEventListener('pointerdown', onPointerDown, true);
+  window.addEventListener('pointermove', onPointerMove, true);
+  window.addEventListener('pointerup', finish, true);
+  window.addEventListener('pointercancel', finish, true);
+  canvas.addEventListener('contextmenu', onContextMenu, true);
+  return () => {
+    window.removeEventListener('pointerdown', onPointerDown, true);
+    window.removeEventListener('pointermove', onPointerMove, true);
+    window.removeEventListener('pointerup', finish, true);
+    window.removeEventListener('pointercancel', finish, true);
+    canvas.removeEventListener('contextmenu', onContextMenu, true);
+    controls.enabled = true;
+  };
 }
 
 function resizeBoardModelViewer() {
@@ -175,6 +258,8 @@ function createBoardModelViewerOverlay(file) {
 }
 
 const BOARD_MODEL_FORMATS = new Set(['glb', 'fbx', 'obj']);
+const BoardModelPreviewJobs = new Map();
+let BoardModelPreviewQueue = Promise.resolve();
 
 function boardModelFormat(file) {
   if (!file) return '';
@@ -265,6 +350,59 @@ async function parseBoardModel(vendor, payload) {
   throw Object.assign(new Error('This 3D model format is not supported.'), { code: 'unsupported-model-format' });
 }
 
+async function renderBoardModelPreview(file) {
+  const vendor = window.MesssModelViewerVendor;
+  if (!vendor || !vendor.THREE || !vendor.OrbitControls || !window.messsAPI ||
+      typeof window.messsAPI.saveModelPreview !== 'function') return '';
+  const { THREE, OrbitControls } = vendor;
+  const payload = await readBoardModelPayload(file);
+  const parsed = await parseBoardModel(vendor, payload);
+  const renderer = createBoardWebglRenderer(THREE, { preserveDrawingBuffer: true });
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.01, 1000);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  try {
+    renderer.setPixelRatio(1);
+    renderer.setSize(512, 512, false);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.08;
+    renderer.setClearColor(0x111317, 1);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x303642, 2));
+    const key = new THREE.DirectionalLight(0xffffff, 2.5);
+    key.position.set(4, 7, 5);
+    scene.add(key, key.target, parsed.root);
+    frameBoardModel(parsed.root, camera, controls, THREE);
+    renderer.render(scene, camera);
+    const dataUrl = renderer.domElement.toDataURL('image/png');
+    const saved = await window.messsAPI.saveModelPreview(file.id, dataUrl);
+    if (!saved || !saved.ok || !saved.url) return '';
+    file.modelPreviewUrl = String(saved.url);
+    return file.modelPreviewUrl;
+  } finally {
+    controls.dispose();
+    disposeBoardModelObject(parsed.root);
+    renderer.renderLists.dispose();
+    renderer.dispose();
+    renderer.forceContextLoss();
+  }
+}
+
+function requestBoardModelPreview(file) {
+  const id = String(file && file.id || '');
+  if (!id || !isSupportedBoardModel(file)) return Promise.resolve('');
+  if (BoardModelPreviewJobs.has(id)) return BoardModelPreviewJobs.get(id);
+  const job = BoardModelPreviewQueue
+    .catch(() => {})
+    .then(() => renderBoardModelPreview(file));
+  BoardModelPreviewQueue = job.then(() => undefined, () => undefined);
+  BoardModelPreviewJobs.set(id, job);
+  job.finally(() => {
+    if (BoardModelPreviewJobs.get(id) === job) BoardModelPreviewJobs.delete(id);
+  }).catch(() => {});
+  return job;
+}
+
 function boardModelErrorMessage(error) {
   const code = String(error && error.code || '');
   if (code === 'model-too-large') {
@@ -302,7 +440,7 @@ function openBoardModelViewer(file) {
   try {
     const { THREE, OrbitControls, RoomEnvironment } = vendor;
     const stage = overlay.querySelector('.board-model-viewer-stage');
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+    const renderer = createBoardWebglRenderer(THREE);
     renderer.domElement.className = 'board-model-viewer-canvas';
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -319,7 +457,7 @@ function openBoardModelViewer(file) {
     const hemi = new THREE.HemisphereLight(0xffffff, 0x303642, 1.5);
     const key = new THREE.DirectionalLight(0xffffff, 2.2);
     key.position.set(4, 7, 5);
-    scene.add(hemi, key);
+    scene.add(hemi, key, key.target);
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
     const environmentScene = new RoomEnvironment();
     const environmentTarget = pmremGenerator.fromScene(environmentScene, 0.04);
@@ -332,6 +470,8 @@ function openBoardModelViewer(file) {
     BoardModelViewer.environmentScene = environmentScene;
     BoardModelViewer.environmentTarget = environmentTarget;
     BoardModelViewer.pmremGenerator = pmremGenerator;
+    BoardModelViewer.keyLight = key;
+    BoardModelViewer.lightDragCleanup = installBoardModelLightDrag(renderer.domElement, key, controls, THREE);
     BoardModelViewer.resizeObserver = new ResizeObserver(resizeBoardModelViewer);
     BoardModelViewer.resizeObserver.observe(stage);
     resizeBoardModelViewer();
@@ -367,4 +507,5 @@ function openBoardModelViewer(file) {
 
 window.openBoardModelViewer = openBoardModelViewer;
 window.closeBoardModelViewer = closeBoardModelViewer;
+window.requestBoardModelPreview = requestBoardModelPreview;
 window.MesssBoardModelViewer = BoardModelViewer;

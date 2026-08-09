@@ -32,7 +32,8 @@ const USAGE_MODEL_NAMES = Object.freeze({
   'chat-2': 'AI Chat',
   'topaz-video-upscale': 'Topaz Video AI',
   hunyuan3d: 'Hunyuan3D',
-  hyper3d: 'Hyper3D'
+  hyper3d: 'Hyper3D',
+  tripo3d: 'Tripo3D'
 });
 
 function usageText(english, chinese, korean) {

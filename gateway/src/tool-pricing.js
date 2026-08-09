@@ -11,7 +11,8 @@ export const BUTLER_FIXED_RETAIL_CREDITS = Object.freeze({
   'super-upscale-v2': 2,
   erase: 1,
   hunyuan3d: 8,
-  hyper3d: 14
+  hyper3d: 14,
+  tripo3d: 10
 });
 
 export function quoteTopazRetailCredits(providerCost) {

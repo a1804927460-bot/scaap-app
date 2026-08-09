@@ -22,7 +22,7 @@ assert.doesNotMatch(boardMedia, /key:\s*'more'/, 'The old three-dot toolbar acti
 assert.match(boardMedia, /window\.messsAPI && window\.messsAPI\.butler/, 'Butler must use the isolated preload namespace.');
 assert.match(boardMedia, /api\.removeBackground\(file\.id\)/, 'Background removal must send only the file id.');
 assert.match(boardMedia, /api\.create3d\(file\.id, safeProviderId\)/, '3D creation must send the selected provider id.');
-assert.match(boardMedia, /generate3d:hunyuan3d[\s\S]*generate3d:hyper3d/, 'Hunyuan and Hyper3D must keep independent task state.');
+assert.match(boardMedia, /generate3d:hunyuan3d[\s\S]*generate3d:hyper3d[\s\S]*generate3d:tripo3d/, 'Hunyuan, Hyper3D and Tripo3D must keep independent task state.');
 assert.match(boardMedia, /api\.get3dStatus\(taskToken\)[\s\S]*api\.download3d\(taskToken\)/, '3D jobs must poll with short requests before downloading.');
 assert.match(boardMedia, /role', 'toolbar'/, 'Butler tools must expand as a horizontal toolbar.');
 assert.match(boardMedia, /modelGroup\.addEventListener\('mouseenter'/, 'The 3D provider layer must open on hover.');
@@ -83,6 +83,7 @@ assert.match(storeClient, /MODEL_FILE_EXTENSIONS = new Set\(\['\.glb', '\.fbx', 
 assert.match(storeClient, /mime === 'model\/gltf-binary'/, 'GLB recognition must include the standard model MIME type.');
 assert.match(boardCanvas, /if \(isModelFile\(f\)\)/, 'All supported model formats must use the model card.');
 assert.match(boardCanvas, /f\.modelPreviewUrl \|\| f\.previewUrl \|\| ''/, 'Model cards must use only a static model preview image.');
+assert.match(boardCanvas, /requestBoardModelPreview\(f\)/, 'Missing model thumbnails must be rendered through the shared model-viewer queue.');
 assert.doesNotMatch(boardCanvas, /new\s+(?:THREE\.)?WebGLRenderer/, 'Board cards must never allocate a WebGL renderer.');
 assert.match(boardCanvas, /else if \(isModel\)[\s\S]*dblclick[\s\S]*openBoardModelViewer\(f\)/, 'Double-clicking a model card must open the viewer.');
 
@@ -91,8 +92,11 @@ assert.match(modelViewer, /new OrbitControls\(camera, renderer\.domElement\)/, '
 assert.match(modelViewer, /new vendor\.GLTFLoader[\s\S]*new vendor\.FBXLoader[\s\S]*new vendor\.OBJLoader/, 'The viewer must parse GLB, FBX and OBJ with dedicated loaders.');
 assert.match(modelViewer, /window\.messsAPI\.readModelData\(file\.id\)/, 'Model parsing must use the isolated binary IPC instead of production custom-protocol fetches.');
 assert.match(preload, /readModelData:[^\n]+files:readModelData/, 'The isolated preload must expose model reads by file id only.');
+assert.match(preload, /saveModelPreview:[^\n]+files:saveModelPreview/, 'The isolated preload must expose only validated model thumbnail writes.');
 assert.match(main, /async function readArchivedModelData[\s\S]*realpath\(store\.libraryDir\)[\s\S]*MAX_MODEL_PREVIEW_BYTES/, 'Model preview reads must stay inside the archive and enforce a size limit.');
+assert.match(main, /async function saveArchivedModelPreview[\s\S]*data:image\\\/png;base64[\s\S]*model-preview\.png/, 'Generated model thumbnails must be validated and stored in the preview cache.');
 assert.match(main, /ipcMain\.handle\('files:readModelData'/, 'The main process must own model binary reads.');
+assert.match(modelViewer, /event\.shiftKey[\s\S]*event\.button !== 2[\s\S]*drag\.azimuth/, 'Shift plus right-drag must rotate the model key light through 360 degrees.');
 assert.match(modelViewer, /window\.messsAPI\.exportFile\(file\.id\)/, 'The viewer download button must use the existing safe export IPC.');
 assert.match(modelViewer, /cancelAnimationFrame[\s\S]*disposeBoardModelObject[\s\S]*forceContextLoss\(\)/, 'Closing the viewer must release animation, scene resources and the WebGL context.');
 assert.match(styles, /\.board-model-viewer-overlay[\s\S]*place-items:\s*center/, 'The full-screen model dialog must be centered.');

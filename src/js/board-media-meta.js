@@ -78,6 +78,7 @@ const BOARD_BUTLER_ICONS = {
   generate3d: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="m12 2 8 4.5v9L12 20l-8-4.5v-9L12 2Z"></path><path d="m4 6.5 8 4.5 8-4.5M12 11v9"></path></svg>',
   hunyuan3d: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="m12 3 7 4v8l-7 4-7-4V7l7-4Z"></path><path d="m5 7 7 4 7-4M12 11v8"></path><path d="m18.5 2 .5 1.5L20.5 4 19 4.5 18.5 6 18 4.5 16.5 4l1.5-.5.5-1.5Z"></path></svg>',
   hyper3d: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="m12 7 4 2.3v4.5L12 16l-4-2.2V9.3L12 7Z"></path><ellipse cx="12" cy="11.5" rx="10" ry="4.5" transform="rotate(28 12 11.5)"></ellipse><ellipse cx="12" cy="11.5" rx="10" ry="4.5" transform="rotate(-28 12 11.5)"></ellipse></svg>',
+  tripo3d: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"></path><path d="m4 7.5 8 4.5 8-4.5M12 12v9"></path><circle cx="18.5" cy="5" r="2"></circle></svg>',
   prompt: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="M4 5h11a3 3 0 0 1 3 3v4a3 3 0 0 1-3 3H9l-5 4V5Z"></path><path d="M8 9h6M8 12h4"></path></svg>',
   layers: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="m12 4 8 4-8 4-8-4 8-4Z"></path><path d="m5 12-1 1 8 4 8-4-1-1M5 17l-1 1 8 4 8-4-1-1"></path></svg>',
   detail: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"></path><circle cx="12" cy="12" r="4"></circle></svg>',
@@ -105,7 +106,8 @@ const BOARD_BUTLER_TASK_ACTIONS = Object.freeze([
   'eraseObject',
   'videoUpscale',
   'generate3d:hunyuan3d',
-  'generate3d:hyper3d'
+  'generate3d:hyper3d',
+  'generate3d:tripo3d'
 ]);
 
 function boardButlerTaskKey(fileId, action) {
@@ -179,13 +181,13 @@ function syncBoardButlerTaskUi(fileId) {
     if (button.dataset.fileId !== id) return;
     const is3dGroup = button.dataset.butlerAction === 'generate3d';
     const task = is3dGroup
-      ? ['generate3d:hunyuan3d', 'generate3d:hyper3d']
+      ? ['generate3d:hunyuan3d', 'generate3d:hyper3d', 'generate3d:tripo3d']
         .map((action) => tasksByAction.get(action))
         .find((entry) => entry && entry.status === 'running') ||
-        ['generate3d:hunyuan3d', 'generate3d:hyper3d']
+        ['generate3d:hunyuan3d', 'generate3d:hyper3d', 'generate3d:tripo3d']
           .map((action) => tasksByAction.get(action))
           .find((entry) => entry && entry.status === 'error') ||
-        ['generate3d:hunyuan3d', 'generate3d:hyper3d']
+        ['generate3d:hunyuan3d', 'generate3d:hyper3d', 'generate3d:tripo3d']
           .map((action) => tasksByAction.get(action))
           .find(Boolean)
       : tasksByAction.get(button.dataset.butlerAction);
@@ -322,7 +324,11 @@ async function placeBoardButlerResult(file, sourceItem, action) {
   const sourceX = Number(sourceItem && sourceItem.x) || 0;
   const sourceY = Number(sourceItem && sourceItem.y) || 0;
   const placementX = sourceX + sourceWidth + 150;
-  const placementOffset = action === 'generate3d:hyper3d' ? 520 : (action.startsWith('generate3d:') ? 320 : 110);
+  const placementOffset = action === 'generate3d:tripo3d'
+    ? 720
+    : action === 'generate3d:hyper3d'
+      ? 520
+      : (action.startsWith('generate3d:') ? 320 : 110);
   const placementY = sourceY + placementOffset;
   closeBoardButlerMenu();
   await addFileToBoard(file.id, placementX, placementY);
@@ -1136,7 +1142,7 @@ async function runBoardButlerRemoveBackground(file, item) {
 }
 
 async function runBoardButlerGenerate3d(file, item, providerId) {
-  const safeProviderId = providerId === 'hyper3d' ? 'hyper3d' : 'hunyuan3d';
+  const safeProviderId = ['hunyuan3d', 'hyper3d', 'tripo3d'].includes(providerId) ? providerId : 'hunyuan3d';
   const action = `generate3d:${safeProviderId}`;
   if (getBoardButlerTask(file.id, action)?.status === 'running') return;
   const api = boardButlerApi();
@@ -1297,12 +1303,17 @@ function openBoardButlerMenu(trigger, file, item) {
   modelMenu.innerHTML = `
     <button type="button" class="board-butler-model-option board-butler-submenu-option board-butler-menu-item" data-butler-action="generate3d:hunyuan3d" role="menuitem">
       <span class="board-butler-submenu-icon" aria-hidden="true">${BOARD_BUTLER_ICONS.hunyuan3d}</span>
-      <span class="board-butler-submenu-label">${t('Hunyuan 3D', '混元 3D', '혼위안 3D')}</span>
+      <span class="board-butler-submenu-label">${t('Hunyuan 3D', '混元 3D', '혼위안 3D')} · 8 pts</span>
       <small class="board-butler-menu-status" hidden></small>
     </button>
     <button type="button" class="board-butler-model-option board-butler-submenu-option board-butler-menu-item" data-butler-action="generate3d:hyper3d" role="menuitem">
       <span class="board-butler-submenu-icon" aria-hidden="true">${BOARD_BUTLER_ICONS.hyper3d}</span>
-      <span class="board-butler-submenu-label">Hyper3D</span>
+      <span class="board-butler-submenu-label">Hyper3D · 14 pts</span>
+      <small class="board-butler-menu-status" hidden></small>
+    </button>
+    <button type="button" class="board-butler-model-option board-butler-submenu-option board-butler-menu-item" data-butler-action="generate3d:tripo3d" role="menuitem">
+      <span class="board-butler-submenu-icon" aria-hidden="true">${BOARD_BUTLER_ICONS.tripo3d}</span>
+      <span class="board-butler-submenu-label">Tripo3D · 10 pts</span>
       <small class="board-butler-menu-status" hidden></small>
     </button>
   `;
@@ -1328,6 +1339,9 @@ function openBoardButlerMenu(trigger, file, item) {
   });
   modelMenu.querySelector('[data-butler-action="generate3d:hyper3d"]').addEventListener('click', (event) => {
     if (!event.currentTarget.disabled) void runBoardButlerGenerate3d(file, item, 'hyper3d');
+  });
+  modelMenu.querySelector('[data-butler-action="generate3d:tripo3d"]').addEventListener('click', (event) => {
+    if (!event.currentTarget.disabled) void runBoardButlerGenerate3d(file, item, 'tripo3d');
   });
     modelGroup.append(modelTrigger, modelMenu);
     menu.appendChild(modelGroup);

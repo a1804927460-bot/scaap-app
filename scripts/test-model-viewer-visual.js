@@ -18,6 +18,6 @@ const result = spawnSync(electronPath, [runnerPath], {
 
 if (result.error) throw result.error;
 assert.strictEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
-const verification = result.stdout.match(/MODEL_VIEWER_VISUAL_OK desktop=\d+ compact=\d+ rotation=[\d.]+/);
+const verification = result.stdout.match(/MODEL_VIEWER_VISUAL_OK desktop=\d+ compact=\d+ rotation=[\d.]+ light=[\d.]+ previews=\d+,\d+,\d+ fbx=\d+ obj=\d+/);
 assert(verification, result.stdout || result.stderr);
 process.stdout.write(`Model-viewer visual interaction test passed (${verification[0]}).\n`);

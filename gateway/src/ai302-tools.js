@@ -6,6 +6,8 @@ const API_ORIGIN = 'https://api.302.ai';
 const BACKGROUND_PATH = '/photoroom/v1/segment?response_format=url';
 const HUNYUAN_PATH = '/tencent/hunyuan3d/pro-job';
 const HYPER3D_PATH = '/302/submit/hyper3d-rodin';
+const TRIPO3D_UPLOAD_PATH = '/tripo3d/v2/openapi/upload';
+const TRIPO3D_TASK_PATH = '/tripo3d/v2/openapi/task';
 const TOPAZ_VIDEO_UPLOAD_PATH = '/topazlabs/video/upload';
 const TOPAZ_VIDEO_STATUS_PATH = '/topazlabs/video';
 const REQUEST_TIMEOUT_MS = 45_000;
@@ -28,7 +30,7 @@ const MAX_RELAY_ASSET_BYTES = 128 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const ALLOWED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const ALLOWED_VIDEO_MIME = new Set(['video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska']);
-const THREE_D_PROVIDERS = new Set(['hunyuan3d', 'hyper3d']);
+const THREE_D_PROVIDERS = new Set(['hunyuan3d', 'hyper3d', 'tripo3d']);
 const TOPAZ_VIDEO_PROVIDER = 'topaz-video-upscale';
 const QUEUED_STATES = new Set(['CREATED', 'IN_QUEUE', 'PENDING', 'QUEUED', 'QUEUEING', 'WAIT', 'WAITING']);
 const PROCESSING_STATES = new Set(['PROCESSING', 'RUNNING', 'RUN', 'IN_PROGRESS', 'GENERATING']);
@@ -88,12 +90,14 @@ function invalidTaskToken() {
   return toolError('three-d-task-not-found', '3D task not found.', 404);
 }
 
-function createTaskToken(providerId, jobId, userId, key, now = Date.now()) {
+function createTaskToken(providerId, jobId, userId, key, now = Date.now(), accounting = {}) {
   const issuedAt = Math.floor(Number(now) / 1000);
   const payload = Buffer.from(JSON.stringify({
     p: providerId,
     j: jobId,
     u: userId,
+    ...(accounting.requestId ? { q: accounting.requestId } : {}),
+    ...(Number.isInteger(accounting.credits) ? { a: accounting.credits } : {}),
     i: issuedAt,
     e: issuedAt + Math.floor(TASK_TOKEN_TTL_MS / 1000)
   }), 'utf8');
@@ -127,19 +131,29 @@ function readTaskToken(taskToken, userId, key, now = Date.now()) {
     const providerId = String(payload && payload.p || '');
     const jobId = String(payload && payload.j || '');
     const ownerId = String(payload && payload.u || '');
+    const requestId = String(payload && payload.q || '').toLowerCase();
+    const credits = Number(payload && payload.a);
     const issuedAt = Number(payload && payload.i);
     const expiresAt = Number(payload && payload.e);
     if (
       !THREE_D_PROVIDERS.has(providerId)
       || !jobId || jobId.length > 512 || /[\u0000-\u001f\u007f]/.test(jobId)
       || !ownerId || ownerId !== String(userId || '')
+      || (requestId && !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(requestId))
+      || (payload && payload.a !== undefined && (!Number.isInteger(credits) || credits < 0 || credits > 3_000_000))
       || !Number.isInteger(issuedAt) || !Number.isInteger(expiresAt)
       || issuedAt > currentTime + 300 || expiresAt <= currentTime
       || expiresAt - issuedAt !== Math.floor(TASK_TOKEN_TTL_MS / 1000)
     ) {
       throw invalidTaskToken();
     }
-    return { providerId, jobId };
+    return {
+      providerId,
+      jobId,
+      issuedAt,
+      ...(requestId ? { requestId } : {}),
+      ...(Number.isInteger(credits) ? { credits } : {})
+    };
   } catch (error) {
     if (error && error.code === 'three-d-task-not-found') throw error;
     throw invalidTaskToken();
@@ -580,7 +594,9 @@ function safeAssetHost(hostname) {
     || host.endsWith('.cos.myqcloud.com')
     || /\.cos\.[a-z0-9-]+\.myqcloud\.com$/.test(host)
     || host.endsWith('.tencentcos.cn')
-    || /\.cos\.[a-z0-9-]+\.tencentcos\.cn$/.test(host);
+    || /\.cos\.[a-z0-9-]+\.tencentcos\.cn$/.test(host)
+    || host === 'tripo-data.rg1.data.tripo3d.com'
+    || /^tripo-data\.[a-z0-9-]+\.data\.tripo3d\.com$/.test(host);
 }
 
 export function validateAssetUrl(value) {
@@ -1045,6 +1061,94 @@ async function createHyper3dJob(image, prompt, dependencies) {
   }
 }
 
+function tripoResponseObject(payload, requiredFields) {
+  if (payload && Object.hasOwn(payload, 'code') && Number(payload.code) !== 0) {
+    throw toolError('ai302-upstream-error', 'The Tripo3D service rejected the request.', 502);
+  }
+  const fields = Array.isArray(requiredFields) && requiredFields.length
+    ? requiredFields
+    : ['task_id', 'status', 'output', 'result', 'image_token'];
+  return nestedResponseObject(
+    payload,
+    (value) => fields.some((key) => Object.hasOwn(value, key)),
+    'The Tripo3D service returned an invalid response.'
+  );
+}
+
+function tripoResultUrl(value) {
+  if (typeof value === 'string') return value.trim();
+  if (value && typeof value === 'object' && typeof value.url === 'string') return value.url.trim();
+  return '';
+}
+
+function tripoStatus(job) {
+  if (tripoResultUrl(job && job.result && job.result.pbr_model)
+      || tripoResultUrl(job && job.output && job.output.pbr_model)) return 'succeeded';
+  return normalizeThreeDStatus(job && job.status);
+}
+
+function findTripoGlb(job) {
+  const modelUrl = tripoResultUrl(job && job.result && job.result.pbr_model)
+    || tripoResultUrl(job && job.output && job.output.pbr_model);
+  if (!modelUrl) {
+    throw toolError('three-d-result-invalid', 'The completed Tripo3D task did not contain a GLB model.', 502);
+  }
+  const previewImageUrl = String(
+    job && job.thumbnail
+    || tripoResultUrl(job && job.result && job.result.rendered_image)
+    || tripoResultUrl(job && job.output && job.output.rendered_image)
+    || tripoResultUrl(job && job.output && job.output.generated_image)
+    || ''
+  ).trim();
+  return { url: modelUrl, ...(previewImageUrl ? { previewImageUrl } : {}) };
+}
+
+async function uploadTripoImage(image, dependencies) {
+  const form = new FormData();
+  const extension = image.extension === 'jpeg' ? 'jpg' : image.extension;
+  form.append('file', new Blob([image.buffer], { type: image.mime }), `input.${extension}`);
+  const payload = await fetch302Json(TRIPO3D_UPLOAD_PATH, { method: 'POST', body: form }, dependencies);
+  const response = tripoResponseObject(payload, ['image_token']);
+  const imageToken = String(response.image_token || '').trim();
+  if (!imageToken || imageToken.length > 512 || /[\u0000-\u001f\u007f]/.test(imageToken)) {
+    throw toolError('ai302-invalid-response', 'The Tripo3D upload did not return a valid image token.', 502);
+  }
+  return { imageToken, extension };
+}
+
+async function createTripoJob(image, prompt, dependencies) {
+  const upload = await uploadTripoImage(image, dependencies);
+  const payload = await fetch302Json(TRIPO3D_TASK_PATH, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'image_to_model',
+      model_version: 'v3.0-20250812',
+      file: { type: upload.extension, file_token: upload.imageToken },
+      texture: true,
+      pbr: true,
+      texture_quality: 'standard',
+      geometry_quality: 'standard',
+      orientation: 'align_image'
+    })
+  }, dependencies);
+  const response = tripoResponseObject(payload, ['task_id']);
+  const jobId = String(response.task_id || '').trim();
+  if (!jobId || jobId.length > 512 || /[\u0000-\u001f\u007f]/.test(jobId)) {
+    throw toolError('ai302-invalid-response', 'The Tripo3D service did not return a valid task.', 502);
+  }
+  return { jobId, status: 'queued' };
+}
+
+async function queryTripoJob(jobId, dependencies) {
+  return tripoResponseObject(await fetch302Json(`${TRIPO3D_TASK_PATH}/${encodeURIComponent(jobId)}`, {
+    method: 'GET'
+  }, {
+    ...dependencies,
+    timeoutMs: STATUS_TIMEOUT_MS
+  }), ['task_id', 'status', 'output', 'result']);
+}
+
 const threeDProviderHandlers = Object.freeze({
   hunyuan3d: {
     create: (image, prompt, dependencies) => createHunyuanJob(image, dependencies),
@@ -1060,6 +1164,12 @@ const threeDProviderHandlers = Object.freeze({
     query: queryHyper3dJob,
     status: hyper3dStatus,
     result: findHyper3dGlb
+  },
+  tripo3d: {
+    create: createTripoJob,
+    query: queryTripoJob,
+    status: tripoStatus,
+    result: findTripoGlb
   }
 });
 
@@ -1152,18 +1262,57 @@ export async function createThreeDTask({ providerId, imageDataUrl, prompt, userI
     publicBaseUrl: options.publicBaseUrl,
     now: options.now
   };
+  const accountingRequestId = String(options.accountingRequestId || '').trim().toLowerCase();
+  const credits = Number(options.credits);
+  if (accountingRequestId && !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(accountingRequestId)) {
+    throw toolError('credit-service-failed', 'The 3D accounting request is invalid.', 503);
+  }
+  if (accountingRequestId && (typeof options.credits !== 'number' || !Number.isInteger(credits) || credits < 0 || credits > 3_000_000)) {
+    throw toolError('credit-service-failed', 'The 3D accounting credits are invalid.', 503);
+  }
   const job = await handler.create(image, normalizedPrompt, dependencies);
   return {
-    taskToken: createTaskToken(normalizedProviderId, job.jobId, ownerId, taskKey, options.now ?? Date.now()),
+    taskToken: createTaskToken(
+      normalizedProviderId,
+      job.jobId,
+      ownerId,
+      taskKey,
+      options.now ?? Date.now(),
+      {
+        ...(accountingRequestId ? { requestId: accountingRequestId } : {}),
+        ...(Number.isInteger(credits) ? { credits } : {})
+      }
+    ),
     status: job.status,
-    retryAfterMs: ['queued', 'processing'].includes(job.status) ? 5_000 : 0
+    retryAfterMs: ['queued', 'processing'].includes(job.status) ? 5_000 : 0,
+    ...(Number.isInteger(credits) ? { credits } : {})
   };
+}
+
+async function settleThreeDCredits(task, status, options) {
+  if (!task.requestId || !['succeeded', 'failed'].includes(status) || typeof options.settleCredits !== 'function') return null;
+  const settled = await options.settleCredits({
+    requestId: task.requestId,
+    status,
+    durationMs: Math.max(0, (Math.floor(Number(options.now ?? Date.now()) / 1000) - task.issuedAt) * 1000)
+  });
+  if (!settled || settled.ok !== true) {
+    throw toolError('credit-settlement-failed', 'The 3D generation credits could not be settled.', 503);
+  }
+  return settled;
 }
 
 export async function getThreeDStatus({ taskToken, userId } = {}, options = {}) {
   const apiKey = configuredApiKey(options.apiKey);
   const taskKey = configuredTaskSecret(apiKey, options.taskSecret);
-  const { providerId, jobId } = readTaskToken(taskToken, userId, taskKey, options.now ?? Date.now());
+  const task = readTaskToken(taskToken, userId, taskKey, options.now ?? Date.now());
+  const { providerId, jobId } = task;
+  if (task.requestId && typeof options.touchCredits === 'function') {
+    const touched = await options.touchCredits({ requestId: task.requestId, userId: String(userId || '') });
+    if (!touched || touched.ok !== true) {
+      throw toolError('credit-service-failed', 'The 3D generation accounting could not be refreshed.', 503);
+    }
+  }
   const handler = threeDProviderHandlers[providerId];
   const job = await handler.query(jobId, {
     apiKey,
@@ -1184,13 +1333,28 @@ export async function getThreeDStatus({ taskToken, userId } = {}, options = {}) 
     result.errorCode = 'three-d-generation-failed';
     result.errorMessage = '3D generation failed.';
   }
+  const settlement = await settleThreeDCredits(task, status, options);
+  if (Number.isInteger(task.credits)) result.credits = task.credits;
+  if (settlement && Number.isFinite(Number(settlement.creditsCharged))) {
+    result.creditsCharged = Number(settlement.creditsCharged);
+  }
+  if (settlement && Number.isFinite(Number(settlement.creditsReleased))) {
+    result.creditsReleased = Number(settlement.creditsReleased);
+  }
   return result;
 }
 
 export async function downloadThreeDModel({ taskToken, userId } = {}, options = {}) {
   const apiKey = configuredApiKey(options.apiKey);
   const taskKey = configuredTaskSecret(apiKey, options.taskSecret);
-  const { providerId, jobId } = readTaskToken(taskToken, userId, taskKey, options.now ?? Date.now());
+  const task = readTaskToken(taskToken, userId, taskKey, options.now ?? Date.now());
+  const { providerId, jobId } = task;
+  if (task.requestId && typeof options.touchCredits === 'function') {
+    const touched = await options.touchCredits({ requestId: task.requestId, userId: String(userId || '') });
+    if (!touched || touched.ok !== true) {
+      throw toolError('credit-service-failed', 'The 3D generation accounting could not be refreshed.', 503);
+    }
+  }
   const handler = threeDProviderHandlers[providerId];
   const job = await handler.query(jobId, {
     apiKey,
@@ -1198,6 +1362,7 @@ export async function downloadThreeDModel({ taskToken, userId } = {}, options = 
     signal: options.signal
   });
   const status = handler.status(job);
+  await settleThreeDCredits(task, status, options);
   if (status !== 'succeeded') {
     throw toolError(
       status === 'failed' ? 'three-d-generation-failed' : 'three-d-task-not-ready',

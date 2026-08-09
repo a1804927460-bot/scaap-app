@@ -75,6 +75,7 @@ const AI302_FLAGS = Object.freeze({
   image: 'ENABLE_302_IMAGE_TOOLS',
   hunyuan3d: 'ENABLE_302_HUNYUAN3D',
   hyper3d: 'ENABLE_302_HYPER3D',
+  tripo3d: 'ENABLE_302_TRIPO3D',
   topaz: 'ENABLE_302_TOPAZ'
 });
 
@@ -733,27 +734,52 @@ async function handle(request, response) {
     const providerId = String(body && body.providerId || '').trim().toLowerCase();
     const flag = AI302_FLAGS[providerId];
     if (!flag || !ai302Enabled(flag)) return disabledTool(response);
-    const task = await runIdempotentImageOperation(user.id, requestId, () => createThreeDTask({
-      providerId, imageDataUrl: body && body.imageDataUrl, prompt: body && body.prompt, userId: user.id
-    }));
+    const task = await runIdempotentImageOperation(user.id, requestId, async () => {
+      const usage = await reserveFixedTool(user.id, providerId, requestId);
+      try {
+        const created = await createThreeDTask({
+          providerId, imageDataUrl: body && body.imageDataUrl, prompt: body && body.prompt, userId: user.id
+        }, {
+          accountingRequestId: usage.requestId,
+          credits: usage.reservation.credits
+        });
+        return {
+          ...created,
+          availableCredits: usage.reservation.availableCredits ?? usage.reservation.available_credits
+        };
+      } catch (error) {
+        await releaseFailedToolReservation(user.id, usage);
+        throw error;
+      }
+    });
     return send(response, 202, task);
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/tools/3d/status') {
-    if (!ai302Enabled(AI302_FLAGS.hunyuan3d) && !ai302Enabled(AI302_FLAGS.hyper3d)) return disabledTool(response);
+    if (!ai302Enabled(AI302_FLAGS.hunyuan3d) && !ai302Enabled(AI302_FLAGS.hyper3d) && !ai302Enabled(AI302_FLAGS.tripo3d)) return disabledTool(response);
     const body = await readJson(request);
     return send(response, 200, await getThreeDStatus({
       taskToken: body && body.taskToken,
       userId: user.id
+    }, {
+      touchCredits: ({ requestId: accountingRequestId }) => touchToolUsage(user.id, accountingRequestId),
+      settleCredits: ({ requestId: accountingRequestId, status, durationMs }) => settleToolUsage(
+        user.id, accountingRequestId, status, durationMs
+      )
     }));
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/tools/3d/download') {
-    if (!ai302Enabled(AI302_FLAGS.hunyuan3d) && !ai302Enabled(AI302_FLAGS.hyper3d)) return disabledTool(response);
+    if (!ai302Enabled(AI302_FLAGS.hunyuan3d) && !ai302Enabled(AI302_FLAGS.hyper3d) && !ai302Enabled(AI302_FLAGS.tripo3d)) return disabledTool(response);
     const body = await readJson(request);
     const glb = await downloadThreeDModel({
       taskToken: body && body.taskToken,
       userId: user.id
+    }, {
+      touchCredits: ({ requestId: accountingRequestId }) => touchToolUsage(user.id, accountingRequestId),
+      settleCredits: ({ requestId: accountingRequestId, status, durationMs }) => settleToolUsage(
+        user.id, accountingRequestId, status, durationMs
+      )
     });
     return send(response, 200, glb, {
       'Content-Type': 'model/gltf-binary',
