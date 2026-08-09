@@ -3,6 +3,16 @@ export const APP_CREDITS_PER_CNY = 10;
 export const TOPAZ_RETAIL_MARKUP = 2;
 export const TOPAZ_RETAIL_CREDIT_MULTIPLIER =
   TOPAZ_PROVIDER_PTC_PER_POINT * APP_CREDITS_PER_CNY * TOPAZ_RETAIL_MARKUP;
+export const TOPAZ_DYNAMIC_PROVIDERS = Object.freeze(new Set([
+  'topaz-video-upscale',
+  'topaz-image-sharpen',
+  'topaz-image-sharpen-gen',
+  'topaz-image-enhance',
+  'topaz-image-enhance-gen',
+  'topaz-image-denoise',
+  'topaz-image-restore',
+  'topaz-image-lighting'
+]));
 
 export const BUTLER_FIXED_RETAIL_CREDITS = Object.freeze({
   'background-remove': 1,
@@ -28,7 +38,7 @@ export function quoteTopazRetailCredits(providerCost) {
 
 export function quoteButlerRetailCredits(providerId, providerCost = null) {
   const normalizedProvider = String(providerId || '').trim().toLowerCase();
-  if (normalizedProvider === 'topaz-video-upscale') {
+  if (TOPAZ_DYNAMIC_PROVIDERS.has(normalizedProvider)) {
     return quoteTopazRetailCredits(providerCost);
   }
   if (!Object.hasOwn(BUTLER_FIXED_RETAIL_CREDITS, normalizedProvider)) {

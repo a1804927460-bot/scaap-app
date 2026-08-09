@@ -286,7 +286,7 @@ function showBoardItemContextMenu(item, x, y) {
         action: () => sendBoardMediaToCreativeApp(item.fileId, 'photoshop')
       });
     }
-    if (isGenerated && isVideoExt(file.ext)) {
+    if (file && isVideoExt(file.ext)) {
       items.push({
         label: t('Send to After Effects', '发送到 After Effects'),
         action: () => sendBoardMediaToCreativeApp(item.fileId, 'after-effects')
@@ -323,8 +323,9 @@ const MULTI_MENU_ITEMS = [
     { key: 'arrange-column', label: ['Column', '纵向排列'] }
   ] },
   { key: 'scale', label: ['Scale', '缩放'], submenu: [
-    { key: 'scale-max', label: ['Scale Up', '放大'] },
-    { key: 'scale-min', label: ['Scale Down', '缩小'] }
+    { key: 'scale-max', label: ['Scale to Maximum', '放大至最大', '최대로 확대'] },
+    { key: 'scale-100', label: ['Scale to 100%', '放大至100%', '100%로 확대'] },
+    { key: 'scale-min', label: ['Scale to Minimum', '缩小至最小', '최소로 축소'] }
   ] },
   { key: 'download', label: ['Export', '导出'] },
   { key: 'group', label: ['Group', '成组'] },
@@ -451,12 +452,13 @@ async function runMultiMenuAction(key, x, y) {
       arrangeItemsLine(selected, 'column');
       break;
     case 'scale-max':
-      selected.forEach((item) => { item.width = MAX_BOARD_ITEM_WIDTH; window.messsAPI.upsertBoardItem(item); });
-      renderBoard();
+      scaleBoardItemsToWidth(selected, MAX_BOARD_ITEM_WIDTH);
+      break;
+    case 'scale-100':
+      scaleBoardItemsToWidth(selected, DEFAULT_BOARD_ITEM_WIDTH);
       break;
     case 'scale-min':
-      selected.forEach((item) => { item.width = MIN_BOARD_ITEM_WIDTH; window.messsAPI.upsertBoardItem(item); });
-      renderBoard();
+      scaleBoardItemsToWidth(selected, MIN_BOARD_ITEM_WIDTH);
       break;
     case 'download':
       for (const item of selected) {
@@ -483,32 +485,35 @@ async function runMultiMenuAction(key, x, y) {
   }
 }
 
+function scaleBoardItemsToWidth(items, targetWidth) {
+  const width = Math.max(1, Math.round(Number(targetWidth) || DEFAULT_BOARD_ITEM_WIDTH));
+  items.forEach((item) => {
+    const previousWidth = Math.max(1, Number(item.width) || DEFAULT_BOARD_ITEM_WIDTH);
+    const previousHeight = Number(item.height);
+    if (previousHeight > 0) {
+      item.height = Math.max(1, Math.round(previousHeight * width / previousWidth));
+    }
+    item.width = width;
+    window.messsAPI.upsertBoardItem(item);
+  });
+  renderBoard();
+}
+
 async function arrangeItemsGrid(items) {
   if (!items.length) return;
   const originX = items.reduce((min, it) => Math.min(min, it.x), Infinity);
   const originY = items.reduce((min, it) => Math.min(min, it.y), Infinity);
-  const sizes = items.map((item) => {
-    const width = Math.max(1, Number(item.width) || 220);
-    const file = AppState.files.find((entry) => entry.id === item.fileId);
-    const sourceWidth = Number(file && file.sourceWidth);
-    const sourceHeight = Number(file && file.sourceHeight);
-    const usesSourceAspect = file && (isImageExt(file.ext) || isVideoExt(file.ext)) &&
-      sourceWidth > 0 && sourceHeight > 0;
-    const height = usesSourceAspect
-      ? width * sourceHeight / sourceWidth
-      : (Number(item.height) || (item.isNote ? 140 : 180));
-    return {
-      id: item.id,
-      x: Number(item.x) || 0,
-      y: Number(item.y) || 0,
-      width,
-      height: Math.max(1, height)
-    };
+  const layoutItems = items.map((item) => {
+    const bounds = typeof boardItemBounds === 'function'
+      ? boardItemBounds(item)
+      : { w: item.width || 220, h: item.height || 180 };
+    return { ...item, width: bounds.w, height: bounds.h };
   });
-  const packed = window.MesssBoardEngine.packRows(sizes, {
+  const packed = window.MesssBoardEngine.packRows(layoutItems, {
     originX,
     originY,
-    gap: 12
+    gap: 20,
+    columns: Math.max(1, Math.round(Math.sqrt(items.length * 1.5)))
   });
   const itemsById = new Map(items.map((item) => [item.id, item]));
   packed.forEach((position) => {
@@ -516,6 +521,11 @@ async function arrangeItemsGrid(items) {
     if (!item) return;
     item.x = position.x;
     item.y = position.y;
+    if (item.layoutFrame === 'uniform-grid') {
+      item.width = position.width;
+      item.height = position.height;
+      delete item.layoutFrame;
+    }
   });
 
   if (typeof window.messsAPI.upsertBoardItems === 'function') {

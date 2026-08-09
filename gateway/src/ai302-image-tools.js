@@ -13,6 +13,17 @@ const QWEN_EDIT_PATH = '/302/submit/qwen-image-edit-plus';
 const QWEN_LAYERED_PATH = '/302/submit/qwen-image-layered';
 const SUPER_UPSCALE_PATH = '/302/submit/super-upscale-v2';
 const ERASE_PATH = '/302/submit/erase';
+const TOPAZ_IMAGE_PATHS = Object.freeze({
+  'topaz-image-sharpen': '/topazlabs/image/v1/sharpen/async',
+  'topaz-image-sharpen-gen': '/topazlabs/image/v1/sharpen-gen/async',
+  'topaz-image-enhance': '/topazlabs/image/v1/enhance/async',
+  'topaz-image-enhance-gen': '/topazlabs/image/v1/enhance-gen/async',
+  'topaz-image-denoise': '/topazlabs/image/v1/denoise/async',
+  'topaz-image-restore': '/topazlabs/image/v1/restore-gen/async',
+  'topaz-image-lighting': '/topazlabs/image/v1/lighting/async'
+});
+const TOPAZ_STATUS_PATH = '/topazlabs/image/v1/status';
+const TOPAZ_DOWNLOAD_PATH = '/topazlabs/image/v1/download';
 const REQUEST_TIMEOUT_MS = 45_000;
 const STATUS_TIMEOUT_MS = 20_000;
 const DOWNLOAD_TIMEOUT_MS = 90_000;
@@ -24,7 +35,11 @@ const MAX_EDIT_IMAGES = 4;
 const MAX_RESULT_IMAGES = 8;
 const TASK_TOKEN_TTL_MS = 72 * 60 * 60 * 1000;
 const TASK_TOKEN_AAD = Buffer.from('messs:ai302-image-task:v1', 'utf8');
-const ASYNC_PROVIDERS = new Set(['qwen-image-edit-plus', 'qwen-image-layered']);
+const ASYNC_PROVIDERS = new Set([
+  'qwen-image-edit-plus',
+  'qwen-image-layered',
+  ...Object.keys(TOPAZ_IMAGE_PATHS)
+]);
 const QUEUED_STATES = new Set(['CREATED', 'IN_QUEUE', 'PENDING', 'QUEUED', 'QUEUEING', 'WAIT', 'WAITING', 'SUBMITTED']);
 const PROCESSING_STATES = new Set(['PROCESSING', 'RUNNING', 'RUN', 'IN_PROGRESS', 'GENERATING']);
 const SUCCESS_STATES = new Set(['DONE', 'SUCCESS', 'SUCCEEDED', 'COMPLETED', 'COMPLETE', 'FINISHED']);
@@ -41,7 +56,9 @@ function imageToolError(code, message, status = 500) {
 }
 
 function configuredApiKey(explicitKey) {
-  const key = String(explicitKey ?? process.env.AI302_KEY ?? process.env.AI_302_API_KEY ?? '').trim();
+  const key = String(explicitKey ?? process.env.AI302_KEY ?? process.env.AI_302_API_KEY ?? '')
+    .trim()
+    .replace(/^Bearer\s+/i, '');
   if (!key || key.length > 4096 || /[\r\n]/.test(key)) {
     throw imageToolError('ai302-not-configured', 'The 302 tool gateway is not configured.', 503);
   }
@@ -87,8 +104,10 @@ async function limitedBuffer(response, maximum) {
 }
 
 function upstreamFailure(response) {
-  const error = response.status === 402
-    ? imageToolError('ai302-balance-exhausted', 'The 302 tool balance is insufficient.', 402)
+  const error = response.status === 401
+    ? imageToolError('ai302-unauthorized', 'The 302 API key was rejected. Update AI302_KEY on the gateway.', 503)
+    : response.status === 402
+      ? imageToolError('ai302-balance-exhausted', 'The 302 tool balance is insufficient.', 402)
     : response.status === 429
       ? imageToolError('ai302-rate-limited', 'The 302 tool service is busy. Try again shortly.', 429)
       : imageToolError('ai302-upstream-error', 'The 302 tool service rejected the request.', 502);
@@ -330,6 +349,9 @@ function normalizeEditOptions(value = {}) {
   if (width * height > 4_194_304) {
     throw imageToolError('invalid-image-tool-options', 'The requested image size is too large.', 400);
   }
+  const seed = options.seed === undefined || options.seed === null || options.seed === ''
+    ? undefined
+    : boundedNumber(options.seed, 0, 0, 2_147_483_647, 'seed', { integer: true });
   return {
     image_size: { width, height },
     num_inference_steps: boundedNumber(options.numInferenceSteps, 30, 1, 50, 'numInferenceSteps', { integer: true }),
@@ -339,7 +361,8 @@ function normalizeEditOptions(value = {}) {
       options.negativePrompt ?? 'blurry, ugly',
       'negative-prompt',
       { maximum: 2000 }
-    )
+    ),
+    ...(seed !== undefined ? { seed } : {})
   };
 }
 
@@ -387,7 +410,7 @@ export async function submitQwenImageEdit({ imageDataUrl, imageDataUrls, prompt,
   }
 }
 
-export async function submitQwenImageLayered({ imageDataUrl, prompt, numLayers, userId } = {}, options = {}) {
+export async function submitQwenImageLayered({ imageDataUrl, prompt, numLayers, toolOptions, userId } = {}, options = {}) {
   if (!String(userId || '').trim()) throw imageToolError('invalid-user', 'An authenticated user is required.', 401);
   const requestDependencies = dependencies(options);
   const accountingRequestId = validUuid(options.accountingRequestId)
@@ -402,7 +425,7 @@ export async function submitQwenImageLayered({ imageDataUrl, prompt, numLayers, 
         image_url: relays[0].url,
         prompt: normalizeText(prompt, 'prompt', { maximum: 4000 }),
         num_layers: boundedNumber(numLayers, 4, 2, 8, 'numLayers', { integer: true }),
-        enable_safety_checker: true,
+        enable_safety_checker: !toolOptions || toolOptions.enableSafetyChecker !== false,
         output_format: 'png'
       })
     }, requestDependencies);
@@ -480,6 +503,180 @@ export function pollQwenImageEdit(input, options = {}) {
 
 export function pollQwenImageLayered(input, options = {}) {
   return pollAsyncImageTask('qwen-image-layered', QWEN_LAYERED_PATH, input, options);
+}
+
+function normalizeTopazOptions(providerId, value = {}) {
+  const options = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const common = {
+    output_format: 'png',
+    image: '',
+    model: {
+      'topaz-image-sharpen': 'Standard',
+      'topaz-image-sharpen-gen': 'Super Focus V2',
+      'topaz-image-enhance': 'Standard V2',
+      'topaz-image-enhance-gen': 'Redefine',
+      'topaz-image-denoise': 'Normal',
+      'topaz-image-restore': 'Dust-Scratch',
+      'topaz-image-lighting': 'Adjust'
+    }[providerId]
+  };
+  if ([
+    'topaz-image-sharpen', 'topaz-image-sharpen-gen',
+    'topaz-image-enhance', 'topaz-image-enhance-gen',
+    'topaz-image-denoise'
+  ].includes(providerId)) {
+    Object.assign(common, {
+      subject_detection: 'All',
+      face_enhancement: options.faceEnhancement !== false,
+      face_enhancement_creativity: boundedNumber(options.faceEnhancementCreativity, 0, 0, 1, 'faceEnhancementCreativity'),
+      face_enhancement_strength: boundedNumber(options.faceEnhancementStrength, 0.8, 0, 1, 'faceEnhancementStrength')
+    });
+  }
+  if (providerId === 'topaz-image-enhance' || providerId === 'topaz-image-enhance-gen') {
+    const outputWidth = boundedNumber(options.outputWidth, 1920, 128, 8192, 'outputWidth', { integer: true });
+    const outputHeight = boundedNumber(options.outputHeight, 1080, 128, 8192, 'outputHeight', { integer: true });
+    if (outputWidth * outputHeight > 33_554_432) {
+      throw imageToolError('invalid-image-tool-options', 'The requested Topaz output is too large.', 400);
+    }
+    Object.assign(common, {
+      output_width: outputWidth,
+      output_height: outputHeight,
+      crop_to_fill: options.cropToFill === true
+    });
+  }
+  return common;
+}
+
+function topazProcessId(payload) {
+  const processId = String(payload && payload.process_id || '').trim().toLowerCase();
+  if (!validUuid(processId)) {
+    throw imageToolError('ai302-invalid-response', 'Topaz did not return a valid process identifier.', 502);
+  }
+  return processId;
+}
+
+function deniedTopazReservation(reservation) {
+  const reason = String(reservation && reservation.reason || 'credit-service-failed');
+  const status = reason === 'insufficient-credits' ? 402 : (reason === 'account-suspended' ? 403 : 503);
+  const error = imageToolError(reason, reason === 'insufficient-credits'
+    ? 'There are not enough credits for this Topaz operation.'
+    : 'The Topaz credit reservation failed.', status);
+  error.requiredCredits = Number(reservation && reservation.credits) || 0;
+  error.availableCredits = Math.max(0, Number(reservation && (reservation.availableCredits ?? reservation.available_credits)) || 0);
+  return error;
+}
+
+export async function submitTopazImageTool({ modelId, imageDataUrl, toolOptions, userId } = {}, options = {}) {
+  const providerId = String(modelId || '').trim().toLowerCase();
+  const path = TOPAZ_IMAGE_PATHS[providerId];
+  if (!path) throw imageToolError('invalid-image-tool', 'The selected Topaz image tool is not supported.', 400);
+  if (!String(userId || '').trim()) throw imageToolError('invalid-user', 'An authenticated user is required.', 401);
+  if (typeof options.reserveCredits !== 'function') {
+    throw imageToolError('credit-service-failed', 'Topaz credit enforcement is unavailable.', 503);
+  }
+  const requestDependencies = dependencies(options);
+  const accountingRequestId = validUuid(options.accountingRequestId)
+    ? String(options.accountingRequestId).trim().toLowerCase()
+    : crypto.randomUUID();
+  const relays = createRelays([imageDataUrl], options);
+  try {
+    const requestBody = normalizeTopazOptions(providerId, toolOptions);
+    requestBody.image = relays[0].url;
+    const payload = await fetch302Json(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody)
+    }, requestDependencies);
+    const processId = topazProcessId(payload);
+    const providerCost = Number(payload.credits);
+    if (!Number.isInteger(providerCost) || providerCost < 0 || providerCost > 1_000_000) {
+      throw imageToolError('ai302-invalid-response', 'Topaz did not return a valid credit cost.', 502);
+    }
+    const reservation = await options.reserveCredits({
+      requestId: accountingRequestId,
+      providerId,
+      providerCost
+    });
+    if (!reservation || reservation.ok !== true) throw deniedTopazReservation(reservation);
+    return {
+      taskToken: createTaskToken(
+        providerId,
+        processId,
+        accountingRequestId,
+        userId,
+        taskTokenKey(requestDependencies.apiKey, options.taskSecret),
+        options.now
+      ),
+      status: 'queued',
+      retryAfterMs: 5000,
+      resultCount: 0,
+      providerCost,
+      credits: Number(reservation.credits) || 0,
+      availableCredits: reservation.availableCredits ?? reservation.available_credits
+    };
+  } catch (error) {
+    for (const relay of relays) deleteAi302RelayAsset(relay.token);
+    throw error;
+  }
+}
+
+function normalizeTopazStatus(value) {
+  const status = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (['completed', 'complete', 'done', 'success', 'succeeded'].includes(status)) return 'succeeded';
+  if (['failed', 'error', 'cancelled', 'canceled'].includes(status)) return 'failed';
+  if (['processing', 'running', 'in_progress'].includes(status)) return 'processing';
+  return 'queued';
+}
+
+export async function pollTopazImageTool({ taskToken, userId } = {}, options = {}) {
+  const requestDependencies = dependencies(options, { status: true });
+  const task = readTaskToken(
+    taskToken,
+    userId,
+    taskTokenKey(requestDependencies.apiKey, options.taskSecret),
+    options.now
+  );
+  if (!Object.hasOwn(TOPAZ_IMAGE_PATHS, task.providerId)) throw invalidTaskToken();
+  if (typeof options.touchCredits === 'function') {
+    const touched = await options.touchCredits({ requestId: task.accountingRequestId, userId: String(userId || '') });
+    if (!touched || touched.ok !== true) {
+      throw imageToolError('credit-service-failed', 'The Topaz accounting could not be refreshed.', 503);
+    }
+  }
+  const payload = await fetch302Json(`${TOPAZ_STATUS_PATH}/${encodeURIComponent(task.requestId)}`, {
+    method: 'GET'
+  }, requestDependencies);
+  const status = normalizeTopazStatus(payload.status);
+  let urls = [];
+  if (status === 'succeeded') {
+    const download = await fetch302Json(`${TOPAZ_DOWNLOAD_PATH}/${encodeURIComponent(task.requestId)}`, {
+      method: 'GET'
+    }, requestDependencies);
+    urls = [validateAssetUrl(download.download_url).toString()];
+  }
+  const settlement = ['succeeded', 'failed'].includes(status) && typeof options.settleCredits === 'function'
+    ? await options.settleCredits({
+        requestId: task.accountingRequestId,
+        status,
+        durationMs: Math.max(0, (Math.floor(Number(options.now ?? Date.now()) / 1000) - task.issuedAt) * 1000)
+      })
+    : null;
+  if (settlement && settlement.ok !== true) {
+    throw imageToolError('credit-settlement-failed', 'The Topaz accounting could not be settled.', 503);
+  }
+  return {
+    status,
+    progress: Math.max(0, Math.min(100, Math.round(Number(payload.progress) || (status === 'succeeded' ? 100 : 0)))),
+    retryAfterMs: ['succeeded', 'failed'].includes(status) ? 0 : 5000,
+    urls,
+    providerCost: Number.isFinite(Number(payload.credits)) ? Number(payload.credits) : undefined,
+    ...(settlement && Number.isFinite(Number(settlement.creditsCharged))
+      ? { creditsCharged: Number(settlement.creditsCharged) }
+      : {}),
+    ...(settlement && Number.isFinite(Number(settlement.creditsReleased))
+      ? { creditsReleased: Number(settlement.creditsReleased) }
+      : {})
+  };
 }
 
 function normalizeUpscaleOptions(value = {}) {

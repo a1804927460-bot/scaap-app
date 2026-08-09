@@ -17,12 +17,12 @@ assert.deepStrictEqual([...SUPPORTED_LANGUAGES], ['en', 'zh', 'ko']);
 assert.strictEqual(normalizeLanguage('EN'), 'en');
 assert.strictEqual(normalizeLanguage('zh'), 'zh');
 assert.strictEqual(normalizeLanguage('KO'), 'ko');
-for (const invalid of ['', null, 'ja', 'korean']) assert.strictEqual(normalizeLanguage(invalid), 'en');
+for (const invalid of ['', null, 'ja', 'korean']) assert.strictEqual(normalizeLanguage(invalid), 'ko');
 
 assert.strictEqual(localeForLanguage('en'), 'en-US');
 assert.strictEqual(localeForLanguage('zh'), 'zh-CN');
 assert.strictEqual(localeForLanguage('ko'), 'ko-KR');
-assert.strictEqual(localeForLanguage('bad'), 'en-US');
+assert.strictEqual(localeForLanguage('bad'), 'ko-KR');
 
 const koreanSamples = {
   'More Settings': '추가 설정',
@@ -58,7 +58,7 @@ assert.deepStrictEqual(languageChoices, [['en', 'English'], ['zh', '中文'], ['
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'messs-language-'));
 try {
   const freshStore = new Store(tempRoot);
-  assert.strictEqual(freshStore.data.settings.language, 'en', 'Fresh installs must default to English.');
+  assert.strictEqual(freshStore.data.settings.language, 'ko', 'Fresh installs must default to Korean.');
   freshStore.data.settings.language = 'ko';
   freshStore.save();
   const restoredStore = new Store(tempRoot);
@@ -67,12 +67,18 @@ try {
   const raw = JSON.parse(fs.readFileSync(restoredStore.dataPath, 'utf8'));
   delete raw.settings.language;
   fs.writeFileSync(restoredStore.dataPath, JSON.stringify(raw), 'utf8');
-  assert.strictEqual(new Store(tempRoot).data.settings.language, 'en', 'Older stores without a language must fall back to English.');
+  assert.strictEqual(new Store(tempRoot).data.settings.language, 'ko', 'Older stores without a language must fall back to Korean.');
 } finally {
   fs.rmSync(tempRoot, { recursive: true, force: true });
 }
 
 assert.match(mainSource, /language:\s*currentLanguage\(\)/, 'Initial renderer state must use the normalized saved language.');
+assert.match(mainSource, /query:\s*\{\s*theme:\s*initialTheme,\s*language:\s*initialLanguage\s*\}/, 'The saved language must reach the renderer before its first paint.');
+const initialStateHandler = mainSource.slice(
+  mainSource.indexOf("ipcMain.handle('app:getInitialState'"),
+  mainSource.indexOf("ipcMain.handle('settings:setTheme'")
+);
+assert.doesNotMatch(initialStateHandler, /await\s+hydrateMissingMediaMetadata|await\s+syncGatewayAccount/, 'Slow startup maintenance must not block interaction.');
 assert.match(mainSource, /settings:setLanguage[\s\S]*?settings\.language\s*=\s*normalizeLanguage\(language\)[\s\S]*?scheduleSave\(\)/, 'Language IPC must normalize and persist Korean.');
 assert.match(chatSource, /function refreshChatLanguage\(\)/, 'Chat needs an immediate language refresh path.');
 assert.match(chatSource, /addEventListener\('messs:language-changed',\s*refreshChatLanguage\)/, 'Chat refresh must run whenever the language changes.');

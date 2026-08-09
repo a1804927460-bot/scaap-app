@@ -42,9 +42,9 @@ const DEFAULT_CATALOG_IMAGE = providerCatalog('image')[0];
 const DEFAULT_CATALOG_VIDEO = providerCatalog('video')[0];
 const DEFAULT_CATALOG_CHAT = providerCatalog('chat')[0];
 const AI_IMAGE_SIZES = new Set([
-  '1K', '2K', '4K', 'original',
+  '1K', '2K', '4K', 'Default', 'adaptive', 'original',
   '1024x1024', '1536x1024', '1024x1536', 'auto',
-  '720p', '1080p'
+  '512x512', '720p', '1080p'
 ]);
 const AI_IMAGE_QUALITIES = new Set(['low', 'medium', 'high', 'auto']);
 const AI_IMAGE_RATIOS = new Set([
@@ -80,6 +80,10 @@ function localizedMessage(en, zh, ko) {
 function setWindowBackgroundColor(theme) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.setBackgroundColor(WINDOW_BACKGROUND_COLORS[normalizeTheme(theme)]);
+}
+
+function revealMainWindow() {
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) mainWindow.show();
 }
 
 const qaRemoteDebugPort = String(process.env.MESSS_QA_REMOTE_DEBUG_PORT || '').trim();
@@ -156,7 +160,14 @@ const BUTLER_IMAGE_TOOL_IDS = new Set([
   'qwen-image-edit-plus',
   'qwen-image-layered',
   'super-upscale-v2',
-  'erase'
+  'erase',
+  'topaz-image-sharpen',
+  'topaz-image-sharpen-gen',
+  'topaz-image-enhance',
+  'topaz-image-enhance-gen',
+  'topaz-image-denoise',
+  'topaz-image-restore',
+  'topaz-image-lighting'
 ]);
 const BUTLER_IMAGE_TOOL_CREDITS = Object.freeze({
   'qwen-image-edit-plus': 2,
@@ -500,6 +511,7 @@ function listDesktopFilenames() {
 
 function createWindow() {
   const initialTheme = normalizeTheme(store && store.data && store.data.settings && store.data.settings.theme);
+  const initialLanguage = currentLanguage();
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -520,14 +532,12 @@ function createWindow() {
     }
   });
 
-  const revealWindow = () => {
-    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) mainWindow.show();
-  };
-  mainWindow.once('ready-to-show', revealWindow);
-  mainWindow.webContents.once('did-fail-load', revealWindow);
-  mainWindow.webContents.once('did-finish-load', () => setTimeout(revealWindow, 0));
+  // Do not expose a half-localized, non-interactive renderer. The renderer
+  // signals as soon as its controls are bound; the timeout is only a fallback.
+  mainWindow.webContents.once('did-fail-load', revealMainWindow);
+  mainWindow.webContents.once('did-finish-load', () => setTimeout(revealMainWindow, 8_000));
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'), {
-    query: { theme: initialTheme }
+    query: { theme: initialTheme, language: initialLanguage }
   });
   mainWindow.setMenu(null);
 
@@ -1217,22 +1227,70 @@ function normalizeButlerVideoOptions(metadata, requested = {}) {
     throw error;
   }
   const frameRate = Math.max(1, Math.min(240, Math.round(Number(requestedOutput.frameRate) || 30)));
-  const videoEncoder = ['H264', 'H265'].includes(String(requestedOutput.videoEncoder || '').trim())
+  const videoEncoder = [
+    'AV1', 'FFV1', 'H264', 'H265', 'ProRes', 'QuickTime Animation', 'QuickTime R210', 'QuickTime V210', 'VP9'
+  ].includes(String(requestedOutput.videoEncoder || '').trim())
     ? String(requestedOutput.videoEncoder).trim()
     : 'H264';
+  const requestedFilters = Array.isArray(input.filters) ? input.filters.slice(0, 2) : [];
+  const allowedFilterModels = new Set([
+    'aaa-9', 'ahq-12', 'alq-13', 'alqs-2', 'amq-13', 'amqs-2', 'ddv-3',
+    'dtd-4', 'dtds-2', 'dtv-4', 'dtvs-2', 'gcg-5', 'ghq-5', 'iris-2',
+    'iris-3', 'nxf-1', 'nyx-3', 'prob-4', 'rhea-1', 'rxl-1', 'thd-3',
+    'thf-4', 'thm-2', 'aion-1', 'apf-2', 'apo-8', 'chf-3', 'chr-2'
+  ]);
+  const filters = (requestedFilters.length ? requestedFilters : [{ model: 'prob-4' }]).map((filter) => {
+    const source = filter && typeof filter === 'object' && !Array.isArray(filter) ? filter : {};
+    const model = String(source.model || 'prob-4').trim().toLowerCase();
+    if (!allowedFilterModels.has(model)) {
+      const error = new Error('The selected Topaz enhancement model is not supported.');
+      error.code = 'invalid-video-tool-options';
+      throw error;
+    }
+    const normalized = { model };
+    if (['Progressive', 'Interlaced', 'ProgressiveInterlaced'].includes(source.videoType)) normalized.videoType = source.videoType;
+    if (['Auto', 'Manual', 'Relative'].includes(source.auto)) normalized.auto = source.auto;
+    if (['TopFirst', 'BottomFirst', 'Auto'].includes(source.fieldOrder)) normalized.fieldOrder = source.fieldOrder;
+    if (['None', 'Normal', 'Strong'].includes(source.focusFixLevel)) normalized.focusFixLevel = source.focusFixLevel;
+    const ranges = {
+      compression: [-1, 1], details: [-1, 1], prenoise: [0, 0.1], noise: [-1, 1],
+      halo: [-1, 1], preblur: [-1, 1], blur: [-1, 1], grain: [0, 0.1],
+      grainSize: [0, 5], recoverOriginalDetailValue: [0, 1], slowmo: [1, 16],
+      fps: [15, 240], duplicateThreshold: [0.001, 0.1]
+    };
+    Object.entries(ranges).forEach(([key, [minimum, maximum]]) => {
+      if (source[key] === undefined || source[key] === null || source[key] === '') return;
+      const value = Number(source[key]);
+      if (Number.isFinite(value)) normalized[key] = Math.max(minimum, Math.min(maximum, value));
+    });
+    if (source.duplicate !== undefined) normalized.duplicate = source.duplicate === true;
+    return normalized;
+  });
+  const audioCodec = ['AAC', 'AC3', 'PCM'].includes(String(requestedOutput.audioCodec || '').toUpperCase())
+    ? String(requestedOutput.audioCodec).toUpperCase()
+    : 'AAC';
+  const audioTransfer = ['Copy', 'Convert', 'None'].includes(String(requestedOutput.audioTransfer || ''))
+    ? String(requestedOutput.audioTransfer)
+    : 'Copy';
+  const dynamicCompressionLevel = ['Low', 'Mid', 'High'].includes(String(requestedOutput.dynamicCompressionLevel || ''))
+    ? String(requestedOutput.dynamicCompressionLevel)
+    : 'High';
+  const container = ['mp4', 'mov', 'mkv'].includes(String(requestedOutput.container || '').toLowerCase())
+    ? String(requestedOutput.container).toLowerCase()
+    : 'mp4';
   return {
     modelId: BUTLER_VIDEO_TOOL_ID,
-    filters: [{ model: 'prob-4' }],
+    filters,
     output: {
       resolution: { width, height },
       frameRate,
-      audioCodec: 'AAC',
-      audioTransfer: 'Copy',
+      audioCodec,
+      audioTransfer,
       videoEncoder,
-      videoProfile: 'Main',
-      dynamicCompressionLevel: 'High',
-      cropToFit: false,
-      container: 'mp4'
+      videoProfile: String(requestedOutput.videoProfile || (videoEncoder === 'H264' ? 'High' : 'Main')).trim().slice(0, 64),
+      dynamicCompressionLevel,
+      cropToFit: requestedOutput.cropToFit === true,
+      container
     },
     sourceDuration: Math.max(0, Math.min(21_600, Number(metadata && metadata.sourceDuration) || 0))
   };
@@ -1501,7 +1559,7 @@ function deriveProviderName(endpoint) {
 
 function normalizeImageProviders(value, fallbackEndpoint) {
   const source = Array.isArray(value) ? value : [];
-  return Array.from({ length: 10 }, (_, index) => {
+  return Array.from({ length: Math.max(10, source.length) }, (_, index) => {
     const saved = source[index] || {};
     const endpoint = normalizeProviderEndpoint(
       saved.endpoint || (index === 0 ? fallbackEndpoint || DEFAULT_IMAGE_ENDPOINT : '')
@@ -1519,7 +1577,7 @@ function normalizeImageProviders(value, fallbackEndpoint) {
 
 function normalizeVideoProviders(value, fallbackEndpoint, fallbackName) {
   const source = Array.isArray(value) ? value : [];
-  return Array.from({ length: 10 }, (_, index) => {
+  return Array.from({ length: Math.max(10, source.length) }, (_, index) => {
     const saved = source[index] || {};
     const endpoint = normalizeProviderEndpoint(
       saved.endpoint || (index === 0 ? fallbackEndpoint || DEFAULT_VIDEO_ENDPOINT : '')
@@ -1563,7 +1621,7 @@ function normalizeChatProviders(value, legacy = {}) {
     models: normalizeChatModels(legacy.model, DEFAULT_CATALOG_CHAT.models[0])
   };
   const effectiveSource = !hasConfiguredSource && legacyEndpoint ? [legacyProvider] : source;
-  return Array.from({ length: 10 }, (_, index) => {
+  return Array.from({ length: Math.max(10, effectiveSource.length) }, (_, index) => {
     const saved = effectiveSource[index] || {};
     const endpoint = normalizeProviderEndpoint(saved.endpoint);
     return {
@@ -1842,7 +1900,7 @@ async function getPublicAiMediaConfig() {
     const gatewayEndpoint = runtimeConfig.aiGatewayUrl;
     const cloudProviders = (kind) => providers
       .filter((provider) => provider && provider.kind === kind)
-      .slice(0, 10)
+      .slice(0, 100)
       .map((provider) => ({
         id: provider.id,
         name: provider.name,
@@ -2660,6 +2718,52 @@ function normalizeAiMediaGenerationRequest(request, kind) {
     if (!AI_IMAGE_QUALITIES.has(quality)) {
       throw invalidAiMediaOption('invalid-quality', 'The selected image quality is not supported.');
     }
+    const imageConfig = getAiMediaConfig();
+    const providerId = String(request.imageProviderId || imageConfig.activeImageProviderId || 'image-1').trim().toLowerCase();
+    const provider = imageConfig.imageProviders.find((entry) => entry.id === providerId)
+      || providerCatalog('image').find((entry) => entry.id === providerId)
+      || null;
+    const capabilities = provider && provider.capabilities && typeof provider.capabilities === 'object'
+      ? provider.capabilities
+      : {};
+    const referenceCount = Array.isArray(request.urls) ? request.urls.length : 0;
+    const configuredReferenceLimit = Number(capabilities.maxReferenceImages);
+    const maxReferenceImages = Number.isInteger(configuredReferenceLimit) && configuredReferenceLimit >= 0
+      ? Math.min(14, configuredReferenceLimit)
+      : 14;
+    const configuredReferenceMinimum = Number(capabilities.minReferenceImages);
+    const minReferenceImages = Number.isInteger(configuredReferenceMinimum) && configuredReferenceMinimum > 0
+      ? Math.min(14, configuredReferenceMinimum)
+      : 0;
+    if (referenceCount < minReferenceImages) {
+      throw invalidAiMediaOption('reference-required', `The selected image model requires at least ${minReferenceImages} reference image${minReferenceImages === 1 ? '' : 's'}.`);
+    }
+    if (referenceCount > maxReferenceImages) {
+      throw invalidAiMediaOption('too-many-references', `The selected image model supports at most ${maxReferenceImages} reference image${maxReferenceImages === 1 ? '' : 's'}.`);
+    }
+    const supportedSizes = new Set(
+      (referenceCount > 1 && Array.isArray(capabilities.multiReferenceSizes)
+        ? capabilities.multiReferenceSizes
+        : referenceCount > 0 && Array.isArray(capabilities.referenceSizes)
+          ? capabilities.referenceSizes
+        : capabilities.sizes || [])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+    );
+    if (supportedSizes.size && !supportedSizes.has(size)) {
+      throw invalidAiMediaOption('invalid-size', 'The selected image model does not support this resolution with the current references.');
+    }
+    const supportedRatios = new Set(
+      (referenceCount > 0 && Array.isArray(capabilities.referenceRatios)
+        ? capabilities.referenceRatios
+        : Array.isArray(capabilities.ratios) ? capabilities.ratios : [])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+    );
+    if (supportedRatios.size && !supportedRatios.has(aspectRatio)) {
+      throw invalidAiMediaOption('invalid-aspect-ratio', 'The selected image model does not support this aspect ratio.');
+    }
+    normalized.imageProviderId = providerId;
     normalized.size = size;
     normalized.quality = quality;
     normalized.aspectRatio = aspectRatio;
@@ -2721,6 +2825,13 @@ function normalizeAiMediaGenerationRequest(request, kind) {
     ? Math.min(14, configuredReferenceLimit)
     : 2;
   const providerName = String(provider.name || 'The selected video model').trim();
+  const configuredReferenceMinimum = Number(capabilities.minReferenceImages);
+  const referenceMinimum = Number.isInteger(configuredReferenceMinimum) && configuredReferenceMinimum > 0
+    ? Math.min(referenceLimit, configuredReferenceMinimum)
+    : 0;
+  if (referenceCount < referenceMinimum) {
+    throw invalidAiMediaOption('reference-required', `${providerName} requires at least ${referenceMinimum} reference image${referenceMinimum === 1 ? '' : 's'}.`);
+  }
   if (referenceCount > referenceLimit) {
     throw invalidAiMediaOption('too-many-references', `${providerName} supports at most ${referenceLimit} reference images.`);
   }
@@ -2796,6 +2907,7 @@ function normalizeButlerImageTool(value) {
 
 function normalizeButlerImageOptions(modelId, requested = {}) {
   const source = requested && typeof requested === 'object' && !Array.isArray(requested) ? requested : {};
+  const finiteOr = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
   if (modelId === 'qwen-image-edit-plus') {
     const prompt = String(source.prompt || '').trim();
     if (!prompt || Array.from(prompt).length > 1200) {
@@ -2804,7 +2916,25 @@ function normalizeButlerImageOptions(modelId, requested = {}) {
       throw error;
     }
     assertPromptHasNoSecrets(prompt);
-    return { prompt };
+    const width = Math.max(256, Math.min(2048, Math.round(Number(source.width) || 1024)));
+    const height = Math.max(256, Math.min(2048, Math.round(Number(source.height) || 768)));
+    if (width * height > 4_194_304) {
+      const error = new Error('The requested image-edit size is too large.');
+      error.code = 'invalid-image-tool-options';
+      throw error;
+    }
+    const seed = source.seed === '' || source.seed === undefined
+      ? undefined
+      : Math.max(0, Math.min(2_147_483_647, Math.round(finiteOr(source.seed, 0))));
+    return {
+      prompt,
+      width,
+      height,
+      numInferenceSteps: Math.max(1, Math.min(50, Math.round(Number(source.numInferenceSteps) || 30))),
+      guidanceScale: Math.max(0, Math.min(20, finiteOr(source.guidanceScale, 4))),
+      negativePrompt: String(source.negativePrompt ?? 'blurry, ugly').trim().slice(0, 2000),
+      ...(seed !== undefined ? { seed } : {})
+    };
   }
   if (modelId === 'qwen-image-layered') {
     const prompt = String(source.prompt || '').trim();
@@ -2816,19 +2946,117 @@ function normalizeButlerImageOptions(modelId, requested = {}) {
     if (prompt) assertPromptHasNoSecrets(prompt);
     return {
       prompt,
-      numLayers: Math.max(2, Math.min(8, Math.round(Number(source.numLayers) || 4)))
+      numLayers: Math.max(2, Math.min(8, Math.round(Number(source.numLayers) || 4))),
+      enableSafetyChecker: source.enableSafetyChecker !== false
     };
   }
   if (modelId === 'super-upscale-v2') {
     return {
       scale: Math.max(2, Math.min(4, Math.round(Number(source.scale) || 3))),
-      detail: Math.max(1, Math.min(3, Math.round(Number(source.detail) || 2)))
+      creativity: Math.max(0, Math.min(1, finiteOr(source.creativity, 0.2))),
+      detail: Math.max(0, Math.min(10, finiteOr(source.detail, 2))),
+      shapePreservation: Math.max(0, Math.min(1, finiteOr(source.shapePreservation, 0.1))),
+      promptSuffix: String(source.promptSuffix ?? 'high quality, highly detailed, high resolution, sharp').trim().slice(0, 1000),
+      negativePrompt: String(source.negativePrompt ?? 'blurry, low resolution, low quality, pixelated, compression artifacts').trim().slice(0, 2000),
+      guidanceScale: Math.max(0, Math.min(20, finiteOr(source.guidanceScale, 7.5))),
+      numInferenceSteps: Math.max(1, Math.min(50, Math.round(Number(source.numInferenceSteps) || 20))),
+      overrideSizeLimits: source.overrideSizeLimits === true
     };
+  }
+  if (modelId.startsWith('topaz-image-')) {
+    const options = {
+      faceEnhancement: source.faceEnhancement !== false,
+      faceEnhancementCreativity: Math.max(0, Math.min(1, finiteOr(source.faceEnhancementCreativity, 0))),
+      faceEnhancementStrength: Math.max(0, Math.min(1, finiteOr(source.faceEnhancementStrength, 0.8)))
+    };
+    if (modelId === 'topaz-image-enhance' || modelId === 'topaz-image-enhance-gen') {
+      const outputWidth = Math.max(128, Math.min(8192, Math.round(Number(source.outputWidth) || 1920)));
+      const outputHeight = Math.max(128, Math.min(8192, Math.round(Number(source.outputHeight) || 1080)));
+      if (outputWidth * outputHeight > 33_554_432) {
+        const error = new Error('The requested Topaz output is too large.');
+        error.code = 'invalid-image-tool-options';
+        throw error;
+      }
+      options.outputWidth = outputWidth;
+      options.outputHeight = outputHeight;
+      options.cropToFill = source.cropToFill === true;
+    }
+    return options;
   }
   return {
     maskDataUrl: source.maskDataUrl,
     maskWidth: Math.max(1, Math.min(5000, Math.round(Number(source.maskWidth) || 1))),
     maskHeight: Math.max(1, Math.min(5000, Math.round(Number(source.maskHeight) || 1)))
+  };
+}
+
+function normalizeButlerBackgroundOptions(requested = {}) {
+  const source = requested && typeof requested === 'object' && !Array.isArray(requested) ? requested : {};
+  const size = ['preview', 'medium', 'hd', 'full'].includes(String(source.size || '').toLowerCase())
+    ? String(source.size).toLowerCase()
+    : 'full';
+  return { size, crop: source.crop === true, despill: source.despill !== false };
+}
+
+function normalizeButler3dOptions(providerId, requested = {}) {
+  const source = requested && typeof requested === 'object' && !Array.isArray(requested) ? requested : {};
+  const enumValue = (value, fallback, allowed) => allowed.includes(String(value || '')) ? String(value) : fallback;
+  if (providerId === 'hunyuan3d') {
+    const model = enumValue(source.model, '3.0', ['3.0', '3.1']);
+    let generateType = enumValue(source.generateType, 'Normal', ['Normal', 'LowPoly', 'Geometry', 'Sketch']);
+    if (model === '3.1' && generateType === 'LowPoly') generateType = 'Normal';
+    const minimumFaces = generateType === 'LowPoly' ? 3_000 : 10_000;
+    return {
+      model,
+      generateType,
+      faceCount: Math.max(minimumFaces, Math.min(1_500_000, Math.round(Number(source.faceCount) || 500_000))),
+      enablePbr: generateType !== 'Geometry' && source.enablePbr === true,
+      ...(generateType === 'LowPoly'
+        ? { polygonType: enumValue(source.polygonType, 'triangle', ['triangle', 'quadrilateral']) }
+        : {})
+    };
+  }
+  if (providerId === 'hyper3d') {
+    const seed = source.seed === '' || source.seed === undefined ? undefined : Math.max(0, Math.min(2_147_483_647, Math.round(Number(source.seed) || 0)));
+    return {
+      quality: enumValue(source.quality, 'medium', ['high', 'medium', 'low', 'extra-low']),
+      material: enumValue(source.material, 'PBR', ['PBR', 'Shaded']),
+      tier: enumValue(source.tier, 'Regular', ['Regular', 'Sketch']),
+      useHyper: source.useHyper === true,
+      tPose: source.tPose === true,
+      ...(seed !== undefined ? { seed } : {})
+    };
+  }
+  const modelVersion = enumValue(source.modelVersion, 'v3.1-20260211', [
+    'P1-20260311', 'Turbo-v1.0-20250506', 'v3.1-20260211', 'v3.0-20250812', 'v2.5-20250123'
+  ]);
+  const supportsGeometryQuality = /^v3\.[01]-/.test(modelVersion);
+  const texture = source.texture !== false;
+  const modelSeed = source.modelSeed === '' || source.modelSeed === undefined
+    ? undefined
+    : Math.max(0, Math.min(2_147_483_647, Math.round(Number(source.modelSeed) || 0)));
+  const textureSeed = source.textureSeed === '' || source.textureSeed === undefined
+    ? undefined
+    : Math.max(0, Math.min(2_147_483_647, Math.round(Number(source.textureSeed) || 0)));
+  return {
+    modelVersion,
+    enableImageAutofix: source.enableImageAutofix !== false,
+    texture,
+    pbr: texture && source.pbr !== false,
+    textureAlignment: enumValue(source.textureAlignment, 'original_image', ['original_image', 'geometry']),
+    textureQuality: enumValue(source.textureQuality, 'standard', ['standard', 'detailed', 'extreme']),
+    orientation: enumValue(source.orientation, 'align_image', ['default', 'align_image']),
+    autoSize: source.autoSize !== false,
+    quad: source.quad === true,
+    smartLowPoly: source.smartLowPoly === true,
+    generateParts: source.generateParts === true,
+    exportUv: source.exportUv !== false,
+    ...(supportsGeometryQuality
+      ? { geometryQuality: enumValue(source.geometryQuality, 'standard', ['standard', 'detailed']) }
+      : {}),
+    ...(source.faceLimit ? { faceLimit: Math.max(1_000, Math.min(500_000, Math.round(Number(source.faceLimit)))) } : {}),
+    ...(modelSeed !== undefined ? { modelSeed } : {}),
+    ...(texture && textureSeed !== undefined ? { textureSeed } : {})
   };
 }
 
@@ -2856,6 +3084,7 @@ function normalizeButlerImageStatus(payload) {
       ? 0
       : Math.max(1_500, Math.min(30_000, Number(payload && payload.retryAfterMs) || 5_000)),
     ...(numeric('credits') !== undefined ? { credits: numeric('credits') } : {}),
+    ...(numeric('providerCost') !== undefined ? { providerCost: numeric('providerCost') } : {}),
     ...(numeric('creditsCharged') !== undefined ? { creditsCharged: numeric('creditsCharged') } : {}),
     ...(numeric('creditsReleased') !== undefined ? { creditsReleased: numeric('creditsReleased') } : {}),
     ...(numeric('availableCredits') !== undefined ? { availableCredits: numeric('availableCredits') } : {}),
@@ -3006,10 +3235,13 @@ function butlerFailure(error, fallbackMessage) {
     'invalid-butler-image': 'The selected image could not be prepared safely.',
     'invalid-image-mask': 'Draw a valid erase mask before starting.',
     'invalid-image-tool': 'The selected image tool is not supported.',
+    'invalid-image-tool-options': 'One or more image-tool settings are not supported.',
+    'invalid-background-options': 'The selected background-removal settings are not supported.',
     'image-tool-task-not-found': 'The image task was not found or has expired.',
     'image-tool-task-not-ready': 'The processed image is not ready yet.',
     'image-tool-failed': 'Image processing failed.',
     'invalid-3d-provider': 'The selected 3D provider is not supported.',
+    'invalid-three-d-options': 'One or more 3D settings are not supported by this model.',
     'invalid-task-token': 'The 3D task is invalid.',
     'invalid-glb': 'The 3D provider returned an invalid model file.',
     'invalid-background-image': 'The background service returned an invalid image.',
@@ -3022,6 +3254,11 @@ function butlerFailure(error, fallbackMessage) {
     'video-tool-task-not-ready': 'The enhanced video is not ready yet.',
     'video-upscale-failed': 'Video enhancement failed.',
     'insufficient-credits': 'There are not enough points for this Butler request.',
+    'ai302-unauthorized': 'The 302 gateway credential is invalid. Ask the administrator to update it.',
+    'ai302-balance-exhausted': 'The 302 account balance is insufficient.',
+    'ai302-rate-limited': 'The 302 service is busy. Please try again shortly.',
+    'ai302-upstream-error': 'The 302 service rejected this request.',
+    'tool-public-url-not-configured': 'The gateway public URL is required for this tool.',
     'media-too-large': 'The generated result exceeds the safe download size.',
     'rate-limited': 'Too many Butler requests. Please wait and try again.'
   };
@@ -3029,6 +3266,11 @@ function butlerFailure(error, fallbackMessage) {
 }
 
 function registerIpcHandlers() {
+  ipcMain.on('window:readyForInteraction', (event) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return;
+    revealMainWindow();
+  });
+
   ipcMain.on('window:syncThemeSurface', (event, theme) => {
     if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return;
     setWindowBackgroundColor(theme);
@@ -3036,8 +3278,18 @@ function registerIpcHandlers() {
 
   ipcMain.handle('app:getInitialState', async () => {
     pruneMissingFiles();
-    await hydrateMissingMediaMetadata();
-    await syncGatewayAccount();
+    // Disk probes and cloud refreshes are maintenance, not prerequisites for
+    // clicking the canvas. Defer them until after the interactive first paint.
+    setTimeout(() => {
+      syncGatewayAccount({ background: true }).catch((error) => {
+        console.warn('Deferred gateway account sync failed:', error && error.message || error);
+      });
+    }, 400);
+    setTimeout(() => {
+      hydrateMissingMediaMetadata().catch((error) => {
+        console.warn('Deferred media metadata hydration failed:', error && error.message || error);
+      });
+    }, 4_000);
     return {
       theme: store.data.settings.theme,
       language: currentLanguage(),
@@ -3565,15 +3817,16 @@ function registerIpcHandlers() {
     return { imported: importedNow, unlocked: Array.from(unlockedKeys) };
   });
 
-  ipcMain.handle('butler:removeBackground', async (_evt, fileId) => {
+  ipcMain.handle('butler:removeBackground', async (_evt, fileId, requestedOptions = {}) => {
     try {
       if (!aiGateway || !aiGateway.isConfigured()) {
         const error = new Error('Butler is not configured.');
         error.code = 'gateway-not-configured';
         throw error;
       }
+      const options = normalizeButlerBackgroundOptions(requestedOptions);
       const source = await butlerSourceImage(fileId);
-      const responseBuffer = await aiGateway.removeBackground(source.imageDataUrl);
+      const responseBuffer = await aiGateway.removeBackground(source.imageDataUrl, options);
       const pngBuffer = await sanitizeButlerBackgroundPng(responseBuffer);
       const record = await addButlerOutputFile(pngBuffer, source.file, 'remove-background');
       return { ok: true, file: fileToPayload(record) };
@@ -3638,6 +3891,41 @@ function registerIpcHandlers() {
     } catch (error) {
       const failure = butlerFailure(error, 'The image layer task could not be started.');
       console.error('Butler image layer failed:', failure.reason);
+      return failure;
+    }
+  });
+
+  ipcMain.handle('butler:image-tool-run', async (_evt, fileId, requestedModelId, requestedOptions = {}) => {
+    try {
+      if (!aiGateway || !aiGateway.isConfigured()) {
+        const error = new Error('Butler is not configured.');
+        error.code = 'gateway-not-configured';
+        throw error;
+      }
+      const modelId = normalizeButlerImageTool(requestedModelId);
+      if (!modelId.startsWith('topaz-image-')) {
+        const error = new Error('The selected asynchronous image tool is not supported.');
+        error.code = 'invalid-image-tool';
+        throw error;
+      }
+      const options = normalizeButlerImageOptions(modelId, requestedOptions);
+      const source = await butlerSourceImage(fileId);
+      const payload = await aiGateway.runImageTool(source.imageDataUrl, modelId, options);
+      const taskToken = normalizeButlerTaskToken(payload && payload.taskToken);
+      const status = normalizeButlerImageStatus(payload || { status: 'queued' });
+      rememberButlerImageTask(taskToken, {
+        sourceFileId: source.file.id,
+        modelId,
+        operation: modelId,
+        resultCount: status.resultCount,
+        credits: status.credits,
+        providerCost: status.providerCost,
+        status: status.status
+      });
+      return { ok: true, taskToken, ...status };
+    } catch (error) {
+      const failure = butlerFailure(error, 'The Topaz image task could not be started.');
+      console.error('Butler Topaz image task failed:', failure.reason);
       return failure;
     }
   });
@@ -3720,6 +4008,7 @@ function registerIpcHandlers() {
         status: status.status,
         resultCount: status.resultCount || existing.resultCount,
         credits: status.credits !== undefined ? status.credits : existing.credits,
+        providerCost: status.providerCost !== undefined ? status.providerCost : existing.providerCost,
         creditsCharged: status.creditsCharged !== undefined ? status.creditsCharged : existing.creditsCharged
       });
       if (['succeeded', 'failed'].includes(status.status) && runtimeConfig.gatewayConfigured) {
@@ -3798,7 +4087,7 @@ function registerIpcHandlers() {
     }
   });
 
-  ipcMain.handle('butler:create3d', async (_evt, fileId, requestedProviderId) => {
+  ipcMain.handle('butler:create3d', async (_evt, fileId, requestedProviderId, requestedOptions = {}) => {
     try {
       if (!aiGateway || !aiGateway.isConfigured()) {
         const error = new Error('Butler is not configured.');
@@ -3806,12 +4095,16 @@ function registerIpcHandlers() {
         throw error;
       }
       const providerId = normalizeButler3dProvider(requestedProviderId);
+      const options = normalizeButler3dOptions(providerId, requestedOptions);
       const source = await butlerSourceImage(fileId, { requireModelDimensions: true });
       const fallbackPrompt = 'Create a detailed 3D model matching the reference image.';
       const storedPrompt = String(source.file.aiGeneration && source.file.aiGeneration.prompt || '').trim();
       const prompt = storedPrompt ? storedPrompt.slice(0, 1024) : fallbackPrompt;
       assertPromptHasNoSecrets(prompt);
-      const payload = await aiGateway.create3d(providerId, source.imageDataUrl, prompt);
+      const requestedPrompt = String(requestedOptions && requestedOptions.prompt || '').trim();
+      const effectivePrompt = requestedPrompt || prompt;
+      assertPromptHasNoSecrets(effectivePrompt);
+      const payload = await aiGateway.create3d(providerId, source.imageDataUrl, effectivePrompt, options);
       const taskToken = normalizeButlerTaskToken(payload && payload.taskToken);
       const status = normalizeButler3dStatus(payload || { status: 'queued' });
       rememberButler3dTask(taskToken, {
@@ -4684,10 +4977,9 @@ function registerIpcHandlers() {
         message: localizedMessage('The media file could not be found.', '找不到要发送的文件。', '보낼 미디어 파일을 찾을 수 없습니다.')
       };
     }
-    // v0.0.3 generated-media records did not always include aiGeneration,
-    // while the renderer also recognises their stable source-folder marker.
-    // Keep the main-process permission check aligned with that UI contract.
-    if (!f.aiGeneration && f.sourceFolder !== 'AI Generated') {
+    // Photoshop keeps the generated-image workflow. After Effects accepts any
+    // archived canvas video, including imported local media.
+    if (normalizedTarget === 'photoshop' && !f.aiGeneration && f.sourceFolder !== 'AI Generated') {
       return {
         ok: false,
         reason: 'not-ai-media',

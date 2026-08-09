@@ -5,8 +5,10 @@ import fs from 'node:fs';
 import {
   downloadAi302ImageResult,
   eraseImageObjects,
+  pollTopazImageTool,
   pollQwenImageEdit,
   pollQwenImageLayered,
+  submitTopazImageTool,
   submitQwenImageEdit,
   submitQwenImageLayered,
   superUpscaleImage
@@ -257,6 +259,19 @@ test('Super Upscale V2 is synchronous, bounded, and releases its temporary relay
   );
 });
 
+test('image tools report a rejected 302 key without exposing it', async () => {
+  await assert.rejects(
+    () => superUpscaleImage({ imageDataUrl: imageDataUrl(rgbaPng()) }, {
+      apiKey: 'rejected-image-key',
+      publicBaseUrl: 'https://gateway.example.com',
+      fetchImpl: async () => new Response(null, { status: 401 })
+    }),
+    (error) => error && error.code === 'ai302-unauthorized'
+      && error.status === 503
+      && !String(error.message).includes('rejected-image-key')
+  );
+});
+
 test('image tools accept wrapped 302 task and synchronous result payloads', async () => {
   const source = rgbaPng();
   const created = await submitQwenImageEdit({
@@ -299,6 +314,166 @@ test('image tools accept wrapped 302 task and synchronous result payloads', asyn
     status: 'succeeded',
     retryAfterMs: 0,
     urls: ['https://file.302.ai/wrapped/upscaled.png']
+  });
+});
+
+test('Topaz image tools use documented endpoints, real provider credits, polling, and settlement', async () => {
+  const source = rgbaPng({ metadata: true });
+  const processId = '11111111-2222-4333-8444-555555555555';
+  let createBody;
+  const created = await submitTopazImageTool({
+    modelId: 'topaz-image-enhance',
+    imageDataUrl: imageDataUrl(source),
+    toolOptions: { outputWidth: 2048, outputHeight: 1536, cropToFill: true },
+    userId: 'topaz-image-owner'
+  }, {
+    apiKey: 'topaz-image-key',
+    taskSecret: 'topaz-image-task-secret',
+    publicBaseUrl: 'https://gateway.example.com',
+    accountingRequestId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    now: 1_800_000_000_000,
+    fetchImpl: async (url, options) => {
+      assert.equal(String(url), 'https://api.302.ai/topazlabs/image/v1/enhance/async');
+      assert.equal(options.headers.Authorization, 'Bearer topaz-image-key');
+      createBody = JSON.parse(options.body);
+      return jsonResponse({ process_id: processId, credits: 2 });
+    },
+    reserveCredits: async (request) => {
+      assert.deepEqual(request, {
+        requestId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+        providerId: 'topaz-image-enhance',
+        providerCost: 2
+      });
+      return { ok: true, credits: 6, availableCredits: 94 };
+    }
+  });
+  assert.equal(createBody.model, 'Standard V2');
+  assert.equal(createBody.output_format, 'png');
+  assert.equal(createBody.output_width, 2048);
+  assert.equal(createBody.output_height, 1536);
+  assert.equal(createBody.crop_to_fill, true);
+  assert.match(createBody.image, /^https:\/\/gateway\.example\.com\/v1\/tools\/assets\//);
+  assert.equal(created.providerCost, 2);
+  assert.equal(created.credits, 6);
+  assert.equal(created.taskToken.includes(processId), false);
+
+  const calls = [];
+  const completed = await pollTopazImageTool({
+    taskToken: created.taskToken,
+    userId: 'topaz-image-owner'
+  }, {
+    apiKey: 'topaz-image-key',
+    taskSecret: 'topaz-image-task-secret',
+    now: 1_800_000_005_000,
+    fetchImpl: async (url, options) => {
+      calls.push({ url: String(url), options });
+      if (String(url).includes('/status/')) {
+        return jsonResponse({ status: 'completed', progress: 100, credits: 2 });
+      }
+      return jsonResponse({ download_url: 'https://file.302.ai/topaz/enhanced.png' });
+    },
+    touchCredits: async ({ requestId }) => ({ ok: requestId === 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' }),
+    settleCredits: async ({ requestId, status }) => ({
+      ok: requestId === 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' && status === 'succeeded',
+      creditsCharged: 6
+    })
+  });
+  assert.equal(calls[0].url, `https://api.302.ai/topazlabs/image/v1/status/${processId}`);
+  assert.equal(calls[1].url, `https://api.302.ai/topazlabs/image/v1/download/${processId}`);
+  assert.deepEqual(completed, {
+    status: 'succeeded',
+    progress: 100,
+    retryAfterMs: 0,
+    urls: ['https://file.302.ai/topaz/enhanced.png'],
+    providerCost: 2,
+    creditsCharged: 6
+  });
+});
+
+test('Topaz generative sharpen and enhance use their distinct documented endpoints', async () => {
+  const source = imageDataUrl(rgbaPng());
+  const cases = [
+    {
+      modelId: 'topaz-image-sharpen-gen',
+      path: '/topazlabs/image/v1/sharpen-gen/async',
+      model: 'Super Focus V2',
+      requestId: '11111111-aaaa-4bbb-8ccc-111111111111'
+    },
+    {
+      modelId: 'topaz-image-enhance-gen',
+      path: '/topazlabs/image/v1/enhance-gen/async',
+      model: 'Redefine',
+      requestId: '22222222-aaaa-4bbb-8ccc-222222222222'
+    }
+  ];
+  for (const entry of cases) {
+    let body;
+    const created = await submitTopazImageTool({
+      modelId: entry.modelId,
+      imageDataUrl: source,
+      toolOptions: entry.modelId.endsWith('enhance-gen')
+        ? { outputWidth: 1600, outputHeight: 1200 }
+        : {},
+      userId: `owner-${entry.modelId}`
+    }, {
+      apiKey: 'topaz-generative-key',
+      taskSecret: 'topaz-generative-secret',
+      publicBaseUrl: 'https://gateway.example.com',
+      accountingRequestId: entry.requestId,
+      now: 1_800_000_000_000,
+      fetchImpl: async (url, options) => {
+        assert.equal(String(url), `https://api.302.ai${entry.path}`);
+        body = JSON.parse(options.body);
+        return jsonResponse({ process_id: entry.requestId, credits: 1 });
+      },
+      reserveCredits: async ({ providerId, providerCost }) => {
+        assert.equal(providerId, entry.modelId);
+        assert.equal(providerCost, 1);
+        return { ok: true, credits: 3, availableCredits: 97 };
+      }
+    });
+    assert.equal(body.model, entry.model);
+    assert.equal(created.providerCost, 1);
+    assert.equal(created.credits, 3);
+    if (entry.modelId.endsWith('enhance-gen')) {
+      assert.equal(body.output_width, 1600);
+      assert.equal(body.output_height, 1200);
+    }
+  }
+});
+
+test('Topaz image failure settles as released credits', async () => {
+  const processId = '66666666-7777-4888-8999-aaaaaaaaaaaa';
+  const created = await submitTopazImageTool({
+    modelId: 'topaz-image-denoise',
+    imageDataUrl: imageDataUrl(rgbaPng()),
+    userId: 'topaz-failed-owner'
+  }, {
+    apiKey: 'topaz-failed-key',
+    taskSecret: 'topaz-failed-secret',
+    publicBaseUrl: 'https://gateway.example.com',
+    now: 1_800_000_000_000,
+    fetchImpl: async () => jsonResponse({ process_id: processId, credits: 1 }),
+    reserveCredits: async () => ({ ok: true, credits: 3, availableCredits: 97 })
+  });
+  const failed = await pollTopazImageTool({
+    taskToken: created.taskToken,
+    userId: 'topaz-failed-owner'
+  }, {
+    apiKey: 'topaz-failed-key',
+    taskSecret: 'topaz-failed-secret',
+    now: 1_800_000_003_000,
+    fetchImpl: async () => jsonResponse({ status: 'failed', progress: 40, credits: 1 }),
+    touchCredits: async () => ({ ok: true }),
+    settleCredits: async ({ status }) => ({ ok: status === 'failed', creditsReleased: 3 })
+  });
+  assert.deepEqual(failed, {
+    status: 'failed',
+    progress: 40,
+    retryAfterMs: 0,
+    urls: [],
+    providerCost: 1,
+    creditsReleased: 3
   });
 });
 

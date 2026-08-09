@@ -402,6 +402,38 @@
     return packed;
   }
 
+  function packUniformGrid(items, options = {}) {
+    if (!Array.isArray(items) || !items.length) return [];
+    const gap = Number.isFinite(options.gap) ? Math.max(0, options.gap) : 20;
+    const width = Math.max(1, Number(options.width) || 280);
+    const height = Math.max(1, Number(options.height) || 168);
+    const originX = Number.isFinite(options.originX)
+      ? options.originX
+      : Math.min(...items.map((item) => Number(item.x) || 0));
+    const originY = Number.isFinite(options.originY)
+      ? options.originY
+      : Math.min(...items.map((item) => Number(item.y) || 0));
+    const columns = Math.max(1, Math.min(
+      items.length,
+      Number.isFinite(options.columns)
+        ? Math.floor(options.columns)
+        : Math.max(1, Math.round(Math.sqrt(items.length * 1.5)))
+    ));
+    const ordered = items.map((item, index) => ({ ...item, _packIndex: index })).sort((a, b) => (
+      (Number(a.y) || 0) - (Number(b.y) || 0) ||
+      (Number(a.x) || 0) - (Number(b.x) || 0) ||
+      a._packIndex - b._packIndex
+    ));
+    return ordered.map((item, index) => ({
+      id: item.id,
+      sourceIndex: item._packIndex,
+      x: Math.round(originX + (index % columns) * (width + gap)),
+      y: Math.round(originY + Math.floor(index / columns) * (height + gap)),
+      width,
+      height
+    }));
+  }
+
   return {
     createSpatialIndex,
     clampZoom,
@@ -416,6 +448,7 @@
     fitAspectRatio,
     estimateRefreshRate,
     gridAroundCenter,
-    packRows
+    packRows,
+    packUniformGrid
   };
 });

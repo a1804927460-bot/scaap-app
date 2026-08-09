@@ -46,10 +46,13 @@ function withEnvironment(values, callback) {
 
 test('gateway quote matches the desktop image table', () => {
   assert.equal(quoteUsage('image', { providerId: 'image-1' }).credits, 16);
-  assert.equal(quoteUsage('image', { providerId: 'image-2' }).credits, 7);
+  assert.equal(quoteUsage('image', { providerId: 'image-2' }).credits, 12);
   assert.equal(quoteUsage('image', { providerId: 'image-3' }).credits, 5);
   assert.equal(quoteUsage('image', { providerId: 'image-4' }).credits, 4);
-  assert.equal(quoteUsage('image', { providerId: 'image-5' }).credits, 8);
+  assert.equal(quoteUsage('image', { providerId: 'image-5' }).credits, 4);
+  assert.equal(quoteUsage('image', { providerId: 'image-9' }).credits, 6);
+  assert.equal(quoteUsage('image', { providerId: 'image-1', size: '4K' }).credits, 28);
+  assert.equal(quoteUsage('image', { providerId: 'image-2', size: '1K' }).credits, 8);
   assert.deepEqual(quoteUsage('image', { providerId: 'image-6', quality: 'high' }), {
     kind: 'image', providerId: 'image-6', credits: 28, resolution: 'high', quality: 'high', duration: null, requiresActivation: false
   });
@@ -365,7 +368,7 @@ test('legacy activation denial opens only the current account and retries the id
     });
 
     assert.equal(calls.length, 3);
-    assert.match(calls[0].url, /\/rpc\/reserve_ai_credits$/);
+    assert.match(calls[0].url, /\/rpc\/reserve_nano_banana_credits$/);
     assert.equal(
       calls[1].url,
       `https://trmbhcniijedpmohkbzx.supabase.co/rest/v1/ai_credit_accounts?user_id=eq.${userId}&select=user_id%2Coverseas_unlocked`
@@ -374,7 +377,7 @@ test('legacy activation denial opens only the current account and retries the id
     assert.equal(calls[1].options.headers.apikey, 'sb_secret_test');
     assert.equal(calls[1].options.headers.Prefer, 'return=representation');
     assert.deepEqual(calls[1].body, { overseas_unlocked: true });
-    assert.match(calls[2].url, /\/rpc\/reserve_ai_credits$/);
+    assert.match(calls[2].url, /\/rpc\/reserve_nano_banana_credits$/);
     assert.equal(calls[0].options.body, calls[2].options.body);
     assert.equal(result.ok, true);
     assert.equal(result.availableCredits, 84);
@@ -388,7 +391,7 @@ test('failed legacy account update keeps the activation denial and does not retr
     const result = await reserveUsage(userId, 'image', 'request-one', { providerId: 'image-2' }, async (url, options) => {
       calls.push({ url, options });
       return calls.length === 1
-        ? jsonResponse({ ok: false, reason: 'activation-required', credits: 7, availableCredits: 100 })
+        ? jsonResponse({ ok: false, reason: 'activation-required', credits: 12, availableCredits: 100 })
         : jsonResponse({ message: 'synthetic update failure' }, 500);
     });
 
@@ -396,7 +399,7 @@ test('failed legacy account update keeps the activation denial and does not retr
     assert.match(calls[1].url, new RegExp(`ai_credit_accounts\\?user_id=eq\\.${userId}&select=`));
     assert.equal(result.ok, false);
     assert.equal(result.reason, 'activation-required');
-    assert.equal(result.credits, 7);
+    assert.equal(result.credits, 12);
   });
 });
 
@@ -492,6 +495,17 @@ test('GPT Image 2 forward migration preserves async reservations and recomputes 
   assert.match(migration, /revoke all on function public\.reserve_ai_credits/i);
   assert.match(migration, /grant execute on function public\.reserve_ai_credits[\s\S]*?to service_role/i);
   assert.doesNotMatch(migration, /activation-required/i);
+});
+
+test('Nano Banana migration enforces provider and resolution pricing server-side', () => {
+  const migration = fs.readFileSync(new URL('../../supabase/migrations/202608090003_nano_banana_credits.sql', import.meta.url), 'utf8');
+  assert.match(migration, /create or replace function public\.reserve_nano_banana_credits/i);
+  assert.match(migration, /normalized_provider not in \('image-1', 'image-2', 'image-5', 'image-9'\)/i);
+  assert.match(migration, /normalized_provider = 'image-1'[\s\S]*?when '4k' then 28 else 16/i);
+  assert.match(migration, /normalized_provider = 'image-2'[\s\S]*?not in \('1k', '2k', '4k'\)[\s\S]*?when '1k' then 8[\s\S]*?when '4k' then 16 else 12/i);
+  assert.doesNotMatch(migration, /0\.5k/i);
+  assert.match(migration, /p_expected_credits is not null and p_expected_credits <> quoted_credits/i);
+  assert.match(migration, /grant execute on function public\.reserve_nano_banana_credits[\s\S]*?to service_role/i);
 });
 
 test('Butler video migration enforces retail pricing and keeps provider-cost audit data server-only', () => {

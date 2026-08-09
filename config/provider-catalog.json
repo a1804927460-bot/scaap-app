@@ -1,77 +1,86 @@
 {
-  "version": 17,
+  "version": 22,
   "providers": [
     {
       "id": "image-1",
       "kind": "image",
       "name": "Nano Banana Pro",
-      "endpoint": "https://api.302.ai/google/v1/models/gemini-3-pro-image-preview",
-      "protocol": "gemini-image",
+      "endpoint": "https://api.302.ai/ws/api/v3/google/nano-banana-pro/text-to-image",
+      "protocol": "ai302-nano-banana-v3",
       "requiresActivation": false,
       "capabilities": {
-        "sizes": ["Default"],
-        "ratios": ["auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
+        "sizes": ["1K", "2K", "4K"],
+        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"],
+        "maxReferenceImages": 14,
+        "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
       },
       "keyEnv": "AI302_KEY"
     },
     {
       "id": "image-2",
       "kind": "image",
-      "name": "Nanobanana Pro SE",
-      "endpoint": "https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent",
-      "protocol": "gemini-image",
+      "name": "Nano Banana 2",
+      "endpoint": "https://api.302.ai/ws/api/v3/google/nano-banana-2/text-to-image",
+      "protocol": "ai302-nano-banana-v3",
       "requiresActivation": false,
       "capabilities": {
         "sizes": ["1K", "2K", "4K"],
-        "ratios": ["auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
+        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"],
+        "maxReferenceImages": 14,
+        "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
       },
-      "keyEnv": "QUICKROUTER_API_KEY"
+      "keyEnv": "AI302_KEY"
     },
     {
       "id": "image-3",
       "kind": "image",
-      "name": "Seedream 5.0 Lite",
-      "endpoint": "https://api.quickrouter.ai/v1/images/generations",
+      "name": "Seedream 5.0",
+      "endpoint": "https://api.302.ai/doubao/images/generations",
       "model": "doubao-seedream-5-0-260128",
       "protocol": "openai-image",
       "requiresActivation": false,
       "capabilities": {
         "sizes": ["2K", "4K"],
-        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
+        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9"],
+        "maxReferenceImages": 10,
+        "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
       },
-      "keyEnv": "QUICKROUTER_API_KEY"
+      "keyEnv": "AI302_KEY"
     },
     {
       "id": "image-4",
       "kind": "image",
-      "name": "Midjourney",
-      "endpoint": "https://api.quickrouter.ai/mj/submit/imagine",
+      "name": "Midjourney Turbo",
+      "endpoint": "https://api.302.ai/mj-turbo/submit/imagine",
       "protocol": "midjourney-imagine",
       "requiresActivation": false,
       "capabilities": {
         "sizes": ["1K"],
-        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
+        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"],
+        "maxReferenceImages": 8
       },
-      "keyEnv": "QUICKROUTER_API_KEY"
+      "keyEnv": "AI302_KEY"
     },
     {
       "id": "image-5",
       "kind": "image",
-      "name": "Nano banana2",
-      "endpoint": "https://api.quickrouter.ai/v1beta/models/gemini-3.1-flash-image:generateContent",
-      "protocol": "gemini-image",
+      "name": "Nano Banana 2 Lite",
+      "endpoint": "https://api.302.ai/ws/api/v3/google/nano-banana-2-lite/text-to-image",
+      "protocol": "ai302-nano-banana-v3",
       "requiresActivation": false,
       "capabilities": {
-        "sizes": ["1K", "2K", "4K"],
-        "ratios": ["auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
+        "sizes": ["Default"],
+        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"],
+        "maxReferenceImages": 14,
+        "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
       },
-      "keyEnv": "QUICKROUTER_API_KEY"
+      "keyEnv": "AI302_KEY"
     },
     {
       "id": "image-6",
       "kind": "image",
       "name": "GPT Image 2",
-      "endpoint": "https://api.quickrouter.ai/v1/images/generations",
+      "endpoint": "https://api.302.ai/v1/images/generations",
       "model": "gpt-image-2",
       "protocol": "openai-image",
       "requiresActivation": false,
@@ -84,7 +93,7 @@
         "referenceDataUrlsOnly": true,
         "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
       },
-      "keyEnv": "QUICKROUTER_API_KEY"
+      "keyEnv": "AI302_KEY"
     },
     {
       "id": "image-7",
@@ -120,6 +129,135 @@
         "enhancePrompt": true,
         "seed": true,
         "styleStrength": true,
+        "maxReferenceImages": 0
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "image-9",
+      "kind": "image",
+      "name": "Nano Banana",
+      "endpoint": "https://api.302.ai/302/submit/gemini-2.5-flash-image-async",
+      "protocol": "ai302-nano-banana-legacy",
+      "requiresActivation": false,
+      "capabilities": {
+        "sizes": ["Default"],
+        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"],
+        "referenceRatios": ["auto"],
+        "maxReferenceImages": 14,
+        "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "image-10",
+      "kind": "image",
+      "name": "Seedream 5.0 Pro",
+      "endpoint": "https://api.302.ai/doubao/images/generations",
+      "model": "doubao-seedream-5-0-pro-260628",
+      "protocol": "openai-image",
+      "requiresActivation": false,
+      "capabilities": {
+        "sizes": ["2K", "4K"],
+        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9"],
+        "maxReferenceImages": 10,
+        "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "image-11",
+      "kind": "image",
+      "name": "Seedream 4.5",
+      "endpoint": "https://api.302.ai/doubao/images/generations",
+      "model": "doubao-seedream-4-5-251128",
+      "protocol": "openai-image",
+      "requiresActivation": false,
+      "capabilities": {
+        "sizes": ["2K", "4K"],
+        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9"],
+        "maxReferenceImages": 10,
+        "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "image-12",
+      "kind": "image",
+      "name": "Seedream 4.0",
+      "endpoint": "https://api.302.ai/doubao/images/generations",
+      "model": "doubao-seedream-4-0-250828",
+      "protocol": "openai-image",
+      "requiresActivation": false,
+      "capabilities": {
+        "sizes": ["1K", "2K", "4K"],
+        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9"],
+        "maxReferenceImages": 10,
+        "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "image-13",
+      "kind": "image",
+      "name": "Seedream 3.0",
+      "endpoint": "https://api.302.ai/doubao/images/generations",
+      "model": "doubao-seedream-3-0-t2i-250415",
+      "protocol": "openai-image",
+      "requiresActivation": false,
+      "capabilities": {
+        "sizes": ["1024x1024"],
+        "ratios": ["1:1"],
+        "maxReferenceImages": 0
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "image-14",
+      "kind": "image",
+      "name": "SeedEdit 3.0",
+      "endpoint": "https://api.302.ai/doubao/images/generations",
+      "model": "doubao-seededit-3-0-i2i-250628",
+      "protocol": "openai-image",
+      "requiresActivation": false,
+      "capabilities": {
+        "sizes": ["adaptive"],
+        "ratios": ["auto"],
+        "minReferenceImages": 1,
+        "maxReferenceImages": 1,
+        "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "image-15",
+      "kind": "image",
+      "name": "Kling Image 2",
+      "endpoint": "https://api.302.ai/klingai/v1/images/generations",
+      "resultEndpoint": "https://api.302.ai/klingai/v1/images/generations",
+      "model": "kling-v2",
+      "protocol": "ai302-kling-image",
+      "requiresActivation": false,
+      "capabilities": {
+        "sizes": ["1K", "2K"],
+        "ratios": ["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3", "21:9"],
+        "multiReferenceSizes": ["1K"],
+        "maxReferenceImages": 4,
+        "referenceMimeTypes": ["image/png", "image/jpeg"]
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "image-16",
+      "kind": "image",
+      "name": "Jimeng Drawing 3.0",
+      "endpoint": "https://api.302.ai/doubao/drawing",
+      "model": "general_v3.0",
+      "protocol": "ai302-jimeng-drawing",
+      "requiresActivation": false,
+      "capabilities": {
+        "sizes": ["512x512", "1024x1024"],
+        "ratios": ["1:1"],
         "maxReferenceImages": 0
       },
       "keyEnv": "AI302_KEY"
@@ -183,6 +321,126 @@
       "keyEnv": "AI302_KEY"
     },
     {
+      "id": "video-4",
+      "kind": "video",
+      "name": "Seedance 2.0 Fast",
+      "endpoint": "https://api.302.ai/volcengine/api/v3/contents/generations/tasks",
+      "resultEndpoint": "https://api.302.ai/volcengine/api/v3/contents/generations/tasks",
+      "model": "doubao-seedance-2-0-fast-260128",
+      "protocol": "seedance-video-v3",
+      "requiresActivation": false,
+      "capabilities": {
+        "resolutions": ["480P", "720P"],
+        "durations": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "ratios": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"],
+        "frameReferenceRatios": ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+        "maxReferenceImages": 9,
+        "referenceRole": "reference_image",
+        "generateAudio": true
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "video-5",
+      "kind": "video",
+      "name": "Seedance 1.5 Pro",
+      "endpoint": "https://api.302.ai/doubao/doubao-seedance",
+      "resultEndpoint": "https://api.302.ai/doubao/doubao-seedance",
+      "model": "doubao-seedance-1-5-pro-251215",
+      "protocol": "seedance-video-v3",
+      "requiresActivation": false,
+      "capabilities": {
+        "resolutions": ["480P", "720P"],
+        "durations": [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        "ratios": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+        "frameReferenceRatios": ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+        "referenceResolutions": ["480P", "720P"],
+        "maxReferenceImages": 2,
+        "referenceRoles": ["first_frame", "last_frame"],
+        "generateAudio": true,
+        "serviceTier": "default"
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "video-6",
+      "kind": "video",
+      "name": "Seedance 1.0 Pro",
+      "endpoint": "https://api.302.ai/doubao/doubao-seedance",
+      "resultEndpoint": "https://api.302.ai/doubao/doubao-seedance",
+      "model": "doubao-seedance-1-0-pro-250528",
+      "protocol": "seedance-video-v3",
+      "requiresActivation": false,
+      "capabilities": {
+        "resolutions": ["480P", "720P", "1080P"],
+        "durations": [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        "ratios": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+        "frameReferenceRatios": ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+        "referenceResolutions": ["480P", "720P"],
+        "maxReferenceImages": 2,
+        "referenceRoles": ["first_frame", "last_frame"],
+        "generateAudio": false,
+        "serviceTier": "default"
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "video-7",
+      "kind": "video",
+      "name": "Seedance 1.0 Lite",
+      "endpoint": "https://api.302.ai/doubao/doubao-seedance",
+      "resultEndpoint": "https://api.302.ai/doubao/doubao-seedance",
+      "model": "doubao-seedance-1-0-lite-i2v-250428",
+      "protocol": "seedance-video-v3",
+      "requiresActivation": false,
+      "capabilities": {
+        "resolutions": ["480P", "720P"],
+        "durations": [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        "ratios": ["16:9", "4:3", "1:1", "21:9"],
+        "frameReferenceRatios": ["adaptive", "16:9", "4:3", "1:1", "21:9"],
+        "referenceResolutions": ["480P", "720P"],
+        "minReferenceImages": 1,
+        "maxReferenceImages": 2,
+        "referenceRoles": ["first_frame", "last_frame"],
+        "generateAudio": false
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "video-8",
+      "kind": "video",
+      "name": "Jimeng Video 3.0",
+      "endpoint": "https://api.302.ai/doubao/drawing/jimengv30",
+      "resultEndpoint": "https://api.302.ai/doubao/drawing/jimengv30_result",
+      "protocol": "jimeng-video-v30",
+      "requiresActivation": false,
+      "capabilities": {
+        "resolutions": ["720P", "1080P"],
+        "durations": [5, 10],
+        "ratios": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+        "frameReferenceRatios": ["adaptive"],
+        "maxReferenceImages": 2
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "video-9",
+      "kind": "video",
+      "name": "Jimeng Video 3.0 Pro",
+      "endpoint": "https://api.302.ai/doubao/drawing/jimeng_ti2v_v30_pro",
+      "resultEndpoint": "https://api.302.ai/doubao/drawing/jimeng_ti2v_v30_pro_result",
+      "protocol": "jimeng-video-v30-pro",
+      "requiresActivation": false,
+      "capabilities": {
+        "resolutions": ["1080P"],
+        "durations": [5, 10],
+        "ratios": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+        "frameReferenceRatios": ["adaptive"],
+        "maxReferenceImages": 1
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
       "id": "chat-1",
       "kind": "chat",
       "name": "Messs AI",
@@ -190,7 +448,7 @@
       "models": ["gemini-3.1-flash-lite", "gemini-3.6-flash"],
       "protocol": "gemini",
       "requiresActivation": false,
-      "keyEnv": "QUICKROUTER_API_KEY"
+      "keyEnv": "AI302_KEY"
     },
     {
       "id": "chat-2",

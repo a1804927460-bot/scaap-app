@@ -48,8 +48,18 @@ assert.ok(catalog.version >= 8);
 assert.deepEqual(
   catalog.providers.filter((provider) => provider.kind === 'image').map((provider) => provider.name),
   [
-    'Nano Banana Pro', 'Nanobanana Pro SE', 'Seedream 5.0 Lite', 'Midjourney',
-    'Nano banana2', 'GPT Image 2', 'Higgsfield Soul Standard', 'Higgsfield Soul'
+    'Nano Banana Pro', 'Nano Banana 2', 'Seedream 5.0', 'Midjourney Turbo',
+    'Nano Banana 2 Lite', 'GPT Image 2', 'Higgsfield Soul Standard', 'Higgsfield Soul',
+    'Nano Banana', 'Seedream 5.0 Pro', 'Seedream 4.5', 'Seedream 4.0',
+    'Seedream 3.0', 'SeedEdit 3.0', 'Kling Image 2', 'Jimeng Drawing 3.0'
+  ]
+);
+assert.deepEqual(
+  catalog.providers.filter((provider) => provider.kind === 'video').map((provider) => provider.name),
+  [
+    'MiniMax H3', 'Seedance 2.0', 'Seedance 2.5', 'Seedance 2.0 Fast',
+    'Seedance 1.5 Pro', 'Seedance 1.0 Pro', 'Seedance 1.0 Lite',
+    'Jimeng Video 3.0', 'Jimeng Video 3.0 Pro'
   ]
 );
 assert.equal(catalog.providers.find((provider) => provider.name === 'MiniMax H3').requiresActivation, false);

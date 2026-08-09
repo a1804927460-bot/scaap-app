@@ -11,6 +11,10 @@ const workspaceSource = fs.readFileSync(path.join(root, 'src', 'js', 'canvas-wor
 const boardStyles = fs.readFileSync(path.join(root, 'src', 'styles', 'main.css'), 'utf8');
 const indexHtml = fs.readFileSync(path.join(root, 'src', 'index.html'), 'utf8');
 const mainSource = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+const sidebarSource = fs.readFileSync(path.join(root, 'src', 'js', 'sidebar.js'), 'utf8');
+const previewSource = fs.readFileSync(path.join(root, 'src', 'js', 'preview-canvas.js'), 'utf8');
+const contextMenuSource = fs.readFileSync(path.join(root, 'src', 'js', 'context-menu.js'), 'utf8');
+const themeSource = fs.readFileSync(path.join(root, 'src', 'styles', 'theme.css'), 'utf8');
 
 const clipboardPaths = [
   'C:\\Users\\Example\\Pictures\\copied image.png',
@@ -31,8 +35,33 @@ assert.match(
 );
 assert.match(
   boardSource,
+  /function recordBoardMoveHistory[\s\S]*?before:[\s\S]*?after:[\s\S]*?function undoBoardMove[\s\S]*?applyBoardMoveHistory\(entry, 'before'\)/,
+  'Board moves must retain their previous coordinates for Ctrl+Z.'
+);
+assert.match(
+  boardSource,
+  /if \(moved\) \{[\s\S]*?recordBoardMoveHistory\(groupStartPositions\)[\s\S]*?shortcutKey === 'z'[\s\S]*?undoBoardMove\(\)/,
+  'Completed single or grouped drags must become one keyboard undo step.'
+);
+assert.match(
+  boardSource,
+  /function persistBoardMoveHistory[\s\S]*?historyPersistPromise[\s\S]*?upsertBoardItems/,
+  'Rapid undo and redo persistence must remain ordered.'
+);
+assert.match(
+  boardSource,
   /aiImagePopoverClickCloser = \(e\) => \{[\s\S]*?if \(pop\.contains\(e\.target\)\) return;[\s\S]*?if \(e\.target\.closest\('#board-canvas \.board-item-image'\)\) return;[\s\S]*?closeAiImagePopover\(\);/,
   'Selecting or removing an image reference must keep the AI composer open while other outside clicks still close it.'
+);
+assert.match(
+  boardSource,
+  /function supportedImageRatios\([\s\S]*?capabilities\.referenceRatios[\s\S]*?function supportedImageAspectRatio/,
+  'Image generation must switch to provider-documented reference-image ratios.'
+);
+assert.match(
+  boardSource,
+  /submitBoardQuickGeneration[\s\S]*?supportedImageSize\(config\.imageSize, imageCapabilities\)[\s\S]*?supportedImageAspectRatio\(original\.aspectRatio, imageCapabilities, referenceFileIds\.length > 0\)/,
+  'Quick image generation must normalize resolution and ratio through the selected provider capabilities.'
 );
 assert.match(
   boardSource,
@@ -69,6 +98,11 @@ assert.match(
   workspaceSource,
   /function showCanvasWorkspace[\s\S]*?restoreBoardViewport\(activeCanvasId\(\)\);[\s\S]*?resetBoardZoomTo100\(\);/,
   'Returning from the canvas library must always enter the canvas at 100%.'
+);
+assert.match(
+  workspaceSource,
+  /function showCanvasLibrary\(\)[\s\S]*?exitBoardFullscreen\(\)[\s\S]*?panel\.classList\.add\('is-canvas-library'\)/,
+  'Leaving a maximized canvas for the library must restore compact mode before fullscreen controls are hidden.'
 );
 assert.match(
   boardSource,
@@ -117,6 +151,21 @@ assert.match(
   /image\.dataset\.quality === 'full' && quality === 'thumb'/,
   'Decoded full-resolution images must not downgrade and flash during later zoom changes.'
 );
+assert.match(
+  boardSource,
+  /function preloadBoardFullImage[\s\S]*?await image\.decode\(\)[\s\S]*?cacheBoardFullImage\(source, image\)/,
+  'Full images must finish decoding in the background before replacing thumbnails.'
+);
+assert.match(
+  boardSource,
+  /function scheduleBoardFullImagePrewarm[\s\S]*?prewarmMountedFullImages[\s\S]*?scheduleBoardFullImagePrewarm\(Board\.zoomTarget\.zoom\)/,
+  'Zoom targets must prewarm full images before the visible quality threshold is crossed.'
+);
+assert.match(
+  boardSource,
+  /const quality = cachedBoardFullImage\(fullSource\) \? 'full' : 'thumb';[\s\S]*?img\.loading = 'eager'/,
+  'Remounted images must reuse decoded full images instead of flashing back to a lazy thumbnail.'
+);
 const transformSource = boardSource.slice(
   boardSource.indexOf('function applyBoardTransform'),
   boardSource.indexOf('function setBoardZoomTarget')
@@ -136,6 +185,50 @@ assert.match(
   /if \(useOverview\) \{[\s\S]*?drawBoardOverview\(visibleIds, rect\);[\s\S]*?clearMountedBoardItems\(\);/,
   'The overview fallback must paint before dense DOM content is removed.'
 );
+assert.match(
+  boardSource,
+  /const BOARD_OVERVIEW_IMAGE_LIMIT = 1600;[\s\S]*?const BOARD_OVERVIEW_IMAGE_CONCURRENCY = 16;/,
+  'Dense boards must retain enough overview thumbnails without starting every decoder at once.'
+);
+assert.match(
+  boardSource,
+  /function boardOverviewThumbnailSource\(file\)[\s\S]*?file\.thumbUrl[\s\S]*?file\.modelPreviewUrl[\s\S]*?function processBoardOverviewImageQueue/,
+  'Overview rendering must include video posters and model previews in addition to images.'
+);
+assert.match(
+  boardSource,
+  /BOARD_OVERVIEW_IMAGE_MAX_EDGE[\s\S]*?createImageBitmap\(image[\s\S]*?cacheBoardOverviewImage/,
+  'Dense-board thumbnails must be downsampled before entering the long-lived overview cache.'
+);
+assert.match(
+  boardSource,
+  /overviewImageFailed: new Set\(\)[\s\S]*?image\.onerror = \(\) => \{[\s\S]*?overviewImageFailed\.add[\s\S]*?function requestBoardOverviewImage\(file, deferStart = false\)[\s\S]*?overviewImageFailed\.has/,
+  'Broken overview thumbnails must not enter an unbounded retry loop.'
+);
+assert.match(
+  boardSource,
+  /function renderBoard\(\)[\s\S]*?rebuildBoardSpatialIndex\(\);[\s\S]*?reconcileMountedBoardItemsAfterDataChange\(\);[\s\S]*?reconcileBoardViewport\(true\);/,
+  'Board data refreshes must preserve unchanged mounted media instead of flashing through a full remount.'
+);
+const renderBoardSource = boardSource.slice(
+  boardSource.indexOf('function renderBoard()'),
+  boardSource.indexOf('function syncBoardSelectionClasses')
+);
+assert.doesNotMatch(
+  renderBoardSource,
+  /clearMountedBoardItems\(\)/,
+  'Normal board renders must not discard every decoded image and video.'
+);
+assert.match(
+  boardSource,
+  /function prioritizeBoardOverviewImageQueue\(files\)[\s\S]*?overviewImageQueue\.length = 0;[\s\S]*?requestBoardOverviewImage\(file, true\)[\s\S]*?prioritizeBoardOverviewImageQueue\(prioritizedImages\.map/,
+  'Dense-canvas thumbnail work must be reprioritized for the current viewport.'
+);
+assert.match(
+  boardSource,
+  /const BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET = 24_000_000;[\s\S]*?overviewImagePixels > BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET/,
+  'Overview thumbnails must respect a decoded-pixel memory budget.'
+);
 assert.doesNotMatch(
   boardStyles,
   /\.board-item[^\{]*\{[^}]*content-visibility:\s*auto/,
@@ -154,5 +247,76 @@ assert.doesNotMatch(
 assert.match(boardSource, /--board-selection-width[\s\S]*?1\.2 \/ Math\.max\(Board\.zoom/);
 assert.match(boardStyles, /\.board-item\.is-selected \{[\s\S]*?outline:\s*var\(--board-selection-width/);
 assert.match(boardStyles, /width:\s*clamp\(440px, 52%, 620px\)/, 'The generation composer must keep the requested compact footprint.');
+assert.doesNotMatch(sidebarSource, /Return home|\\u8fd4\\u56de\\u9996\\u9875/, 'The brand menu must not offer a return-to-home action.');
+assert.match(
+  sidebarSource,
+  /lastClickedSidebarId = f\.id;[\s\S]*?selectFileForPreview\(f\.id\)/,
+  'A plain sidebar click must establish the range-selection anchor.'
+);
+assert.match(
+  sidebarSource,
+  /stopImmediatePropagation\(\);[\s\S]*?selectAllSidebarFiles\(\);[\s\S]*?\}, true\);/,
+  'Sidebar Ctrl+A must be captured before the canvas-wide shortcut.'
+);
+assert.match(previewSource, /clone\.removeAttribute\('style'\)[\s\S]*?clone\.removeAttribute\('width'\)[\s\S]*?clone\.removeAttribute\('height'\)/);
+assert.match(previewSource, /function openFileFullscreenPreview\(file\)[\s\S]*?showFullscreenMedia\(image/);
+assert.match(boardStyles, /\.fullscreen-overlay \{[\s\S]*?z-index:\s*400;[\s\S]*?background:\s*rgba\(5, 6, 8, \.88\)/,
+  'The fullscreen media viewer must render above the fullscreen board and Butler overlays.');
+assert.match(boardStyles, /\.fullscreen-stage > img \{[\s\S]*?max-width:\s*min\(88vw, 1600px\);[\s\S]*?max-height:\s*82vh;/);
+assert.match(contextMenuSource, /function arrangeItemsGrid[\s\S]*?boardItemBounds\(item\)[\s\S]*?packRows\(layoutItems,[\s\S]*?gap:\s*20/);
+assert.doesNotMatch(contextMenuSource, /item\.layoutFrame = 'uniform-grid'/);
+assert.match(
+  boardSource,
+  /function restoreLegacyUniformBoardFrames[\s\S]*?width \* sourceHeight \/ sourceWidth[\s\S]*?needsRatioRepair[\s\S]*?delete item\.layoutFrame/,
+  'Legacy and distorted media frames must restore source aspect ratios and remove the cropping frame.'
+);
+assert.match(
+  boardSource,
+  /function renderBoard\(\)[\s\S]*?restoreLegacyUniformBoardFrames\(\)[\s\S]*?rebuildBoardSpatialIndex\(\)/,
+  'Legacy uniform frames must be repaired before board bounds are rebuilt.'
+);
+assert.match(
+  boardSource,
+  /function boardMediaResizeAspect[\s\S]*?file\.sourceWidth[\s\S]*?media\.naturalWidth[\s\S]*?sourceHeight \/ sourceWidth/,
+  'Media resize must prefer the original file or decoded-media aspect ratio.'
+);
+assert.match(
+  boardSource,
+  /const freeResize = !locksMediaAspect && point\.shiftKey;[\s\S]*?locksMediaAspect[\s\S]*?newWidth \* aspectRatio/,
+  'Images and videos must remain proportional even while Shift is held.'
+);
+assert.match(
+  boardSource,
+  /function observeBoardMediaIntrinsicRatio[\s\S]*?syncBoardMediaIntrinsicRatio[\s\S]*?loadedmetadata/,
+  'Missing legacy media dimensions must be repaired after the source decodes.'
+);
+assert.match(themeSource, /\[data-theme="dark"\][\s\S]*?--bg-base:\s*#111111;[\s\S]*?--bg-surface-2:\s*#282828;/);
+assert.match(
+  themeSource,
+  /\[data-theme="dark"\][\s\S]*?--board-workspace-bg:\s*color-mix\(in srgb, var\(--bg-deep\) 94%, #090b10 6%\)/,
+  'Dark canvas modes must share the existing node-canvas background color.'
+);
+assert.match(
+  boardStyles,
+  /\.board-viewport \{[\s\S]*?background-color:\s*var\(--board-workspace-bg\)[\s\S]*?\.board-node-mode \{[\s\S]*?background-color:\s*var\(--board-workspace-bg\)/,
+  'Canvas and node mode must render on the same workspace background.'
+);
+assert.match(contextMenuSource, /key:\s*'scale-max'[\s\S]*?'放大至最大'/);
+assert.match(contextMenuSource, /key:\s*'scale-100'[\s\S]*?'放大至100%'/);
+assert.match(contextMenuSource, /key:\s*'scale-min'[\s\S]*?'缩小至最小'/);
+assert.match(contextMenuSource, /function scaleBoardItemsToWidth[\s\S]*?previousHeight \* width \/ previousWidth/);
+assert.match(boardSource, /const DEFAULT_BOARD_ITEM_WIDTH = 220;/);
+assert.match(contextMenuSource, /case 'scale-100':[\s\S]*?scaleBoardItemsToWidth\(selected, DEFAULT_BOARD_ITEM_WIDTH\)/);
+assert.match(boardStyles, /\[data-theme="dark"\] \.board-image-toolbar,[\s\S]*?\[data-theme="dark"\] \.board-butler-menu/);
+assert.match(
+  contextMenuSource,
+  /if \(file && isVideoExt\(file\.ext\)\) \{[\s\S]*?Send to After Effects[\s\S]*?'after-effects'/,
+  'Every canvas video must expose Send to After Effects, not only generated videos.'
+);
+assert.match(
+  mainSource,
+  /normalizedTarget === 'photoshop' && !f\.aiGeneration && f\.sourceFolder !== 'AI Generated'/,
+  'The main process must allow imported videos through the version-independent After Effects launcher.'
+);
 
 process.stdout.write('Canvas interaction tests passed.\n');

@@ -21,6 +21,7 @@ assert.deepStrictEqual(quoteMediaCredits({
 }), {
   kind: 'image',
   providerId: 'image-1',
+  resolution: '2k',
   count: 2,
   units: 2,
   unit: 'image',
@@ -61,6 +62,15 @@ assert.strictEqual(quoteMediaCredits({
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-8', size: '1080p', count: 4
 }).totalCredits, 32);
+assert.strictEqual(quoteMediaCredits({
+  kind: 'image', imageProviderId: 'image-1', size: '4K'
+}).totalCredits, 28);
+assert.strictEqual(quoteMediaCredits({
+  kind: 'image', imageProviderId: 'image-2', size: '1K'
+}).totalCredits, 8);
+assert.strictEqual(quoteMediaCredits({
+  kind: 'image', imageProviderId: 'image-9'
+}).totalCredits, 6);
 
 assert.deepStrictEqual(quoteMediaCredits({
   kind: 'video',
@@ -121,11 +131,14 @@ assert.strictEqual(quoteMediaCredits({
 }).totalCredits, 30, 'Unknown Seedance resolutions must use that provider\'s default 720P rate.');
 
 const publicPricing = publicCreditPricing();
-assert.strictEqual(publicPricing.image['image-5'], 8);
+assert.strictEqual(publicPricing.image['image-5'], 4);
+assert.strictEqual(publicPricing.image['image-9'], 6);
 assert.strictEqual(publicPricing.image['image-6'], 12);
 assert.deepStrictEqual(publicPricing.imageQuality['image-6'], IMAGE_QUALITY_PRICES['image-6']);
 assert.deepStrictEqual(publicPricing.imageResolution['image-7'], IMAGE_RESOLUTION_PRICES['image-7']);
 assert.deepStrictEqual(publicPricing.imageResolution['image-8'], IMAGE_RESOLUTION_PRICES['image-8']);
+assert.deepStrictEqual(publicPricing.imageResolution['image-1'], IMAGE_RESOLUTION_PRICES['image-1']);
+assert.deepStrictEqual(publicPricing.imageResolution['image-2'], IMAGE_RESOLUTION_PRICES['image-2']);
 assert.strictEqual(publicPricing.video['video-1']['768P'], 10);
 assert.deepStrictEqual(publicPricing.video['video-2'], VIDEO_RATES['video-2']);
 assert.deepStrictEqual(publicPricing.video['video-3'], VIDEO_RATES['video-3']);
@@ -158,6 +171,11 @@ assert.match(
   assistantSource,
   /function updateAssistantCreditEstimate\(\)[\s\S]*?quoteMediaCredits[\s\S]*?imageProviderId:[\s\S]*?videoProviderId:[\s\S]*?count:[\s\S]*?resolution:[\s\S]*?duration:/,
   'The assistant quote must react to the selected model, count, video resolution and duration.'
+);
+assert.match(
+  assistantSource,
+  /function updateAssistantCreditEstimate\(\)[\s\S]*?size: kind === 'image' \? document\.getElementById\('ai-assistant-size'\)\.value/,
+  'The assistant quote must include the selected image resolution.'
 );
 assert.match(
   assistantSource,

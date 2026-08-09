@@ -7,6 +7,7 @@ const { PROVIDER_CATALOG_VERSION } = require('../lib/provider-catalog');
 process.env.Quick_API_KEY = 'quickrouter-secret';
 process.env.AI302_KEY = 'ai302-secret';
 process.env.MINIMAX_API_KEY = 'minimax-secret';
+process.env.AI_GATEWAY_PUBLIC_URL = 'https://gateway.test';
 process.env.RELAY_2_API_KEY = 'relay-two-secret';
 process.env.AI_PROVIDERS_JSON = JSON.stringify([
   {
@@ -51,12 +52,16 @@ assert.deepEqual(
   ['model-a', 'model-b']
 );
 assert.equal(config.providers.find((provider) => provider.id === 'image-1').name, 'Nano Banana Pro');
-assert.equal(config.providers.find((provider) => provider.id === 'image-2').name, 'Nanobanana Pro SE');
-assert.equal(config.providers.find((provider) => provider.id === 'image-3').name, 'Seedream 5.0 Lite');
+assert.equal(config.providers.find((provider) => provider.id === 'image-2').name, 'Nano Banana 2');
+assert.deepEqual(config.providers.find((provider) => provider.id === 'image-2').capabilities.sizes, ['1K', '2K', '4K']);
+assert.equal(config.providers.find((provider) => provider.id === 'image-3').name, 'Seedream 5.0');
 assert.equal(config.providers.find((provider) => provider.id === 'image-3').model, 'doubao-seedream-5-0-260128');
-assert.equal(config.providers.find((provider) => provider.id === 'image-4').name, 'Midjourney');
-assert.equal(config.providers.find((provider) => provider.id === 'image-5').name, 'Nano banana2');
-assert.equal(config.providers.find((provider) => provider.id === 'image-5').protocol, 'gemini-image');
+assert.equal(config.providers.find((provider) => provider.id === 'image-4').name, 'Midjourney Turbo');
+assert.equal(config.providers.find((provider) => provider.id === 'image-5').name, 'Nano Banana 2 Lite');
+assert.equal(config.providers.find((provider) => provider.id === 'image-5').protocol, 'ai302-nano-banana-v3');
+assert.equal(config.providers.find((provider) => provider.id === 'image-9').name, 'Nano Banana');
+assert.equal(config.providers.find((provider) => provider.id === 'image-9').protocol, 'ai302-nano-banana-legacy');
+assert.deepEqual(config.providers.find((provider) => provider.id === 'image-9').capabilities.referenceRatios, ['auto']);
 const gptImage2Provider = config.providers.find((provider) => provider.id === 'image-6');
 assert.equal(gptImage2Provider.name, 'GPT Image 2');
 assert.equal(gptImage2Provider.model, 'gpt-image-2');
@@ -111,8 +116,18 @@ assert.equal(publicText.includes('api.302.ai'), false);
 const configuredAi302Key = process.env.AI302_KEY;
 delete process.env.AI302_KEY;
 const withoutAi302 = publicProviderConfig();
+assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-1'), false);
+assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-2'), false);
+assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-5'), false);
+assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-9'), false);
+for (const id of ['image-3', 'image-4', 'image-6', 'image-7', 'image-8', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16']) {
+  assert.equal(withoutAi302.providers.some((provider) => provider.id === id), false);
+}
 assert.equal(withoutAi302.providers.some((provider) => provider.id === 'video-2'), false);
 assert.equal(withoutAi302.providers.some((provider) => provider.id === 'video-3'), false);
+for (const id of ['video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9']) {
+  assert.equal(withoutAi302.providers.some((provider) => provider.id === id), false);
+}
 process.env.AI302_KEY = configuredAi302Key;
 
 function jsonResponse(payload, status = 200) {
@@ -123,6 +138,17 @@ function jsonResponse(payload, status = 200) {
   };
 }
 
+function pngHeader(width, height) {
+  const buffer = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buffer);
+  buffer.write('IHDR', 12, 'ascii');
+  buffer.writeUInt32BE(width, 16);
+  buffer.writeUInt32BE(height, 20);
+  return buffer;
+}
+
+const nano2kPng = pngHeader(2048, 1536);
+
 const nanoCalls = [];
 globalThis.fetch = async (url, options = {}) => {
   nanoCalls.push({ url: String(url), options });
@@ -130,7 +156,7 @@ globalThis.fetch = async (url, options = {}) => {
     candidates: [{
       content: {
         role: 'model',
-        parts: [{ inlineData: { mimeType: 'image/png', data: 'iVBORw==' } }]
+        parts: [{ inlineData: { mimeType: 'image/png', data: nano2kPng.toString('base64') } }]
       }
     }]
   });
@@ -138,19 +164,59 @@ globalThis.fetch = async (url, options = {}) => {
 const nanoImage = await generateMedia('image', {
   providerId: 'image-1',
   prompt: 'editorial portrait',
-  size: 'Default',
+  size: '2K',
   aspectRatio: '3:4',
   urls: []
 });
-assert.deepEqual(nanoImage, Buffer.from('iVBORw==', 'base64'));
+assert.deepEqual(nanoImage, nano2kPng);
 assert.equal(
   nanoCalls[0].url,
-  'https://api.302.ai/google/v1/models/gemini-3-pro-image-preview'
+  'https://api.302.ai/ws/api/v3/google/nano-banana-pro/text-to-image'
 );
 assert.equal(nanoCalls[0].options.headers.Authorization, 'Bearer ai302-secret');
-assert.equal(nanoCalls[0].options.headers['x-goog-api-key'], undefined);
 const nanoBody = JSON.parse(nanoCalls[0].options.body);
-assert.deepEqual(nanoBody.generationConfig.imageConfig, { aspectRatio: '3:4' });
+assert.deepEqual(nanoBody, {
+  aspect_ratio: '3:4',
+  resolution: '2k',
+  enable_base64_output: false,
+  enable_sync_mode: false,
+  prompt: 'editorial portrait'
+});
+
+const relayReference = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+await generateMedia('image', {
+  providerId: 'image-2',
+  prompt: 'restyle this reference',
+  size: '2K',
+  aspectRatio: '1:1',
+  urls: [relayReference]
+});
+assert.equal(nanoCalls[1].url, 'https://api.302.ai/ws/api/v3/google/nano-banana-2/edit');
+const relayedBody = JSON.parse(nanoCalls[1].options.body);
+assert.equal(relayedBody.images.length, 1);
+assert.match(relayedBody.images[0], /^https:\/\/gateway\.test\/v1\/tools\/assets\/[A-Za-z0-9_-]{43}$/);
+const relayToken = relayedBody.images[0].split('/').pop();
+const { getAi302RelayAsset } = await import('../gateway/src/ai302-tools.js');
+assert.throws(() => getAi302RelayAsset(relayToken), (error) => error && error.code === 'tool-asset-not-found');
+
+globalThis.fetch = async () => jsonResponse({
+  candidates: [{
+    content: {
+      role: 'model',
+      parts: [{ inlineData: { mimeType: 'image/png', data: pngHeader(1024, 1024).toString('base64') } }]
+    }
+  }]
+});
+await assert.rejects(
+  generateMedia('image', {
+    providerId: 'image-1',
+    prompt: 'must remain 4K',
+    size: '4K',
+    aspectRatio: '1:1',
+    urls: []
+  }),
+  (error) => error && error.code === 'image-resolution-mismatch'
+);
 
 const gptImageCalls = [];
 globalThis.fetch = async (url, options = {}) => {
@@ -166,8 +232,8 @@ const gptImage = await generateMedia('image', {
   urls: []
 });
 assert.deepEqual(gptImage, Buffer.from('iVBORw==', 'base64'));
-assert.equal(gptImageCalls[0].url, 'https://api.quickrouter.ai/v1/images/generations');
-assert.equal(gptImageCalls[0].options.headers.Authorization, 'Bearer quickrouter-secret');
+assert.equal(gptImageCalls[0].url, 'https://api.302.ai/v1/images/generations');
+assert.equal(gptImageCalls[0].options.headers.Authorization, 'Bearer ai302-secret');
 assert.deepEqual(JSON.parse(gptImageCalls[0].options.body), {
   model: 'gpt-image-2',
   prompt: 'minimal product photograph',
@@ -184,7 +250,7 @@ await generateMedia('image', {
   aspectRatio: '2:3',
   urls: ['data:image/webp;base64,UklGRg==']
 });
-assert.equal(gptImageCalls[1].url, 'https://api.quickrouter.ai/v1/images/edits');
+assert.equal(gptImageCalls[1].url, 'https://api.302.ai/v1/images/edits');
 assert.ok(gptImageCalls[1].options.body instanceof FormData);
 assert.equal(gptImageCalls[1].options.body.get('model'), 'gpt-image-2');
 assert.equal(gptImageCalls[1].options.body.get('size'), '1024x1536');
@@ -478,5 +544,125 @@ for (const providerId of ['video-2', 'video-3']) {
     (error) => error && error.code === 'async-video-required'
   );
 }
+
+const legacySeedanceCalls = [];
+globalThis.fetch = async (url, options = {}) => {
+  const value = String(url);
+  legacySeedanceCalls.push({ url: value, options });
+  if (value === 'https://api.302.ai/doubao/doubao-seedance' && options.method === 'POST') {
+    return jsonResponse({ id: 'seedance-15-task' });
+  }
+  if (value.endsWith('/seedance-15-task')) {
+    return jsonResponse({
+      id: 'seedance-15-task',
+      status: 'done',
+      content: { video_url: 'https://cdn.example/seedance-15.mp4' }
+    });
+  }
+  throw new Error(`Unexpected legacy Seedance URL: ${value}`);
+};
+assert.deepEqual(await createVideoTask({
+  providerId: 'video-5',
+  prompt: 'transition between the product frames',
+  resolution: '720P',
+  duration: 2,
+  aspectRatio: 'adaptive',
+  urls: ['https://cdn.example/first.png', 'https://cdn.example/last.png']
+}), { providerId: 'video-5', taskId: 'seedance-15-task' });
+assert.deepEqual(JSON.parse(legacySeedanceCalls[0].options.body), {
+  model: 'doubao-seedance-1-5-pro-251215',
+  content: [
+    { type: 'text', text: 'transition between the product frames' },
+    { type: 'image_url', image_url: { url: 'https://cdn.example/first.png' }, role: 'first_frame' },
+    { type: 'image_url', image_url: { url: 'https://cdn.example/last.png' }, role: 'last_frame' }
+  ],
+  generate_audio: true,
+  ratio: 'adaptive',
+  duration: 2,
+  resolution: '720p',
+  watermark: false,
+  service_tier: 'default'
+});
+assert.deepEqual(await pollVideoTask('video-5', 'seedance-15-task'), {
+  status: 'succeeded',
+  resultUrl: 'https://cdn.example/seedance-15.mp4'
+});
+await assert.rejects(
+  createVideoTask({
+    providerId: 'video-6',
+    prompt: 'reference image at an unsupported resolution',
+    resolution: '1080P',
+    duration: 2,
+    aspectRatio: 'adaptive',
+    urls: ['https://cdn.example/first.png']
+  }),
+  (error) => error && error.code === 'invalid-resolution'
+);
+await assert.rejects(
+  createVideoTask({
+    providerId: 'video-7',
+    prompt: 'missing required first frame',
+    resolution: '720P',
+    duration: 2,
+    aspectRatio: '16:9',
+    urls: []
+  }),
+  (error) => error && error.code === 'reference-required'
+);
+
+const jimengCalls = [];
+globalThis.fetch = async (url, options = {}) => {
+  const value = String(url);
+  jimengCalls.push({ url: value, options });
+  if (value.endsWith('/jimengv30') || value.endsWith('/jimeng_ti2v_v30_pro')) {
+    return jsonResponse({ code: 10000, data: { task_id: value.endsWith('/jimengv30') ? 'jimeng-30-task' : 'jimeng-pro-task' } });
+  }
+  if (value.endsWith('/jimengv30_result')) {
+    return jsonResponse({ code: 10000, data: { status: 'done', video_url: 'https://cdn.example/jimeng-30.mp4' } });
+  }
+  if (value.endsWith('/jimeng_ti2v_v30_pro_result')) {
+    return jsonResponse({ code: 10000, data: { status: 'processing' } });
+  }
+  throw new Error(`Unexpected Jimeng URL: ${value}`);
+};
+assert.deepEqual(await createVideoTask({
+  providerId: 'video-8',
+  prompt: 'wide cinematic landscape',
+  resolution: '1080P',
+  duration: 5,
+  aspectRatio: '21:9',
+  urls: []
+}), { providerId: 'video-8', taskId: 'jimeng-30-task' });
+assert.deepEqual(JSON.parse(jimengCalls[0].options.body), {
+  prompt: 'wide cinematic landscape',
+  seed: -1,
+  frames: 121,
+  aspect_ratio: '21:9',
+  req_key: 'jimeng_t2v_v30_1080p'
+});
+assert.deepEqual(await pollVideoTask('video-8', 'jimeng-30-task'), {
+  status: 'succeeded',
+  resultUrl: 'https://cdn.example/jimeng-30.mp4'
+});
+assert.equal(jimengCalls[1].options.method, 'POST');
+assert.deepEqual(JSON.parse(jimengCalls[1].options.body), { task_id: 'jimeng-30-task' });
+
+assert.deepEqual(await createVideoTask({
+  providerId: 'video-9',
+  prompt: 'animate this portrait',
+  resolution: '1080P',
+  duration: 5,
+  aspectRatio: 'adaptive',
+  urls: ['https://cdn.example/portrait.png']
+}), { providerId: 'video-9', taskId: 'jimeng-pro-task' });
+const jimengProBody = JSON.parse(jimengCalls[2].options.body);
+assert.deepEqual(jimengProBody, {
+  prompt: 'animate this portrait',
+  seed: -1,
+  frames: 121,
+  image_urls: ['https://cdn.example/portrait.png']
+});
+assert.equal(Object.hasOwn(jimengProBody, 'req_key'), false);
+assert.deepEqual(await pollVideoTask('video-9', 'jimeng-pro-task'), { status: 'running' });
 
 process.stdout.write('gateway provider registry tests passed.\n');

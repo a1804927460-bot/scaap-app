@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { BUTLER_FIXED_RETAIL_CREDITS, quoteButlerRetailCredits } from './tool-pricing.js';
+import { BUTLER_FIXED_RETAIL_CREDITS, TOPAZ_DYNAMIC_PROVIDERS, quoteButlerRetailCredits } from './tool-pricing.js';
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
 
@@ -8,13 +8,21 @@ const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmoh
 // it. A version mismatch therefore fails closed instead of undercharging.
 export const IMAGE_CREDITS = Object.freeze({
   'image-1': 16,
-  'image-2': 7,
+  'image-2': 12,
   'image-3': 5,
   'image-4': 4,
-  'image-5': 8,
+  'image-5': 4,
   'image-6': 12,
   'image-7': 4,
-  'image-8': 4
+  'image-8': 4,
+  'image-9': 6,
+  'image-10': 8,
+  'image-11': 5,
+  'image-12': 4,
+  'image-13': 3,
+  'image-14': 4,
+  'image-15': 5,
+  'image-16': 3
 });
 
 export const IMAGE_QUALITY_CREDITS = Object.freeze({
@@ -22,20 +30,52 @@ export const IMAGE_QUALITY_CREDITS = Object.freeze({
 });
 
 export const IMAGE_RESOLUTION_CREDITS = Object.freeze({
+  'image-1': Object.freeze({ '1k': 16, '2k': 16, '4k': 28 }),
+  'image-2': Object.freeze({ '1k': 8, '2k': 12, '4k': 16 }),
+  'image-3': Object.freeze({ '2k': 5, '4k': 8 }),
   'image-7': Object.freeze({ '720p': 4, '1080p': 8 }),
-  'image-8': Object.freeze({ '720p': 4, '1080p': 8 })
+  'image-8': Object.freeze({ '720p': 4, '1080p': 8 }),
+  'image-10': Object.freeze({ '2k': 8, '4k': 14 }),
+  'image-11': Object.freeze({ '2k': 5, '4k': 8 }),
+  'image-12': Object.freeze({ '1k': 4, '2k': 5, '4k': 8 }),
+  'image-15': Object.freeze({ '1k': 5, '2k': 8 }),
+  'image-16': Object.freeze({ '512x512': 3, '1024x1024': 4 })
 });
 
 export const VIDEO_CREDITS_PER_SECOND = Object.freeze({
   'video-1': Object.freeze({ '768P': 10, '2K': 16 }),
   'video-2': Object.freeze({ '480P': 3, '720P': 5 }),
-  'video-3': Object.freeze({ '480P': 4, '720P': 6 })
+  'video-3': Object.freeze({ '480P': 4, '720P': 6 }),
+  'video-4': Object.freeze({ '480P': 3, '720P': 5 }),
+  'video-5': Object.freeze({ '480P': 4, '720P': 6 }),
+  'video-6': Object.freeze({ '480P': 4, '720P': 6, '1080P': 8 }),
+  'video-7': Object.freeze({ '480P': 3, '720P': 5 }),
+  'video-8': Object.freeze({ '720P': 1, '1080P': 2 }),
+  'video-9': Object.freeze({ '1080P': 4 })
 });
 
 export const VIDEO_DEFAULT_RESOLUTIONS = Object.freeze({
   'video-1': '768P',
   'video-2': '720P',
-  'video-3': '720P'
+  'video-3': '720P',
+  'video-4': '720P',
+  'video-5': '720P',
+  'video-6': '1080P',
+  'video-7': '720P',
+  'video-8': '720P',
+  'video-9': '1080P'
+});
+
+export const VIDEO_DURATION_LIMITS = Object.freeze({
+  'video-1': Object.freeze({ minimum: 4, maximum: 15 }),
+  'video-2': Object.freeze({ minimum: 4, maximum: 15 }),
+  'video-3': Object.freeze({ minimum: 4, maximum: 15 }),
+  'video-4': Object.freeze({ minimum: 4, maximum: 15 }),
+  'video-5': Object.freeze({ minimum: 2, maximum: 12 }),
+  'video-6': Object.freeze({ minimum: 2, maximum: 12 }),
+  'video-7': Object.freeze({ minimum: 2, maximum: 12 }),
+  'video-8': Object.freeze({ minimum: 5, maximum: 10 }),
+  'video-9': Object.freeze({ minimum: 5, maximum: 10 })
 });
 
 const DURABLE_TIMEOUT_MS = 5_000;
@@ -109,8 +149,13 @@ export function quoteUsage(kind, request = {}) {
     const resolutionRates = IMAGE_RESOLUTION_CREDITS[providerId];
     const requestedQuality = String(request.quality || 'auto').trim().toLowerCase();
     const quality = qualityRates && Object.hasOwn(qualityRates, requestedQuality) ? requestedQuality : 'auto';
-    const requestedResolution = String(request.resolution || request.size || '720p').trim().toLowerCase();
-    const resolution = resolutionRates && Object.hasOwn(resolutionRates, requestedResolution) ? requestedResolution : '720p';
+    const defaultResolution = resolutionRates
+      ? (Object.hasOwn(resolutionRates, '2k') ? '2k' : Object.keys(resolutionRates)[0])
+      : '720p';
+    const requestedResolution = String(request.resolution || request.size || defaultResolution).trim().toLowerCase();
+    const resolution = resolutionRates && Object.hasOwn(resolutionRates, requestedResolution)
+      ? requestedResolution
+      : defaultResolution;
     return {
       kind: 'image',
       providerId,
@@ -131,7 +176,8 @@ export function quoteUsage(kind, request = {}) {
     const requestedResolution = String(request.resolution || '').trim().toUpperCase();
     const defaultResolution = VIDEO_DEFAULT_RESOLUTIONS[providerId];
     const resolution = Object.hasOwn(rates, requestedResolution) ? requestedResolution : defaultResolution;
-    const duration = boundedInteger(request.duration, 6, 4, 15);
+    const durationLimits = VIDEO_DURATION_LIMITS[providerId] || VIDEO_DURATION_LIMITS['video-1'];
+    const duration = boundedInteger(request.duration, 6, durationLimits.minimum, durationLimits.maximum);
     return {
       kind: 'video',
       providerId,
@@ -229,9 +275,14 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
     p_duration: quote.duration,
     p_expected_credits: quote.credits
   });
-  const reserveRpc = ['image-7', 'image-8'].includes(quote.providerId)
-    ? 'reserve_higgsfield_credits'
-    : 'reserve_ai_credits';
+  const reserveRpc = ['image-1', 'image-2', 'image-5', 'image-9'].includes(quote.providerId)
+    ? 'reserve_nano_banana_credits'
+    : (['image-7', 'image-8'].includes(quote.providerId)
+      ? 'reserve_higgsfield_credits'
+      : (['image-3', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16',
+          'video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9'].includes(quote.providerId)
+        ? 'reserve_302_catalog_credits'
+        : 'reserve_ai_credits'));
   let { response, payload } = await reserveCredits(headers, requestBody, fetchImpl, reserveRpc);
   if (!response.ok) {
     if (isMissingCreditRpc(response, payload) && !durableRequired()) {
@@ -340,7 +391,7 @@ export async function reserveToolUsage(userId, requestId, request = {}, fetchImp
   const providerId = String(request.providerId || '').trim().toLowerCase();
   const hasRequestedCredits = request.credits !== null && request.credits !== undefined;
   const requestedCredits = hasRequestedCredits ? Number(request.credits) : null;
-  const isTopaz = providerId === 'topaz-video-upscale';
+  const isTopaz = TOPAZ_DYNAMIC_PROVIDERS.has(providerId);
   const hasProviderCost = request.providerCost !== null && request.providerCost !== undefined;
   const providerCost = isTopaz && hasProviderCost ? Number(request.providerCost) : null;
   const resolution = String(request.resolution || '').trim().slice(0, 32) || null;
@@ -394,7 +445,10 @@ export async function reserveToolUsage(userId, requestId, request = {}, fetchImp
   let payload;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/reserve_ai_tool_credits`, {
+      const rpcName = isTopaz && providerId !== 'topaz-video-upscale'
+        ? 'reserve_topaz_image_credits'
+        : 'reserve_ai_tool_credits';
+      response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/${rpcName}`, {
         ...requestOptions,
         signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
       });

@@ -10,6 +10,7 @@ import {
   getAi302RelayAsset,
   getThreeDStatus,
   getVideoUpscaleStatus,
+  normalizeThreeDOptions,
   normalizeVideoUpscaleOptions,
   parseImageDataUrl,
   parseVideoDataUrl,
@@ -126,7 +127,7 @@ test('background removal uses fixed upstream options and accepts a direct transp
     return new Response(output, { status: 200, headers: { 'Content-Type': 'image/png' } });
   };
   const result = await removeBackground({ imageDataUrl: imageDataUrl(input) }, {
-    apiKey: 'test-302-key',
+    apiKey: 'Bearer test-302-key',
     fetchImpl: fetchMock
   });
   assert.deepEqual(result, output);
@@ -137,6 +138,41 @@ test('background removal uses fixed upstream options and accepts a direct transp
   assert.equal(calls[0].options.body.get('size'), 'full');
   assert.equal(calls.length, 1);
   assert.equal(JSON.stringify(result).includes('test-302-key'), false);
+});
+
+test('302 authorization failures are explicit and background options follow the documented form', async () => {
+  let submittedForm;
+  await assert.rejects(
+    () => removeBackground({
+      imageDataUrl: imageDataUrl(rgbaPng()),
+      toolOptions: { size: 'hd', crop: true, despill: false }
+    }, {
+      apiKey: 'rejected-key',
+      fetchImpl: async (_url, options) => {
+        submittedForm = options.body;
+        return new Response(null, { status: 401 });
+      }
+    }),
+    { code: 'ai302-unauthorized', status: 503 }
+  );
+  assert.equal(submittedForm.get('size'), 'hd');
+  assert.equal(submittedForm.get('crop'), 'true');
+  assert.equal(submittedForm.get('despill'), 'false');
+});
+
+test('provider-specific 3D options reject unsupported combinations before submission', () => {
+  assert.throws(
+    () => normalizeThreeDOptions('hunyuan3d', { model: '3.1', generateType: 'LowPoly' }),
+    { code: 'invalid-three-d-options', status: 400 }
+  );
+  assert.throws(
+    () => normalizeThreeDOptions('hyper3d', { quality: 'ultra' }),
+    { code: 'invalid-three-d-options', status: 400 }
+  );
+  assert.throws(
+    () => normalizeThreeDOptions('tripo3d', { modelVersion: 'unknown-version' }),
+    { code: 'invalid-three-d-options', status: 400 }
+  );
 });
 
 test('asset URLs reject non-provider hosts, credentials, ports, fragments, and IP literals', () => {
@@ -184,9 +220,10 @@ test('HUNYUAN3D task tokens hide the job, bind the user and provider, and normal
   });
   assert.deepEqual({ status: created.status, retryAfterMs: created.retryAfterMs }, { status: 'queued', retryAfterMs: 5000 });
   assert.equal(created.taskToken.includes('private-hunyuan-job-id'), false);
-  assert.deepEqual(Object.keys(createBody).sort(), ['GenerateType', 'ImageBase64', 'Model']);
+  assert.deepEqual(Object.keys(createBody).sort(), ['EnablePBR', 'GenerateType', 'ImageBase64', 'Model']);
   assert.equal(createBody.Model, '3.0');
   assert.equal(createBody.GenerateType, 'Normal');
+  assert.equal(createBody.EnablePBR, false);
   assert.equal(Buffer.from(createBody.ImageBase64, 'base64').includes(Buffer.from('private-metadata')), false);
 
   const status = await getThreeDStatus({ taskToken: created.taskToken, userId: 'user-one' }, {
@@ -217,6 +254,7 @@ test('Hyper3D receives a short-lived metadata-free image relay and uses the docu
     providerId: 'hyper3d',
     imageDataUrl: imageDataUrl(input),
     prompt: 'A precise product model',
+    toolOptions: { quality: 'high', material: 'Shaded', tier: 'Sketch', useHyper: true, tPose: true, seed: 42 },
     userId: 'user-hyper'
   }, {
     apiKey: 'test-key',
@@ -244,12 +282,13 @@ test('Hyper3D receives a short-lived metadata-free image relay and uses the docu
     prompt: 'A precise product model',
     condition_mode: 'concat',
     geometry_file_format: 'glb',
-    material: 'PBR',
-    quality: 'medium',
-    tier: 'Regular',
-    use_hyper: false,
-    TAPose: false
+    material: 'Shaded',
+    quality: 'high',
+    tier: 'Sketch',
+    use_hyper: true,
+    TAPose: true
   });
+  assert.equal(requestBody.seed, 42);
   const relayUrl = new URL(requestBody.input_image_urls[0]);
   assert.equal(relayUrl.origin, 'https://gateway.example.com');
   const relayToken = relayUrl.pathname.split('/').at(-1);
@@ -302,13 +341,20 @@ test('Tripo3D uploads the image, creates a PBR task, polls, settles credits, and
   assert.equal(calls[1].url, 'https://api.302.ai/tripo3d/v2/openapi/task');
   assert.deepEqual(JSON.parse(calls[1].options.body), {
     type: 'image_to_model',
-    model_version: 'v3.0-20250812',
+    model_version: 'v3.1-20260211',
     file: { type: 'png', file_token: 'private-image-token' },
+    enable_image_autofix: true,
     texture: true,
     pbr: true,
+    texture_alignment: 'original_image',
     texture_quality: 'standard',
     geometry_quality: 'standard',
-    orientation: 'align_image'
+    orientation: 'align_image',
+    auto_size: true,
+    quad: false,
+    smart_low_poly: false,
+    generate_parts: false,
+    export_uv: true
   });
   assert.equal(created.credits, 10);
   assert.equal(created.taskToken.includes('private-tripo-task'), false);
@@ -794,8 +840,8 @@ test('server enables paid 302 routes with the shared key unless a route is expli
   assertGuardBefore('/v1/tools/background/remove', 'ai302Enabled(AI302_FLAGS.background)', 'removeBackground');
   assertGuardBefore('/v1/tools/image/edit', 'ai302Enabled(AI302_FLAGS.image)', 'submitQwenImageEdit');
   assertGuardBefore('/v1/tools/image/layer', 'ai302Enabled(AI302_FLAGS.image)', 'submitQwenImageLayered');
-  assertGuardBefore('/v1/tools/image/status', 'ai302Enabled(AI302_FLAGS.image)', 'imageToolPoller');
-  assertGuardBefore('/v1/tools/image/download', 'ai302Enabled(AI302_FLAGS.image)', 'imageToolPoller');
+  assertGuardBefore('/v1/tools/image/status', 'ai302Enabled(imageToolFlag(modelId))', 'imageToolPoller');
+  assertGuardBefore('/v1/tools/image/download', 'ai302Enabled(imageToolFlag(modelId))', 'imageToolPoller');
   assertGuardBefore('/v1/tools/image/upscale', 'ai302Enabled(AI302_FLAGS.image)', 'superUpscaleImage');
   assertGuardBefore('/v1/tools/image/erase', 'ai302Enabled(AI302_FLAGS.image)', 'eraseImageObjects');
   assertGuardBefore('/v1/tools/3d/create', 'ai302Enabled(flag)', 'createThreeDTask');

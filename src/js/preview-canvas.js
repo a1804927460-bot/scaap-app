@@ -1191,6 +1191,9 @@ function showFullscreenMedia(media, options = {}) {
   if (!overlay.hidden) closeFullscreenPreview();
   fsStage.innerHTML = '';
   const clone = media.cloneNode(true);
+  clone.removeAttribute('style');
+  clone.removeAttribute('width');
+  clone.removeAttribute('height');
   FullscreenPreviewState.sourceVideo = null;
   FullscreenPreviewState.cloneVideo = null;
   if (clone.tagName === 'IMG' && options.fallbackSrc) {

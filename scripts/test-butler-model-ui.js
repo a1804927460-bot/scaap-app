@@ -20,8 +20,9 @@ const bundlePath = path.join(root, 'src', 'vendor', 'model-viewer.bundle.js');
 assert.match(boardMedia, /className = 'board-butler-trigger'/, 'The selected-image toolbar must expose the Butler capsule.');
 assert.doesNotMatch(boardMedia, /key:\s*'more'/, 'The old three-dot toolbar action must be removed.');
 assert.match(boardMedia, /window\.messsAPI && window\.messsAPI\.butler/, 'Butler must use the isolated preload namespace.');
-assert.match(boardMedia, /api\.removeBackground\(file\.id\)/, 'Background removal must send only the file id.');
-assert.match(boardMedia, /api\.create3d\(file\.id, safeProviderId\)/, '3D creation must send the selected provider id.');
+assert.match(boardMedia, /api\.removeBackground\(file\.id, options\)/, 'Background removal must send only documented settings with the file id.');
+assert.match(boardMedia, /api\.create3d\(file\.id, safeProviderId, options\)/, '3D creation must send the selected provider and validated settings.');
+assert.match(boardMedia, /function openBoardButlerThreeDPanel[\s\S]*butler-3d-quality[\s\S]*butler-3d-geometry-quality/, 'Every 3D provider must expose its own documented quality controls.');
 assert.match(boardMedia, /generate3d:hunyuan3d[\s\S]*generate3d:hyper3d[\s\S]*generate3d:tripo3d/, 'Hunyuan, Hyper3D and Tripo3D must keep independent task state.');
 assert.match(boardMedia, /api\.get3dStatus\(taskToken\)[\s\S]*api\.download3d\(taskToken\)/, '3D jobs must poll with short requests before downloading.');
 assert.match(boardMedia, /role', 'toolbar'/, 'Butler tools must expand as a horizontal toolbar.');
@@ -54,8 +55,18 @@ assert.match(boardMedia, /task\.creditsCharged \?\? task\.credits[\s\S]*?const p
 assert.match(boardMedia, /phase === 'queued'[\s\S]*?phase === 'downloading'[\s\S]*?phase === 'saving'/, 'Video enhancement must expose its queue, download, and canvas-save phases.');
 assert.match(boardMedia, /BOARD_BUTLER_VIDEO_EXTENSIONS[\s\S]*?\.mp4[\s\S]*?\.mkv[\s\S]*?appendBoardVideoButlerToolbar/, 'The Butler video entry must use the same supported container list as the desktop bridge.');
 assert.match(boardMedia, /butlerOperation\.kind === 'video-upscale'[\s\S]*?operationCredits/, 'Enhanced-video details must preserve the charged points.');
-assert.match(boardMedia, /filters:\s*\[\{ model: 'prob-4' \}\][\s\S]*audioTransfer: 'Copy'/, 'Video enhancement must send the documented filter/output shape.');
+assert.match(boardMedia, /butler-video-model[\s\S]*filters:\s*\[\{[\s\S]*videoType:[\s\S]*audioTransfer: 'Copy'/, 'Video enhancement must send the selected documented filter/output shape.');
 assert.match(boardCanvas, /appendBoardVideoButlerToolbar\(el, f, item\)/, 'Selected videos must expose the Butler capsule.');
+assert.match(
+  boardCanvas,
+  /const videoToolbar = appendBoardVideoButlerToolbar\(el, f, item\);[\s\S]*?appendGeneratedMediaDetailsControl\(el, f, videoToolbar\)/,
+  'Video details must share the Butler toolbar instead of overlapping it.'
+);
+assert.match(
+  boardMedia,
+  /function appendGeneratedMediaDetailsControl\(element, file, toolbar = null\)[\s\S]*?\(toolbar \|\| element\)\.appendChild\(button\)/,
+  'Generated-media details must support an inline toolbar host.'
+);
 assert.match(preload, /upscaleVideo:[\s\S]*butler:upscaleVideo/, 'The isolated preload must expose video enhancement.');
 assert.match(preload, /getVideoToolStatus:[\s\S]*downloadVideoToolResult:/, 'The isolated preload must expose video polling and download.');
 [
@@ -70,6 +81,9 @@ assert.match(preload, /getImageToolStatus:[^\n]+butler:image-tool-status/, 'Imag
 assert.match(preload, /downloadImageToolResult:[^\n]+butler:image-tool-download/, 'Image tools must expose result download and archival.');
 assert.match(boardMedia, /task\.phase === 'queued'[\s\S]*task\.phase === 'downloading'[\s\S]*task\.phase === 'saving'/, 'Image tools must expose their asynchronous phases.');
 assert.match(boardMedia, /result\.result[\s\S]*result\.output/, 'Image tool results must accept archived files returned in nested task payloads.');
+assert.match(boardMedia, /topazSharpenGen:[\s\S]*topaz-image-sharpen-gen/, 'Generative sharpen must have an isolated Topaz bridge hook.');
+assert.match(boardMedia, /topazEnhanceGen:[\s\S]*topaz-image-enhance-gen/, 'Generative enhance must have an isolated Topaz bridge hook.');
+assert.match(boardMedia, /Generative sharpen[\s\S]*Generative enhance/, 'Both Topaz generative tools must be visible in the Butler submenu.');
 assert.doesNotMatch(preload, /AI302_KEY|AI_302_API_KEY|server-only-302-key/, 'The renderer bridge must never contain the 302 credential.');
 assert.match(main, /async function butlerSourceVideo[\s\S]*realpath\(store\.libraryDir\)[\s\S]*isSymbolicLink/, 'Video enhancement must read only a real archived library file.');
 assert.match(main, /MAX_BUTLER_VIDEO_BYTES = 48 \* 1024 \* 1024[\s\S]*butler-video-too-large/, 'Video relay input must be bounded before base64 encoding.');
@@ -97,6 +111,10 @@ assert.match(main, /async function readArchivedModelData[\s\S]*realpath\(store\.
 assert.match(main, /async function saveArchivedModelPreview[\s\S]*data:image\\\/png;base64[\s\S]*model-preview\.png/, 'Generated model thumbnails must be validated and stored in the preview cache.');
 assert.match(main, /ipcMain\.handle\('files:readModelData'/, 'The main process must own model binary reads.');
 assert.match(modelViewer, /event\.shiftKey[\s\S]*event\.button !== 2[\s\S]*drag\.azimuth/, 'Shift plus right-drag must rotate the model key light through 360 degrees.');
+assert.match(modelViewer, /BOARD_MODEL_COLOR_TEXTURE_SLOTS[\s\S]*function prepareBoardModelMaterials[\s\S]*value\.anisotropy[\s\S]*value\.colorSpace = THREE\.SRGBColorSpace/, 'Textured model materials must be prepared for accurate color and sharp rendering.');
+assert.ok((modelViewer.match(/prepareBoardModelMaterials\(/g) || []).length >= 3, 'Material preparation must run for both model thumbnails and the full viewer.');
+assert.match(modelViewer, /hemisphereLight\.intensity = isDragging \? 0\.08 : 0\.28[\s\S]*rimLight\.intensity = isDragging \? 3\.8 : 2\.7[\s\S]*scene\.environmentIntensity = isDragging \? 0\.06 : 0\.18/, 'Light dragging must produce unmistakable key, fill and environment contrast.');
+assert.match(modelViewer, /rimLight\.position\.set\(-light\.position\.x[\s\S]*--light-angle/, 'The rim light and visible direction indicator must follow the rotated key light.');
 assert.match(modelViewer, /window\.messsAPI\.exportFile\(file\.id\)/, 'The viewer download button must use the existing safe export IPC.');
 assert.match(modelViewer, /cancelAnimationFrame[\s\S]*disposeBoardModelObject[\s\S]*forceContextLoss\(\)/, 'Closing the viewer must release animation, scene resources and the WebGL context.');
 assert.match(styles, /\.board-model-viewer-overlay[\s\S]*place-items:\s*center/, 'The full-screen model dialog must be centered.');
@@ -104,6 +122,8 @@ assert.match(styles, /\.board-butler-menu\s*\{[\s\S]*display:\s*flex/, 'The Butl
 assert.match(styles, /\.board-butler-config-panel[\s\S]*\.board-butler-segmented/, 'Butler parameter panels must share the compact control language.');
 assert.match(styles, /\.board-butler-mask-overlay[\s\S]*\.board-butler-mask-stage/, 'Erase must use a dedicated mask workspace.');
 assert.match(styles, /\.board-item-video\.is-selected\.is-single-selection \.board-image-toolbar/, 'Video Butler toolbar must appear for a selected video.');
+assert.match(styles, /\.generated-media-detail-trigger\.is-inline\s*\{[\s\S]*?position:\s*static;[\s\S]*?flex:\s*0 0 25px;/,
+  'The inline video details control must participate in toolbar layout.');
 
 assert.match(html, /connect-src messs-file:;/, 'CSP must permit GLTFLoader to fetch only archived local model files.');
 assert.doesNotMatch(html.match(/Content-Security-Policy[^>]+/)[0], /connect-src[^;]*(?:https?:|\*)/, 'The model-viewer CSP must not open network fetches.');

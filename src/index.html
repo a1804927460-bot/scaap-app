@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark" data-view="main" data-language="en">
+<html lang="ko" data-theme="dark" data-view="main" data-language="ko">
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: messs-file: messs-preview: messs-thumb:; media-src 'self' messs-file: messs-transcode:; font-src 'self'; connect-src messs-file:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none';" />
@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="styles/main.css" />
   <link rel="stylesheet" href="styles/account-avatar.css" />
   <link rel="stylesheet" href="styles/chat.css" />
+  <link rel="stylesheet" href="../node_modules/drawflow/dist/drawflow.min.css" />
 </head>
 <body>
   <div id="app-titlebar" class="app-titlebar">
@@ -86,6 +87,9 @@
         <div class="file-list-header">
           <span class="file-list-label" data-i18n-en="Files" data-i18n-zh="文件">Files</span>
           <div class="file-list-header-actions">
+            <button id="add-folder-btn" class="icon-btn-sm" type="button" title="New folder" aria-label="New folder">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/><path d="M12 10v6M9 13h6"/></svg>
+            </button>
             <button id="import-btn" class="icon-btn-sm" title="Upload files" aria-label="Upload files">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 20h14"/></svg>
             </button>
@@ -345,8 +349,8 @@
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
             </button>
             <button id="board-agent-toggle" class="pill-btn pill-btn-ghost board-workspace-only" type="button" title="Messs Agent" aria-label="Messs Agent" aria-expanded="false">Messs Agent</button>
-            <button id="board-ai-generate" class="icon-btn-sm board-workspace-only" title="AI generate" aria-label="AI generate">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.7 5.1L19 10l-5.3 1.9L12 17l-1.7-5.1L5 10l5.3-1.9L12 3z"/><path d="M19 15l.9 2.6L22 18.5l-2.1.9L19 22l-.9-2.6-2.1-.9 2.1-.9L19 15z"/></svg>
+            <button id="board-mode-toggle" class="icon-btn-sm board-workspace-only" type="button" title="Switch to node mode" aria-label="Switch to node mode" aria-pressed="false">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="6" height="6" rx="1.4"/><rect x="15" y="15" width="6" height="6" rx="1.4"/><path d="M9 6h3a3 3 0 0 1 3 3v6"/><circle cx="15" cy="9" r="1.5"/></svg>
             </button>
             <button id="board-zoom-out" class="icon-btn-sm board-workspace-only" title="Zoom out" aria-label="Zoom out">-</button>
             <button id="board-zoom-label" class="zoom-label zoom-reset-button board-workspace-only" type="button" title="Reset to 100%" aria-label="Reset canvas zoom to 100%">100%</button>
@@ -397,6 +401,22 @@
             <canvas id="board-doodle-canvas" class="board-doodle-canvas" hidden></canvas>
             <div id="board-empty" class="board-empty">Drag files here to compare, arrange, and generate freely.</div>
             <div id="board-file-drop-indicator" class="board-file-drop-indicator" hidden><span>Drop to place on canvas</span></div>
+          </div>
+          <div id="board-node-mode" class="board-node-mode" hidden>
+            <div id="board-node-editor" class="board-node-editor" aria-label="Node canvas"></div>
+            <div id="board-node-empty" class="board-node-empty" hidden>No files on this canvas</div>
+            <div class="board-node-add">
+              <div id="board-node-add-menu" class="board-node-add-menu" role="menu" hidden>
+                <button type="button" role="menuitem" data-add-node="text"><span class="board-node-menu-icon">T</span><span>Text prompt</span></button>
+                <button type="button" role="menuitem" data-add-node="import-image"><span class="board-node-menu-icon">▧</span><span>Import image</span></button>
+                <button type="button" role="menuitem" data-add-node="import-video"><span class="board-node-menu-icon">▶</span><span>Import video</span></button>
+                <button type="button" role="menuitem" data-add-node="generate-image"><span class="board-node-menu-icon">✦</span><span>Image generation</span></button>
+                <button type="button" role="menuitem" data-add-node="generate-video"><span class="board-node-menu-icon">▷</span><span>Video generation</span></button>
+              </div>
+              <button id="board-node-add-toggle" class="board-node-add-toggle" type="button" aria-expanded="false" aria-controls="board-node-add-menu">
+                <b aria-hidden="true">+</b><span>Add node</span>
+              </button>
+            </div>
           </div>
           <div id="resize-handle-board-agent" class="resize-handle resize-handle-v board-agent-resize-handle" data-target="agent" role="separator" aria-orientation="vertical" aria-label="Resize Canvas Agent"></div>
           <aside id="board-agent-panel" class="board-agent-panel is-hidden">
@@ -548,9 +568,9 @@
               <div class="preference-settings-row">
                 <div class="preference-settings-copy"><strong>Language</strong><small>Interface language</small></div>
                 <div class="language-switch preference-choice-switch" role="group" aria-label="Language">
-                  <button class="language-opt is-active" data-language-choice="en">English</button>
+                  <button class="language-opt" data-language-choice="en">English</button>
                   <button class="language-opt" data-language-choice="zh">中文</button>
-                  <button class="language-opt" data-language-choice="ko">한국어</button>
+                  <button class="language-opt is-active" data-language-choice="ko">한국어</button>
                 </div>
               </div>
             </div>
@@ -991,6 +1011,8 @@
   <script src="js/board-media-meta.js"></script>
   <script src="js/canvas-workspace.js"></script>
   <script src="js/board-canvas.js"></script>
+  <script src="../node_modules/drawflow/dist/drawflow.min.js"></script>
+  <script src="js/canvas-node-mode.js"></script>
   <script src="js/panel-resize.js"></script>
   <script src="js/panel-layout.js"></script>
   <script src="js/stats-detail.js"></script>

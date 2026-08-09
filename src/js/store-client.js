@@ -18,7 +18,7 @@ const AppState = {
   viewMode: 'grid',
   gridThumbSize: 140,
   theme: 'dark',
-  language: 'en'
+  language: document.documentElement.dataset.language || 'ko'
 };
 
 function isZh() {
@@ -32,7 +32,7 @@ function isKo() {
 function normalizeAppLanguage(language) {
   return window.MesssI18n
     ? window.MesssI18n.normalizeLanguage(language)
-    : (language === 'zh' || language === 'ko' ? language : 'en');
+    : (language === 'en' || language === 'zh' ? language : 'ko');
 }
 
 function appLocale() {

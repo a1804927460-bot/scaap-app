@@ -14,8 +14,10 @@ import {
 import {
   downloadAi302ImageResult,
   eraseImageObjects,
+  pollTopazImageTool,
   pollQwenImageEdit,
   pollQwenImageLayered,
+  submitTopazImageTool,
   submitQwenImageEdit,
   submitQwenImageLayered,
   superUpscaleImage
@@ -55,6 +57,16 @@ const port = Math.max(1, Number(process.env.PORT) || 3000);
 const maxBodyBytes = 70 * 1024 * 1024;
 const rateBuckets = new Map();
 const imageOperationCache = new Map();
+const TOPAZ_IMAGE_TOOL_IDS = new Set([
+  'topaz-image-sharpen',
+  'topaz-image-sharpen-gen',
+  'topaz-image-enhance',
+  'topaz-image-enhance-gen',
+  'topaz-image-denoise',
+  'topaz-image-restore',
+  'topaz-image-lighting'
+]);
+const TOPAZ_IMAGE_MAX_RETAIL_CREDITS = 18;
 const allowedOrigins = new Set(String(process.env.ALLOWED_ORIGINS || '').split(',').map((v) => v.trim()).filter(Boolean));
 const secretPatterns = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,
@@ -215,6 +227,13 @@ function validateBody(body, kind) {
   const maxReferenceImages = Number.isInteger(configuredReferenceLimit) && configuredReferenceLimit >= 0
     ? Math.min(14, configuredReferenceLimit)
     : 14;
+  const configuredReferenceMinimum = Number(capabilities.minReferenceImages);
+  const minReferenceImages = Number.isInteger(configuredReferenceMinimum) && configuredReferenceMinimum > 0
+    ? Math.min(maxReferenceImages, configuredReferenceMinimum)
+    : 0;
+  if ((Array.isArray(body.urls) ? body.urls.length : 0) < minReferenceImages) {
+    throw invalidOption('reference-required', `The selected model requires at least ${minReferenceImages} reference image${minReferenceImages === 1 ? '' : 's'}.`);
+  }
   if (Array.isArray(body.urls) && body.urls.length > maxReferenceImages) {
     throw invalidOption('too-many-references', `The selected model accepts at most ${maxReferenceImages} reference images.`);
   }
@@ -261,21 +280,34 @@ function validateBody(body, kind) {
     const allowedSizes = Array.isArray(capabilities.sizes) && capabilities.sizes.length
       ? new Set(capabilities.sizes.map(String))
       : imageSizes;
-    const allowedRatios = Array.isArray(capabilities.ratios) && capabilities.ratios.length
-      ? new Set(capabilities.ratios.map(String))
+    const configuredRatios = urls.length && Array.isArray(capabilities.referenceRatios)
+      ? capabilities.referenceRatios
+      : capabilities.ratios;
+    const allowedRatios = Array.isArray(configuredRatios) && configuredRatios.length
+      ? new Set(configuredRatios.map(String))
       : imageRatios;
     const allowedQualities = Array.isArray(capabilities.qualities) && capabilities.qualities.length
       ? new Set(capabilities.qualities.map((value) => String(value).toLowerCase()))
       : null;
     if (!allowedSizes.has(requestedSize)) throw invalidOption('invalid-size', 'The selected image resolution is not supported.');
-    if (!allowedRatios.has(requestedRatio)) throw invalidOption('invalid-aspect-ratio', 'The selected image aspect ratio is not supported.');
+    if (!allowedRatios.has(requestedRatio)) {
+      throw invalidOption(
+        'invalid-aspect-ratio',
+        urls.length
+          ? 'The selected image model does not support this aspect ratio with reference images.'
+          : 'The selected image aspect ratio is not supported.'
+      );
+    }
     if (allowedQualities && !allowedQualities.has(requestedQuality)) {
       throw invalidOption('invalid-quality', 'The selected image quality is not supported.');
     }
   }
   if (kind === 'video') {
-    const allowedResolutions = Array.isArray(capabilities.resolutions) && capabilities.resolutions.length
-      ? new Set(capabilities.resolutions.map((value) => String(value).toUpperCase()))
+    const configuredResolutions = urls.length && Array.isArray(capabilities.referenceResolutions)
+      ? capabilities.referenceResolutions
+      : capabilities.resolutions;
+    const allowedResolutions = Array.isArray(configuredResolutions) && configuredResolutions.length
+      ? new Set(configuredResolutions.map((value) => String(value).toUpperCase()))
       : defaultVideoResolutions;
     if (!allowedResolutions.has(requestedResolution)) {
       throw invalidOption('invalid-resolution', 'The selected video model does not support this resolution.');
@@ -390,7 +422,12 @@ async function releaseFailedToolReservation(userId, usage) {
 function imageToolPoller(providerId) {
   if (providerId === 'qwen-image-edit-plus') return pollQwenImageEdit;
   if (providerId === 'qwen-image-layered') return pollQwenImageLayered;
+  if (TOPAZ_IMAGE_TOOL_IDS.has(providerId)) return pollTopazImageTool;
   throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
+}
+
+function imageToolFlag(providerId) {
+  return TOPAZ_IMAGE_TOOL_IDS.has(providerId) ? AI302_FLAGS.topaz : AI302_FLAGS.image;
 }
 
 function validUuid(value) {
@@ -544,7 +581,10 @@ async function handle(request, response) {
     const png = await runIdempotentImageOperation(user.id, requestId, async () => {
       const usage = await reserveFixedTool(user.id, 'background-remove', requestId);
       try {
-        const result = await removeBackground({ imageDataUrl: body && body.imageDataUrl });
+        const result = await removeBackground({
+          imageDataUrl: body && body.imageDataUrl,
+          toolOptions: body && body.options
+        });
         await settleToolUsage(user.id, usage.requestId, 'succeeded', Date.now() - usage.startedAt);
         return result;
       } catch (error) {
@@ -601,6 +641,7 @@ async function handle(request, response) {
           imageDataUrl: body && body.imageDataUrl,
           prompt: body && body.options && body.options.prompt,
           numLayers: body && body.options && body.options.numLayers,
+          toolOptions: body && body.options,
           userId: user.id
         }, { accountingRequestId: usage.requestId });
         return {
@@ -616,10 +657,41 @@ async function handle(request, response) {
     return send(response, 202, task);
   }
 
-  if (request.method === 'POST' && url.pathname === '/v1/tools/image/status') {
-    if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
+  if (request.method === 'POST' && url.pathname === '/v1/tools/image/topaz') {
+    if (!ai302Enabled(AI302_FLAGS.topaz)) return disabledTool(response);
     const body = await readJson(request);
     const modelId = String(body && body.modelId || '').trim().toLowerCase();
+    if (!TOPAZ_IMAGE_TOOL_IDS.has(modelId)) {
+      throw invalidOption('invalid-image-tool', 'The selected Topaz image tool is not supported.');
+    }
+    const account = await getUsageAccount(user.id);
+    const availableCredits = availableAccountCredits(account);
+    if (availableCredits !== null && availableCredits < TOPAZ_IMAGE_MAX_RETAIL_CREDITS) {
+      return deniedReservation(response, {
+        reason: 'insufficient-credits',
+        credits: TOPAZ_IMAGE_MAX_RETAIL_CREDITS,
+        availableCredits
+      });
+    }
+    const task = await runIdempotentImageOperation(user.id, requestId, () => submitTopazImageTool({
+      modelId,
+      imageDataUrl: body && body.imageDataUrl,
+      toolOptions: body && body.options,
+      userId: user.id
+    }, {
+      reserveCredits: ({ requestId: accountingRequestId, providerId, providerCost }) => reserveToolUsage(
+        user.id,
+        accountingRequestId,
+        { providerId, providerCost }
+      )
+    }));
+    return send(response, 202, task);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/image/status') {
+    const body = await readJson(request);
+    const modelId = String(body && body.modelId || '').trim().toLowerCase();
+    if (!ai302Enabled(imageToolFlag(modelId))) return disabledTool(response);
     const poll = imageToolPoller(modelId);
     const result = await poll({
       taskToken: body && body.taskToken,
@@ -635,17 +707,19 @@ async function handle(request, response) {
     });
     return send(response, 200, {
       status: result.status,
+      ...(result.progress !== undefined ? { progress: result.progress } : {}),
       retryAfterMs: result.retryAfterMs,
       resultCount: Array.isArray(result.urls) ? result.urls.length : 0,
+      ...(result.providerCost !== undefined ? { providerCost: result.providerCost } : {}),
       ...(result.creditsCharged !== undefined ? { creditsCharged: result.creditsCharged } : {}),
       ...(result.creditsReleased !== undefined ? { creditsReleased: result.creditsReleased } : {})
     });
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/tools/image/download') {
-    if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
     const body = await readJson(request);
     const modelId = String(body && body.modelId || '').trim().toLowerCase();
+    if (!ai302Enabled(imageToolFlag(modelId))) return disabledTool(response);
     const index = Number(body && body.index);
     if (!Number.isInteger(index) || index < 0 || index >= 8) {
       throw invalidOption('invalid-image-result-index', 'The selected image result is invalid.');
@@ -738,7 +812,11 @@ async function handle(request, response) {
       const usage = await reserveFixedTool(user.id, providerId, requestId);
       try {
         const created = await createThreeDTask({
-          providerId, imageDataUrl: body && body.imageDataUrl, prompt: body && body.prompt, userId: user.id
+          providerId,
+          imageDataUrl: body && body.imageDataUrl,
+          prompt: body && body.prompt,
+          toolOptions: body && body.options,
+          userId: user.id
         }, {
           accountingRequestId: usage.requestId,
           credits: usage.reservation.credits

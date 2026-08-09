@@ -1,7 +1,13 @@
 import { createRequire } from 'node:module';
+import {
+  deleteAi302RelayAsset,
+  parseImageDataUrl,
+  storeAi302RelayAsset,
+  stripImageMetadata
+} from './ai302-tools.js';
 
 const require = createRequire(import.meta.url);
-const { generateMediaBuffer } = require('../../lib/ai-media-provider');
+const { detectMediaProtocol, generateMediaBuffer } = require('../../lib/ai-media-provider');
 const { requestChat, discoverChatModels } = require('../../lib/ai-chat-provider');
 const { PROVIDER_CATALOG_VERSION, providerCatalog } = require('../../lib/provider-catalog');
 
@@ -10,7 +16,12 @@ const DEFAULT_RESULT_ENDPOINT = `${QUICKROUTER_BASE_URL}/v1/videos`;
 const PROVIDER_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const PROVIDER_KEY_ENV = /^[A-Z][A-Z0-9_]{1,80}$/;
 const MAX_PROVIDERS = 100;
-const ASYNC_VIDEO_PROTOCOLS = new Set(['minimax-video-v2', 'seedance-video-v3']);
+const ASYNC_VIDEO_PROTOCOLS = new Set([
+  'minimax-video-v2',
+  'seedance-video-v3',
+  'jimeng-video-v30',
+  'jimeng-video-v30-pro'
+]);
 const TERMINAL_VIDEO_FAILURES = new Set(['failed', 'cancelled', 'expired']);
 
 function safeServerEndpoint(value) {
@@ -125,7 +136,29 @@ export async function generateMedia(kind, body, signal) {
     timeoutMs: 20 * 60_000,
     pollIntervalMs: 2_000
   };
-  return generateMediaBuffer(fetch, config, kind, body, signal);
+  const relayTokens = [];
+  let requestBody = body;
+  if (kind === 'image' && detectMediaProtocol(provider.endpoint).startsWith('ai302-nano-banana-')) {
+    try {
+      const urls = Array.isArray(body.urls) ? body.urls.slice(0, 14).map((value) => {
+        const source = String(value || '').trim();
+        if (!/^data:image\//i.test(source)) return source;
+        const image = stripImageMetadata(parseImageDataUrl(source, { maxBytes: 24 * 1024 * 1024 }));
+        const relay = storeAi302RelayAsset(image);
+        relayTokens.push(relay.token);
+        return relay.url;
+      }) : [];
+      requestBody = { ...body, urls };
+    } catch (error) {
+      relayTokens.forEach((token) => deleteAi302RelayAsset(token));
+      throw error;
+    }
+  }
+  try {
+    return await generateMediaBuffer(fetch, config, kind, requestBody, signal);
+  } finally {
+    relayTokens.forEach((token) => deleteAi302RelayAsset(token));
+  }
 }
 
 const imageStyleCache = new Map();
@@ -274,11 +307,11 @@ function providerHeaders(provider, includeJson = false) {
 
 function normalizeVideoTaskStatus(value) {
   const status = String(value || '').trim().toLowerCase();
-  if (['succeeded', 'success', 'completed', 'complete'].includes(status)) return 'succeeded';
+  if (['succeeded', 'success', 'completed', 'complete', 'done', 'finished'].includes(status)) return 'succeeded';
   if (['failed', 'failure', 'error'].includes(status)) return 'failed';
   if (['cancelled', 'canceled'].includes(status)) return 'cancelled';
   if (status === 'expired') return 'expired';
-  if (['processing', 'running', 'generating'].includes(status)) return 'running';
+  if (['processing', 'running', 'generating', 'in_progress'].includes(status)) return 'running';
   return 'queued';
 }
 
@@ -287,6 +320,10 @@ function validatedVideoTaskInput(provider, body) {
     ? provider.capabilities
     : {};
   const submittedUrls = Array.isArray(body.urls) ? body.urls.filter(Boolean) : [];
+  const configuredMinimum = Number(capabilities.minReferenceImages);
+  const minReferenceImages = Number.isInteger(configuredMinimum) && configuredMinimum >= 0
+    ? Math.min(14, configuredMinimum)
+    : 0;
   const configuredLimit = Number(capabilities.maxReferenceImages);
   const maxReferenceImages = Number.isInteger(configuredLimit) && configuredLimit >= 0
     ? Math.min(14, configuredLimit)
@@ -295,6 +332,12 @@ function validatedVideoTaskInput(provider, body) {
     throw Object.assign(new Error(`${provider.name} accepts at most ${maxReferenceImages} reference images.`), {
       status: 400,
       code: 'too-many-references'
+    });
+  }
+  if (submittedUrls.length < minReferenceImages) {
+    throw Object.assign(new Error(`${provider.name} requires at least ${minReferenceImages} reference image${minReferenceImages === 1 ? '' : 's'}.`), {
+      status: 400,
+      code: 'reference-required'
     });
   }
   const urls = submittedUrls.slice(0, maxReferenceImages);
@@ -310,8 +353,11 @@ function validatedVideoTaskInput(provider, body) {
       code: 'invalid-aspect-ratio'
     });
   }
-  const validResolutions = Array.isArray(capabilities.resolutions)
-    ? capabilities.resolutions.map((value) => String(value).toUpperCase())
+  const resolutionSource = urls.length && Array.isArray(capabilities.referenceResolutions)
+    ? capabilities.referenceResolutions
+    : capabilities.resolutions;
+  const validResolutions = Array.isArray(resolutionSource)
+    ? resolutionSource.map((value) => String(value).toUpperCase())
     : [];
   if (!validResolutions.includes(resolution)) {
     throw Object.assign(new Error(`${provider.name} does not support this resolution.`), {
@@ -358,26 +404,96 @@ async function createMiniMaxVideoTask(provider, body, signal) {
 async function createSeedanceVideoTask(provider, body, signal) {
   const { capabilities, duration, ratio, resolution, urls } = validatedVideoTaskInput(provider, body);
   const content = [{ type: 'text', text: String(body.prompt || '').trim() }];
-  urls.forEach((url) => content.push({
+  const referenceRoles = Array.isArray(capabilities.referenceRoles) ? capabilities.referenceRoles : [];
+  urls.forEach((url, index) => content.push({
     type: 'image_url',
     image_url: { url: String(url) },
-    role: String(capabilities.referenceRole || 'reference_image')
+    ...(referenceRoles[index]
+      ? { role: String(referenceRoles[index]) }
+      : (capabilities.referenceRole ? { role: String(capabilities.referenceRole) } : {}))
   }));
+  const requestBody = {
+    model: provider.model,
+    content,
+    generate_audio: capabilities.generateAudio !== false,
+    ratio,
+    duration,
+    resolution: resolution.toLowerCase(),
+    watermark: false,
+    ...(capabilities.serviceTier ? { service_tier: String(capabilities.serviceTier) } : {})
+  };
   const created = await responseJson(await fetch(provider.endpoint, {
     method: 'POST',
     headers: providerHeaders(provider, true),
     signal: providerSignal(signal),
-    body: JSON.stringify({
-      model: provider.model,
-      content,
-      generate_audio: capabilities.generateAudio !== false,
-      ratio,
-      duration,
-      resolution: resolution.toLowerCase(),
-      watermark: false
-    })
+    body: JSON.stringify(requestBody)
   }), provider.name);
   const taskId = String(created.id || '').trim();
+  if (!taskId || taskId.length > 256) {
+    throw Object.assign(new Error(`${provider.name} did not return a valid task ID.`), {
+      status: 502,
+      code: 'provider-invalid-response',
+      retryable: false
+    });
+  }
+  return { providerId: provider.id, taskId };
+}
+
+function jimengImagePayloads(urls) {
+  const imageUrls = [];
+  const binaryData = [];
+  for (const rawUrl of urls) {
+    const url = String(rawUrl || '').trim();
+    if (/^data:image\//i.test(url)) {
+      const image = stripImageMetadata(parseImageDataUrl(url, { maxBytes: 24 * 1024 * 1024 }));
+      binaryData.push(image.buffer.toString('base64'));
+    } else if (/^https:\/\//i.test(url)) {
+      imageUrls.push(url);
+    } else {
+      throw Object.assign(new Error('Jimeng requires HTTPS or local image references.'), {
+        status: 400,
+        code: 'invalid-reference-image'
+      });
+    }
+  }
+  return {
+    ...(imageUrls.length ? { image_urls: imageUrls } : {}),
+    ...(binaryData.length ? { binary_data_base64: binaryData } : {})
+  };
+}
+
+function jimengRequestKey(resolution, referenceCount) {
+  const highDefinition = resolution === '1080P';
+  if (referenceCount >= 2) return highDefinition ? 'jimeng_i2v_first_tail_v30_1080p' : 'jimeng_i2v_first_tail_v30';
+  if (referenceCount === 1) return highDefinition ? 'jimeng_i2v_first_v30_1080' : 'jimeng_i2v_first_v30';
+  return highDefinition ? 'jimeng_t2v_v30_1080p' : 'jimeng_t2v_v30';
+}
+
+async function createJimengVideoTask(provider, body, signal) {
+  const { duration, ratio, resolution, urls } = validatedVideoTaskInput(provider, body);
+  const pro = provider.protocol === 'jimeng-video-v30-pro';
+  const requestBody = {
+    prompt: String(body.prompt || '').trim(),
+    seed: -1,
+    frames: duration * 24 + 1,
+    ...(urls.length ? {} : { aspect_ratio: ratio }),
+    ...jimengImagePayloads(urls),
+    ...(!pro ? { req_key: jimengRequestKey(resolution, urls.length) } : {})
+  };
+  const created = await responseJson(await fetch(provider.endpoint, {
+    method: 'POST',
+    headers: providerHeaders(provider, true),
+    signal: providerSignal(signal),
+    body: JSON.stringify(requestBody)
+  }), provider.name);
+  if (Number(created.code ?? created.status) !== 10000) {
+    throw Object.assign(new Error(safeProviderText(created.message, `${provider.name} rejected the request.`)), {
+      status: 502,
+      code: 'provider-request-failed',
+      upstreamCode: safeProviderText(created.code ?? created.status, '')
+    });
+  }
+  const taskId = String(created.data && created.data.task_id || '').trim();
   if (!taskId || taskId.length > 256) {
     throw Object.assign(new Error(`${provider.name} did not return a valid task ID.`), {
       status: 502,
@@ -392,6 +508,9 @@ export async function createVideoTask(body, signal) {
   const provider = providerFor('video', String(body.providerId || ''));
   if (provider.protocol === 'minimax-video-v2') return createMiniMaxVideoTask(provider, body, signal);
   if (provider.protocol === 'seedance-video-v3') return createSeedanceVideoTask(provider, body, signal);
+  if (['jimeng-video-v30', 'jimeng-video-v30-pro'].includes(provider.protocol)) {
+    return createJimengVideoTask(provider, body, signal);
+  }
   throw Object.assign(new Error('The selected video provider does not support asynchronous tasks.'), {
     status: 400,
     code: 'async-video-not-supported'
@@ -466,10 +585,50 @@ async function pollSeedanceVideoTask(provider, taskId, signal) {
   return { status };
 }
 
+async function pollJimengVideoTask(provider, taskId, signal) {
+  const normalizedTaskId = validVideoTaskId(taskId);
+  const result = await responseJson(await fetch(provider.resultEndpoint, {
+    method: 'POST',
+    headers: providerHeaders(provider, true),
+    signal: providerSignal(signal),
+    body: JSON.stringify({ task_id: normalizedTaskId })
+  }), provider.name);
+  if (Number(result.code ?? result.status) !== 10000) {
+    return {
+      status: 'failed',
+      errorCode: safeProviderText(result.code ?? result.status, 'provider-request-failed'),
+      errorMessage: safeProviderText(result.message, `${provider.name} task query failed.`)
+    };
+  }
+  const data = result.data && typeof result.data === 'object' ? result.data : {};
+  const status = normalizeVideoTaskStatus(data.status);
+  if (status === 'succeeded') {
+    const resultUrl = String(data.video_url || '').trim();
+    return resultUrl
+      ? { status, resultUrl }
+      : {
+          status: 'failed',
+          errorCode: 'provider-result-missing',
+          errorMessage: `${provider.name} completed the task without a downloadable video.`
+        };
+  }
+  if (TERMINAL_VIDEO_FAILURES.has(status)) {
+    return {
+      status,
+      errorCode: safeProviderText(data.error_code || result.code, `provider-${status}`),
+      errorMessage: safeProviderText(data.message || result.message, `${provider.name} video generation ${status}.`)
+    };
+  }
+  return { status };
+}
+
 export async function pollVideoTask(providerId, taskId, signal) {
   const provider = providerFor('video', String(providerId || ''));
   if (provider.protocol === 'minimax-video-v2') return pollMiniMaxVideoTask(provider, taskId, signal);
   if (provider.protocol === 'seedance-video-v3') return pollSeedanceVideoTask(provider, taskId, signal);
+  if (['jimeng-video-v30', 'jimeng-video-v30-pro'].includes(provider.protocol)) {
+    return pollJimengVideoTask(provider, taskId, signal);
+  }
   throw Object.assign(new Error('The selected video provider does not support task polling.'), {
     status: 400,
     code: 'async-video-not-supported'

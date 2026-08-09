@@ -20,6 +20,7 @@
   --dur-fast: 180ms;
   --dur-base: 320ms;
   --dur-slow: 560ms;
+  --board-workspace-bg: var(--bg-base);
 
   --font-display: "Helvetica Neue LT Pro 93 Black Extended", "Helvetica Neue LT Pro", "Helvetica Neue", -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
   --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Helvetica, Arial, sans-serif;
@@ -27,32 +28,34 @@
 
 /* -------- Dark theme (default) -------- */
 [data-theme="dark"] {
-  --bg-base: #080A0D;
-  --bg-elevated: #0E1115;
-  --bg-surface: #15191E;
-  --bg-surface-2: #20252B;
-  --border-hairline: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(72, 137, 232, 0.34);
+  --bg-deep: #0d0d0d;
+  --bg-base: #111111;
+  --bg-elevated: #171717;
+  --bg-surface: #1d1d1d;
+  --bg-surface-2: #282828;
+  --board-workspace-bg: color-mix(in srgb, var(--bg-deep) 94%, #090b10 6%);
+  --border-hairline: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.17);
 
-  --text-primary: #F4F6F8;
-  --text-secondary: #A7ADB6;
-  --text-tertiary: #707780;
+  --text-primary: #f3f3f3;
+  --text-secondary: #b0b0b0;
+  --text-tertiary: #777777;
 
-  --title-accent: #4A8BE8;
+  --title-accent: #f3f3f3;
 
-  --accent: #F5D84C;
-  --accent-soft: rgba(245, 216, 76, 0.14);
-  --accent-ink: #0A0C0F;
-  --accent-glow: rgba(245, 216, 76, 0.24);
-  --selection-outline: #F5D84C;
-  --selection-handle: #FFF3A8;
-  --glow-color: rgba(44, 123, 224, 0.30);
-  --resize-handle-line: rgba(167, 173, 182, 0.10);
-  --resize-handle-hover: rgba(167, 173, 182, 0.30);
-  --resize-handle-active: rgba(74, 139, 232, 0.72);
+  --accent: #57bce8;
+  --accent-soft: rgba(87, 188, 232, 0.14);
+  --accent-ink: #0b1114;
+  --accent-glow: rgba(87, 188, 232, 0.22);
+  --selection-outline: #6bc5eb;
+  --selection-handle: #e8f8ff;
+  --glow-color: rgba(87, 188, 232, 0.18);
+  --resize-handle-line: rgba(255, 255, 255, 0.08);
+  --resize-handle-hover: rgba(255, 255, 255, 0.24);
+  --resize-handle-active: rgba(87, 188, 232, 0.68);
 
   --shadow-elevated: 0 20px 60px rgba(0, 0, 0, 0.62);
-  --scrollbar-thumb: rgba(112, 119, 128, 0.42);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.22);
 
   --cursor-default: url('../assets/cursors/arrow-dark.svg') 4 3, default;
   --cursor-click: url('../assets/cursors/click-dark.svg') 9 3, pointer;

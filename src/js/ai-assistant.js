@@ -437,6 +437,7 @@ function updateAssistantCreditEstimate() {
     imageProviderId: kind === 'image' ? provider.id : null,
     videoProviderId: kind === 'video' ? provider.id : null,
     count: kind === 'image' ? Number(document.getElementById('ai-assistant-count').value) : undefined,
+    size: kind === 'image' ? document.getElementById('ai-assistant-size').value : undefined,
     resolution: kind === 'video' ? document.getElementById('ai-assistant-size').value : undefined,
     duration: kind === 'video' ? Number(document.getElementById('ai-assistant-duration').value) : undefined
   };
@@ -468,30 +469,34 @@ function assistantHasMediaAttachments() {
 }
 
 function assistantAttachmentLimit() {
-  if (AiAssistant.kind !== 'video') return 4;
-  const maximum = Number(assistantVideoCapabilities().maxReferenceImages);
-  return Number.isFinite(maximum) && maximum > 0 ? Math.floor(maximum) : 2;
+  const capabilities = AiAssistant.kind === 'video'
+    ? assistantVideoCapabilities()
+    : assistantImageCapabilities();
+  const maximum = Number(capabilities.maxReferenceImages);
+  if (Number.isFinite(maximum) && maximum >= 0) return Math.floor(maximum);
+  return AiAssistant.kind === 'video' ? 2 : 4;
 }
 
 function syncAssistantMediaOptions() {
   const isVideo = AiAssistant.kind === 'video';
   const capabilities = isVideo ? assistantVideoCapabilities() : assistantImageCapabilities();
-  if (isVideo) {
-    const maximum = Number(capabilities.maxReferenceImages);
-    const limit = Number.isFinite(maximum) && maximum > 0 ? Math.floor(maximum) : 2;
-    if (AiAssistant.attachments.length > limit) {
-      AiAssistant.attachments = AiAssistant.attachments.slice(0, limit);
-      renderAssistantAttachments();
-    }
+  const limit = assistantAttachmentLimit();
+  if (AiAssistant.attachments.length > limit) {
+    AiAssistant.attachments = AiAssistant.attachments.slice(0, limit);
+    renderAssistantAttachments();
   }
   const sizeWrap = document.getElementById('ai-assistant-size-wrap');
   const sizeSelect = document.getElementById('ai-assistant-size');
   const durationSelect = document.getElementById('ai-assistant-duration');
   const resolutions = isVideo
     ? (Array.isArray(capabilities.resolutions) ? capabilities.resolutions : ['768P', '2K'])
-    : (Array.isArray(capabilities.sizes) && capabilities.sizes.length
-      ? capabilities.sizes
-      : ['1K', '2K', '4K']);
+    : (AiAssistant.attachments.length > 1 && Array.isArray(capabilities.multiReferenceSizes)
+      ? capabilities.multiReferenceSizes
+      : AiAssistant.attachments.length > 0 && Array.isArray(capabilities.referenceSizes)
+        ? capabilities.referenceSizes
+      : Array.isArray(capabilities.sizes) && capabilities.sizes.length
+        ? capabilities.sizes
+        : ['1K', '2K', '4K']);
   const durations = isVideo && Array.isArray(capabilities.durations) && capabilities.durations.length
     ? capabilities.durations
     : [6, 8, 10, 15];
@@ -619,9 +624,11 @@ function renderAssistantRatios() {
       : (Array.isArray(capabilities.ratios) && capabilities.ratios.length
         ? capabilities.ratios
         : ['16:9', '9:16']))
-    : (Array.isArray(capabilities.ratios) && capabilities.ratios.length
-      ? capabilities.ratios
-      : AI_IMAGE_RATIOS);
+    : (assistantHasMediaAttachments() && Array.isArray(capabilities.referenceRatios)
+      ? capabilities.referenceRatios
+      : (Array.isArray(capabilities.ratios) && capabilities.ratios.length
+        ? capabilities.ratios
+        : AI_IMAGE_RATIOS));
   const config = AiAssistant.config || {};
   const selected = AiAssistant.kind === 'video'
     ? (config.videoAspectRatio || '16:9')
@@ -785,6 +792,7 @@ async function submitAssistantMessage() {
       videoProviderId: submittedKind === 'video' && submittedProvider ? submittedProvider.id : null,
       count: submittedMediaOptions.count,
       duration: submittedMediaOptions.duration,
+      size: submittedKind === 'image' ? submittedMediaOptions.size : undefined,
       resolution: submittedKind === 'video'
         ? submittedMediaOptions.size
         : undefined

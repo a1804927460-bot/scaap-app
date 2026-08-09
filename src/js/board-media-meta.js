@@ -73,6 +73,12 @@ const BOARD_BUTLER_ICONS = {
   imageEdit: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><rect x="3" y="4" width="15" height="15" rx="2"></rect><path d="m4 15 4-4 3 3 2-2 2 2"></path><path d="m14.5 7.5 4-4 2 2-4 4-3 .9z"></path></svg>',
   imageLayer: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z"></path><path d="m5 12-2 1 9 5 9-5-2-1M5 17l-2 1 9 5 9-5-2-1"></path></svg>',
   imageUpscale: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="M9 3H3v6M15 3h6v6M9 21H3v-6M15 21h6v-6"></path><path d="m3 9 6-6m6 0 6 6M3 15l6 6m6 0 6-6"></path></svg>',
+  topazImage: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="M12 3 9.8 9.8 3 12l6.8 2.2L12 21l2.2-6.8L21 12l-6.8-2.2L12 3Z"></path></svg>',
+  sharpen: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="M4 16 16 4M8 20 20 8"></path><path d="M5 5h5v5H5zM14 14h5v5h-5z"></path></svg>',
+  enhance: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"></path><circle cx="12" cy="12" r="7"></circle></svg>',
+  denoise: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="M4 8h16M4 16h16"></path><path d="M8 4v16M16 4v16"></path><circle cx="8" cy="8" r="2"></circle><circle cx="16" cy="16" r="2"></circle></svg>',
+  restore: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6"></path><path d="M4 4v4.6h4.6"></path><path d="M12 8v4l3 2"></path></svg>',
+  lighting: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>',
   videoUpscale: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m10 9 5 3-5 3V9Z"></path><path d="M6 2v3M18 2v3M6 19v3M18 19v3"></path></svg>',
   eraseObject: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="m7.5 19 11-11a2.8 2.8 0 0 0-4-4l-11 11a2.8 2.8 0 0 0 0 4l1 1h9"></path><path d="m10 8 6 6M7.5 19l-4-4"></path></svg>',
   generate3d: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="m12 2 8 4.5v9L12 20l-8-4.5v-9L12 2Z"></path><path d="m4 6.5 8 4.5 8-4.5M12 11v9"></path></svg>',
@@ -91,7 +97,14 @@ const BOARD_BUTLER_IMAGE_TOOL_HOOKS = Object.freeze({
   imageEdit: Object.freeze({ method: 'editImage', toolId: 'qwen-image-edit-plus' }),
   imageLayer: Object.freeze({ method: 'layerImage', toolId: 'qwen-image-layered' }),
   imageUpscale: Object.freeze({ method: 'upscaleImage', toolId: 'super-upscale-v2' }),
-  eraseObject: Object.freeze({ method: 'eraseObject', toolId: 'erase' })
+  eraseObject: Object.freeze({ method: 'eraseObject', toolId: 'erase' }),
+  topazSharpen: Object.freeze({ method: 'topazImage', toolId: 'topaz-image-sharpen' }),
+  topazSharpenGen: Object.freeze({ method: 'topazImage', toolId: 'topaz-image-sharpen-gen' }),
+  topazEnhance: Object.freeze({ method: 'topazImage', toolId: 'topaz-image-enhance' }),
+  topazEnhanceGen: Object.freeze({ method: 'topazImage', toolId: 'topaz-image-enhance-gen' }),
+  topazDenoise: Object.freeze({ method: 'topazImage', toolId: 'topaz-image-denoise' }),
+  topazRestore: Object.freeze({ method: 'topazImage', toolId: 'topaz-image-restore' }),
+  topazLighting: Object.freeze({ method: 'topazImage', toolId: 'topaz-image-lighting' })
 });
 
 const BOARD_BUTLER_VIDEO_TOOL_HOOKS = Object.freeze({
@@ -104,6 +117,13 @@ const BOARD_BUTLER_TASK_ACTIONS = Object.freeze([
   'imageLayer',
   'imageUpscale',
   'eraseObject',
+  'topazSharpen',
+  'topazSharpenGen',
+  'topazEnhance',
+  'topazEnhanceGen',
+  'topazDenoise',
+  'topazRestore',
+  'topazLighting',
   'videoUpscale',
   'generate3d:hunyuan3d',
   'generate3d:hyper3d',
@@ -159,6 +179,13 @@ function boardButlerStatusText(action, task) {
   if (action === 'imageUpscale') return t('Upscaling...', '放大中...', '확대 중...');
   if (action === 'imageLayer') return t('Layering...', '分层中...', '레이어 분리 중...');
   if (action === 'imageEdit') return t('Editing...', '修改中...', '편집 중...');
+  if (action === 'topazSharpen') return t('Sharpening...', '锐化中...', '선명화 중...');
+  if (action === 'topazSharpenGen') return t('Generative sharpening...', '生成式锐化中...', '생성형 선명화 중...');
+  if (action === 'topazEnhance') return t('Enhancing...', '增强中...', '향상 중...');
+  if (action === 'topazEnhanceGen') return t('Generative enhancing...', '生成式增强中...', '생성형 향상 중...');
+  if (action === 'topazDenoise') return t('Denoising...', '降噪中...', '노이즈 제거 중...');
+  if (action === 'topazRestore') return t('Restoring...', '修复中...', '복원 중...');
+  if (action === 'topazLighting') return t('Relighting...', '打光中...', '조명 보정 중...');
   if (task.phase === 'downloading') return t('Saving...', '保存中...', '저장 중...');
   if (task.phase === 'queued') return t('Queued', '排队中', '대기 중');
   return t('Creating...', '生成中...', '생성 중...');
@@ -693,6 +720,133 @@ function appendBoardButlerFormActions(form, submitLabel) {
   return submit;
 }
 
+function boardButlerSelectField(icon, title, name, options, selectedValue) {
+  const label = document.createElement('label');
+  label.className = 'board-butler-config-field';
+  const heading = document.createElement('span');
+  heading.innerHTML = `${icon}<strong>${title}</strong>`;
+  const select = document.createElement('select');
+  select.name = name;
+  options.forEach((option) => {
+    const element = document.createElement('option');
+    element.value = String(option.value);
+    element.textContent = option.label;
+    element.selected = String(option.value) === String(selectedValue);
+    select.appendChild(element);
+  });
+  label.append(heading, select);
+  return label;
+}
+
+function boardButlerRangeField(icon, title, name, { min, max, step, value, format }) {
+  const label = document.createElement('label');
+  label.className = 'board-butler-config-field';
+  const heading = document.createElement('span');
+  heading.innerHTML = `${icon}<strong>${title}</strong>`;
+  const output = document.createElement('output');
+  const render = () => { output.textContent = format ? format(Number(input.value)) : input.value; };
+  heading.appendChild(output);
+  const input = document.createElement('input');
+  input.type = 'range';
+  input.name = name;
+  input.min = String(min);
+  input.max = String(max);
+  input.step = String(step);
+  input.value = String(value);
+  input.addEventListener('input', render);
+  label.append(heading, input);
+  render();
+  return label;
+}
+
+function boardButlerNumberField(icon, title, name, { min, max, step = 1, value = '', placeholder = '' }) {
+  const label = document.createElement('label');
+  label.className = 'board-butler-config-field';
+  const heading = document.createElement('span');
+  heading.innerHTML = `${icon}<strong>${title}</strong>`;
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.name = name;
+  input.min = String(min);
+  input.max = String(max);
+  input.step = String(step);
+  input.value = String(value);
+  input.placeholder = placeholder;
+  label.append(heading, input);
+  return label;
+}
+
+function boardButlerToggleField(title, name, checked, description = '') {
+  const label = document.createElement('label');
+  label.className = 'board-butler-toggle-field';
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.name = name;
+  input.checked = checked;
+  const control = document.createElement('span');
+  control.className = 'board-butler-toggle-control';
+  const copy = document.createElement('span');
+  copy.className = 'board-butler-toggle-copy';
+  const strong = document.createElement('strong');
+  strong.textContent = title;
+  copy.appendChild(strong);
+  if (description) {
+    const small = document.createElement('small');
+    small.textContent = description;
+    copy.appendChild(small);
+  }
+  label.append(input, control, copy);
+  return label;
+}
+
+function boardButlerAdvancedSection(label) {
+  const details = document.createElement('details');
+  details.className = 'board-butler-advanced';
+  const summary = document.createElement('summary');
+  summary.textContent = label;
+  const content = document.createElement('div');
+  content.className = 'board-butler-advanced-content';
+  details.append(summary, content);
+  return { details, content };
+}
+
+function openBoardButlerBackgroundPanel(anchor, file, item) {
+  const { body } = createBoardButlerConfigPanel(
+    anchor,
+    BOARD_BUTLER_ICONS.removeBackground,
+    t('Remove background', '去除背景', '배경 제거'),
+    'PhotoRoom'
+  );
+  const form = document.createElement('form');
+  form.className = 'board-butler-config-form';
+  form.appendChild(boardButlerSegmentedField(
+    BOARD_BUTLER_ICONS.detail,
+    t('Output size', '输出尺寸', '출력 크기'),
+    'butler-background-size',
+    [
+      { value: 'medium', label: t('Medium', '中等', '중간') },
+      { value: 'hd', label: 'HD' },
+      { value: 'full', label: t('Full', '原尺寸', '원본') }
+    ],
+    'full'
+  ));
+  form.appendChild(boardButlerToggleField(t('Crop to subject', '裁切主体', '피사체 자르기'), 'butler-background-crop', false));
+  form.appendChild(boardButlerToggleField(t('Color decontamination', '边缘去色', '가장자리 색상 제거'), 'butler-background-despill', true));
+  appendBoardButlerFormActions(form, t('Remove', '去除', '제거'));
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    const options = {
+      size: String(data.get('butler-background-size') || 'full'),
+      crop: data.get('butler-background-crop') === 'on',
+      despill: data.get('butler-background-despill') === 'on'
+    };
+    void runBoardButlerRemoveBackground(file, item, options);
+    closeBoardButlerPanel();
+  });
+  body.appendChild(form);
+}
+
 function openBoardButlerImageEditPanel(anchor, file, item) {
   const { body } = createBoardButlerConfigPanel(
     anchor,
@@ -705,19 +859,58 @@ function openBoardButlerImageEditPanel(anchor, file, item) {
   form.innerHTML = `
     <label class="board-butler-config-field">
       <span>${BOARD_BUTLER_ICONS.prompt}<strong>${t('Prompt', '提示词', '프롬프트')}</strong></span>
-      <textarea rows="4" maxlength="1200" required placeholder="${t(
+      <textarea name="butler-edit-prompt" rows="4" maxlength="1200" required placeholder="${t(
         'Describe the change you want',
         '描述想要修改的内容',
         '원하는 변경 사항을 설명하세요'
       )}"></textarea>
     </label>
   `;
+  form.appendChild(boardButlerSegmentedField(
+    BOARD_BUTLER_ICONS.detail,
+    t('Output size', '输出尺寸', '출력 크기'),
+    'butler-edit-size',
+    [
+      { value: '1024x768', label: '4:3' },
+      { value: '1024x1024', label: '1:1' },
+      { value: '768x1024', label: '3:4' }
+    ],
+    '1024x768'
+  ));
+  const advanced = boardButlerAdvancedSection(t('Advanced settings', '高级设置', '고급 설정'));
+  advanced.content.append(
+    boardButlerRangeField(BOARD_BUTLER_ICONS.detail, t('Steps', '生成步数', '생성 단계'), 'butler-edit-steps', {
+      min: 1, max: 50, step: 1, value: 30
+    }),
+    boardButlerRangeField(BOARD_BUTLER_ICONS.detail, t('Guidance', '引导强度', '가이던스'), 'butler-edit-guidance', {
+      min: 0, max: 20, step: 0.5, value: 4
+    }),
+    boardButlerNumberField(BOARD_BUTLER_ICONS.detail, t('Seed', '随机种子', '시드'), 'butler-edit-seed', {
+      min: 0, max: 2147483647, value: '', placeholder: t('Random', '随机', '무작위')
+    })
+  );
+  const negative = document.createElement('label');
+  negative.className = 'board-butler-config-field';
+  negative.innerHTML = `<span>${BOARD_BUTLER_ICONS.prompt}<strong>${t('Negative prompt', '反向提示词', '네거티브 프롬프트')}</strong></span><textarea name="butler-edit-negative" rows="2" maxlength="2000">blurry, ugly</textarea>`;
+  advanced.content.appendChild(negative);
+  form.appendChild(advanced.details);
   appendBoardButlerFormActions(form, t('Edit', '开始修改', '편집'));
   form.addEventListener('submit', (event) => {
     event.preventDefault();
-    const prompt = form.querySelector('textarea').value.trim();
+    const data = new FormData(form);
+    const prompt = String(data.get('butler-edit-prompt') || '').trim();
     if (!prompt) return;
-    if (launchBoardButlerImageTool('imageEdit', file, item, { prompt })) closeBoardButlerPanel();
+    const [width, height] = String(data.get('butler-edit-size') || '1024x768').split('x').map(Number);
+    const options = {
+      prompt,
+      width,
+      height,
+      numInferenceSteps: Number(data.get('butler-edit-steps')) || 30,
+      guidanceScale: Number(data.get('butler-edit-guidance')) || 4,
+      negativePrompt: String(data.get('butler-edit-negative') || '').trim(),
+      ...(data.get('butler-edit-seed') !== '' ? { seed: Number(data.get('butler-edit-seed')) } : {})
+    };
+    if (launchBoardButlerImageTool('imageEdit', file, item, options)) closeBoardButlerPanel();
   });
   body.appendChild(form);
   form.querySelector('textarea').focus();
@@ -750,12 +943,18 @@ function openBoardButlerLayerPanel(anchor, file, item) {
   const range = form.querySelector('input[type="range"]');
   const output = form.querySelector('output');
   range.addEventListener('input', () => { output.textContent = range.value; });
+  form.appendChild(boardButlerToggleField(
+    t('Safety checker', '安全检查', '안전 검사'),
+    'butler-layer-safety',
+    true
+  ));
   appendBoardButlerFormActions(form, t('Separate', '开始分层', '분리'));
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     const options = {
       numLayers: Math.max(2, Math.min(8, Number(range.value) || 4)),
-      prompt: form.querySelector('textarea').value.trim()
+      prompt: form.querySelector('textarea').value.trim(),
+      enableSafetyChecker: new FormData(form).get('butler-layer-safety') === 'on'
     };
     if (launchBoardButlerImageTool('imageLayer', file, item, options)) closeBoardButlerPanel();
   });
@@ -801,23 +1000,50 @@ function openBoardButlerUpscalePanel(anchor, file, item) {
     [{ value: 2, label: '2x' }, { value: 3, label: '3x' }, { value: 4, label: '4x' }],
     3
   ));
-  form.appendChild(boardButlerSegmentedField(
+  form.appendChild(boardButlerRangeField(
     BOARD_BUTLER_ICONS.detail,
     t('Detail', '细节强度', '디테일'),
     'butler-upscale-detail',
-    [
-      { value: 1, label: t('Soft', '柔和', '부드럽게') },
-      { value: 2, label: t('Balanced', '均衡', '균형') },
-      { value: 3, label: t('Sharp', '清晰', '선명하게') }
-    ],
-    2
+    { min: 0, max: 10, step: 0.5, value: 2 }
   ));
+  const advanced = boardButlerAdvancedSection(t('Advanced settings', '高级设置', '고급 설정'));
+  advanced.content.append(
+    boardButlerRangeField(BOARD_BUTLER_ICONS.detail, t('Creativity', '创意强度', '창의성'), 'butler-upscale-creativity', {
+      min: 0, max: 1, step: 0.05, value: 0.2
+    }),
+    boardButlerRangeField(BOARD_BUTLER_ICONS.detail, t('Shape preservation', '结构保持', '형태 보존'), 'butler-upscale-shape', {
+      min: 0, max: 1, step: 0.05, value: 0.1
+    }),
+    boardButlerRangeField(BOARD_BUTLER_ICONS.detail, t('Inference steps', '生成步数', '추론 단계'), 'butler-upscale-steps', {
+      min: 1, max: 50, step: 1, value: 20
+    }),
+    boardButlerRangeField(BOARD_BUTLER_ICONS.detail, t('Guidance', '引导强度', '가이던스'), 'butler-upscale-guidance', {
+      min: 0, max: 20, step: 0.5, value: 7.5
+    }),
+    boardButlerToggleField(t('Override size limits', '覆盖尺寸限制', '크기 제한 무시'), 'butler-upscale-override', false)
+  );
+  const suffix = document.createElement('label');
+  suffix.className = 'board-butler-config-field';
+  suffix.innerHTML = `<span>${BOARD_BUTLER_ICONS.prompt}<strong>${t('Detail prompt', '细节提示词', '디테일 프롬프트')}</strong></span><textarea name="butler-upscale-suffix" rows="2" maxlength="1000">high quality, highly detailed, high resolution, sharp</textarea>`;
+  const negative = document.createElement('label');
+  negative.className = 'board-butler-config-field';
+  negative.innerHTML = `<span>${BOARD_BUTLER_ICONS.prompt}<strong>${t('Negative prompt', '反向提示词', '네거티브 프롬프트')}</strong></span><textarea name="butler-upscale-negative" rows="2" maxlength="2000">blurry, low resolution, low quality, pixelated, compression artifacts</textarea>`;
+  advanced.content.append(suffix, negative);
+  form.appendChild(advanced.details);
   appendBoardButlerFormActions(form, t('Upscale', '开始放大', '확대'));
   form.addEventListener('submit', (event) => {
     event.preventDefault();
+    const data = new FormData(form);
     const options = {
-      scale: Number(new FormData(form).get('butler-upscale-scale')) || 3,
-      detail: Number(new FormData(form).get('butler-upscale-detail')) || 2
+      scale: Number(data.get('butler-upscale-scale')) || 3,
+      detail: Number(data.get('butler-upscale-detail')) || 2,
+      creativity: Number(data.get('butler-upscale-creativity')) || 0,
+      shapePreservation: Number(data.get('butler-upscale-shape')) || 0,
+      numInferenceSteps: Number(data.get('butler-upscale-steps')) || 20,
+      guidanceScale: Number(data.get('butler-upscale-guidance')) || 7.5,
+      promptSuffix: String(data.get('butler-upscale-suffix') || '').trim(),
+      negativePrompt: String(data.get('butler-upscale-negative') || '').trim(),
+      overrideSizeLimits: data.get('butler-upscale-override') === 'on'
     };
     if (launchBoardButlerImageTool('imageUpscale', file, item, options)) closeBoardButlerPanel();
   });
@@ -845,6 +1071,19 @@ function openBoardButlerVideoUpscalePanel(anchor, file, item) {
   const dimensions = portrait
     ? ['1080x1920', '1440x2560', '2160x3840']
     : ['1920x1080', '2560x1440', '3840x2160'];
+  form.appendChild(boardButlerSelectField(
+    BOARD_BUTLER_ICONS.videoUpscale,
+    t('Enhancement model', '增强模型', '향상 모델'),
+    'butler-video-model',
+    [
+      { value: 'prob-4', label: 'Proteus 4' },
+      { value: 'iris-3', label: 'Iris 3' },
+      { value: 'rhea-1', label: 'Rhea 1' },
+      { value: 'nyx-3', label: 'Nyx 3' },
+      { value: 'aion-1', label: 'Aion 1' }
+    ],
+    'prob-4'
+  ));
   form.appendChild(boardButlerSegmentedField(
     BOARD_BUTLER_ICONS.videoUpscale,
     t('Resolution', '输出分辨率', '출력 해상도'),
@@ -863,6 +1102,47 @@ function openBoardButlerVideoUpscalePanel(anchor, file, item) {
     [{ value: 30, label: '30 FPS' }, { value: 60, label: '60 FPS' }],
     30
   ));
+  const advanced = boardButlerAdvancedSection(t('Advanced settings', '高级设置', '고급 설정'));
+  advanced.content.append(
+    boardButlerSelectField(BOARD_BUTLER_ICONS.detail, t('Source type', '视频类型', '비디오 유형'), 'butler-video-type', [
+      { value: 'Progressive', label: t('Progressive', '逐行', '프로그레시브') },
+      { value: 'Interlaced', label: t('Interlaced', '隔行', '인터레이스') },
+      { value: 'ProgressiveInterlaced', label: t('Mixed', '混合', '혼합') }
+    ], 'Progressive'),
+    boardButlerSelectField(BOARD_BUTLER_ICONS.detail, t('Processing', '处理模式', '처리 모드'), 'butler-video-auto', [
+      { value: 'Auto', label: t('Auto', '自动', '자동') },
+      { value: 'Manual', label: t('Manual', '手动', '수동') },
+      { value: 'Relative', label: t('Relative', '相对', '상대') }
+    ], 'Auto'),
+    boardButlerSelectField(BOARD_BUTLER_ICONS.detail, t('Focus correction', '对焦修复', '초점 보정'), 'butler-video-focus', [
+      { value: 'None', label: t('None', '关闭', '없음') },
+      { value: 'Normal', label: t('Normal', '标准', '표준') },
+      { value: 'Strong', label: t('Strong', '强', '강함') }
+    ], 'None'),
+    boardButlerRangeField(BOARD_BUTLER_ICONS.detail, t('Compression recovery', '压缩修复', '압축 복구'), 'butler-video-compression', {
+      min: -1, max: 1, step: 0.1, value: 0
+    }),
+    boardButlerRangeField(BOARD_BUTLER_ICONS.detail, t('Detail recovery', '细节恢复', '디테일 복구'), 'butler-video-details', {
+      min: -1, max: 1, step: 0.1, value: 0
+    }),
+    boardButlerRangeField(BOARD_BUTLER_ICONS.detail, t('Noise reduction', '降噪', '노이즈 감소'), 'butler-video-noise', {
+      min: -1, max: 1, step: 0.1, value: 0
+    }),
+    boardButlerSelectField(BOARD_BUTLER_ICONS.videoUpscale, t('Encoder', '编码器', '인코더'), 'butler-video-encoder', [
+      { value: 'H264', label: 'H.264' },
+      { value: 'H265', label: 'H.265' },
+      { value: 'AV1', label: 'AV1' },
+      { value: 'ProRes', label: 'ProRes' },
+      { value: 'VP9', label: 'VP9' }
+    ], 'H264'),
+    boardButlerSelectField(BOARD_BUTLER_ICONS.videoUpscale, t('Container', '封装格式', '컨테이너'), 'butler-video-container', [
+      { value: 'mp4', label: 'MP4' },
+      { value: 'mov', label: 'MOV' },
+      { value: 'mkv', label: 'MKV' }
+    ], 'mp4'),
+    boardButlerToggleField(t('Crop to fit', '裁切以适配', '맞춤 자르기'), 'butler-video-crop', false)
+  );
+  form.appendChild(advanced.details);
   const cost = document.createElement('div');
   cost.className = 'board-butler-cost-estimate';
   const updateCost = () => {
@@ -888,17 +1168,27 @@ function openBoardButlerVideoUpscalePanel(anchor, file, item) {
     const formData = new FormData(form);
     const resolution = String(formData.get('butler-video-resolution') || dimensions[2]);
     const [width, height] = resolution.split('x').map((value) => Number(value));
+    const videoEncoder = String(formData.get('butler-video-encoder') || 'H264');
     const options = {
-      filters: [{ model: 'prob-4' }],
+      filters: [{
+        model: String(formData.get('butler-video-model') || 'prob-4'),
+        videoType: String(formData.get('butler-video-type') || 'Progressive'),
+        auto: String(formData.get('butler-video-auto') || 'Auto'),
+        focusFixLevel: String(formData.get('butler-video-focus') || 'None'),
+        compression: Number(formData.get('butler-video-compression')) || 0,
+        details: Number(formData.get('butler-video-details')) || 0,
+        noise: Number(formData.get('butler-video-noise')) || 0
+      }],
       output: {
         resolution: { width, height },
         frameRate: Number(formData.get('butler-video-frame-rate')) || 30,
         audioCodec: 'AAC',
         audioTransfer: 'Copy',
-        videoEncoder: 'H264',
-        videoProfile: 'Main',
+        videoEncoder,
+        videoProfile: videoEncoder === 'H264' ? 'High' : 'Main',
         dynamicCompressionLevel: 'High',
-        container: 'mp4'
+        cropToFit: formData.get('butler-video-crop') === 'on',
+        container: String(formData.get('butler-video-container') || 'mp4')
       }
     };
     if (launchBoardButlerVideoTool('videoUpscale', file, item, options)) closeBoardButlerPanel();
@@ -1111,7 +1401,7 @@ function clearCompletedBoardButlerTask(fileId, action, state) {
   }, 1800);
 }
 
-async function runBoardButlerRemoveBackground(file, item) {
+async function runBoardButlerRemoveBackground(file, item, options = {}) {
   const action = 'removeBackground';
   if (getBoardButlerTask(file.id, action)?.status === 'running') return;
   const api = boardButlerApi();
@@ -1122,7 +1412,7 @@ async function runBoardButlerRemoveBackground(file, item) {
   const state = { status: 'running', phase: 'processing' };
   setBoardButlerTask(file.id, action, state);
   try {
-    const result = await api.removeBackground(file.id);
+    const result = await api.removeBackground(file.id, options);
     if (!result || !result.ok || !result.file) {
       throw boardButlerError(result, t('Could not remove the background.', '去除背景失败。', '배경을 제거하지 못했습니다.'));
     }
@@ -1141,7 +1431,222 @@ async function runBoardButlerRemoveBackground(file, item) {
   }
 }
 
-async function runBoardButlerGenerate3d(file, item, providerId) {
+function openBoardButlerThreeDPanel(anchor, file, item, providerId) {
+  const provider = ['hunyuan3d', 'hyper3d', 'tripo3d'].includes(providerId) ? providerId : 'hunyuan3d';
+  const providerMeta = {
+    hunyuan3d: { icon: BOARD_BUTLER_ICONS.hunyuan3d, name: 'Hunyuan 3D', credits: 8 },
+    hyper3d: { icon: BOARD_BUTLER_ICONS.hyper3d, name: 'Hyper3D Rodin', credits: 14 },
+    tripo3d: { icon: BOARD_BUTLER_ICONS.tripo3d, name: 'Tripo3D', credits: 10 }
+  }[provider];
+  const { body } = createBoardButlerConfigPanel(
+    anchor,
+    providerMeta.icon,
+    t('Generate 3D', '生成 3D', '3D 생성'),
+    providerMeta.name
+  );
+  const form = document.createElement('form');
+  form.className = 'board-butler-config-form';
+
+  if (provider === 'hunyuan3d') {
+    form.append(
+      boardButlerSegmentedField(BOARD_BUTLER_ICONS.generate3d, t('Model', '模型版本', '모델'), 'butler-3d-model', [
+        { value: '3.0', label: '3.0' }, { value: '3.1', label: '3.1' }
+      ], '3.0'),
+      boardButlerSelectField(BOARD_BUTLER_ICONS.detail, t('Generation type', '生成类型', '생성 유형'), 'butler-3d-generate-type', [
+        { value: 'Normal', label: t('Normal', '标准', '표준') },
+        { value: 'LowPoly', label: 'Low Poly' },
+        { value: 'Geometry', label: t('Geometry only', '仅几何', '지오메트리') },
+        { value: 'Sketch', label: t('Sketch', '草图', '스케치') }
+      ], 'Normal'),
+      boardButlerRangeField(BOARD_BUTLER_ICONS.detail, t('Face count', '模型面数', '면 수'), 'butler-3d-face-count', {
+        min: 10000, max: 1500000, step: 10000, value: 500000,
+        format: (value) => value >= 1000000 ? `${(value / 1000000).toFixed(1)}M` : `${Math.round(value / 1000)}K`
+      }),
+      boardButlerToggleField(t('PBR material', 'PBR 材质', 'PBR 재질'), 'butler-3d-pbr', false)
+    );
+    const advanced = boardButlerAdvancedSection(t('Advanced settings', '高级设置', '고급 설정'));
+    advanced.content.appendChild(boardButlerSegmentedField(
+      BOARD_BUTLER_ICONS.detail,
+      t('Low-poly mesh', '低模网格', '로우 폴리 메시'),
+      'butler-3d-polygon',
+      [{ value: 'triangle', label: t('Triangles', '三角面', '삼각형') }, { value: 'quadrilateral', label: t('Quads', '四边面', '사각형') }],
+      'triangle'
+    ));
+    form.appendChild(advanced.details);
+    const syncHunyuanOptions = () => {
+      const model = String(new FormData(form).get('butler-3d-model') || '3.0');
+      const type = form.elements.namedItem('butler-3d-generate-type');
+      const faceCount = form.elements.namedItem('butler-3d-face-count');
+      const pbr = form.elements.namedItem('butler-3d-pbr');
+      const polygon = form.querySelector('.board-butler-segmented-field:has([name="butler-3d-polygon"])');
+      const lowPolyOption = type && type.querySelector('option[value="LowPoly"]');
+      if (lowPolyOption) lowPolyOption.disabled = model === '3.1';
+      if (model === '3.1' && type && type.value === 'LowPoly') type.value = 'Normal';
+      const lowPoly = type && type.value === 'LowPoly';
+      if (faceCount) {
+        faceCount.min = lowPoly ? '3000' : '10000';
+        if (Number(faceCount.value) < Number(faceCount.min)) faceCount.value = faceCount.min;
+        faceCount.dispatchEvent(new Event('input'));
+      }
+      if (pbr) {
+        pbr.disabled = type && type.value === 'Geometry';
+        if (pbr.disabled) pbr.checked = false;
+      }
+      if (polygon) polygon.hidden = !lowPoly;
+    };
+    form.addEventListener('change', syncHunyuanOptions);
+    syncHunyuanOptions();
+  } else if (provider === 'hyper3d') {
+    const prompt = document.createElement('label');
+    prompt.className = 'board-butler-config-field';
+    prompt.innerHTML = `<span>${BOARD_BUTLER_ICONS.prompt}<strong>${t('Prompt', '提示词', '프롬프트')}</strong></span><textarea name="butler-3d-prompt" rows="3" maxlength="1024">Create a detailed 3D model matching the reference image.</textarea>`;
+    form.append(
+      prompt,
+      boardButlerSegmentedField(BOARD_BUTLER_ICONS.detail, t('Quality', '质量', '품질'), 'butler-3d-quality', [
+        { value: 'high', label: t('High', '高', '높음') },
+        { value: 'medium', label: t('Balanced', '均衡', '균형') },
+        { value: 'low', label: t('Fast', '快速', '빠름') },
+        { value: 'extra-low', label: t('Draft', '草稿', '초안') }
+      ], 'medium'),
+      boardButlerSegmentedField(BOARD_BUTLER_ICONS.generate3d, t('Material', '材质', '재질'), 'butler-3d-material', [
+        { value: 'PBR', label: 'PBR' }, { value: 'Shaded', label: t('Shaded', '着色', '셰이딩') }
+      ], 'PBR'),
+      boardButlerSegmentedField(BOARD_BUTLER_ICONS.detail, t('Tier', '模式', '등급'), 'butler-3d-tier', [
+        { value: 'Regular', label: t('Regular', '标准', '일반') }, { value: 'Sketch', label: t('Sketch', '草图', '스케치') }
+      ], 'Regular')
+    );
+    const advanced = boardButlerAdvancedSection(t('Advanced settings', '高级设置', '고급 설정'));
+    advanced.content.append(
+      boardButlerToggleField(t('Hyper mode', 'Hyper 模式', 'Hyper 모드'), 'butler-3d-hyper', false),
+      boardButlerToggleField(t('T-pose', 'T 型姿势', 'T 포즈'), 'butler-3d-tpose', false),
+      boardButlerNumberField(BOARD_BUTLER_ICONS.detail, t('Seed', '随机种子', '시드'), 'butler-3d-seed', {
+        min: 0, max: 2147483647, value: '', placeholder: t('Random', '随机', '무작위')
+      })
+    );
+    form.appendChild(advanced.details);
+  } else {
+    form.append(
+      boardButlerSelectField(BOARD_BUTLER_ICONS.generate3d, t('Model version', '模型版本', '모델 버전'), 'butler-3d-model-version', [
+        { value: 'P1-20260311', label: 'P1' },
+        { value: 'v3.1-20260211', label: 'v3.1' },
+        { value: 'v3.0-20250812', label: 'v3.0' },
+        { value: 'Turbo-v1.0-20250506', label: 'Turbo' },
+        { value: 'v2.5-20250123', label: 'v2.5' }
+      ], 'v3.1-20260211'),
+      boardButlerSegmentedField(BOARD_BUTLER_ICONS.detail, t('Geometry quality', '几何质量', '지오메트리 품질'), 'butler-3d-geometry-quality', [
+        { value: 'standard', label: t('Standard', '标准', '표준') },
+        { value: 'detailed', label: t('Detailed', '精细', '상세') }
+      ], 'detailed'),
+      boardButlerSegmentedField(BOARD_BUTLER_ICONS.layers, t('Texture quality', '纹理质量', '텍스처 품질'), 'butler-3d-texture-quality', [
+        { value: 'standard', label: t('Standard', '标准', '표준') },
+        { value: 'detailed', label: t('Detailed', '精细', '상세') },
+        { value: 'extreme', label: t('Extreme', '极致', '최고') }
+      ], 'detailed'),
+      boardButlerToggleField(t('Generate textures', '生成纹理', '텍스처 생성'), 'butler-3d-texture', true),
+      boardButlerToggleField(t('PBR material', 'PBR 材质', 'PBR 재질'), 'butler-3d-pbr', true)
+    );
+    const advanced = boardButlerAdvancedSection(t('Advanced settings', '高级设置', '고급 설정'));
+    advanced.content.append(
+      boardButlerRangeField(BOARD_BUTLER_ICONS.detail, t('Face limit', '面数上限', '면 수 제한'), 'butler-3d-face-limit', {
+        min: 1000, max: 500000, step: 1000, value: 100000,
+        format: (value) => `${Math.round(value / 1000)}K`
+      }),
+      boardButlerNumberField(BOARD_BUTLER_ICONS.detail, t('Geometry seed', '几何种子', '지오메트리 시드'), 'butler-3d-model-seed', {
+        min: 0, max: 2147483647, value: '', placeholder: t('Random', '随机', '무작위')
+      }),
+      boardButlerNumberField(BOARD_BUTLER_ICONS.layers, t('Texture seed', '纹理种子', '텍스처 시드'), 'butler-3d-texture-seed', {
+        min: 0, max: 2147483647, value: '', placeholder: t('Random', '随机', '무작위')
+      }),
+      boardButlerToggleField(t('Image auto-fix', '图片自动修复', '이미지 자동 보정'), 'butler-3d-autofix', true),
+      boardButlerToggleField(t('Auto size', '自动尺寸', '자동 크기'), 'butler-3d-auto-size', true),
+      boardButlerToggleField(t('Quad mesh', '四边面网格', '쿼드 메시'), 'butler-3d-quad', false),
+      boardButlerToggleField(t('Smart low poly', '智能低模', '스마트 로우 폴리'), 'butler-3d-lowpoly', false),
+      boardButlerToggleField(t('Generate parts', '生成部件', '파트 생성'), 'butler-3d-parts', false)
+    );
+    form.appendChild(advanced.details);
+    const syncTripoOptions = () => {
+      const version = String(form.elements.namedItem('butler-3d-model-version')?.value || 'v3.1-20260211');
+      const texture = form.elements.namedItem('butler-3d-texture');
+      const pbr = form.elements.namedItem('butler-3d-pbr');
+      const textureQuality = form.querySelector('.board-butler-segmented-field:has([name="butler-3d-texture-quality"])');
+      const geometryQuality = form.querySelector('.board-butler-segmented-field:has([name="butler-3d-geometry-quality"])');
+      const supportsGeometryQuality = /^v3\.[01]-/.test(version);
+      if (geometryQuality) geometryQuality.hidden = !supportsGeometryQuality;
+      if (pbr) {
+        pbr.disabled = texture && !texture.checked;
+        if (pbr.disabled) pbr.checked = false;
+      }
+      if (textureQuality) textureQuality.classList.toggle('is-disabled', texture && !texture.checked);
+      textureQuality?.querySelectorAll('input').forEach((input) => { input.disabled = texture && !texture.checked; });
+      const textureSeed = form.elements.namedItem('butler-3d-texture-seed');
+      if (textureSeed) textureSeed.disabled = texture && !texture.checked;
+    };
+    form.addEventListener('change', syncTripoOptions);
+    syncTripoOptions();
+  }
+
+  const cost = document.createElement('div');
+  cost.className = 'board-butler-cost-estimate';
+  cost.textContent = t(
+    `${providerMeta.credits} pts · GLB output for canvas preview`,
+    `${providerMeta.credits} 积分 · 输出 GLB 以便画布预览`,
+    `${providerMeta.credits} 포인트 · 캔버스 미리보기용 GLB 출력`
+  );
+  form.appendChild(cost);
+  appendBoardButlerFormActions(form, t('Generate', '开始生成', '생성'));
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    let options;
+    if (provider === 'hunyuan3d') {
+      options = {
+        model: String(data.get('butler-3d-model') || '3.0'),
+        generateType: String(data.get('butler-3d-generate-type') || 'Normal'),
+        faceCount: Number(data.get('butler-3d-face-count')) || 500000,
+        enablePbr: data.get('butler-3d-pbr') === 'on',
+        polygonType: String(data.get('butler-3d-polygon') || 'triangle')
+      };
+      if (options.model === '3.1' && options.generateType === 'LowPoly') {
+        showToast(t('Hunyuan 3D 3.1 does not support Low Poly.', '混元 3D 3.1 不支持低模模式。', 'Hunyuan 3D 3.1은 Low Poly를 지원하지 않습니다.'));
+        return;
+      }
+    } else if (provider === 'hyper3d') {
+      options = {
+        prompt: String(data.get('butler-3d-prompt') || '').trim(),
+        quality: String(data.get('butler-3d-quality') || 'medium'),
+        material: String(data.get('butler-3d-material') || 'PBR'),
+        tier: String(data.get('butler-3d-tier') || 'Regular'),
+        useHyper: data.get('butler-3d-hyper') === 'on',
+        tPose: data.get('butler-3d-tpose') === 'on',
+        ...(data.get('butler-3d-seed') !== '' ? { seed: Number(data.get('butler-3d-seed')) } : {})
+      };
+    } else {
+      options = {
+        modelVersion: String(data.get('butler-3d-model-version') || 'v3.1-20260211'),
+        geometryQuality: String(data.get('butler-3d-geometry-quality') || 'detailed'),
+        textureQuality: String(data.get('butler-3d-texture-quality') || 'detailed'),
+        texture: data.get('butler-3d-texture') === 'on',
+        pbr: data.get('butler-3d-pbr') === 'on',
+        faceLimit: Number(data.get('butler-3d-face-limit')) || 100000,
+        enableImageAutofix: data.get('butler-3d-autofix') === 'on',
+        autoSize: data.get('butler-3d-auto-size') === 'on',
+        quad: data.get('butler-3d-quad') === 'on',
+        smartLowPoly: data.get('butler-3d-lowpoly') === 'on',
+        generateParts: data.get('butler-3d-parts') === 'on',
+        exportUv: true,
+        textureAlignment: 'original_image',
+        orientation: 'align_image',
+        ...(data.get('butler-3d-model-seed') !== '' ? { modelSeed: Number(data.get('butler-3d-model-seed')) } : {}),
+        ...(data.get('butler-3d-texture-seed') !== '' ? { textureSeed: Number(data.get('butler-3d-texture-seed')) } : {})
+      };
+    }
+    void runBoardButlerGenerate3d(file, item, provider, options);
+    closeBoardButlerPanel();
+  });
+  body.appendChild(form);
+}
+
+async function runBoardButlerGenerate3d(file, item, providerId, options = {}) {
   const safeProviderId = ['hunyuan3d', 'hyper3d', 'tripo3d'].includes(providerId) ? providerId : 'hunyuan3d';
   const action = `generate3d:${safeProviderId}`;
   if (getBoardButlerTask(file.id, action)?.status === 'running') return;
@@ -1154,7 +1659,7 @@ async function runBoardButlerGenerate3d(file, item, providerId) {
   const state = { status: 'running', phase: 'creating' };
   setBoardButlerTask(file.id, action, state);
   try {
-    const created = await api.create3d(file.id, safeProviderId);
+    const created = await api.create3d(file.id, safeProviderId, options);
     if (!created || !created.ok || !created.taskToken) {
       throw boardButlerError(created, t('Could not start 3D generation.', '无法发起 3D 生成。', '3D 생성을 시작하지 못했습니다.'));
     }
@@ -1252,7 +1757,8 @@ function openBoardButlerMenu(trigger, file, item) {
     'removeBackground',
     BOARD_BUTLER_ICONS.removeBackground,
     t('Remove background', '去除背景', '배경 제거'),
-    () => void runBoardButlerRemoveBackground(file, item)
+    (button) => openBoardButlerBackgroundPanel(button, file, item),
+    { popup: 'dialog' }
   ));
   menu.appendChild(createBoardButlerMenuButton(
     file,
@@ -1286,6 +1792,69 @@ function openBoardButlerMenu(trigger, file, item) {
     () => openBoardButlerErasePanel(file, item),
     { popup: 'dialog' }
   ));
+
+  const topazGroup = document.createElement('div');
+  topazGroup.className = 'board-butler-model-group board-butler-submenu-group';
+  const topazTrigger = createBoardButlerMenuButton(
+    file,
+    'topazImage',
+    BOARD_BUTLER_ICONS.topazImage,
+    t('Topaz image', 'Topaz 图片', 'Topaz 이미지'),
+    null,
+    { popup: 'menu', hasSubmenu: true }
+  );
+  const topazMenu = document.createElement('div');
+  topazMenu.className = 'board-butler-model-menu board-butler-submenu';
+  topazMenu.setAttribute('role', 'menu');
+  const topazItems = [
+    ['topazSharpen', BOARD_BUTLER_ICONS.sharpen, t('Sharpen', '锐化', '선명화')],
+    ['topazSharpenGen', BOARD_BUTLER_ICONS.sharpen, t('Generative sharpen', '生成式锐化', '생성형 선명화')],
+    ['topazEnhance', BOARD_BUTLER_ICONS.enhance, t('Enhance', '增强', '향상')],
+    ['topazEnhanceGen', BOARD_BUTLER_ICONS.enhance, t('Generative enhance', '生成式增强', '생성형 향상')],
+    ['topazDenoise', BOARD_BUTLER_ICONS.denoise, t('Denoise', '降噪', '노이즈 제거')],
+    ['topazRestore', BOARD_BUTLER_ICONS.restore, t('Restore', '修复', '복원')],
+    ['topazLighting', BOARD_BUTLER_ICONS.lighting, t('Relight', '打光', '조명 보정')]
+  ];
+  topazItems.forEach(([action, icon, label]) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'board-butler-model-option board-butler-submenu-option board-butler-menu-item';
+    button.dataset.butlerAction = action;
+    button.dataset.fileId = String(file.id);
+    button.setAttribute('role', 'menuitem');
+    button.innerHTML = `
+      <span class="board-butler-submenu-icon" aria-hidden="true">${icon}</span>
+      <span class="board-butler-submenu-label">${label} · ${t('from 3 pts', '3 积分起', '3 포인트부터')}</span>
+      <small class="board-butler-menu-status" hidden></small>
+    `;
+    button.addEventListener('click', () => {
+      if (button.disabled) return;
+      const width = Math.max(128, Number(file.sourceWidth) || 960);
+      const height = Math.max(128, Number(file.sourceHeight) || 540);
+      const scale = Math.min(2, 8192 / width, 8192 / height, Math.sqrt(33_554_432 / (width * height)));
+      const options = action === 'topazEnhance' || action === 'topazEnhanceGen'
+        ? { outputWidth: Math.round(width * scale), outputHeight: Math.round(height * scale), cropToFill: false }
+        : {};
+      if (launchBoardButlerImageTool(action, file, item, options)) closeBoardButlerMenu();
+    });
+    topazMenu.appendChild(button);
+  });
+  const setTopazMenuOpen = (open) => {
+    topazGroup.classList.toggle('is-open', open);
+    topazTrigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  topazTrigger.addEventListener('click', () => {
+    if (topazTrigger.disabled) return;
+    const pinned = topazGroup.dataset.pinned !== 'true';
+    topazGroup.dataset.pinned = pinned ? 'true' : 'false';
+    setTopazMenuOpen(pinned);
+  });
+  topazGroup.addEventListener('mouseenter', () => setTopazMenuOpen(true));
+  topazGroup.addEventListener('mouseleave', () => {
+    if (topazGroup.dataset.pinned !== 'true') setTopazMenuOpen(false);
+  });
+  topazGroup.append(topazTrigger, topazMenu);
+  menu.appendChild(topazGroup);
 
   const modelGroup = document.createElement('div');
   modelGroup.className = 'board-butler-model-group board-butler-submenu-group';
@@ -1335,13 +1904,13 @@ function openBoardButlerMenu(trigger, file, item) {
     if (modelGroup.dataset.pinned !== 'true') setModelMenuOpen(false);
   });
   modelMenu.querySelector('[data-butler-action="generate3d:hunyuan3d"]').addEventListener('click', (event) => {
-    if (!event.currentTarget.disabled) void runBoardButlerGenerate3d(file, item, 'hunyuan3d');
+    if (!event.currentTarget.disabled) openBoardButlerThreeDPanel(event.currentTarget, file, item, 'hunyuan3d');
   });
   modelMenu.querySelector('[data-butler-action="generate3d:hyper3d"]').addEventListener('click', (event) => {
-    if (!event.currentTarget.disabled) void runBoardButlerGenerate3d(file, item, 'hyper3d');
+    if (!event.currentTarget.disabled) openBoardButlerThreeDPanel(event.currentTarget, file, item, 'hyper3d');
   });
   modelMenu.querySelector('[data-butler-action="generate3d:tripo3d"]').addEventListener('click', (event) => {
-    if (!event.currentTarget.disabled) void runBoardButlerGenerate3d(file, item, 'tripo3d');
+    if (!event.currentTarget.disabled) openBoardButlerThreeDPanel(event.currentTarget, file, item, 'tripo3d');
   });
     modelGroup.append(modelTrigger, modelMenu);
     menu.appendChild(modelGroup);
@@ -1468,10 +2037,14 @@ function appendBoardVideoButlerToolbar(element, file, item) {
   return toolbar;
 }
 
-function appendGeneratedMediaDetailsControl(element, file) {
+function appendGeneratedMediaDetailsControl(element, file, toolbar = null) {
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'generated-media-detail-trigger';
+  button.className = toolbar
+    ? 'board-image-toolbar-button is-details generated-media-detail-trigger is-inline'
+    : 'generated-media-detail-trigger';
+  button.dataset.boardInteractive = 'true';
+  button.draggable = false;
   button.title = t('Generation details', '生成详情');
   button.setAttribute('aria-label', button.title);
   button.innerHTML = `
@@ -1485,7 +2058,7 @@ function appendGeneratedMediaDetailsControl(element, file) {
     button.addEventListener(eventName, (event) => event.stopPropagation());
   });
   button.addEventListener('click', () => showGeneratedMediaDetails(file, element));
-  element.appendChild(button);
+  (toolbar || element).appendChild(button);
   return button;
 }
 

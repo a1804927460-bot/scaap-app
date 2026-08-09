@@ -27,6 +27,7 @@ function bootstrapMainApp(initial) {
   initDetailPanel();
   initPreviewCanvas();
   initBoardCanvas();
+  initCanvasNodeMode();
   initPanelResize();
   initPanelLayout();
   initStatsDetail();
@@ -36,11 +37,15 @@ function bootstrapMainApp(initial) {
 
 document.addEventListener('DOMContentLoaded', async () => {
   initTitlebar();
+  const startupLanguage = normalizeAppLanguage(document.documentElement.dataset.language || 'ko');
+  AppState.language = startupLanguage;
+  applyLanguageChoice(startupLanguage, { rerender: false });
   const initial = await window.messsAPI.getInitialState();
   AppState.language = normalizeAppLanguage(initial.language);
   applyLanguageChoice(AppState.language, { rerender: false });
   initTheme(initial.theme);
   initUpdater();
-  await initActivation(initial.activation);
+  void initActivation(initial.activation);
   initStartScreen(() => bootstrapMainApp(initial), { enterImmediately: true });
+  window.messsAPI.readyForInteraction();
 });

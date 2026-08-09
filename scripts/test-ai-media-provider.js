@@ -8,6 +8,7 @@ const {
   normalizeConfig,
   detectMediaProtocol,
   deriveKlingModel,
+  resolveAi302KlingImageEndpoint,
   resolveQuickRouterKlingEndpoint,
   resolveQuickRouterUnifiedVideoEndpoint,
   resolveOpenAiImagesEndpoint,
@@ -26,6 +27,8 @@ const {
   buildHiggsfieldSoulStandardBody,
   buildHiggsfieldSoulBody,
   extractMediaUrls,
+  generatedImageDimensions,
+  validateGeneratedImageResolution,
   validateGeneratedMediaBuffer,
   generateMediaBuffer,
   pollMediaTask
@@ -37,6 +40,15 @@ function jsonResponse(payload, status = 200) {
     status,
     text: async () => JSON.stringify(payload)
   };
+}
+
+function pngHeader(width, height) {
+  const buffer = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buffer);
+  buffer.write('IHDR', 12, 'ascii');
+  buffer.writeUInt32BE(width, 16);
+  buffer.writeUInt32BE(height, 20);
+  return buffer;
 }
 
 async function testImageFlow() {
@@ -283,7 +295,7 @@ async function testGptImage2FlowAndReferenceLimits() {
   assert.ok(provider);
   assert.strictEqual(provider.name, 'GPT Image 2');
   assert.strictEqual(provider.model, 'gpt-image-2');
-  assert.strictEqual(provider.endpoint, 'https://api.quickrouter.ai/v1/images/generations');
+  assert.strictEqual(provider.endpoint, 'https://api.302.ai/v1/images/generations');
   assert.deepStrictEqual(provider.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
 
   const config = normalizeConfig({
@@ -304,7 +316,7 @@ async function testGptImage2FlowAndReferenceLimits() {
   });
   assert.strictEqual(
     resolveOpenAiImageEditsEndpoint(provider.endpoint),
-    'https://api.quickrouter.ai/v1/images/edits'
+    'https://api.302.ai/v1/images/edits'
   );
 
   const calls = [];
@@ -328,7 +340,7 @@ async function testGptImage2FlowAndReferenceLimits() {
   });
   assert.deepStrictEqual(generated, Buffer.from('iVBORw==', 'base64'));
   assert.deepStrictEqual(edited, Buffer.from('iVBORw==', 'base64'));
-  assert.strictEqual(calls[0].url, 'https://api.quickrouter.ai/v1/images/generations');
+  assert.strictEqual(calls[0].url, 'https://api.302.ai/v1/images/generations');
   assert.strictEqual(calls[0].options.headers.Authorization, 'Bearer server-only-secret');
   assert.deepStrictEqual(JSON.parse(calls[0].options.body), {
     model: 'gpt-image-2',
@@ -337,7 +349,7 @@ async function testGptImage2FlowAndReferenceLimits() {
     size: '1024x1024',
     quality: 'low'
   });
-  assert.strictEqual(calls[1].url, 'https://api.quickrouter.ai/v1/images/edits');
+  assert.strictEqual(calls[1].url, 'https://api.302.ai/v1/images/edits');
   assert.strictEqual(calls[1].options.headers.Authorization, 'Bearer server-only-secret');
   assert.strictEqual(calls[1].options.headers['Content-Type'], undefined);
   assert.ok(calls[1].options.body instanceof FormData);
@@ -438,67 +450,95 @@ async function testQuickRouterNativeGeminiImageFlow() {
   });
 }
 
-async function test302NanoBananaProFlow() {
-  const provider = catalogProvider('image-1');
-  assert.ok(provider);
-  assert.strictEqual(provider.name, 'Nano Banana Pro');
-  assert.strictEqual(provider.protocol, 'gemini-image');
-  assert.strictEqual(provider.keyEnv, 'AI302_KEY');
-  assert.strictEqual(
-    provider.endpoint,
-    'https://api.302.ai/google/v1/models/gemini-3-pro-image-preview'
-  );
-  assert.strictEqual(detectMediaProtocol(provider.endpoint), 'gemini-native');
-  assert.strictEqual(resolveGeminiMediaEndpoint(provider.endpoint), provider.endpoint);
-
-  const calls = [];
-  // Gemini's 16:9 4K output family is four times the dimensions of the
-  // 1376x768 1K response that exposed the ignored-resolution regression.
-  const png = Buffer.alloc(24);
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png);
-  png.write('IHDR', 12, 'ascii');
-  png.writeUInt32BE(5504, 16);
-  png.writeUInt32BE(3072, 20);
-  const responses = [
-    jsonResponse({
-      candidates: [{
-        content: {
-          role: 'model',
-          parts: [{ url: 'https://cdn.test/nano-banana-pro-4k.png' }]
-        },
-        finishReason: 'STOP'
-      }],
-      modelVersion: 'gemini-3-pro-image-preview'
-    }),
-    { ok: true, status: 200, arrayBuffer: async () => png }
+async function test302NanoBananaFlows() {
+  const cases = [
+    {
+      id: 'image-1', name: 'Nano Banana Pro', suffix: 'nano-banana-pro/text-to-image', size: '4K',
+      expectedBody: {
+        aspect_ratio: '16:9', resolution: '4k', enable_base64_output: false,
+        enable_sync_mode: false, prompt: 'cinematic scene'
+      }
+    },
+    {
+      id: 'image-2', name: 'Nano Banana 2', suffix: 'nano-banana-2/edit', size: '2K',
+      urls: ['https://gateway.test/reference.png'],
+      expectedBody: {
+        aspect_ratio: '16:9', resolution: '2k', enable_base64_output: false,
+        enable_sync_mode: false, images: ['https://gateway.test/reference.png'], prompt: 'cinematic scene'
+      }
+    },
+    {
+      id: 'image-5', name: 'Nano Banana 2 Lite', suffix: 'nano-banana-2-lite/text-to-image', size: 'Default',
+      expectedBody: {
+        size: '16:9', enable_base64_output: false, enable_sync_mode: false, prompt: 'cinematic scene'
+      }
+    }
   ];
-  const buffer = await generateMediaBuffer(async (url, options = {}) => {
+  for (const entry of cases) {
+    const provider = catalogProvider(entry.id);
+    assert.ok(provider);
+    assert.strictEqual(provider.name, entry.name);
+    assert.strictEqual(provider.protocol, 'ai302-nano-banana-v3');
+    assert.strictEqual(provider.keyEnv, 'AI302_KEY');
+    assert.strictEqual(detectMediaProtocol(provider.endpoint), 'ai302-nano-banana-v3');
+    const calls = [];
+    const png = entry.size === '4K'
+      ? pngHeader(4096, 2304)
+      : (entry.size === '2K' ? pngHeader(2048, 2048) : pngHeader(1024, 576));
+    const responses = [
+      jsonResponse({ code: 200, data: { id: `${entry.id}-task`, outputs: [], status: 'created' } }),
+      jsonResponse({ code: 200, data: { id: `${entry.id}-task`, outputs: [], status: 'processing' } }),
+      jsonResponse({ code: 200, data: { id: `${entry.id}-task`, outputs: [`https://cdn.test/${entry.id}.png`], status: 'completed' } }),
+      { ok: true, status: 200, arrayBuffer: async () => png }
+    ];
+    const buffer = await generateMediaBuffer(async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      return responses.shift();
+    }, normalizeConfig({ apiKey: 'server-only-302-key', imageEndpoint: provider.endpoint, pollIntervalMs: 800 }), 'image', {
+      prompt: 'cinematic scene', size: entry.size, aspectRatio: '16:9', urls: entry.urls || []
+    }, null, async () => {});
+    assert.deepStrictEqual(buffer, png);
+    assert.strictEqual(calls[0].url, `https://api.302.ai/ws/api/v3/google/${entry.suffix}`);
+    assert.strictEqual(calls[0].options.headers.Authorization, 'Bearer server-only-302-key');
+    assert.deepStrictEqual(JSON.parse(calls[0].options.body), entry.expectedBody);
+    assert.strictEqual(calls[1].url, `https://api.302.ai/ws/api/v3/predictions/${entry.id}-task/result`);
+    assert.strictEqual(calls[3].url, `https://cdn.test/${entry.id}.png`);
+  }
+
+  const nano = catalogProvider('image-9');
+  assert.strictEqual(nano.name, 'Nano Banana');
+  assert.strictEqual(detectMediaProtocol(nano.endpoint), 'ai302-nano-banana-legacy');
+  const calls = [];
+  const responses = [
+    jsonResponse({ request_id: 'nano-task', status: 'IN_QUEUE' }),
+    jsonResponse({ id: 'nano-task', status: 'IN_PROGRESS', output: '' }),
+    jsonResponse({ id: 'nano-task', status: 'COMPLETED', output: 'https://cdn.test/nano.png' }),
+    { ok: true, status: 200, arrayBuffer: async () => Buffer.from([0x89, 0x50, 0x4e, 0x47]) }
+  ];
+  await generateMediaBuffer(async (url, options = {}) => {
     calls.push({ url: String(url), options });
     return responses.shift();
-  }, normalizeConfig({
-    apiKey: 'server-only-302-key',
-    imageEndpoint: provider.endpoint
-  }), 'image', {
-    prompt: 'cinematic widescreen scene',
-    size: '4K',
-    aspectRatio: '16:9'
-  });
-
-  assert.deepStrictEqual(buffer, png);
-  assert.strictEqual(buffer.readUInt32BE(16), 5504);
-  assert.strictEqual(buffer.readUInt32BE(20), 3072);
-  assert.strictEqual(calls.length, 2);
-  assert.strictEqual(calls[0].url, provider.endpoint);
-  assert.strictEqual(calls[0].options.headers.Authorization, 'Bearer server-only-302-key');
-  assert.strictEqual(calls[0].options.headers['x-goog-api-key'], undefined);
+  }, normalizeConfig({ apiKey: 'server-only-302-key', imageEndpoint: nano.endpoint, pollIntervalMs: 800 }), 'image', {
+    prompt: 'restyle', size: 'Default', aspectRatio: '3:4', urls: ['https://gateway.test/reference.png']
+  }, null, async () => {});
+  assert.strictEqual(calls[0].url, 'https://api.302.ai/302/submit/gemini-2.5-flash-image-edit-async');
   assert.deepStrictEqual(JSON.parse(calls[0].options.body), {
-    contents: [{ role: 'user', parts: [{ text: 'cinematic widescreen scene' }] }],
-    generationConfig: {
-      responseModalities: ['TEXT', 'IMAGE'],
-      imageConfig: { aspectRatio: '16:9' }
-    }
+    prompt: 'restyle', image_urls: ['https://gateway.test/reference.png']
   });
-  assert.strictEqual(calls[1].url, 'https://cdn.test/nano-banana-pro-4k.png');
+  assert.strictEqual(calls[1].url, 'https://api.302.ai/302/submit/gemini-2.5-flash-image-async?request_id=nano-task');
+
+  assert.deepStrictEqual(generatedImageDimensions(pngHeader(4096, 2304)), { width: 4096, height: 2304 });
+  assert.throws(
+    () => validateGeneratedImageResolution(pngHeader(1024, 1024), '4K'),
+    (error) => error && error.code === 'image-resolution-mismatch' && error.actualWidth === 1024
+  );
+  assert.doesNotThrow(() => validateGeneratedImageResolution(pngHeader(4096, 2304), '4K'));
+  assert.throws(
+    () => buildRequestBody('image', {
+      prompt: 'unsupported resolution', size: '0.5K', aspectRatio: '1:1', urls: []
+    }, normalizeConfig({ apiKey: 'server-only-302-key', imageEndpoint: catalogProvider('image-2').endpoint }), catalogProvider('image-2').endpoint),
+    (error) => error && error.code === 'invalid-size'
+  );
 }
 
 async function testHiggsfieldFlows() {
@@ -700,17 +740,12 @@ function testDefaultImageBody() {
     urls: [dataUrl, 'file:///not-allowed.webp']
   }, config);
   assert.deepStrictEqual(body, {
-    contents: [{
-      role: 'user',
-      parts: [
-        { text: 'restyle this image' },
-        { inlineData: { mimeType: 'image/webp', data: 'UklGRg==' } }
-      ]
-    }],
-    generationConfig: {
-      responseModalities: ['TEXT', 'IMAGE'],
-      imageConfig: { aspectRatio: '1:1', imageSize: '2K' }
-    }
+    aspect_ratio: '1:1',
+    resolution: '2k',
+    enable_base64_output: false,
+    enable_sync_mode: false,
+    images: [dataUrl],
+    prompt: 'restyle this image'
   });
 }
 
@@ -727,7 +762,7 @@ function testSeedreamSizeAndRatioMapping() {
   }, config), {
     model: 'doubao-seedream-5-0-260128',
     prompt: 'wide editorial scene',
-    size: '2720x1536',
+    size: '2K',
     sequential_image_generation: 'disabled',
     response_format: 'url',
     watermark: false
@@ -738,7 +773,7 @@ function testSeedreamSizeAndRatioMapping() {
     aspectRatio: '9:16',
     urls: ['https://cdn.test/reference.png']
   }, config);
-  assert.strictEqual(editBody.size, '3072x5440');
+  assert.strictEqual(editBody.size, '4K');
   assert.strictEqual(editBody.image, 'https://cdn.test/reference.png');
   assert.strictEqual(
     buildOpenAiImageEditForm({ urls: ['data:image/png;base64,iVBORw=='] }, config),
@@ -746,55 +781,129 @@ function testSeedreamSizeAndRatioMapping() {
   );
 }
 
-async function testNanoBanana2NativeGeminiImageFlow() {
-  const provider = catalogProvider('image-5');
-  assert.ok(provider);
-  assert.strictEqual(provider.name, 'Nano banana2');
-  assert.strictEqual(provider.protocol, 'gemini-image');
-  assert.strictEqual(
-    provider.endpoint,
-    'https://api.quickrouter.ai/v1beta/models/gemini-3.1-flash-image:generateContent'
-  );
+function test302ImageModelBodies() {
+  const reference = 'data:image/png;base64,iVBORw==';
+  const seedEdit = catalogProvider('image-14');
+  assert.deepStrictEqual(buildRequestBody('image', {
+    prompt: 'replace the background',
+    size: 'adaptive',
+    aspectRatio: 'auto',
+    urls: [reference]
+  }, normalizeConfig({ imageEndpoint: seedEdit.endpoint, imageModel: seedEdit.model }), seedEdit.endpoint), {
+    model: 'doubao-seededit-3-0-i2i-250628',
+    prompt: 'replace the background',
+    image: reference,
+    size: 'adaptive',
+    response_format: 'url',
+    watermark: false
+  });
 
+  const kling = catalogProvider('image-15');
+  assert.deepStrictEqual(buildRequestBody('image', {
+    prompt: 'studio product photo',
+    size: '2K',
+    aspectRatio: '3:2',
+    urls: ['https://cdn.test/product.png']
+  }, normalizeConfig({ imageEndpoint: kling.endpoint, imageModel: kling.model }), kling.endpoint), {
+    model_name: 'kling-v2',
+    prompt: 'studio product photo',
+    image: 'https://cdn.test/product.png',
+    n: 1,
+    aspect_ratio: '3:2',
+    resolution: '2k'
+  });
+
+  const multiEndpoint = resolveAi302KlingImageEndpoint(kling.endpoint, 2);
+  assert.strictEqual(
+    multiEndpoint,
+    'https://api.302.ai/klingai/v1/images/multi-image2image'
+  );
+  assert.strictEqual(detectMediaProtocol(multiEndpoint), 'ai302-kling-image');
+  assert.deepStrictEqual(buildRequestBody('image', {
+    prompt: 'combine the two products',
+    size: '1K',
+    aspectRatio: '21:9',
+    urls: ['https://cdn.test/product-a.png', 'https://cdn.test/product-b.png']
+  }, normalizeConfig({ imageEndpoint: kling.endpoint, imageModel: kling.model }), multiEndpoint), {
+    model_name: 'kling-v2',
+    promot: 'combine the two products',
+    subject_image_list: [
+      { subject_image: 'https://cdn.test/product-a.png' },
+      { subject_image: 'https://cdn.test/product-b.png' }
+    ],
+    n: 1,
+    aspect_ratio: '21:9'
+  });
+
+  const jimeng = catalogProvider('image-16');
+  const jimengBody = buildRequestBody('image', {
+    prompt: 'paper cut illustration',
+    size: '512x512',
+    aspectRatio: '1:1',
+    seed: 42,
+    urls: []
+  }, normalizeConfig({ imageEndpoint: jimeng.endpoint, imageModel: jimeng.model }), jimeng.endpoint);
+  assert.equal(jimengBody.model_version, 'general_v3.0');
+  assert.equal(jimengBody.width, 512);
+  assert.equal(jimengBody.height, 512);
+  assert.equal(jimengBody.seed, 42);
+  assert.equal(jimengBody.use_sr, false);
+}
+
+async function test302KlingMultiImageFlow() {
+  const provider = catalogProvider('image-15');
   const calls = [];
-  const pngBase64 = 'iVBORw==';
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xdb]);
+  const responses = [
+    jsonResponse({ code: 0, message: 'SUCCEED', data: { task_id: 'kling-multi-task', task_status: 'submitted' } }),
+    jsonResponse({
+      code: 0,
+      data: {
+        task_id: 'kling-multi-task',
+        task_status: 'succeed',
+        task_result: { images: [{ url: 'https://cdn.test/kling-multi.jpg' }] }
+      }
+    }),
+    { ok: true, status: 200, arrayBuffer: async () => jpeg }
+  ];
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url, options });
-    return jsonResponse({
-      candidates: [{
-        content: {
-          role: 'model',
-          parts: [{ inlineData: { mimeType: 'image/png', data: pngBase64 } }]
-        },
-        finishReason: 'STOP'
-      }],
-      modelVersion: 'gemini-3.1-flash-image'
-    });
+    return responses.shift();
   };
-  const config = normalizeConfig({
-    apiKey: 'secret',
-    imageEndpoint: provider.endpoint
-  });
-  const buffer = await generateMediaBuffer(fetchImpl, config, 'image', {
-    prompt: 'editorial product photograph',
-    size: '2K',
-    aspectRatio: '3:4',
-    urls: ['data:image/png;base64,iVBORw0KGgo=']
-  });
+  const buffer = await generateMediaBuffer(fetchImpl, {
+    apiKey: '302-secret',
+    imageEndpoint: provider.endpoint,
+    imageModel: provider.model,
+    pollIntervalMs: 800,
+    timeoutMs: 10000
+  }, 'image', {
+    prompt: 'combine two products',
+    size: '1K',
+    aspectRatio: '21:9',
+    urls: ['https://cdn.test/a.png', 'https://cdn.test/b.png']
+  }, null, async () => {});
 
-  assert.deepStrictEqual(buffer, Buffer.from(pngBase64, 'base64'));
-  assert.strictEqual(calls.length, 1);
-  assert.strictEqual(calls[0].url, provider.endpoint);
-  const body = JSON.parse(calls[0].options.body);
-  assert.strictEqual(body.contents[0].parts[0].text, 'editorial product photograph');
-  assert.strictEqual(body.contents[0].parts[1].inlineData.mimeType, 'image/png');
-  assert.deepStrictEqual(body.generationConfig.imageConfig, {
-    aspectRatio: '3:4',
-    clarity: '2K'
+  assert.deepStrictEqual(buffer, jpeg);
+  assert.strictEqual(calls[0].url, 'https://api.302.ai/klingai/v1/images/multi-image2image');
+  assert.deepStrictEqual(JSON.parse(calls[0].options.body), {
+    model_name: 'kling-v2',
+    promot: 'combine two products',
+    subject_image_list: [
+      { subject_image: 'https://cdn.test/a.png' },
+      { subject_image: 'https://cdn.test/b.png' }
+    ],
+    n: 1,
+    aspect_ratio: '21:9'
   });
+  assert.strictEqual(
+    calls[1].url,
+    'https://api.302.ai/klingai/v1/images/multi-image2image/kling-multi-task'
+  );
+  assert.strictEqual(calls[2].url, 'https://cdn.test/kling-multi.jpg');
 }
 
 async function testMidjourneyFlow() {
+  const provider = catalogProvider('image-4');
   const calls = [];
   const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xdb]);
   const responses = [
@@ -808,7 +917,7 @@ async function testMidjourneyFlow() {
   };
   const config = normalizeConfig({
     apiKey: 'secret',
-    imageEndpoint: 'https://api.quickrouter.ai/mj/submit/imagine',
+    imageEndpoint: provider.endpoint,
     pollIntervalMs: 800,
     timeoutMs: 10000
   });
@@ -820,7 +929,7 @@ async function testMidjourneyFlow() {
 
   assert.deepStrictEqual(buffer, jpeg);
   assert.strictEqual(detectMediaProtocol(config.imageEndpoint), 'midjourney-imagine');
-  assert.strictEqual(calls[0].url, 'https://api.quickrouter.ai/mj/submit/imagine');
+  assert.strictEqual(calls[0].url, 'https://api.302.ai/mj-turbo/submit/imagine');
   assert.deepStrictEqual(JSON.parse(calls[0].options.body), {
     botType: 'MID_JOURNEY',
     prompt: 'editorial portrait --ar 3:2',
@@ -828,7 +937,7 @@ async function testMidjourneyFlow() {
     notifyHook: '',
     state: ''
   });
-  assert.strictEqual(calls[1].url, 'https://api.quickrouter.ai/mj/task/mj-task-1/fetch');
+  assert.strictEqual(calls[1].url, 'https://api.302.ai/mj-turbo/task/mj-task-1/fetch');
   assert.strictEqual(calls[2].url, 'https://cdn.test/midjourney.jpg');
 }
 
@@ -860,11 +969,12 @@ async function main() {
   await testOpenAiImageFlow();
   await testGptImage2FlowAndReferenceLimits();
   testSeedreamSizeAndRatioMapping();
+  test302ImageModelBodies();
+  await test302KlingMultiImageFlow();
   testGeminiImageBody();
   await testQuickRouterNativeGeminiImageFlow();
-  await test302NanoBananaProFlow();
+  await test302NanoBananaFlows();
   await testHiggsfieldFlows();
-  await testNanoBanana2NativeGeminiImageFlow();
   await testMidjourneyFlow();
   testOpenAiVideoRequest();
   testChatCompatibleImageRequest();

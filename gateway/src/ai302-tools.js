@@ -62,7 +62,9 @@ function toolError(code, message, status = 500) {
 }
 
 function configuredApiKey(explicitKey) {
-  const key = String(explicitKey ?? process.env.AI302_KEY ?? process.env.AI_302_API_KEY ?? '').trim();
+  const key = String(explicitKey ?? process.env.AI302_KEY ?? process.env.AI_302_API_KEY ?? '')
+    .trim()
+    .replace(/^Bearer\s+/i, '');
   if (!key) throw toolError('ai302-not-configured', 'The 302 tool gateway is not configured.', 503);
   if (key.length > 4096 || /[\r\n]/.test(key)) {
     throw toolError('ai302-not-configured', 'The 302 tool gateway credential is invalid.', 503);
@@ -643,8 +645,10 @@ async function limitedBuffer(response, maximum) {
 }
 
 function upstreamFailure(response) {
-  const error = response.status === 402
-    ? toolError('ai302-balance-exhausted', 'The 302 tool balance is insufficient.', 402)
+  const error = response.status === 401
+    ? toolError('ai302-unauthorized', 'The 302 API key was rejected. Update AI302_KEY on the gateway.', 503)
+    : response.status === 402
+      ? toolError('ai302-balance-exhausted', 'The 302 tool balance is insufficient.', 402)
     : response.status === 429
       ? toolError('ai302-rate-limited', 'The 302 tool service is busy. Try again shortly.', 429)
       : toolError('ai302-upstream-error', 'The 302 tool service rejected the request.', 502);
@@ -766,6 +770,122 @@ function boundedNumber(value, fallback, minimum, maximum) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(minimum, Math.min(maximum, parsed));
+}
+
+function requiredBoundedInteger(value, fallback, minimum, maximum, name) {
+  const parsed = value === undefined || value === null || value === '' ? fallback : Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw toolError('invalid-three-d-options', `The ${name} 3D option is invalid.`, 400);
+  }
+  return parsed;
+}
+
+function optionalThreeDInteger(source, key, minimum, maximum) {
+  if (!source || source[key] === undefined || source[key] === null || source[key] === '') return undefined;
+  return requiredBoundedInteger(source[key], undefined, minimum, maximum, key);
+}
+
+function enumThreeDOption(value, fallback, allowed, name) {
+  const normalized = String(value ?? fallback).trim();
+  if (!allowed.includes(normalized)) {
+    throw toolError('invalid-three-d-options', `The ${name} 3D option is invalid.`, 400);
+  }
+  return normalized;
+}
+
+const TRIPO_MODEL_VERSIONS = new Set([
+  'P1-20260311',
+  'Turbo-v1.0-20250506',
+  'v3.1-20260211',
+  'v3.0-20250812',
+  'v2.5-20250123'
+]);
+
+export function normalizeThreeDOptions(providerId, value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  if (providerId === 'hunyuan3d') {
+    const model = enumThreeDOption(source.model, '3.0', ['3.0', '3.1'], 'model');
+    const generateType = enumThreeDOption(
+      source.generateType,
+      'Normal',
+      ['Normal', 'LowPoly', 'Geometry', 'Sketch'],
+      'generation type'
+    );
+    if (model === '3.1' && generateType === 'LowPoly') {
+      throw toolError('invalid-three-d-options', 'Hunyuan 3D 3.1 does not support LowPoly generation.', 400);
+    }
+    const minimumFaces = generateType === 'LowPoly' ? 3_000 : 10_000;
+    const faceCount = requiredBoundedInteger(source.faceCount, 500_000, minimumFaces, 1_500_000, 'face count');
+    return {
+      model,
+      generateType,
+      enablePbr: generateType !== 'Geometry' && source.enablePbr === true,
+      ...(faceCount !== 500_000 ? { faceCount } : {}),
+      ...(generateType === 'LowPoly'
+        ? { polygonType: enumThreeDOption(source.polygonType, 'triangle', ['triangle', 'quadrilateral'], 'polygon type') }
+        : {})
+    };
+  }
+  if (providerId === 'hyper3d') {
+    return {
+      quality: enumThreeDOption(source.quality, 'medium', ['high', 'medium', 'low', 'extra-low'], 'quality'),
+      material: enumThreeDOption(source.material, 'PBR', ['PBR', 'Shaded'], 'material'),
+      tier: enumThreeDOption(source.tier, 'Regular', ['Regular', 'Sketch'], 'tier'),
+      useHyper: source.useHyper === true,
+      tPose: source.tPose === true,
+      ...(optionalThreeDInteger(source, 'seed', 0, 2_147_483_647) !== undefined
+        ? { seed: optionalThreeDInteger(source, 'seed', 0, 2_147_483_647) }
+        : {})
+    };
+  }
+  if (providerId === 'tripo3d') {
+    const modelVersion = String(source.modelVersion || 'v3.1-20260211').trim();
+    if (!TRIPO_MODEL_VERSIONS.has(modelVersion)) {
+      throw toolError('invalid-three-d-options', 'The Tripo3D model version is not supported.', 400);
+    }
+    const supportsGeometryQuality = modelVersion.startsWith('v3.0-') || modelVersion.startsWith('v3.1-');
+    const texture = source.texture !== false;
+    const options = {
+      modelVersion,
+      enableImageAutofix: source.enableImageAutofix !== false,
+      texture,
+      pbr: texture && source.pbr !== false,
+      textureAlignment: enumThreeDOption(
+        source.textureAlignment,
+        'original_image',
+        ['original_image', 'geometry'],
+        'texture alignment'
+      ),
+      textureQuality: enumThreeDOption(
+        source.textureQuality,
+        'standard',
+        ['standard', 'detailed', 'extreme'],
+        'texture quality'
+      ),
+      orientation: enumThreeDOption(source.orientation, 'align_image', ['default', 'align_image'], 'orientation'),
+      autoSize: source.autoSize !== false,
+      quad: source.quad === true,
+      smartLowPoly: source.smartLowPoly === true,
+      generateParts: source.generateParts === true,
+      exportUv: source.exportUv !== false
+    };
+    const modelSeed = optionalThreeDInteger(source, 'modelSeed', 0, 2_147_483_647);
+    const textureSeed = optionalThreeDInteger(source, 'textureSeed', 0, 2_147_483_647);
+    const faceLimit = optionalThreeDInteger(source, 'faceLimit', 1_000, 500_000);
+    if (modelSeed !== undefined) options.modelSeed = modelSeed;
+    if (textureSeed !== undefined && texture) options.textureSeed = textureSeed;
+    if (faceLimit !== undefined) options.faceLimit = faceLimit;
+    if (supportsGeometryQuality) {
+      options.geometryQuality = enumThreeDOption(
+        source.geometryQuality,
+        'standard',
+        ['standard', 'detailed'],
+        'geometry quality'
+      );
+    }
+    return options;
+  }
+  throw toolError('invalid-three-d-provider', 'The selected 3D provider is not supported.', 400);
 }
 
 function optionalBoundedNumber(source, key, minimum, maximum) {
@@ -989,14 +1109,17 @@ function findHunyuanGlb(job) {
   return result;
 }
 
-async function createHunyuanJob(image, dependencies) {
+async function createHunyuanJob(image, dependencies, toolOptions) {
   const payload = await fetch302Json(HUNYUAN_PATH, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      Model: '3.0',
+      Model: toolOptions.model,
       ImageBase64: image.buffer.toString('base64'),
-      GenerateType: 'Normal'
+      GenerateType: toolOptions.generateType,
+      EnablePBR: toolOptions.enablePbr,
+      ...(toolOptions.faceCount !== undefined ? { FaceCount: toolOptions.faceCount } : {}),
+      ...(toolOptions.polygonType ? { PolygonType: toolOptions.polygonType } : {})
     })
   }, dependencies);
   const jobId = String(responseObject(payload).JobId || '').trim();
@@ -1029,7 +1152,7 @@ function findHyper3dGlb(job) {
   return { url: result.url };
 }
 
-async function createHyper3dJob(image, prompt, dependencies) {
+async function createHyper3dJob(image, prompt, dependencies, toolOptions) {
   if (!prompt) throw toolError('invalid-prompt', 'Hyper3D requires a prompt.', 400);
   const relay = storeRelayAsset(image, dependencies);
   try {
@@ -1041,11 +1164,12 @@ async function createHyper3dJob(image, prompt, dependencies) {
         input_image_urls: [relay.url],
         condition_mode: 'concat',
         geometry_file_format: 'glb',
-        material: 'PBR',
-        quality: 'medium',
-        tier: 'Regular',
-        use_hyper: false,
-        TAPose: false
+        material: toolOptions.material,
+        quality: toolOptions.quality,
+        tier: toolOptions.tier,
+        use_hyper: toolOptions.useHyper,
+        TAPose: toolOptions.tPose,
+        ...(toolOptions.seed !== undefined ? { seed: toolOptions.seed } : {})
       })
     }, dependencies);
     const response = hyper3dResponseObject(payload);
@@ -1116,20 +1240,30 @@ async function uploadTripoImage(image, dependencies) {
   return { imageToken, extension };
 }
 
-async function createTripoJob(image, prompt, dependencies) {
+async function createTripoJob(image, prompt, dependencies, toolOptions) {
   const upload = await uploadTripoImage(image, dependencies);
   const payload = await fetch302Json(TRIPO3D_TASK_PATH, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       type: 'image_to_model',
-      model_version: 'v3.0-20250812',
+      model_version: toolOptions.modelVersion,
       file: { type: upload.extension, file_token: upload.imageToken },
-      texture: true,
-      pbr: true,
-      texture_quality: 'standard',
-      geometry_quality: 'standard',
-      orientation: 'align_image'
+      enable_image_autofix: toolOptions.enableImageAutofix,
+      texture: toolOptions.texture,
+      pbr: toolOptions.pbr,
+      texture_alignment: toolOptions.textureAlignment,
+      texture_quality: toolOptions.textureQuality,
+      orientation: toolOptions.orientation,
+      auto_size: toolOptions.autoSize,
+      quad: toolOptions.quad,
+      smart_low_poly: toolOptions.smartLowPoly,
+      generate_parts: toolOptions.generateParts,
+      export_uv: toolOptions.exportUv,
+      ...(toolOptions.geometryQuality ? { geometry_quality: toolOptions.geometryQuality } : {}),
+      ...(toolOptions.modelSeed !== undefined ? { model_seed: toolOptions.modelSeed } : {}),
+      ...(toolOptions.textureSeed !== undefined ? { texture_seed: toolOptions.textureSeed } : {}),
+      ...(toolOptions.faceLimit !== undefined ? { face_limit: toolOptions.faceLimit } : {})
     })
   }, dependencies);
   const response = tripoResponseObject(payload, ['task_id']);
@@ -1151,7 +1285,7 @@ async function queryTripoJob(jobId, dependencies) {
 
 const threeDProviderHandlers = Object.freeze({
   hunyuan3d: {
-    create: (image, prompt, dependencies) => createHunyuanJob(image, dependencies),
+    create: (image, prompt, dependencies, toolOptions) => createHunyuanJob(image, dependencies, toolOptions),
     query: queryHunyuanJob,
     status: (job) => normalizeThreeDStatus(job.Status),
     result: (job) => {
@@ -1210,14 +1344,30 @@ export function validateGlb(buffer) {
   return true;
 }
 
-export async function removeBackground({ imageDataUrl } = {}, options = {}) {
+export function normalizeBackgroundRemovalOptions(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const size = String(source.size || 'full').trim().toLowerCase();
+  if (!['preview', 'medium', 'hd', 'full'].includes(size)) {
+    throw toolError('invalid-background-options', 'The background-removal output size is invalid.', 400);
+  }
+  return {
+    size,
+    crop: source.crop === true,
+    despill: source.despill !== false
+  };
+}
+
+export async function removeBackground({ imageDataUrl, toolOptions } = {}, options = {}) {
   const apiKey = configuredApiKey(options.apiKey);
+  const normalizedOptions = normalizeBackgroundRemovalOptions(toolOptions);
   const image = stripImageMetadata(parseImageDataUrl(imageDataUrl, { maxBytes: MAX_BACKGROUND_INPUT_BYTES }));
   const form = new FormData();
   form.append('image_file', new Blob([image.buffer], { type: image.mime }), `input.${image.extension}`);
   form.append('format', 'png');
   form.append('channels', 'rgba');
-  form.append('size', 'full');
+  form.append('size', normalizedOptions.size);
+  form.append('crop', normalizedOptions.crop ? 'true' : 'false');
+  form.append('despill', normalizedOptions.despill ? 'true' : 'false');
   const fetchImpl = options.fetchImpl || fetch;
   let response;
   try {
@@ -1261,12 +1411,13 @@ export async function removeBackground({ imageDataUrl } = {}, options = {}) {
   return png;
 }
 
-export async function createThreeDTask({ providerId, imageDataUrl, prompt, userId } = {}, options = {}) {
+export async function createThreeDTask({ providerId, imageDataUrl, prompt, toolOptions, userId } = {}, options = {}) {
   const apiKey = configuredApiKey(options.apiKey);
   const taskKey = configuredTaskSecret(apiKey, options.taskSecret);
   const normalizedProviderId = String(providerId || '').trim().toLowerCase();
   const handler = threeDProviderHandlers[normalizedProviderId];
   if (!handler) throw toolError('invalid-three-d-provider', 'The selected 3D provider is not supported.', 400);
+  const normalizedToolOptions = normalizeThreeDOptions(normalizedProviderId, toolOptions);
   const ownerId = String(userId || '').trim();
   if (!ownerId || ownerId.length > 256 || /[\u0000-\u001f\u007f]/.test(ownerId)) {
     throw toolError('invalid-tool-user', 'The authenticated user is invalid.', 400);
@@ -1296,7 +1447,7 @@ export async function createThreeDTask({ providerId, imageDataUrl, prompt, userI
   if (accountingRequestId && (typeof options.credits !== 'number' || !Number.isInteger(credits) || credits < 0 || credits > 3_000_000)) {
     throw toolError('credit-service-failed', 'The 3D accounting credits are invalid.', 503);
   }
-  const job = await handler.create(image, normalizedPrompt, dependencies);
+  const job = await handler.create(image, normalizedPrompt, dependencies, normalizedToolOptions);
   return {
     taskToken: createTaskToken(
       normalizedProviderId,

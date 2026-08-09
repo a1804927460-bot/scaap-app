@@ -48,6 +48,19 @@ assert.deepStrictEqual(shortLastRow.map(({ id, x, y }) => ({ id, x, y })), [
   { id: 'c', x: 66, y: 122 }
 ]);
 
+const uniformGrid = engine.packUniformGrid([
+  { id: 'wide', x: 200, y: 0, width: 900, height: 200 },
+  { id: 'tiny', x: 0, y: 0, width: 40, height: 90 },
+  { id: 'portrait', x: 0, y: 300, width: 100, height: 500 },
+  { id: 'square', x: 300, y: 300, width: 240, height: 240 }
+], { originX: 10, originY: 20, width: 280, height: 168, gap: 20, columns: 2 });
+assert.deepStrictEqual(uniformGrid.map(({ id, x, y, width, height }) => ({ id, x, y, width, height })), [
+  { id: 'tiny', x: 10, y: 20, width: 280, height: 168 },
+  { id: 'wide', x: 310, y: 20, width: 280, height: 168 },
+  { id: 'portrait', x: 10, y: 208, width: 280, height: 168 },
+  { id: 'square', x: 310, y: 208, width: 280, height: 168 }
+]);
+
 for (const refreshRate of [60, 120, 144, 240]) {
   const deltas = Array(90).fill(1000 / refreshRate);
   assert.strictEqual(engine.estimateRefreshRate(deltas), refreshRate);

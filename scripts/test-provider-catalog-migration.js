@@ -31,20 +31,37 @@ assert.deepEqual(
   media.imageProviders.filter((provider) => provider.name).map((provider) => provider.name),
   [
     'Nano Banana Pro',
-    'Nanobanana Pro SE',
-    'Seedream 5.0 Lite',
-    'Midjourney',
-    'Nano banana2',
+    'Nano Banana 2',
+    'Seedream 5.0',
+    'Midjourney Turbo',
+    'Nano Banana 2 Lite',
     'GPT Image 2',
     'Higgsfield Soul Standard',
-    'Higgsfield Soul'
+    'Higgsfield Soul',
+    'Nano Banana',
+    'Seedream 5.0 Pro',
+    'Seedream 4.5',
+    'Seedream 4.0',
+    'Seedream 3.0',
+    'SeedEdit 3.0',
+    'Kling Image 2',
+    'Jimeng Drawing 3.0'
   ]
 );
 const nanoBananaPro = media.imageProviders.find((provider) => provider.id === 'image-1');
 assert.ok(nanoBananaPro);
-assert.equal(nanoBananaPro.endpoint, 'https://api.302.ai/google/v1/models/gemini-3-pro-image-preview');
-assert.deepEqual(nanoBananaPro.capabilities.sizes, ['Default']);
+assert.equal(nanoBananaPro.endpoint, 'https://api.302.ai/ws/api/v3/google/nano-banana-pro/text-to-image');
+assert.deepEqual(nanoBananaPro.capabilities.sizes, ['1K', '2K', '4K']);
+assert.equal(nanoBananaPro.capabilities.ratios.includes('auto'), false);
+assert.deepEqual(media.imageProviders.find((provider) => provider.id === 'image-2').capabilities.sizes, ['1K', '2K', '4K']);
+assert.deepEqual(media.imageProviders.find((provider) => provider.id === 'image-9').capabilities.referenceRatios, ['auto']);
 assert.equal(require('../lib/provider-catalog').catalogProvider('image-1').keyEnv, 'AI302_KEY');
+for (const id of [
+  'image-2', 'image-3', 'image-4', 'image-5', 'image-6', 'image-7', 'image-8',
+  'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16'
+]) {
+  assert.equal(require('../lib/provider-catalog').catalogProvider(id).keyEnv, 'AI302_KEY');
+}
 const gptImage2 = media.imageProviders.find((provider) => provider.id === 'image-6');
 assert.ok(gptImage2);
 assert.equal(gptImage2.model, 'gpt-image-2');
@@ -61,7 +78,17 @@ for (const id of ['image-7', 'image-8']) {
 assert.equal(media.videoProviderName, 'MiniMax H3');
 assert.deepEqual(
   media.videoProviders.filter((provider) => provider.name).map((provider) => provider.name),
-  ['MiniMax H3', 'Seedance 2.0', 'Seedance 2.5']
+  [
+    'MiniMax H3',
+    'Seedance 2.0',
+    'Seedance 2.5',
+    'Seedance 2.0 Fast',
+    'Seedance 1.5 Pro',
+    'Seedance 1.0 Pro',
+    'Seedance 1.0 Lite',
+    'Jimeng Video 3.0',
+    'Jimeng Video 3.0 Pro'
+  ]
 );
 const seedance20 = media.videoProviders.find((provider) => provider.id === 'video-2');
 const seedance25 = media.videoProviders.find((provider) => provider.id === 'video-3');
@@ -71,6 +98,9 @@ assert.deepEqual(seedance20.capabilities.resolutions, ['480P', '720P']);
 assert.deepEqual(seedance25.capabilities.resolutions, ['480P', '720P']);
 assert.equal(require('../lib/provider-catalog').catalogProvider('video-2').keyEnv, 'AI302_KEY');
 assert.equal(require('../lib/provider-catalog').catalogProvider('video-3').keyEnv, 'AI302_KEY');
+for (const id of ['video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9']) {
+  assert.equal(require('../lib/provider-catalog').catalogProvider(id).keyEnv, 'AI302_KEY');
+}
 assert.equal(media.chatProviderName, 'Messs AI');
 assert.equal(media.chatModel, 'gemini-3.1-flash-lite');
 const advancedChat = media.chatProviders.find((provider) => provider.id === 'chat-2');
@@ -104,6 +134,9 @@ const current = normalizeGatewayCatalog({
   catalogVersion: PROVIDER_CATALOG_VERSION,
   providers: [
     { id: 'image-1', kind: 'image', name: 'legacy-name' },
+    { id: 'image-2', kind: 'image', name: 'legacy-nano-2' },
+    { id: 'image-5', kind: 'image', name: 'legacy-nano-lite' },
+    { id: 'image-9', kind: 'image', name: 'legacy-nano' },
     { id: 'image-6', kind: 'image', name: 'legacy-gpt-image-name' },
     { id: 'image-7', kind: 'image', name: 'legacy-higgsfield-standard' },
     { id: 'image-8', kind: 'image', name: 'legacy-higgsfield-soul' },
@@ -116,6 +149,9 @@ const current = normalizeGatewayCatalog({
 }, 'https://gateway.example');
 assert.equal(current.compatible, true);
 assert.equal(assertGatewayProvider(current, 'image', 'image-1').name, 'Nano Banana Pro');
+assert.equal(assertGatewayProvider(current, 'image', 'image-2').name, 'Nano Banana 2');
+assert.equal(assertGatewayProvider(current, 'image', 'image-5').name, 'Nano Banana 2 Lite');
+assert.equal(assertGatewayProvider(current, 'image', 'image-9').name, 'Nano Banana');
 assert.equal(assertGatewayProvider(current, 'image', 'image-6').name, 'GPT Image 2');
 assert.equal(assertGatewayProvider(current, 'image', 'image-7').name, 'Higgsfield Soul Standard');
 assert.equal(assertGatewayProvider(current, 'image', 'image-8').name, 'Higgsfield Soul');
@@ -132,6 +168,14 @@ assert.deepEqual(assertGatewayProvider(current, 'chat', 'chat-2').models, [
   'deepseek-v4-pro'
 ]);
 const assistantSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'ai-assistant.js'), 'utf8');
+const mainSource = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+const sidebarSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'sidebar.js'), 'utf8');
+assert.match(mainSource, /length: Math\.max\(10, source\.length\)/);
+assert.match(mainSource, /\.slice\(0, 100\)/);
+assert.match(mainSource, /'Default', 'adaptive', 'original'/);
+assert.match(mainSource, /'512x512', '720p', '1080p'/);
+assert.match(mainSource, /configuredReferenceMinimum/);
+assert.match(sidebarSource, /length: Math\.max\(10, list\.length\)/);
 assert.match(assistantSource, /'gpt-5\.6-luna': 'GPT-5\.6Luna'/);
 assert.match(assistantSource, /'doubao-seed-2-1-pro-260628': 'Doubao2\.1pro'/);
 assert.match(assistantSource, /'deepseek-v4-pro': 'DeepSeek-V4-Pro'/);

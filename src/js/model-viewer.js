@@ -14,7 +14,9 @@ const BoardModelViewer = {
   environmentTarget: null,
   environmentScene: null,
   pmremGenerator: null,
+  hemisphereLight: null,
   keyLight: null,
+  rimLight: null,
   lightDragCleanup: null,
   keyHandler: null,
   loadGeneration: 0
@@ -76,7 +78,9 @@ function closeBoardModelViewer() {
   BoardModelViewer.environmentTarget = null;
   BoardModelViewer.environmentScene = null;
   BoardModelViewer.pmremGenerator = null;
+  BoardModelViewer.hemisphereLight = null;
   BoardModelViewer.keyLight = null;
+  BoardModelViewer.rimLight = null;
   BoardModelViewer.lightDragCleanup = null;
   BoardModelViewer.keyHandler = null;
 }
@@ -85,8 +89,54 @@ function createBoardWebglRenderer(THREE, options = {}) {
   return new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance', ...options });
 }
 
-function installBoardModelLightDrag(canvas, light, controls, THREE) {
+const BOARD_MODEL_COLOR_TEXTURE_SLOTS = new Set([
+  'map',
+  'emissiveMap',
+  'sheenColorMap',
+  'specularColorMap'
+]);
+
+function prepareBoardModelMaterials(root, renderer, THREE) {
+  if (!root || !renderer) return { meshes: 0, texturedMeshes: 0 };
+  const maxAnisotropy = Math.max(1, Math.min(16, renderer.capabilities.getMaxAnisotropy()));
+  let meshes = 0;
+  let texturedMeshes = 0;
+  root.traverse((object) => {
+    if (!object || !object.isMesh) return;
+    meshes += 1;
+    if (!object.material) {
+      object.material = new THREE.MeshStandardMaterial({ color: 0xb9bec8, roughness: 0.72, metalness: 0.08 });
+    }
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    let hasTexture = false;
+    materials.filter(Boolean).forEach((material) => {
+      Object.entries(material).forEach(([slot, value]) => {
+        if (!value || !value.isTexture) return;
+        hasTexture = true;
+        value.anisotropy = maxAnisotropy;
+        if (BOARD_MODEL_COLOR_TEXTURE_SLOTS.has(slot)) value.colorSpace = THREE.SRGBColorSpace;
+        value.needsUpdate = true;
+      });
+      if ('envMapIntensity' in material) material.envMapIntensity = Math.max(0.85, Number(material.envMapIntensity) || 0);
+      material.needsUpdate = true;
+    });
+    if (hasTexture) texturedMeshes += 1;
+  });
+  return { meshes, texturedMeshes };
+}
+
+function installBoardModelLightDrag(canvas, light, controls, THREE, lighting = {}) {
   let drag = null;
+  const hemisphereLight = lighting.hemisphereLight || null;
+  const rimLight = lighting.rimLight || null;
+  const scene = lighting.scene || null;
+  const indicator = lighting.indicator || null;
+  const applyLightContrast = (isDragging) => {
+    light.intensity = isDragging ? 8.5 : 6.4;
+    if (hemisphereLight) hemisphereLight.intensity = isDragging ? 0.08 : 0.28;
+    if (rimLight) rimLight.intensity = isDragging ? 3.8 : 2.7;
+    if (scene && 'environmentIntensity' in scene) scene.environmentIntensity = isDragging ? 0.06 : 0.18;
+  };
   const updateLight = () => {
     if (!drag) return;
     const radius = 8;
@@ -98,6 +148,15 @@ function installBoardModelLightDrag(canvas, light, controls, THREE) {
     );
     light.target.position.set(0, 0, 0);
     light.target.updateMatrixWorld();
+    if (rimLight) {
+      rimLight.position.set(-light.position.x, Math.max(1.5, -light.position.y * 0.35), -light.position.z);
+      rimLight.target.position.set(0, 0, 0);
+      rimLight.target.updateMatrixWorld();
+    }
+    if (indicator) {
+      const degrees = THREE.MathUtils.radToDeg(drag.azimuth);
+      indicator.style.setProperty('--light-angle', `${degrees}deg`);
+    }
   };
   const onPointerDown = (event) => {
     if (event.target !== canvas || !event.shiftKey || event.button !== 2) return;
@@ -111,6 +170,8 @@ function installBoardModelLightDrag(canvas, light, controls, THREE) {
     };
     controls.enabled = false;
     canvas.classList.add('is-light-dragging');
+    if (indicator) indicator.classList.add('is-active');
+    applyLightContrast(true);
     canvas.setPointerCapture(event.pointerId);
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -121,8 +182,8 @@ function installBoardModelLightDrag(canvas, light, controls, THREE) {
     const deltaY = event.clientY - drag.y;
     drag.x = event.clientX;
     drag.y = event.clientY;
-    drag.azimuth += deltaX * 0.012;
-    drag.elevation = THREE.MathUtils.clamp(drag.elevation - deltaY * 0.009, -1.35, 1.35);
+    drag.azimuth += deltaX * 0.018;
+    drag.elevation = THREE.MathUtils.clamp(drag.elevation - deltaY * 0.014, -1.35, 1.35);
     updateLight();
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -133,6 +194,8 @@ function installBoardModelLightDrag(canvas, light, controls, THREE) {
     drag = null;
     controls.enabled = true;
     canvas.classList.remove('is-light-dragging');
+    if (indicator) indicator.classList.remove('is-active');
+    applyLightContrast(false);
     if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
     if (event) {
       event.preventDefault();
@@ -149,6 +212,7 @@ function installBoardModelLightDrag(canvas, light, controls, THREE) {
   window.addEventListener('pointerup', finish, true);
   window.addEventListener('pointercancel', finish, true);
   canvas.addEventListener('contextmenu', onContextMenu, true);
+  applyLightContrast(false);
   return () => {
     window.removeEventListener('pointerdown', onPointerDown, true);
     window.removeEventListener('pointermove', onPointerMove, true);
@@ -156,6 +220,7 @@ function installBoardModelLightDrag(canvas, light, controls, THREE) {
     window.removeEventListener('pointercancel', finish, true);
     canvas.removeEventListener('contextmenu', onContextMenu, true);
     controls.enabled = true;
+    if (indicator) indicator.classList.remove('is-active');
   };
 }
 
@@ -242,6 +307,7 @@ function createBoardModelViewerOverlay(file) {
         </div>
       </header>
       <div class="board-model-viewer-stage">
+        <div class="board-model-light-indicator" aria-hidden="true"><span></span></div>
         <div class="board-model-viewer-status" role="status" aria-live="polite"></div>
       </div>
     </section>
@@ -361,6 +427,9 @@ async function renderBoardModelPreview(file) {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(38, 1, 0.01, 1000);
   const controls = new OrbitControls(camera, renderer.domElement);
+  let environmentScene = null;
+  let environmentTarget = null;
+  let pmremGenerator = null;
   try {
     renderer.setPixelRatio(1);
     renderer.setSize(512, 512, false);
@@ -368,10 +437,20 @@ async function renderBoardModelPreview(file) {
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.08;
     renderer.setClearColor(0x111317, 1);
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x303642, 2));
-    const key = new THREE.DirectionalLight(0xffffff, 2.5);
+    prepareBoardModelMaterials(parsed.root, renderer, THREE);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x20242b, 0.45));
+    const key = new THREE.DirectionalLight(0xfff4de, 5.2);
     key.position.set(4, 7, 5);
-    scene.add(key, key.target, parsed.root);
+    const rim = new THREE.DirectionalLight(0x75a7ff, 1.8);
+    rim.position.set(-4, 2, -5);
+    scene.add(key, key.target, rim, rim.target, parsed.root);
+    if (vendor.RoomEnvironment) {
+      pmremGenerator = new THREE.PMREMGenerator(renderer);
+      environmentScene = new vendor.RoomEnvironment();
+      environmentTarget = pmremGenerator.fromScene(environmentScene, 0.04);
+      scene.environment = environmentTarget.texture;
+      if ('environmentIntensity' in scene) scene.environmentIntensity = 0.2;
+    }
     frameBoardModel(parsed.root, camera, controls, THREE);
     renderer.render(scene, camera);
     const dataUrl = renderer.domElement.toDataURL('image/png');
@@ -382,6 +461,9 @@ async function renderBoardModelPreview(file) {
   } finally {
     controls.dispose();
     disposeBoardModelObject(parsed.root);
+    disposeBoardModelObject(environmentScene);
+    if (environmentTarget) environmentTarget.dispose();
+    if (pmremGenerator) pmremGenerator.dispose();
     renderer.renderLists.dispose();
     renderer.dispose();
     renderer.forceContextLoss();
@@ -454,14 +536,17 @@ function openBoardModelViewer(file) {
     controls.dampingFactor = 0.075;
     controls.enablePan = true;
     controls.screenSpacePanning = true;
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x303642, 1.5);
-    const key = new THREE.DirectionalLight(0xffffff, 2.2);
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x171a20, 0.28);
+    const key = new THREE.DirectionalLight(0xfff1d6, 6.4);
     key.position.set(4, 7, 5);
-    scene.add(hemi, key, key.target);
+    const rim = new THREE.DirectionalLight(0x72a5ff, 2.7);
+    rim.position.set(-4, 2, -5);
+    scene.add(hemi, key, key.target, rim, rim.target);
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
     const environmentScene = new RoomEnvironment();
     const environmentTarget = pmremGenerator.fromScene(environmentScene, 0.04);
     scene.environment = environmentTarget.texture;
+    if ('environmentIntensity' in scene) scene.environmentIntensity = 0.18;
     BoardModelViewer.renderer = renderer;
     BoardModelViewer.scene = scene;
     BoardModelViewer.camera = camera;
@@ -470,8 +555,15 @@ function openBoardModelViewer(file) {
     BoardModelViewer.environmentScene = environmentScene;
     BoardModelViewer.environmentTarget = environmentTarget;
     BoardModelViewer.pmremGenerator = pmremGenerator;
+    BoardModelViewer.hemisphereLight = hemi;
     BoardModelViewer.keyLight = key;
-    BoardModelViewer.lightDragCleanup = installBoardModelLightDrag(renderer.domElement, key, controls, THREE);
+    BoardModelViewer.rimLight = rim;
+    BoardModelViewer.lightDragCleanup = installBoardModelLightDrag(renderer.domElement, key, controls, THREE, {
+      hemisphereLight: hemi,
+      rimLight: rim,
+      scene,
+      indicator: overlay.querySelector('.board-model-light-indicator')
+    });
     BoardModelViewer.resizeObserver = new ResizeObserver(resizeBoardModelViewer);
     BoardModelViewer.resizeObserver.observe(stage);
     resizeBoardModelViewer();
@@ -485,6 +577,7 @@ function openBoardModelViewer(file) {
       if (!root || !root.isObject3D) {
         throw Object.assign(new Error('The model does not contain a valid scene.'), { code: 'invalid-model-data' });
       }
+      prepareBoardModelMaterials(root, renderer, THREE);
       BoardModelViewer.root = root;
       scene.add(root);
       frameBoardModel(root, camera, controls, THREE);

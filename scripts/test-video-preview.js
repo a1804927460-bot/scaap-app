@@ -13,8 +13,13 @@ const boardStyles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles', 
 
 assert.match(
   boardSource,
-  /video\.addEventListener\('error',[\s\S]*?video\.src\s*=\s*res\.url;[\s\S]*?video\.load\(\);[\s\S]*?if \(wantsPreview\) video\.play\(\)/,
+  /video\.addEventListener\('error',[\s\S]*?video\.src\s*=\s*res\.url;[\s\S]*?video\.load\(\);[\s\S]*?if \(wantsPreview\) requestPlayback\(\)/,
   'A failed native video must resume hover playback after its transcoded source is installed.'
+);
+assert.match(
+  boardSource,
+  /function requestPlayback\(\)[\s\S]*?HAVE_CURRENT_DATA[\s\S]*?loadeddata[\s\S]*?canplay[\s\S]*?video\.load\(\)/,
+  'Canvas video hover playback must wait for decodable data and retry instead of swallowing an early play rejection.'
 );
 assert.match(
   boardSource,

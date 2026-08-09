@@ -293,6 +293,11 @@ function showCanvasLibrary() {
   const library = document.getElementById('canvas-library-view');
   const workspace = document.getElementById('board-workspace-body');
   if (!panel || !library || !workspace) return;
+  // Fullscreen belongs to one active canvas workspace. Clear it before the
+  // workspace controls are hidden, otherwise the library traps the panel in
+  // fullscreen with no visible control that can restore the compact layout.
+  if (typeof exitBoardFullscreen === 'function') exitBoardFullscreen();
+  else panel.classList.remove('is-fullscreen');
   panel.classList.add('is-canvas-library');
   library.hidden = false;
   workspace.hidden = true;

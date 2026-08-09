@@ -10,16 +10,24 @@ const BOARD_DOM_ITEM_LIMIT = 320;
 const BOARD_DOM_ITEM_EXIT_LIMIT = 240;
 const BOARD_DOM_RETAIN_LIMIT = BOARD_DOM_ITEM_LIMIT;
 const BOARD_OVERVIEW_ITEM_THRESHOLD = 180;
-const BOARD_FULL_IMAGE_LIMIT = 6;
+const BOARD_FULL_IMAGE_LIMIT = 8;
+const BOARD_FULL_IMAGE_CACHE_LIMIT = 8;
 const BOARD_THUMBNAIL_MAX_EDGE = 400;
-const BOARD_FULL_IMAGE_MIN_SCREEN_EDGE = 340;
+const BOARD_FULL_IMAGE_MIN_SCREEN_EDGE = 220;
+const BOARD_SELECTED_FULL_IMAGE_MIN_SCREEN_EDGE = 150;
+const BOARD_FULL_IMAGE_PREWARM_SCREEN_EDGE = 140;
 const BOARD_QUALITY_SETTLE_MS = 90;
 const BOARD_VIEW_STORAGE_KEY = 'messs.board.viewport.v2';
 const BOARD_OVERVIEW_DPR = 1;
-const BOARD_OVERVIEW_IMAGE_LIMIT = 240;
+const BOARD_OVERVIEW_IMAGE_LIMIT = 1600;
+const BOARD_OVERVIEW_IMAGE_CACHE_LIMIT = 1800;
+const BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET = 24_000_000;
+const BOARD_OVERVIEW_IMAGE_CONCURRENCY = 16;
+const BOARD_OVERVIEW_IMAGE_MAX_EDGE = 192;
 const BOARD_WHEEL_MAX_DELTA = 120;
 const BOARD_WHEEL_PAN_GAIN = 0.78;
 const BOARD_WHEEL_ZOOM_RATE = 0.00125;
+const BOARD_MOVE_HISTORY_LIMIT = 100;
 
 const Board = {
   panX: 200,
@@ -44,6 +52,7 @@ const Board = {
   metrics: new Map(),
   filesById: new Map(),
   itemsById: new Map(),
+  selectedCount: 0,
   lastMountHash: null,
   lastKeepHash: null,
   lastZoomBucket: null,
@@ -55,10 +64,100 @@ const Board = {
   overviewCanvas: null,
   overviewImageCache: new Map(),
   overviewImagePending: new Map(),
+  overviewImageQueue: [],
+  overviewImageActive: 0,
+  overviewImagePixels: 0,
+  overviewRedrawFrame: 0,
+  overviewImageFailed: new Set(),
+  fullImageCache: new Map(),
+  fullImagePending: new Map(),
+  fullImagePrewarmTimer: 0,
   failedFullImageSources: new Set(),
   resizeObserver: null,
-  clipboardPastePromise: null
+  clipboardPastePromise: null,
+  historyPersistPromise: Promise.resolve()
 };
+
+const BoardMoveHistory = new Map();
+
+function boardMoveHistoryState(canvasId = activeCanvasId()) {
+  if (!BoardMoveHistory.has(canvasId)) {
+    BoardMoveHistory.set(canvasId, { undo: [], redo: [] });
+  }
+  return BoardMoveHistory.get(canvasId);
+}
+
+function recordBoardMoveHistory(startPositions) {
+  const changes = startPositions.map(({ item, startLeft, startTop }) => ({
+    id: item.id,
+    before: { x: startLeft, y: startTop },
+    after: { x: item.x, y: item.y }
+  })).filter((change) => (
+    change.before.x !== change.after.x || change.before.y !== change.after.y
+  ));
+  if (!changes.length) return false;
+
+  const state = boardMoveHistoryState();
+  state.undo.push({ changes });
+  if (state.undo.length > BOARD_MOVE_HISTORY_LIMIT) state.undo.shift();
+  state.redo.length = 0;
+  return true;
+}
+
+function persistBoardMoveHistory(items, canvasId = activeCanvasId()) {
+  Board.historyPersistPromise = Board.historyPersistPromise
+    .catch(() => {})
+    .then(async () => {
+      if (typeof window.messsAPI.upsertBoardItems === 'function') {
+        await window.messsAPI.upsertBoardItems(items);
+      } else {
+        await Promise.all(items.map((item) => window.messsAPI.upsertBoardItem(item)));
+      }
+      canvasWorkspaceTouch(canvasId);
+      await canvasWorkspaceSave();
+    });
+}
+
+function applyBoardMoveHistory(entry, direction) {
+  const changedItems = [];
+  entry.changes.forEach((change) => {
+    const item = Board.itemsById.get(change.id) || AppState.boardItems.find((candidate) => candidate.id === change.id);
+    if (!item) return;
+    const position = change[direction];
+    item.x = position.x;
+    item.y = position.y;
+    updateBoardItemIndex(item);
+    const element = Board.mounted.get(item.id) || document.querySelector(`.board-item[data-board-id="${item.id}"]`);
+    if (element) {
+      element.style.left = `${item.x}px`;
+      element.style.top = `${item.y}px`;
+    }
+    changedItems.push(item);
+  });
+  if (!changedItems.length) return false;
+  markBoardInteraction();
+  scheduleBoardReconcile();
+  persistBoardMoveHistory(changedItems);
+  return true;
+}
+
+function undoBoardMove() {
+  const state = boardMoveHistoryState();
+  const entry = state.undo.pop();
+  if (!entry) return false;
+  if (!applyBoardMoveHistory(entry, 'before')) return false;
+  state.redo.push(entry);
+  return true;
+}
+
+function redoBoardMove() {
+  const state = boardMoveHistoryState();
+  const entry = state.redo.pop();
+  if (!entry) return false;
+  if (!applyBoardMoveHistory(entry, 'after')) return false;
+  state.undo.push(entry);
+  return true;
+}
 
 // In-app clipboard for board items (Ctrl+C/V) �?intentionally separate from
 // the OS clipboard. Copies the item's data (file reference, position, size,
@@ -180,6 +279,100 @@ function activeBoardImage(element) {
     element.querySelector('img[data-full-src]');
 }
 
+function cachedBoardFullImage(source) {
+  const image = Board.fullImageCache.get(source);
+  if (!image || !image.complete || !image.naturalWidth) return null;
+  Board.fullImageCache.delete(source);
+  Board.fullImageCache.set(source, image);
+  return image;
+}
+
+function cacheBoardFullImage(source, image) {
+  Board.fullImageCache.delete(source);
+  Board.fullImageCache.set(source, image);
+  while (Board.fullImageCache.size > BOARD_FULL_IMAGE_CACHE_LIMIT) {
+    Board.fullImageCache.delete(Board.fullImageCache.keys().next().value);
+  }
+}
+
+function preloadBoardFullImage(source) {
+  if (!source || Board.failedFullImageSources.has(source)) return Promise.resolve(null);
+  const cached = cachedBoardFullImage(source);
+  if (cached) return Promise.resolve(cached);
+  if (Board.fullImagePending.has(source)) return Board.fullImagePending.get(source);
+
+  const image = new Image();
+  image.decoding = 'async';
+  image.fetchPriority = 'high';
+  const request = new Promise((resolve) => {
+    image.addEventListener('load', async () => {
+      try {
+        if (typeof image.decode === 'function') await image.decode();
+      } catch (err) {}
+      Board.fullImagePending.delete(source);
+      if (!image.naturalWidth || !image.naturalHeight) {
+        Board.failedFullImageSources.add(source);
+        resolve(null);
+        return;
+      }
+      cacheBoardFullImage(source, image);
+      resolve(image);
+    }, { once: true });
+    image.addEventListener('error', () => {
+      Board.fullImagePending.delete(source);
+      Board.failedFullImageSources.add(source);
+      resolve(null);
+    }, { once: true });
+  });
+  Board.fullImagePending.set(source, request);
+  image.src = source;
+  return request;
+}
+
+function mountedFullImageCandidates(zoom, minimumScreenEdge) {
+  const candidates = [];
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  for (const [id, element] of Board.mounted) {
+    const image = activeBoardImage(element);
+    const item = Board.itemsById.get(id);
+    if (!image || !item || !Board.visibleIds.has(id)) continue;
+    const file = Board.filesById.get(item.fileId);
+    const fullSource = image.dataset.fullSrc || '';
+    const thumbSource = image.dataset.thumbSrc || '';
+    if (!fullSource || fullSource === thumbSource || Board.failedFullImageSources.has(fullSource)) continue;
+    const sourceEdge = Math.max(
+      Number(file && file.sourceWidth) || 0,
+      Number(file && file.sourceHeight) || 0
+    );
+    if (sourceEdge > 0 && sourceEdge <= BOARD_THUMBNAIL_MAX_EDGE) continue;
+    const bounds = boardItemBounds(item);
+    const screenEdge = Math.max(bounds.w, bounds.h) * zoom * dpr;
+    if (screenEdge < minimumScreenEdge) continue;
+    candidates.push({
+      id,
+      image,
+      source: fullSource,
+      screenEdge,
+      priority: (item.selected ? 1000000 : 0) + screenEdge
+    });
+  }
+  return candidates.sort((a, b) => b.priority - a.priority);
+}
+
+function prewarmMountedFullImages(zoom) {
+  mountedFullImageCandidates(zoom, BOARD_FULL_IMAGE_PREWARM_SCREEN_EDGE)
+    .slice(0, BOARD_FULL_IMAGE_LIMIT)
+    .forEach((entry) => { void preloadBoardFullImage(entry.source); });
+}
+
+function scheduleBoardFullImagePrewarm(zoom) {
+  if (Board.fullImagePrewarmTimer) return;
+  Board.fullImagePrewarmTimer = window.setTimeout(() => {
+    Board.fullImagePrewarmTimer = 0;
+    prewarmMountedFullImages(Number.isFinite(zoom) ? zoom : Board.zoom);
+  }, 24);
+}
+
 function transitionBoardImageQuality(element, quality) {
   const stack = element.querySelector('.board-image-stack');
   const active = activeBoardImage(element);
@@ -199,38 +392,48 @@ function transitionBoardImageQuality(element, quality) {
 
   stack.querySelectorAll('.board-image-layer.is-pending').forEach((image) => image.remove());
   stack.dataset.pendingQuality = quality;
-  const next = active.cloneNode(true);
-  next.className = 'board-image-layer is-pending';
-  next.removeAttribute('src');
-  next.dataset.quality = quality;
-  next.decoding = 'async';
-  next.fetchPriority = quality === 'full' ? 'high' : 'low';
-  next.style.opacity = '0';
-
-  const finish = async () => {
-    if (!next.isConnected || stack.dataset.pendingQuality !== quality) return;
-    if (typeof next.decode === 'function') {
-      try { await next.decode(); } catch (err) {}
+  const ready = quality === 'full' ? preloadBoardFullImage(source) : Promise.resolve(true);
+  void ready.then((decoded) => {
+    if (!decoded || !stack.isConnected || stack.dataset.pendingQuality !== quality) {
+      if (stack.dataset.pendingQuality === quality) stack.dataset.pendingQuality = '';
+      return;
     }
-    if (!next.isConnected || stack.dataset.pendingQuality !== quality) return;
-    await new Promise((resolve) => requestAnimationFrame(resolve));
-    next.style.opacity = '';
-    next.classList.remove('is-pending');
-    next.classList.add('is-active');
-    active.classList.remove('is-active');
-    stack.dataset.pendingQuality = '';
-    window.setTimeout(() => {
-      if (active.parentNode === stack) active.remove();
-    }, 240);
-  };
-  next.addEventListener('load', finish, { once: true });
-  next.addEventListener('error', () => {
-    if (quality === 'full') Board.failedFullImageSources.add(source);
-    if (next.parentNode === stack) next.remove();
-    if (stack.dataset.pendingQuality === quality) stack.dataset.pendingQuality = '';
-  }, { once: true });
-  stack.appendChild(next);
-  next.src = source;
+    const next = active.cloneNode(true);
+    next.className = 'board-image-layer is-pending';
+    next.removeAttribute('src');
+    next.dataset.quality = quality;
+    next.decoding = 'async';
+    next.fetchPriority = quality === 'full' ? 'high' : 'low';
+    next.style.opacity = '0';
+    let revealed = false;
+    const reveal = async () => {
+      if (revealed) return;
+      revealed = true;
+      if (typeof next.decode === 'function') {
+        try { await next.decode(); } catch (err) {}
+      }
+      if (!next.isConnected || stack.dataset.pendingQuality !== quality) return;
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      next.style.opacity = '';
+      next.classList.remove('is-pending');
+      next.classList.add('is-active', 'is-quality-crossfading');
+      active.classList.remove('is-active');
+      stack.dataset.pendingQuality = '';
+      window.setTimeout(() => {
+        next.classList.remove('is-quality-crossfading');
+        if (active.parentNode === stack) active.remove();
+      }, 280);
+    };
+    next.addEventListener('load', reveal, { once: true });
+    next.addEventListener('error', () => {
+      if (quality === 'full') Board.failedFullImageSources.add(source);
+      if (next.parentNode === stack) next.remove();
+      if (stack.dataset.pendingQuality === quality) stack.dataset.pendingQuality = '';
+    }, { once: true });
+    stack.appendChild(next);
+    next.src = source;
+    if (next.complete && next.naturalWidth) queueMicrotask(reveal);
+  });
 }
 
 function loadBoardPreview(fileId) {
@@ -280,36 +483,13 @@ function syncMountedImageQuality() {
     scheduleMountedImageQuality();
     return;
   }
-  const detailCandidates = [];
-  for (const [id, element] of Board.mounted) {
-    const image = activeBoardImage(element);
-    const item = Board.itemsById.get(id);
-    if (!image || !item) continue;
-    const file = Board.filesById.get(item.fileId);
-    const isVisible = Board.visibleIds.has(id);
-    const fullSource = image.dataset.fullSrc || '';
-    const thumbSource = image.dataset.thumbSrc || '';
-    const canUpgradeSource = !!fullSource && fullSource !== thumbSource &&
-      !Board.failedFullImageSources.has(fullSource);
-    const bounds = boardItemBounds(item);
-    const screenEdge = Math.max(bounds.w, bounds.h) * Board.zoom * Math.min(2, window.devicePixelRatio || 1);
-    const sourceEdge = Math.max(
-      Number(file && file.sourceWidth) || 0,
-      Number(file && file.sourceHeight) || 0
-    );
-    const fullResolutionUseful = canUpgradeSource &&
-      (sourceEdge === 0 || sourceEdge > BOARD_THUMBNAIL_MAX_EDGE) &&
-      screenEdge >= (item.selected ? 280 : BOARD_FULL_IMAGE_MIN_SCREEN_EDGE);
-    if (boardZoomBucket() === 'detail' && isVisible && fullResolutionUseful) {
-      detailCandidates.push({
-        id,
-        image,
-        priority: (item.selected ? 1000000 : 0) + (isVisible ? 10000 : 0) +
-          screenEdge
-      });
-    }
-  }
-  detailCandidates.sort((a, b) => b.priority - a.priority);
+  const detailCandidates = boardZoomBucket() === 'detail'
+    ? mountedFullImageCandidates(Board.zoom, BOARD_SELECTED_FULL_IMAGE_MIN_SCREEN_EDGE)
+      .filter((entry) => {
+        const item = Board.itemsById.get(entry.id);
+        return !!item && (item.selected || entry.screenEdge >= BOARD_FULL_IMAGE_MIN_SCREEN_EDGE);
+      })
+    : [];
   const fullIds = new Set(detailCandidates.slice(0, BOARD_FULL_IMAGE_LIMIT).map((entry) => entry.id));
 
   for (const [id, element] of Board.mounted) {
@@ -362,6 +542,7 @@ function setBoardZoomTarget(screenPoint, factor) {
     factor,
     { min: BOARD_ZOOM_MIN, max: BOARD_ZOOM_MAX }
   );
+  scheduleBoardFullImagePrewarm(Board.zoomTarget.zoom);
   if (!Board.zoomFrame) {
     Board.zoomLastTime = 0;
     Board.zoomFrame = requestAnimationFrame(stepBoardZoom);
@@ -605,29 +786,59 @@ function createBoardVideoDurationBadge(file) {
   return badge;
 }
 
+function syncBoardMediaIntrinsicRatio(content, file, item, media) {
+  const sourceWidth = Number(file.sourceWidth) || Number(media && (media.naturalWidth || media.videoWidth));
+  const sourceHeight = Number(file.sourceHeight) || Number(media && (media.naturalHeight || media.videoHeight));
+  if (!(sourceWidth > 0 && sourceHeight > 0)) return;
+  if (!(Number(file.sourceWidth) > 0)) file.sourceWidth = sourceWidth;
+  if (!(Number(file.sourceHeight) > 0)) file.sourceHeight = sourceHeight;
+  const width = Math.max(1, Number(item.width) || 220);
+  const expectedHeight = Math.max(1, Math.round(width * sourceHeight / sourceWidth));
+  const element = content.closest('.board-item');
+  if (element) {
+    element.style.aspectRatio = `${sourceWidth} / ${sourceHeight}`;
+    element.style.height = `${expectedHeight}px`;
+  }
+  if (Math.abs((Number(item.height) || 0) - expectedHeight) <= 1) return;
+  item.height = expectedHeight;
+  updateBoardItemIndex(item);
+  if (window.messsAPI && typeof window.messsAPI.upsertBoardItem === 'function') {
+    Promise.resolve(window.messsAPI.upsertBoardItem(item)).catch(() => {});
+  }
+}
+
+function observeBoardMediaIntrinsicRatio(content, file, item, media) {
+  const sync = () => syncBoardMediaIntrinsicRatio(content, file, item, media);
+  media.addEventListener('load', sync, { once: true });
+  media.addEventListener('loadedmetadata', sync, { once: true });
+  if ((media.complete && media.naturalWidth) || media.videoWidth) queueMicrotask(sync);
+}
+
 /** Fills a board item's content area. Images render immediately (the URL is
     already known); everything else shows a placeholder icon right away,
     then upgrades in place to a real thumbnail/player once getPreview()
     resolves (cached so repeat renders are instant). */
 function renderBoardItemContent(content, f, item) {
   if (isImageExt(f.ext)) {
-    const quality = 'thumb';
     const thumbSource = resolveImageDisplaySource(f, false);
     const fullSource = resolveImageDisplaySource(f, true);
+    const quality = cachedBoardFullImage(fullSource) ? 'full' : 'thumb';
+    const initialSource = quality === 'full' ? fullSource : thumbSource;
     const stack = document.createElement('div');
     stack.className = 'board-image-stack';
     stack.dataset.pendingQuality = '';
     const img = document.createElement('img');
     img.className = 'board-image-layer is-active';
-    img.src = thumbSource;
+    img.src = initialSource;
     img.dataset.fullSrc = fullSource;
     img.dataset.thumbSrc = thumbSource;
     img.dataset.quality = quality;
-    img.loading = 'lazy';
+    img.loading = 'eager';
     img.alt = f.name;
     img.draggable = false;
     img.decoding = 'async';
     img.fetchPriority = quality === 'full' ? 'high' : 'low';
+    observeBoardMediaIntrinsicRatio(content, f, item, img);
     stack.appendChild(img);
     content.appendChild(stack);
     return;
@@ -680,6 +891,7 @@ function renderBoardItemContent(content, f, item) {
     const img = document.createElement('img');
     img.src = f.thumbUrl;
     img.loading = 'lazy';
+    observeBoardMediaIntrinsicRatio(content, f, item, img);
     img.alt = f.name;
     img.draggable = false;
     preview.append(img, createBoardVideoDurationBadge(f));
@@ -794,11 +1006,41 @@ function boardItemBounds(item) {
   };
 }
 
+function restoreLegacyUniformBoardFrames() {
+  const filesById = new Map(AppState.files.map((file) => [file.id, file]));
+  const changed = [];
+  AppState.boardItems.forEach((item) => {
+    const file = filesById.get(item.fileId);
+    const hadUniformFrame = item.layoutFrame === 'uniform-grid';
+    const width = Math.max(1, Number(item.width) || 220);
+    const sourceWidth = Number(file && file.sourceWidth);
+    const sourceHeight = Number(file && file.sourceHeight);
+    const isMedia = file && (isImageExt(file.ext) || isVideoExt(file.ext));
+    const hasSourceRatio = isMedia && sourceWidth > 0 && sourceHeight > 0;
+    const expectedHeight = hasSourceRatio
+      ? Math.max(1, Math.round(width * sourceHeight / sourceWidth))
+      : null;
+    const needsRatioRepair = expectedHeight !== null && Math.abs((Number(item.height) || 0) - expectedHeight) > 1;
+    if (!hadUniformFrame && !needsRatioRepair) return;
+    item.width = width;
+    if (expectedHeight !== null) item.height = expectedHeight;
+    if (hadUniformFrame) delete item.layoutFrame;
+    changed.push(item);
+  });
+  if (!changed.length) return;
+  const persistence = typeof window.messsAPI.upsertBoardItems === 'function'
+    ? window.messsAPI.upsertBoardItems(changed)
+    : Promise.all(changed.map((item) => window.messsAPI.upsertBoardItem(item)));
+  Promise.resolve(persistence).catch(() => {});
+}
+
 function rebuildBoardSpatialIndex() {
   Board.spatialIndex.clear();
   Board.filesById = new Map(AppState.files.map((file) => [file.id, file]));
   Board.itemsById = new Map(AppState.boardItems.map((item) => [item.id, item]));
+  Board.selectedCount = 0;
   for (const item of AppState.boardItems) {
+    if (item.selected) Board.selectedCount += 1;
     Board.spatialIndex.set(item.id, boardItemBounds(item));
   }
   Board.lastMountHash = null;
@@ -828,6 +1070,73 @@ function destroyMountedBoardItem(id) {
 function clearMountedBoardItems() {
   Board.mountQueue.clear();
   for (const id of [...Board.mounted.keys()]) destroyMountedBoardItem(id);
+}
+
+function boardRenderMetadata(value) {
+  if (!value) return '';
+  try { return JSON.stringify(value); } catch (error) { return String(value); }
+}
+
+function boardItemRenderSignature(item, file) {
+  if (item.isAiPlaceholder) return `pending:${item.id}`;
+  if (item.isNote) {
+    return [
+      'note', item.text, item.fontFamily, item.fontSize, item.fontWeight,
+      item.color, item.noFill, item.align
+    ].join('\u001f');
+  }
+  if (item.isDoodle) {
+    const source = String(item.imageData || '');
+    return `doodle:${source.length}:${source.slice(0, 48)}:${source.slice(-48)}`;
+  }
+  if (!file) return `missing:${item.fileId || ''}`;
+  return [
+    'file', item.layoutFrame || '', file.id, file.ext, file.name,
+    file.url, file.thumbUrl, file.previewUrl, file.modelPreviewUrl,
+    file.sourceWidth, file.sourceHeight, file.sourceFolder,
+    boardRenderMetadata(file.aiGeneration),
+    boardRenderMetadata(file.butlerOperation)
+  ].join('\u001f');
+}
+
+function syncMountedBoardItemGeometry(element, item) {
+  const file = Board.filesById.get(item.fileId);
+  const isMedia = file && (isImageExt(file.ext) || isVideoExt(file.ext));
+  const width = Math.max(1, Number(item.width) || 220);
+  element.style.left = `${Number.isFinite(item.x) ? item.x : 0}px`;
+  element.style.top = `${Number.isFinite(item.y) ? item.y : 0}px`;
+  element.style.zIndex = String(item.zIndex || 1);
+  if (!item.isNote || Number(item.width) > 0) element.style.width = `${width}px`;
+
+  if (isMedia && Number(file.sourceWidth) > 0 && Number(file.sourceHeight) > 0) {
+    const height = Math.max(1, Math.round(width * file.sourceHeight / file.sourceWidth));
+    element.style.aspectRatio = `${file.sourceWidth} / ${file.sourceHeight}`;
+    element.style.height = `${height}px`;
+  } else {
+    element.style.aspectRatio = '';
+    element.style.height = Number(item.height) > 0 ? `${item.height}px` : '';
+  }
+  element.classList.toggle('is-selected', Boolean(item.selected));
+  element.classList.toggle('is-single-selection', Boolean(item.selected) && Board.selectedCount === 1);
+}
+
+function reconcileMountedBoardItemsAfterDataChange() {
+  for (const [id, element] of [...Board.mounted]) {
+    const item = Board.itemsById.get(id);
+    const file = item && Board.filesById.get(item.fileId);
+    const signature = item && boardItemRenderSignature(item, file);
+    if (
+      !item ||
+      element._boardItemRef !== item ||
+      element._boardFileRef !== file ||
+      element._boardRenderSignature !== signature
+    ) {
+      destroyMountedBoardItem(id);
+      if (!item) Board.metrics.delete(id);
+      continue;
+    }
+    syncMountedBoardItemGeometry(element, item);
+  }
 }
 
 function isMountableBoardItem(id) {
@@ -909,42 +1218,191 @@ function boardOverviewColor(item) {
   return '#8a91a0';
 }
 
-function requestBoardOverviewImage(file) {
-  if (!file || !isImageExt(file.ext)) return;
-  if (Board.overviewImageCache.has(file.id) || Board.overviewImagePending.has(file.id)) return;
-  const image = new Image();
-  Board.overviewImagePending.set(file.id, image);
-  image.decoding = 'async';
-  image.onload = () => {
-    Board.overviewImagePending.delete(file.id);
-    if (image.naturalWidth > 0 && image.naturalHeight > 0) {
-      Board.overviewImageCache.set(file.id, image);
-      while (Board.overviewImageCache.size > BOARD_OVERVIEW_IMAGE_LIMIT * 2) {
-        Board.overviewImageCache.delete(Board.overviewImageCache.keys().next().value);
+function boardOverviewThumbnailSource(file) {
+  if (!file) return '';
+  const thumbnail = String(file.thumbUrl || file.modelPreviewUrl || '').trim();
+  if (thumbnail) return thumbnail;
+  if (isImageExt(file.ext)) return String(file.previewUrl || file.url || '').trim();
+  if (isModelFile(file)) return String(file.previewUrl || '').trim();
+  return '';
+}
+
+function boardOverviewImageRequestKey(fileId, source) {
+  return `${fileId}\n${source}`;
+}
+
+function closeBoardOverviewDrawable(drawable) {
+  if (drawable && typeof drawable.close === 'function') drawable.close();
+}
+
+function cachedBoardOverviewImage(file) {
+  const source = boardOverviewThumbnailSource(file);
+  const cached = file && Board.overviewImageCache.get(file.id);
+  if (!cached) return null;
+  if (!source || cached.source !== source) {
+    closeBoardOverviewDrawable(cached.drawable);
+    Board.overviewImagePixels = Math.max(0, Board.overviewImagePixels - (cached.pixels || 0));
+    Board.overviewImageCache.delete(file.id);
+    return null;
+  }
+  // Refresh insertion order so a dense viewport does not evict thumbnails
+  // that are still visible while the user pans across the board.
+  Board.overviewImageCache.delete(file.id);
+  Board.overviewImageCache.set(file.id, cached);
+  return cached.drawable;
+}
+
+async function createBoardOverviewDrawable(image) {
+  const sourceWidth = image.naturalWidth;
+  const sourceHeight = image.naturalHeight;
+  const longestEdge = Math.max(sourceWidth, sourceHeight);
+  if (typeof createImageBitmap !== 'function' || longestEdge <= BOARD_OVERVIEW_IMAGE_MAX_EDGE) return image;
+  const scale = BOARD_OVERVIEW_IMAGE_MAX_EDGE / longestEdge;
+  try {
+    return await createImageBitmap(image, 0, 0, sourceWidth, sourceHeight, {
+      resizeWidth: Math.max(1, Math.round(sourceWidth * scale)),
+      resizeHeight: Math.max(1, Math.round(sourceHeight * scale)),
+      resizeQuality: 'high'
+    });
+  } catch (error) {
+    return image;
+  }
+}
+
+function cacheBoardOverviewImage(fileId, source, drawable) {
+  const previous = Board.overviewImageCache.get(fileId);
+  if (previous) {
+    Board.overviewImagePixels = Math.max(0, Board.overviewImagePixels - (previous.pixels || 0));
+    if (previous.drawable !== drawable) closeBoardOverviewDrawable(previous.drawable);
+  }
+  const pixels = Math.max(1, Number(drawable && drawable.width) || 1) *
+    Math.max(1, Number(drawable && drawable.height) || 1);
+  Board.overviewImageCache.delete(fileId);
+  Board.overviewImageCache.set(fileId, { source, drawable, pixels });
+  Board.overviewImagePixels += pixels;
+  Board.overviewImageFailed.delete(boardOverviewImageRequestKey(fileId, source));
+  while (
+    Board.overviewImageCache.size > BOARD_OVERVIEW_IMAGE_CACHE_LIMIT ||
+    Board.overviewImagePixels > BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET
+  ) {
+    const oldestId = Board.overviewImageCache.keys().next().value;
+    const oldest = Board.overviewImageCache.get(oldestId);
+    Board.overviewImageCache.delete(oldestId);
+    Board.overviewImagePixels = Math.max(0, Board.overviewImagePixels - (oldest && oldest.pixels || 0));
+    closeBoardOverviewDrawable(oldest && oldest.drawable);
+  }
+}
+
+function scheduleBoardOverviewRedraw() {
+  if (Board.overviewRedrawFrame) return;
+  Board.overviewRedrawFrame = requestAnimationFrame(() => {
+    Board.overviewRedrawFrame = 0;
+    const canvas = Board.overviewCanvas;
+    if (!canvas || (canvas.hidden && Board.lastZoomBucket !== 'overview')) return;
+    const viewport = document.getElementById('board-viewport');
+    const rect = viewport && viewport.getBoundingClientRect();
+    if (rect && rect.width && rect.height) drawBoardOverview(Board.visibleIds, rect);
+  });
+}
+
+function processBoardOverviewImageQueue() {
+  while (
+    Board.overviewImageActive < BOARD_OVERVIEW_IMAGE_CONCURRENCY &&
+    Board.overviewImageQueue.length
+  ) {
+    const fileId = Board.overviewImageQueue.shift();
+    const request = Board.overviewImagePending.get(fileId);
+    if (!request || request.started) continue;
+    request.started = true;
+    Board.overviewImageActive += 1;
+    const image = new Image();
+    request.image = image;
+    image.decoding = 'async';
+
+    const finish = () => {
+      if (Board.overviewImagePending.get(fileId) === request) {
+        Board.overviewImagePending.delete(fileId);
       }
+      Board.overviewImageActive = Math.max(0, Board.overviewImageActive - 1);
+      scheduleBoardOverviewRedraw();
+      processBoardOverviewImageQueue();
+    };
+    image.onload = async () => {
+      try {
+        if (
+          image.naturalWidth > 0 && image.naturalHeight > 0 &&
+          Board.overviewImagePending.get(fileId) === request
+        ) {
+          const drawable = await createBoardOverviewDrawable(image);
+          if (Board.overviewImagePending.get(fileId) === request) {
+            cacheBoardOverviewImage(fileId, request.source, drawable);
+          } else {
+            closeBoardOverviewDrawable(drawable);
+          }
+        }
+      } finally {
+        finish();
+      }
+    };
+    image.onerror = () => {
+      Board.overviewImageFailed.add(boardOverviewImageRequestKey(fileId, request.source));
+      finish();
+    };
+    image.src = request.source;
+  }
+}
+
+function requestBoardOverviewImage(file, deferStart = false) {
+  const source = boardOverviewThumbnailSource(file);
+  if (!file || !source || cachedBoardOverviewImage(file)) return;
+  if (Board.overviewImageFailed.has(boardOverviewImageRequestKey(file.id, source))) return;
+  const pending = Board.overviewImagePending.get(file.id);
+  if (pending && pending.source === source) {
+    if (!pending.started && !Board.overviewImageQueue.includes(file.id)) {
+      Board.overviewImageQueue.push(file.id);
     }
-    scheduleBoardReconcile();
-  };
-  image.onerror = () => {
-    Board.overviewImagePending.delete(file.id);
-  };
-  image.src = file.thumbUrl || file.url;
+    if (!deferStart) processBoardOverviewImageQueue();
+    return;
+  }
+  const request = { file, source, started: false, image: null };
+  Board.overviewImagePending.set(file.id, request);
+  Board.overviewImageQueue.push(file.id);
+  if (!deferStart) processBoardOverviewImageQueue();
+}
+
+function prioritizeBoardOverviewImageQueue(files) {
+  const prioritized = [];
+  const wantedIds = new Set();
+  for (const file of files) {
+    if (!file || wantedIds.has(file.id)) continue;
+    wantedIds.add(file.id);
+    prioritized.push(file);
+  }
+
+  for (const [fileId, request] of [...Board.overviewImagePending]) {
+    if (!request.started && !wantedIds.has(fileId)) Board.overviewImagePending.delete(fileId);
+  }
+  Board.overviewImageQueue.length = 0;
+  prioritized.forEach((file) => requestBoardOverviewImage(file, true));
+  processBoardOverviewImageQueue();
 }
 
 function drawBoardOverviewImage(ctx, image, x, y, width, height) {
-  if (!image || !image.naturalWidth || !image.naturalHeight) return false;
-  const sourceRatio = image.naturalWidth / image.naturalHeight;
+  const imageWidth = Number(image && (image.naturalWidth || image.width));
+  const imageHeight = Number(image && (image.naturalHeight || image.height));
+  if (!imageWidth || !imageHeight) return false;
+  const sourceRatio = imageWidth / imageHeight;
   const targetRatio = width / Math.max(1, height);
   let sourceX = 0;
   let sourceY = 0;
-  let sourceWidth = image.naturalWidth;
-  let sourceHeight = image.naturalHeight;
+  let sourceWidth = imageWidth;
+  let sourceHeight = imageHeight;
   if (sourceRatio > targetRatio) {
-    sourceWidth = image.naturalHeight * targetRatio;
-    sourceX = (image.naturalWidth - sourceWidth) / 2;
+    sourceWidth = imageHeight * targetRatio;
+    sourceX = (imageWidth - sourceWidth) / 2;
   } else {
-    sourceHeight = image.naturalWidth / targetRatio;
-    sourceY = (image.naturalHeight - sourceHeight) / 2;
+    sourceHeight = imageWidth / targetRatio;
+    sourceY = (imageHeight - sourceHeight) / 2;
   }
   ctx.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, x, y, width, height);
   return true;
@@ -975,13 +1433,15 @@ function drawBoardOverview(visibleIds, viewportRect) {
       const file = item && Board.filesById.get(item.fileId);
       return { id, item, bounds, file };
     })
-    .filter((entry) => entry.item && entry.bounds && entry.file && isImageExt(entry.file.ext))
+    .filter((entry) => entry.item && entry.bounds && boardOverviewThumbnailSource(entry.file))
     .sort((a, b) => {
       const aArea = a.bounds.w * a.bounds.h;
       const bArea = b.bounds.w * b.bounds.h;
       return (b.item.selected ? 1e9 : bArea) - (a.item.selected ? 1e9 : aArea);
     });
-  const imageIds = new Set(imageCandidates.slice(0, BOARD_OVERVIEW_IMAGE_LIMIT).map((entry) => entry.id));
+  const prioritizedImages = imageCandidates.slice(0, BOARD_OVERVIEW_IMAGE_LIMIT);
+  const imageIds = new Set(prioritizedImages.map((entry) => entry.id));
+  prioritizeBoardOverviewImageQueue(prioritizedImages.map((entry) => entry.file));
 
   for (const id of visibleIds) {
     const item = Board.itemsById.get(id);
@@ -996,8 +1456,7 @@ function drawBoardOverview(visibleIds, viewportRect) {
     ctx.fillRect(x, y, w, h);
     const file = Board.filesById.get(item.fileId);
     if (imageIds.has(id) && file) {
-      requestBoardOverviewImage(file);
-      const image = Board.overviewImageCache.get(file.id);
+      const image = cachedBoardOverviewImage(file);
       if (image) {
         ctx.globalAlpha = item.selected ? 1 : 0.92;
         drawBoardOverviewImage(ctx, image, x, y, w, h);
@@ -1054,19 +1513,21 @@ function createBoardItemElement(item) {
   const isImage = isImageExt(f.ext);
   const isVideo = isVideoExt(f.ext);
   const isModel = isModelFile(f);
+  const isUniformFrame = item.layoutFrame === 'uniform-grid';
   el.className = 'board-item' +
     (isImage ? ' board-item-image' : '') +
     (isVideo ? ' board-item-video' : '') +
     (isModel ? ' board-item-model' : '') +
+    (isUniformFrame ? ' is-uniform-frame' : '') +
     (isImage && typeof isAiComposerReference === 'function' && isAiComposerReference(item.fileId)
       ? ' is-ai-reference' : '') +
     (item.selected ? ' is-selected' : '') +
-    (item.selected && AppState.boardItems.filter((boardItem) => boardItem.selected).length === 1
+    (item.selected && Board.selectedCount === 1
       ? ' is-single-selection' : '');
   el.style.left = item.x + 'px';
   el.style.top = item.y + 'px';
   el.style.width = (item.width || 220) + 'px';
-  if ((isImage || isVideo) && f.sourceWidth && f.sourceHeight) {
+  if (!isUniformFrame && (isImage || isVideo) && f.sourceWidth && f.sourceHeight) {
     el.style.aspectRatio = `${f.sourceWidth} / ${f.sourceHeight}`;
   } else if (item.height) {
     el.style.height = `${item.height}px`;
@@ -1101,8 +1562,8 @@ function createBoardItemElement(item) {
     appendBoardImageToolbar(el, f, item);
     appendBoardEditHint(el);
   } else if (isVideo) {
-    appendBoardVideoButlerToolbar(el, f, item);
-    if (hasMediaDetails) appendGeneratedMediaDetailsControl(el, f);
+    const videoToolbar = appendBoardVideoButlerToolbar(el, f, item);
+    if (hasMediaDetails) appendGeneratedMediaDetailsControl(el, f, videoToolbar);
   }
 
   const name = document.createElement('div');
@@ -1169,6 +1630,10 @@ function processBoardMountQueue() {
       continue;
     }
     if (!element) continue;
+    const file = Board.filesById.get(item.fileId);
+    element._boardItemRef = item;
+    element._boardFileRef = file;
+    element._boardRenderSignature = boardItemRenderSignature(item, file);
     canvas.appendChild(element);
     Board.mounted.set(id, element);
     observeBoardElementPaintReady(element);
@@ -1310,14 +1775,17 @@ function scheduleBoardReconcile() {
 function renderBoard() {
   const empty = document.getElementById('board-empty');
   empty.hidden = AppState.boardItems.length > 0;
-  clearMountedBoardItems();
+  restoreLegacyUniformBoardFrames();
   rebuildBoardSpatialIndex();
+  reconcileMountedBoardItemsAfterDataChange();
   reconcileBoardViewport(true);
+  if (typeof syncCanvasNodeMode === 'function') syncCanvasNodeMode();
 }
 
 function syncBoardSelectionClasses() {
   const selectedIds = new Set(AppState.boardItems.filter((item) => item.selected).map((item) => item.id));
   const hasSingleSelection = selectedIds.size === 1;
+  Board.selectedCount = selectedIds.size;
   document.querySelectorAll('#board-canvas .board-item').forEach((element) => {
     const selected = selectedIds.has(element.dataset.boardId);
     element.classList.toggle('is-selected', selected);
@@ -1424,15 +1892,16 @@ function makeBoardItemDraggable(el, item) {
     }
     function onUp() {
       moveRunner.flush();
-      if (moved) Board.lastDragEndedAt = Date.now();
+      if (moved) {
+        Board.lastDragEndedAt = Date.now();
+        recordBoardMoveHistory(groupStartPositions);
+      }
       markBoardInteraction();
       el.classList.remove('is-dragging');
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
-      groupMates.forEach((gItem) => {
-        updateBoardItemIndex(gItem);
-        window.messsAPI.upsertBoardItem(gItem);
-      });
+      groupMates.forEach((gItem) => updateBoardItemIndex(gItem));
+      if (moved) persistBoardMoveHistory(groupMates);
       scheduleBoardReconcile();
     }
     document.addEventListener('mousemove', onMove);
@@ -1442,12 +1911,23 @@ function makeBoardItemDraggable(el, item) {
   addResizeHandles(el, item);
 }
 
+const DEFAULT_BOARD_ITEM_WIDTH = 220;
 const MIN_BOARD_ITEM_WIDTH = 90;
 const MAX_BOARD_ITEM_WIDTH = 900;
 
-/** Adds four corner handles so a selected board item can be freely resized
-    by dragging any corner �?keeps the opposite corner anchored in place,
-    matching how design tools (Figma, Photoshop, etc.) handle corner resize. */
+function boardMediaResizeAspect(el, item) {
+  const file = item && Board.filesById.get(item.fileId);
+  if (!file || (!isImageExt(file.ext) && !isVideoExt(file.ext))) return null;
+  const media = el.querySelector('img, video');
+  const sourceWidth = Number(file.sourceWidth) || Number(media && (media.naturalWidth || media.videoWidth));
+  const sourceHeight = Number(file.sourceHeight) || Number(media && (media.naturalHeight || media.videoHeight));
+  if (sourceWidth > 0 && sourceHeight > 0) return sourceHeight / sourceWidth;
+  const rect = el.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0 ? rect.height / rect.width : null;
+}
+
+/** Adds four corner handles while keeping the opposite corner anchored.
+    Images and videos always preserve their intrinsic aspect ratio. */
 function addResizeHandles(el, item) {
   const corners = [
     { cls: 'corner-se', signX: 1, signY: 1 },
@@ -1469,10 +1949,18 @@ function addResizeHandles(el, item) {
     const startClientX = e.clientX;
       const startClientY = e.clientY;
       const startWidth = item.width || el.getBoundingClientRect().width / Board.zoom;
-      const startHeight = item.height || el.getBoundingClientRect().height / Board.zoom;
+      const mediaAspectRatio = boardMediaResizeAspect(el, item);
+      const locksMediaAspect = Number.isFinite(mediaAspectRatio) && mediaAspectRatio > 0;
+      const startHeight = locksMediaAspect
+        ? startWidth * mediaAspectRatio
+        : item.height || el.getBoundingClientRect().height / Board.zoom;
       const startLeft = item.x;
       const startTop = item.y;
-      const aspectRatio = startHeight / startWidth;
+      const aspectRatio = locksMediaAspect ? mediaAspectRatio : startHeight / startWidth;
+      if (locksMediaAspect) {
+        item.height = Math.max(1, Math.round(startHeight));
+        el.style.aspectRatio = String(1 / aspectRatio);
+      }
 
       const resizeRunner = createLatestFrameRunner((point) => {
         const dx = ((point.clientX - startClientX) / Board.zoom) * signX;
@@ -1482,13 +1970,16 @@ function addResizeHandles(el, item) {
         const widthFromX = startWidth + dx;
         const widthFromY = startWidth + dy / aspectRatio;
         const proportionalWidth = Math.abs(dx) >= Math.abs(dy / aspectRatio) ? widthFromX : widthFromY;
-        const newWidth = Math.max(minWidth, Math.min(MAX_BOARD_ITEM_WIDTH, point.shiftKey ? widthFromX : proportionalWidth));
-        const newHeight = point.shiftKey
+        const freeResize = !locksMediaAspect && point.shiftKey;
+        const newWidth = Math.max(minWidth, Math.min(MAX_BOARD_ITEM_WIDTH, freeResize ? widthFromX : proportionalWidth));
+        const newHeight = freeResize
           ? Math.max(minHeight, Math.min(MAX_BOARD_ITEM_WIDTH, startHeight + dy))
-          : Math.max(minHeight, Math.round(newWidth * aspectRatio));
+          : locksMediaAspect
+            ? Math.max(1, Math.round(newWidth * aspectRatio))
+            : Math.max(minHeight, Math.round(newWidth * aspectRatio));
         item.width = Math.round(newWidth);
         el.style.width = item.width + 'px';
-        if (item.isDoodle || point.shiftKey) {
+        if (locksMediaAspect || item.isDoodle || freeResize) {
           item.height = Math.round(newHeight);
           el.style.height = item.height + 'px';
         }
@@ -1674,7 +2165,13 @@ function initBoardCanvas() {
     const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || (document.activeElement && document.activeElement.isContentEditable);
     if (isEditable || !isBoardWorkspaceActive()) return;
 
-    if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const shortcutKey = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && shortcutKey === 'z') {
+      const handled = e.shiftKey ? redoBoardMove() : undoBoardMove();
+      if (handled) e.preventDefault();
+    } else if ((e.ctrlKey || e.metaKey) && shortcutKey === 'y') {
+      if (redoBoardMove()) e.preventDefault();
+    } else if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
       if (!selectedBoardImageItems().length) return;
       e.preventDefault();
       closeBoardQuickGenerate();
@@ -2071,7 +2568,7 @@ function buildMiniVideoPlayer(result, f) {
   const video = document.createElement('video');
   video.src = result.url;
   video.poster = f.thumbUrl || '';
-  video.preload = 'metadata';
+  video.preload = 'auto';
   video.muted = true;
   video.loop = true;
   video.draggable = false;
@@ -2081,13 +2578,34 @@ function buildMiniVideoPlayer(result, f) {
 
   let wantsPreview = false;
   const abortController = new AbortController();
+  let playRequest = 0;
+  function requestPlayback() {
+    const request = ++playRequest;
+    const attempt = () => {
+      if (!wantsPreview || request !== playRequest || !video.isConnected) return;
+      stopOtherBoardVideos(video);
+      const promise = video.play();
+      if (promise && typeof promise.catch === 'function') {
+        promise.catch(() => {
+          if (!wantsPreview || request !== playRequest) return;
+          if (video.readyState === HTMLMediaElement.HAVE_NOTHING) video.load();
+        });
+      }
+    };
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) attempt();
+    else {
+      video.addEventListener('loadeddata', attempt, { once: true, signal: abortController.signal });
+      video.addEventListener('canplay', attempt, { once: true, signal: abortController.signal });
+      video.load();
+    }
+  }
   wrap._boardPlayPreview = () => {
     wantsPreview = true;
-    stopOtherBoardVideos(video);
-    video.play().catch(() => {});
+    requestPlayback();
   };
   wrap._boardStopPreview = () => {
     wantsPreview = false;
+    playRequest += 1;
     video.pause();
     try { video.currentTime = 0; } catch (error) {}
   };
@@ -2102,7 +2620,7 @@ function buildMiniVideoPlayer(result, f) {
     if (!Number.isFinite(video.duration) || video.duration <= 0) return;
     durationBadge.textContent = formatBoardVideoDuration(video.duration);
     durationBadge.hidden = false;
-    if (wantsPreview) video.play().catch(() => {});
+    if (wantsPreview) requestPlayback();
   });
 
   video.addEventListener('error', async () => {
@@ -2112,7 +2630,7 @@ function buildMiniVideoPlayer(result, f) {
     if (res.ok) {
       video.src = res.url;
       video.load();
-      if (wantsPreview) video.play().catch(() => {});
+      if (wantsPreview) requestPlayback();
     }
   }, { once: true });
 
@@ -2246,6 +2764,8 @@ function boardAiDurationValue(seconds) {
 
 function renderShortcutsPopover(pop) {
   const shortcuts = [
+    ['Ctrl/Cmd + Z', 'Undo last move', '撤回上次移动'],
+    ['Ctrl/Cmd + Shift + Z', 'Redo last move', '重做上次移动'],
     ['Ctrl/Cmd + A', 'Select all board items', '选择全部画布项目'],
     ['Delete', 'Remove selected items from board', '移除所选画布项目'],
     ['Esc', 'Clear selection or exit drawing', '清除选择或退出绘制'],
@@ -2321,7 +2841,7 @@ document.addEventListener('messs:ai-config-updated', (event) => {
 });
 
 function setAiImageButtonsActive(active) {
-  ['board-ai-generate', 'board-tool-ai-image', 'board-tool-ai-video'].forEach((id) => {
+  ['board-tool-ai-image', 'board-tool-ai-video'].forEach((id) => {
     const btn = document.getElementById(id);
     if (btn) btn.classList.toggle('is-active', active);
   });
@@ -2652,6 +3172,49 @@ function normalizedCapabilityValues(values, fallback = []) {
   return configured.length ? configured : normalize(fallback);
 }
 
+function supportedImageSizes(capabilities = {}, referenceCount = 0) {
+  const configured = referenceCount > 1 && Array.isArray(capabilities.multiReferenceSizes)
+    ? capabilities.multiReferenceSizes
+    : referenceCount > 0 && Array.isArray(capabilities.referenceSizes)
+      ? capabilities.referenceSizes
+    : capabilities.sizes;
+  return normalizedCapabilityValues(configured, ['1K', '2K', '4K']);
+}
+
+function supportedImageSize(value, capabilities = {}, referenceCount = 0) {
+  const supported = supportedImageSizes(capabilities, referenceCount);
+  const requested = String(value || '').trim();
+  return supported.includes(requested) ? requested : supported[0];
+}
+
+function supportedImageRatios(capabilities = {}, hasReferenceImages = false) {
+  return normalizedCapabilityValues(
+    hasReferenceImages && Array.isArray(capabilities.referenceRatios)
+      ? capabilities.referenceRatios
+      : capabilities.ratios,
+    AI_IMAGE_RATIOS
+  );
+}
+
+function supportedImageAspectRatio(value, capabilities = {}, hasReferenceImages = false) {
+  const supported = supportedImageRatios(capabilities, hasReferenceImages);
+  const requested = String(value || '').trim();
+  if (supported.includes(requested)) return requested;
+  if (supported.includes('auto')) return 'auto';
+  const numeric = BoardEngine.parseAspectRatio(requested, NaN);
+  if (Number.isFinite(numeric)) {
+    const candidates = supported
+      .map((ratio) => ({ ratio, numeric: BoardEngine.parseAspectRatio(ratio, NaN) }))
+      .filter((entry) => Number.isFinite(entry.numeric));
+    if (candidates.length) {
+      return candidates.reduce((nearest, candidate) => (
+        Math.abs(candidate.numeric - numeric) < Math.abs(nearest.numeric - numeric) ? candidate : nearest
+      )).ratio;
+    }
+  }
+  return supported[0] || '1:1';
+}
+
 function supportedVideoResolutions(capabilities = {}) {
   return normalizedCapabilityValues(capabilities.resolutions, DEFAULT_VIDEO_RESOLUTIONS)
     .map((entry) => entry.toUpperCase());
@@ -2741,7 +3304,7 @@ function createAiPlaceholders(request) {
   const count = request.kind === 'image' ? Math.max(1, Math.min(4, Number(request.count) || 1)) : 1;
   const size = BoardEngine.fitAspectRatio(request.aspectRatio, 300, 220);
   const targetCanvasId = request.canvasId || activeCanvasId();
-  const positions = BoardEngine.gridAroundCenter(count, size, boardViewportCenterCoords(), 24);
+  const positions = BoardEngine.gridAroundCenter(count, size, request.placement || boardViewportCenterCoords(), 24);
   const items = positions.map((position, index) => ({
     id: 'ai_pending_' + Math.random().toString(36).slice(2, 10),
     isAiPlaceholder: true,
@@ -2860,7 +3423,11 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
   canvasWorkspaceTouch(request.canvasId || activeCanvasId());
   await canvasWorkspaceSave();
   renderBoard();
-  if (updates.length && activeCanvasId() === (request.canvasId || activeCanvasId())) {
+  if (
+    updates.length &&
+    activeCanvasId() === (request.canvasId || activeCanvasId()) &&
+    !(typeof CanvasNodeMode !== 'undefined' && CanvasNodeMode.mode === 'node')
+  ) {
     requestAnimationFrame(() => fitBoardItemsToViewport(updates));
   }
   if (typeof renderCanvasLibrary === 'function') renderCanvasLibrary();
@@ -3325,9 +3892,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     }
     const resolutions = kind === 'video'
       ? supportedVideoResolutions(capabilities)
-      : (Array.isArray(capabilities.sizes) && capabilities.sizes.length
-        ? capabilities.sizes
-        : ['1K', '2K', '4K']);
+      : supportedImageSizes(capabilities, boardReferences.size);
     const durations = kind === 'video' ? supportedVideoDurations(capabilities) : [6, 8, 10, 15];
     if (!resolutions.includes(size)) size = resolutions[0];
     const supportedCounts = kind === 'image' && Array.isArray(capabilities.counts) && capabilities.counts.length
@@ -3374,9 +3939,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const capabilities = kind === 'video' ? selectedVideoCapabilities() : selectedImageCapabilities();
     const ratios = kind === 'video'
       ? supportedVideoRatios(capabilities, boardReferences.size > 0)
-      : (Array.isArray(capabilities.ratios) && capabilities.ratios.length
-        ? capabilities.ratios
-        : AI_IMAGE_RATIOS);
+      : supportedImageRatios(capabilities, boardReferences.size > 0);
     if (!ratios.includes(ratio)) ratio = ratios[0];
     ratioGrid.innerHTML = '';
     ratios.forEach((value) => {
@@ -3570,8 +4133,15 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
         ...boardReferences.values().map((entry) => entry.dataUrl)
       ]
     };
+    const generationHooks = pop._generationHooks || null;
+    if (generationHooks && typeof generationHooks.onSubmit === 'function') {
+      generationHooks.onSubmit(request);
+    }
     closeAiImagePopover();
-    await generateAiMediaForBoardV3(request);
+    const files = await generateAiMediaForBoardV3(request);
+    if (generationHooks && typeof generationHooks.onComplete === 'function') {
+      generationHooks.onComplete(files, request);
+    }
   });
 
   pop._setMode = (nextKind) => {
@@ -3601,10 +4171,12 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       duration = supportedVideoDuration(preset.duration || duration, capabilities);
     } else {
       const capabilities = selectedImageCapabilities();
-      const imageSizes = normalizedCapabilityValues(capabilities.sizes, ['1K', '2K', '4K']);
-      const presetSize = String(preset.size || '');
-      if (imageSizes.includes(presetSize)) size = presetSize;
-      ratio = String(preset.aspectRatio || ratio);
+      size = supportedImageSize(preset.size, capabilities);
+      ratio = supportedImageAspectRatio(
+        preset.aspectRatio || ratio,
+        capabilities,
+        boardReferences.size > 0
+      );
     }
     count = Math.max(1, Math.min(4, Number(preset.count) || 1));
     syncGenerationOptions();
@@ -3674,7 +4246,7 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
 
 async function generateAiMediaForBoardV3(request) {
   const creditAccess = await window.MesssCredits.ensure(request);
-  if (!creditAccess.ok) return;
+  if (!creditAccess.ok) return [];
   const taskId = beginAiMediaTask(request);
   const targetCanvasId = activeCanvasId();
   const generationRequest = { ...request, canvasId: targetCanvasId };
@@ -3706,7 +4278,7 @@ async function generateAiMediaForBoardV3(request) {
         : (res && res.message) || t('AI generation failed.', 'AI 生成失败。');
       removeAiPlaceholders(placeholders);
       showToast(message, 'AI');
-      return;
+      return [];
     }
 
     AppState.files = [...files, ...AppState.files.filter((file) => !files.some((next) => next.id === file.id))];
@@ -3728,9 +4300,11 @@ async function generateAiMediaForBoardV3(request) {
           `${files.length} 张 AI 图片已加入画布`
     );
     showToast(successMessage, 'AI');
+    return files;
   } catch (err) {
     removeAiPlaceholders(placeholders);
     showToast(err && err.message ? err.message : t('AI generation failed.', 'AI 生成失败。'), 'AI');
+    return [];
   } finally {
     finishAiMediaTask(taskId);
   }
@@ -3825,8 +4399,8 @@ async function boardSelectionReferenceData() {
   return references;
 }
 
-async function submitBoardQuickGeneration(kind, promptText) {
-  if (!promptText) return;
+async function submitBoardQuickGeneration(kind, promptText, options = {}) {
+  if (!promptText) return [];
   try {
     const config = await window.messsAPI.getAiMediaConfig();
     const providers = kind === 'video'
@@ -3834,19 +4408,34 @@ async function submitBoardQuickGeneration(kind, promptText) {
       : getConfiguredImageProviders(config);
     const activeId = kind === 'video' ? config.activeVideoProviderId : config.activeImageProviderId;
     const provider = providers.find((entry) => entry.id === activeId) || providers[0];
-    if (!provider) return;
-    const original = sourceImageGenerationOptions();
-    const urls = await boardSelectionReferenceData();
-    const referenceFileIds = selectedBoardImageItems().map((item) => item.fileId);
+    if (!provider) return [];
+    const explicitReferenceIds = Array.isArray(options.referenceFileIds)
+      ? options.referenceFileIds
+      : null;
+    const referenceData = explicitReferenceIds
+      ? await generatedReferenceData(explicitReferenceIds)
+      : { urls: await boardSelectionReferenceData(), referenceFileIds: selectedBoardImageItems().map((item) => item.fileId) };
+    const referenceFileIds = referenceData.referenceFileIds;
+    const referenceFile = referenceFileIds.length
+      ? AppState.files.find((entry) => entry.id === referenceFileIds[0])
+      : null;
+    const original = referenceFile
+      ? sourceImageGenerationOptionsForFile(referenceFile)
+      : sourceImageGenerationOptions();
+    const urls = referenceData.urls;
     const isVideo = kind === 'video';
     const videoCapabilities = isVideo && provider.capabilities ? provider.capabilities : {};
+    const imageCapabilities = !isVideo && provider.capabilities ? provider.capabilities : {};
     const videoResolution = isVideo
       ? supportedVideoResolution(null, videoCapabilities)
       : undefined;
-    await generateAiMediaForBoardV3({
+    const imageSize = isVideo
+      ? undefined
+      : supportedImageSize(config.imageSize, imageCapabilities);
+    return await generateAiMediaForBoardV3({
       kind,
       prompt: promptText,
-      size: isVideo ? videoResolution : 'original',
+      size: isVideo ? videoResolution : imageSize,
       resolution: videoResolution,
       count: 1,
       duration: isVideo
@@ -3854,21 +4443,30 @@ async function submitBoardQuickGeneration(kind, promptText) {
         : Number(config.videoDuration) || 6,
       aspectRatio: isVideo
         ? supportedVideoAspectRatio(original.aspectRatio, videoCapabilities, referenceFileIds.length > 0)
-        : original.aspectRatio,
+        : supportedImageAspectRatio(original.aspectRatio, imageCapabilities, referenceFileIds.length > 0),
       sourceWidth: original.sourceWidth,
       sourceHeight: original.sourceHeight,
       imageProviderId: kind === 'image' && provider ? provider.id : null,
       videoProviderId: kind === 'video' && provider ? provider.id : null,
       modelName: provider ? provider.name : t('Auto-detected API', '自动识别接口'),
       referenceFileIds,
-      urls
+      urls,
+      placement: options.placement || null
     });
   } catch (err) {
     showToast(err && err.message ? err.message : t('AI generation failed.', 'AI 生成失败。'), 'AI');
+    return [];
   }
 }
 
-async function openAiComposerForSelection(kind, promptText = '') {
+function sourceImageGenerationOptionsForFile(file) {
+  const width = Math.max(1, Math.round(Number(file && (file.sourceWidth || file.width)) || 1));
+  const height = Math.max(1, Math.round(Number(file && (file.sourceHeight || file.height)) || 1));
+  const divisor = greatestCommonDivisor(width, height);
+  return { aspectRatio: `${width / divisor}:${height / divisor}`, sourceWidth: width, sourceHeight: height };
+}
+
+async function openAiComposerForSelection(kind, promptText = '', options = {}) {
   let pop = activeAiComposer();
   if (!pop) {
     await showAiImagePopover(kind);
@@ -3877,6 +4475,7 @@ async function openAiComposerForSelection(kind, promptText = '') {
     pop._setMode(kind);
   }
   if (!pop) return;
+  pop._generationHooks = options;
 
   for (const item of selectedBoardImageItems()) {
     if (
@@ -3917,9 +4516,12 @@ async function retryGeneratedMediaFromDetails(file) {
   try {
     const references = await generatedReferenceData(generation.referenceFileIds);
     const isVideo = generation.kind === 'video';
-    const config = isVideo ? await window.messsAPI.getAiMediaConfig() : null;
+    const config = await window.messsAPI.getAiMediaConfig();
     const videoProvider = isVideo
       ? getConfiguredVideoProviders(config || {}).find((provider) => provider.id === generation.providerId)
+      : null;
+    const imageProvider = !isVideo
+      ? getConfiguredImageProviders(config || {}).find((provider) => provider.id === generation.providerId)
       : null;
     const videoCapabilities = videoProvider && videoProvider.capabilities
       ? videoProvider.capabilities
@@ -3927,10 +4529,13 @@ async function retryGeneratedMediaFromDetails(file) {
     const videoResolution = isVideo
       ? supportedVideoResolution(generation.resolution || generation.size, videoCapabilities)
       : undefined;
+    const imageCapabilities = imageProvider && imageProvider.capabilities
+      ? imageProvider.capabilities
+      : {};
     await generateAiMediaForBoardV3({
       kind: isVideo ? 'video' : 'image',
       prompt: generation.prompt,
-      size: isVideo ? videoResolution : (generation.size || '1K'),
+      size: isVideo ? videoResolution : supportedImageSize(generation.size, imageCapabilities),
       resolution: videoResolution,
       count: 1,
       duration: isVideo
@@ -3938,7 +4543,11 @@ async function retryGeneratedMediaFromDetails(file) {
         : Number(generation.duration) || 6,
       aspectRatio: isVideo
         ? supportedVideoAspectRatio(generation.aspectRatio, videoCapabilities, references.referenceFileIds.length > 0)
-        : (generation.aspectRatio || 'auto'),
+        : supportedImageAspectRatio(
+          generation.aspectRatio,
+          imageCapabilities,
+          references.referenceFileIds.length > 0
+        ),
       sourceWidth: file.sourceWidth || null,
       sourceHeight: file.sourceHeight || null,
       imageProviderId: generation.kind === 'video' ? null : generation.providerId,
@@ -4117,7 +4726,7 @@ async function showAiImagePopover(initialKind = 'image') {
 
   aiImagePopoverClickCloser = (e) => {
     if (pop.contains(e.target)) return;
-    if (e.target.closest('#board-ai-generate, #board-tool-ai-image, #board-tool-ai-video')) return;
+    if (e.target.closest('#board-mode-toggle, #board-tool-ai-image, #board-tool-ai-video')) return;
     // Canvas images toggle AI reference state; they must not dismiss the active composer.
     if (e.target.closest('#board-canvas .board-item-image')) return;
     if (e.target.closest('#board-viewport') && boardImageItemAtClientPoint(e.clientX, e.clientY)) return;
@@ -4134,7 +4743,6 @@ async function showAiImagePopover(initialKind = 'image') {
 
 function initBoardBottomBar() {
   void loadAiMediaConfigCached();
-  document.getElementById('board-ai-generate').addEventListener('click', () => showAiImagePopover('image'));
 
   document.getElementById('board-theme-toggle').addEventListener('click', async () => {
     const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';

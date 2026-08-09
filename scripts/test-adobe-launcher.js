@@ -40,6 +40,30 @@ async function run() {
   });
   assert.strictEqual(detected, registryPath, 'App Paths should support custom Creative Cloud install locations');
 
+  const afterEffectsRoot = 'C:\\Program Files\\Adobe';
+  const latestAfterEffects = path.join(afterEffectsRoot, 'Adobe After Effects 2031', 'Support Files', 'AfterFX.exe');
+  const detectedAfterEffects = findAdobeExecutable('after-effects', {
+    platform: 'win32',
+    env: {},
+    adobeRoots: [afterEffectsRoot],
+    queryRegistry: () => '',
+    readdirSync: (candidate) => {
+      assert.strictEqual(candidate, afterEffectsRoot);
+      return ['Adobe After Effects CS6', 'Adobe After Effects 2025', 'Adobe After Effects 2031'].map((name) => ({
+        name,
+        isDirectory: () => true
+      }));
+    },
+    existsSync: (candidate) => candidate === latestAfterEffects,
+    statSync: fakeFileStat,
+    execFileSyncImpl: () => { throw new Error('not on PATH'); }
+  });
+  assert.strictEqual(
+    detectedAfterEffects,
+    latestAfterEffects,
+    'After Effects discovery must accept arbitrary installed versions and prefer the newest available version'
+  );
+
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'messs-adobe-'));
   const sourcePath = path.join(tempRoot, '中文 media file.png');
   fs.writeFileSync(sourcePath, Buffer.from('test'));

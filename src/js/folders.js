@@ -52,6 +52,34 @@ function renderFolderList() {
   renderChildFolderSection();
 }
 
+function beginFolderRename(folderId) {
+  const row = document.querySelector(`#folder-list .folder-item[data-folder-id="${folderId}"]`);
+  if (!row) return;
+  const name = row.querySelector('.folder-item-name');
+  const input = row.querySelector('.folder-item-rename-input');
+  if (!name || !input) return;
+  name.hidden = true;
+  input.hidden = false;
+  input.focus();
+  input.select();
+}
+
+async function createTopLevelFolder() {
+  const button = document.getElementById('add-folder-btn');
+  if (button) button.disabled = true;
+  try {
+    const folder = await window.messsAPI.createFolder('', null);
+    if (!folder || !folder.id) throw new Error(folderText('Could not create folder', '无法新建文件夹'));
+    AppState.folders.push(folder);
+    renderFolderList();
+    beginFolderRename(folder.id);
+  } catch (error) {
+    showToast(error && error.message ? error.message : folderText('Could not create folder', '无法新建文件夹'));
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 function renderChildFolderSection() {
   const breadcrumb = document.getElementById('folder-breadcrumb');
   const breadcrumbLabel = document.getElementById('folder-breadcrumb-label');
@@ -426,6 +454,11 @@ function navigateFolderUp() {
 }
 
 function initFolders() {
+  document.getElementById('add-folder-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    void createTopLevelFolder();
+  });
+
   document.getElementById('folder-breadcrumb-back').addEventListener('click', (e) => {
     e.stopPropagation();
     navigateFolderUp();

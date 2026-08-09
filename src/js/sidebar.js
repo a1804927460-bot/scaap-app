@@ -53,16 +53,16 @@ function toggleSidebarSelect(id) {
 }
 
 function selectSidebarRange(toId) {
-  const ids = currentFileListScope().map((f) => f.id);
+  const ids = [...document.querySelectorAll('#file-list .file-item')].map((item) => item.dataset.fileId);
   const fromIdx = lastClickedSidebarId ? ids.indexOf(lastClickedSidebarId) : -1;
   const toIdx = ids.indexOf(toId);
   if (fromIdx === -1 || toIdx === -1) {
     sidebarSelected.add(toId);
+    lastClickedSidebarId = toId;
   } else {
     const [start, end] = fromIdx < toIdx ? [fromIdx, toIdx] : [toIdx, fromIdx];
     ids.slice(start, end + 1).forEach((id) => sidebarSelected.add(id));
   }
-  lastClickedSidebarId = toId;
   renderFileList(currentFileListScope());
 }
 
@@ -73,7 +73,9 @@ function clearSidebarSelect() {
 }
 
 function selectAllSidebarFiles() {
-  sidebarSelected = new Set(currentFileListScope().map((f) => f.id));
+  sidebarSelected = new Set(
+    [...document.querySelectorAll('#file-list .file-item')].map((item) => item.dataset.fileId)
+  );
   renderFileList(currentFileListScope());
 }
 
@@ -174,6 +176,7 @@ function buildFileItem(f) {
       return;
     }
     if (sidebarSelected.size) clearSidebarSelect();
+    lastClickedSidebarId = f.id;
     selectFileForPreview(f.id);
   });
 
@@ -262,11 +265,6 @@ function initSidebar() {
     event.stopPropagation();
     buildAndShowSimpleMenu([
       {
-        label: t('Return home', '\u8fd4\u56de\u9996\u9875'),
-        icon: 'M3 11l9-7 9 7;M5 10v10h14V10;M9 20v-6h6v6',
-        action: () => goBackToStartScreen()
-      },
-      {
         label: t('Sponsor', '\u8d5e\u52a9'),
         icon: 'M12 21s-8-4.8-8-11a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 20 10c0 6.2-8 11-8 11z',
         action: () => showToast(t('Sponsorship is coming soon.', '\u8d5e\u52a9\u529f\u80fd\u5f85\u5b9a\u3002'), 'Messs')
@@ -288,25 +286,29 @@ function initSidebar() {
 
 function initSidebarMultiSelectShortcuts() {
   const wrap = document.getElementById('file-list-wrap');
+  wrap.tabIndex = -1;
+  wrap.addEventListener('pointerdown', () => wrap.focus({ preventScroll: true }));
   wrap.addEventListener('mouseenter', () => { isSidebarListHovered = true; });
   wrap.addEventListener('mouseleave', () => { isSidebarListHovered = false; });
 
   document.addEventListener('keydown', (e) => {
-    if (!isSidebarListHovered) return;
+    if (!isSidebarListHovered && !wrap.contains(document.activeElement) && document.activeElement !== wrap) return;
     const tag = document.activeElement && document.activeElement.tagName;
     const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || (document.activeElement && document.activeElement.isContentEditable);
     if (isEditable) return;
 
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
       e.preventDefault();
+      e.stopImmediatePropagation();
       selectAllSidebarFiles();
     } else if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') || e.key === 'Escape') {
       if (sidebarSelected.size) {
         e.preventDefault();
+        e.stopImmediatePropagation();
         clearSidebarSelect();
       }
     }
-  });
+  }, true);
 }
 
 function setText(selector, en, zh) {
@@ -385,7 +387,7 @@ function refreshStaticLanguage() {
   setAttr('#search-input', 'placeholder', 'Search files', '搜索文件');
   setText('.file-list-label', 'Files', '文件');
   setText('#file-list-empty', 'No files yet. Drop files on the canvas or use Import.', '还没有文件。把文件拖进画布，或点击导入。');
-  setTitleAndLabel('#add-folder-btn', 'Add folder', '添加文件夹');
+  setTitleAndLabel('#add-folder-btn', 'New folder', '新建文件夹');
   setTitleAndLabel('#collapse-sidebar-btn', 'Collapse sidebar', '收起侧边栏');
   setTitleAndLabel('#expand-sidebar-btn', 'Expand sidebar', '展开侧边栏');
   setTitleAndLabel('#import-btn', 'Import files', '导入文件');
@@ -440,7 +442,7 @@ function refreshStaticLanguage() {
 
   setText('#board-panel .panel-title', 'Integrated Canvas', '整合画布');
   setText('#board-empty', 'Drag files here to compare, arrange, and generate freely.', '把文件拖到这里，自由对比、排布和生成。');
-  setTitleAndLabel('#board-ai-generate', 'AI generate', 'AI 生成');
+  if (typeof refreshCanvasNodeModeLanguage === 'function') refreshCanvasNodeModeLanguage();
   setTitleAndLabel('#board-zoom-out', 'Zoom out', '缩小');
   setTitleAndLabel('#board-zoom-in', 'Zoom in', '放大');
   setTitleAndLabel('#board-fit-all', 'Fit all', '适应全部');
@@ -591,7 +593,7 @@ function applyLanguageChoice(language, options = {}) {
 }
 
 function initLanguageSettings() {
-  applyLanguageChoice(AppState.language || 'en', { rerender: false });
+  applyLanguageChoice(AppState.language || 'ko', { rerender: false });
   document.querySelectorAll('.language-opt').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const choice = normalizeAppLanguage(btn.dataset.languageChoice);
@@ -819,7 +821,7 @@ function renderAiProviderSlots(containerId, kind, providers, activeProviderId, f
   const slots = document.getElementById(containerId);
   slots.innerHTML = '';
   const list = Array.isArray(providers) ? providers : [];
-  Array.from({ length: 10 }, (_, index) => list[index] || {
+  Array.from({ length: Math.max(10, list.length) }, (_, index) => list[index] || {
     id: `${kind}-${index + 1}`,
     name: index === 0 && allowFallback ? fallbackName : '',
     endpoint: index === 0 && allowFallback ? fallbackEndpoint : ''
@@ -896,7 +898,7 @@ function renderChatProviderSlots(providers, activeProviderId, allowFallback = tr
   if (!slots) return;
   slots.innerHTML = '';
   const list = Array.isArray(providers) ? providers : [];
-  Array.from({ length: 10 }, (_, index) => list[index] || {
+  Array.from({ length: Math.max(10, list.length) }, (_, index) => list[index] || {
     id: `chat-${index + 1}`,
     name: index === 0 && allowFallback ? 'Messs AI' : '',
     endpoint: '',

@@ -110,12 +110,13 @@ async function testGatewayClient() {
   const cdnCall = calls.find((call) => call.url === 'https://cdn.example/video.mp4');
   assert.strictEqual(cdnCall.options.headers.Authorization, undefined);
   const backgroundCall = calls.find((call) => call.url.endsWith('/v1/tools/background/remove'));
-  assert.deepStrictEqual(JSON.parse(backgroundCall.options.body), { imageDataUrl });
+  assert.deepStrictEqual(JSON.parse(backgroundCall.options.body), { imageDataUrl, options: {} });
   const create3dCall = calls.find((call) => call.url.endsWith('/v1/tools/3d/create'));
   assert.deepStrictEqual(JSON.parse(create3dCall.options.body), {
     providerId: 'hyper3d',
     imageDataUrl,
-    prompt: 'Make a model'
+    prompt: 'Make a model',
+    options: {}
   });
   const status3dCall = calls.find((call) => call.url.endsWith('/v1/tools/3d/status'));
   assert.deepStrictEqual(JSON.parse(status3dCall.options.body), { taskToken });
