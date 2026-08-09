@@ -1,5 +1,5 @@
 {
-  "version": 15,
+  "version": 16,
   "providers": [
     {
       "id": "image-1",
@@ -85,6 +85,44 @@
         "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
       },
       "keyEnv": "QUICKROUTER_API_KEY"
+    },
+    {
+      "id": "image-7",
+      "kind": "image",
+      "name": "Higgsfield Soul Standard",
+      "endpoint": "https://api.302.ai/higgsfield/soul/standard",
+      "protocol": "higgsfield-soul-standard",
+      "requiresActivation": false,
+      "capabilities": {
+        "sizes": ["720p", "1080p"],
+        "ratios": ["9:16", "16:9", "4:3", "3:4", "1:1", "2:3", "3:2"],
+        "counts": [1, 4],
+        "styles": true,
+        "enhancePrompt": true,
+        "seed": true,
+        "styleStrength": true,
+        "maxReferenceImages": 0
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "image-8",
+      "kind": "image",
+      "name": "Higgsfield Soul",
+      "endpoint": "https://api.302.ai/higgsfield/v1/text2image/soul",
+      "protocol": "higgsfield-soul",
+      "requiresActivation": false,
+      "capabilities": {
+        "sizes": ["720p", "1080p"],
+        "ratios": ["9:16", "16:9", "4:3", "3:4", "1:1", "2:3", "3:2"],
+        "counts": [1, 4],
+        "styles": true,
+        "enhancePrompt": true,
+        "seed": true,
+        "styleStrength": true,
+        "maxReferenceImages": 0
+      },
+      "keyEnv": "AI302_KEY"
     },
     {
       "id": "video-1",

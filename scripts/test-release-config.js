@@ -47,7 +47,10 @@ assert.match(html, /class="ai-provider-section ai-provider-chat-section direct-a
 assert.ok(catalog.version >= 8);
 assert.deepEqual(
   catalog.providers.filter((provider) => provider.kind === 'image').map((provider) => provider.name),
-  ['Nano Banana Pro', 'Nanobanana Pro SE', 'Seedream 5.0 Lite', 'Midjourney', 'Nano banana2', 'GPT Image 2']
+  [
+    'Nano Banana Pro', 'Nanobanana Pro SE', 'Seedream 5.0 Lite', 'Midjourney',
+    'Nano banana2', 'GPT Image 2', 'Higgsfield Soul Standard', 'Higgsfield Soul'
+  ]
 );
 assert.equal(catalog.providers.find((provider) => provider.name === 'MiniMax H3').requiresActivation, false);
 assert.equal(catalog.providers.every((provider) => provider.requiresActivation === false), true);

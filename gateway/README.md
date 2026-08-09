@@ -46,10 +46,11 @@ Every paid route is fail-closed behind an independent Railway flag. Missing,
 empty, or malformed values are treated as `false`:
 
 ```text
-ENABLE_302_BACKGROUND_REMOVE=false
-ENABLE_302_HUNYUAN3D=false
-ENABLE_302_HYPER3D=false
-ENABLE_302_TOPAZ=false
+ENABLE_302_BACKGROUND_REMOVE=true
+ENABLE_302_IMAGE_TOOLS=true
+ENABLE_302_HUNYUAN3D=true
+ENABLE_302_HYPER3D=true
+ENABLE_302_TOPAZ=true
 ```
 
 Keep the flags disabled until the corresponding server-authoritative credit
@@ -92,7 +93,9 @@ failed-job reservations.
 Apply `supabase/migrations/202608080007_seedance_video_credits.sql` followed by
 `supabase/migrations/202608080008_butler_tool_credits.sql` before enabling the
 Seedance or Butler image/3D routes. Paid 302 routes remain unavailable until
-their matching `ENABLE_302_*` Railway variable is explicitly set to `true`.
+their matching `ENABLE_302_*` Railway variable is not explicitly set to `false`.
+When `AI302_KEY` is present, a missing flag enables the route; setting a flag
+to `false` is the emergency kill switch for that specific paid tool.
 
 Hyper3D and Topaz require a public HTTPS URL for their bounded input relay. Configure
 `AI_GATEWAY_PUBLIC_URL` to the gateway's public origin. If omitted, Railway's

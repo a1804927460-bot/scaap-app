@@ -12,11 +12,18 @@ export const IMAGE_CREDITS = Object.freeze({
   'image-3': 5,
   'image-4': 4,
   'image-5': 8,
-  'image-6': 12
+  'image-6': 12,
+  'image-7': 4,
+  'image-8': 4
 });
 
 export const IMAGE_QUALITY_CREDITS = Object.freeze({
   'image-6': Object.freeze({ low: 3, medium: 8, high: 28, auto: 12 })
+});
+
+export const IMAGE_RESOLUTION_CREDITS = Object.freeze({
+  'image-7': Object.freeze({ '720p': 4, '1080p': 8 }),
+  'image-8': Object.freeze({ '720p': 4, '1080p': 8 })
 });
 
 export const VIDEO_CREDITS_PER_SECOND = Object.freeze({
@@ -99,14 +106,18 @@ export function quoteUsage(kind, request = {}) {
       throw Object.assign(new Error('The selected image provider is not allowed.'), { code: 'provider-not-allowed', status: 400 });
     }
     const qualityRates = IMAGE_QUALITY_CREDITS[providerId];
+    const resolutionRates = IMAGE_RESOLUTION_CREDITS[providerId];
     const requestedQuality = String(request.quality || 'auto').trim().toLowerCase();
     const quality = qualityRates && Object.hasOwn(qualityRates, requestedQuality) ? requestedQuality : 'auto';
+    const requestedResolution = String(request.resolution || request.size || '720p').trim().toLowerCase();
+    const resolution = resolutionRates && Object.hasOwn(resolutionRates, requestedResolution) ? requestedResolution : '720p';
     return {
       kind: 'image',
       providerId,
-      credits: qualityRates ? qualityRates[quality] : IMAGE_CREDITS[providerId],
-      resolution: qualityRates ? quality : null,
+      credits: qualityRates ? qualityRates[quality] : resolutionRates ? resolutionRates[resolution] : IMAGE_CREDITS[providerId],
+      resolution: qualityRates ? quality : resolutionRates ? resolution : null,
       ...(qualityRates ? { quality } : {}),
+      ...(resolutionRates ? { imageResolution: resolution } : {}),
       duration: null,
       requiresActivation: false
     };
@@ -165,8 +176,8 @@ async function legacyReserve(headers, userId, kind, requestId, fetchImpl) {
   };
 }
 
-async function reserveCredits(headers, requestBody, fetchImpl) {
-  const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/reserve_ai_credits`, {
+async function reserveCredits(headers, requestBody, fetchImpl, rpcName = 'reserve_ai_credits') {
+  const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/${rpcName}`, {
     method: 'POST',
     headers,
     body: requestBody,
@@ -218,7 +229,10 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
     p_duration: quote.duration,
     p_expected_credits: quote.credits
   });
-  let { response, payload } = await reserveCredits(headers, requestBody, fetchImpl);
+  const reserveRpc = ['image-7', 'image-8'].includes(quote.providerId)
+    ? 'reserve_higgsfield_credits'
+    : 'reserve_ai_credits';
+  let { response, payload } = await reserveCredits(headers, requestBody, fetchImpl, reserveRpc);
   if (!response.ok) {
     if (isMissingCreditRpc(response, payload) && !durableRequired()) {
       return legacyReserve(headers, userId, quote.kind, requestId, fetchImpl);
@@ -234,7 +248,7 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
   if (payload && !Array.isArray(payload) && payload.ok === false && payload.reason === 'activation-required') {
     const accessOpened = await openLegacyModelAccess(headers, userId, fetchImpl);
     if (accessOpened) {
-      ({ response, payload } = await reserveCredits(headers, requestBody, fetchImpl));
+      ({ response, payload } = await reserveCredits(headers, requestBody, fetchImpl, reserveRpc));
       if (!response.ok) {
         const code = isMissingCreditRpc(response, payload) ? 'credit-schema-missing' : 'credit-service-failed';
         throw serviceError(code, 'Could not reserve AI credits.');
@@ -255,6 +269,7 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
     providerId: quote.providerId,
     resolution: quote.resolution,
     ...(quote.quality ? { quality: quote.quality } : {}),
+    ...(quote.imageResolution ? { imageResolution: quote.imageResolution } : {}),
     duration: quote.duration
   };
 }

@@ -323,11 +323,11 @@ test('gateway wires every image tool route through durable credits and opaque re
   const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
   assert.match(
     server,
-    /url\.pathname === '\/v1\/tools\/image\/edit'[\s\S]*?reserveFixedTool\(response, user\.id, modelId\)[\s\S]*?submitQwenImageEdit[\s\S]*?accountingRequestId: usage\.requestId/
+    /url\.pathname === '\/v1\/tools\/image\/edit'[\s\S]*?runIdempotentImageOperation\(user\.id, requestId[\s\S]*?reserveFixedTool\(user\.id, modelId, requestId\)[\s\S]*?submitQwenImageEdit[\s\S]*?accountingRequestId: usage\.requestId/
   );
   assert.match(
     server,
-    /url\.pathname === '\/v1\/tools\/image\/layer'[\s\S]*?reserveFixedTool\(response, user\.id, modelId\)[\s\S]*?submitQwenImageLayered[\s\S]*?accountingRequestId: usage\.requestId/
+    /url\.pathname === '\/v1\/tools\/image\/layer'[\s\S]*?runIdempotentImageOperation\(user\.id, requestId[\s\S]*?reserveFixedTool\(user\.id, modelId, requestId\)[\s\S]*?submitQwenImageLayered[\s\S]*?accountingRequestId: usage\.requestId/
   );
   assert.match(
     server,

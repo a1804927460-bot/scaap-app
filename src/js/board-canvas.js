@@ -17,6 +17,9 @@ const BOARD_QUALITY_SETTLE_MS = 90;
 const BOARD_VIEW_STORAGE_KEY = 'messs.board.viewport.v2';
 const BOARD_OVERVIEW_DPR = 1;
 const BOARD_OVERVIEW_IMAGE_LIMIT = 240;
+const BOARD_WHEEL_MAX_DELTA = 120;
+const BOARD_WHEEL_PAN_GAIN = 0.78;
+const BOARD_WHEEL_ZOOM_RATE = 0.00125;
 
 const Board = {
   panX: 200,
@@ -47,6 +50,7 @@ const Board = {
   zoomLod: null,
   densityOverview: false,
   lastDragEndedAt: 0,
+  lastPanEndedAt: 0,
   visibleIds: new Set(),
   overviewCanvas: null,
   overviewImageCache: new Map(),
@@ -356,13 +360,28 @@ function setBoardZoomTarget(screenPoint, factor) {
   }
 }
 
+function setBoardPanTarget(deltaX, deltaY) {
+  const target = Board.zoomTarget || {
+    panX: Board.panX,
+    panY: Board.panY,
+    zoom: Board.zoom
+  };
+  target.panX -= deltaX * BOARD_WHEEL_PAN_GAIN;
+  target.panY -= deltaY * BOARD_WHEEL_PAN_GAIN;
+  Board.zoomTarget = target;
+  if (!Board.zoomFrame) {
+    Board.zoomLastTime = 0;
+    Board.zoomFrame = requestAnimationFrame(stepBoardZoom);
+  }
+}
+
 function stepBoardZoom(now) {
   Board.zoomFrame = 0;
   const target = Board.zoomTarget;
   if (!target) return;
   const elapsed = Board.zoomLastTime ? Math.min(48, now - Board.zoomLastTime) : 16;
   Board.zoomLastTime = now;
-  const blend = 1 - Math.exp(-elapsed / 54);
+  const blend = 1 - Math.exp(-elapsed / 48);
   Board.panX += (target.panX - Board.panX) * blend;
   Board.panY += (target.panY - Board.panY) * blend;
   Board.zoom += (target.zoom - Board.zoom) * blend;
@@ -1490,10 +1509,12 @@ function enterBoardFullscreen() {
   document.getElementById('board-fullscreen-toggle').setAttribute('aria-label', fullscreenTitle);
   document.getElementById('board-bottom-bar').hidden = false;
   syncBoardBottomZoomLabel();
+  if (typeof setCanvasAgentOpen === 'function') setCanvasAgentOpen(true);
 }
 
 function exitBoardFullscreen() {
   if (!isBoardFullscreen()) return;
+  if (typeof setCanvasAgentOpen === 'function') setCanvasAgentOpen(false);
   document.getElementById('board-panel').classList.remove('is-fullscreen');
   document.getElementById('board-fullscreen-icon').outerHTML = ICON_EXPAND.replace('<svg ', '<svg id="board-fullscreen-icon" ');
   const fullscreenTitle = boardFullscreenToggleTitle();
@@ -1662,17 +1683,34 @@ function initBoardCanvas() {
     }
   });
 
-  viewport.addEventListener('mousedown', (e) => {
+  let panPointerId = null;
+  let panMoveRunner = null;
+
+  viewport.addEventListener('pointerdown', (e) => {
     const isPanGesture = e.button === 1 || (e.button === 0 && e.altKey);
-    if (isPanGesture) {
-      e.preventDefault();
-      e.stopPropagation();
-      Board.isPanning = true;
+    if (!isPanGesture) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (Board.zoomFrame) cancelAnimationFrame(Board.zoomFrame);
+    Board.zoomFrame = 0;
+    Board.zoomTarget = null;
+    Board.zoomLastTime = 0;
+    Board.isPanning = true;
+    panPointerId = e.pointerId;
+    markBoardInteraction();
+    Board.panStart = { x: e.clientX, y: e.clientY, panX: Board.panX, panY: Board.panY };
+    panMoveRunner = createLatestFrameRunner((point) => {
+      Board.panX = Board.panStart.panX + (point.clientX - Board.panStart.x);
+      Board.panY = Board.panStart.panY + (point.clientY - Board.panStart.y);
       markBoardInteraction();
-      Board.panStart = { x: e.clientX, y: e.clientY, panX: Board.panX, panY: Board.panY };
-      viewport.classList.add('is-panning');
-      return;
-    }
+      applyBoardTransform();
+    });
+    viewport.classList.add('is-panning');
+    if (viewport.setPointerCapture) viewport.setPointerCapture(e.pointerId);
+  }, true);
+
+  viewport.addEventListener('mousedown', (e) => {
+    if (e.button === 1 || (e.button === 0 && e.altKey)) return;
     if (e.target.closest('.board-item')) return;
 
     // While the doodle/eraser tool is active, all mouse interaction on the
@@ -1713,28 +1751,69 @@ function initBoardCanvas() {
       startBoxSelect(e);
     }
   }, true);
-  document.addEventListener('mousemove', (e) => {
-    if (!Board.isPanning) return;
-    Board.panX = Board.panStart.panX + (e.clientX - Board.panStart.x);
-    Board.panY = Board.panStart.panY + (e.clientY - Board.panStart.y);
-    markBoardInteraction();
-    applyBoardTransform();
+  viewport.addEventListener('pointermove', (e) => {
+    if (!Board.isPanning || e.pointerId !== panPointerId || !panMoveRunner) return;
+    const coalesced = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
+    const point = coalesced.length ? coalesced[coalesced.length - 1] : e;
+    e.preventDefault();
+    panMoveRunner.push({ clientX: point.clientX, clientY: point.clientY });
   });
-  document.addEventListener('mouseup', () => {
+
+  function finishBoardPan(e) {
+    if (!Board.isPanning || (e && e.pointerId !== undefined && e.pointerId !== panPointerId)) return;
+    if (panMoveRunner) panMoveRunner.flush();
+    const completedPointerId = panPointerId;
     Board.isPanning = false;
+    Board.lastPanEndedAt = Date.now();
+    Board.panStart = null;
+    panPointerId = null;
+    panMoveRunner = null;
     markBoardInteraction();
     viewport.classList.remove('is-panning');
+    if (completedPointerId !== null && viewport.hasPointerCapture && viewport.hasPointerCapture(completedPointerId)) {
+      viewport.releasePointerCapture(completedPointerId);
+    }
+    scheduleBoardReconcile();
+  }
+  viewport.addEventListener('pointerup', finishBoardPan);
+  viewport.addEventListener('pointercancel', finishBoardPan);
+  viewport.addEventListener('lostpointercapture', finishBoardPan);
+  viewport.addEventListener('auxclick', (e) => {
+    if (e.button === 1) e.preventDefault();
   });
+  window.addEventListener('blur', () => finishBoardPan());
 
   viewport.addEventListener('wheel', (e) => {
     e.preventDefault();
     markBoardInteraction();
+    const modeScale = e.deltaMode === 1
+      ? 16
+      : (e.deltaMode === 2 ? Math.max(1, viewport.clientHeight) : 1);
+    const deltaX = Math.max(-BOARD_WHEEL_MAX_DELTA, Math.min(BOARD_WHEEL_MAX_DELTA, e.deltaX * modeScale));
+    const deltaY = Math.max(-BOARD_WHEEL_MAX_DELTA, Math.min(BOARD_WHEEL_MAX_DELTA, e.deltaY * modeScale));
+    if (!(e.ctrlKey || e.metaKey)) {
+      const horizontalDelta = e.shiftKey && Math.abs(deltaX) < 0.01 ? deltaY : deltaX;
+      setBoardPanTarget(horizontalDelta, e.shiftKey ? 0 : deltaY);
+      return;
+    }
     const rect = viewport.getBoundingClientRect();
     setBoardZoomTarget(
       { x: e.clientX - rect.left, y: e.clientY - rect.top },
-      Math.exp(-Math.max(-120, Math.min(120, e.deltaY)) * 0.0019)
+      Math.exp(-deltaY * BOARD_WHEEL_ZOOM_RATE)
     );
   }, { passive: false });
+
+  viewport.addEventListener('click', (event) => {
+    if (!activeAiComposer() || event.button !== 0) return;
+    if (event.target.closest('.board-item')) return;
+    if (Date.now() - Board.lastPanEndedAt < 160) return;
+    const item = boardImageItemAtClientPoint(event.clientX, event.clientY);
+    if (!item) return;
+    const file = Board.filesById.get(item.fileId);
+    event.preventDefault();
+    event.stopPropagation();
+    void toggleAiComposerBoardReference(file, item.fileId);
+  });
 
   viewport.addEventListener('paste', (event) => {
     const hasImage = [...(event.clipboardData && event.clipboardData.items || [])]
@@ -2051,7 +2130,8 @@ const SHORTCUTS_TEXT = [
   ['Ctrl/Cmd + A', 'Select all board items', '选择全部画布项目'],
   ['Delete', 'Remove selected items from board', '移除所选画布项目'],
   ['Esc', 'Clear selection or exit drawing', '清除选择或退出绘制'],
-  ['Mouse wheel', 'Zoom board', '缩放画布'],
+  ['Mouse wheel', 'Pan board', '滚动画布'],
+  ['Ctrl/Cmd + wheel', 'Zoom board', '缩放画布'],
   ['Middle drag', 'Pan board', '平移画布']
 ];
 
@@ -2123,7 +2203,8 @@ function renderShortcutsPopover(pop) {
     ['Ctrl/Cmd + A', 'Select all board items', '选择全部画布项目'],
     ['Delete', 'Remove selected items from board', '移除所选画布项目'],
     ['Esc', 'Clear selection or exit drawing', '清除选择或退出绘制'],
-    ['Mouse wheel', 'Zoom board', '缩放画布'],
+    ['Mouse wheel', 'Pan board', '滚动画布'],
+    ['Ctrl/Cmd + wheel', 'Zoom board', '缩放画布'],
     ['Middle drag', 'Pan board', '平移画布']
   ];
   pop.innerHTML = '<div class="shortcuts-title">' + t('Shortcuts', '快捷键') + '</div>' + shortcuts.map(([key, en, zh]) =>
@@ -2208,6 +2289,27 @@ function syncAiComposerReferenceClasses() {
     const item = Board.itemsById.get(element.dataset.boardId);
     element.classList.toggle('is-ai-reference', !!(item && isAiComposerReference(item.fileId)));
   });
+}
+
+function boardImageItemAtClientPoint(clientX, clientY) {
+  const viewport = document.getElementById('board-viewport');
+  const target = document.elementFromPoint(clientX, clientY);
+  if (!viewport || !target || !viewport.contains(target)) return null;
+  const point = clientToBoardCoords(clientX, clientY);
+  const tolerance = Math.max(0.25, 1 / Math.max(Board.zoom, 0.001));
+  const matches = Board.spatialIndex.query({
+    x: point.x - tolerance / 2,
+    y: point.y - tolerance / 2,
+    w: tolerance,
+    h: tolerance
+  });
+  return [...matches]
+    .map((id) => Board.itemsById.get(id))
+    .filter((item) => {
+      const file = item && Board.filesById.get(item.fileId);
+      return file && isImageExt(file.ext);
+    })
+    .sort((a, b) => Number(b.zIndex || 0) - Number(a.zIndex || 0))[0] || null;
 }
 
 async function toggleAiComposerBoardReference(file, fileId) {
@@ -2784,6 +2886,25 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
             <button type="button" data-value="4">4</button>
           </div>
         </div>
+        <div class="ai-option-block ai-higgsfield-block" hidden>
+          <label class="ai-field-row">
+            <span>${t('Style', '风格')}</span>
+            <select class="ai-higgsfield-style"><option value="">${t('No style', '不使用风格')}</option></select>
+          </label>
+          <label class="ai-field-row ai-field-toggle">
+            <span>${t('Enhance prompt', '增强提示词')}</span>
+            <input class="ai-higgsfield-enhance" type="checkbox" checked>
+          </label>
+          <label class="ai-field-row">
+            <span>${t('Seed', '随机种子')}</span>
+            <input class="ai-higgsfield-seed" type="number" min="1" max="1000000" step="1" placeholder="Auto">
+          </label>
+          <label class="ai-field-row ai-field-strength">
+            <span>${t('Style strength', '风格强度')}</span>
+            <input class="ai-higgsfield-strength" type="range" min="0" max="1" step="0.05" value="1">
+            <output>1.00</output>
+          </label>
+        </div>
         <div class="ai-option-block ai-duration-block" hidden>
           <div class="ai-options-heading"><strong>时长</strong><span class="ai-duration-value">6 秒</span></div>
           <input class="ai-duration-range" type="range" min="6" max="15" value="6" step="1">
@@ -2807,6 +2928,11 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   const creditEstimate = pop.querySelector('.ai-credit-estimate');
   const submit = pop.querySelector('.ai-composer-submit');
   const close = pop.querySelector('.ai-composer-close');
+  const higgsfieldBlock = pop.querySelector('.ai-higgsfield-block');
+  const higgsfieldStyle = pop.querySelector('.ai-higgsfield-style');
+  const higgsfieldEnhance = pop.querySelector('.ai-higgsfield-enhance');
+  const higgsfieldSeed = pop.querySelector('.ai-higgsfield-seed');
+  const higgsfieldStrength = pop.querySelector('.ai-higgsfield-strength');
   const providers = getConfiguredImageProviders(aiConfig);
   const videoProviders = getConfiguredVideoProviders(aiConfig);
   let kind = initialKind === 'video' ? 'video' : 'image';
@@ -2814,6 +2940,11 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   let size = aiConfig.imageSize || '1K';
   let count = 1;
   let duration = Number(aiConfig.videoDuration) || 6;
+  let styleId = '';
+  let enhancePrompt = true;
+  let seed = null;
+  let styleStrength = 1;
+  let styleLoadRevision = 0;
   const boardReferences = new Map();
   let creditQuoteRevision = 0;
 
@@ -2862,10 +2993,15 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       syncAiComposerReferenceClasses();
       return;
     }
-    const configuredLimit = Number(selectedVideoCapabilities().maxReferenceImages);
-    const limit = kind === 'video'
-      ? (Number.isFinite(configuredLimit) && configuredLimit > 0 ? Math.floor(configuredLimit) : 2)
-      : 14;
+    const capabilities = kind === 'video' ? selectedVideoCapabilities() : selectedImageCapabilities();
+    const configuredLimit = Number(capabilities.maxReferenceImages);
+    const limit = Number.isFinite(configuredLimit) && configuredLimit >= 0
+      ? Math.floor(configuredLimit)
+      : (kind === 'video' ? 2 : 14);
+    if (limit === 0) {
+      showToast(t('This model does not accept reference images.', '此模型不支持参考图。'), 'AI');
+      return;
+    }
     if (boardReferences.size >= limit) {
       showToast(
         t(`Up to ${limit} reference images can be used.`, `最多可使用 ${limit} 张参考图。`),
@@ -3055,7 +3191,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       imageProviderId: kind === 'image' ? provider.id : null,
       videoProviderId: kind === 'video' ? provider.id : null,
       count: kind === 'image' ? count : undefined,
-      resolution: kind === 'video' ? size : undefined,
+      size: kind === 'image' ? size : undefined,
+      resolution: size,
       duration: kind === 'video' ? duration : undefined
     };
     Promise.resolve(quoteApi.call(window.messsAPI, request)).then((pricing) => {
@@ -3081,6 +3218,39 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       : {};
   }
 
+  async function syncHiggsfieldOptions() {
+    const provider = selectedImageProvider();
+    const capabilities = selectedImageCapabilities();
+    const enabled = kind === 'image' && capabilities.styles === true && provider;
+    higgsfieldBlock.hidden = !enabled;
+    if (!enabled) return;
+    const revision = ++styleLoadRevision;
+    if (higgsfieldStyle.dataset.providerId === provider.id) return;
+    higgsfieldStyle.disabled = true;
+    higgsfieldStyle.innerHTML = `<option value="">${escapeHtml(t('Loading styles...', '正在加载风格...'))}</option>`;
+    try {
+      const payload = await window.messsAPI.getAiImageStyles(provider.id);
+      if (revision !== styleLoadRevision || modelSelect.value !== provider.id) return;
+      const styles = payload && Array.isArray(payload.styles) ? payload.styles : [];
+      higgsfieldStyle.innerHTML = `<option value="">${escapeHtml(t('No style', '不使用风格'))}</option>`;
+      styles.forEach((entry) => {
+        const option = document.createElement('option');
+        option.value = entry.id;
+        option.textContent = entry.name;
+        option.title = entry.description || entry.name;
+        higgsfieldStyle.appendChild(option);
+      });
+      higgsfieldStyle.dataset.providerId = provider.id;
+      higgsfieldStyle.value = styles.some((entry) => entry.id === styleId) ? styleId : '';
+      if (!higgsfieldStyle.value) styleId = '';
+    } catch (error) {
+      if (revision !== styleLoadRevision) return;
+      higgsfieldStyle.innerHTML = `<option value="">${escapeHtml(t('Styles unavailable', '风格暂不可用'))}</option>`;
+    } finally {
+      if (revision === styleLoadRevision) higgsfieldStyle.disabled = false;
+    }
+  }
+
   function syncGenerationOptions() {
     const capabilities = kind === 'video' ? selectedVideoCapabilities() : selectedImageCapabilities();
     if (kind === 'video') {
@@ -3092,6 +3262,13 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
         syncAiComposerReferenceClasses();
       }
       ratio = supportedVideoAspectRatio(ratio, capabilities, boardReferences.size > 0);
+    } else {
+      const configuredLimit = Number(capabilities.maxReferenceImages);
+      if (Number.isFinite(configuredLimit) && configuredLimit >= 0 && boardReferences.size > configuredLimit) {
+        [...boardReferences.keys()].slice(configuredLimit).forEach((fileId) => boardReferences.delete(fileId));
+        renderBoardReferences();
+        syncAiComposerReferenceClasses();
+      }
     }
     const resolutions = kind === 'video'
       ? supportedVideoResolutions(capabilities)
@@ -3100,6 +3277,19 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
         : ['1K', '2K', '4K']);
     const durations = kind === 'video' ? supportedVideoDurations(capabilities) : [6, 8, 10, 15];
     if (!resolutions.includes(size)) size = resolutions[0];
+    const supportedCounts = kind === 'image' && Array.isArray(capabilities.counts) && capabilities.counts.length
+      ? capabilities.counts.map(Number).filter((value) => Number.isInteger(value) && value >= 1 && value <= 4)
+      : [1, 2, 3, 4];
+    if (!supportedCounts.includes(count)) count = supportedCounts[0] || 1;
+    const countGroup = pop.querySelector('[data-option="count"]');
+    countGroup.innerHTML = '';
+    supportedCounts.forEach((value) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.value = String(value);
+      button.textContent = String(value);
+      countGroup.appendChild(button);
+    });
     const sizeGroup = pop.querySelector('[data-option="size"]');
     sizeGroup.innerHTML = '';
     resolutions.forEach((value) => {
@@ -3124,6 +3314,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     updateSummary();
     refreshLanguage();
     updateCreditEstimate();
+    void syncHiggsfieldOptions();
   }
 
   function renderRatios() {
@@ -3272,6 +3463,16 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
 
   pop.querySelector('.ai-duration-range').addEventListener('input', refreshLanguage);
   pop.querySelector('.ai-duration-range').addEventListener('input', keepOptionsOpen);
+  higgsfieldStyle.addEventListener('change', () => { styleId = higgsfieldStyle.value; });
+  higgsfieldEnhance.addEventListener('change', () => { enhancePrompt = higgsfieldEnhance.checked; });
+  higgsfieldSeed.addEventListener('input', () => {
+    const value = Math.round(Number(higgsfieldSeed.value));
+    seed = Number.isInteger(value) && value >= 1 && value <= 1_000_000 ? value : null;
+  });
+  higgsfieldStrength.addEventListener('input', () => {
+    styleStrength = Math.max(0, Math.min(1, Number(higgsfieldStrength.value)));
+    higgsfieldBlock.querySelector('output').textContent = styleStrength.toFixed(2);
+  });
   prompt.addEventListener('pointerdown', () => setOptionsOpen(false));
   prompt.addEventListener('focus', () => setOptionsOpen(false));
   prompt.addEventListener('keydown', (event) => {
@@ -3298,7 +3499,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       kind,
       prompt: text,
       size,
-      resolution: kind === 'video' ? size : undefined,
+      resolution: size,
       count,
       duration: kind === 'video' ? supportedVideoDuration(duration, videoCapabilities) : duration,
       aspectRatio: kind === 'video'
@@ -3307,6 +3508,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       imageProviderId: kind === 'image' && selectedProvider ? selectedProvider.id : null,
       videoProviderId: kind === 'video' && selectedProvider ? selectedProvider.id : null,
       modelName: selectedProvider ? selectedProvider.name : (aiConfig.videoProviderName || '视频生成'),
+      enhancePrompt,
+      seed,
+      styleId,
+      styleStrength,
       referenceFileIds: [...boardReferences.keys()],
       urls: [
         ...boardReferences.values().map((entry) => entry.dataUrl)
@@ -3862,6 +4067,7 @@ async function showAiImagePopover(initialKind = 'image') {
     if (e.target.closest('#board-ai-generate, #board-tool-ai-image, #board-tool-ai-video')) return;
     // Canvas images toggle AI reference state; they must not dismiss the active composer.
     if (e.target.closest('#board-canvas .board-item-image')) return;
+    if (e.target.closest('#board-viewport') && boardImageItemAtClientPoint(e.clientX, e.clientY)) return;
     closeAiImagePopover();
   };
   aiImagePopoverKeyCloser = (e) => {

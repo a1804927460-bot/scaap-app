@@ -344,7 +344,7 @@
             <button id="canvas-header-new" class="icon-btn-sm canvas-library-only" type="button" title="New canvas" aria-label="New canvas">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
             </button>
-            <button id="board-agent-toggle" class="pill-btn pill-btn-ghost board-workspace-only" type="button" title="Canvas Agent" aria-label="Canvas Agent">Canvas Agent</button>
+            <button id="board-agent-toggle" class="pill-btn pill-btn-ghost board-workspace-only" type="button" title="Messs Agent" aria-label="Messs Agent" aria-expanded="false">Messs Agent</button>
             <button id="board-ai-generate" class="icon-btn-sm board-workspace-only" title="AI generate" aria-label="AI generate">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.7 5.1L19 10l-5.3 1.9L12 17l-1.7-5.1L5 10l5.3-1.9L12 3z"/><path d="M19 15l.9 2.6L22 18.5l-2.1.9L19 22l-.9-2.6-2.1-.9 2.1-.9L19 15z"/></svg>
             </button>
@@ -400,17 +400,15 @@
           </div>
           <div id="resize-handle-board-agent" class="resize-handle resize-handle-v board-agent-resize-handle" data-target="agent" role="separator" aria-orientation="vertical" aria-label="Resize Canvas Agent"></div>
           <aside id="board-agent-panel" class="board-agent-panel is-hidden">
-            <header class="board-agent-header">
-              <div>
-                <strong>Canvas Agent</strong>
-                <small id="board-agent-context">Current canvas</small>
+            <button id="board-agent-close" class="board-agent-close" type="button" title="Close Messs Agent" aria-label="Close Messs Agent">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            </button>
+            <div id="board-agent-messages" class="board-agent-messages" aria-live="polite">
+              <div id="board-agent-welcome" class="board-agent-welcome">
+                <img src="assets/logo-mark.png" alt="" draggable="false" />
+                <strong>Messs Agent</strong>
+                <span>Solve your problem.</span>
               </div>
-              <button id="board-agent-close" class="icon-btn-sm" type="button" title="Close Canvas Agent" aria-label="Close Canvas Agent">x</button>
-            </header>
-            <div id="board-agent-messages" class="board-agent-messages" aria-live="polite"></div>
-            <div class="board-agent-quick-prompts">
-              <button type="button" data-board-agent-prompt="Organize the selected canvas objects into a clear visual hierarchy.">Organize selection</button>
-              <button type="button" data-board-agent-prompt="Suggest the next three creative steps for this canvas.">Suggest next steps</button>
             </div>
             <form id="board-agent-form" class="board-agent-form">
               <textarea id="board-agent-input" rows="3" placeholder="Ask about this canvas..." spellcheck="false"></textarea>

@@ -599,7 +599,7 @@ test('unsafe redirects and missing public relay configuration fail closed', asyn
   }
 });
 
-test('server keeps every paid 302 route behind an explicit default-off feature flag', () => {
+test('server enables paid 302 routes with the shared key unless a route is explicitly disabled', () => {
   const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
   const environment = fs.readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
   const assertGuardBefore = (route, guard, action) => {
@@ -632,7 +632,9 @@ test('server keeps every paid 302 route behind an explicit default-off feature f
   assert.match(server, /ENABLE_302_HUNYUAN3D/);
   assert.match(server, /ENABLE_302_HYPER3D/);
   assert.match(server, /ENABLE_302_TOPAZ/);
-  assert.match(server, /String\(process\.env\[flag\] \|\| ''\)\.trim\(\)\.toLowerCase\(\) === 'true'/);
+  assert.match(server, /if \(configured === 'false'\) return false;/);
+  assert.match(server, /if \(configured === 'true'\) return true;/);
+  assert.match(server, /process\.env\.AI302_KEY \|\| process\.env\.AI_302_API_KEY/);
   assertGuardBefore('/v1/tools/background/remove', 'ai302Enabled(AI302_FLAGS.background)', 'removeBackground');
   assertGuardBefore('/v1/tools/image/edit', 'ai302Enabled(AI302_FLAGS.image)', 'submitQwenImageEdit');
   assertGuardBefore('/v1/tools/image/layer', 'ai302Enabled(AI302_FLAGS.image)', 'submitQwenImageLayered');
@@ -653,7 +655,7 @@ test('server keeps every paid 302 route behind an explicit default-off feature f
     'ENABLE_302_HYPER3D',
     'ENABLE_302_TOPAZ'
   ]) {
-    assert.match(environment, new RegExp(`^${flag}=false$`, 'm'));
+    assert.match(environment, new RegExp(`^${flag}=true$`, 'm'));
   }
   assert.doesNotMatch(server, /\/v1\/tools\/hunyuan3d\//);
   assert.match(server, /url\.pathname\.startsWith\('\/v1\/tools\/assets\/'\)[\s\S]*?const user = await authenticate\(request\)/);

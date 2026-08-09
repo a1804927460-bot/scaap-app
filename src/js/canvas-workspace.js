@@ -298,7 +298,7 @@ function showCanvasLibrary() {
   workspace.hidden = true;
   document.getElementById('canvas-library-back').hidden = true;
   document.getElementById('board-bottom-bar').hidden = true;
-  document.getElementById('board-agent-panel').classList.add('is-hidden');
+  setCanvasAgentOpen(false);
   document.getElementById('board-panel-title').textContent = t('All Canvases', '全部画布');
   if (typeof closeAiImagePopover === 'function') closeAiImagePopover();
   renderCanvasLibrary();
@@ -573,11 +573,32 @@ function renderCanvasAgentContext() {
 function appendCanvasAgentMessage(role, text) {
   const list = document.getElementById('board-agent-messages');
   if (!list) return;
+  const welcome = document.getElementById('board-agent-welcome');
+  if (welcome) welcome.hidden = true;
   const row = document.createElement('div');
   row.className = `board-agent-message is-${role}`;
   row.textContent = text;
   list.appendChild(row);
   list.scrollTop = list.scrollHeight;
+}
+
+function setCanvasAgentOpen(open, options = {}) {
+  const agent = document.getElementById('board-agent-panel');
+  const board = document.getElementById('board-panel');
+  const toggle = document.getElementById('board-agent-toggle');
+  if (!agent || !board) return false;
+  const allowed = !!open && board.classList.contains('is-fullscreen') &&
+    !board.classList.contains('is-canvas-library');
+  agent.classList.toggle('is-hidden', !allowed);
+  if (toggle) toggle.setAttribute('aria-expanded', String(allowed));
+  if (allowed) {
+    renderCanvasAgentContext();
+    if (options.focus) {
+      requestAnimationFrame(() => document.getElementById('board-agent-input').focus());
+    }
+  }
+  window.dispatchEvent(new Event('resize'));
+  return allowed;
 }
 
 function canvasAgentPrompt(prompt) {
@@ -667,27 +688,14 @@ function refreshCanvasWorkspaceLanguage() {
   if (panel && panel.classList.contains('is-canvas-library')) {
     document.getElementById('board-panel-title').textContent = t('All Canvases', '全部画布');
   }
-  const agentTitle = document.querySelector('.board-agent-header strong');
-  if (agentTitle) agentTitle.textContent = t('Canvas Agent', '画布 Agent');
+  const agentTitle = document.querySelector('.board-agent-welcome strong');
   const toggle = document.getElementById('board-agent-toggle');
-  if (toggle) toggle.textContent = t('Canvas Agent', '画布 Agent');
+  if (agentTitle) agentTitle.textContent = 'Messs Agent';
+  const agentSubtitle = document.querySelector('.board-agent-welcome span');
+  if (agentSubtitle) agentSubtitle.textContent = t('Solve your problem.', '解决你的问题。');
   const input = document.getElementById('board-agent-input');
+  if (toggle) toggle.textContent = 'Messs Agent';
   if (input) input.placeholder = t('Ask about this canvas...', '询问这个画布...');
-  const quick = document.querySelectorAll('.board-agent-quick-prompts button');
-  if (quick[0]) {
-    quick[0].textContent = t('Organize selection', '整理所选内容');
-    quick[0].dataset.boardAgentPrompt = t(
-      'Organize the selected canvas objects into a clear visual hierarchy.',
-      '将所选画布对象整理成清晰的视觉层级。'
-    );
-  }
-  if (quick[1]) {
-    quick[1].textContent = t('Suggest next steps', '建议下一步');
-    quick[1].dataset.boardAgentPrompt = t(
-      'Suggest the next three creative steps for this canvas.',
-      '为这个画布建议接下来的三个创作步骤。'
-    );
-  }
   const send = document.getElementById('board-agent-submit');
   if (send) {
     send.title = t('Send', '发送');
@@ -763,10 +771,11 @@ async function initCanvasWorkspace(initial) {
   });
 
   document.getElementById('board-agent-toggle').addEventListener('click', () => {
-    document.getElementById('board-agent-panel').classList.toggle('is-hidden');
+    const agent = document.getElementById('board-agent-panel');
+    setCanvasAgentOpen(agent.classList.contains('is-hidden'), { focus: true });
   });
   document.getElementById('board-agent-close').addEventListener('click', () => {
-    document.getElementById('board-agent-panel').classList.add('is-hidden');
+    setCanvasAgentOpen(false);
   });
   document.getElementById('board-agent-form').addEventListener('submit', (event) => {
     event.preventDefault();
@@ -777,12 +786,6 @@ async function initCanvasWorkspace(initial) {
       event.preventDefault();
       document.getElementById('board-agent-form').requestSubmit();
     }
-  });
-  document.querySelector('.board-agent-quick-prompts').addEventListener('click', (event) => {
-    const button = event.target.closest('[data-board-agent-prompt]');
-    if (!button) return;
-    document.getElementById('board-agent-input').value = button.dataset.boardAgentPrompt;
-    document.getElementById('board-agent-input').focus();
   });
   document.addEventListener('messs:ai-config-updated', (event) => {
     CanvasWorkspace.config = event.detail || CanvasWorkspace.config;

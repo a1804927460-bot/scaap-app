@@ -442,7 +442,7 @@ async function runMultiMenuAction(key, x, y) {
       pasteBoardSelectionAt(x, y);
       break;
     case 'arrange-pack':
-      arrangeItemsGrid(selected);
+      await arrangeItemsGrid(selected);
       break;
     case 'arrange-row':
       arrangeItemsLine(selected, 'row');
@@ -483,48 +483,46 @@ async function runMultiMenuAction(key, x, y) {
   }
 }
 
-function arrangeItemsGrid(items) {
-  const cols = Math.ceil(Math.sqrt(items.length));
-  const gap = 10;
+async function arrangeItemsGrid(items) {
+  if (!items.length) return;
   const originX = items.reduce((min, it) => Math.min(min, it.x), Infinity);
   const originY = items.reduce((min, it) => Math.min(min, it.y), Infinity);
-
-  // Pack each column and row from the actual item bounds. Fixed cells leave
-  // huge gaps after users scale thumbnails down, especially at overview zoom.
   const sizes = items.map((item) => {
     const width = Math.max(1, Number(item.width) || 220);
     const file = AppState.files.find((entry) => entry.id === item.fileId);
     const sourceWidth = Number(file && file.sourceWidth);
     const sourceHeight = Number(file && file.sourceHeight);
-    const height = Number(item.height) ||
-      (sourceWidth > 0 && sourceHeight > 0 ? width * sourceHeight / sourceWidth : width * 0.75);
-    return { width, height: Math.max(1, height) };
+    const usesSourceAspect = file && (isImageExt(file.ext) || isVideoExt(file.ext)) &&
+      sourceWidth > 0 && sourceHeight > 0;
+    const height = usesSourceAspect
+      ? width * sourceHeight / sourceWidth
+      : (Number(item.height) || (item.isNote ? 140 : 180));
+    return {
+      id: item.id,
+      x: Number(item.x) || 0,
+      y: Number(item.y) || 0,
+      width,
+      height: Math.max(1, height)
+    };
   });
-  const rows = Math.ceil(items.length / cols);
-  const columnWidths = Array.from({ length: cols }, () => 1);
-  const rowHeights = Array.from({ length: rows }, () => 1);
-  sizes.forEach((size, index) => {
-    columnWidths[index % cols] = Math.max(columnWidths[index % cols], size.width);
-    rowHeights[Math.floor(index / cols)] = Math.max(rowHeights[Math.floor(index / cols)], size.height);
+  const packed = window.MesssBoardEngine.packRows(sizes, {
+    originX,
+    originY,
+    gap: 12
   });
-  const columnX = [];
-  const rowY = [];
-  let cursorX = originX;
-  let cursorY = originY;
-  columnWidths.forEach((width) => {
-    columnX.push(cursorX);
-    cursorX += width + gap;
-  });
-  rowHeights.forEach((height) => {
-    rowY.push(cursorY);
-    cursorY += height + gap;
+  const itemsById = new Map(items.map((item) => [item.id, item]));
+  packed.forEach((position) => {
+    const item = itemsById.get(position.id);
+    if (!item) return;
+    item.x = position.x;
+    item.y = position.y;
   });
 
-  items.forEach((item, i) => {
-    item.x = Math.round(columnX[i % cols]);
-    item.y = Math.round(rowY[Math.floor(i / cols)]);
-    window.messsAPI.upsertBoardItem(item);
-  });
+  if (typeof window.messsAPI.upsertBoardItems === 'function') {
+    await window.messsAPI.upsertBoardItems(items);
+  } else {
+    await Promise.all(items.map((item) => window.messsAPI.upsertBoardItem(item)));
+  }
   renderBoard();
 }
 

@@ -16,6 +16,38 @@ assert.deepStrictEqual(positions, [
   { x: 10, y: 10 }
 ]);
 
+const mixedMediaLayout = engine.packRows([
+  { id: 'portrait', x: 0, y: 0, width: 100, height: 200 },
+  { id: 'landscape', x: 200, y: 0, width: 300, height: 100 },
+  { id: 'square', x: 0, y: 300, width: 150, height: 150 },
+  { id: 'tall-video', x: 200, y: 300, width: 50, height: 250 }
+], { gap: 10, columns: 2 });
+assert.deepStrictEqual(mixedMediaLayout.map(({ id, x, y }) => ({ id, x, y })), [
+  { id: 'portrait', x: 0, y: 0 },
+  { id: 'landscape', x: 110, y: 50 },
+  { id: 'square', x: 100, y: 260 },
+  { id: 'tall-video', x: 260, y: 210 }
+]);
+assert.strictEqual(
+  mixedMediaLayout[1].x - (mixedMediaLayout[0].x + mixedMediaLayout[0].width),
+  10
+);
+assert.strictEqual(
+  mixedMediaLayout[3].x - (mixedMediaLayout[2].x + mixedMediaLayout[2].width),
+  10
+);
+
+const shortLastRow = engine.packRows([
+  { id: 'c', x: 0, y: 100, width: 80, height: 80 },
+  { id: 'b', x: 100, y: 0, width: 80, height: 80 },
+  { id: 'a', x: 0, y: 0, width: 80, height: 80 }
+], { gap: 12, columns: 2, originX: 20, originY: 30 });
+assert.deepStrictEqual(shortLastRow.map(({ id, x, y }) => ({ id, x, y })), [
+  { id: 'a', x: 20, y: 30 },
+  { id: 'b', x: 112, y: 30 },
+  { id: 'c', x: 66, y: 122 }
+]);
+
 for (const refreshRate of [60, 120, 144, 240]) {
   const deltas = Array(90).fill(1000 / refreshRate);
   assert.strictEqual(engine.estimateRefreshRate(deltas), refreshRate);

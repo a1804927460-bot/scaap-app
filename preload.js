@@ -211,6 +211,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   setSidebarCollapsed: (collapsed) => ipcRenderer.invoke('settings:setSidebarCollapsed', collapsed),
   getPreviewToolStatus: (forceRefresh) => ipcRenderer.invoke('settings:getPreviewToolStatus', forceRefresh),
   getAiMediaConfig: () => ipcRenderer.invoke('settings:getAiMediaConfig'),
+  getAiImageStyles: (providerId) => ipcRenderer.invoke('ai:getImageStyles', providerId),
   setAiMediaConfig: (config) => ipcRenderer.invoke('settings:setAiMediaConfig', config),
   discoverAiModels: (request) => ipcRenderer.invoke('settings:discoverAiModels', request),
   saveCanvasState: (state) => ipcRenderer.invoke('canvas:saveState', state),

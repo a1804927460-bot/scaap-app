@@ -23,6 +23,8 @@ const {
   buildOpenAiChatImageBody,
   buildOpenAiVideoBody,
   buildOpenAiVideoForm,
+  buildHiggsfieldSoulStandardBody,
+  buildHiggsfieldSoulBody,
   extractMediaUrls,
   validateGeneratedMediaBuffer,
   generateMediaBuffer,
@@ -499,6 +501,79 @@ async function test302NanoBananaProFlow() {
   assert.strictEqual(calls[1].url, 'https://cdn.test/nano-banana-pro-4k.png');
 }
 
+async function testHiggsfieldFlows() {
+  const styleId = '8f09a1aa-5b34-4bd4-9a9f-6c26fc84f888';
+  assert.deepStrictEqual(buildHiggsfieldSoulStandardBody({
+    prompt: 'editorial portrait', size: '1080p', aspectRatio: '16:9',
+    seed: 42, styleId, styleStrength: 0.65, enhancePrompt: false
+  }), {
+    prompt: 'editorial portrait',
+    aspect_ratio: '16:9',
+    resolution: '1080p',
+    batch_size: 1,
+    enhance_prompt: false,
+    style_strength: 0.65,
+    seed: 42,
+    style_id: styleId
+  });
+  assert.deepStrictEqual(buildHiggsfieldSoulBody({
+    prompt: 'studio product', size: '720p', aspectRatio: '2:3',
+    seed: 7, styleId, styleStrength: 0.4
+  }), {
+    params: {
+      quality: '720p',
+      prompt: 'studio product',
+      enhance_prompt: true,
+      width_and_height: '1120x1680',
+      batch_size: 1,
+      style_strength: 0.4,
+      seed: 7,
+      style_id: styleId
+    }
+  });
+
+  for (const endpoint of [
+    'https://api.302.ai/higgsfield/soul/standard',
+    'https://api.302.ai/higgsfield/v1/text2image/soul'
+  ]) {
+    const calls = [];
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const responses = [
+      jsonResponse({ job_set_id: 'hf-job-set-1' }),
+      jsonResponse({ jobs: [{ status: 'processing' }] }),
+      jsonResponse({ jobs: [{ status: 'completed', results: { raw: { url: 'https://cdn.test/higgsfield.png' } } }] }),
+      { ok: true, status: 200, arrayBuffer: async () => png }
+    ];
+    const buffer = await generateMediaBuffer(async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      return responses.shift();
+    }, normalizeConfig({ apiKey: 'server-only-302-key', imageEndpoint: endpoint, pollIntervalMs: 1, timeoutMs: 1000 }), 'image', {
+      prompt: 'studio product', size: '1080p', aspectRatio: '16:9', styleId
+    }, null, async () => {});
+    assert.deepStrictEqual(buffer, png);
+    assert.strictEqual(calls[0].options.headers.Authorization, 'Bearer server-only-302-key');
+    assert.strictEqual(calls[1].url, 'https://api.302.ai/higgsfield/v1/job-sets/hf-job-set-1');
+    assert.strictEqual(calls[3].url, 'https://cdn.test/higgsfield.png');
+  }
+
+  await assert.rejects(
+    () => pollMediaTask(async () => jsonResponse({
+      jobs: [{ status: 'completed', results: { raw: {} } }]
+    }), normalizeConfig({ apiKey: 'secret', imageEndpoint: 'https://api.302.ai/higgsfield/soul/standard', pollIntervalMs: 1, timeoutMs: 100 }), 'hf-empty', null, async () => {}, {
+      kind: 'image', protocol: 'higgsfield-soul-standard', pollUrl: 'https://api.302.ai/higgsfield/v1/job-sets/hf-empty'
+    }),
+    (error) => error && error.code === 'empty-media'
+  );
+  await assert.rejects(
+    () => pollMediaTask(async () => jsonResponse({ jobs: [{ status: 'failed', error: 'provider rejected request' }] }),
+      normalizeConfig({ apiKey: 'secret', imageEndpoint: 'https://api.302.ai/higgsfield/soul/standard', pollIntervalMs: 1, timeoutMs: 100 }),
+      'hf-failed', null, async () => {}, {
+        kind: 'image', protocol: 'higgsfield-soul-standard', pollUrl: 'https://api.302.ai/higgsfield/v1/job-sets/hf-failed'
+      }),
+    (error) => error && error.code === 'generation-failed'
+  );
+}
+
 function testOpenAiVideoRequest() {
   const config = normalizeConfig({
     videoEndpoint: 'https://api.quickrouter.ai/v1/videos?model=sora-2-pro'
@@ -788,6 +863,7 @@ async function main() {
   testGeminiImageBody();
   await testQuickRouterNativeGeminiImageFlow();
   await test302NanoBananaProFlow();
+  await testHiggsfieldFlows();
   await testNanoBanana2NativeGeminiImageFlow();
   await testMidjourneyFlow();
   testOpenAiVideoRequest();

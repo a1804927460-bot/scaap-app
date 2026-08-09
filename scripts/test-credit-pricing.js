@@ -6,6 +6,7 @@ const path = require('path');
 const {
   POINTS_PER_CNY,
   IMAGE_QUALITY_PRICES,
+  IMAGE_RESOLUTION_PRICES,
   VIDEO_RATES,
   quoteMediaCredits,
   publicCreditPricing
@@ -53,6 +54,13 @@ assert.strictEqual(quoteMediaCredits({
   imageProviderId: 'image-6',
   quality: 'invalid'
 }).totalCredits, 12, 'Unknown GPT Image 2 quality must use the automatic-quality price.');
+
+assert.strictEqual(quoteMediaCredits({
+  kind: 'image', imageProviderId: 'image-7', resolution: '720p', count: 4
+}).totalCredits, 16);
+assert.strictEqual(quoteMediaCredits({
+  kind: 'image', imageProviderId: 'image-8', size: '1080p', count: 4
+}).totalCredits, 32);
 
 assert.deepStrictEqual(quoteMediaCredits({
   kind: 'video',
@@ -116,6 +124,8 @@ const publicPricing = publicCreditPricing();
 assert.strictEqual(publicPricing.image['image-5'], 8);
 assert.strictEqual(publicPricing.image['image-6'], 12);
 assert.deepStrictEqual(publicPricing.imageQuality['image-6'], IMAGE_QUALITY_PRICES['image-6']);
+assert.deepStrictEqual(publicPricing.imageResolution['image-7'], IMAGE_RESOLUTION_PRICES['image-7']);
+assert.deepStrictEqual(publicPricing.imageResolution['image-8'], IMAGE_RESOLUTION_PRICES['image-8']);
 assert.strictEqual(publicPricing.video['video-1']['768P'], 10);
 assert.deepStrictEqual(publicPricing.video['video-2'], VIDEO_RATES['video-2']);
 assert.deepStrictEqual(publicPricing.video['video-3'], VIDEO_RATES['video-3']);
@@ -131,7 +141,7 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /kind,[\s\S]*?providerId: provider\.id,[\s\S]*?count: kind === 'image' \? count[\s\S]*?resolution: kind === 'video' \? size[\s\S]*?duration: kind === 'video' \? duration/,
+  /kind,[\s\S]*?providerId: provider\.id,[\s\S]*?count: kind === 'image' \? count[\s\S]*?resolution: size,[\s\S]*?duration: kind === 'video' \? duration/,
   'Credit quotes must use the selected model, image count, video resolution and duration.'
 );
 assert.match(

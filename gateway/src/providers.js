@@ -128,6 +128,42 @@ export async function generateMedia(kind, body, signal) {
   return generateMediaBuffer(fetch, config, kind, body, signal);
 }
 
+const imageStyleCache = new Map();
+
+export async function imageStyles(providerId, signal) {
+  const provider = providerFor('image', String(providerId || ''));
+  if (!['higgsfield-soul-standard', 'higgsfield-soul'].includes(provider.protocol)) {
+    throw Object.assign(new Error('The selected image provider does not expose styles.'), {
+      status: 400,
+      code: 'image-styles-not-supported'
+    });
+  }
+  const cached = imageStyleCache.get(provider.id);
+  if (cached && cached.expiresAt > Date.now()) return cached.styles;
+  const endpoint = new URL(provider.endpoint);
+  endpoint.pathname = '/higgsfield/v1/text2image/soul-styles';
+  endpoint.search = '';
+  endpoint.hash = '';
+  const payload = await responseJson(await fetch(endpoint, {
+    headers: providerHeaders(provider),
+    signal: providerSignal(signal, 20_000)
+  }), provider.name);
+  if (!Array.isArray(payload)) {
+    throw Object.assign(new Error('Higgsfield returned an invalid style list.'), {
+      status: 502,
+      code: 'invalid-provider-response'
+    });
+  }
+  const styles = payload.slice(0, 300).map((entry) => ({
+    id: String(entry && (entry.platform_id || entry.id) || '').trim(),
+    name: String(entry && entry.name || '').trim().slice(0, 100),
+    description: String(entry && entry.description || '').trim().slice(0, 300),
+    previewUrl: safeServerEndpoint(entry && entry.preview_url)
+  })).filter((entry) => /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(entry.id) && entry.name);
+  imageStyleCache.set(provider.id, { styles, expiresAt: Date.now() + 15 * 60_000 });
+  return styles;
+}
+
 function delayWithSignal(ms, signal) {
   if (signal && signal.aborted) return Promise.reject(signal.reason || new Error('Aborted'));
   return new Promise((resolve, reject) => {

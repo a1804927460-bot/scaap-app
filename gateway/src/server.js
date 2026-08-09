@@ -26,6 +26,7 @@ import {
   createVideoTask,
   generateLegacyVideo,
   generateMedia,
+  imageStyles,
   models,
   pollVideoTask,
   providerCapabilities,
@@ -53,6 +54,7 @@ import {
 const port = Math.max(1, Number(process.env.PORT) || 3000);
 const maxBodyBytes = 70 * 1024 * 1024;
 const rateBuckets = new Map();
+const imageOperationCache = new Map();
 const allowedOrigins = new Set(String(process.env.ALLOWED_ORIGINS || '').split(',').map((v) => v.trim()).filter(Boolean));
 const secretPatterns = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,
@@ -77,7 +79,10 @@ const AI302_FLAGS = Object.freeze({
 });
 
 function ai302Enabled(flag) {
-  return String(process.env[flag] || '').trim().toLowerCase() === 'true';
+  const configured = String(process.env[flag] || '').trim().toLowerCase();
+  if (configured === 'false') return false;
+  if (configured === 'true') return true;
+  return Boolean(String(process.env.AI302_KEY || process.env.AI_302_API_KEY || '').trim());
 }
 
 function disabledTool(response) {
@@ -201,6 +206,9 @@ function validateBody(body, kind) {
   const requestedRatio = String(body.aspectRatio || '').trim();
   const requestedQuality = String(body.quality || 'auto').trim().toLowerCase();
   const requestedDuration = Number(body.duration);
+  const requestedSeed = Math.round(Number(body.seed));
+  const requestedStyleId = String(body.styleId || '').trim();
+  const requestedStyleStrength = Math.max(0, Math.min(1, Number(body.styleStrength ?? 1)));
   if (kind === 'image') {
     const allowedSizes = Array.isArray(capabilities.sizes) && capabilities.sizes.length
       ? new Set(capabilities.sizes.map(String))
@@ -259,7 +267,11 @@ function validateBody(body, kind) {
     aspectRatio: kind === 'chat' ? 'auto' : requestedRatio,
     duration: kind === 'video' ? requestedDuration : Math.max(1, Math.min(30, Number(body.duration) || 6)),
     sourceWidth: Math.max(0, Math.min(16384, Number(body.sourceWidth) || 0)),
-    sourceHeight: Math.max(0, Math.min(16384, Number(body.sourceHeight) || 0))
+    sourceHeight: Math.max(0, Math.min(16384, Number(body.sourceHeight) || 0)),
+    enhancePrompt: body.enhancePrompt !== false,
+    seed: Number.isInteger(requestedSeed) && requestedSeed >= 1 && requestedSeed <= 1_000_000 ? requestedSeed : null,
+    styleId: /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(requestedStyleId) ? requestedStyleId : null,
+    styleStrength: requestedStyleStrength
   };
 }
 
@@ -291,13 +303,24 @@ function availableAccountCredits(account) {
   return Number.isFinite(balance) && Number.isFinite(reserved) ? Math.max(0, balance - reserved) : null;
 }
 
-async function reserveFixedTool(response, userId, providerId) {
-  const requestId = crypto.randomUUID();
+async function reserveFixedTool(userId, providerId, requestId) {
   const startedAt = Date.now();
   const reservation = await reserveToolUsage(userId, requestId, { providerId });
   if (!reservation || reservation.ok !== true) {
-    deniedReservation(response, reservation);
-    return null;
+    const reason = String(reservation && reservation.reason || 'credit-service-failed');
+    const statuses = {
+      'insufficient-credits': 402,
+      'account-suspended': 403,
+      'provider-not-allowed': 400,
+      'pricing-mismatch': 409,
+      'request-id-conflict': 409
+    };
+    const error = new Error(reason);
+    error.code = reason;
+    error.status = statuses[reason] || 503;
+    error.requiredCredits = Number(reservation && reservation.credits) || 0;
+    error.availableCredits = Math.max(0, Number(reservation && (reservation.availableCredits ?? reservation.available_credits)) || 0);
+    throw error;
   }
   return { requestId, startedAt, reservation };
 }
@@ -328,6 +351,23 @@ function validUuid(value) {
 
 function validTaskToken(value) {
   return /^[A-Za-z0-9_-]{32,128}$/.test(String(value || '').trim());
+}
+
+function runIdempotentImageOperation(userId, operationId, factory) {
+  const now = Date.now();
+  for (const [key, entry] of imageOperationCache) {
+    if (entry.expiresAt <= now) imageOperationCache.delete(key);
+  }
+  const cacheKey = `${userId}:${operationId}`;
+  const existing = imageOperationCache.get(cacheKey);
+  if (existing) return existing.promise;
+  const entry = {
+    expiresAt: now + 30 * 60_000,
+    promise: Promise.resolve().then(factory)
+  };
+  imageOperationCache.set(cacheKey, entry);
+  while (imageOperationCache.size > 200) imageOperationCache.delete(imageOperationCache.keys().next().value);
+  return entry.promise;
 }
 
 function publicDownloadUrl(value) {
@@ -384,7 +424,8 @@ async function attachVideoTaskWithRetry(requestId, providerTaskId) {
 }
 
 async function handle(request, response) {
-  const requestId = crypto.randomUUID();
+  const suppliedOperationId = String(request.headers['x-idempotency-key'] || '').trim();
+  const requestId = validUuid(suppliedOperationId) ? suppliedOperationId : crypto.randomUUID();
   response.setHeader('X-Request-Id', requestId);
   const url = new URL(request.url, 'http://gateway.local');
   if (request.method === 'GET' && url.pathname === '/healthz') {
@@ -447,11 +488,25 @@ async function handle(request, response) {
     const requestedProviderId = String(url.searchParams.get('providerId') || 'chat-1').trim().toLowerCase();
     return send(response, 200, await models(requestedProviderId));
   }
+  if (request.method === 'GET' && url.pathname === '/v1/media/image/styles') {
+    const providerId = String(url.searchParams.get('providerId') || '').trim().toLowerCase();
+    return send(response, 200, { providerId, styles: await imageStyles(providerId) });
+  }
 
   if (request.method === 'POST' && url.pathname === '/v1/tools/background/remove') {
     if (!ai302Enabled(AI302_FLAGS.background)) return disabledTool(response);
     const body = await readJson(request);
-    const png = await removeBackground({ imageDataUrl: body && body.imageDataUrl });
+    const png = await runIdempotentImageOperation(user.id, requestId, async () => {
+      const usage = await reserveFixedTool(user.id, 'background-remove', requestId);
+      try {
+        const result = await removeBackground({ imageDataUrl: body && body.imageDataUrl });
+        await settleToolUsage(user.id, usage.requestId, 'succeeded', Date.now() - usage.startedAt);
+        return result;
+      } catch (error) {
+        await releaseFailedToolReservation(user.id, usage);
+        throw error;
+      }
+    });
     return send(response, 200, png, {
       'Content-Type': 'image/png',
       'Content-Disposition': 'attachment; filename="background-removed.png"'
@@ -465,24 +520,26 @@ async function handle(request, response) {
     if (modelId !== 'qwen-image-edit-plus') {
       throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
     }
-    const usage = await reserveFixedTool(response, user.id, modelId);
-    if (!usage) return;
-    try {
-      const task = await submitQwenImageEdit({
-        imageDataUrl: body && body.imageDataUrl,
-        prompt: body && body.options && body.options.prompt,
-        toolOptions: body && body.options,
-        userId: user.id
-      }, { accountingRequestId: usage.requestId });
-      return send(response, 202, {
-        ...task,
-        credits: usage.reservation.credits,
-        availableCredits: usage.reservation.availableCredits ?? usage.reservation.available_credits
-      });
-    } catch (error) {
-      await releaseFailedToolReservation(user.id, usage);
-      throw error;
-    }
+    const task = await runIdempotentImageOperation(user.id, requestId, async () => {
+      const usage = await reserveFixedTool(user.id, modelId, requestId);
+      try {
+        const created = await submitQwenImageEdit({
+          imageDataUrl: body && body.imageDataUrl,
+          prompt: body && body.options && body.options.prompt,
+          toolOptions: body && body.options,
+          userId: user.id
+        }, { accountingRequestId: usage.requestId });
+        return {
+          ...created,
+          credits: usage.reservation.credits,
+          availableCredits: usage.reservation.availableCredits ?? usage.reservation.available_credits
+        };
+      } catch (error) {
+        await releaseFailedToolReservation(user.id, usage);
+        throw error;
+      }
+    });
+    return send(response, 202, task);
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/tools/image/layer') {
@@ -492,24 +549,26 @@ async function handle(request, response) {
     if (modelId !== 'qwen-image-layered') {
       throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
     }
-    const usage = await reserveFixedTool(response, user.id, modelId);
-    if (!usage) return;
-    try {
-      const task = await submitQwenImageLayered({
-        imageDataUrl: body && body.imageDataUrl,
-        prompt: body && body.options && body.options.prompt,
-        numLayers: body && body.options && body.options.numLayers,
-        userId: user.id
-      }, { accountingRequestId: usage.requestId });
-      return send(response, 202, {
-        ...task,
-        credits: usage.reservation.credits,
-        availableCredits: usage.reservation.availableCredits ?? usage.reservation.available_credits
-      });
-    } catch (error) {
-      await releaseFailedToolReservation(user.id, usage);
-      throw error;
-    }
+    const task = await runIdempotentImageOperation(user.id, requestId, async () => {
+      const usage = await reserveFixedTool(user.id, modelId, requestId);
+      try {
+        const created = await submitQwenImageLayered({
+          imageDataUrl: body && body.imageDataUrl,
+          prompt: body && body.options && body.options.prompt,
+          numLayers: body && body.options && body.options.numLayers,
+          userId: user.id
+        }, { accountingRequestId: usage.requestId });
+        return {
+          ...created,
+          credits: usage.reservation.credits,
+          availableCredits: usage.reservation.availableCredits ?? usage.reservation.available_credits
+        };
+      } catch (error) {
+        await releaseFailedToolReservation(user.id, usage);
+        throw error;
+      }
+    });
+    return send(response, 202, task);
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/tools/image/status') {
@@ -582,23 +641,22 @@ async function handle(request, response) {
     if (modelId !== 'super-upscale-v2') {
       throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
     }
-    const usage = await reserveFixedTool(response, user.id, modelId);
-    if (!usage) return;
-    try {
-      const result = await superUpscaleImage({
-        imageDataUrl: body && body.imageDataUrl,
-        toolOptions: body && body.options
-      });
-      const png = await downloadAi302ImageResult(result.urls[0]);
-      await settleToolUsage(user.id, usage.requestId, 'succeeded', Date.now() - usage.startedAt);
-      return send(response, 200, png, {
-        'Content-Type': 'image/png',
-        'Content-Disposition': 'attachment; filename="super-upscaled.png"'
-      });
-    } catch (error) {
-      await releaseFailedToolReservation(user.id, usage);
-      throw error;
-    }
+    const png = await runIdempotentImageOperation(user.id, requestId, async () => {
+      const usage = await reserveFixedTool(user.id, modelId, requestId);
+      try {
+        const result = await superUpscaleImage({ imageDataUrl: body && body.imageDataUrl, toolOptions: body && body.options });
+        const output = await downloadAi302ImageResult(result.urls[0]);
+        await settleToolUsage(user.id, usage.requestId, 'succeeded', Date.now() - usage.startedAt);
+        return output;
+      } catch (error) {
+        await releaseFailedToolReservation(user.id, usage);
+        throw error;
+      }
+    });
+    return send(response, 200, png, {
+      'Content-Type': 'image/png',
+      'Content-Disposition': 'attachment; filename="super-upscaled.png"'
+    });
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/tools/image/erase') {
@@ -608,23 +666,22 @@ async function handle(request, response) {
     if (modelId !== 'erase') {
       throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
     }
-    const usage = await reserveFixedTool(response, user.id, modelId);
-    if (!usage) return;
-    try {
-      const result = await eraseImageObjects({
-        imageDataUrl: body && body.imageDataUrl,
-        maskImageDataUrl: body && body.maskDataUrl
-      });
-      const png = await downloadAi302ImageResult(result.urls[0]);
-      await settleToolUsage(user.id, usage.requestId, 'succeeded', Date.now() - usage.startedAt);
-      return send(response, 200, png, {
-        'Content-Type': 'image/png',
-        'Content-Disposition': 'attachment; filename="erased.png"'
-      });
-    } catch (error) {
-      await releaseFailedToolReservation(user.id, usage);
-      throw error;
-    }
+    const png = await runIdempotentImageOperation(user.id, requestId, async () => {
+      const usage = await reserveFixedTool(user.id, modelId, requestId);
+      try {
+        const result = await eraseImageObjects({ imageDataUrl: body && body.imageDataUrl, maskImageDataUrl: body && body.maskDataUrl });
+        const output = await downloadAi302ImageResult(result.urls[0]);
+        await settleToolUsage(user.id, usage.requestId, 'succeeded', Date.now() - usage.startedAt);
+        return output;
+      } catch (error) {
+        await releaseFailedToolReservation(user.id, usage);
+        throw error;
+      }
+    });
+    return send(response, 200, png, {
+      'Content-Type': 'image/png',
+      'Content-Disposition': 'attachment; filename="erased.png"'
+    });
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/tools/3d/create') {
@@ -632,12 +689,9 @@ async function handle(request, response) {
     const providerId = String(body && body.providerId || '').trim().toLowerCase();
     const flag = AI302_FLAGS[providerId];
     if (!flag || !ai302Enabled(flag)) return disabledTool(response);
-    const task = await createThreeDTask({
-      providerId,
-      imageDataUrl: body && body.imageDataUrl,
-      prompt: body && body.prompt,
-      userId: user.id
-    });
+    const task = await runIdempotentImageOperation(user.id, requestId, () => createThreeDTask({
+      providerId, imageDataUrl: body && body.imageDataUrl, prompt: body && body.prompt, userId: user.id
+    }));
     return send(response, 202, task);
   }
 
@@ -679,17 +733,13 @@ async function handle(request, response) {
         availableCredits
       });
     }
-    const task = await createVideoUpscaleTask({
-      videoDataUrl: body && body.videoDataUrl,
-      toolOptions: body && body.options,
-      userId: user.id
+    const task = await runIdempotentImageOperation(user.id, requestId, () => createVideoUpscaleTask({
+      videoDataUrl: body && body.videoDataUrl, toolOptions: body && body.options, userId: user.id
     }, {
-      reserveCredits: ({ requestId, providerId, credits, providerCost, resolution, duration }) => reserveToolUsage(
-        user.id,
-        requestId,
-        { providerId, credits, providerCost, resolution, duration }
+      reserveCredits: ({ requestId: accountingRequestId, providerId, credits, providerCost, resolution, duration }) => reserveToolUsage(
+        user.id, accountingRequestId, { providerId, credits, providerCost, resolution, duration }
       )
-    });
+    }));
     return send(response, 202, task);
   }
 
@@ -822,6 +872,27 @@ async function handle(request, response) {
   if (!kind) return send(response, 404, { code: 'not-found', message: 'Route not found.' });
 
   const body = validateBody(await readJson(request), kind);
+  if (kind === 'image') {
+    const media = await runIdempotentImageOperation(user.id, requestId, async () => {
+      const reservation = await reserveUsage(user.id, kind, requestId, body);
+      if (!reservation.ok) {
+        const error = new Error(String(reservation.reason || 'The image request was not accepted.'));
+        error.code = String(reservation.reason || 'credit-service-failed');
+        error.status = error.code === 'insufficient-credits' ? 402 : 400;
+        throw error;
+      }
+      const startedAt = Date.now();
+      try {
+        const result = await generateMedia(kind, body, AbortSignal.timeout(20 * 60_000));
+        await settleUsage(requestId, 'succeeded', Date.now() - startedAt);
+        return result;
+      } catch (error) {
+        try { await settleUsage(requestId, 'failed', Date.now() - startedAt); } catch (settlementError) {}
+        throw error;
+      }
+    });
+    return send(response, 200, media, { 'Content-Type': 'application/octet-stream' });
+  }
   const reservation = await reserveUsage(user.id, kind, requestId, body);
   if (!reservation.ok) return deniedReservation(response, reservation);
   const startedAt = Date.now();

@@ -343,6 +343,65 @@
     }));
   }
 
+  function packRows(items, options = {}) {
+    if (!Array.isArray(items) || !items.length) return [];
+
+    const gap = Number.isFinite(options.gap) ? Math.max(0, options.gap) : 12;
+    const originX = Number.isFinite(options.originX)
+      ? options.originX
+      : Math.min(...items.map((item) => Number.isFinite(item.x) ? item.x : 0));
+    const originY = Number.isFinite(options.originY)
+      ? options.originY
+      : Math.min(...items.map((item) => Number.isFinite(item.y) ? item.y : 0));
+    const columns = Math.max(1, Math.min(
+      items.length,
+      Number.isFinite(options.columns)
+        ? Math.floor(options.columns)
+        : Math.ceil(Math.sqrt(items.length))
+    ));
+    const ordered = items.map((item, index) => ({
+      ...item,
+      _packIndex: index,
+      width: Math.max(1, Number(item.width) || Number(item.w) || 1),
+      height: Math.max(1, Number(item.height) || Number(item.h) || 1)
+    })).sort((a, b) => (
+      (Number(a.y) || 0) - (Number(b.y) || 0) ||
+      (Number(a.x) || 0) - (Number(b.x) || 0) ||
+      a._packIndex - b._packIndex
+    ));
+
+    const rows = [];
+    for (let index = 0; index < ordered.length; index += columns) {
+      const rowItems = ordered.slice(index, index + columns);
+      rows.push({
+        items: rowItems,
+        width: rowItems.reduce((sum, item) => sum + item.width, 0) +
+          Math.max(0, rowItems.length - 1) * gap,
+        height: Math.max(...rowItems.map((item) => item.height))
+      });
+    }
+
+    const layoutWidth = Math.max(...rows.map((row) => row.width));
+    const packed = [];
+    let cursorY = originY;
+    for (const row of rows) {
+      let cursorX = originX + (layoutWidth - row.width) / 2;
+      for (const item of row.items) {
+        packed.push({
+          id: item.id,
+          sourceIndex: item._packIndex,
+          x: Math.round(cursorX),
+          y: Math.round(cursorY + (row.height - item.height) / 2),
+          width: item.width,
+          height: item.height
+        });
+        cursorX += item.width + gap;
+      }
+      cursorY += row.height + gap;
+    }
+    return packed;
+  }
+
   return {
     createSpatialIndex,
     clampZoom,
@@ -356,6 +415,7 @@
     parseAspectRatio,
     fitAspectRatio,
     estimateRefreshRate,
-    gridAroundCenter
+    gridAroundCenter,
+    packRows
   };
 });

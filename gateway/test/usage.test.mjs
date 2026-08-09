@@ -56,6 +56,12 @@ test('gateway quote matches the desktop image table', () => {
   assert.equal(quoteUsage('image', { providerId: 'image-6', quality: 'low' }).credits, 3);
   assert.equal(quoteUsage('image', { providerId: 'image-6', quality: 'medium' }).credits, 8);
   assert.equal(quoteUsage('image', { providerId: 'image-6', quality: 'invalid' }).credits, 12);
+  assert.deepEqual(quoteUsage('image', { providerId: 'image-7', size: '720p' }), {
+    kind: 'image', providerId: 'image-7', credits: 4, resolution: '720p', imageResolution: '720p', duration: null, requiresActivation: false
+  });
+  assert.deepEqual(quoteUsage('image', { providerId: 'image-8', resolution: '1080p' }), {
+    kind: 'image', providerId: 'image-8', credits: 8, resolution: '1080p', imageResolution: '1080p', duration: null, requiresActivation: false
+  });
   assert.throws(() => quoteUsage('image', { providerId: 'image-free-bypass' }), { code: 'provider-not-allowed' });
 });
 
@@ -284,6 +290,34 @@ test('GPT Image 2 reserves the selected quality price through the existing RPC p
       p_expected_credits: 8
     });
     assert.equal(result.quality, 'medium');
+    assert.equal(result.credits, 8);
+  });
+});
+
+test('Higgsfield reserves resolution pricing through its server-authoritative RPC', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
+    let call;
+    const result = await reserveUsage(
+      '00000000-0000-4000-8000-000000000051',
+      'image',
+      '00000000-0000-4000-8000-000000000052',
+      { providerId: 'image-7', size: '1080p' },
+      async (url, options) => {
+        call = { url, body: JSON.parse(options.body) };
+        return jsonResponse({ ok: true, reason: 'reserved', credits: 8, availableCredits: 92 });
+      }
+    );
+    assert.match(call.url, /\/rpc\/reserve_higgsfield_credits$/);
+    assert.deepEqual(call.body, {
+      p_user_id: '00000000-0000-4000-8000-000000000051',
+      p_kind: 'image',
+      p_provider_id: 'image-7',
+      p_request_id: '00000000-0000-4000-8000-000000000052',
+      p_resolution: '1080p',
+      p_duration: null,
+      p_expected_credits: 8
+    });
+    assert.equal(result.imageResolution, '1080p');
     assert.equal(result.credits, 8);
   });
 });

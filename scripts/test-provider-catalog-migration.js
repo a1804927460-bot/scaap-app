@@ -29,7 +29,16 @@ upgradeAiDefaults(data);
 const media = data.settings.aiMedia;
 assert.deepEqual(
   media.imageProviders.filter((provider) => provider.name).map((provider) => provider.name),
-  ['Nano Banana Pro', 'Nanobanana Pro SE', 'Seedream 5.0 Lite', 'Midjourney', 'Nano banana2', 'GPT Image 2']
+  [
+    'Nano Banana Pro',
+    'Nanobanana Pro SE',
+    'Seedream 5.0 Lite',
+    'Midjourney',
+    'Nano banana2',
+    'GPT Image 2',
+    'Higgsfield Soul Standard',
+    'Higgsfield Soul'
+  ]
 );
 const nanoBananaPro = media.imageProviders.find((provider) => provider.id === 'image-1');
 assert.ok(nanoBananaPro);
@@ -41,6 +50,14 @@ assert.ok(gptImage2);
 assert.equal(gptImage2.model, 'gpt-image-2');
 assert.deepEqual(gptImage2.capabilities.sizes, ['1024x1024', '1536x1024', '1024x1536', 'auto']);
 assert.deepEqual(gptImage2.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
+for (const id of ['image-7', 'image-8']) {
+  const higgsfield = media.imageProviders.find((provider) => provider.id === id);
+  assert.ok(higgsfield);
+  assert.equal(require('../lib/provider-catalog').catalogProvider(id).keyEnv, 'AI302_KEY');
+  assert.deepEqual(higgsfield.capabilities.sizes, ['720p', '1080p']);
+  assert.deepEqual(higgsfield.capabilities.counts, [1, 4]);
+  assert.equal(higgsfield.capabilities.maxReferenceImages, 0);
+}
 assert.equal(media.videoProviderName, 'MiniMax H3');
 assert.deepEqual(
   media.videoProviders.filter((provider) => provider.name).map((provider) => provider.name),
@@ -88,6 +105,8 @@ const current = normalizeGatewayCatalog({
   providers: [
     { id: 'image-1', kind: 'image', name: 'legacy-name' },
     { id: 'image-6', kind: 'image', name: 'legacy-gpt-image-name' },
+    { id: 'image-7', kind: 'image', name: 'legacy-higgsfield-standard' },
+    { id: 'image-8', kind: 'image', name: 'legacy-higgsfield-soul' },
     { id: 'video-1', kind: 'video', name: 'legacy-video' },
     { id: 'video-2', kind: 'video', name: 'legacy-seedance-2' },
     { id: 'video-3', kind: 'video', name: 'legacy-seedance-2-5' },
@@ -98,6 +117,8 @@ const current = normalizeGatewayCatalog({
 assert.equal(current.compatible, true);
 assert.equal(assertGatewayProvider(current, 'image', 'image-1').name, 'Nano Banana Pro');
 assert.equal(assertGatewayProvider(current, 'image', 'image-6').name, 'GPT Image 2');
+assert.equal(assertGatewayProvider(current, 'image', 'image-7').name, 'Higgsfield Soul Standard');
+assert.equal(assertGatewayProvider(current, 'image', 'image-8').name, 'Higgsfield Soul');
 assert.equal(assertGatewayProvider(current, 'video', 'video-1').name, 'MiniMax H3');
 assert.equal(assertGatewayProvider(current, 'video', 'video-2').name, 'Seedance 2.0');
 assert.equal(assertGatewayProvider(current, 'video', 'video-3').name, 'Seedance 2.5');

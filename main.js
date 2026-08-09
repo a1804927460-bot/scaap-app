@@ -43,7 +43,8 @@ const DEFAULT_CATALOG_VIDEO = providerCatalog('video')[0];
 const DEFAULT_CATALOG_CHAT = providerCatalog('chat')[0];
 const AI_IMAGE_SIZES = new Set([
   '1K', '2K', '4K', 'original',
-  '1024x1024', '1536x1024', '1024x1536', 'auto'
+  '1024x1024', '1536x1024', '1024x1536', 'auto',
+  '720p', '1080p'
 ]);
 const AI_IMAGE_QUALITIES = new Set(['low', 'medium', 'high', 'auto']);
 const AI_IMAGE_RATIOS = new Set([
@@ -1889,6 +1890,10 @@ async function generateAiMediaBuffer(kind, prompt, options = {}) {
         sourceWidth: options.sourceWidth,
         sourceHeight: options.sourceHeight,
         duration: options.duration,
+        enhancePrompt: options.enhancePrompt,
+        seed: options.seed,
+        styleId: options.styleId,
+        styleStrength: options.styleStrength,
         urls: options.urls
       }, controller.signal);
     }
@@ -2399,6 +2404,10 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
       quality: mediaKind === 'image'
         ? String(request.quality || 'auto').trim().toLowerCase().slice(0, 16)
         : null,
+      styleId: mediaKind === 'image' ? String(request.styleId || '').trim().slice(0, 64) || null : null,
+      styleStrength: mediaKind === 'image' ? Math.max(0, Math.min(1, Number(request.styleStrength ?? 1))) : null,
+      enhancePrompt: mediaKind === 'image' ? request.enhancePrompt !== false : null,
+      seed: mediaKind === 'image' && Number.isInteger(Number(request.seed)) ? Number(request.seed) : null,
       resolution: mediaKind === 'video'
         ? String(request.resolution || request.size || 'auto').trim().slice(0, 32)
         : null,
@@ -2612,6 +2621,12 @@ function normalizeAiMediaGenerationRequest(request, kind) {
     normalized.size = size;
     normalized.quality = quality;
     normalized.aspectRatio = aspectRatio;
+    normalized.enhancePrompt = request.enhancePrompt !== false;
+    const seed = Math.round(Number(request.seed));
+    normalized.seed = Number.isInteger(seed) && seed >= 1 && seed <= 1_000_000 ? seed : null;
+    const styleId = String(request.styleId || '').trim();
+    normalized.styleId = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(styleId) ? styleId : null;
+    normalized.styleStrength = Math.max(0, Math.min(1, Number(request.styleStrength ?? 1)));
     return normalized;
   }
 
@@ -3263,6 +3278,11 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('settings:getAiMediaConfig', () => getPublicAiMediaConfig());
+  ipcMain.handle('ai:getImageStyles', async (_evt, providerId) => {
+    if (!runtimeConfig.gatewayConfigured) return { providerId, styles: [] };
+    await requireGatewayProvider('image', providerId);
+    return aiGateway.getImageStyles(providerId);
+  });
 
   ipcMain.handle('settings:discoverAiModels', async (_evt, request = {}) => {
     if (runtimeConfig.gatewayConfigured) {
@@ -4064,6 +4084,10 @@ function registerIpcHandlers() {
         sourceWidth: request.sourceWidth,
         sourceHeight: request.sourceHeight,
         duration: request.duration,
+        enhancePrompt: request.enhancePrompt,
+        seed: request.seed,
+        styleId: request.styleId,
+        styleStrength: request.styleStrength,
         urls: request.urls,
         imageProviderId: request.imageProviderId,
         videoProviderId: request.videoProviderId
