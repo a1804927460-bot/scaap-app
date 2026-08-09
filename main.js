@@ -34,7 +34,7 @@ const { activate: activateApp, getActivationStatus } = require('./lib/activation
 const { quoteMediaCredits, publicCreditPricing } = require('./lib/credit-pricing');
 const { launchAdobeMedia } = require('./lib/adobe-launcher');
 const { ChatService } = require('./lib/chat-service');
-const { probeVideoMetadata } = require('./lib/media-metadata');
+const { probeVideoMetadata, shutdownProcesses: shutdownMediaMetadataProcesses } = require('./lib/media-metadata');
 const { authenticatedUserId, profileAvatarPath } = require('./lib/profile-avatar');
 const { normalizeLanguage, translate: translateLanguage } = require('./lib/i18n');
 
@@ -134,6 +134,7 @@ let previewCacheDir;
 let previewTmpDir;
 let thumbCacheDir;
 let updateCheckInterval;
+let updateInstallStarted = false;
 let googleOAuthPromise;
 let updaterState = {
   enabled: true,
@@ -387,6 +388,7 @@ function setupAutoUpdater() {
   updaterState.enabled = store.data.settings.autoUpdateEnabled !== false;
   autoUpdater.autoDownload = updaterState.enabled;
   autoUpdater.autoInstallOnAppQuit = updaterState.enabled;
+  autoUpdater.autoRunAppAfterInstall = true;
   const publishInfo = getPublishInfo();
   if (publishInfo) {
     autoUpdater.setFeedURL({
@@ -666,6 +668,33 @@ function fileToPayload(f) {
     thumbUrl: 'messs-thumb://' + f.id,
     ...(MODEL_FILE_EXTENSIONS.has(ext) ? { modelPreviewUrl: `messs-preview://${f.id}/model` } : {})
   };
+}
+
+async function installDownloadedUpdate() {
+  if (updateInstallStarted) return { ok: true, installing: true };
+  if (updaterState.status !== 'downloaded') return { ok: false, reason: 'not-downloaded' };
+
+  updateInstallStarted = true;
+  setUpdaterState({ status: 'installing', progress: 100, message: null });
+  if (updateCheckInterval) clearInterval(updateCheckInterval);
+  if (usageTickInterval) clearInterval(usageTickInterval);
+  preview.shutdownProcesses();
+  thumbnails.shutdownProcesses();
+  shutdownMediaMetadataProcesses();
+  if (store) store.flushSync();
+
+  if (chatService) {
+    await Promise.race([
+      chatService.close().catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 1_500))
+    ]);
+  }
+
+  // Silent mode avoids leaving the assisted installer open while Electron is
+  // shutting down. Force-run starts the newly installed build afterwards.
+  autoUpdater.quitAndInstall(true, true);
+  setTimeout(() => app.exit(0), 5_000).unref();
+  return { ok: true, installing: true };
 }
 
 async function readSourceMediaMetadata(filePath, ext) {
@@ -5243,13 +5272,13 @@ function registerIpcHandlers() {
     return { ok: true };
   });
 
-  ipcMain.handle('updater:installNow', () => {
+  ipcMain.handle('updater:installNow', async () => {
     try {
-      autoUpdater.quitAndInstall();
-      return { ok: true };
+      return await installDownloadedUpdate();
     } catch (err) {
+      updateInstallStarted = false;
       console.error('quitAndInstall failed:', err.message);
-      return { ok: false };
+      return { ok: false, reason: 'install-failed' };
     }
   });
 
@@ -5442,6 +5471,9 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  preview.shutdownProcesses();
+  thumbnails.shutdownProcesses();
+  shutdownMediaMetadataProcesses();
   if (store) store.flushSync();
   if (chatService) chatService.flushLocal();
 });
