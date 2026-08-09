@@ -257,6 +257,51 @@ test('Super Upscale V2 is synchronous, bounded, and releases its temporary relay
   );
 });
 
+test('image tools accept wrapped 302 task and synchronous result payloads', async () => {
+  const source = rgbaPng();
+  const created = await submitQwenImageEdit({
+    imageDataUrl: imageDataUrl(source),
+    prompt: 'Make the product blue',
+    userId: 'wrapped-image-owner'
+  }, {
+    apiKey: 'wrapped-image-key',
+    taskSecret: 'wrapped-image-secret',
+    publicBaseUrl: 'https://gateway.example.com',
+    now: 1_800_000_000_000,
+    fetchImpl: async () => jsonResponse({ data: { requestId: 'wrapped-image-job', status: 'IN_QUEUE' } })
+  });
+  const completed = await pollQwenImageEdit({
+    taskToken: created.taskToken,
+    userId: 'wrapped-image-owner'
+  }, {
+    apiKey: 'wrapped-image-key',
+    taskSecret: 'wrapped-image-secret',
+    now: 1_800_000_001_000,
+    fetchImpl: async () => jsonResponse({
+      response: { images: [{ url: 'https://file.302.ai/wrapped/edit.png' }] }
+    })
+  });
+  assert.deepEqual(completed, {
+    status: 'succeeded',
+    retryAfterMs: 0,
+    urls: ['https://file.302.ai/wrapped/edit.png']
+  });
+
+  const upscaled = await superUpscaleImage({ imageDataUrl: imageDataUrl(source) }, {
+    apiKey: 'wrapped-image-key',
+    publicBaseUrl: 'https://gateway.example.com',
+    now: 1_800_000_000_000,
+    fetchImpl: async () => jsonResponse({
+      data: { result: { image: { url: 'https://file.302.ai/wrapped/upscaled.png' } } }
+    })
+  });
+  assert.deepEqual(upscaled, {
+    status: 'succeeded',
+    retryAfterMs: 0,
+    urls: ['https://file.302.ai/wrapped/upscaled.png']
+  });
+});
+
 test('Erase sends sanitized multipart image and mask files and returns one safe URL', async () => {
   const source = rgbaPng({ metadata: true });
   const mask = rgbaPng({ metadata: true });

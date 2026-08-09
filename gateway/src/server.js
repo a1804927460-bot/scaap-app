@@ -118,6 +118,53 @@ function send(response, status, payload, headers = {}) {
   response.end(body);
 }
 
+function sendRelayAsset(request, response, asset) {
+  const total = asset.buffer.length;
+  const rangeHeader = String(request.headers.range || '').trim();
+  let start = 0;
+  let end = total - 1;
+  let status = 200;
+  if (rangeHeader) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader);
+    if (!match || (!match[1] && !match[2])) {
+      response.writeHead(416, { 'Content-Range': `bytes */${total}`, 'Content-Length': '0' });
+      return response.end();
+    }
+    if (!match[1]) {
+      const suffixLength = Number(match[2]);
+      if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) {
+        response.writeHead(416, { 'Content-Range': `bytes */${total}`, 'Content-Length': '0' });
+        return response.end();
+      }
+      start = Math.max(0, total - suffixLength);
+    } else {
+      start = Number(match[1]);
+      end = match[2] ? Number(match[2]) : end;
+    }
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start >= total || end < start) {
+      response.writeHead(416, { 'Content-Range': `bytes */${total}`, 'Content-Length': '0' });
+      return response.end();
+    }
+    end = Math.min(end, total - 1);
+    status = 206;
+  }
+  const length = end - start + 1;
+  response.writeHead(status, {
+    'Content-Type': asset.mime,
+    'Content-Length': length,
+    'Content-Disposition': 'inline',
+    'Accept-Ranges': 'bytes',
+    ...(status === 206 ? { 'Content-Range': `bytes ${start}-${end}/${total}` } : {}),
+    'Cache-Control': 'private, no-store',
+    'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
+    'Referrer-Policy': 'no-referrer',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY'
+  });
+  if (request.method === 'HEAD') return response.end();
+  return response.end(asset.buffer.subarray(start, end + 1));
+}
+
 async function readJson(request) {
   const chunks = [];
   let size = 0;
@@ -434,15 +481,12 @@ async function handle(request, response) {
   // Hyper3D needs a short-lived, capability-token-protected image relay. The
   // relay contains no user identity or upstream credential, so it is the only
   // public Butler endpoint; all task routes below still require Supabase auth.
-  if (request.method === 'GET' && url.pathname.startsWith('/v1/tools/assets/')) {
+  if (['GET', 'HEAD'].includes(request.method) && url.pathname.startsWith('/v1/tools/assets/')) {
     const match = /^\/v1\/tools\/assets\/([A-Za-z0-9_-]{43})$/.exec(url.pathname);
     if (!match) return send(response, 404, { code: 'tool-asset-not-found', message: 'Temporary image not found.' });
     try {
       const asset = getAi302RelayAsset(match[1]);
-      return send(response, 200, asset.buffer, {
-        'Content-Type': asset.mime,
-        'Content-Disposition': 'inline'
-      });
+      return sendRelayAsset(request, response, asset);
     } catch (error) {
       return send(response, 404, { code: 'tool-asset-not-found', message: 'Temporary image not found.' });
     }
@@ -981,7 +1025,15 @@ const server = http.createServer((request, response) => {
       'three-d-generation-failed': '3D generation failed.'
     };
     // Do not log prompts, attachments, authorization headers, or upstream bodies.
-    console.error(JSON.stringify({ level: 'error', requestId: response.getHeader('X-Request-Id'), code, status }));
+    const upstreamStatus = Number(error.upstreamStatus);
+    console.error(JSON.stringify({
+      level: 'error',
+      requestId: response.getHeader('X-Request-Id'),
+      path: new URL(request.url, 'http://gateway.local').pathname,
+      code,
+      status,
+      ...(Number.isInteger(upstreamStatus) ? { upstreamStatus } : {})
+    }));
     if (!response.headersSent) send(response, status, {
       code,
       message: safeMessages[code] || (status >= 500 ? 'The AI gateway could not complete this request.' : error.message)

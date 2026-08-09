@@ -143,6 +143,10 @@ test('background removal uses fixed upstream options and returns only a validate
 test('asset URLs reject non-provider hosts, credentials, ports, fragments, and IP literals', () => {
   assert.equal(validateAssetUrl('https://file.302.ai/model.glb').hostname, 'file.302.ai');
   assert.equal(validateAssetUrl('https://bucket.cos.ap-guangzhou.myqcloud.com/model.glb').hostname, 'bucket.cos.ap-guangzhou.myqcloud.com');
+  assert.equal(
+    validateAssetUrl('https://hunyuan-prod-1258344699.cos.ap-guangzhou.tencentcos.cn/model.glb').hostname,
+    'hunyuan-prod-1258344699.cos.ap-guangzhou.tencentcos.cn'
+  );
   for (const value of [
     'http://file.302.ai/model.glb',
     'https://file.302.ai.evil.test/model.glb',
@@ -162,7 +166,7 @@ test('HUNYUAN3D task tokens hide the job, bind the user and provider, and normal
   const createFetch = async (url, options) => {
     assert.equal(String(url), 'https://api.302.ai/tencent/hunyuan3d/pro-job');
     createBody = JSON.parse(options.body);
-    return jsonResponse({ Response: { JobId: 'private-hunyuan-job-id', RequestId: 'request-id' } });
+    return jsonResponse({ data: { Response: { JobId: 'private-hunyuan-job-id', RequestId: 'request-id' } } });
   };
   const created = await createThreeDTask({
     providerId: 'hunyuan3d',
@@ -188,7 +192,7 @@ test('HUNYUAN3D task tokens hide the job, bind the user and provider, and normal
     now: 1_800_000_001_000,
     fetchImpl: async (url) => {
       assert.equal(String(url), 'https://api.302.ai/tencent/hunyuan3d/pro-job/private-hunyuan-job-id');
-      return jsonResponse({ Response: { Status: 'RUN' } });
+      return jsonResponse({ result: { Response: { Status: 'RUN' } } });
     }
   });
   assert.deepEqual(status, { status: 'processing', retryAfterMs: 5000 });
@@ -219,7 +223,7 @@ test('Hyper3D receives a short-lived metadata-free image relay and uses the docu
     fetchImpl: async (url, options) => {
       assert.equal(String(url), 'https://api.302.ai/302/submit/hyper3d-rodin');
       requestBody = JSON.parse(options.body);
-      return jsonResponse({ request_id: 'private-hyper-job-id', status: 'IN_QUEUE', queue_position: 2 });
+      return jsonResponse({ data: { requestId: 'private-hyper-job-id', status: 'IN_QUEUE', queue_position: 2 } });
     }
   });
   assert.equal(created.status, 'queued');
@@ -260,7 +264,7 @@ test('Hyper3D receives a short-lived metadata-free image relay and uses the docu
     now: 1_800_000_002_000,
     fetchImpl: async (url) => {
       assert.equal(String(url), 'https://api.302.ai/302/submit/hyper3d-rodin?request_id=private-hyper-job-id');
-      return jsonResponse({ status: 'PROCESSING' });
+      return jsonResponse({ response: { status: 'PROCESSING' } });
     }
   });
   assert.deepEqual(status, { status: 'processing', retryAfterMs: 5000 });
@@ -599,6 +603,25 @@ test('unsafe redirects and missing public relay configuration fail closed', asyn
   }
 });
 
+test('background removal accepts a wrapped 302 result without exposing the provider URL', async () => {
+  const output = rgbaPng();
+  let call = 0;
+  const result = await removeBackground({ imageDataUrl: imageDataUrl(rgbaPng()) }, {
+    apiKey: 'test-key',
+    fetchImpl: async (url, options) => {
+      call += 1;
+      if (call === 1) {
+        assert.equal(options.headers.Authorization, 'Bearer test-key');
+        return jsonResponse({ data: { result: { url: 'https://file.302.ai/results/wrapped.png' } } });
+      }
+      assert.equal(String(url), 'https://file.302.ai/results/wrapped.png');
+      assert.equal(options.headers.Authorization, undefined);
+      return new Response(output, { status: 200, headers: { 'Content-Type': 'image/png' } });
+    }
+  });
+  assert.deepEqual(result, output);
+});
+
 test('server enables paid 302 routes with the shared key unless a route is explicitly disabled', () => {
   const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
   const environment = fs.readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
@@ -627,6 +650,9 @@ test('server enables paid 302 routes with the shared key unless a route is expli
   );
   assert.match(server, /\/v1\/tools\/video\/status/);
   assert.match(server, /\/v1\/tools\/video\/download/);
+  assert.match(server, /\['GET', 'HEAD'\]\.includes\(request\.method\)[\s\S]*?\/v1\/tools\/assets\//);
+  assert.match(server, /'Accept-Ranges': 'bytes'/);
+  assert.match(server, /'Content-Range': `bytes \$\{start\}-\$\{end\}\/\$\{total\}`/);
   assert.match(server, /ENABLE_302_BACKGROUND_REMOVE/);
   assert.match(server, /ENABLE_302_IMAGE_TOOLS/);
   assert.match(server, /ENABLE_302_HUNYUAN3D/);

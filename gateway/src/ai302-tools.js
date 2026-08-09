@@ -627,9 +627,13 @@ async function limitedBuffer(response, maximum) {
 }
 
 function upstreamFailure(response) {
-  if (response.status === 402) return toolError('ai302-balance-exhausted', 'The 302 tool balance is insufficient.', 402);
-  if (response.status === 429) return toolError('ai302-rate-limited', 'The 302 tool service is busy. Try again shortly.', 429);
-  return toolError('ai302-upstream-error', 'The 302 tool service rejected the request.', 502);
+  const error = response.status === 402
+    ? toolError('ai302-balance-exhausted', 'The 302 tool balance is insufficient.', 402)
+    : response.status === 429
+      ? toolError('ai302-rate-limited', 'The 302 tool service is busy. Try again shortly.', 429)
+      : toolError('ai302-upstream-error', 'The 302 tool service rejected the request.', 502);
+  error.upstreamStatus = response.status;
+  return error;
 }
 
 async function fetch302Json(path, init, { apiKey, fetchImpl, timeoutMs = REQUEST_TIMEOUT_MS, signal } = {}) {
@@ -694,12 +698,43 @@ async function fetchAsset(urlValue, maximum, { fetchImpl, signal } = {}) {
   throw toolError('unsafe-tool-result-url', 'The tool result contains too many redirects.', 502);
 }
 
-function responseObject(payload) {
-  const value = payload && payload.Response;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw toolError('ai302-invalid-response', 'The 302 tool service returned an invalid response.', 502);
+function nestedResponseObject(payload, predicate, message = 'The 302 tool service returned an invalid response.') {
+  let value = payload;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) break;
+    if (predicate(value)) return value;
+    const nested = ['data', 'result', 'response', 'Response']
+      .map((key) => value[key])
+      .find((entry) => entry && typeof entry === 'object' && !Array.isArray(entry));
+    if (!nested) break;
+    value = nested;
   }
-  return value;
+  throw toolError('ai302-invalid-response', message, 502);
+}
+
+function responseObject(payload) {
+  return nestedResponseObject(
+    payload,
+    (value) => ['JobId', 'Status', 'ResultFile3Ds', 'ErrorCode'].some((key) => Object.hasOwn(value, key))
+  );
+}
+
+function hyper3dResponseObject(payload) {
+  return nestedResponseObject(
+    payload,
+    (value) => ['request_id', 'requestId', 'task_id', 'taskId', 'status', 'model_mesh'].some((key) => Object.hasOwn(value, key)),
+    'The Hyper3D service returned an invalid response.'
+  );
+}
+
+function backgroundResultUrl(payload) {
+  const value = nestedResponseObject(
+    payload,
+    (entry) => (typeof entry.url === 'string' && entry.url.trim())
+      || (entry.image && typeof entry.image.url === 'string' && entry.image.url.trim()),
+    'The background-removal service returned an invalid response.'
+  );
+  return String(value.url || (value.image && value.image.url) || '').trim();
 }
 
 function normalizeThreeDStatus(value) {
@@ -956,13 +991,13 @@ async function createHunyuanJob(image, dependencies) {
 }
 
 async function queryHyper3dJob(jobId, dependencies) {
-  return fetch302Json(`${HYPER3D_PATH}?request_id=${encodeURIComponent(jobId)}`, {
+  return hyper3dResponseObject(await fetch302Json(`${HYPER3D_PATH}?request_id=${encodeURIComponent(jobId)}`, {
     method: 'GET',
     headers: { 'Content-Type': 'application/json' }
   }, {
     ...dependencies,
     timeoutMs: STATUS_TIMEOUT_MS
-  });
+  }));
 }
 
 function hyper3dStatus(job) {
@@ -997,11 +1032,12 @@ async function createHyper3dJob(image, prompt, dependencies) {
         TAPose: false
       })
     }, dependencies);
-    const jobId = String(payload.request_id || '').trim();
+    const response = hyper3dResponseObject(payload);
+    const jobId = String(response.request_id || response.requestId || response.task_id || response.taskId || '').trim();
     if (!jobId || jobId.length > 512 || /[\u0000-\u001f\u007f]/.test(jobId)) {
       throw toolError('ai302-invalid-response', 'The 3D service did not return a valid task.', 502);
     }
-    const status = payload.status ? normalizeThreeDStatus(payload.status) : 'queued';
+    const status = response.status ? normalizeThreeDStatus(response.status) : 'queued';
     return { jobId, status };
   } catch (error) {
     deleteRelayAsset(relay.token);
@@ -1080,7 +1116,7 @@ export async function removeBackground({ imageDataUrl } = {}, options = {}) {
     fetchImpl: options.fetchImpl || fetch,
     signal: options.signal
   });
-  const resultUrl = validateAssetUrl(payload.url).toString();
+  const resultUrl = validateAssetUrl(backgroundResultUrl(payload)).toString();
   const png = await fetchAsset(resultUrl, MAX_BACKGROUND_OUTPUT_BYTES, {
     fetchImpl: options.fetchImpl || fetch,
     signal: options.signal

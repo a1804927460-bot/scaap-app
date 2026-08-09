@@ -87,13 +87,13 @@ async function limitedBuffer(response, maximum) {
 }
 
 function upstreamFailure(response) {
-  if (response.status === 402) {
-    return imageToolError('ai302-balance-exhausted', 'The 302 tool balance is insufficient.', 402);
-  }
-  if (response.status === 429) {
-    return imageToolError('ai302-rate-limited', 'The 302 tool service is busy. Try again shortly.', 429);
-  }
-  return imageToolError('ai302-upstream-error', 'The 302 tool service rejected the request.', 502);
+  const error = response.status === 402
+    ? imageToolError('ai302-balance-exhausted', 'The 302 tool balance is insufficient.', 402)
+    : response.status === 429
+      ? imageToolError('ai302-rate-limited', 'The 302 tool service is busy. Try again shortly.', 429)
+      : imageToolError('ai302-upstream-error', 'The 302 tool service rejected the request.', 502);
+  error.upstreamStatus = response.status;
+  return error;
 }
 
 async function fetch302Json(path, init, dependencies) {
@@ -249,7 +249,7 @@ function safeResultUrls(items) {
 }
 
 function synchronousResult(payload) {
-  const image = payload && payload.image;
+  const image = imageToolResponseObject(payload).image;
   return {
     status: 'succeeded',
     retryAfterMs: 0,
@@ -277,6 +277,34 @@ function validateRequestId(value) {
     throw imageToolError('ai302-invalid-response', 'The 302 tool service did not return a valid task.', 502);
   }
   return requestId;
+}
+
+function hasImageToolPayloadFields(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) && [
+    'request_id', 'requestId', 'task_id', 'taskId', 'status', 'images', 'image'
+  ].some((key) => Object.hasOwn(value, key));
+}
+
+function imageToolResponseObject(payload) {
+  let value = payload;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) break;
+    if (hasImageToolPayloadFields(value)) return value;
+    const nested = ['data', 'result', 'response']
+      .map((key) => value[key])
+      .find((entry) => entry && typeof entry === 'object' && !Array.isArray(entry));
+    if (!nested) break;
+    value = nested;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw imageToolError('ai302-invalid-response', 'The image tool returned an invalid response.', 502);
+  }
+  return value;
+}
+
+function responseRequestId(payload) {
+  const value = imageToolResponseObject(payload);
+  return validateRequestId(value.request_id ?? value.requestId ?? value.task_id ?? value.taskId);
 }
 
 function createRelays(imageDataUrls, options) {
@@ -337,8 +365,9 @@ export async function submitQwenImageEdit({ imageDataUrl, imageDataUrls, prompt,
         ...normalizeEditOptions(toolOptions)
       })
     }, requestDependencies);
-    const requestId = validateRequestId(payload.request_id);
-    const status = payload.status ? normalizedStatus(payload) : 'queued';
+    const response = imageToolResponseObject(payload);
+    const requestId = responseRequestId(response);
+    const status = response.status ? normalizedStatus(response) : 'queued';
     return {
       taskToken: createTaskToken(
         'qwen-image-edit-plus',
@@ -377,8 +406,9 @@ export async function submitQwenImageLayered({ imageDataUrl, prompt, numLayers, 
         output_format: 'png'
       })
     }, requestDependencies);
-    const requestId = validateRequestId(payload.request_id);
-    const status = payload.status ? normalizedStatus(payload) : 'queued';
+    const response = imageToolResponseObject(payload);
+    const requestId = responseRequestId(response);
+    const status = response.status ? normalizedStatus(response) : 'queued';
     return {
       taskToken: createTaskToken(
         'qwen-image-layered',
@@ -419,7 +449,8 @@ async function pollAsyncImageTask(expectedProviderId, path, { taskToken, userId 
   const payload = await fetch302Json(`${path}?request_id=${encodeURIComponent(task.requestId)}`, {
     method: 'GET'
   }, requestDependencies);
-  const status = normalizedStatus(payload);
+  const response = imageToolResponseObject(payload);
+  const status = normalizedStatus(response);
   const settlement = ['succeeded', 'failed'].includes(status) && typeof options.settleCredits === 'function'
     ? await options.settleCredits({
       requestId: task.accountingRequestId,
@@ -433,7 +464,7 @@ async function pollAsyncImageTask(expectedProviderId, path, { taskToken, userId 
   return {
     status,
     retryAfterMs: status === 'queued' || status === 'processing' ? 5000 : 0,
-    urls: status === 'succeeded' ? safeResultUrls(payload.images) : [],
+    urls: status === 'succeeded' ? safeResultUrls(response.images) : [],
     ...(settlement && Number.isFinite(Number(settlement.creditsCharged))
       ? { creditsCharged: Number(settlement.creditsCharged) }
       : {}),
