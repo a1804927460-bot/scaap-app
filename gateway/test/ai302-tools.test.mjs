@@ -482,6 +482,78 @@ test('Topaz result download validates the provider URL and returns only video by
   );
 });
 
+test('Topaz accepts wrapped 302 responses and derives progress from processing jobs', async () => {
+  const input = mp4Fixture();
+  const output = mp4Fixture();
+  const created = await createVideoUpscaleTask({
+    videoDataUrl: videoDataUrl(input),
+    toolOptions: { output: { resolution: { width: 1920, height: 1080 } } },
+    userId: 'wrapped-topaz-user'
+  }, {
+    apiKey: 'server-only-302-key',
+    taskSecret: 'wrapped-topaz-secret',
+    publicBaseUrl: 'https://gateway.example.com',
+    now: 1_800_000_000_000,
+    fetchImpl: async () => jsonResponse({
+      data: { cost: '7', request_id: 'wrapped-topaz-request' }
+    }),
+    reserveCredits: async ({ credits, providerCost }) => ({
+      ok: credits === 21 && providerCost === 7,
+      reason: 'reserved'
+    })
+  });
+
+  const status = await getVideoUpscaleStatus({
+    taskToken: created.taskToken,
+    userId: 'wrapped-topaz-user'
+  }, {
+    apiKey: 'server-only-302-key',
+    taskSecret: 'wrapped-topaz-secret',
+    now: 1_800_000_002_000,
+    touchCredits: async () => ({ ok: true }),
+    settleCredits: async () => { throw new Error('processing tasks must not settle'); },
+    fetchImpl: async () => jsonResponse({
+      data: {
+        processingJobs: [{ status: 'enhancing', progress: 46 }]
+      }
+    })
+  });
+  assert.deepEqual(status, {
+    status: 'processing',
+    progress: 46,
+    retryAfterMs: 5_000,
+    credits: 21,
+    providerCost: 7
+  });
+
+  let call = 0;
+  const downloaded = await downloadVideoUpscaleResult({
+    taskToken: created.taskToken,
+    userId: 'wrapped-topaz-user'
+  }, {
+    apiKey: 'server-only-302-key',
+    taskSecret: 'wrapped-topaz-secret',
+    now: 1_800_000_004_000,
+    touchCredits: async () => ({ ok: true }),
+    settleCredits: async () => ({ ok: true, status: 'succeeded', creditsCharged: 21 }),
+    fetchImpl: async (url, options) => {
+      call += 1;
+      if (call === 1) {
+        return jsonResponse({
+          response: {
+            status: 'complete',
+            result: { url: 'https://file.302.ai/video/wrapped-result.mov' }
+          }
+        });
+      }
+      assert.equal(String(url), 'https://file.302.ai/video/wrapped-result.mov');
+      assert.match(options.headers.Accept, /video\/\*/);
+      return new Response(output, { status: 200, headers: { 'Content-Type': 'video/quicktime' } });
+    }
+  });
+  assert.deepEqual(downloaded, output);
+});
+
 test('Topaz video inputs and output options fail closed', () => {
   const input = mp4Fixture();
   assert.deepEqual(parseVideoDataUrl(videoDataUrl(input)).buffer, input);

@@ -669,7 +669,7 @@ async function fetchAsset(urlValue, maximum, { fetchImpl, signal } = {}) {
     try {
       response = await fetchImpl(url, {
         method: 'GET',
-        headers: { Accept: 'application/octet-stream,image/png' },
+        headers: { Accept: 'application/octet-stream,image/png,video/*' },
         redirect: 'manual',
         signal: composedSignal(ASSET_TIMEOUT_MS, signal)
       });
@@ -831,22 +831,80 @@ export function normalizeVideoUpscaleOptions(value = {}) {
 }
 
 function normalizeTopazVideoStatus(job) {
-  if (job && job.download && typeof job.download.url === 'string' && job.download.url.trim()) return 'succeeded';
+  const resultUrl = topazDownloadUrl(job);
+  if (resultUrl) return 'succeeded';
   const raw = String(job && job.status || '').trim().toUpperCase().replace(/[ -]+/g, '_');
   if (QUEUED_STATES.has(raw) || ['UPLOADING', 'ACCEPTED', 'SUBMITTED'].includes(raw)) return 'queued';
   if (PROCESSING_STATES.has(raw) || ['ENCODING', 'ENHANCING'].includes(raw)) return 'processing';
   if (SUCCESS_STATES.has(raw) || ['COMPLETE', 'FINISHED', 'READY'].includes(raw)) return 'succeeded';
   if (FAILURE_STATES.has(raw) || ['ABORTED', 'REJECTED'].includes(raw)) return 'failed';
+  const childStatuses = Array.isArray(job && job.processingJobs)
+    ? job.processingJobs.map((entry) => String(entry && entry.status || '').trim().toUpperCase().replace(/[ -]+/g, '_')).filter(Boolean)
+    : [];
+  if (childStatuses.length) {
+    if (childStatuses.some((status) => FAILURE_STATES.has(status) || ['ABORTED', 'REJECTED'].includes(status))) return 'failed';
+    if (childStatuses.every((status) => SUCCESS_STATES.has(status) || ['COMPLETE', 'FINISHED', 'READY'].includes(status))) return 'succeeded';
+    if (childStatuses.some((status) => PROCESSING_STATES.has(status) || ['ENCODING', 'ENHANCING'].includes(status))) return 'processing';
+    if (childStatuses.every((status) => QUEUED_STATES.has(status) || ['UPLOADING', 'ACCEPTED', 'SUBMITTED'].includes(status))) return 'queued';
+  }
   throw toolError('ai302-invalid-response', 'The video enhancement service returned an unsupported task status.', 502);
 }
 
+function hasTopazPayloadFields(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) && [
+    'requestId', 'request_id', 'cost', 'status', 'progress', 'download', 'processingJobs'
+  ].some((key) => Object.hasOwn(value, key));
+}
+
+function topazResponseObject(payload) {
+  let value = payload;
+  for (let depth = 0; depth < 3; depth += 1) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) break;
+    if (hasTopazPayloadFields(value)) break;
+    const nested = ['data', 'result', 'response']
+      .map((key) => value[key])
+      .find((entry) => entry && typeof entry === 'object' && !Array.isArray(entry));
+    if (!nested) break;
+    value = nested;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw toolError('ai302-invalid-response', 'The video enhancement service returned an invalid response.', 502);
+  }
+  return value;
+}
+
+function topazDownloadUrl(payload) {
+  const job = topazResponseObject(payload);
+  const candidates = [
+    job.download && job.download.url,
+    typeof job.download === 'string' ? job.download : '',
+    job.output && job.output.url,
+    job.result && job.result.url,
+    job.url
+  ];
+  return String(candidates.find((value) => typeof value === 'string' && value.trim()) || '').trim();
+}
+
+function topazProgress(job, status) {
+  const direct = Number(job && job.progress);
+  if (Number.isFinite(direct)) return Math.max(0, Math.min(100, Math.round(direct)));
+  const childProgress = Array.isArray(job && job.processingJobs)
+    ? job.processingJobs.map((entry) => Number(entry && entry.progress)).filter(Number.isFinite)
+    : [];
+  if (childProgress.length) {
+    return Math.max(0, Math.min(100, Math.round(childProgress.reduce((total, value) => total + value, 0) / childProgress.length)));
+  }
+  return status === 'succeeded' ? 100 : 0;
+}
+
 async function queryTopazVideoJob(providerJobId, dependencies) {
-  return fetch302Json(`${TOPAZ_VIDEO_STATUS_PATH}/${encodeURIComponent(providerJobId)}/status`, {
+  const payload = await fetch302Json(`${TOPAZ_VIDEO_STATUS_PATH}/${encodeURIComponent(providerJobId)}/status`, {
     method: 'GET'
   }, {
     ...dependencies,
     timeoutMs: STATUS_TIMEOUT_MS
   });
+  return topazResponseObject(payload);
 }
 
 async function settleVideoUpscaleCredits(task, status, options) {
@@ -1149,8 +1207,9 @@ export async function createVideoUpscaleTask({ videoDataUrl, toolOptions, userId
       fetchImpl: options.fetchImpl || fetch,
       signal: options.signal
     });
-    const providerJobId = String(payload.requestId || '').trim();
-    const providerCost = Number(payload.cost);
+    const result = topazResponseObject(payload);
+    const providerJobId = String(result.requestId || result.request_id || '').trim();
+    const providerCost = Number(result.cost);
     if (!providerJobId || providerJobId.length > 512 || /[\u0000-\u001f\u007f]/.test(providerJobId)
         || !Number.isInteger(providerCost) || providerCost < 0 || providerCost > 1_000_000) {
       throw toolError('ai302-invalid-response', 'The video enhancement service did not return a valid task.', 502);
@@ -1214,9 +1273,10 @@ export async function getVideoUpscaleStatus({ taskToken, userId } = {}, options 
     signal: options.signal
   });
   const status = normalizeTopazVideoStatus(job);
+  if (status === 'succeeded') validateAssetUrl(topazDownloadUrl(job));
   const settlement = await settleVideoUpscaleCredits(task, status, options);
   if (['succeeded', 'failed'].includes(status)) deleteRelayAsset(task.relayToken);
-  const progress = Math.max(0, Math.min(100, Math.round(Number(job.progress) || (status === 'succeeded' ? 100 : 0))));
+  const progress = topazProgress(job, status);
   return {
     status,
     progress,
@@ -1260,8 +1320,7 @@ export async function downloadVideoUpscaleResult({ taskToken, userId } = {}, opt
       409
     );
   }
-  const download = job && job.download;
-  const resultUrl = validateAssetUrl(download && download.url).toString();
+  const resultUrl = validateAssetUrl(topazDownloadUrl(job)).toString();
   const video = await fetchAsset(resultUrl, MAX_VIDEO_OUTPUT_BYTES, {
     fetchImpl: options.fetchImpl || fetch,
     signal: options.signal

@@ -52,12 +52,9 @@ ENABLE_302_HYPER3D=false
 ENABLE_302_TOPAZ=false
 ```
 
-Keep all four flags disabled until the corresponding server-authoritative
-credit reservation and settlement flow is deployed. Background removal and 3D
-do not yet have that accounting. Topaz must also remain disabled even if
-`202608080005_butler_video_credits.sql` is installed: its upstream quote is
-currently returned only after a paid task is created, so the reservation order
-must be redesigned before production rollout.
+Keep the flags disabled until the corresponding server-authoritative credit
+reservation and settlement flow is deployed. Apply the Butler credit migrations
+listed below before enabling Topaz or the other paid tools.
 
 Set `AI302_TASK_SECRET` to a separate, stable random secret. It encrypts and
 authenticates asynchronous 3D and video task tokens and binds each token and

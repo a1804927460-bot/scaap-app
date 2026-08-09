@@ -39,9 +39,10 @@ assert.deepStrictEqual(summary.totals, { credits: 120, generations: 3, average: 
 assert.strictEqual(JSON.stringify(summary).includes('providerCost'), false, 'Renderer normalization must discard supplier-cost fields.');
 assert.strictEqual(normalizeUsageSummary({ authenticated: false, summary: null }).authenticated, false);
 
-const sevenDays = fillUsageRange([{ date: '2026-08-08', credits: 12, requests: 1 }], '7');
+const today = new Date().toISOString().slice(0, 10);
+const sevenDays = fillUsageRange([{ date: today, credits: 12, requests: 1 }], '7');
 assert.strictEqual(sevenDays.length, 7);
-assert.deepStrictEqual(sevenDays[6], { date: '2026-08-08', credits: 12, requests: 1 });
+assert.deepStrictEqual(sevenDays[6], { date: today, credits: 12, requests: 1 });
 assert.strictEqual(fillUsageRange(sevenDays, 'all'), sevenDays);
 const trendPath = smoothUsagePath([{ x: 1, y: 2 }, { x: 3, y: 4 }, { x: 5, y: 2 }]);
 assert.match(trendPath, /^M [\s\S]* C /);
