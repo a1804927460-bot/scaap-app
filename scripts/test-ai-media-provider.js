@@ -937,7 +937,11 @@ async function testMidjourneyFlow() {
     notifyHook: '',
     state: ''
   });
+  assert.strictEqual(calls[0].options.headers['mj-api-secret'], 'secret');
+  assert.strictEqual(calls[0].options.headers.Authorization, undefined);
   assert.strictEqual(calls[1].url, 'https://api.302.ai/mj-turbo/task/mj-task-1/fetch');
+  assert.strictEqual(calls[1].options.headers['mj-api-secret'], 'secret');
+  assert.strictEqual(calls[1].options.headers.Authorization, undefined);
   assert.strictEqual(calls[2].url, 'https://cdn.test/midjourney.jpg');
 }
 

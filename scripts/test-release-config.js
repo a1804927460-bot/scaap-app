@@ -28,6 +28,8 @@ assert.match(builder, /packElevateHelper:\s*true/);
 assert.match(builder, /include:\s*build-resources\/installer\.nsh/);
 assert.match(installerInclude, /\$\{isUpdated\}[\s\S]*?taskkill\.exe[\s\S]*?\/F[\s\S]*?APP_EXECUTABLE_FILENAME/);
 assert.doesNotMatch(installerInclude, /taskkill\.exe[^\r\n]*\/T/, 'The installer must not terminate its own child process tree.');
+assert.match(installerInclude, /Get-CimInstance Win32_Process[\s\S]*?ExecutablePath[\s\S]*?\$INSTDIR\\resources\\tools\\\*[\s\S]*?Invoke-CimMethod -MethodName Terminate/);
+assert.doesNotMatch(installerInclude, /taskkill\.exe[^\r\n]*(?:soffice|ffmpeg|magick)/i, 'Bundled helpers must be terminated by install path, not a broad image-name match.');
 assert.match(workflow, /secrets\.RELEASES_TOKEN/);
 assert.match(workflow, /secrets\.CSC_LINK/);
 assert.match(workflow, /secrets\.CSC_KEY_PASSWORD/);
