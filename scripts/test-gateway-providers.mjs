@@ -138,7 +138,7 @@ globalThis.fetch = async (url, options = {}) => {
 const nanoImage = await generateMedia('image', {
   providerId: 'image-1',
   prompt: 'editorial portrait',
-  size: '2K',
+  size: 'Default',
   aspectRatio: '3:4',
   urls: []
 });
@@ -150,7 +150,7 @@ assert.equal(
 assert.equal(nanoCalls[0].options.headers.Authorization, 'Bearer ai302-secret');
 assert.equal(nanoCalls[0].options.headers['x-goog-api-key'], undefined);
 const nanoBody = JSON.parse(nanoCalls[0].options.body);
-assert.deepEqual(nanoBody.generationConfig.imageConfig, { aspectRatio: '3:4', imageSize: '2K' });
+assert.deepEqual(nanoBody.generationConfig.imageConfig, { aspectRatio: '3:4' });
 
 const gptImageCalls = [];
 globalThis.fetch = async (url, options = {}) => {

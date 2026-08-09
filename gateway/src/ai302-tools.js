@@ -3,7 +3,7 @@ import net from 'node:net';
 import { quoteTopazRetailCredits } from './tool-pricing.js';
 
 const API_ORIGIN = 'https://api.302.ai';
-const BACKGROUND_PATH = '/photoroom/v1/segment?response_format=url';
+const BACKGROUND_PATH = '/photoroom/v1/segment?response_format=original';
 const HUNYUAN_PATH = '/tencent/hunyuan3d/pro-job';
 const HYPER3D_PATH = '/302/submit/hyper3d-rodin';
 const TRIPO3D_UPLOAD_PATH = '/tripo3d/v2/openapi/upload';
@@ -1218,19 +1218,45 @@ export async function removeBackground({ imageDataUrl } = {}, options = {}) {
   form.append('format', 'png');
   form.append('channels', 'rgba');
   form.append('size', 'full');
-  const payload = await fetch302Json(BACKGROUND_PATH, {
-    method: 'POST',
-    body: form
-  }, {
-    apiKey,
-    fetchImpl: options.fetchImpl || fetch,
-    signal: options.signal
-  });
-  const resultUrl = validateAssetUrl(backgroundResultUrl(payload)).toString();
-  const png = await fetchAsset(resultUrl, MAX_BACKGROUND_OUTPUT_BYTES, {
-    fetchImpl: options.fetchImpl || fetch,
-    signal: options.signal
-  });
+  const fetchImpl = options.fetchImpl || fetch;
+  let response;
+  try {
+    response = await fetchImpl(`${API_ORIGIN}${BACKGROUND_PATH}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'image/png,application/json'
+      },
+      body: form,
+      redirect: 'error',
+      signal: composedSignal(REQUEST_TIMEOUT_MS, options.signal)
+    });
+  } catch (error) {
+    throw toolError('ai302-unavailable', 'The 302 tool service is temporarily unavailable.', 503);
+  }
+  if (!response.ok) {
+    if (response.body) await response.body.cancel().catch(() => {});
+    throw upstreamFailure(response);
+  }
+  const contentType = String(response.headers && response.headers.get('content-type') || '').toLowerCase();
+  const bytes = await limitedBuffer(response, MAX_BACKGROUND_OUTPUT_BYTES);
+  let png = bytes;
+  if (contentType.includes('application/json') || !bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
+    if (bytes.length > MAX_JSON_BYTES) {
+      throw toolError('ai302-invalid-response', 'The background-removal service returned an invalid response.', 502);
+    }
+    let payload;
+    try {
+      payload = JSON.parse(bytes.toString('utf8'));
+    } catch (error) {
+      throw toolError('ai302-invalid-response', 'The background-removal service returned an invalid response.', 502);
+    }
+    const resultUrl = validateAssetUrl(backgroundResultUrl(payload)).toString();
+    png = await fetchAsset(resultUrl, MAX_BACKGROUND_OUTPUT_BYTES, {
+      fetchImpl,
+      signal: options.signal
+    });
+  }
   validatePng(png, { requireTransparency: true });
   return png;
 }

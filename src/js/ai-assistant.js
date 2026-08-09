@@ -503,7 +503,7 @@ function syncAssistantMediaOptions() {
   resolutions.forEach((value) => {
     const option = document.createElement('option');
     option.value = value;
-    option.textContent = value;
+    option.textContent = value === 'Default' ? t('Default', '默认', '기본') : value;
     sizeSelect.appendChild(option);
   });
   sizeSelect.value = resolutions.includes(previousSize) ? previousSize : resolutions[0];

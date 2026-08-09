@@ -216,6 +216,31 @@ test('Butler Topaz accounting converts provider cost to retail credits and prese
   });
 });
 
+test('Butler Topaz accounting retries a transient reservation failure with the same request', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
+    const userId = '00000000-0000-4000-8000-000000000033';
+    const requestId = '00000000-0000-4000-8000-000000000034';
+    const bodies = [];
+    let attempt = 0;
+    const reserved = await reserveToolUsage(userId, requestId, {
+      providerId: 'topaz-video-upscale',
+      providerCost: 21,
+      credits: 63,
+      resolution: '3840x2160',
+      duration: 13
+    }, async (url, options) => {
+      attempt += 1;
+      bodies.push(JSON.parse(options.body));
+      if (attempt === 1) throw new Error('temporary network failure');
+      return jsonResponse({ ok: true, reason: 'reserved', availableCredits: 937 });
+    });
+    assert.equal(reserved.ok, true);
+    assert.equal(attempt, 2);
+    assert.deepEqual(bodies[0], bodies[1]);
+    assert.equal(bodies[0].p_request_id, requestId);
+  });
+});
+
 test('Butler fixed-price tools use the server table and never accept caller pricing or provider cost', async () => {
   assert.deepEqual(BUTLER_FIXED_RETAIL_CREDITS, {
     'background-remove': 1,

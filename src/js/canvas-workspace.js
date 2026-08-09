@@ -318,12 +318,8 @@ function showCanvasWorkspace() {
   document.getElementById('board-panel-title').textContent = active ? active.name : t('Integrated Canvas', '整合画布');
   requestAnimationFrame(() => {
     if (typeof renderBoard === 'function') renderBoard();
-    const restored = typeof restoreBoardViewport === 'function' && restoreBoardViewport(activeCanvasId());
-    if (!restored && typeof fitBoardToContent === 'function') {
-      fitBoardToContent();
-    } else if (typeof applyBoardTransform === 'function') {
-      applyBoardTransform();
-    }
+    if (typeof restoreBoardViewport === 'function') restoreBoardViewport(activeCanvasId());
+    if (typeof resetBoardZoomTo100 === 'function') resetBoardZoomTo100();
   });
 }
 

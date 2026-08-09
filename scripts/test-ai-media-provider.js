@@ -495,7 +495,7 @@ async function test302NanoBananaProFlow() {
     contents: [{ role: 'user', parts: [{ text: 'cinematic widescreen scene' }] }],
     generationConfig: {
       responseModalities: ['TEXT', 'IMAGE'],
-      imageConfig: { aspectRatio: '16:9', imageSize: '4K' }
+      imageConfig: { aspectRatio: '16:9' }
     }
   });
   assert.strictEqual(calls[1].url, 'https://cdn.test/nano-banana-pro-4k.png');

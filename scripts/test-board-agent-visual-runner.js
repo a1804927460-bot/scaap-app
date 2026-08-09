@@ -20,7 +20,7 @@ async function run() {
   fs.writeFileSync(htmlPath, `<!doctype html>
     <html data-theme="light"><head><meta charset="utf-8">
       <link rel="stylesheet" href="${themeUrl}"><link rel="stylesheet" href="${stylesUrl}">
-      <style>body{background:var(--bg-base)}#board-panel{position:fixed;inset:38px 0 0}.fixture-canvas{position:absolute;inset:0;background-image:radial-gradient(circle,var(--border-hairline) 1px,transparent 1px);background-size:28px 28px}</style>
+      <style>body{background:var(--bg-base)}#board-panel{position:fixed;inset:38px 0 0}.fixture-canvas{position:absolute;inset:0;background-image:radial-gradient(circle,var(--border-hairline) 1px,transparent 1px);background-size:28px 28px}.ai-composer{animation:none!important}</style>
     </head><body>
       <section id="board-panel" class="board-panel is-fullscreen">
         <header class="panel-header"><span class="panel-title">Project</span><div class="panel-tools"><button id="board-agent-toggle" class="pill-btn pill-btn-ghost">Messs Agent</button><span class="zoom-label">100%</span></div></header>
@@ -56,10 +56,22 @@ async function run() {
   if (full.agent.width < 300 || full.agent.right > 1440 || full.agent.bottom > 900) throw new Error(`Agent escaped viewport: ${JSON.stringify(full)}`);
   if (full.radius !== '18px') throw new Error(`Agent radius mismatch: ${full.radius}`);
   if (Math.abs((full.logo.left + full.logo.right) / 2 - (full.agent.left + full.agent.right) / 2) > 2) throw new Error(`Agent logo is not centered: ${JSON.stringify(full)}`);
-  if (full.composer.width < 780 || full.composer.height < 280) throw new Error(`Composer was not enlarged: ${JSON.stringify(full.composer)}`);
+  if (full.composer.width < 440 || full.composer.width > 620 || full.composer.height < 220) {
+    throw new Error(`Composer size is outside the compact range: ${JSON.stringify(full.composer)}`);
+  }
   const screenshotDir = path.join(root, 'test-artifacts');
   fs.mkdirSync(screenshotDir, { recursive: true });
   fs.writeFileSync(path.join(screenshotDir, 'board-agent-fullscreen.png'), (await window.webContents.capturePage()).toPNG());
+
+  window.setSize(900, 650);
+  await wait(180);
+  const smallComposer = await window.webContents.executeJavaScript(`(() => {
+    const r = document.querySelector('.ai-composer').getBoundingClientRect();
+    return { left:r.left, right:r.right, top:r.top, bottom:r.bottom, width:r.width, height:r.height };
+  })()`);
+  if (smallComposer.left < 16 || smallComposer.right > 884 || smallComposer.bottom > 650) {
+    throw new Error(`Composer escaped compact viewport: ${JSON.stringify(smallComposer)}`);
+  }
 
   const compact = await window.webContents.executeJavaScript(`(() => {
     document.getElementById('board-panel').classList.remove('is-fullscreen');

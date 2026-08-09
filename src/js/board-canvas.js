@@ -316,6 +316,10 @@ function syncMountedImageQuality() {
     const image = activeBoardImage(element);
     if (!image) continue;
     const quality = fullIds.has(id) ? 'full' : 'thumb';
+    // Keep decoded full-resolution layers for the lifetime of the mounted
+    // item. Downgrading on zoom-out and upgrading again on zoom-in makes the
+    // same image visibly pulse between sharp and soft states.
+    if (image.dataset.quality === 'full' && quality === 'thumb') continue;
     if (image.dataset.quality === quality) continue;
     transitionBoardImageQuality(element, quality);
   }
@@ -329,6 +333,10 @@ function applyBoardTransform() {
     canvas.classList.add('is-transforming');
     canvas.style.transform = boardTransform();
     canvas.style.setProperty('--board-label-scale', String(Math.min(7, Math.max(1, 1 / Board.zoom))));
+    canvas.style.setProperty(
+      '--board-selection-width',
+      `${Math.min(40, Math.max(0.2, 1.2 / Math.max(Board.zoom, 0.001)))}px`
+    );
     document.getElementById('board-zoom-label').textContent = Math.round(Board.zoom * 100) + '%';
     updateInfiniteGrid();
     markBoardInteraction();
@@ -358,6 +366,29 @@ function setBoardZoomTarget(screenPoint, factor) {
     Board.zoomLastTime = 0;
     Board.zoomFrame = requestAnimationFrame(stepBoardZoom);
   }
+}
+
+function resetBoardZoomTo100() {
+  const viewport = document.getElementById('board-viewport');
+  if (!viewport) return;
+  if (Board.zoomFrame) cancelAnimationFrame(Board.zoomFrame);
+  Board.zoomFrame = 0;
+  Board.zoomTarget = null;
+  Board.zoomLastTime = 0;
+
+  const rect = viewport.getBoundingClientRect();
+  const currentZoom = Number.isFinite(Board.zoom) && Board.zoom > 0 ? Board.zoom : 1;
+  const resetView = BoardEngine.zoomAtPoint(
+    { panX: Board.panX, panY: Board.panY, zoom: currentZoom },
+    { x: rect.width / 2, y: rect.height / 2 },
+    1 / currentZoom,
+    { min: 1, max: 1 }
+  );
+  Board.panX = resetView.panX;
+  Board.panY = resetView.panY;
+  Board.zoom = 1;
+  Board.zoomLod = null;
+  applyBoardTransform();
 }
 
 function setBoardPanTarget(deltaX, deltaY) {
@@ -1620,7 +1651,7 @@ function initBoardCanvas() {
   const viewport = document.getElementById('board-viewport');
   restoreBoardViewport();
   ensureBoardOverviewCanvas();
-  applyBoardTransform();
+  resetBoardZoomTo100();
   reconcileBoardViewport(true);
   Board.resizeObserver = new ResizeObserver(() => {
     Board.lastMountHash = null;
@@ -1805,9 +1836,10 @@ function initBoardCanvas() {
       : (e.deltaMode === 2 ? Math.max(1, viewport.clientHeight) : 1);
     const deltaX = Math.max(-BOARD_WHEEL_MAX_DELTA, Math.min(BOARD_WHEEL_MAX_DELTA, e.deltaX * modeScale));
     const deltaY = Math.max(-BOARD_WHEEL_MAX_DELTA, Math.min(BOARD_WHEEL_MAX_DELTA, e.deltaY * modeScale));
-    if (!(e.ctrlKey || e.metaKey)) {
+    const horizontalPan = e.shiftKey || Math.abs(deltaX) > Math.abs(deltaY) * 1.2;
+    if (horizontalPan && !(e.ctrlKey || e.metaKey)) {
       const horizontalDelta = e.shiftKey && Math.abs(deltaX) < 0.01 ? deltaY : deltaX;
-      setBoardPanTarget(horizontalDelta, e.shiftKey ? 0 : deltaY);
+      setBoardPanTarget(horizontalDelta, 0);
       return;
     }
     const rect = viewport.getBoundingClientRect();
@@ -2144,8 +2176,8 @@ const SHORTCUTS_TEXT = [
   ['Ctrl/Cmd + A', 'Select all board items', '选择全部画布项目'],
   ['Delete', 'Remove selected items from board', '移除所选画布项目'],
   ['Esc', 'Clear selection or exit drawing', '清除选择或退出绘制'],
-  ['Mouse wheel', 'Pan board', '滚动画布'],
-  ['Ctrl/Cmd + wheel', 'Zoom board', '缩放画布'],
+  ['Mouse wheel', 'Zoom board', '缩放画布'],
+  ['Shift + wheel', 'Pan board', '滚动画布'],
   ['Middle drag', 'Pan board', '平移画布']
 ];
 
@@ -2217,8 +2249,8 @@ function renderShortcutsPopover(pop) {
     ['Ctrl/Cmd + A', 'Select all board items', '选择全部画布项目'],
     ['Delete', 'Remove selected items from board', '移除所选画布项目'],
     ['Esc', 'Clear selection or exit drawing', '清除选择或退出绘制'],
-    ['Mouse wheel', 'Pan board', '滚动画布'],
-    ['Ctrl/Cmd + wheel', 'Zoom board', '缩放画布'],
+    ['Mouse wheel', 'Zoom board', '缩放画布'],
+    ['Shift + wheel', 'Pan board', '滚动画布'],
     ['Middle drag', 'Pan board', '平移画布']
   ];
   pop.innerHTML = '<div class="shortcuts-title">' + t('Shortcuts', '快捷键') + '</div>' + shortcuts.map(([key, en, zh]) =>
@@ -2241,6 +2273,13 @@ function refreshBoardLanguage() {
     locateButton.title = t('Locate images', '定位图片');
     locateButton.setAttribute('aria-label', locateButton.title);
   }
+  const resetZoomTitle = t('Reset to 100%', '重置为 100%', '100%로 재설정');
+  ['board-zoom-label', 'board-bottom-zoom-label'].forEach((id) => {
+    const button = document.getElementById(id);
+    if (!button) return;
+    button.title = resetZoomTitle;
+    button.setAttribute('aria-label', resetZoomTitle);
+  });
 
   const composer = document.getElementById('ai-image-popover');
   if (composer && typeof composer._refreshLanguage === 'function') composer._refreshLanguage();
@@ -3310,7 +3349,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       const button = document.createElement('button');
       button.type = 'button';
       button.dataset.value = value;
-      button.textContent = value;
+      button.textContent = value === 'Default' ? t('Default', '默认', '기본') : value;
       sizeGroup.appendChild(button);
     });
     const durationRange = pop.querySelector('.ai-duration-range');
@@ -4135,6 +4174,8 @@ function initBoardBottomBar() {
 
   document.getElementById('board-bottom-zoom-out').addEventListener('click', () => document.getElementById('board-zoom-out').click());
   document.getElementById('board-bottom-zoom-in').addEventListener('click', () => document.getElementById('board-zoom-in').click());
+  document.getElementById('board-bottom-zoom-label').addEventListener('click', resetBoardZoomTo100);
+  document.getElementById('board-zoom-label').addEventListener('click', resetBoardZoomTo100);
   document.getElementById('board-bottom-fullscreen-toggle').addEventListener('click', toggleBoardFullscreen);
 
   const origZoomLabel = document.getElementById('board-zoom-label');

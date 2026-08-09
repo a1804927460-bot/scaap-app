@@ -117,13 +117,12 @@ test('image data URLs are strict and metadata is removed without corrupting PNG 
   );
 });
 
-test('background removal uses fixed upstream options and returns only a validated transparent PNG', async () => {
+test('background removal uses fixed upstream options and accepts a direct transparent PNG', async () => {
   const input = rgbaPng();
   const output = rgbaPng();
   const calls = [];
   const fetchMock = async (url, options) => {
     calls.push({ url: String(url), options });
-    if (calls.length === 1) return jsonResponse({ url: 'https://file.302.ai/results/removed.png' });
     return new Response(output, { status: 200, headers: { 'Content-Type': 'image/png' } });
   };
   const result = await removeBackground({ imageDataUrl: imageDataUrl(input) }, {
@@ -131,12 +130,12 @@ test('background removal uses fixed upstream options and returns only a validate
     fetchImpl: fetchMock
   });
   assert.deepEqual(result, output);
-  assert.equal(calls[0].url, 'https://api.302.ai/photoroom/v1/segment?response_format=url');
+  assert.equal(calls[0].url, 'https://api.302.ai/photoroom/v1/segment?response_format=original');
   assert.equal(calls[0].options.headers.Authorization, 'Bearer test-302-key');
   assert.equal(calls[0].options.body.get('format'), 'png');
   assert.equal(calls[0].options.body.get('channels'), 'rgba');
   assert.equal(calls[0].options.body.get('size'), 'full');
-  assert.equal(calls[1].options.headers.Authorization, undefined);
+  assert.equal(calls.length, 1);
   assert.equal(JSON.stringify(result).includes('test-302-key'), false);
 });
 
@@ -703,7 +702,7 @@ test('Topaz video inputs and output options fail closed', () => {
   assert.throws(() => quoteTopazRetailCredits(1.5), { code: 'invalid-provider-cost' });
 });
 
-test('unsafe redirects and missing public relay configuration fail closed', async () => {
+test('unsafe background-result redirects and missing public relay configuration fail closed', async () => {
   await assert.rejects(
     () => removeBackground({ imageDataUrl: imageDataUrl(rgbaPng()) }, {
       apiKey: 'test-key',

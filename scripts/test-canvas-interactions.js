@@ -42,12 +42,34 @@ assert.match(
 assert.match(boardSource, /viewport\.addEventListener\('click',[\s\S]*?boardImageItemAtClientPoint[\s\S]*?toggleAiComposerBoardReference/);
 assert.match(
   boardSource,
-  /viewport\.addEventListener\('wheel',[\s\S]*?!\(e\.ctrlKey \|\| e\.metaKey\)[\s\S]*?setBoardPanTarget[\s\S]*?setBoardZoomTarget/,
-  'Plain wheel input must pan smoothly while Ctrl/Cmd wheel keeps pointer-centered zoom.'
+  /viewport\.addEventListener\('wheel',[\s\S]*?const horizontalPan = e\.shiftKey[\s\S]*?setBoardPanTarget[\s\S]*?setBoardZoomTarget/,
+  'Plain vertical wheel input must zoom around the pointer while Shift or horizontal trackpad input pans.'
 );
 assert.match(boardSource, /const BOARD_WHEEL_PAN_GAIN = 0\.78;/);
 assert.match(boardSource, /const BOARD_WHEEL_ZOOM_RATE = 0\.00125;/);
 assert.match(boardSource, /function setBoardPanTarget[\s\S]*?requestAnimationFrame\(stepBoardZoom\)/);
+assert.match(
+  boardSource,
+  /function resetBoardZoomTo100[\s\S]*?cancelAnimationFrame\(Board\.zoomFrame\)[\s\S]*?BoardEngine\.zoomAtPoint[\s\S]*?Board\.zoom = 1;[\s\S]*?applyBoardTransform\(\);/,
+  'Resetting the board must settle pending animation and return to an exact 100% around the viewport center.'
+);
+assert.match(
+  boardSource,
+  /board-bottom-zoom-label'\)\.addEventListener\('click', resetBoardZoomTo100\)[\s\S]*?board-zoom-label'\)\.addEventListener\('click', resetBoardZoomTo100\)/,
+  'Both visible zoom percentages must provide a direct 100% reset.'
+);
+assert.match(indexHtml, /id="board-zoom-label"[^>]*zoom-reset-button[^>]*Reset to 100%/);
+assert.match(indexHtml, /id="board-bottom-zoom-label"[^>]*zoom-reset-button[^>]*Reset to 100%/);
+assert.match(
+  boardSource,
+  /function initBoardCanvas[\s\S]*?restoreBoardViewport\(\);[\s\S]*?resetBoardZoomTo100\(\);/,
+  'The board must initialize at 100% even when a previous zoom was saved.'
+);
+assert.match(
+  workspaceSource,
+  /function showCanvasWorkspace[\s\S]*?restoreBoardViewport\(activeCanvasId\(\)\);[\s\S]*?resetBoardZoomTo100\(\);/,
+  'Returning from the canvas library must always enter the canvas at 100%.'
+);
 assert.match(
   boardSource,
   /function enterBoardFullscreen[\s\S]*?setCanvasAgentOpen\(true\)[\s\S]*?function exitBoardFullscreen[\s\S]*?setCanvasAgentOpen\(false\)/,
@@ -90,6 +112,11 @@ assert.match(
   /Board\.isPanning \|\| Board\.zoomFrame \|\| Date\.now\(\) < Board\.interactingUntil/,
   'Image LOD changes must remain frozen for the full pan/zoom interaction.'
 );
+assert.match(
+  qualitySource,
+  /image\.dataset\.quality === 'full' && quality === 'thumb'/,
+  'Decoded full-resolution images must not downgrade and flash during later zoom changes.'
+);
 const transformSource = boardSource.slice(
   boardSource.indexOf('function applyBoardTransform'),
   boardSource.indexOf('function setBoardZoomTarget')
@@ -124,5 +151,8 @@ assert.doesNotMatch(
   /\.board-canvas\.is-transforming \.board-image-layer/,
   'Individual image layers must not be promoted and demoted during every interaction.'
 );
+assert.match(boardSource, /--board-selection-width[\s\S]*?1\.2 \/ Math\.max\(Board\.zoom/);
+assert.match(boardStyles, /\.board-item\.is-selected \{[\s\S]*?outline:\s*var\(--board-selection-width/);
+assert.match(boardStyles, /width:\s*clamp\(440px, 52%, 620px\)/, 'The generation composer must keep the requested compact footprint.');
 
 process.stdout.write('Canvas interaction tests passed.\n');

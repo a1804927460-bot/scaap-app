@@ -377,7 +377,7 @@ export async function reserveToolUsage(userId, requestId, request = {}, fetchImp
       developmentBypass: true
     };
   }
-  const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/reserve_ai_tool_credits`, {
+  const requestOptions = {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -388,10 +388,25 @@ export async function reserveToolUsage(userId, requestId, request = {}, fetchImp
       p_provider_cost: providerCost,
       p_resolution: resolution,
       p_duration: duration
-    }),
-    signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
-  });
-  const payload = await responsePayload(response);
+    })
+  };
+  let response;
+  let payload;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/reserve_ai_tool_credits`, {
+        ...requestOptions,
+        signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
+      });
+      payload = await responsePayload(response);
+      if (response.ok || response.status < 500 || attempt === 1) break;
+    } catch (error) {
+      if (attempt === 1) {
+        throw serviceError('credit-service-failed', 'Could not reserve Butler tool credits.');
+      }
+    }
+  }
+  if (!response) throw serviceError('credit-service-failed', 'Could not reserve Butler tool credits.');
   if (!response.ok) {
     const code = isMissingCreditRpc(response, payload) ? 'credit-schema-missing' : 'credit-service-failed';
     throw serviceError(code, 'Could not reserve Butler tool credits.');

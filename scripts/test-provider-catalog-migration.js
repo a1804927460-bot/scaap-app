@@ -43,7 +43,7 @@ assert.deepEqual(
 const nanoBananaPro = media.imageProviders.find((provider) => provider.id === 'image-1');
 assert.ok(nanoBananaPro);
 assert.equal(nanoBananaPro.endpoint, 'https://api.302.ai/google/v1/models/gemini-3-pro-image-preview');
-assert.deepEqual(nanoBananaPro.capabilities.sizes, ['1K', '2K', '4K']);
+assert.deepEqual(nanoBananaPro.capabilities.sizes, ['Default']);
 assert.equal(require('../lib/provider-catalog').catalogProvider('image-1').keyEnv, 'AI302_KEY');
 const gptImage2 = media.imageProviders.find((provider) => provider.id === 'image-6');
 assert.ok(gptImage2);
