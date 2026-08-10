@@ -1729,6 +1729,59 @@ function createBoardButlerMenuButton(file, action, icon, label, onClick, options
   return button;
 }
 
+function bindBoardButlerHoverSubmenu(group, trigger) {
+  let closeTimer = null;
+  const applyOpenState = (open) => {
+    group.classList.toggle('is-open', open);
+    trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  const cancelClose = () => {
+    if (closeTimer === null) return;
+    window.clearTimeout(closeTimer);
+    closeTimer = null;
+  };
+  const setOpen = (open, immediate = false) => {
+    cancelClose();
+    if (open) {
+      group.parentElement?.querySelectorAll('.board-butler-submenu-group.is-open').forEach((otherGroup) => {
+        if (otherGroup !== group && typeof otherGroup._setButlerSubmenuOpen === 'function') {
+          otherGroup._setButlerSubmenuOpen(false, true);
+        }
+      });
+      applyOpenState(true);
+      return;
+    }
+    if (immediate) {
+      applyOpenState(false);
+      return;
+    }
+    closeTimer = window.setTimeout(() => {
+      closeTimer = null;
+      if (group.matches(':hover') || group.contains(document.activeElement)) return;
+      applyOpenState(false);
+    }, 120);
+  };
+
+  group._setButlerSubmenuOpen = setOpen;
+  group.addEventListener('mouseenter', () => setOpen(true));
+  group.addEventListener('mouseleave', () => setOpen(false));
+  group.addEventListener('focusin', () => setOpen(true));
+  group.addEventListener('focusout', (event) => {
+    if (!group.contains(event.relatedTarget)) setOpen(false);
+  });
+  trigger.addEventListener('click', (event) => {
+    if (trigger.disabled) return;
+    event.preventDefault();
+    setOpen(true);
+  });
+  trigger.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    setOpen(true);
+    group.querySelector('.board-butler-submenu [role="menuitem"]')?.focus();
+  });
+}
+
 function openBoardButlerMenu(trigger, file, item) {
   if (boardButlerMenu && boardButlerMenu._trigger === trigger) {
     closeBoardButlerMenu();
@@ -1839,20 +1892,7 @@ function openBoardButlerMenu(trigger, file, item) {
     });
     topazMenu.appendChild(button);
   });
-  const setTopazMenuOpen = (open) => {
-    topazGroup.classList.toggle('is-open', open);
-    topazTrigger.setAttribute('aria-expanded', open ? 'true' : 'false');
-  };
-  topazTrigger.addEventListener('click', () => {
-    if (topazTrigger.disabled) return;
-    const pinned = topazGroup.dataset.pinned !== 'true';
-    topazGroup.dataset.pinned = pinned ? 'true' : 'false';
-    setTopazMenuOpen(pinned);
-  });
-  topazGroup.addEventListener('mouseenter', () => setTopazMenuOpen(true));
-  topazGroup.addEventListener('mouseleave', () => {
-    if (topazGroup.dataset.pinned !== 'true') setTopazMenuOpen(false);
-  });
+  bindBoardButlerHoverSubmenu(topazGroup, topazTrigger);
   topazGroup.append(topazTrigger, topazMenu);
   menu.appendChild(topazGroup);
 
@@ -1889,20 +1929,7 @@ function openBoardButlerMenu(trigger, file, item) {
   modelMenu.querySelectorAll('.board-butler-model-option').forEach((button) => {
     button.dataset.fileId = String(file.id);
   });
-  const setModelMenuOpen = (open) => {
-    modelGroup.classList.toggle('is-open', open);
-    modelTrigger.setAttribute('aria-expanded', open ? 'true' : 'false');
-  };
-  modelTrigger.addEventListener('click', () => {
-    if (modelTrigger.disabled) return;
-    const pinned = modelGroup.dataset.pinned !== 'true';
-    modelGroup.dataset.pinned = pinned ? 'true' : 'false';
-    setModelMenuOpen(pinned);
-  });
-  modelGroup.addEventListener('mouseenter', () => setModelMenuOpen(true));
-  modelGroup.addEventListener('mouseleave', () => {
-    if (modelGroup.dataset.pinned !== 'true') setModelMenuOpen(false);
-  });
+  bindBoardButlerHoverSubmenu(modelGroup, modelTrigger);
   modelMenu.querySelector('[data-butler-action="generate3d:hunyuan3d"]').addEventListener('click', (event) => {
     if (!event.currentTarget.disabled) openBoardButlerThreeDPanel(event.currentTarget, file, item, 'hunyuan3d');
   });

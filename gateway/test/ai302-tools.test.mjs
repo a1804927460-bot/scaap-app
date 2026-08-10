@@ -160,6 +160,17 @@ test('302 authorization failures are explicit and background options follow the 
   assert.equal(submittedForm.get('despill'), 'false');
 });
 
+test('background removal distinguishes a provider timeout from a transport outage', async () => {
+  await assert.rejects(
+    () => removeBackground({ imageDataUrl: imageDataUrl(rgbaPng()) }, {
+      apiKey: 'timeout-background-key',
+      signal: AbortSignal.abort(new DOMException('timed out', 'TimeoutError')),
+      fetchImpl: async (_url, options) => { throw options.signal.reason; }
+    }),
+    { code: 'ai302-timeout', status: 504 }
+  );
+});
+
 test('provider-specific 3D options reject unsupported combinations before submission', () => {
   assert.throws(
     () => normalizeThreeDOptions('hunyuan3d', { model: '3.1', generateType: 'LowPoly' }),

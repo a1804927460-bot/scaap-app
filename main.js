@@ -3286,6 +3286,8 @@ function butlerFailure(error, fallbackMessage) {
     'ai302-unauthorized': 'The 302 gateway credential is invalid. Ask the administrator to update it.',
     'ai302-balance-exhausted': 'The 302 account balance is insufficient.',
     'ai302-rate-limited': 'The 302 service is busy. Please try again shortly.',
+    'ai302-timeout': 'The 302 service did not finish in time. This request was not submitted again automatically.',
+    'ai302-unavailable': 'The 302 service is temporarily unavailable. Please try again later.',
     'ai302-upstream-error': 'The 302 service rejected this request.',
     'tool-public-url-not-configured': 'The gateway public URL is required for this tool.',
     'media-too-large': 'The generated result exceeds the safe download size.',

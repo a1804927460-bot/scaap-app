@@ -272,6 +272,18 @@ test('image tools report a rejected 302 key without exposing it', async () => {
   );
 });
 
+test('image tools distinguish a provider timeout from a transport outage', async () => {
+  await assert.rejects(
+    () => superUpscaleImage({ imageDataUrl: imageDataUrl(rgbaPng()) }, {
+      apiKey: 'timeout-image-key',
+      publicBaseUrl: 'https://gateway.example.com',
+      signal: AbortSignal.abort(new DOMException('timed out', 'TimeoutError')),
+      fetchImpl: async (_url, options) => { throw options.signal.reason; }
+    }),
+    { code: 'ai302-timeout', status: 504 }
+  );
+});
+
 test('image tools accept wrapped 302 task and synchronous result payloads', async () => {
   const source = rgbaPng();
   const created = await submitQwenImageEdit({

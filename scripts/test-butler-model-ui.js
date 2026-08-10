@@ -26,7 +26,9 @@ assert.match(boardMedia, /function openBoardButlerThreeDPanel[\s\S]*butler-3d-qu
 assert.match(boardMedia, /generate3d:hunyuan3d[\s\S]*generate3d:hyper3d[\s\S]*generate3d:tripo3d/, 'Hunyuan, Hyper3D and Tripo3D must keep independent task state.');
 assert.match(boardMedia, /api\.get3dStatus\(taskToken\)[\s\S]*api\.download3d\(taskToken\)/, '3D jobs must poll with short requests before downloading.');
 assert.match(boardMedia, /role', 'toolbar'/, 'Butler tools must expand as a horizontal toolbar.');
-assert.match(boardMedia, /modelGroup\.addEventListener\('mouseenter'/, 'The 3D provider layer must open on hover.');
+assert.match(boardMedia, /function bindBoardButlerHoverSubmenu[\s\S]*group\.addEventListener\('mouseenter',[\s\S]*group\.addEventListener\('mouseleave'/, 'Butler secondary menus must open on hover and close after leaving.');
+assert.match(boardMedia, /bindBoardButlerHoverSubmenu\(topazGroup, topazTrigger\)[\s\S]*bindBoardButlerHoverSubmenu\(modelGroup, modelTrigger\)/, 'Topaz and 3D must share hover-first submenu behavior.');
+assert.doesNotMatch(boardMedia, /dataset\.pinned/, 'Butler secondary menus must not require click-pinning before choosing an option.');
 assert.match(boardMedia, /event\.key === 'Escape'[\s\S]*closeBoardButlerMenu/, 'The Butler toolbar must close with Escape.');
 ['imageEdit', 'imageLayer', 'imageUpscale', 'eraseObject'].forEach((action) => {
   assert.match(boardMedia, new RegExp(`${action}: Object\\.freeze`), `${action} must have an explicit bridge hook.`);

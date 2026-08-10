@@ -10,7 +10,8 @@ const TRIPO3D_UPLOAD_PATH = '/tripo3d/v2/openapi/upload';
 const TRIPO3D_TASK_PATH = '/tripo3d/v2/openapi/task';
 const TOPAZ_VIDEO_UPLOAD_PATH = '/topazlabs/video/upload';
 const TOPAZ_VIDEO_STATUS_PATH = '/topazlabs/video';
-const REQUEST_TIMEOUT_MS = 45_000;
+const REQUEST_TIMEOUT_MS = 2 * 60_000;
+const LONG_RUNNING_REQUEST_TIMEOUT_MS = 10 * 60_000;
 const STATUS_TIMEOUT_MS = 20_000;
 const ASSET_TIMEOUT_MS = 90_000;
 const MAX_JSON_BYTES = 1024 * 1024;
@@ -656,6 +657,21 @@ function upstreamFailure(response) {
   return error;
 }
 
+function providerTransportFailure(error) {
+  const timedOut = error && (
+    error.name === 'TimeoutError'
+    || error.code === 'ABORT_ERR'
+    || error.cause && error.cause.name === 'TimeoutError'
+  );
+  return timedOut
+    ? toolError(
+      'ai302-timeout',
+      'The 302 tool is still processing or did not respond in time. The same request will not be submitted again automatically.',
+      504
+    )
+    : toolError('ai302-unavailable', 'The 302 tool service is temporarily unavailable.', 503);
+}
+
 async function fetch302Json(path, init, { apiKey, fetchImpl, timeoutMs = REQUEST_TIMEOUT_MS, signal } = {}) {
   let response;
   try {
@@ -670,7 +686,7 @@ async function fetch302Json(path, init, { apiKey, fetchImpl, timeoutMs = REQUEST
       signal: composedSignal(timeoutMs, signal)
     });
   } catch (error) {
-    throw toolError('ai302-unavailable', 'The 302 tool service is temporarily unavailable.', 503);
+    throw providerTransportFailure(error);
   }
   if (!response.ok) {
     if (response.body) await response.body.cancel().catch(() => {});
@@ -1379,10 +1395,10 @@ export async function removeBackground({ imageDataUrl, toolOptions } = {}, optio
       },
       body: form,
       redirect: 'error',
-      signal: composedSignal(REQUEST_TIMEOUT_MS, options.signal)
+      signal: composedSignal(LONG_RUNNING_REQUEST_TIMEOUT_MS, options.signal)
     });
   } catch (error) {
-    throw toolError('ai302-unavailable', 'The 302 tool service is temporarily unavailable.', 503);
+    throw providerTransportFailure(error);
   }
   if (!response.ok) {
     if (response.body) await response.body.cancel().catch(() => {});
@@ -1583,7 +1599,8 @@ export async function createVideoUpscaleTask({ videoDataUrl, toolOptions, userId
     }, {
       apiKey,
       fetchImpl: options.fetchImpl || fetch,
-      signal: options.signal
+      signal: options.signal,
+      timeoutMs: LONG_RUNNING_REQUEST_TIMEOUT_MS
     });
     const result = topazResponseObject(payload);
     const providerJobId = String(result.requestId || result.request_id || '').trim();

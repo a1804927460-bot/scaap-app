@@ -24,7 +24,8 @@ const TOPAZ_IMAGE_PATHS = Object.freeze({
 });
 const TOPAZ_STATUS_PATH = '/topazlabs/image/v1/status';
 const TOPAZ_DOWNLOAD_PATH = '/topazlabs/image/v1/download';
-const REQUEST_TIMEOUT_MS = 45_000;
+const REQUEST_TIMEOUT_MS = 2 * 60_000;
+const LONG_RUNNING_REQUEST_TIMEOUT_MS = 10 * 60_000;
 const STATUS_TIMEOUT_MS = 20_000;
 const DOWNLOAD_TIMEOUT_MS = 90_000;
 const MAX_JSON_BYTES = 1024 * 1024;
@@ -115,6 +116,21 @@ function upstreamFailure(response) {
   return error;
 }
 
+function providerTransportFailure(error) {
+  const timedOut = error && (
+    error.name === 'TimeoutError'
+    || error.code === 'ABORT_ERR'
+    || error.cause && error.cause.name === 'TimeoutError'
+  );
+  return timedOut
+    ? imageToolError(
+      'ai302-timeout',
+      'The 302 tool is still processing or did not respond in time. The same request will not be submitted again automatically.',
+      504
+    )
+    : imageToolError('ai302-unavailable', 'The 302 tool service is temporarily unavailable.', 503);
+}
+
 async function fetch302Json(path, init, dependencies) {
   let response;
   try {
@@ -129,7 +145,7 @@ async function fetch302Json(path, init, dependencies) {
       signal: composedSignal(dependencies.timeoutMs || REQUEST_TIMEOUT_MS, dependencies.signal)
     });
   } catch (error) {
-    throw imageToolError('ai302-unavailable', 'The 302 tool service is temporarily unavailable.', 503);
+    throw providerTransportFailure(error);
   }
   if (!response.ok) {
     if (response.body) await response.body.cancel().catch(() => {});
@@ -276,7 +292,7 @@ function synchronousResult(payload) {
   };
 }
 
-function dependencies(options = {}, { status = false } = {}) {
+function dependencies(options = {}, { status = false, longRunning = false } = {}) {
   const apiKey = configuredApiKey(options.apiKey);
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   if (typeof fetchImpl !== 'function') {
@@ -286,7 +302,11 @@ function dependencies(options = {}, { status = false } = {}) {
     apiKey,
     fetchImpl,
     signal: options.signal,
-    timeoutMs: status ? STATUS_TIMEOUT_MS : REQUEST_TIMEOUT_MS
+    timeoutMs: status
+      ? STATUS_TIMEOUT_MS
+      : longRunning
+        ? LONG_RUNNING_REQUEST_TIMEOUT_MS
+        : REQUEST_TIMEOUT_MS
   };
 }
 
@@ -708,7 +728,7 @@ function normalizeUpscaleOptions(value = {}) {
 }
 
 export async function superUpscaleImage({ imageDataUrl, toolOptions } = {}, options = {}) {
-  const requestDependencies = dependencies(options);
+  const requestDependencies = dependencies(options, { longRunning: true });
   const relays = createRelays([imageDataUrl], options);
   try {
     const payload = await fetch302Json(SUPER_UPSCALE_PATH, {
@@ -731,7 +751,7 @@ export async function eraseImageObjects({ imageDataUrl, maskImageDataUrl } = {},
   if (mask.mime !== 'image/png') {
     throw imageToolError('invalid-mask-image', 'The object-removal mask must be a PNG image.', 400);
   }
-  const requestDependencies = dependencies(options);
+  const requestDependencies = dependencies(options, { longRunning: true });
   const form = new FormData();
   form.append('image_url', new Blob([image.buffer], { type: image.mime }), `image.${image.extension}`);
   form.append('mask_image_url', new Blob([mask.buffer], { type: mask.mime }), 'mask.png');

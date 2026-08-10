@@ -171,7 +171,6 @@ async function captureButlerLayout(window, label, width, height) {
     card.querySelector('.board-butler-trigger').click();
     const modelTrigger = document.querySelector('.board-butler-menu-item.has-submenu');
     const modelGroup = modelTrigger.closest('.board-butler-model-group');
-    modelTrigger.click();
     modelGroup.dispatchEvent(new MouseEvent('mouseenter'));
   })()`);
   await wait(180);
@@ -189,7 +188,7 @@ async function captureButlerLayout(window, label, width, height) {
       menu: toRect(document.querySelector('.board-butler-menu')),
       modelMenu: toRect(document.querySelector('.board-butler-model-menu')),
       modelMenuVisible: getComputedStyle(document.querySelector('.board-butler-model-menu')).visibility,
-      clickExpanded: modelTrigger.getAttribute('aria-expanded'),
+      hoverExpanded: modelTrigger.getAttribute('aria-expanded'),
       modelGroupClass: modelGroup.className
     };
   })()`);
@@ -199,8 +198,8 @@ async function captureButlerLayout(window, label, width, height) {
       throw new Error(`${label} Butler ${key} extends outside the viewport: ${JSON.stringify(layout)}`);
     }
   }
-  if (layout.clickExpanded !== 'true' || layout.modelMenuVisible !== 'visible') {
-    throw new Error(`${label} 3D provider menu did not open: ${JSON.stringify(layout)}.`);
+  if (layout.hoverExpanded !== 'true' || layout.modelMenuVisible !== 'visible') {
+    throw new Error(`${label} secondary menu did not open on hover: ${JSON.stringify(layout)}.`);
   }
   const screenshotDir = String(process.env.MESSS_MODEL_VIEWER_SCREENSHOT_DIR || '').trim();
   if (screenshotDir) {
