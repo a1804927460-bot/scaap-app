@@ -333,6 +333,14 @@ function boardButlerError(result, fallback) {
   return error;
 }
 
+function isTransientBoardButlerStatusFailure(result) {
+  const reason = String(result && (result.reason || result.errorCode || result.code) || '').trim().toLowerCase();
+  return [
+    'ai302-invalid-response', 'ai302-upstream-error', 'ai302-timeout',
+    'ai302-unavailable', 'gateway-request-failed', 'rate-limited'
+  ].includes(reason);
+}
+
 function boardButlerPollDelay(value) {
   const delay = Number(value);
   return Math.max(800, Math.min(10000, Number.isFinite(delay) ? delay : 2400));
@@ -1667,6 +1675,7 @@ async function runBoardButlerGenerate3d(file, item, providerId, options = {}) {
     let status = String(created.status || 'queued').toLowerCase();
     let retryAfterMs = boardButlerPollDelay(created.retryAfterMs);
     let lastResult = created;
+    let transientStatusFailures = 0;
     for (let attempt = 0; status !== 'succeeded' && attempt < BOARD_BUTLER_MAX_POLLS; attempt += 1) {
       if (status === 'failed') {
         throw boardButlerError(lastResult, t('3D generation failed.', '3D 生成失败。', '3D 생성에 실패했습니다.'));
@@ -1676,8 +1685,14 @@ async function runBoardButlerGenerate3d(file, item, providerId, options = {}) {
       await waitForBoardButlerPoll(retryAfterMs);
       lastResult = await api.get3dStatus(taskToken);
       if (!lastResult || !lastResult.ok) {
+        if (isTransientBoardButlerStatusFailure(lastResult) && transientStatusFailures < 6) {
+          transientStatusFailures += 1;
+          retryAfterMs = Math.min(10000, 1200 * (2 ** Math.min(3, transientStatusFailures)));
+          continue;
+        }
         throw boardButlerError(lastResult, t('Could not check 3D generation.', '无法查询 3D 生成进度。', '3D 생성 상태를 확인하지 못했습니다.'));
       }
+      transientStatusFailures = 0;
       status = String(lastResult.status || 'processing').toLowerCase();
       retryAfterMs = boardButlerPollDelay(lastResult.retryAfterMs);
     }

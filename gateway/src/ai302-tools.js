@@ -33,10 +33,22 @@ const ALLOWED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const ALLOWED_VIDEO_MIME = new Set(['video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska']);
 const THREE_D_PROVIDERS = new Set(['hunyuan3d', 'hyper3d', 'tripo3d']);
 const TOPAZ_VIDEO_PROVIDER = 'topaz-video-upscale';
-const QUEUED_STATES = new Set(['CREATED', 'IN_QUEUE', 'PENDING', 'QUEUED', 'QUEUEING', 'WAIT', 'WAITING']);
-const PROCESSING_STATES = new Set(['PROCESSING', 'RUNNING', 'RUN', 'IN_PROGRESS', 'GENERATING']);
-const SUCCESS_STATES = new Set(['DONE', 'SUCCESS', 'SUCCEEDED', 'COMPLETED']);
-const FAILURE_STATES = new Set(['FAIL', 'FAILED', 'ERROR', 'CANCELED', 'CANCELLED', 'EXPIRED']);
+const QUEUED_STATES = new Set([
+  'ACCEPTED', 'CREATED', 'IN_QUEUE', 'PENDING', 'QUEUED', 'QUEUEING',
+  'SUBMIT', 'SUBMITTED', 'WAIT', 'WAITING'
+]);
+const PROCESSING_STATES = new Set([
+  'EXECUTING', 'GENERATE', 'GENERATING', 'IN_PROGRESS', 'PROCESSING',
+  'RUN', 'RUNNING'
+]);
+const SUCCESS_STATES = new Set([
+  'COMPLETE', 'COMPLETED', 'DONE', 'FINISH', 'FINISHED', 'READY',
+  'SUCCESS', 'SUCCEEDED'
+]);
+const FAILURE_STATES = new Set([
+  'ABORTED', 'CANCELED', 'CANCELLED', 'ERROR', 'EXPIRED', 'FAIL',
+  'FAILED', 'REJECTED'
+]);
 const TOPAZ_VIDEO_FILTER_MODELS = new Set([
   'aaa-9', 'ahq-12', 'alq-13', 'alqs-2', 'amq-13', 'amqs-2', 'ddv-3',
   'dtd-4', 'dtds-2', 'dtv-4', 'dtvs-2', 'gcg-5', 'ghq-5', 'iris-2',
@@ -751,16 +763,38 @@ function nestedResponseObject(payload, predicate, message = 'The 302 tool servic
 function responseObject(payload) {
   return nestedResponseObject(
     payload,
-    (value) => ['JobId', 'Status', 'ResultFile3Ds', 'ErrorCode'].some((key) => Object.hasOwn(value, key))
+    (value) => [
+      'JobId', 'jobId', 'job_id', 'Status', 'status', 'ResultFile3Ds',
+      'resultFile3Ds', 'ErrorCode', 'errorCode', 'ErrorMessage',
+      'errorMessage', 'RequestId', 'requestId'
+    ].some((key) => Object.hasOwn(value, key))
   );
 }
 
-function hyper3dResponseObject(payload) {
-  return nestedResponseObject(
+function hyper3dResponseObject(payload, { terminalOnBusinessError = false } = {}) {
+  const topLevelCode = payload && Object.hasOwn(payload, 'code') ? String(payload.code).trim() : '';
+  if (topLevelCode && !['0', '200'].includes(topLevelCode)) {
+    if (terminalOnBusinessError) return { status: 'failed', error_code: topLevelCode };
+    throw toolError('ai302-upstream-error', 'The Hyper3D service rejected the request.', 502);
+  }
+  const response = nestedResponseObject(
     payload,
-    (value) => ['request_id', 'requestId', 'task_id', 'taskId', 'status', 'model_mesh'].some((key) => Object.hasOwn(value, key)),
+    (value) => [
+      'request_id', 'requestId', 'task_id', 'taskId', 'status', 'model_mesh',
+      'queue_position', 'queuePosition', 'progress', 'error_code', 'errorCode',
+      'error', 'detail'
+    ].some((key) => Object.hasOwn(value, key)),
     'The Hyper3D service returned an invalid response.'
   );
+  const errorCode = String(response.error_code ?? response.errorCode ?? '').trim();
+  const errorValue = response.error ?? response.detail;
+  const hasError = (errorCode && errorCode !== '0')
+    || (typeof errorValue === 'string' && errorValue.trim())
+    || (errorValue && typeof errorValue === 'object');
+  if (hasError && !terminalOnBusinessError) {
+    throw toolError('ai302-upstream-error', 'The Hyper3D service rejected the request.', 502);
+  }
+  return hasError && !response.status ? { ...response, status: 'failed' } : response;
 }
 
 function backgroundResultUrl(payload) {
@@ -774,12 +808,24 @@ function backgroundResultUrl(payload) {
 }
 
 function normalizeThreeDStatus(value) {
-  const raw = String(value || '').trim().toUpperCase();
+  const raw = String(value || '').trim().toUpperCase().replace(/[ -]+/g, '_');
   if (QUEUED_STATES.has(raw)) return 'queued';
   if (PROCESSING_STATES.has(raw)) return 'processing';
   if (SUCCESS_STATES.has(raw)) return 'succeeded';
   if (FAILURE_STATES.has(raw)) return 'failed';
   throw toolError('ai302-invalid-response', 'The 3D service returned an unsupported task status.', 502);
+}
+
+function hunyuanStatus(job) {
+  const errorCode = String(job && (job.ErrorCode ?? job.errorCode) || '').trim();
+  if (errorCode && errorCode !== '0') return 'failed';
+  const files = job && (job.ResultFile3Ds || job.resultFile3Ds);
+  if (Array.isArray(files) && files.length) return 'succeeded';
+  const rawStatus = job && (job.Status ?? job.status);
+  // 302 can briefly return only RequestId/ErrorCode while a newly-created
+  // Hunyuan job is being registered. Keep polling instead of failing the task.
+  if (rawStatus === undefined || rawStatus === null || String(rawStatus).trim() === '') return 'queued';
+  return normalizeThreeDStatus(rawStatus);
 }
 
 function boundedNumber(value, fallback, minimum, maximum) {
@@ -1117,12 +1163,18 @@ async function queryHunyuanJob(jobId, dependencies) {
 }
 
 function findHunyuanGlb(job) {
-  const files = Array.isArray(job.ResultFile3Ds) ? job.ResultFile3Ds : [];
-  const result = files.find((file) => String(file && file.Type || '').trim().toUpperCase() === 'GLB');
-  if (!result || typeof result.Url !== 'string') {
+  const files = Array.isArray(job.ResultFile3Ds)
+    ? job.ResultFile3Ds
+    : Array.isArray(job.resultFile3Ds) ? job.resultFile3Ds : [];
+  const result = files.find((file) => String(file && (file.Type ?? file.type) || '').trim().toUpperCase() === 'GLB');
+  const url = String(result && (result.Url ?? result.url) || '').trim();
+  if (!url) {
     throw toolError('three-d-result-invalid', 'The completed 3D task did not contain a GLB model.', 502);
   }
-  return result;
+  return {
+    url,
+    previewImageUrl: String(result.PreviewImageUrl ?? result.previewImageUrl ?? '').trim()
+  };
 }
 
 async function createHunyuanJob(image, dependencies, toolOptions) {
@@ -1138,7 +1190,12 @@ async function createHunyuanJob(image, dependencies, toolOptions) {
       ...(toolOptions.polygonType ? { PolygonType: toolOptions.polygonType } : {})
     })
   }, dependencies);
-  const jobId = String(responseObject(payload).JobId || '').trim();
+  const response = responseObject(payload);
+  const errorCode = String(response.ErrorCode ?? response.errorCode ?? '').trim();
+  if (errorCode && errorCode !== '0') {
+    throw toolError('ai302-upstream-error', 'The Hunyuan3D service rejected the generation request.', 502);
+  }
+  const jobId = String(response.JobId ?? response.jobId ?? response.job_id ?? '').trim();
   if (!jobId || jobId.length > 512 || /[\u0000-\u001f\u007f]/.test(jobId)) {
     throw toolError('ai302-invalid-response', 'The 3D service did not return a valid task.', 502);
   }
@@ -1152,12 +1209,22 @@ async function queryHyper3dJob(jobId, dependencies) {
   }, {
     ...dependencies,
     timeoutMs: STATUS_TIMEOUT_MS
-  }));
+  }), { terminalOnBusinessError: true });
 }
 
 function hyper3dStatus(job) {
   if (job && job.model_mesh && typeof job.model_mesh.url === 'string') return 'succeeded';
-  return normalizeThreeDStatus(job && job.status);
+  const rawStatus = job && job.status;
+  if (rawStatus !== undefined && rawStatus !== null && String(rawStatus).trim()) {
+    return normalizeThreeDStatus(rawStatus);
+  }
+  const progress = Number(job && job.progress);
+  if (Number.isFinite(progress) && progress > 0) return 'processing';
+  if (job && [
+    'request_id', 'requestId', 'task_id', 'taskId',
+    'queue_position', 'queuePosition', 'progress'
+  ].some((key) => Object.hasOwn(job, key))) return 'queued';
+  throw toolError('ai302-invalid-response', 'The Hyper3D service returned an unsupported task status.', 502);
 }
 
 function findHyper3dGlb(job) {
@@ -1201,8 +1268,9 @@ async function createHyper3dJob(image, prompt, dependencies, toolOptions) {
   }
 }
 
-function tripoResponseObject(payload, requiredFields) {
+function tripoResponseObject(payload, requiredFields, { terminalOnBusinessError = false } = {}) {
   if (payload && Object.hasOwn(payload, 'code') && Number(payload.code) !== 0) {
+    if (terminalOnBusinessError) return { status: 'failed', code: payload.code };
     throw toolError('ai302-upstream-error', 'The Tripo3D service rejected the request.', 502);
   }
   const fields = Array.isArray(requiredFields) && requiredFields.length
@@ -1296,17 +1364,17 @@ async function queryTripoJob(jobId, dependencies) {
   }, {
     ...dependencies,
     timeoutMs: STATUS_TIMEOUT_MS
-  }), ['task_id', 'status', 'output', 'result']);
+  }), ['task_id', 'status', 'output', 'result'], { terminalOnBusinessError: true });
 }
 
 const threeDProviderHandlers = Object.freeze({
   hunyuan3d: {
     create: (image, prompt, dependencies, toolOptions) => createHunyuanJob(image, dependencies, toolOptions),
     query: queryHunyuanJob,
-    status: (job) => normalizeThreeDStatus(job.Status),
+    status: hunyuanStatus,
     result: (job) => {
       const result = findHunyuanGlb(job);
-      return { url: result.Url, previewImageUrl: result.PreviewImageUrl };
+      return { url: result.url, previewImageUrl: result.previewImageUrl };
     }
   },
   hyper3d: {

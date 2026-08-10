@@ -247,6 +247,23 @@ test('HUNYUAN3D task tokens hide the job, bind the user and provider, and normal
     }
   });
   assert.deepEqual(status, { status: 'processing', retryAfterMs: 5000 });
+  const pendingWithoutStatus = await getThreeDStatus({ taskToken: created.taskToken, userId: 'user-one' }, {
+    apiKey: 'test-key',
+    taskSecret: 'independent-task-secret',
+    now: 1_800_000_001_500,
+    fetchImpl: async () => jsonResponse({ Response: { RequestId: 'request-id', ErrorCode: '', ErrorMessage: '' } })
+  });
+  assert.deepEqual(pendingWithoutStatus, { status: 'queued', retryAfterMs: 5000 });
+  const failed = await getThreeDStatus({ taskToken: created.taskToken, userId: 'user-one' }, {
+    apiKey: 'test-key',
+    taskSecret: 'independent-task-secret',
+    now: 1_800_000_001_700,
+    fetchImpl: async () => jsonResponse({ Response: { Status: 'ERROR', ErrorCode: 'UPSTREAM_BUSY' } })
+  });
+  assert.deepEqual(failed, {
+    status: 'failed', retryAfterMs: 0,
+    errorCode: 'three-d-generation-failed', errorMessage: '3D generation failed.'
+  });
   await assert.rejects(
     () => getThreeDStatus({ taskToken: created.taskToken, userId: 'user-two' }, {
       apiKey: 'test-key',
@@ -321,6 +338,37 @@ test('Hyper3D receives a short-lived metadata-free image relay and uses the docu
     }
   });
   assert.deepEqual(status, { status: 'processing', retryAfterMs: 5000 });
+  const queuedWithoutStatus = await getThreeDStatus({ taskToken: created.taskToken, userId: 'user-hyper' }, {
+    apiKey: 'test-key',
+    taskSecret: 'independent-task-secret',
+    now: 1_800_000_002_500,
+    fetchImpl: async () => jsonResponse({ data: { request_id: 'private-hyper-job-id', queue_position: 1, progress: 0 } })
+  });
+  assert.deepEqual(queuedWithoutStatus, { status: 'queued', retryAfterMs: 5000 });
+  const processingWithoutStatus = await getThreeDStatus({ taskToken: created.taskToken, userId: 'user-hyper' }, {
+    apiKey: 'test-key',
+    taskSecret: 'independent-task-secret',
+    now: 1_800_000_002_700,
+    fetchImpl: async () => jsonResponse({ code: 0, data: { progress: 34 } })
+  });
+  assert.deepEqual(processingWithoutStatus, { status: 'processing', retryAfterMs: 5000 });
+  const wrappedHttpStyleCode = await getThreeDStatus({ taskToken: created.taskToken, userId: 'user-hyper' }, {
+    apiKey: 'test-key',
+    taskSecret: 'independent-task-secret',
+    now: 1_800_000_002_800,
+    fetchImpl: async () => jsonResponse({ code: 200, data: { status: 'IN_QUEUE', queue_position: 2 } })
+  });
+  assert.deepEqual(wrappedHttpStyleCode, { status: 'queued', retryAfterMs: 5000 });
+  const failedWithoutHttpError = await getThreeDStatus({ taskToken: created.taskToken, userId: 'user-hyper' }, {
+    apiKey: 'test-key',
+    taskSecret: 'independent-task-secret',
+    now: 1_800_000_002_900,
+    fetchImpl: async () => jsonResponse({ code: 4001, message: 'job failed' })
+  });
+  assert.deepEqual(failedWithoutHttpError, {
+    status: 'failed', retryAfterMs: 0,
+    errorCode: 'three-d-generation-failed', errorMessage: '3D generation failed.'
+  });
 });
 
 test('Tripo3D uploads the image, creates a PBR task, polls, settles credits, and downloads GLB', async () => {
@@ -385,6 +433,20 @@ test('Tripo3D uploads the image, creates a PBR task, polls, settles credits, and
     }
   });
   assert.deepEqual(processing, { status: 'processing', retryAfterMs: 5000, credits: 10 });
+
+  let released;
+  const failed = await getThreeDStatus({ taskToken: created.taskToken, userId: 'tripo-owner' }, {
+    apiKey: 'test-key', taskSecret: 'tripo-task-secret', now: 1_800_000_001_500,
+    touchCredits: async () => ({ ok: true }),
+    settleCredits: async (value) => {
+      released = value;
+      return { ok: true, status: 'failed', creditsReleased: 10 };
+    },
+    fetchImpl: async () => jsonResponse({ code: 2010, message: 'task failed' })
+  });
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.creditsReleased, 10);
+  assert.deepEqual(released, { requestId: accountingRequestId, status: 'failed', durationMs: 1000 });
 
   let settled;
   let downloadCall = 0;
