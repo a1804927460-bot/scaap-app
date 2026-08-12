@@ -486,8 +486,24 @@ async function test302NanoBananaFlows() {
       ? pngHeader(4096, 2304)
       : (entry.size === '2K' ? pngHeader(2048, 2048) : pngHeader(1024, 576));
     const responses = [
-      jsonResponse({ code: 200, data: { id: `${entry.id}-task`, outputs: [], status: 'created' } }),
-      jsonResponse({ code: 200, data: { id: `${entry.id}-task`, outputs: [], status: 'processing' } }),
+      jsonResponse({
+        code: 200,
+        data: {
+          id: `${entry.id}-task`,
+          outputs: [],
+          urls: { get: `https://api.302.ai/ws/api/v3/predictions/${entry.id}-task/result` },
+          status: 'created'
+        }
+      }),
+      jsonResponse({
+        code: 200,
+        data: {
+          id: `${entry.id}-task`,
+          outputs: [],
+          urls: { get: `https://api.302.ai/ws/api/v3/predictions/${entry.id}-task/result` },
+          status: 'processing'
+        }
+      }),
       jsonResponse({ code: 200, data: { id: `${entry.id}-task`, outputs: [`https://cdn.test/${entry.id}.png`], status: 'completed' } }),
       { ok: true, status: 200, arrayBuffer: async () => png }
     ];
@@ -502,7 +518,9 @@ async function test302NanoBananaFlows() {
     assert.strictEqual(calls[0].options.headers.Authorization, 'Bearer server-only-302-key');
     assert.deepStrictEqual(JSON.parse(calls[0].options.body), entry.expectedBody);
     assert.strictEqual(calls[1].url, `https://api.302.ai/ws/api/v3/predictions/${entry.id}-task/result`);
+    assert.strictEqual(calls[1].options.headers.Authorization, 'Bearer server-only-302-key');
     assert.strictEqual(calls[3].url, `https://cdn.test/${entry.id}.png`);
+    assert.strictEqual(calls[3].options.headers, undefined);
   }
 
   const nano = catalogProvider('image-9');
