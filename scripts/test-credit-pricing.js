@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const {
   POINTS_PER_CNY,
   IMAGE_QUALITY_PRICES,
@@ -71,6 +72,27 @@ assert.strictEqual(quoteMediaCredits({
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-9'
 }).totalCredits, 6);
+
+const imageResolutionMatrix = {
+  'image-1': { '1K': 16, '2K': 16, '4K': 28 },
+  'image-2': { '1K': 8, '2K': 12, '4K': 16 }
+};
+Object.entries(imageResolutionMatrix).forEach(([imageProviderId, resolutions]) => {
+  Object.entries(resolutions).forEach(([size, expectedCredits]) => {
+    assert.strictEqual(
+      quoteMediaCredits({ kind: 'image', imageProviderId, size }).totalCredits,
+      expectedCredits,
+      `${imageProviderId} ${size} must use its exact resolution price.`
+    );
+  });
+});
+Object.entries({ low: 3, medium: 8, high: 28, auto: 12 }).forEach(([quality, expectedCredits]) => {
+  assert.strictEqual(
+    quoteMediaCredits({ kind: 'image', imageProviderId: 'image-6', quality }).totalCredits,
+    expectedCredits,
+    `GPT Image 2 ${quality} must use its exact quality price.`
+  );
+});
 
 assert.deepStrictEqual(quoteMediaCredits({
   kind: 'video',
@@ -145,6 +167,7 @@ assert.deepStrictEqual(publicPricing.video['video-3'], VIDEO_RATES['video-3']);
 
 const boardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'board-canvas.js'), 'utf8');
 const assistantSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'ai-assistant.js'), 'utf8');
+const mainSource = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
 const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
 const boardStyles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles', 'main.css'), 'utf8');
 assert.match(
@@ -182,5 +205,67 @@ assert.match(
   /kind === 'chat'[\s\S]*?renderAssistantCreditEstimate\(0\)/,
   'Chat must remain free and hide the media-credit quote.'
 );
+assert.match(
+  mainSource,
+  /const creditQuote = quoteMediaCredits\(\{[\s\S]*?size: request\.size,[\s\S]*?resolution: request\.resolution/,
+  'Main-process settlement must quote the selected image size instead of falling back to the default resolution.'
+);
+assert.match(
+  mainSource,
+  /const creditsCharged = kind === 'image'[\s\S]*?creditQuote\.unitCredits \* files\.length[\s\S]*?settledCredits: creditsCharged[\s\S]*?estimatedCredits: creditQuote\.totalCredits,[\s\S]*?creditsCharged,[\s\S]*?pricing:/,
+  'Successful generation must return the estimate, normalized pricing and the charge for successful outputs only.'
+);
+assert.match(
+  assistantSource,
+  /appendAssistantMedia\(files, submittedKind, response\.creditsCharged\)[\s\S]*?Actual charge:[\s\S]*?实际扣除/,
+  'The assistant must show the settled charge returned by the main process.'
+);
+assert.match(
+  boardSource,
+  /const settledCharge = res\.creditsCharged[\s\S]*?Actual charge:[\s\S]*?实际扣除/,
+  'The canvas must show the settled charge returned by the main process.'
+);
 
-process.stdout.write('Credit pricing tests passed.\n');
+async function assertGatewayPricingParity() {
+  const { quoteUsage } = await import(pathToFileURL(path.join(__dirname, '..', 'gateway', 'src', 'usage.js')).href);
+  const pricing = publicCreditPricing();
+
+  Object.keys(pricing.image).forEach((providerId) => {
+    const qualityRates = pricing.imageQuality[providerId];
+    const resolutionRates = pricing.imageResolution[providerId];
+    const variants = qualityRates
+      ? Object.keys(qualityRates).map((quality) => ({ quality }))
+      : resolutionRates
+        ? Object.keys(resolutionRates).map((size) => ({ size }))
+        : [{}];
+    variants.forEach((variant) => {
+      const desktop = quoteMediaCredits({ kind: 'image', imageProviderId: providerId, ...variant });
+      const gateway = quoteUsage('image', { providerId, ...variant });
+      assert.strictEqual(
+        desktop.totalCredits,
+        gateway.credits,
+        `Desktop and gateway image pricing must match for ${providerId} ${JSON.stringify(variant)}.`
+      );
+    });
+  });
+
+  Object.entries(pricing.video).forEach(([providerId, rates]) => {
+    Object.keys(rates).forEach((resolution) => {
+      const request = { kind: 'video', videoProviderId: providerId, resolution, duration: 6 };
+      const desktop = quoteMediaCredits(request);
+      const gateway = quoteUsage('video', { providerId, resolution, duration: 6 });
+      assert.strictEqual(
+        desktop.totalCredits,
+        gateway.credits,
+        `Desktop and gateway video pricing must match for ${providerId} ${resolution}.`
+      );
+    });
+  });
+}
+
+assertGatewayPricingParity()
+  .then(() => process.stdout.write('Credit pricing tests passed.\n'))
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });

@@ -712,15 +712,21 @@ function appendAssistantText(role, text, className = '') {
   return row;
 }
 
-function appendAssistantMedia(files, kind) {
+function appendAssistantMedia(files, kind, creditsCharged) {
   const messages = document.getElementById('ai-assistant-messages');
   const row = document.createElement('div');
   row.className = 'ai-assistant-message is-assistant';
   const body = document.createElement('div');
   body.className = 'ai-assistant-message-body';
-  body.textContent = kind === 'video'
+  const completionText = kind === 'video'
     ? t('Video generated and saved to the library.', '视频已生成并保存到资料库。')
     : t(`${files.length} image${files.length === 1 ? '' : 's'} generated and saved to the library.`, `${files.length} 张图片已生成并保存到资料库。`);
+  const hasSettledCharge = creditsCharged !== null
+    && creditsCharged !== undefined
+    && Number.isFinite(Number(creditsCharged));
+  body.textContent = hasSettledCharge
+    ? `${completionText} ${t(`Actual charge: ${Math.max(0, Math.round(Number(creditsCharged)))} points.`, `实际扣除 ${Math.max(0, Math.round(Number(creditsCharged)))} 积分。`)}`
+    : completionText;
   const grid = document.createElement('div');
   grid.className = 'ai-assistant-media-grid';
 
@@ -896,12 +902,17 @@ async function submitAssistantMessage() {
       renderFolderGridIfActive();
       if (response.unlocked && response.unlocked.length) await refreshAchievements();
       pending.remove();
-      appendAssistantMedia(files, submittedKind);
+      appendAssistantMedia(files, submittedKind, response.creditsCharged);
+      const settledCharge = Number.isFinite(Number(response.creditsCharged))
+        ? Math.max(0, Math.round(Number(response.creditsCharged)))
+        : null;
       AiAssistant.messages.push({
         role: 'assistant',
-        content: submittedKind === 'video'
+        content: `${submittedKind === 'video'
           ? t('Video generated and saved to the library.', '视频已生成并保存到资料库。')
-          : t(`${files.length} image${files.length === 1 ? '' : 's'} generated and saved to the library.`, `${files.length} 张图片已生成并保存到资料库。`)
+          : t(`${files.length} image${files.length === 1 ? '' : 's'} generated and saved to the library.`, `${files.length} 张图片已生成并保存到资料库。`)}${settledCharge === null
+          ? ''
+          : ` ${t(`Actual charge: ${settledCharge} points.`, `实际扣除 ${settledCharge} 积分。`)}`}`
       });
       persistActiveAiChatSession();
     }
@@ -956,13 +967,16 @@ function refreshAssistantLanguage() {
   const messages = document.getElementById('ai-assistant-messages');
   if (home && !home.hidden) {
     document.querySelectorAll('.ai-assistant-quick-prompts button').forEach((button) => {
-      if (button.dataset.aiKind === 'image') {
-        button.textContent = t('Concept Art', '概念图');
-        button.dataset.aiQuick = t('Help me generate a cinematic concept image.', '帮我生成一张电影感概念图。');
-      } else if (button.dataset.aiKind === 'chat') {
+      if (button.dataset.aiQuickAction === 'poster') {
+        button.textContent = t('Create Poster', '生成海报');
+        button.dataset.aiQuick = t('Help me create a professional poster.', '帮我生成一张专业海报。');
+      } else if (button.dataset.aiQuickAction === 'logo') {
+        button.textContent = t('Create LOGO', '生成 LOGO');
+        button.dataset.aiQuick = t('Help me design a clean and professional logo.', '帮我设计一个简洁专业的 LOGO。');
+      } else if (button.dataset.aiQuickAction === 'clarify') {
         button.textContent = t('Clarify Idea', '理清想法');
         button.dataset.aiQuick = t('Help me organize this idea into a clear execution plan.', '帮我把这个想法整理成清晰的执行计划。');
-      } else if (button.dataset.aiKind === 'video') {
+      } else if (button.dataset.aiQuickAction === 'short-video') {
         button.textContent = t('Short Video', '短视频');
         button.dataset.aiQuick = t('Generate a short video prompt with camera movement.', '生成一个带镜头运动的短视频提示词。');
       }

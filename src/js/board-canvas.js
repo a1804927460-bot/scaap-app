@@ -75,6 +75,7 @@ const Board = {
   failedFullImageSources: new Set(),
   resizeObserver: null,
   clipboardPastePromise: null,
+  clipboardPasteTimer: 0,
   historyPersistPromise: Promise.resolve()
 };
 
@@ -1552,6 +1553,16 @@ function createBoardItemElement(item) {
     ) {
       toggleAiComposerBoardReference(f, item.fileId);
     }
+    const agentPanel = document.getElementById('board-agent-panel');
+    if (
+      isImage &&
+      agentPanel && !agentPanel.classList.contains('is-hidden') &&
+      Date.now() - Board.lastDragEndedAt > 120 &&
+      typeof addCanvasAgentReference === 'function'
+    ) {
+      addCanvasAgentReference(item.fileId);
+    }
+    if (typeof renderCanvasAgentContext === 'function') renderCanvasAgentContext();
   });
 
   const content = document.createElement('div');
@@ -2188,19 +2199,18 @@ function initBoardCanvas() {
       BoardClipboard.items = selected.map((item) => ({ ...item }));
       BoardClipboard.preferInternal = true;
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
-      e.preventDefault();
       if (BoardClipboard.preferInternal && BoardClipboard.items.length) {
+        e.preventDefault();
         pasteBoardClipboard();
       } else {
-        pasteExternalImageToBoard().then((pasted) => {
-          if (!pasted && BoardClipboard.items.length) {
-            pasteBoardClipboard();
-          } else if (!pasted) {
-            showToast(t('No image found on the clipboard', '剪贴板中没有图片'));
-          }
-        }).catch((err) => {
-          showToast(err && err.message ? err.message : t('Could not paste the image', '无法粘贴图片'));
-        });
+        // Let Chromium dispatch the real paste event first. Its DataTransfer
+        // often contains a browser/chat image that Electron's clipboard API
+        // does not expose as a native bitmap.
+        clearTimeout(Board.clipboardPasteTimer);
+        Board.clipboardPasteTimer = setTimeout(() => {
+          Board.clipboardPasteTimer = 0;
+          pasteExternalImageWithFeedback();
+        }, 120);
       }
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
       e.preventDefault();
@@ -2272,10 +2282,7 @@ function initBoardCanvas() {
       // actually create the element before trying to focus it.
       requestAnimationFrame(() => {
         const contentEl = document.querySelector(`.board-text-note[data-board-id="${note.id}"] .board-text-note-content`);
-        if (contentEl) {
-          contentEl.focus();
-          showTextToolPanel(note, contentEl);
-        }
+        if (contentEl) beginTextNoteEditing(note, contentEl);
       });
       return;
     }
@@ -2358,14 +2365,15 @@ function initBoardCanvas() {
     void toggleAiComposerBoardReference(file, item.fileId);
   });
 
-  viewport.addEventListener('paste', (event) => {
-    const hasImage = [...(event.clipboardData && event.clipboardData.items || [])]
-      .some((item) => item.kind === 'file' && /^image\//i.test(item.type));
-    if (!hasImage || BoardClipboard.preferInternal) return;
+  document.addEventListener('paste', (event) => {
+    if (!isBoardWorkspaceActive() || BoardClipboard.preferInternal) return;
+    const target = event.target;
+    if (target && (target.matches('input, textarea') || target.isContentEditable)) return;
+    clearTimeout(Board.clipboardPasteTimer);
+    Board.clipboardPasteTimer = 0;
     event.preventDefault();
-    pasteExternalImageToBoard().catch((err) => {
-      showToast(err && err.message ? err.message : t('Could not paste the image', '无法粘贴图片'));
-    });
+    clipboardImageRequest(event.clipboardData)
+      .then((request) => pasteExternalImageWithFeedback(boardViewportCenterCoords(), request));
   });
 
   document.getElementById('board-zoom-in').addEventListener('click', () => {
@@ -2464,7 +2472,13 @@ function initBoardCanvas() {
       else filePaths.push(resolvedPath);
     }
 
-    if (!filePaths.length && !dirPaths.length) return;
+    if (!filePaths.length && !dirPaths.length) {
+      const request = await clipboardImageRequest(e.dataTransfer);
+      if (request.dataUrl || request.html || request.text) {
+        await pasteExternalImageWithFeedback({ x, y }, request);
+      }
+      return;
+    }
 
     const targetFolderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
       ? AppState.activeFolderId : null;
@@ -2647,31 +2661,38 @@ function buildTextNoteEl(item) {
 
   const content = document.createElement('div');
   content.className = 'board-text-note-content';
-  content.contentEditable = 'true';
+  content.contentEditable = 'false';
   content.spellcheck = false;
   content.textContent = item.text;
   content.addEventListener('input', () => {
     item.text = content.textContent;
   });
-  content.addEventListener('blur', () => {
-    window.messsAPI.upsertBoardItem(item);
+  content.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      commitActiveTextNote();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelActiveTextNoteEditing();
+    }
   });
-  content.addEventListener('mousedown', (e) => e.stopPropagation()); // typing shouldn't start a drag
+  content.addEventListener('mousedown', (e) => {
+    if (el.classList.contains('is-text-editing')) e.stopPropagation();
+  });
   el.appendChild(content);
   applyTextNoteStyle(item, content);
 
   el.addEventListener('click', (e) => {
-    if (e.target === content) {
-      // Clicking into the text itself opens the detail panel for it,
-      // without also toggling board-canvas selection (that would be a
-      // confusing double meaning for the same click).
-      showTextToolPanel(item, content);
-      return;
-    }
+    if (el.classList.contains('is-text-editing')) return;
     if (!(e.ctrlKey || e.metaKey || e.shiftKey)) AppState.boardItems.forEach((b) => { b.selected = false; });
-    item.selected = !item.selected;
-    if (activeTextNoteId === item.id) hideTextToolPanel();
+    item.selected = true;
     syncBoardSelectionClasses();
+  });
+  el.addEventListener('dblclick', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    beginTextNoteEditing(item, content);
   });
 
   el.addEventListener('contextmenu', (e) => {
@@ -2953,10 +2974,42 @@ async function importFilesDirectlyToBoard(paths, placement = boardViewportCenter
   return imported;
 }
 
-async function pasteExternalImageToBoard(placement = boardViewportCenterCoords()) {
+function clipboardFileDataUrl(file) {
+  return new Promise((resolve) => {
+    if (!file || !/^image\//i.test(file.type || '') || Number(file.size) > 64 * 1024 * 1024) return resolve('');
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => resolve('');
+    reader.readAsDataURL(file);
+  });
+}
+
+async function clipboardImageRequest(dataTransfer) {
+  const transfer = dataTransfer || null;
+  const request = {};
+  if (!transfer) return request;
+  try { request.html = String(transfer.getData('text/html') || ''); } catch (error) {}
+  try {
+    request.text = String(
+      transfer.getData('text/uri-list') ||
+      transfer.getData('text/plain') ||
+      ''
+    );
+  } catch (error) {}
+  const imageItem = [...(transfer.items || [])]
+    .find((item) => item.kind === 'file' && /^image\//i.test(item.type || ''));
+  const file = imageItem && imageItem.getAsFile ? imageItem.getAsFile() : null;
+  request.dataUrl = await clipboardFileDataUrl(file);
+  return request;
+}
+
+async function pasteExternalImageToBoard(placement = boardViewportCenterCoords(), clipboardRequest = {}) {
   const result = await window.messsAPI.importClipboardImage({
     canvasId: activeCanvasId(),
-    folderId: AppState.activeFolderId
+    folderId: AppState.activeFolderId,
+    dataUrl: clipboardRequest.dataUrl || '',
+    html: clipboardRequest.html || '',
+    text: clipboardRequest.text || ''
   });
   if (!result || !result.ok || !result.file) return false;
   const file = result.file;
@@ -2965,6 +3018,29 @@ async function pasteExternalImageToBoard(placement = boardViewportCenterCoords()
   renderFolderGridIfActive();
   await addFilesToBoard([file.id], placement.x, placement.y);
   return true;
+}
+
+function pasteExternalImageWithFeedback(placement = boardViewportCenterCoords(), clipboardRequest = {}) {
+  if (Board.clipboardPastePromise) return Board.clipboardPastePromise;
+  Board.clipboardPastePromise = pasteExternalImageToBoard(placement, clipboardRequest)
+    .then((pasted) => {
+      if (pasted) return true;
+      if (BoardClipboard.items.length) {
+        pasteBoardClipboard();
+        return true;
+      }
+      showToast(t(
+        'No importable image found. Copy the image, image file, or image link and try again.',
+        '没有找到可导入的图片，请复制图片本身、图片文件或图片链接后重试。'
+      ));
+      return false;
+    })
+    .catch((error) => {
+      showToast(error && error.message ? error.message : t('Could not paste the image', '无法粘贴图片'));
+      return false;
+    })
+    .finally(() => { Board.clipboardPastePromise = null; });
+  return Board.clipboardPastePromise;
 }
 
 function buildAiImagePopover(aiConfig) {
@@ -3736,7 +3812,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       appendAiModelLabel(option, provider);
       option.addEventListener('click', () => {
         modelSelect.value = provider.id;
-        appendAiModelLabel(modelPickerLabel, provider);
+        appendAiModelLabel(modelPickerLabel, provider, { sparkle: false });
         modelPickerMenu.querySelectorAll('.ai-model-picker-option').forEach((item) => {
           item.classList.toggle('is-active', item === option);
           item.setAttribute('aria-selected', String(item === option));
@@ -3749,7 +3825,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     });
     const selected = options.find((provider) => provider.id === modelSelect.value) || options[0];
     modelPickerLabel.textContent = selected ? selected.name : t('No model configured', '未配置模型');
-    if (selected) appendAiModelLabel(modelPickerLabel, selected);
+    if (selected) appendAiModelLabel(modelPickerLabel, selected, { sparkle: false });
     // A running request must not disable a newly opened composer. Each
     // submission owns its own request and placeholder state.
     submit.disabled = !selected;
@@ -4299,7 +4375,17 @@ async function generateAiMediaForBoardV3(request) {
           `${files.length} AI image${files.length === 1 ? '' : 's'} added to the canvas`,
           `${files.length} 张 AI 图片已加入画布`
     );
-    showToast(successMessage, 'AI');
+    const settledCharge = res.creditsCharged !== null
+      && res.creditsCharged !== undefined
+      && Number.isFinite(Number(res.creditsCharged))
+      ? Math.max(0, Math.round(Number(res.creditsCharged)))
+      : null;
+    showToast(
+      settledCharge === null
+        ? successMessage
+        : `${successMessage} · ${t(`Actual charge: ${settledCharge} points`, `实际扣除 ${settledCharge} 积分`)}`,
+      'AI'
+    );
     return files;
   } catch (err) {
     removeAiPlaceholders(placeholders);
@@ -4692,7 +4778,9 @@ async function showAiImagePopover(initialKind = 'image') {
     return;
   }
 
-  const anchor = document.getElementById('board-panel');
+  // Center the composer in the drawable canvas, not the whole board panel.
+  // The optional Agent sidebar would otherwise shift the capsule to the right.
+  const anchor = document.getElementById('board-viewport');
   const loading = document.createElement('div');
   loading.id = 'ai-image-popover';
   loading.className = 'ai-image-popover ai-composer ai-composer-loading' + (isBoardFullscreen() ? '' : ' is-panel-popover');
@@ -4796,6 +4884,7 @@ function initBoardBottomBar() {
 
 let textPlacementArmed = false;
 let activeTextNoteId = null;
+let activeTextNoteOriginalText = '';
 
 /** Click the "T" tool once to arm placement mode �?the next click on empty
     canvas space creates a new, immediately-editable text box there (rather
@@ -4860,6 +4949,64 @@ function hideTextToolPanel() {
   document.getElementById('text-tool-panel').hidden = true;
 }
 
+function activeTextNoteElements() {
+  if (!activeTextNoteId) return {};
+  const noteEl = document.querySelector(`.board-text-note[data-board-id="${activeTextNoteId}"]`);
+  return { noteEl, contentEl: noteEl && noteEl.querySelector('.board-text-note-content') };
+}
+
+function beginTextNoteEditing(note, contentEl) {
+  if (!note || !contentEl) return;
+  if (activeTextNoteId && activeTextNoteId !== note.id) commitActiveTextNote();
+  activeTextNoteId = note.id;
+  activeTextNoteOriginalText = String(note.text || '');
+  const noteEl = contentEl.closest('.board-text-note');
+  if (noteEl) noteEl.classList.add('is-text-editing');
+  contentEl.contentEditable = 'true';
+  showTextToolPanel(note, contentEl);
+  contentEl.focus();
+  const selection = window.getSelection && window.getSelection();
+  if (selection && document.createRange) {
+    const range = document.createRange();
+    range.selectNodeContents(contentEl);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+}
+
+function finishTextNoteEditing({ cancel = false } = {}) {
+  const note = getActiveTextNote();
+  if (!note) return;
+  const { noteEl, contentEl } = activeTextNoteElements();
+  if (cancel) note.text = activeTextNoteOriginalText;
+  else note.text = String(contentEl && contentEl.textContent || note.text || '').replace(/\r/g, '');
+  if (contentEl) {
+    contentEl.textContent = note.text;
+    contentEl.contentEditable = 'false';
+  }
+  if (noteEl) noteEl.classList.remove('is-text-editing');
+  hideTextToolPanel();
+  if (!note.text.trim()) {
+    AppState.boardItems = AppState.boardItems.filter((item) => item.id !== note.id);
+    canvasWorkspaceRemoveItems([note.id]);
+    if (window.messsAPI && typeof window.messsAPI.removeBoardItem === 'function') {
+      Promise.resolve(window.messsAPI.removeBoardItem(note.id)).catch(() => {});
+    }
+    renderBoard();
+    return;
+  }
+  window.messsAPI.upsertBoardItem(note);
+}
+
+function commitActiveTextNote() {
+  finishTextNoteEditing();
+}
+
+function cancelActiveTextNoteEditing() {
+  finishTextNoteEditing({ cancel: true });
+}
+
 function applyTextNoteStyle(note, contentEl) {
   const el = contentEl || document.querySelector(`.board-text-note[data-board-id="${note.id}"] .board-text-note-content`);
   if (!el) return;
@@ -4876,6 +5023,11 @@ function getActiveTextNote() {
 }
 
 function initTextToolPanel() {
+  document.addEventListener('pointerdown', (e) => {
+    if (!activeTextNoteId) return;
+    if (e.target.closest('.board-text-note.is-text-editing, #text-tool-panel')) return;
+    commitActiveTextNote();
+  }, true);
   document.getElementById('text-font-select').addEventListener('change', (e) => {
     const note = getActiveTextNote(); if (!note) return;
     note.fontFamily = e.target.value;
@@ -4982,6 +5134,8 @@ function buildDoodleItemEl(item) {
 
 let doodleActive = false;
 let doodleCtx = null;
+let doodlePixelRatio = 1;
+let doodleStrokes = [];
 
 function isDoodleActive() { return doodleActive; }
 
@@ -5012,43 +5166,84 @@ function enterDoodleMode() {
   btn.classList.add('is-active');
 
   const viewport = document.getElementById('board-viewport');
-  canvas.width = viewport.clientWidth;
-  canvas.height = viewport.clientHeight;
-  doodleCtx = canvas.getContext('2d');
-  applyDoodleBrushSettings();
+  const maximumPixelRatio = Math.sqrt(16_000_000 / Math.max(1, viewport.clientWidth * viewport.clientHeight));
+  doodlePixelRatio = Math.max(1, Math.min(3, maximumPixelRatio, window.devicePixelRatio || 1));
+  canvas.width = Math.max(1, Math.round(viewport.clientWidth * doodlePixelRatio));
+  canvas.height = Math.max(1, Math.round(viewport.clientHeight * doodlePixelRatio));
+  doodleCtx = canvas.getContext('2d', { alpha: true });
+  doodleStrokes = [];
 
   let drawing = false;
   let drawFrameId = 0;
-  const pendingPoints = [];
+  let activeStroke = null;
 
   function pos(e) {
     const rect = canvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const pressure = e.pointerType === 'pen' && Number.isFinite(e.pressure) && e.pressure > 0
+      ? e.pressure
+      : undefined;
+    return [e.clientX - rect.left, e.clientY - rect.top, pressure];
   }
 
-  function flushDoodlePoints() {
-    drawFrameId = 0;
-    if (!pendingPoints.length) return;
-    for (const point of pendingPoints.splice(0)) {
-      doodleCtx.lineTo(point.x, point.y);
+  function paintSmoothStroke(stroke) {
+    if (!stroke || !stroke.points.length || !window.PerfectFreehand) return;
+    const outline = window.PerfectFreehand.getStroke(stroke.points, {
+      size: stroke.tool === 'eraser' ? stroke.size * 3 : stroke.size,
+      thinning: stroke.tool === 'eraser' ? 0 : 0.38,
+      smoothing: 0.72,
+      streamline: 0.48,
+      simulatePressure: true,
+      last: stroke.complete,
+      start: { cap: true },
+      end: { cap: true }
+    });
+    if (!outline.length) return;
+    doodleCtx.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
+    doodleCtx.fillStyle = stroke.color;
+    doodleCtx.beginPath();
+    doodleCtx.moveTo(outline[0][0], outline[0][1]);
+    for (let index = 1; index < outline.length; index += 1) {
+      const point = outline[index];
+      const next = outline[(index + 1) % outline.length];
+      doodleCtx.quadraticCurveTo(point[0], point[1], (point[0] + next[0]) / 2, (point[1] + next[1]) / 2);
     }
-    doodleCtx.stroke();
+    doodleCtx.closePath();
+    doodleCtx.fill();
   }
 
-  function queueDoodlePoints(events) {
-    for (const event of events) pendingPoints.push(pos(event));
-    if (!drawFrameId) drawFrameId = requestAnimationFrame(flushDoodlePoints);
+  function renderDoodleStrokes() {
+    drawFrameId = 0;
+    doodleCtx.setTransform(1, 0, 0, 1, 0, 0);
+    doodleCtx.clearRect(0, 0, canvas.width, canvas.height);
+    doodleCtx.setTransform(doodlePixelRatio, 0, 0, doodlePixelRatio, 0, 0);
+    doodleStrokes.forEach(paintSmoothStroke);
+  }
+
+  function scheduleDoodleRender() {
+    if (!drawFrameId) drawFrameId = requestAnimationFrame(renderDoodleStrokes);
+  }
+
+  function appendDoodlePoints(events) {
+    if (!activeStroke) return;
+    for (const event of events) activeStroke.points.push(pos(event));
+    scheduleDoodleRender();
   }
 
   canvas.onpointerdown = (e) => {
     if (e.button !== 0) return;
+    e.preventDefault();
     e.stopPropagation();
     drawing = true;
     doodleHasStrokes = true;
-    applyDoodleBrushSettings();
-    const p = pos(e);
-    doodleCtx.beginPath();
-    doodleCtx.moveTo(p.x, p.y);
+    activeStroke = {
+      color: DoodleState.color,
+      size: DoodleState.size,
+      tool: DoodleState.tool,
+      points: [pos(e)],
+      complete: false
+    };
+    doodleStrokes.push(activeStroke);
+    scheduleDoodleRender();
     if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
   };
 
@@ -5058,31 +5253,47 @@ function enterDoodleMode() {
     const coalesced = typeof e.getCoalescedEvents === 'function'
       ? e.getCoalescedEvents()
       : [];
-    queueDoodlePoints(coalesced.length ? coalesced : [e]);
+    appendDoodlePoints(coalesced.length ? coalesced : [e]);
   };
 
   canvas.onpointerup = (e) => {
-    flushDoodlePoints();
+    appendDoodlePoints([e]);
+    if (activeStroke) activeStroke.complete = true;
+    renderDoodleStrokes();
     drawing = false;
+    activeStroke = null;
     if (canvas.hasPointerCapture && canvas.hasPointerCapture(e.pointerId)) {
       canvas.releasePointerCapture(e.pointerId);
     }
   };
   canvas.onpointercancel = () => {
-    flushDoodlePoints();
+    if (activeStroke) activeStroke.complete = true;
+    renderDoodleStrokes();
     drawing = false;
+    activeStroke = null;
   };
-  function escHandler(e) {
-    if (e.key === 'Escape' && doodleActive) exitDoodleMode(false);
+  function keyHandler(e) {
+    if (!doodleActive) return;
+    if (e.key === 'Escape') exitDoodleMode(false);
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      exitDoodleMode(true);
+    }
+  }
+  function outsideHandler(e) {
+    if (!doodleActive || !doodleHasStrokes) return;
+    if (e.target === canvas || e.target.closest('#doodle-color-panel, #board-tool-doodle')) return;
+    exitDoodleMode(true);
   }
   canvas._doodleCleanup = () => {
     if (drawFrameId) cancelAnimationFrame(drawFrameId);
     drawFrameId = 0;
-    pendingPoints.length = 0;
-    document.removeEventListener('keydown', escHandler);
+    document.removeEventListener('keydown', keyHandler);
+    document.removeEventListener('pointerdown', outsideHandler, true);
   };
 
-  document.addEventListener('keydown', escHandler);
+  document.addEventListener('keydown', keyHandler);
+  document.addEventListener('pointerdown', outsideHandler, true);
 }
 
 /** Leaves doodle mode. When `commit` is true (pressing the 鉁?confirm
@@ -5111,6 +5322,7 @@ function exitDoodleMode(commit) {
   canvas.onpointerup = null;
   canvas.onpointercancel = null;
   if (doodleCtx) doodleCtx.clearRect(0, 0, canvas.width, canvas.height);
+  doodleStrokes = [];
   doodleHasStrokes = false;
 }
 
@@ -5132,10 +5344,10 @@ function commitDoodleToBoard(canvas) {
     id: 'doodle_' + Math.random().toString(36).slice(2, 10),
     isDoodle: true,
     imageData: cropped.toDataURL('image/png'),
-    x: Math.round(x + bounds.x / Board.zoom),
-    y: Math.round(y + bounds.y / Board.zoom),
-    width: Math.round(bounds.width / Board.zoom),
-    height: Math.round(bounds.height / Board.zoom),
+    x: Math.round(x + bounds.x / doodlePixelRatio / Board.zoom),
+    y: Math.round(y + bounds.y / doodlePixelRatio / Board.zoom),
+    width: Math.max(1, Math.round(bounds.width / doodlePixelRatio / Board.zoom)),
+    height: Math.max(1, Math.round(bounds.height / doodlePixelRatio / Board.zoom)),
     doodleTrimVersion: 2,
     zIndex: AppState.boardItems.length + 1,
     canvasId: activeCanvasId(),
@@ -5202,20 +5414,6 @@ function trimStoredDoodleToInk(item, img) {
   item.doodleTrimVersion = 2;
   window.messsAPI.upsertBoardItem(item);
   renderBoard();
-}
-
-/** Applies the current tool/color/size to the doodle canvas's drawing
-    context. The eraser is implemented via destination-out compositing
-    (paints transparency instead of a color), so it actually erases
-    whatever was drawn underneath rather than drawing over it in the
-    canvas's background color. */
-function applyDoodleBrushSettings() {
-  if (!doodleCtx) return;
-  doodleCtx.globalCompositeOperation = DoodleState.tool === 'eraser' ? 'destination-out' : 'source-over';
-  doodleCtx.strokeStyle = DoodleState.color;
-  doodleCtx.lineWidth = DoodleState.tool === 'eraser' ? DoodleState.size * 3 : DoodleState.size;
-  doodleCtx.lineJoin = 'round';
-  doodleCtx.lineCap = 'round';
 }
 
 function initDoodleColorPanel() {

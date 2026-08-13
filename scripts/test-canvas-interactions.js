@@ -121,10 +121,37 @@ assert.match(
   'The Agent control must disappear on the compact canvas.'
 );
 assert.match(boardStyles, /\.board-agent-panel \{[\s\S]*?border-radius:\s*18px/);
+assert.match(indexHtml, /id="board-agent-references"[\s\S]*?id="board-agent-add-reference"[\s\S]*?id="board-agent-model-menu"[\s\S]*?data-agent-kind="image"[\s\S]*?data-agent-kind="video"/,
+  'Canvas Agent must expose references plus image/video model selection.');
+assert.match(boardStyles, /\.board-agent-form textarea \{[\s\S]*?min-height:\s*58px;[\s\S]*?max-height:\s*112px;/,
+  'The Canvas Agent prompt must be approximately half its previous height.');
+assert.match(boardSource, /agentPanel && !agentPanel\.classList\.contains\('is-hidden'\)[\s\S]*?addCanvasAgentReference\(item\.fileId\)/,
+  'Clicking an image while Agent is open must add it as a reference.');
+assert.match(workspaceSource, /function addCanvasAgentReference[\s\S]*?agentReferenceFileIds[\s\S]*?function submitCanvasAgentGeneration[\s\S]*?generateAiMediaForBoardV3/,
+  'Agent references and model selection must submit through the real board generation pipeline.');
+assert.match(workspaceSource, /function canvasAgentMediaProviders[\s\S]*?getConfiguredVideoProviders[\s\S]*?getConfiguredImageProviders[\s\S]*?function renderCanvasAgentModels/,
+  'Agent model choices must come from the public provider configuration.');
+assert.doesNotMatch(workspaceSource, /else icon\.innerHTML|canvasAgentProviderIcon/,
+  'Agent generation choices must not invent icons for models other than Nano Banana Pro.');
 assert.match(
   mainSource,
   /parseCfHDrop\(clipboard\.readBuffer\('CF_HDROP'\)\)[\s\S]*?preview\.isImageExt/,
   'Copying an image file in another Windows app must import it from CF_HDROP.'
+);
+assert.match(
+  mainSource,
+  /extractClipboardImageSources[\s\S]*?clipboardDataImageBuffer[\s\S]*?clipboard\.readImage\(\)[\s\S]*?downloadClipboardImage/,
+  'Clipboard import must fall back from files to renderer images, native bitmaps, HTML and public HTTPS URLs.'
+);
+assert.match(
+  mainSource,
+  /resolvePublicClipboardHost[\s\S]*?isPrivateNetworkAddress[\s\S]*?MAX_CLIPBOARD_IMAGE_BYTES/,
+  'Remote clipboard images must block private networks and enforce a download limit.'
+);
+assert.match(
+  boardSource,
+  /setTimeout\(\(\) => \{[\s\S]*?pasteExternalImageWithFeedback[\s\S]*?document\.addEventListener\('paste'[\s\S]*?clipboardImageRequest\(event\.clipboardData\)/,
+  'The real paste event must get first access to browser and chat image files.'
 );
 assert.match(
   boardStyles,
@@ -136,6 +163,22 @@ assert.match(
   /\.canvas-library-card \{[\s\S]*?backdrop-filter:\s*blur\(/,
   'Canvas library cards must use the restrained glass surface.'
 );
+assert.match(indexHtml, /js\/vendor\/perfect-freehand\.js[\s\S]*?js\/board-canvas\.js/,
+  'The smooth-stroke library must load before canvas interactions.');
+assert.match(boardSource, /window\.PerfectFreehand\.getStroke[\s\S]*?smoothing:\s*0\.72[\s\S]*?streamline:\s*0\.48/,
+  'Doodles must use perfect-freehand smoothing instead of raw pixelated line segments.');
+assert.match(boardSource, /window\.devicePixelRatio[\s\S]*?canvas\.width[\s\S]*?doodlePixelRatio/,
+  'The doodle surface must render at device pixel ratio.');
+assert.match(boardSource, /16_000_000[\s\S]*?maximumPixelRatio[\s\S]*?doodlePixelRatio/,
+  'High-DPI doodles must retain a bounded backing-store pixel count on large displays.');
+assert.match(boardSource, /e\.key === 'Enter'[\s\S]*?commitActiveTextNote\(\)[\s\S]*?document\.addEventListener\('pointerdown'[\s\S]*?commitActiveTextNote\(\)/,
+  'Enter and outside pointer clicks must commit text editing.');
+assert.match(boardSource, /content\.contentEditable = 'false'[\s\S]*?beginTextNoteEditing[\s\S]*?contentEl\.contentEditable = 'true'/,
+  'Confirmed text must leave editing mode so the board drag handler can move it.');
+assert.match(boardSource, /if \(e\.key === 'Enter'\)[\s\S]*?exitDoodleMode\(true\)[\s\S]*?outsideHandler[\s\S]*?exitDoodleMode\(true\)/,
+  'Enter and outside pointer clicks must commit the current drawing.');
+assert.match(boardStyles, /\.board-text-note\.is-text-editing \{[\s\S]*?background:\s*var\(--bg-elevated\)[\s\S]*?border:\s*1px/,
+  'Text input chrome must appear only while editing.');
 
 const qualitySource = boardSource.slice(
   boardSource.indexOf('function syncMountedImageQuality'),
@@ -246,7 +289,7 @@ assert.doesNotMatch(
 );
 assert.match(boardSource, /--board-selection-width[\s\S]*?1\.2 \/ Math\.max\(Board\.zoom/);
 assert.match(boardStyles, /\.board-item\.is-selected \{[\s\S]*?outline:\s*var\(--board-selection-width/);
-assert.match(boardStyles, /width:\s*clamp\(440px, 52%, 620px\)/, 'The generation composer must keep the requested compact footprint.');
+assert.match(boardStyles, /width:\s*min\(860px, calc\(100% - 40px\)\)/, 'The generation composer must keep the centered compact footprint.');
 assert.doesNotMatch(sidebarSource, /Return home|\\u8fd4\\u56de\\u9996\\u9875/, 'The brand menu must not offer a return-to-home action.');
 assert.match(
   sidebarSource,
@@ -264,6 +307,27 @@ assert.match(boardStyles, /\.fullscreen-overlay \{[\s\S]*?z-index:\s*400;[\s\S]*
   'The fullscreen media viewer must render above the fullscreen board and Butler overlays.');
 assert.match(boardStyles, /\.fullscreen-stage > img \{[\s\S]*?max-width:\s*min\(88vw, 1600px\);[\s\S]*?max-height:\s*82vh;/);
 assert.match(contextMenuSource, /function arrangeItemsGrid[\s\S]*?boardItemBounds\(item\)[\s\S]*?packRows\(layoutItems,[\s\S]*?gap:\s*20/);
+assert.match(
+  contextMenuSource,
+  /function showBoardItemContextMenu[\s\S]*?Create duplicate[\s\S]*?Download[\s\S]*?Send to After Effects[\s\S]*?Send to Photoshop[\s\S]*?Delete/,
+  'A single canvas file must expose the compact five-command media menu.'
+);
+assert.match(
+  contextMenuSource,
+  /function duplicateBoardItem[\s\S]*?pasteBoardClipboard\(item\.x \+ 28, item\.y \+ 28\)/,
+  'Creating a duplicate must place an offset canvas copy instead of overlapping the source.'
+);
+assert.match(contextMenuSource, /if \(item\.divider\)[\s\S]*?context-menu-divider/,
+  'The destructive canvas command must support a visual divider.');
+assert.match(contextMenuSource, /function exportBoardItemFile[\s\S]*?exportFile\(item\.fileId\)/);
+assert.match(contextMenuSource, /function removeBoardItemFromCanvas[\s\S]*?removeBoardItem\(item\.id\)/);
+assert.match(
+  mainSource,
+  /const supported = normalizedTarget === 'photoshop'[\s\S]*?preview\.isImageExt\(ext\)[\s\S]*?preview\.isImageExt\(ext\) \|\| preview\.isVideoExt\(ext\)/,
+  'Images must be accepted by both Photoshop and After Effects while videos remain available to After Effects.'
+);
+assert.doesNotMatch(mainSource, /reason:\s*'not-ai-media'/,
+  'Imported images must not be blocked from Photoshop solely because they were not AI generated.');
 assert.doesNotMatch(contextMenuSource, /item\.layoutFrame = 'uniform-grid'/);
 assert.match(
   boardSource,
@@ -310,13 +374,8 @@ assert.match(contextMenuSource, /case 'scale-100':[\s\S]*?scaleBoardItemsToWidth
 assert.match(boardStyles, /\[data-theme="dark"\] \.board-image-toolbar,[\s\S]*?\[data-theme="dark"\] \.board-butler-menu/);
 assert.match(
   contextMenuSource,
-  /if \(file && isVideoExt\(file\.ext\)\) \{[\s\S]*?Send to After Effects[\s\S]*?'after-effects'/,
+  /const isVideo = !!\(file && isVideoExt\(file\.ext\)\);[\s\S]*?if \(isImage \|\| isVideo\) \{[\s\S]*?Send to After Effects[\s\S]*?'after-effects'/,
   'Every canvas video must expose Send to After Effects, not only generated videos.'
-);
-assert.match(
-  mainSource,
-  /normalizedTarget === 'photoshop' && !f\.aiGeneration && f\.sourceFolder !== 'AI Generated'/,
-  'The main process must allow imported videos through the version-independent After Effects launcher.'
 );
 
 process.stdout.write('Canvas interaction tests passed.\n');

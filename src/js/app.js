@@ -21,7 +21,7 @@ function bootstrapMainApp(initial) {
   window.messsAPI.setSidebarCollapsed(false);
 
   initFolders();
-  initSidebar();
+  initSidebar(initial);
   initContextMenu();
   initDocumentEditor();
   initDetailPanel();

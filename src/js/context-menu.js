@@ -38,9 +38,13 @@ function cutBoardSelection(items) {
 }
 
 function pasteBoardSelectionAt(clickX, clickY) {
-  if (!BoardClipboard.items.length) return;
   const { x, y } = clientToBoardCoords(clickX, clickY);
-  pasteBoardClipboard(Math.round(x - 110), Math.round(y - 70));
+  const placement = { x: Math.round(x - 110), y: Math.round(y - 70) };
+  if (BoardClipboard.items.length) {
+    pasteBoardClipboard(placement.x, placement.y);
+    return;
+  }
+  pasteExternalImageWithFeedback(placement);
 }
 
 function normalizeTargetFolderId(folderId) {
@@ -217,6 +221,12 @@ function buildAndShowSimpleMenu(items, x, y, menuId = 'simple-context-menu') {
   document.body.appendChild(menu);
 
   for (const item of items) {
+    if (item.divider) {
+      const divider = document.createElement('li');
+      divider.className = 'context-menu-divider';
+      divider.setAttribute('role', 'separator');
+      menu.appendChild(divider);
+    }
     const li = document.createElement('li');
     li.className = 'context-menu-item' + (item.danger ? ' is-danger' : '');
     if (item.icon) {
@@ -269,47 +279,79 @@ async function sendBoardMediaToCreativeApp(fileId, target) {
   }
 }
 
-function showBoardItemContextMenu(item, x, y) {
-  const selected = AppState.boardItems.filter((boardItem) => boardItem.selected);
-  const items = [
-    { label: t('Copy', '复制'), action: () => copyBoardSelection(selected.length ? selected : [item]) },
-    { label: t('Cut', '剪切'), action: () => cutBoardSelection(selected.length ? selected : [item]) },
-    { label: t('Paste', '粘贴'), action: () => pasteBoardSelectionAt(x, y), danger: false }
-  ];
+function duplicateBoardItem(item) {
+  copyBoardSelection([item]);
+  const copies = pasteBoardClipboard(item.x + 28, item.y + 28);
+  if (copies.length) showToast(t('Duplicate created', '\u5df2\u521b\u5efa\u526f\u672c'));
+}
 
+async function exportBoardItemFile(item) {
+  const result = await window.messsAPI.exportFile(item.fileId);
+  if (result && result.ok) showToast(t('File downloaded', '\u6587\u4ef6\u5df2\u4e0b\u8f7d'));
+}
+
+async function removeBoardItemFromCanvas(item) {
+  AppState.boardItems = AppState.boardItems.filter((boardItem) => boardItem.id !== item.id);
+  canvasWorkspaceRemoveItems([item.id]);
+  await window.messsAPI.removeBoardItem(item.id);
+  if (item.isNote && typeof activeTextNoteId !== 'undefined' && activeTextNoteId === item.id) hideTextToolPanel();
+  renderBoard();
+  showToast(t('Removed from canvas', '\u5df2\u4ece\u753b\u5e03\u79fb\u9664'));
+}
+
+function showBoardItemContextMenu(item, x, y) {
   if (item.fileId) {
     const file = AppState.files.find((entry) => entry.id === item.fileId);
-    const isGenerated = !!(file && (file.aiGeneration || file.sourceFolder === 'AI Generated'));
-    if (isGenerated && isImageExt(file.ext)) {
+    const isImage = !!(file && isImageExt(file.ext));
+    const isVideo = !!(file && isVideoExt(file.ext));
+    const items = [
+      {
+        label: t('Create duplicate', '\u521b\u5efa\u526f\u672c'),
+        icon: 'M8 8h11v11H8z;M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1',
+        action: () => duplicateBoardItem(item)
+      },
+      {
+        label: t('Download', '\u4e0b\u8f7d'),
+        icon: 'M12 3v12;M7 10l5 5 5-5;M4 20h16',
+        action: () => exportBoardItemFile(item)
+      }
+    ];
+    if (isImage || isVideo) {
       items.push({
-        label: t('Send to Photoshop', '发送到 Photoshop'),
-        action: () => sendBoardMediaToCreativeApp(item.fileId, 'photoshop')
-      });
-    }
-    if (file && isVideoExt(file.ext)) {
-      items.push({
-        label: t('Send to After Effects', '发送到 After Effects'),
+        label: t('Send to After Effects', '\u53d1\u9001\u5230 After Effects'),
+        icon: 'M22 2 11 13;M22 2l-7 20-4-9-9-4z',
         action: () => sendBoardMediaToCreativeApp(item.fileId, 'after-effects')
       });
     }
-    items.push(
-      { label: t('Open Default App', '用默认应用打开'), action: () => window.messsAPI.openFileExternally(item.fileId) },
-      { label: t('Show in Folder', '在文件夹中显示'), action: () => window.messsAPI.revealFile(item.fileId) }
-    );
+    if (isImage) {
+      items.push({
+        label: t('Send to Photoshop', '\u53d1\u9001\u5230 Photoshop'),
+        icon: 'M4 5h16v14H4z;M8 15l3-3 2 2 2-2 3 3;M16 8h.01',
+        action: () => sendBoardMediaToCreativeApp(item.fileId, 'photoshop')
+      });
+    }
+    items.push({
+      label: t('Delete', '\u5220\u9664'),
+      icon: 'M3 6h18;M8 6V4h8v2;M7 6l1 15h8l1-15;M10 10v7;M14 10v7',
+      divider: true,
+      danger: true,
+      action: () => removeBoardItemFromCanvas(item)
+    });
+    buildAndShowSimpleMenu(items, x, y, 'board-item-context-menu');
+    return;
   }
 
-  items.push({
-    label: t('Remove from Canvas', '从画布移除'),
-    danger: true,
-    action: async () => {
-      AppState.boardItems = AppState.boardItems.filter((boardItem) => boardItem.id !== item.id);
-      canvasWorkspaceRemoveItems([item.id]);
-      await window.messsAPI.removeBoardItem(item.id);
-      if (item.isNote && typeof activeTextNoteId !== 'undefined' && activeTextNoteId === item.id) hideTextToolPanel();
-      renderBoard();
-      showToast(t('Removed from canvas', '已从画布移除'));
+  const selected = AppState.boardItems.filter((boardItem) => boardItem.selected);
+  const items = [
+    { label: t('Copy', '\u590d\u5236'), action: () => copyBoardSelection(selected.length ? selected : [item]) },
+    { label: t('Cut', '\u526a\u5207'), action: () => cutBoardSelection(selected.length ? selected : [item]) },
+    { label: t('Paste', '\u7c98\u8d34'), action: () => pasteBoardSelectionAt(x, y), danger: false },
+    {
+      label: t('Remove from Canvas', '\u4ece\u753b\u5e03\u79fb\u9664'),
+      danger: true,
+      action: () => removeBoardItemFromCanvas(item)
     }
-  });
+  ];
   buildAndShowSimpleMenu(items, x, y, 'board-item-context-menu');
 }
 

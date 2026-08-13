@@ -254,6 +254,28 @@ test('HUNYUAN3D task tokens hide the job, bind the user and provider, and normal
     fetchImpl: async () => jsonResponse({ Response: { RequestId: 'request-id', ErrorCode: '', ErrorMessage: '' } })
   });
   assert.deepEqual(pendingWithoutStatus, { status: 'queued', retryAfterMs: 5000 });
+  for (const upstreamStatus of ['PENDING_QUEUE', 'WAITING_TO_RUN', 'NOT_STARTED', 'SUBMITTED']) {
+    let settled = false;
+    const queued = await getThreeDStatus({ taskToken: created.taskToken, userId: 'user-one' }, {
+      apiKey: 'test-key',
+      taskSecret: 'independent-task-secret',
+      now: 1_800_000_001_600,
+      fetchImpl: async () => jsonResponse({ Response: { Status: upstreamStatus } }),
+      settleCredits: async () => {
+        settled = true;
+        return { ok: true };
+      }
+    });
+    assert.deepEqual(queued, { status: 'queued', retryAfterMs: 5000 });
+    assert.equal(settled, false, `${upstreamStatus} must remain queued without settling credits`);
+  }
+  const creating = await getThreeDStatus({ taskToken: created.taskToken, userId: 'user-one' }, {
+    apiKey: 'test-key',
+    taskSecret: 'independent-task-secret',
+    now: 1_800_000_001_650,
+    fetchImpl: async () => jsonResponse({ Response: { Status: 'CREATING' } })
+  });
+  assert.deepEqual(creating, { status: 'processing', retryAfterMs: 5000 });
   const failed = await getThreeDStatus({ taskToken: created.taskToken, userId: 'user-one' }, {
     apiKey: 'test-key',
     taskSecret: 'independent-task-secret',

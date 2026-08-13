@@ -3,6 +3,10 @@
 const CanvasWorkspace = {
   agentMessages: [],
   agentBusy: false,
+  agentMode: 'chat',
+  agentGenerationKind: 'image',
+  agentProviderId: null,
+  agentReferenceFileIds: new Set(),
   config: null,
   libraryFilter: 'all',
   libraryProjectId: null,
@@ -635,11 +639,204 @@ function activeCanvasAgentProvider() {
   };
 }
 
+function canvasAgentMediaProviders(kind = CanvasWorkspace.agentGenerationKind) {
+  const config = CanvasWorkspace.config || {};
+  if (kind === 'video') {
+    return typeof getConfiguredVideoProviders === 'function' ? getConfiguredVideoProviders(config) : [];
+  }
+  return typeof getConfiguredImageProviders === 'function' ? getConfiguredImageProviders(config) : [];
+}
+
+function renderCanvasAgentModels() {
+  const list = document.getElementById('board-agent-model-options');
+  const triggerLabel = document.getElementById('board-agent-model-label');
+  const chatOption = document.getElementById('board-agent-chat-mode');
+  if (!list || !triggerLabel || !chatOption) return;
+  const providers = canvasAgentMediaProviders();
+  if (!providers.some((provider) => provider.id === CanvasWorkspace.agentProviderId)) {
+    const config = CanvasWorkspace.config || {};
+    const activeId = CanvasWorkspace.agentGenerationKind === 'video'
+      ? config.activeVideoProviderId
+      : config.activeImageProviderId;
+    CanvasWorkspace.agentProviderId = (providers.find((provider) => provider.id === activeId) || providers[0] || {}).id || null;
+  }
+  chatOption.classList.toggle('is-active', CanvasWorkspace.agentMode === 'chat');
+  list.innerHTML = '';
+  providers.forEach((provider) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `board-agent-model-option${CanvasWorkspace.agentMode === 'generate' && provider.id === CanvasWorkspace.agentProviderId ? ' is-active' : ''}`;
+    button.dataset.providerId = provider.id;
+    button.setAttribute('role', 'option');
+    const icon = document.createElement('span');
+    const badgeKind = typeof aiModelBadgeKind === 'function' ? aiModelBadgeKind(provider) : null;
+    if (badgeKind && typeof createAiModelBadge === 'function') icon.appendChild(createAiModelBadge(badgeKind));
+    const label = document.createElement('span');
+    label.textContent = provider.name;
+    const check = document.createElement('i');
+    check.textContent = '✓';
+    button.append(icon, label, check);
+    list.appendChild(button);
+  });
+  const selected = providers.find((provider) => provider.id === CanvasWorkspace.agentProviderId);
+  triggerLabel.textContent = CanvasWorkspace.agentMode === 'chat'
+    ? 'Agent'
+    : (selected ? selected.name : t('No model', '无可用模型'));
+  document.querySelectorAll('[data-agent-kind]').forEach((button) => {
+    const active = button.dataset.agentKind === CanvasWorkspace.agentGenerationKind;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+}
+
+function canvasAgentReferenceLimit() {
+  const provider = canvasAgentMediaProviders('image')
+    .find((entry) => entry.id === CanvasWorkspace.agentProviderId);
+  const configured = Number(provider && provider.capabilities && provider.capabilities.maxReferenceImages);
+  return Number.isFinite(configured) && configured >= 0 ? Math.floor(configured) : 14;
+}
+
+function addCanvasAgentReferenceIds(fileIds) {
+  renderCanvasAgentModels();
+  const limit = canvasAgentReferenceLimit();
+  if (limit === 0) {
+    showToast(t('This model does not accept reference images.', '此模型不支持参考图。'), 'AI');
+    return false;
+  }
+  let added = false;
+  for (const fileId of fileIds) {
+    if (CanvasWorkspace.agentReferenceFileIds.has(fileId)) continue;
+    if (CanvasWorkspace.agentReferenceFileIds.size >= limit) {
+      showToast(t(`Up to ${limit} reference images can be used.`, `最多可使用 ${limit} 张参考图。`), 'AI');
+      break;
+    }
+    CanvasWorkspace.agentReferenceFileIds.add(fileId);
+    added = true;
+  }
+  renderCanvasAgentReferences();
+  return added;
+}
+
+function renderCanvasAgentReferences() {
+  const strip = document.getElementById('board-agent-references');
+  if (!strip) return;
+  [...CanvasWorkspace.agentReferenceFileIds].forEach((fileId) => {
+    const file = AppState.files.find((entry) => entry.id === fileId);
+    if (!file || !isImageExt(file.ext)) CanvasWorkspace.agentReferenceFileIds.delete(fileId);
+  });
+  strip.innerHTML = '';
+  CanvasWorkspace.agentReferenceFileIds.forEach((fileId) => {
+    const file = AppState.files.find((entry) => entry.id === fileId);
+    if (!file) return;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'board-agent-reference';
+    button.title = t(`Remove ${file.name}`, `移除 ${file.name}`);
+    const image = document.createElement('img');
+    image.src = file.thumbUrl || file.url;
+    image.alt = file.name;
+    const remove = document.createElement('span');
+    remove.textContent = '×';
+    button.append(image, remove);
+    button.addEventListener('click', () => {
+      CanvasWorkspace.agentReferenceFileIds.delete(fileId);
+      renderCanvasAgentReferences();
+      if (typeof syncAiComposerReferenceClasses === 'function') syncAiComposerReferenceClasses();
+    });
+    strip.appendChild(button);
+  });
+  strip.hidden = CanvasWorkspace.agentReferenceFileIds.size === 0;
+}
+
+function selectedCanvasAgentImageIds() {
+  if (typeof selectedBoardImageItems !== 'function') return [];
+  return selectedBoardImageItems().map((item) => item.fileId).filter(Boolean);
+}
+
+function addSelectedImagesToCanvasAgent() {
+  const ids = selectedCanvasAgentImageIds();
+  if (!ids.length) {
+    showToast(t('Select an image on the canvas first.', '请先选择画布中的图片。'), 'AI');
+    return false;
+  }
+  CanvasWorkspace.agentMode = 'generate';
+  CanvasWorkspace.agentGenerationKind = 'image';
+  return addCanvasAgentReferenceIds(ids);
+}
+
+function addCanvasAgentReference(fileId) {
+  const file = AppState.files.find((entry) => entry.id === fileId);
+  if (!file || !isImageExt(file.ext)) return false;
+  CanvasWorkspace.agentMode = 'generate';
+  CanvasWorkspace.agentGenerationKind = 'image';
+  return addCanvasAgentReferenceIds([file.id]);
+}
+
+async function submitCanvasAgentGeneration(prompt) {
+  const providers = canvasAgentMediaProviders();
+  const provider = providers.find((entry) => entry.id === CanvasWorkspace.agentProviderId) || providers[0];
+  if (!provider || typeof generateAiMediaForBoardV3 !== 'function') {
+    showToast(t('No generation model is available.', '没有可用的生成模型。'), 'AI');
+    return;
+  }
+  const config = CanvasWorkspace.config || {};
+  const kind = CanvasWorkspace.agentGenerationKind;
+  const referenceLimit = kind === 'image'
+    ? canvasAgentReferenceLimit()
+    : (() => {
+      const configured = Number(provider.capabilities && provider.capabilities.maxReferenceImages);
+      return Number.isFinite(configured) && configured >= 0 ? Math.floor(configured) : 2;
+    })();
+  const referenceIds = [...CanvasWorkspace.agentReferenceFileIds].slice(0, referenceLimit);
+  const references = typeof generatedReferenceData === 'function'
+    ? await generatedReferenceData(referenceIds)
+    : { urls: [], referenceFileIds: [] };
+  const sourceFile = references.referenceFileIds.length
+    ? AppState.files.find((entry) => entry.id === references.referenceFileIds[0])
+    : null;
+  const original = sourceFile && typeof sourceImageGenerationOptionsForFile === 'function'
+    ? sourceImageGenerationOptionsForFile(sourceFile)
+    : { aspectRatio: kind === 'video' ? '16:9' : '1:1', sourceWidth: null, sourceHeight: null };
+  const capabilities = provider.capabilities || {};
+  const resolution = kind === 'video' ? supportedVideoResolution(null, capabilities) : supportedImageSize(config.imageSize, capabilities);
+  await generateAiMediaForBoardV3({
+    kind,
+    prompt,
+    size: resolution,
+    resolution: kind === 'video' ? resolution : undefined,
+    count: 1,
+    duration: kind === 'video' ? supportedVideoDuration(config.videoDuration, capabilities) : Number(config.videoDuration) || 6,
+    aspectRatio: kind === 'video'
+      ? supportedVideoAspectRatio(original.aspectRatio, capabilities, references.referenceFileIds.length > 0)
+      : supportedImageAspectRatio(original.aspectRatio, capabilities, references.referenceFileIds.length > 0),
+    sourceWidth: original.sourceWidth,
+    sourceHeight: original.sourceHeight,
+    imageProviderId: kind === 'image' ? provider.id : null,
+    videoProviderId: kind === 'video' ? provider.id : null,
+    modelName: provider.name,
+    referenceFileIds: references.referenceFileIds,
+    urls: references.urls
+  });
+}
+
 async function submitCanvasAgentMessage() {
   if (CanvasWorkspace.agentBusy) return;
   const input = document.getElementById('board-agent-input');
   const prompt = input.value.trim();
   if (!prompt) return;
+  if (CanvasWorkspace.agentMode === 'generate') {
+    input.value = '';
+    input.disabled = true;
+    document.getElementById('board-agent-submit').disabled = true;
+    try {
+      await submitCanvasAgentGeneration(prompt);
+    } finally {
+      input.disabled = false;
+      document.getElementById('board-agent-submit').disabled = false;
+      input.focus();
+    }
+    return;
+  }
   const selected = activeCanvasAgentProvider();
   input.value = '';
   appendCanvasAgentMessage('user', prompt);
@@ -778,6 +975,43 @@ async function initCanvasWorkspace(initial) {
   document.getElementById('board-agent-close').addEventListener('click', () => {
     setCanvasAgentOpen(false);
   });
+  const modelTrigger = document.getElementById('board-agent-model-trigger');
+  const modelMenu = document.getElementById('board-agent-model-menu');
+  modelTrigger.addEventListener('click', () => {
+    modelMenu.hidden = !modelMenu.hidden;
+    modelTrigger.setAttribute('aria-expanded', String(!modelMenu.hidden));
+    if (!modelMenu.hidden) renderCanvasAgentModels();
+  });
+  document.getElementById('board-agent-chat-mode').addEventListener('click', () => {
+    CanvasWorkspace.agentMode = 'chat';
+    renderCanvasAgentModels();
+    modelMenu.hidden = true;
+    modelTrigger.setAttribute('aria-expanded', 'false');
+  });
+  document.querySelector('.board-agent-kind-switch').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-agent-kind]');
+    if (!button) return;
+    CanvasWorkspace.agentGenerationKind = button.dataset.agentKind === 'video' ? 'video' : 'image';
+    CanvasWorkspace.agentMode = 'generate';
+    CanvasWorkspace.agentProviderId = null;
+    renderCanvasAgentModels();
+  });
+  document.getElementById('board-agent-model-options').addEventListener('click', (event) => {
+    const option = event.target.closest('[data-provider-id]');
+    if (!option) return;
+    CanvasWorkspace.agentMode = 'generate';
+    CanvasWorkspace.agentProviderId = option.dataset.providerId;
+    renderCanvasAgentModels();
+    modelMenu.hidden = true;
+    modelTrigger.setAttribute('aria-expanded', 'false');
+  });
+  document.getElementById('board-agent-add-reference').addEventListener('click', addSelectedImagesToCanvasAgent);
+  document.addEventListener('pointerdown', (event) => {
+    if (!event.target.closest('.board-agent-model-picker')) {
+      modelMenu.hidden = true;
+      modelTrigger.setAttribute('aria-expanded', 'false');
+    }
+  }, true);
   document.getElementById('board-agent-form').addEventListener('submit', (event) => {
     event.preventDefault();
     submitCanvasAgentMessage();
@@ -790,12 +1024,15 @@ async function initCanvasWorkspace(initial) {
   });
   document.addEventListener('messs:ai-config-updated', (event) => {
     CanvasWorkspace.config = event.detail || CanvasWorkspace.config;
+    renderCanvasAgentModels();
   });
   try {
     CanvasWorkspace.config = await window.messsAPI.getAiMediaConfig();
   } catch (err) {
     CanvasWorkspace.config = null;
   }
+  renderCanvasAgentModels();
+  renderCanvasAgentReferences();
   showCanvasLibrary();
   refreshCanvasWorkspaceLanguage();
 }

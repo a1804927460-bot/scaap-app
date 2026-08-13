@@ -16,13 +16,19 @@ const CanvasNodeMode = {
   panFrame: 0,
   spacePressed: false,
   selectedNodeId: null,
+  selectedNodeIds: new Set(),
   selectedConnection: null,
   connectionObserver: null,
   connectionDraft: null,
   connectionPointer: null,
   connectionMenu: null,
   textEditor: null,
-  textEditorNodeId: null
+  textEditorNodeId: null,
+  marqueePointerId: null,
+  marqueeStart: null,
+  marqueePoint: null,
+  marqueeElement: null,
+  marqueeInitialSelection: new Set()
 };
 
 const CANVAS_NODE_MODE_KEY = 'messs.canvas.mode.v1';
@@ -631,6 +637,135 @@ function isCanvasNodeTextTarget(target) {
   return Boolean(target && target.closest('input, textarea, select, [contenteditable="true"]'));
 }
 
+function canvasNodeIdFromElement(element) {
+  return element && String(element.id || '').replace(/^node-/, '');
+}
+
+function applyCanvasNodeSelection(nodeIds) {
+  const host = document.getElementById('board-node-editor');
+  if (!host) return;
+  const selectedIds = new Set([...nodeIds].map(String));
+  host.querySelectorAll('.drawflow-node').forEach((node) => {
+    node.classList.toggle('selected', selectedIds.has(canvasNodeIdFromElement(node)));
+  });
+  CanvasNodeMode.selectedNodeIds = selectedIds;
+  CanvasNodeMode.selectedNodeId = selectedIds.size === 1 ? [...selectedIds][0] : null;
+  const editor = CanvasNodeMode.editor;
+  if (editor) {
+    editor.node_selected = CanvasNodeMode.selectedNodeId
+      ? host.querySelector(`#node-${CSS.escape(CanvasNodeMode.selectedNodeId)}`)
+      : null;
+  }
+  syncCanvasNodeConnectionFlow();
+}
+
+function clearCanvasNodeConnectionSelection() {
+  const editor = CanvasNodeMode.editor;
+  if (!editor || !editor.connection_selected) return;
+  editor.connection_selected.classList.remove('selected');
+  editor.connection_selected = null;
+  CanvasNodeMode.selectedConnection = null;
+}
+
+function updateCanvasNodeMarquee() {
+  const start = CanvasNodeMode.marqueeStart;
+  const point = CanvasNodeMode.marqueePoint;
+  const box = CanvasNodeMode.marqueeElement;
+  if (!start || !point || !box) return;
+  const left = Math.min(start.x, point.x);
+  const top = Math.min(start.y, point.y);
+  const width = Math.abs(point.x - start.x);
+  const height = Math.abs(point.y - start.y);
+  box.style.left = `${left}px`;
+  box.style.top = `${top}px`;
+  box.style.width = `${width}px`;
+  box.style.height = `${height}px`;
+  box.hidden = width < 3 && height < 3;
+}
+
+function finishCanvasNodeMarquee(event) {
+  const pointerId = CanvasNodeMode.marqueePointerId;
+  if (pointerId === null || (event && event.pointerId !== undefined && event.pointerId !== pointerId)) return;
+  const host = document.getElementById('board-node-editor');
+  const start = CanvasNodeMode.marqueeStart;
+  const point = CanvasNodeMode.marqueePoint || start;
+  const selectedIds = new Set(CanvasNodeMode.marqueeInitialSelection);
+  const dragged = !!(start && point && (Math.abs(point.x - start.x) >= 3 || Math.abs(point.y - start.y) >= 3));
+  if (host && dragged) {
+    const hostRect = host.getBoundingClientRect();
+    const selectionRect = {
+      left: hostRect.left + Math.min(start.x, point.x),
+      right: hostRect.left + Math.max(start.x, point.x),
+      top: hostRect.top + Math.min(start.y, point.y),
+      bottom: hostRect.top + Math.max(start.y, point.y)
+    };
+    host.querySelectorAll('.drawflow-node').forEach((node) => {
+      const rect = node.getBoundingClientRect();
+      const intersects = rect.right >= selectionRect.left && rect.left <= selectionRect.right &&
+        rect.bottom >= selectionRect.top && rect.top <= selectionRect.bottom;
+      if (intersects) selectedIds.add(canvasNodeIdFromElement(node));
+    });
+  }
+  applyCanvasNodeSelection(selectedIds);
+  CanvasNodeMode.marqueeElement?.remove();
+  CanvasNodeMode.marqueePointerId = null;
+  CanvasNodeMode.marqueeStart = null;
+  CanvasNodeMode.marqueePoint = null;
+  CanvasNodeMode.marqueeElement = null;
+  CanvasNodeMode.marqueeInitialSelection = new Set();
+  if (host) {
+    host.classList.remove('is-marquee-selecting');
+    if (host.hasPointerCapture && host.hasPointerCapture(pointerId)) host.releasePointerCapture(pointerId);
+  }
+}
+
+function bindCanvasNodeMarqueeSelection(host) {
+  host.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || event.altKey || CanvasNodeMode.spacePressed) return;
+    if (event.target.closest('.drawflow-node, .connection, .input, .output, .point')) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeCanvasNodeAddMenu();
+    closeCanvasNodeConnectionMenu();
+    clearCanvasNodeConnectionSelection();
+    const rect = host.getBoundingClientRect();
+    const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+    CanvasNodeMode.marqueePointerId = event.pointerId;
+    CanvasNodeMode.marqueeStart = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    CanvasNodeMode.marqueePoint = { ...CanvasNodeMode.marqueeStart };
+    CanvasNodeMode.marqueeInitialSelection = additive
+      ? new Set(CanvasNodeMode.selectedNodeIds)
+      : new Set();
+    const box = document.createElement('div');
+    box.className = 'board-node-selection-box';
+    box.hidden = true;
+    box.setAttribute('aria-hidden', 'true');
+    host.appendChild(box);
+    CanvasNodeMode.marqueeElement = box;
+    host.classList.add('is-marquee-selecting');
+    if (host.setPointerCapture) host.setPointerCapture(event.pointerId);
+  }, true);
+  host.addEventListener('mousedown', (event) => {
+    if (CanvasNodeMode.marqueePointerId === null) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }, true);
+  host.addEventListener('pointermove', (event) => {
+    if (event.pointerId !== CanvasNodeMode.marqueePointerId) return;
+    event.preventDefault();
+    const rect = host.getBoundingClientRect();
+    CanvasNodeMode.marqueePoint = {
+      x: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
+      y: Math.max(0, Math.min(rect.height, event.clientY - rect.top))
+    };
+    updateCanvasNodeMarquee();
+  }, true);
+  host.addEventListener('pointerup', finishCanvasNodeMarquee, true);
+  host.addEventListener('pointercancel', finishCanvasNodeMarquee, true);
+  host.addEventListener('lostpointercapture', finishCanvasNodeMarquee, true);
+  window.addEventListener('blur', () => finishCanvasNodeMarquee());
+}
+
 function bindCanvasNodePanning(host, editor) {
   host.addEventListener('pointerdown', (event) => {
     const modifierPan = event.button === 0 && (event.altKey || CanvasNodeMode.spacePressed);
@@ -682,10 +817,10 @@ function canvasNodeConnectionMatches(connection, details) {
 function syncCanvasNodeConnectionFlow() {
   const host = document.getElementById('board-node-editor');
   if (!host) return;
-  const nodeId = CanvasNodeMode.selectedNodeId;
+  const nodeIds = CanvasNodeMode.selectedNodeIds;
   const selectedConnection = CanvasNodeMode.selectedConnection;
   host.querySelectorAll('.drawflow .connection').forEach((connection) => {
-    const connectedToNode = nodeId && (
+    const connectedToNode = [...nodeIds].some((nodeId) =>
       connection.classList.contains(`node_out_node-${nodeId}`) ||
       connection.classList.contains(`node_in_node-${nodeId}`)
     );
@@ -761,6 +896,7 @@ function ensureCanvasNodeEditor() {
   editor.start();
   CanvasNodeMode.editor = editor;
   bindCanvasNodePanning(host, editor);
+  bindCanvasNodeMarqueeSelection(host);
   observeCanvasNodeConnections(host);
   ['pointerdown', 'pointermove', 'pointerup'].forEach((eventName) => {
     host.addEventListener(eventName, (event) => {
@@ -772,16 +908,14 @@ function ensureCanvasNodeEditor() {
     editor.on(eventName, saveCanvasNodeLayout);
   });
   editor.on('nodeSelected', (nodeId) => {
-    CanvasNodeMode.selectedNodeId = String(nodeId);
+    applyCanvasNodeSelection(new Set([String(nodeId)]));
     CanvasNodeMode.selectedConnection = null;
-    syncCanvasNodeConnectionFlow();
   });
   editor.on('nodeUnselected', () => {
-    CanvasNodeMode.selectedNodeId = null;
-    syncCanvasNodeConnectionFlow();
+    if (CanvasNodeMode.marqueePointerId === null) applyCanvasNodeSelection(new Set());
   });
   editor.on('connectionSelected', (details) => {
-    CanvasNodeMode.selectedNodeId = null;
+    applyCanvasNodeSelection(new Set());
     CanvasNodeMode.selectedConnection = details;
     syncCanvasNodeConnectionFlow();
   });
@@ -811,7 +945,10 @@ function ensureCanvasNodeEditor() {
   editor.on('connectionRemoved', syncCanvasNodeConnectionFlow);
   editor.on('nodeRemoved', (nodeId) => {
     if (String(nodeId) === String(CanvasNodeMode.textEditorNodeId)) closeCanvasTextEditor({ save: false });
-    CanvasNodeMode.selectedNodeId = null;
+    CanvasNodeMode.selectedNodeIds.delete(String(nodeId));
+    CanvasNodeMode.selectedNodeId = CanvasNodeMode.selectedNodeIds.size === 1
+      ? [...CanvasNodeMode.selectedNodeIds][0]
+      : null;
     saveCanvasNodeLayout();
     window.setTimeout(reconcileCanvasNodes, 0);
   });
@@ -870,6 +1007,8 @@ function applyCanvasModeVisibility() {
     closeCanvasTextEditor();
     CanvasNodeMode.connectionDraft = null;
     finishCanvasNodePan();
+    finishCanvasNodeMarquee();
+    applyCanvasNodeSelection(new Set());
     CanvasNodeMode.spacePressed = false;
     document.getElementById('board-node-editor')?.classList.remove('is-pan-ready');
   }

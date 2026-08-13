@@ -167,6 +167,8 @@ function testButlerDesktopBridgeSurface() {
   });
   assert.match(mainSource, /sanitizeImageForButler/);
   assert.match(mainSource, /assertValidGlbBuffer\(buffer\)/);
+  assert.match(mainSource, /'pending_queue'[\s\S]*?'waiting_to_run'[\s\S]*?\? 'queued'/,
+    'The desktop bridge must keep provider queue aliases in a non-terminal state.');
   assert.match(mainSource, /modelPreviewUrl:\s*`messs-preview:\/\/\$\{f\.id\}\/model`/);
   assert.match(mainSource, /pageStr === 'model'/);
   assert.strictEqual(/BearerKey|AI302_KEY|AI_302_API_KEY/.test(`${preloadSource}\n${mainSource}\n${clientSource}`), false);

@@ -53,16 +53,15 @@ assert.deepEqual(
 );
 assert.equal(config.providers.find((provider) => provider.id === 'image-1').name, 'Nano Banana Pro');
 assert.equal(config.providers.find((provider) => provider.id === 'image-1').protocol, 'gemini-native');
-assert.equal(config.providers.find((provider) => provider.id === 'image-2').name, 'Nano Banana 2');
-assert.deepEqual(config.providers.find((provider) => provider.id === 'image-2').capabilities.sizes, ['1K', '2K', '4K']);
 assert.equal(config.providers.find((provider) => provider.id === 'image-3').name, 'Seedream 5.0');
 assert.equal(config.providers.find((provider) => provider.id === 'image-3').model, 'doubao-seedream-5-0-260128');
 assert.equal(config.providers.find((provider) => provider.id === 'image-4').name, 'Midjourney Turbo');
-assert.equal(config.providers.find((provider) => provider.id === 'image-5').name, 'Nano Banana 2 Lite');
-assert.equal(config.providers.find((provider) => provider.id === 'image-5').protocol, 'ai302-nano-banana-v3');
-assert.equal(config.providers.find((provider) => provider.id === 'image-9').name, 'Nano Banana');
-assert.equal(config.providers.find((provider) => provider.id === 'image-9').protocol, 'ai302-nano-banana-legacy');
-assert.deepEqual(config.providers.find((provider) => provider.id === 'image-9').capabilities.referenceRatios, ['auto']);
+for (const id of ['image-2', 'image-5', 'image-7', 'image-9', 'image-11', 'image-12', 'image-13', 'image-14']) {
+  assert.equal(ids.includes(id), false);
+}
+for (const id of ['video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9']) {
+  assert.equal(ids.includes(id), false);
+}
 const gptImage2Provider = config.providers.find((provider) => provider.id === 'image-6');
 assert.equal(gptImage2Provider.name, 'GPT Image 2');
 assert.equal(gptImage2Provider.model, 'gpt-image-2');

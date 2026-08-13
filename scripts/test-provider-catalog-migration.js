@@ -31,19 +31,11 @@ assert.deepEqual(
   media.imageProviders.filter((provider) => provider.name).map((provider) => provider.name),
   [
     'Nano Banana Pro',
-    'Nano Banana 2',
     'Seedream 5.0',
     'Midjourney Turbo',
-    'Nano Banana 2 Lite',
     'GPT Image 2',
-    'Higgsfield Soul Standard',
     'Higgsfield Soul',
-    'Nano Banana',
     'Seedream 5.0 Pro',
-    'Seedream 4.5',
-    'Seedream 4.0',
-    'Seedream 3.0',
-    'SeedEdit 3.0',
     'Kling Image 2',
     'Jimeng Drawing 3.0'
   ]
@@ -54,8 +46,9 @@ assert.equal(nanoBananaPro.endpoint, 'https://api.quickrouter.ai/v1beta/models/g
 assert.equal(nanoBananaPro.protocol, 'gemini-native');
 assert.deepEqual(nanoBananaPro.capabilities.sizes, ['1K', '2K', '4K']);
 assert.equal(nanoBananaPro.capabilities.ratios.includes('auto'), false);
-assert.deepEqual(media.imageProviders.find((provider) => provider.id === 'image-2').capabilities.sizes, ['1K', '2K', '4K']);
-assert.deepEqual(media.imageProviders.find((provider) => provider.id === 'image-9').capabilities.referenceRatios, ['auto']);
+for (const id of ['image-2', 'image-5', 'image-7', 'image-9', 'image-11', 'image-12', 'image-13', 'image-14']) {
+  assert.equal(media.imageProviders.find((provider) => provider.id === id).name, '');
+}
 assert.equal(require('../lib/provider-catalog').catalogProvider('image-1').keyEnv, 'QUICKROUTER_API_KEY');
 for (const id of [
   'image-2', 'image-3', 'image-4', 'image-5', 'image-6', 'image-7', 'image-8',
@@ -68,7 +61,7 @@ assert.ok(gptImage2);
 assert.equal(gptImage2.model, 'gpt-image-2');
 assert.deepEqual(gptImage2.capabilities.sizes, ['1024x1024', '1536x1024', '1024x1536', 'auto']);
 assert.deepEqual(gptImage2.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
-for (const id of ['image-7', 'image-8']) {
+for (const id of ['image-8']) {
   const higgsfield = media.imageProviders.find((provider) => provider.id === id);
   assert.ok(higgsfield);
   assert.equal(require('../lib/provider-catalog').catalogProvider(id).keyEnv, 'AI302_KEY');
@@ -82,13 +75,7 @@ assert.deepEqual(
   [
     'MiniMax H3',
     'Seedance 2.0',
-    'Seedance 2.5',
-    'Seedance 2.0 Fast',
-    'Seedance 1.5 Pro',
-    'Seedance 1.0 Pro',
-    'Seedance 1.0 Lite',
-    'Jimeng Video 3.0',
-    'Jimeng Video 3.0 Pro'
+    'Seedance 2.5'
   ]
 );
 const seedance20 = media.videoProviders.find((provider) => provider.id === 'video-2');
@@ -101,6 +88,7 @@ assert.equal(require('../lib/provider-catalog').catalogProvider('video-2').keyEn
 assert.equal(require('../lib/provider-catalog').catalogProvider('video-3').keyEnv, 'AI302_KEY');
 for (const id of ['video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9']) {
   assert.equal(require('../lib/provider-catalog').catalogProvider(id).keyEnv, 'AI302_KEY');
+  assert.equal(media.videoProviders.find((provider) => provider.id === id).name, '');
 }
 assert.equal(media.chatProviderName, 'Messs AI');
 assert.equal(media.chatModel, 'gemini-3.1-flash-lite');
@@ -150,12 +138,11 @@ const current = normalizeGatewayCatalog({
 }, 'https://gateway.example');
 assert.equal(current.compatible, true);
 assert.equal(assertGatewayProvider(current, 'image', 'image-1').name, 'Nano Banana Pro');
-assert.equal(assertGatewayProvider(current, 'image', 'image-2').name, 'Nano Banana 2');
-assert.equal(assertGatewayProvider(current, 'image', 'image-5').name, 'Nano Banana 2 Lite');
-assert.equal(assertGatewayProvider(current, 'image', 'image-9').name, 'Nano Banana');
 assert.equal(assertGatewayProvider(current, 'image', 'image-6').name, 'GPT Image 2');
-assert.equal(assertGatewayProvider(current, 'image', 'image-7').name, 'Higgsfield Soul Standard');
 assert.equal(assertGatewayProvider(current, 'image', 'image-8').name, 'Higgsfield Soul');
+for (const id of ['image-2', 'image-5', 'image-7', 'image-9']) {
+  assert.throws(() => assertGatewayProvider(current, 'image', id), (error) => error && error.code === 'provider-not-configured');
+}
 assert.equal(assertGatewayProvider(current, 'video', 'video-1').name, 'MiniMax H3');
 assert.equal(assertGatewayProvider(current, 'video', 'video-2').name, 'Seedance 2.0');
 assert.equal(assertGatewayProvider(current, 'video', 'video-3').name, 'Seedance 2.5');

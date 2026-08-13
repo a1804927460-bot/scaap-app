@@ -26,6 +26,7 @@ assert.match(boardMedia, /function openBoardButlerThreeDPanel[\s\S]*butler-3d-qu
 assert.match(boardMedia, /generate3d:hunyuan3d[\s\S]*generate3d:hyper3d[\s\S]*generate3d:tripo3d/, 'Hunyuan, Hyper3D and Tripo3D must keep independent task state.');
 assert.match(boardMedia, /api\.get3dStatus\(taskToken\)[\s\S]*api\.download3d\(taskToken\)/, '3D jobs must poll with short requests before downloading.');
 assert.match(boardMedia, /isTransientBoardButlerStatusFailure[\s\S]*transientStatusFailures < 6[\s\S]*continue;/, '3D polling must survive bounded transient gateway and provider failures.');
+assert.match(boardMedia, /let status = normalizeBoardButlerJobStatus\(created\.status\)[\s\S]*status = normalizeBoardButlerJobStatus\(lastResult\.status \|\| 'processing'\)/, '3D polling must normalize queued provider aliases before deciding a task failed.');
 assert.match(boardMedia, /isTransientBoardButlerStatusFailure[\s\S]*ai302-upstream-error/, '3D polling must retry bounded transient 302 upstream failures.');
 assert.match(boardMedia, /role', 'toolbar'/, 'Butler tools must expand as a horizontal toolbar.');
 assert.match(boardMedia, /function bindBoardButlerHoverSubmenu[\s\S]*group\.addEventListener\('mouseenter',[\s\S]*group\.addEventListener\('mouseleave'/, 'Butler secondary menus must open on hover and close after leaving.');

@@ -24,6 +24,10 @@
 
   --font-display: "Helvetica Neue LT Pro 93 Black Extended", "Helvetica Neue LT Pro", "Helvetica Neue", -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
   --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Helvetica, Arial, sans-serif;
+  --font-ui-xs: 12px;
+  --font-ui-sm: 13.5px;
+  --font-ui-md: 15px;
+  --font-ui-lg: 16px;
 }
 
 /* -------- Dark theme (default) -------- */

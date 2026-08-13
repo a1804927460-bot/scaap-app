@@ -1,10 +1,13 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, Menu, clipboard, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, Menu, Tray, Notification, clipboard, safeStorage, desktopCapturer, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 const http = require('http');
+const https = require('https');
+const dns = require('dns');
+const nodeNet = require('net');
 const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 const { autoUpdater } = require('electron-updater');
@@ -16,6 +19,12 @@ const preview = require('./lib/preview');
 const thumbnails = require('./lib/thumbnails');
 const { getDefaultLibraryRoot } = require('./lib/storage-paths');
 const { buildCfHDrop, parseCfHDrop } = require('./lib/clipboard-files');
+const {
+  extractClipboardImageSources,
+  clipboardSourceToLocalPath,
+  normalizeClipboardRemoteUrl,
+  isPrivateNetworkAddress
+} = require('./lib/clipboard-images');
 const {
   DEFAULT_IMAGE_ENDPOINT,
   DEFAULT_VIDEO_ENDPOINT,
@@ -83,7 +92,11 @@ function setWindowBackgroundColor(theme) {
 }
 
 function revealMainWindow() {
-  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) mainWindow.show();
+  if ((!mainWindow || mainWindow.isDestroyed()) && app.isReady() && store) createWindow();
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (!mainWindow.isVisible()) mainWindow.show();
+  mainWindow.focus();
 }
 
 const qaRemoteDebugPort = String(process.env.MESSS_QA_REMOTE_DEBUG_PORT || '').trim();
@@ -117,6 +130,9 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow;
+let tray;
+let isQuitting = false;
+const activeNotifications = new Set();
 let store;
 let membershipService;
 let runtimeConfig;
@@ -156,6 +172,8 @@ const MAX_BUTLER_VIDEO_BYTES = 48 * 1024 * 1024;
 const MAX_BUTLER_VIDEO_OUTPUT_BYTES = 256 * 1024 * 1024;
 const MAX_BUTLER_PREVIEW_BYTES = 16 * 1024 * 1024;
 const MAX_MODEL_PREVIEW_BYTES = 256 * 1024 * 1024;
+const MAX_CLIPBOARD_IMAGE_BYTES = 64 * 1024 * 1024;
+const MAX_CLIPBOARD_PNG_BYTES = 160 * 1024 * 1024;
 const MODEL_FILE_EXTENSIONS = new Set(['.glb', '.fbx', '.obj']);
 const BUTLER_IMAGE_TOOL_IDS = new Set([
   'qwen-image-edit-plus',
@@ -554,6 +572,11 @@ function createWindow() {
 
   mainWindow.on('maximize', () => mainWindow.webContents.send('window:maximizedChanged', true));
   mainWindow.on('unmaximize', () => mainWindow.webContents.send('window:maximizedChanged', false));
+  mainWindow.on('close', (event) => {
+    if (isQuitting || updateInstallStarted) return;
+    event.preventDefault();
+    mainWindow.hide();
+  });
 
   if (process.argv.includes('--dev')) {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
@@ -675,6 +698,7 @@ async function installDownloadedUpdate() {
   if (updaterState.status !== 'downloaded') return { ok: false, reason: 'not-downloaded' };
 
   updateInstallStarted = true;
+  isQuitting = true;
   setUpdaterState({ status: 'installing', progress: 100, message: null });
   if (updateCheckInterval) clearInterval(updateCheckInterval);
   if (usageTickInterval) clearInterval(usageTickInterval);
@@ -759,6 +783,83 @@ const MIME_BY_EXTENSION = {
   '.tar': 'application/x-tar', '.gz': 'application/gzip',
   '.glb': 'model/gltf-binary', '.fbx': 'model/vnd.autodesk.fbx', '.obj': 'model/obj'
 };
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  isQuitting = true;
+  app.quit();
+} else {
+  app.on('second-instance', revealMainWindow);
+}
+
+function trayIconPath() {
+  const packaged = path.join(__dirname, 'src', 'assets', 'logo-mark.png');
+  const development = path.join(__dirname, 'build-resources', 'icon.png');
+  return app.isPackaged && fs.existsSync(packaged) ? packaged : development;
+}
+
+function updateTrayMenu() {
+  if (!tray || tray.isDestroyed()) return;
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: localizedMessage('Show Messs', '显示 Messs', 'Messs 열기'), click: revealMainWindow },
+    { type: 'separator' },
+    {
+      label: localizedMessage('Quit Messs', '退出 Messs', 'Messs 종료'),
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      }
+    }
+  ]));
+}
+
+function createTray() {
+  if (tray && !tray.isDestroyed()) return tray;
+  tray = new Tray(trayIconPath());
+  tray.setToolTip('Messs');
+  tray.on('click', revealMainWindow);
+  updateTrayMenu();
+  return tray;
+}
+
+function chatNotificationText(detail) {
+  if (detail.kind === 'image') return localizedMessage('[Image]', '[图片]', '[이미지]');
+  if (detail.kind === 'file') {
+    return detail.fileName
+      ? localizedMessage(`File: ${detail.fileName}`, `文件：${detail.fileName}`, `파일: ${detail.fileName}`)
+      : localizedMessage('[File]', '[文件]', '[파일]');
+  }
+  const body = String(detail.body || '').replace(/\s+/g, ' ').trim();
+  return body.length > 120 ? `${body.slice(0, 117)}...` : body;
+}
+
+function showIncomingChatNotification(payload) {
+  const detail = payload && payload.detail || {};
+  if (!detail.incoming || !Notification.isSupported()) return;
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()
+    && !mainWindow.isMinimized() && mainWindow.isFocused()) return;
+  const conversations = payload.state && payload.state.conversations || [];
+  const conversation = conversations.find((item) => item.id === detail.conversationId);
+  const sender = conversation && conversation.other && conversation.other.displayName
+    || localizedMessage('New message', '新消息', '새 메시지');
+  const notification = new Notification({
+    title: sender,
+    body: chatNotificationText(detail),
+    icon: trayIconPath(),
+    silent: false
+  });
+  activeNotifications.add(notification);
+  const release = () => activeNotifications.delete(notification);
+  notification.once('close', release);
+  notification.once('failed', release);
+  notification.on('click', () => {
+    release();
+    revealMainWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('chat:openConversation', detail.conversationId);
+    }
+  });
+  notification.show();
+}
 const ARCHIVE_EXTENSIONS = new Set(['.zip', '.7z', '.rar', '.tar', '.gz', '.bz2', '.xz', '.zst', '.iso', '.dmg', '.img']);
 
 function classifyArchiveFile(name) {
@@ -1432,6 +1533,177 @@ async function readBoundedFetchBuffer(response, maximumBytes) {
     chunks.push(part);
   }
   return Buffer.concat(chunks, received);
+}
+
+function clipboardImageError(message, code = 'clipboard-image-unavailable') {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function clipboardDataImageBuffer(value) {
+  const source = String(value || '').trim();
+  if (!source || source.length > Math.ceil(MAX_CLIPBOARD_IMAGE_BYTES * 4 / 3) + 4096) return null;
+  const match = /^data:image\/[a-z0-9.+-]+(?:;charset=[^;,]+)?(;base64)?,([\s\S]+)$/i.exec(source);
+  if (!match) return null;
+  let buffer;
+  try {
+    if (match[1]) {
+      const encoded = match[2].replace(/\s+/g, '');
+      buffer = Buffer.from(encoded, 'base64');
+      if (!encoded || buffer.toString('base64').replace(/=+$/, '') !== encoded.replace(/=+$/, '')) return null;
+    } else {
+      buffer = Buffer.from(decodeURIComponent(match[2]), 'utf8');
+    }
+  } catch (error) {
+    return null;
+  }
+  return buffer.length > 0 && buffer.length <= MAX_CLIPBOARD_IMAGE_BYTES ? buffer : null;
+}
+
+async function canonicalClipboardPng(input) {
+  if (!sharp) throw clipboardImageError('Image decoding is unavailable in this build.', 'clipboard-decoder-unavailable');
+  const source = Buffer.isBuffer(input) ? input : String(input || '');
+  if ((Buffer.isBuffer(source) && (!source.length || source.length > MAX_CLIPBOARD_IMAGE_BYTES)) || !source) {
+    throw clipboardImageError('The clipboard image is empty or too large.', 'clipboard-image-too-large');
+  }
+  try {
+    const pipeline = sharp(source, {
+      failOn: 'error',
+      limitInputPixels: 256 * 1024 * 1024,
+      sequentialRead: true,
+      pages: 1
+    }).rotate();
+    const metadata = await pipeline.metadata();
+    const dimensions = orientedImageDimensions(metadata);
+    if (!(dimensions.width > 0 && dimensions.height > 0)) throw new Error('invalid-dimensions');
+    const png = await pipeline.png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer();
+    if (!png.length || png.length > MAX_CLIPBOARD_PNG_BYTES) {
+      throw clipboardImageError('The clipboard image is too large to import.', 'clipboard-image-too-large');
+    }
+    return { png, dimensions };
+  } catch (cause) {
+    if (cause && cause.code && String(cause.code).startsWith('clipboard-')) throw cause;
+    throw clipboardImageError('The copied content could not be decoded as an image.', 'invalid-clipboard-image');
+  }
+}
+
+async function resolvePublicClipboardHost(hostname) {
+  const host = String(hostname || '').replace(/^\[|\]$/g, '');
+  const literalFamily = nodeNet.isIP(host);
+  const records = literalFamily
+    ? [{ address: host, family: literalFamily }]
+    : await dns.promises.lookup(host, { all: true, verbatim: true });
+  if (!records.length || records.some((record) => isPrivateNetworkAddress(record.address))) {
+    throw clipboardImageError('Private network image addresses cannot be imported.', 'unsafe-clipboard-url');
+  }
+  return records[0];
+}
+
+async function requestRemoteClipboardImage(urlValue) {
+  const url = new URL(urlValue);
+  const resolved = await resolvePublicClipboardHost(url.hostname);
+  return new Promise((resolve, reject) => {
+    const request = https.request(url, {
+      method: 'GET',
+      headers: {
+        Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.5',
+        'Accept-Encoding': 'identity',
+        'User-Agent': 'Messs Clipboard Image Import'
+      },
+      lookup(_hostname, _options, callback) {
+        callback(null, resolved.address, resolved.family);
+      }
+    }, (response) => {
+      response.on('error', reject);
+      const status = Number(response.statusCode) || 0;
+      const location = Array.isArray(response.headers.location)
+        ? response.headers.location[0]
+        : response.headers.location;
+      if ([301, 302, 303, 307, 308].includes(status)) {
+        response.resume();
+        resolve({ status, location: location || '', contentType: '', buffer: null });
+        return;
+      }
+      if (status < 200 || status >= 300) {
+        response.resume();
+        reject(clipboardImageError(`The copied image could not be downloaded (HTTP ${status}).`, 'clipboard-download-failed'));
+        return;
+      }
+      const contentType = String(response.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+      if (contentType && !contentType.startsWith('image/') && contentType !== 'application/octet-stream') {
+        response.resume();
+        reject(clipboardImageError('The copied URL did not return an image.', 'invalid-clipboard-image'));
+        return;
+      }
+      const declaredLength = Number(response.headers['content-length']) || 0;
+      if (declaredLength > MAX_CLIPBOARD_IMAGE_BYTES) {
+        response.resume();
+        reject(clipboardImageError('The copied image is too large to import.', 'clipboard-image-too-large'));
+        return;
+      }
+      const chunks = [];
+      let received = 0;
+      response.on('data', (chunk) => {
+        received += chunk.length;
+        if (received > MAX_CLIPBOARD_IMAGE_BYTES) {
+          request.destroy(clipboardImageError('The copied image is too large to import.', 'clipboard-image-too-large'));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.on('end', () => resolve({
+        status,
+        location: '',
+        contentType,
+        buffer: Buffer.concat(chunks, received)
+      }));
+    });
+    request.setTimeout(25_000, () => {
+      request.destroy(clipboardImageError('The copied image download timed out.', 'clipboard-download-timeout'));
+    });
+    request.on('error', reject);
+    request.end();
+  });
+}
+
+async function downloadClipboardImage(initialUrl) {
+  let currentUrl = normalizeClipboardRemoteUrl(initialUrl);
+  if (!currentUrl) throw clipboardImageError('Only public HTTPS image URLs can be imported.', 'unsafe-clipboard-url');
+  for (let redirects = 0; redirects <= 4; redirects += 1) {
+    const response = await requestRemoteClipboardImage(currentUrl);
+    if (response.location) {
+      if (redirects === 4) throw clipboardImageError('The copied image redirected too many times.', 'clipboard-download-failed');
+      currentUrl = normalizeClipboardRemoteUrl(new URL(response.location, currentUrl).toString());
+      if (!currentUrl) throw clipboardImageError('The copied image redirected to an unsafe address.', 'unsafe-clipboard-url');
+      continue;
+    }
+    return response.buffer;
+  }
+  throw clipboardImageError('The copied image could not be downloaded.', 'clipboard-download-failed');
+}
+
+async function importClipboardPng(png, request, dimensions) {
+  const tempDir = path.join(app.getPath('temp'), 'messs-clipboard');
+  const tempPath = path.join(tempDir, `${crypto.randomUUID()}.png`);
+  await fs.promises.mkdir(tempDir, { recursive: true });
+  await fs.promises.writeFile(tempPath, png);
+  try {
+    const folderId = request.folderId && request.folderId !== 'default' ? String(request.folderId) : null;
+    const canvasId = String(request.canvasId || '').trim() || null;
+    const unlockedKeys = new Set();
+    const record = await importOneFile(tempPath, folderId, unlockedKeys, achievements.todayStr(), canvasId);
+    if (!record) return { ok: false, reason: 'invalid-image' };
+    if (dimensions && dimensions.width > 0) record.sourceWidth = dimensions.width;
+    if (dimensions && dimensions.height > 0) record.sourceHeight = dimensions.height;
+    record.originalPath = 'Clipboard';
+    record.sourceFolder = 'Clipboard';
+    store.scheduleSave();
+    if (unlockedKeys.size > 0) notifyAchievements();
+    return { ok: true, file: fileToPayload(record) };
+  } finally {
+    await fs.promises.rm(tempPath, { force: true }).catch(() => {});
+  }
 }
 
 async function downloadButlerPreview(previewUrl) {
@@ -3154,12 +3426,22 @@ function normalizeButlerTaskToken(value) {
 }
 
 function normalizeButler3dStatus(payload) {
-  const raw = String(payload && payload.status || '').trim().toLowerCase();
-  const status = raw === 'done' || raw === 'completed' || raw === 'success'
-    ? 'succeeded'
-    : raw === 'running' || raw === 'in_progress' || raw === 'in-progress'
+  const raw = String(payload && payload.status || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  const status = [
+    'accepted', 'created', 'in_queue', 'not_started', 'pending', 'pending_queue',
+    'queued', 'queueing', 'submitted', 'waiting', 'waiting_to_run'
+  ].includes(raw)
+    ? 'queued'
+    : ['creating', 'executing', 'generating', 'in_progress', 'preparing', 'processing', 'run', 'running'].includes(raw)
       ? 'processing'
-      : raw;
+      : ['complete', 'completed', 'done', 'finished', 'ready', 'success', 'succeeded'].includes(raw)
+        ? 'succeeded'
+        : ['aborted', 'cancelled', 'canceled', 'error', 'expired', 'fail', 'failed', 'rejected'].includes(raw)
+          ? 'failed'
+          : raw;
   if (!['queued', 'processing', 'succeeded', 'failed'].includes(status)) {
     const error = new Error('The 3D gateway returned an invalid task status.');
     error.code = 'invalid-gateway-response';
@@ -3329,6 +3611,8 @@ function registerIpcHandlers() {
       viewMode: store.data.settings.viewMode,
       sidebarCollapsed: store.data.settings.sidebarCollapsed,
       defaultFolderName: store.data.settings.defaultFolderName,
+      profileDisplayName: store.data.settings.profileDisplayName || '',
+      profileSignature: store.data.settings.profileSignature || '',
       files: store.data.files.map(fileToPayload),
       folders: store.data.folders,
       boardItems: store.data.boardItems,
@@ -3449,7 +3733,23 @@ function registerIpcHandlers() {
   ipcMain.handle('settings:setLanguage', (_evt, language) => {
     store.data.settings.language = normalizeLanguage(language);
     store.scheduleSave();
+    updateTrayMenu();
     return store.data.settings.language;
+  });
+
+  ipcMain.handle('profile:setDisplayName', (_evt, value) => {
+    const name = String(value || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (!name) return { ok: false, reason: 'empty-name' };
+    store.data.settings.profileDisplayName = name;
+    store.scheduleSave();
+    return { ok: true, value: name };
+  });
+
+  ipcMain.handle('profile:setSignature', (_evt, value) => {
+    const signature = String(value || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    store.data.settings.profileSignature = signature;
+    store.scheduleSave();
+    return { ok: true, value: signature };
   });
 
   ipcMain.handle('auth:getSession', () => supabaseAuth.getPublicSession());
@@ -3541,6 +3841,47 @@ function registerIpcHandlers() {
   ipcMain.handle('membership:getSnapshot', async () => {
     await syncGatewayAccount();
     return membershipService.getSnapshot();
+  });
+
+  ipcMain.handle('chat:sendFile', async (_evt, conversationId) => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Send a file',
+      properties: ['openFile']
+    });
+    if (result.canceled || !result.filePaths[0]) return { ok: false, reason: 'cancelled' };
+    try { return await chatService.sendFile(conversationId, result.filePaths[0]); }
+    catch (error) { return { ok: false, reason: error.code || 'file-send-failed', message: error.message }; }
+  });
+
+  ipcMain.handle('chat:sendScreenshot', async (_evt, conversationId) => {
+    let temporaryPath = null;
+    try {
+      const primary = screen.getPrimaryDisplay();
+      const scale = Number(primary.scaleFactor) || 1;
+      const size = {
+        width: Math.max(1, Math.round(primary.size.width * scale)),
+        height: Math.max(1, Math.round(primary.size.height * scale))
+      };
+      const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: size });
+      const source = sources.find((item) => String(item.display_id) === String(primary.id)) || sources[0];
+      if (!source || source.thumbnail.isEmpty()) return { ok: false, reason: 'capture-failed', message: 'Unable to capture the screen.' };
+      const directory = path.join(app.getPath('temp'), 'messs-chat-captures');
+      temporaryPath = path.join(directory, `screenshot-${Date.now()}-${crypto.randomUUID()}.png`);
+      await fs.promises.mkdir(directory, { recursive: true });
+      await fs.promises.writeFile(temporaryPath, source.thumbnail.toPNG());
+      return await chatService.sendImage(conversationId, temporaryPath);
+    } catch (error) {
+      return { ok: false, reason: error.code || 'capture-failed', message: error.message };
+    } finally {
+      if (temporaryPath) await fs.promises.rm(temporaryPath, { force: true }).catch(() => {});
+    }
+  });
+
+  ipcMain.handle('chat:openFile', async (_evt, clientId) => {
+    const result = await chatService.getFileLocalPath(clientId);
+    if (!result.ok) return result;
+    const errorMessage = await shell.openPath(result.path);
+    return errorMessage ? { ok: false, reason: 'open-failed', message: errorMessage } : { ok: true };
   });
 
   ipcMain.handle('membership:getUsageSummary', async (_evt, range = '7d') => {
@@ -3765,55 +4106,80 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('clipboard:importImage', async (_evt, request = {}) => {
-    const filePaths = process.platform === 'win32'
+    const nativeFilePaths = process.platform === 'win32'
       ? parseCfHDrop(clipboard.readBuffer('CF_HDROP'))
       : [];
-    const copiedImagePath = filePaths.find((filePath) => (
-      preview.isImageExt(path.extname(filePath).toLowerCase()) && fs.existsSync(filePath)
-    ));
-    const image = copiedImagePath ? null : clipboard.readImage();
-    if (!copiedImagePath && (!image || image.isEmpty())) return { ok: false, reason: 'empty' };
-
-    const png = copiedImagePath ? null : image.toPNG();
-    if (!copiedImagePath && (!png || !png.length)) return { ok: false, reason: 'empty' };
-
-    // Import through the same archive path as a dropped file so pasted images
-    // receive thumbnails, metadata, persistence, and normal canvas records.
-    const tempDir = path.join(app.getPath('temp'), 'messs-clipboard');
-    const tempPath = copiedImagePath || path.join(tempDir, `${crypto.randomUUID()}.png`);
-    if (!copiedImagePath) {
-      await fs.promises.mkdir(tempDir, { recursive: true });
-      await fs.promises.writeFile(tempPath, png);
-    }
-
+    const sources = extractClipboardImageSources({
+      html: String(request.html || '') || clipboard.readHTML(),
+      text: String(request.text || '') || clipboard.readText()
+    });
+    const localPaths = [...nativeFilePaths, ...sources.map(clipboardSourceToLocalPath).filter(Boolean)];
+    const copiedImagePath = localPaths.find((filePath) => {
+      try {
+        return preview.isImageExt(path.extname(filePath).toLowerCase()) && fs.statSync(filePath).isFile();
+      } catch (error) {
+        return false;
+      }
+    });
     const folderId = request.folderId && request.folderId !== 'default'
       ? String(request.folderId)
       : null;
     const canvasId = String(request.canvasId || '').trim() || null;
-    const unlockedKeys = new Set();
-    try {
+    if (copiedImagePath) {
+      const unlockedKeys = new Set();
       const record = await importOneFile(
-        tempPath,
+        copiedImagePath,
         folderId,
         unlockedKeys,
         achievements.todayStr(),
         canvasId
       );
       if (!record) return { ok: false, reason: 'invalid-image' };
-
-      const dimensions = image ? image.getSize() : null;
-      if (dimensions && !(record.sourceWidth > 0) && dimensions.width > 0) record.sourceWidth = dimensions.width;
-      if (dimensions && !(record.sourceHeight > 0) && dimensions.height > 0) record.sourceHeight = dimensions.height;
       record.originalPath = 'Clipboard';
       record.sourceFolder = 'Clipboard';
       store.scheduleSave();
       if (unlockedKeys.size > 0) notifyAchievements();
       return { ok: true, file: fileToPayload(record) };
-    } finally {
-      if (!copiedImagePath) {
-        try { await fs.promises.rm(tempPath, { force: true }); } catch (err) {}
+    }
+
+    const requestBuffer = clipboardDataImageBuffer(request.dataUrl);
+    if (requestBuffer) {
+      const canonical = await canonicalClipboardPng(requestBuffer);
+      return importClipboardPng(canonical.png, request, canonical.dimensions);
+    }
+
+    const nativeImage = clipboard.readImage();
+    if (nativeImage && !nativeImage.isEmpty()) {
+      const nativePng = nativeImage.toPNG();
+      if (nativePng && nativePng.length) {
+        const dimensions = nativeImage.getSize();
+        const canonical = await canonicalClipboardPng(nativePng);
+        return importClipboardPng(canonical.png, request, dimensions.width > 0 && dimensions.height > 0
+          ? dimensions
+          : canonical.dimensions);
       }
     }
+
+    let sourceError = null;
+    for (const source of sources) {
+      try {
+        const dataBuffer = clipboardDataImageBuffer(source);
+        if (dataBuffer) {
+          const canonical = await canonicalClipboardPng(dataBuffer);
+          return importClipboardPng(canonical.png, request, canonical.dimensions);
+        }
+        const remoteUrl = normalizeClipboardRemoteUrl(source);
+        if (!remoteUrl) continue;
+        const remoteBuffer = await downloadClipboardImage(remoteUrl);
+        const canonical = await canonicalClipboardPng(remoteBuffer);
+        return importClipboardPng(canonical.png, request, canonical.dimensions);
+      } catch (error) {
+        sourceError = error;
+      }
+    }
+
+    if (sourceError) throw sourceError;
+    return { ok: false, reason: 'empty' };
   });
 
   ipcMain.handle('dialog:pickFolderToImport', async (_evt, canvasId) => {
@@ -4137,7 +4503,7 @@ function registerIpcHandlers() {
       assertPromptHasNoSecrets(effectivePrompt);
       const payload = await aiGateway.create3d(providerId, source.imageDataUrl, effectivePrompt, options);
       const taskToken = normalizeButlerTaskToken(payload && payload.taskToken);
-      const status = normalizeButler3dStatus(payload || { status: 'queued' });
+      const status = normalizeButler3dStatus({ status: 'queued', ...(payload || {}) });
       rememberButler3dTask(taskToken, {
         sourceFileId: source.file.id,
         providerId,
@@ -4401,6 +4767,7 @@ function registerIpcHandlers() {
       videoProviderId: request.videoProviderId,
       count,
       quality: request.quality,
+      size: request.size,
       resolution: request.resolution,
       duration: request.duration
     });
@@ -4491,13 +4858,14 @@ function registerIpcHandlers() {
       }
       const failures = settled.filter((result) => result.status === 'rejected');
       if (!files.length) throw failures[0].reason;
+      const creditsCharged = kind === 'image'
+        ? creditQuote.unitCredits * files.length
+        : creditQuote.totalCredits;
       membershipService.finishUsage(usage.usageId, {
         status: failures.length ? 'partial' : 'succeeded',
         resultUnits: files.length,
         failedUnits: failures.length,
-        settledCredits: kind === 'image'
-          ? creditQuote.unitCredits * files.length
-          : creditQuote.totalCredits
+        settledCredits: creditsCharged
       });
       if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
       store.scheduleSave();
@@ -4508,7 +4876,16 @@ function registerIpcHandlers() {
         boardItems,
         failedCount: failures.length,
         unlocked: [...unlockedKeys],
-        creditsCharged: kind === 'image' ? creditQuote.unitCredits * files.length : creditQuote.totalCredits,
+        estimatedCredits: creditQuote.totalCredits,
+        creditsCharged,
+        pricing: {
+          providerId: creditQuote.providerId,
+          unitCredits: creditQuote.unitCredits,
+          count: kind === 'image' ? files.length : 1,
+          ...(creditQuote.resolution ? { resolution: creditQuote.resolution } : {}),
+          ...(creditQuote.quality ? { quality: creditQuote.quality } : {}),
+          ...(creditQuote.duration ? { duration: creditQuote.duration } : {})
+        },
         membership: membershipService.getSnapshot()
       };
     } catch (err) {
@@ -5008,17 +5385,10 @@ function registerIpcHandlers() {
         message: localizedMessage('The media file could not be found.', '找不到要发送的文件。', '보낼 미디어 파일을 찾을 수 없습니다.')
       };
     }
-    // Photoshop keeps the generated-image workflow. After Effects accepts any
-    // archived canvas video, including imported local media.
-    if (normalizedTarget === 'photoshop' && !f.aiGeneration && f.sourceFolder !== 'AI Generated') {
-      return {
-        ok: false,
-        reason: 'not-ai-media',
-        message: localizedMessage('Only AI-generated media can be sent.', '仅支持发送 AI 生成的媒体。', 'AI로 생성한 미디어만 보낼 수 있습니다.')
-      };
-    }
     const ext = path.extname(f.name || f.storedPath || '').toLowerCase();
-    const supported = normalizedTarget === 'photoshop' ? preview.isImageExt(ext) : preview.isVideoExt(ext);
+    const supported = normalizedTarget === 'photoshop'
+      ? preview.isImageExt(ext)
+      : preview.isImageExt(ext) || preview.isVideoExt(ext);
     if (!supported) {
       return {
         ok: false,
@@ -5318,8 +5688,10 @@ app.whenReady().then(() => {
     localRoot: path.join(store.dir, 'chat'),
     onEvent: (payload) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:event', payload);
+      showIncomingChatNotification(payload);
     }
   });
+  createTray();
 
   ipcMain.handle('updater:getState', () => publicUpdaterState());
 
@@ -5458,6 +5830,7 @@ app.whenReady().then(() => {
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    else revealMainWindow();
   });
 }).catch((error) => {
   const message = error && error.stack ? error.stack : String(error || 'Unknown startup error');
@@ -5467,12 +5840,11 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (usageTickInterval) clearInterval(usageTickInterval);
-  if (store) store.flushSync();
-  if (process.platform !== 'darwin') app.quit();
+  if (isQuitting && process.platform !== 'darwin') app.quit();
 });
 
 app.on('before-quit', () => {
+  isQuitting = true;
   preview.shutdownProcesses();
   thumbnails.shutdownProcesses();
   shutdownMediaMetadataProcesses();

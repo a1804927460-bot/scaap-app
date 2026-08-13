@@ -180,6 +180,8 @@ contextBridge.exposeInMainWorld('messsAPI', {
   },
   getProfileAvatar: () => ipcRenderer.invoke('profile:getAvatar'),
   chooseProfileAvatar: () => ipcRenderer.invoke('profile:chooseAvatar'),
+  setProfileDisplayName: (value) => ipcRenderer.invoke('profile:setDisplayName', value),
+  setProfileSignature: (value) => ipcRenderer.invoke('profile:setSignature', value),
   getCloudSession: () => ipcRenderer.invoke('auth:getSession'),
   signInCloud: (credentials) => ipcRenderer.invoke('auth:signIn', credentials),
   signUpCloud: (credentials) => ipcRenderer.invoke('auth:signUp', credentials),
@@ -196,6 +198,9 @@ contextBridge.exposeInMainWorld('messsAPI', {
   loadOlderChatHistory: (conversationId, options) => ipcRenderer.invoke('chat:loadOlderRemote', conversationId, options),
   sendChatText: (conversationId, body) => ipcRenderer.invoke('chat:sendText', conversationId, body),
   sendChatImage: (conversationId) => ipcRenderer.invoke('chat:sendImage', conversationId),
+  sendChatFile: (conversationId) => ipcRenderer.invoke('chat:sendFile', conversationId),
+  sendChatScreenshot: (conversationId) => ipcRenderer.invoke('chat:sendScreenshot', conversationId),
+  openChatFile: (clientId) => ipcRenderer.invoke('chat:openFile', clientId),
   retryChatMessage: (clientId) => ipcRenderer.invoke('chat:retryMessage', clientId),
   recallChatMessage: (clientId) => ipcRenderer.invoke('chat:recallMessage', clientId),
   getChatImageDataUrl: (clientId) => ipcRenderer.invoke('chat:getImageDataUrl', clientId),
@@ -203,6 +208,11 @@ contextBridge.exposeInMainWorld('messsAPI', {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('chat:event', listener);
     return () => ipcRenderer.removeListener('chat:event', listener);
+  },
+  onOpenChatConversation: (callback) => {
+    const listener = (_event, conversationId) => callback(conversationId);
+    ipcRenderer.on('chat:openConversation', listener);
+    return () => ipcRenderer.removeListener('chat:openConversation', listener);
   },
 
   getLibraryPaths: () => ipcRenderer.invoke('settings:getLibraryPaths'),

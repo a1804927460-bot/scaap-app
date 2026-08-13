@@ -10,6 +10,9 @@ let sidebarDragGhost = null;
 let activeAccountAvatarUserId = null;
 let accountSummaryRenderGeneration = 0;
 let accountAvatarLoadGeneration = 0;
+let accountProfileDisplayName = '';
+let accountProfileSignature = '';
+let accountProfileFallbackName = 'Messs user';
 
 function appendFileThumbnail(container, file, alt = '') {
   const image = document.createElement('img');
@@ -103,7 +106,7 @@ function renderFileList(files) {
   if (currentFolderContextId() === null) {
     const badge = document.createElement('li');
     badge.className = 'file-list-storage-badge';
-    badge.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-5 9 5-9 5-9-5z"/><path d="M3 7v10l9 5 9-5V7"/><path d="M12 12v10"/></svg><span>${t('Library', '资料库')}</span>`;
+    badge.textContent = t('Library', '资料库');
     list.appendChild(badge);
   }
 
@@ -226,7 +229,9 @@ function buildFileItem(f) {
   return li;
 }
 
-function initSidebar() {
+function initSidebar(initial = {}) {
+  accountProfileDisplayName = String(initial.profileDisplayName || '').trim();
+  accountProfileSignature = String(initial.profileSignature || '').trim();
   const searchInput = document.getElementById('search-input');
   let debounceTimer;
   searchInput.addEventListener('input', () => {
@@ -279,6 +284,7 @@ function initSidebar() {
   if (typeof initUsageSettings === 'function') initUsageSettings();
   initImportProgress();
   initSidebarMultiSelectShortcuts();
+  initAccountProfileEditing();
   document.addEventListener('messs:membership-updated', (event) => {
     renderMembershipBalance(event.detail);
   });
@@ -314,6 +320,115 @@ function initSidebarMultiSelectShortcuts() {
 function setText(selector, en, zh) {
   const el = document.querySelector(selector);
   if (el) el.textContent = t(en, zh);
+}
+
+function accountProfileElement(field) {
+  return document.getElementById(field === 'name' ? 'account-popover-name' : 'account-popover-signature');
+}
+
+function renderAccountProfileText() {
+  const displayName = accountProfileDisplayName || accountProfileFallbackName;
+  const values = {
+    'account-footer-name': displayName,
+    'account-footer-signature': accountProfileSignature,
+    'account-popover-name': displayName,
+    'account-popover-signature': accountProfileSignature
+  };
+  Object.entries(values).forEach(([id, value]) => {
+    const element = document.getElementById(id);
+    if (!element || element.matches('input')) return;
+    element.textContent = value;
+    if (id.endsWith('signature')) {
+      element.classList.toggle('is-empty', !value);
+      element.dataset.placeholder = t('Personal signature', '个性签名');
+    }
+  });
+}
+
+function beginAccountProfileEdit(field) {
+  const element = accountProfileElement(field);
+  if (!element || element.matches('input')) return;
+  const previousValue = field === 'name'
+    ? (accountProfileDisplayName || accountProfileFallbackName)
+    : accountProfileSignature;
+  const input = document.createElement('input');
+  input.id = element.id;
+  input.className = 'account-profile-edit-input';
+  input.type = 'text';
+  input.maxLength = field === 'name' ? 80 : 120;
+  input.value = previousValue;
+  input.setAttribute('aria-label', field === 'name' ? t('Display name', '显示名称') : t('Personal signature', '个性签名'));
+  element.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let finished = false;
+  const finish = async (save) => {
+    if (finished) return;
+    finished = true;
+    const nextValue = input.value.replace(/\s+/g, ' ').trim();
+    const replacement = document.createElement(field === 'name' ? 'strong' : 'small');
+    replacement.id = input.id;
+    replacement.className = 'account-profile-editable';
+    replacement.dataset.profileField = field;
+    input.replaceWith(replacement);
+
+    if (!save || (field === 'name' && !nextValue)) {
+      renderAccountProfileText();
+      return;
+    }
+
+    if (field === 'name') accountProfileDisplayName = nextValue;
+    else accountProfileSignature = nextValue;
+    renderAccountProfileText();
+
+    try {
+      const method = field === 'name' ? 'setProfileDisplayName' : 'setProfileSignature';
+      const result = await window.messsAPI[method](nextValue);
+      if (!result || !result.ok) throw new Error(t('Could not save profile.', '无法保存个人资料。'));
+      if (field === 'name') accountProfileDisplayName = result.value;
+      else accountProfileSignature = result.value;
+      renderAccountProfileText();
+    } catch (error) {
+      if (field === 'name') accountProfileDisplayName = previousValue === accountProfileFallbackName ? '' : previousValue;
+      else accountProfileSignature = previousValue;
+      renderAccountProfileText();
+      showToast(error && error.message ? error.message : t('Could not save profile.', '无法保存个人资料。'), 'Messs');
+    }
+  };
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void finish(true);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      void finish(false);
+    }
+  });
+  input.addEventListener('blur', () => void finish(true), { once: true });
+}
+
+function initAccountProfileEditing() {
+  const head = document.querySelector('.account-popover-head');
+  if (!head) return;
+  head.addEventListener('dblclick', (event) => {
+    const target = event.target.closest('[data-profile-field]');
+    if (!target) return;
+    event.preventDefault();
+    event.stopPropagation();
+    beginAccountProfileEdit(target.dataset.profileField);
+  });
+  document.querySelector('.account-footer-copy')?.addEventListener('dblclick', (event) => {
+    const target = event.target.closest('[data-profile-field]');
+    if (!target) return;
+    event.preventDefault();
+    event.stopPropagation();
+    document.getElementById('settings-popover').hidden = true;
+    document.getElementById('account-popover').hidden = false;
+    beginAccountProfileEdit(target.dataset.profileField);
+  });
+  renderAccountProfileText();
 }
 
 function setAttr(selector, attr, en, zh) {
@@ -419,12 +534,13 @@ function refreshStaticLanguage() {
 
   setText('#ai-assistant-home h2', 'Messs resolves your confusion.', 'Messs 帮你理清混乱。');
   setText('#ai-assistant-home p', 'What should we solve today?', '今天要解决什么？');
-  setText('.ai-assistant-quick-prompts [data-ai-kind="image"]', 'Concept Art', '概念图');
-  setText('.ai-assistant-quick-prompts [data-ai-kind="chat"]', 'Clarify Idea', '理清想法');
-  setText('.ai-assistant-quick-prompts [data-ai-kind="video"]', 'Short Video', '短视频');
+  setText('.ai-assistant-quick-prompts [data-ai-quick-action="poster"]', 'Create Poster', '生成海报');
+  setText('.ai-assistant-quick-prompts [data-ai-quick-action="logo"]', 'Create LOGO', '生成 LOGO');
+  setText('.ai-assistant-quick-prompts [data-ai-quick-action="clarify"]', 'Clarify Idea', '理清想法');
+  setText('.ai-assistant-quick-prompts [data-ai-quick-action="short-video"]', 'Short Video', '短视频');
   setText('[data-assistant-kind="chat"]', 'Chat', '对话');
-  setText('[data-assistant-kind="image"]', 'Image', '图片');
-  setText('[data-assistant-kind="video"]', 'Video', '视频');
+  setTitleAndLabel('[data-assistant-kind="image"]', 'Image', '图片');
+  setTitleAndLabel('[data-assistant-kind="video"]', 'Video', '视频');
   setAttr('.ai-assistant-mode', 'aria-label', 'AI mode', 'AI 模式');
   setAttr('#ai-assistant-model', 'aria-label', 'AI provider', 'AI 服务商');
   setTitleAndLabel('#ai-assistant-upload', 'Upload image', '上传图片');
@@ -1122,9 +1238,10 @@ async function renderAccountSummary(config) {
     ]);
   } catch (error) {}
   if (summaryRenderGeneration !== accountSummaryRenderGeneration || activeAccountAvatarUserId !== (accountUserId || null)) return;
-  const displayName = authenticated
+  accountProfileFallbackName = authenticated
     ? ((membership && membership.account && membership.account.displayName) || email.split('@')[0] || 'Messs user')
     : t('Messs user', 'Messs 用户');
+  const displayName = accountProfileDisplayName || accountProfileFallbackName;
   const plan = membership && membership.plan && membership.plan.name || t('Free', '免费');
   const balance = membership && Number.isFinite(Number(membership.credits && membership.credits.balance))
     ? Number(membership.credits.balance)
@@ -1134,10 +1251,6 @@ async function renderAccountSummary(config) {
     renderAccountAvatars(initial, avatarDataUrl);
   }
   const values = {
-    'account-footer-name': displayName,
-    'account-popover-name': displayName,
-    'account-popover-email': authenticated ? email : t('Sign in to sync your account', '登录后同步账户'),
-    'account-footer-meta': `${plan} · ${balance.toLocaleString(appLocale())} ${t('credits', '积分')}`,
     'account-credit-count': balance.toLocaleString(appLocale()),
     'account-plan-badge': plan
   };
@@ -1145,6 +1258,7 @@ async function renderAccountSummary(config) {
     const element = document.getElementById(id);
     if (element) element.textContent = value;
   });
+  renderAccountProfileText();
   const google = document.getElementById('account-google-sign-in');
   const signOut = document.getElementById('account-sign-out');
   if (avatarButton) avatarButton.disabled = !accountUserId;
@@ -1158,10 +1272,8 @@ function renderMembershipBalance(membership) {
   const balance = Number.isFinite(Number(membership.credits && membership.credits.balance))
     ? Number(membership.credits.balance)
     : 0;
-  const footerMeta = document.getElementById('account-footer-meta');
   const creditCount = document.getElementById('account-credit-count');
   const planBadge = document.getElementById('account-plan-badge');
-  if (footerMeta) footerMeta.textContent = `${plan} · ${balance.toLocaleString(appLocale())} ${t('credits', '积分')}`;
   if (creditCount) creditCount.textContent = balance.toLocaleString(appLocale());
   if (planBadge) planBadge.textContent = plan;
 }

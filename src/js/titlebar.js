@@ -16,6 +16,8 @@ function initWindowControls() {
 
   minBtn.addEventListener('click', () => window.messsAPI.minimizeWindow());
   closeBtn.addEventListener('click', () => window.messsAPI.closeWindow());
+  closeBtn.title = t('Run in background', '在后台运行');
+  closeBtn.setAttribute('aria-label', closeBtn.title);
   maxBtn.addEventListener('click', async () => {
     const isMaximized = await window.messsAPI.toggleMaximizeWindow();
     setMaximizeIcon(isMaximized);
@@ -40,6 +42,11 @@ function refreshTitlebarLanguage() {
   const isMaximized = document.documentElement.dataset.windowMaximized === 'true';
   maxBtn.title = isMaximized ? t('Restore', '还原') : t('Maximize', '最大化');
   maxBtn.setAttribute('aria-label', maxBtn.title);
+  const closeBtn = document.getElementById('win-close-btn');
+  if (closeBtn) {
+    closeBtn.title = t('Run in background', '在后台运行');
+    closeBtn.setAttribute('aria-label', closeBtn.title);
+  }
 }
 
 function initSectionTabs() {

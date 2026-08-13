@@ -70,6 +70,7 @@ function configuredProviders() {
       model: String(raw.model || '').trim().slice(0, 120),
       protocol: String(raw.protocol || '').trim().slice(0, 40),
       capabilities: raw.capabilities && typeof raw.capabilities === 'object' ? raw.capabilities : null,
+      hidden: raw.hidden === true,
       keyEnv
     });
   }
@@ -86,10 +87,10 @@ function providerApiKey(provider) {
 }
 
 export function publicProviderConfig() {
-  const providers = configuredProviders().filter((provider) => Boolean(providerApiKey(provider)));
+  const providers = configuredProviders().filter((provider) => !provider.hidden && Boolean(providerApiKey(provider)));
   return {
     catalogVersion: PROVIDER_CATALOG_VERSION,
-    providers: providers.map(({ keyEnv, endpoint, resultEndpoint, ...provider }) => provider)
+    providers: providers.map(({ keyEnv, endpoint, resultEndpoint, hidden, ...provider }) => provider)
   };
 }
 

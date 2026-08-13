@@ -599,6 +599,8 @@ function message(clientId, conversationId, createdAt, extra = {}) {
   assert.match(serviceSource, /event:\s*'UPDATE'[\s\S]*?table:\s*'chat_messages'/);
   assert.match(serviceSource, /client\.rpc\('recall_chat_message'/);
   assert.match(serviceSource, /CHAT_MESSAGE_COLUMNS_V3 = `\$\{CHAT_MESSAGE_COLUMNS_V2\},updated_at,recalled_at,recalled_by`/);
+  assert.match(serviceSource, /const incoming = !existing && !message\.recalledAt && message\.senderId !== this\.clientUserId/);
+  assert.match(serviceSource, /incomingMessages\.forEach\(\(message\) => this\._emit\('message'/);
 
   const mainSource = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   assert.match(mainSource, /if \(supabaseAuth\.getPublicSession\(\)\.authenticated\) \{\s*chatService\.initialize\(\)/);
@@ -606,13 +608,36 @@ function message(clientId, conversationId, createdAt, extra = {}) {
 
   const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
   assert.match(preloadSource, /recallChatMessage:\s*\(clientId\)\s*=>\s*ipcRenderer\.invoke\('chat:recallMessage', clientId\)/);
+  assert.match(preloadSource, /onOpenChatConversation:[\s\S]*?ipcRenderer\.on\('chat:openConversation'/);
 
+  const fileMigration = fs.readFileSync(
+    path.join(__dirname, '..', 'supabase', 'migrations', '202608140001_chat_files.sql'),
+    'utf8'
+  );
+  assert.match(fileMigration, /add column if not exists file_path text/i);
+  assert.match(fileMigration, /kind in \('text', 'image', 'file'\)/i);
+  assert.match(fileMigration, /'chat-files', 'chat-files', false, 104857600/i);
+  assert.match(fileMigration, /'schema_version', 4/i);
+  assert.match(serviceSource, /async sendFile\(conversationId, sourcePath\)/);
+  assert.match(serviceSource, /client\.storage\.from\('chat-files'\)/);
+  assert.match(mainSource, /ipcMain\.handle\('chat:sendFile'/);
+  assert.match(mainSource, /desktopCapturer\.getSources/);
+  assert.match(preloadSource, /sendChatFile:\s*\(conversationId\)\s*=>\s*ipcRenderer\.invoke\('chat:sendFile', conversationId\)/);
   const chatUiSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'chat.js'), 'utf8');
   assert.doesNotMatch(chatUiSource, /messsId/);
   assert.match(chatUiSource, /bubble\.textContent = t\('Message recalled', '消息已撤回'\)/);
   assert.match(chatUiSource, /window\.messsAPI\.recallChatMessage\(message\.clientId\)/);
+  assert.match(chatUiSource, /window\.messsAPI\.onOpenChatConversation\([\s\S]*?openChatConversation\(conversationId\)/);
 
   const indexSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
+  assert.match(indexSource, /data-chat-view="messages"/);
+  assert.match(indexSource, /id="chat-emoji-btn"/);
+  assert.match(indexSource, /id="chat-file-btn"/);
+  assert.match(indexSource, /id="chat-screenshot-btn"/);
+  const chatCssSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles', 'chat.css'), 'utf8');
+  assert.match(chatCssSource, /grid-template-columns:\s*76px\s+clamp\(270px, 23vw, 320px\)\s+minmax\(380px, 1fr\)/);
+  assert.match(chatCssSource, /grid-template-rows:\s*auto\s+minmax\(0, 1fr\)\s+clamp\(230px, 30vh, 310px\)/);
+  assert.match(chatCssSource, /\.chat-composer-toolbar[\s\S]*?padding:\s*6px 12px/);
   const chatMarkup = indexSource.match(/<div id="section-chat"[\s\S]*?<div id="section-market"/i)[0];
   assert.doesNotMatch(chatMarkup, /Messs ID|chat-own-id|chat-contacts-toggle|chat-contacts-close/i);
   assert.match(chatMarkup, /chat-people-panel[\s\S]*chat-user-search-form[\s\S]*chat-conversations-panel[\s\S]*<\/aside>\s*<main class="chat-thread-panel"/i);

@@ -83,6 +83,24 @@ assert.match(
 );
 assert.match(source, /event\.code === 'Space'[\s\S]*?CanvasNodeMode\.spacePressed = true/);
 assert.match(styles, /\.board-node-editor\.is-panning[\s\S]*?var\(--cursor-grabbing\)/);
+assert.match(
+  source,
+  /function bindCanvasNodeMarqueeSelection[\s\S]*?event\.button !== 0 \|\| event\.altKey \|\| CanvasNodeMode\.spacePressed[\s\S]*?drawflow-node, \.connection, \.input, \.output, \.point/,
+  'Plain left drag on empty node-canvas space must start marquee selection without stealing node or port interactions.'
+);
+assert.match(
+  source,
+  /function finishCanvasNodeMarquee[\s\S]*?getBoundingClientRect\(\)[\s\S]*?const intersects =[\s\S]*?selectedIds\.add/,
+  'Marquee selection must use rendered node bounds so it remains correct under zoom and pan.'
+);
+assert.match(
+  source,
+  /event\.shiftKey \|\| event\.ctrlKey \|\| event\.metaKey[\s\S]*?new Set\(CanvasNodeMode\.selectedNodeIds\)/,
+  'Shift, Ctrl, and Command marquee gestures must add to the current node selection.'
+);
+assert.match(source, /bindCanvasNodePanning\(host, editor\);[\s\S]*?bindCanvasNodeMarqueeSelection\(host\)/);
+assert.match(styles, /\.board-node-selection-box \{[\s\S]*?pointer-events:\s*none;[\s\S]*?border:\s*1px solid var\(--accent\)/,
+  'The visible marquee must use the theme accent and never block pointer release.');
 
 assert.match(boardSource, /async function submitBoardQuickGeneration\(kind, promptText, options = \{\}\)/);
 assert.match(boardSource, /options\.referenceFileIds/);
@@ -103,7 +121,7 @@ assert.match(
 );
 assert.match(styles, /\.messs-media-node\.selected \.canvas-node-preview \{/);
 assert.match(source, /function ensureCanvasNodeFlowPaths\(root\)/);
-assert.match(source, /editor\.on\('nodeSelected',[\s\S]*?syncCanvasNodeConnectionFlow\(\)/);
-assert.match(source, /editor\.on\('nodeUnselected',[\s\S]*?selectedNodeId = null/);
+assert.match(source, /editor\.on\('nodeSelected',[\s\S]*?applyCanvasNodeSelection\(new Set/);
+assert.match(source, /editor\.on\('nodeUnselected',[\s\S]*?applyCanvasNodeSelection\(new Set\(\)\)/);
 
 process.stdout.write('Canvas node mode tests passed.\n');

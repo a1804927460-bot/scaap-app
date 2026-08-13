@@ -117,7 +117,7 @@
         <div class="sidebar-footer account-footer">
           <button id="account-menu-open" class="account-footer-main" type="button" aria-label="Account and settings">
             <span id="account-footer-avatar" class="account-avatar">M</span>
-            <span class="account-footer-copy"><strong id="account-footer-name">Messs user</strong><small id="account-footer-meta">Free · 0 credits</small></span>
+            <span class="account-footer-copy"><strong id="account-footer-name" data-profile-field="name">Messs user</strong><small id="account-footer-signature" data-profile-field="signature"></small></span>
           </button>
           <button id="settings-btn" class="account-settings-btn" title="Settings" aria-label="Settings">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
@@ -135,7 +135,10 @@
                 </svg>
               </span>
             </span>
-            <span><strong id="account-popover-name">Messs user</strong><small id="account-popover-email">Sign in to sync your account</small></span>
+            <span class="account-profile-copy">
+              <strong id="account-popover-name" class="account-profile-editable" data-profile-field="name">Messs user</strong>
+              <small id="account-popover-signature" class="account-profile-editable" data-profile-field="signature"></small>
+            </span>
           </div>
           <div class="account-plan-card">
             <div><strong><span id="account-credit-count">0</span><small> credits</small></strong><span id="account-plan-badge">Free</span></div>
@@ -266,29 +269,31 @@
             <h2>Messs resolves your confusion.</h2>
             <p id="ai-assistant-dynamic-prompt" aria-live="polite">What should we solve today?</p>
             <div class="ai-assistant-quick-prompts">
-              <button type="button" data-ai-kind="image" data-ai-quick="Help me generate a cinematic concept image.">Concept Art</button>
-              <button type="button" data-ai-kind="chat" data-ai-quick="Help me organize this idea into a clear execution plan.">Clarify Idea</button>
-              <button type="button" data-ai-kind="video" data-ai-quick="Generate a short video prompt with camera movement.">Short Video</button>
+              <button type="button" data-ai-quick-action="poster" data-ai-kind="image" data-ai-quick="Help me create a professional poster.">生成海报</button>
+              <button type="button" data-ai-quick-action="logo" data-ai-kind="image" data-ai-quick="Help me design a clean and professional logo.">生成 LOGO</button>
+              <button type="button" data-ai-quick-action="clarify" data-ai-kind="chat" data-ai-quick="Help me organize this idea into a clear execution plan.">理清想法</button>
+              <button type="button" data-ai-quick-action="short-video" data-ai-kind="video" data-ai-quick="Generate a short video prompt with camera movement.">短视频</button>
             </div>
           </div>
           <div id="ai-assistant-messages" class="ai-assistant-messages" hidden aria-live="polite"></div>
           <form id="ai-assistant-form" class="ai-assistant-form">
-            <div class="ai-assistant-mode" role="tablist" aria-label="AI mode">
-              <button id="ai-assistant-upload" class="icon-btn-sm ai-assistant-upload-top" type="button" title="Add image" aria-label="Add image">
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-              </button>
-              <button type="button" data-assistant-kind="chat" class="is-active" role="tab" aria-selected="true">Chat</button>
-              <button type="button" class="ai-assistant-kind-icon" data-assistant-kind="image" role="tab" aria-selected="false" title="Image" aria-label="Image">
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M3 17l5-5 4 4 3-3 6 6"/></svg>
-              </button>
-              <button type="button" class="ai-assistant-kind-icon" data-assistant-kind="video" role="tab" aria-selected="false" title="Video" aria-label="Video">
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="15" height="14" rx="2"/><path d="M17 10l5-3v10l-5-3z"/></svg>
-              </button>
-            </div>
             <textarea id="ai-assistant-input" rows="3" placeholder="Type a message" spellcheck="false"></textarea>
             <div id="ai-assistant-attachments" class="ai-assistant-attachments" hidden></div>
             <div class="ai-assistant-form-footer">
-              <div class="ai-assistant-tools">
+              <div class="ai-assistant-footer-start">
+                <div class="ai-assistant-mode" role="tablist" aria-label="AI mode">
+                  <button id="ai-assistant-upload" class="icon-btn-sm ai-assistant-upload-top" type="button" title="Add image" aria-label="Add image">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                  </button>
+                  <button type="button" data-assistant-kind="chat" class="is-active" role="tab" aria-selected="true">Chat</button>
+                  <button type="button" class="ai-assistant-kind-icon" data-assistant-kind="image" role="tab" aria-selected="false" title="Image" aria-label="Image">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M3 17l5-5 4 4 3-3 6 6"/></svg>
+                  </button>
+                  <button type="button" class="ai-assistant-kind-icon" data-assistant-kind="video" role="tab" aria-selected="false" title="Video" aria-label="Video">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="15" height="14" rx="2"/><path d="M17 10l5-3v10l-5-3z"/></svg>
+                  </button>
+                </div>
+                <div class="ai-assistant-tools">
                 <div class="ai-assistant-model-picker" hidden>
                   <select id="ai-assistant-model" aria-label="AI provider"></select>
                   <button id="ai-assistant-model-trigger" class="ai-model-picker-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
@@ -300,6 +305,7 @@
                 <button id="ai-assistant-options-toggle" class="icon-btn-sm" type="button" title="Generation settings" aria-label="Generation settings">
                   <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
                 </button>
+                </div>
               </div>
               <span id="ai-assistant-credit-estimate" class="ai-credit-estimate ai-assistant-credit-estimate" hidden aria-live="polite"></span>
               <button id="ai-assistant-submit" class="ai-assistant-submit" type="submit" title="Send" aria-label="Send">
@@ -431,8 +437,39 @@
               </div>
             </div>
             <form id="board-agent-form" class="board-agent-form">
-              <textarea id="board-agent-input" rows="3" placeholder="Ask about this canvas..." spellcheck="false"></textarea>
+              <div id="board-agent-references" class="board-agent-references" aria-label="Reference images" hidden></div>
+              <textarea id="board-agent-input" rows="2" placeholder="Ask about this canvas..." spellcheck="false"></textarea>
               <div class="board-agent-form-footer">
+                <div class="board-agent-form-tools">
+                  <button id="board-agent-add-reference" class="board-agent-tool-btn" type="button" title="Add selected image" aria-label="Add selected image">
+                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>
+                  </button>
+                  <div class="board-agent-model-picker">
+                    <button id="board-agent-model-trigger" class="board-agent-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 9.8 9.8 3 12l6.8 2.2L12 21l2.2-6.8L21 12l-6.8-2.2L12 3Z"/></svg>
+                      <span id="board-agent-model-label">Agent</span>
+                      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="m7 10 5 5 5-5"/></svg>
+                    </button>
+                    <div id="board-agent-model-menu" class="board-agent-model-menu" role="dialog" hidden>
+                      <div class="board-agent-model-menu-title">生成时使用的模型</div>
+                      <button id="board-agent-chat-mode" class="board-agent-model-option is-active" type="button">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v11H9l-5 4V5Z"/></svg>
+                        <span>Agent 对话</span><i aria-hidden="true">✓</i>
+                      </button>
+                      <div class="board-agent-kind-switch" role="tablist" aria-label="Generation type">
+                        <button type="button" role="tab" data-agent-kind="image" class="is-active">
+                          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="2"/><path d="m4 17 5-5 4 4 2-2 5 5"/></svg>
+                          图片
+                        </button>
+                        <button type="button" role="tab" data-agent-kind="video">
+                          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="m17 10 4-2v8l-4-2z"/></svg>
+                          视频
+                        </button>
+                      </div>
+                      <div id="board-agent-model-options" class="board-agent-model-options" role="listbox"></div>
+                    </div>
+                  </div>
+                </div>
                 <button id="board-agent-submit" class="icon-btn-sm" type="submit" title="Send" aria-label="Send">
                   <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5"/><path d="M6 11l6-6 6 6"/></svg>
                 </button>
@@ -856,6 +893,24 @@
 
   <div id="section-chat" class="app-section chat-section">
     <div id="chat-shell" class="chat-shell" aria-label="Messs Chat">
+      <nav class="chat-nav-rail" aria-label="Chat navigation">
+        <span id="chat-rail-avatar" class="chat-rail-avatar">M</span>
+        <div class="chat-nav-actions">
+          <button class="chat-nav-button is-active" type="button" data-chat-view="messages" aria-label="Messages" title="Messages">
+            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M20 15a4 4 0 0 1-4 4H8l-4 3V7a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4z"/><path d="M8 9h8M8 13h5"/></svg>
+            <span>Messages</span>
+          </button>
+          <button class="chat-nav-button" type="button" data-chat-view="contacts" aria-label="Contacts" title="Contacts">
+            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 8h5M18.5 5.5v5"/></svg>
+            <span>Contacts</span>
+          </button>
+          <button class="chat-nav-button" type="button" data-chat-view="moments" aria-label="Moments" title="Moments">
+            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M12 3c2.5 0 3.8 2.4 2.5 4.4M20 8c1.2 2.2-.2 4.6-2.7 4.5M17 19c-2.1 1.4-4.6.1-4.6-2.4M7 19c-2.3-1.1-2.4-3.9-.2-5.1M4 8c.4-2.5 3-3.4 4.7-1.5"/></svg>
+            <span>Moments</span>
+          </button>
+        </div>
+        <span id="chat-rail-status" class="chat-rail-status" title="Connection status"></span>
+      </nav>
       <aside class="chat-people-panel">
         <form id="chat-user-search-form" class="chat-user-search">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
@@ -875,12 +930,8 @@
           </button>
         </header>
 
-        <section id="chat-requests-section" class="chat-list-section" hidden>
-          <div class="chat-list-heading"><span>Friend requests</span><span id="chat-request-count" class="chat-count">0</span></div>
-          <div id="chat-request-list" class="chat-mini-list"></div>
-        </section>
-
-        <section class="chat-conversations-panel">
+        <section id="chat-messages-view" class="chat-side-view is-active" data-chat-side-view="messages">
+          <section class="chat-conversations-panel">
           <div class="chat-list-heading"><span>Messages</span></div>
           <div id="chat-conversation-list" class="chat-conversation-list"></div>
           <div id="chat-conversation-empty" class="chat-conversation-empty">
@@ -889,16 +940,39 @@
             </span>
             <strong>No conversations yet</strong><small>Start a chat from your friends list</small>
           </div>
+          </section>
         </section>
 
-        <section class="chat-list-section chat-friends-section">
-          <div class="chat-list-heading"><span>Friends</span><span id="chat-friend-count" class="chat-count">0</span></div>
-          <div id="chat-friend-list" class="chat-mini-list"></div>
-          <div id="chat-friend-empty" class="chat-list-empty">Add friends using their full email or ID</div>
+        <section id="chat-contacts-view" class="chat-side-view" data-chat-side-view="contacts" hidden>
+          <section id="chat-requests-section" class="chat-list-section" hidden>
+            <div class="chat-list-heading"><span>Friend requests</span><span id="chat-request-count" class="chat-count">0</span></div>
+            <div id="chat-request-list" class="chat-mini-list"></div>
+          </section>
+          <section class="chat-list-section chat-friends-section">
+            <div class="chat-list-heading"><span>Friends</span><span id="chat-friend-count" class="chat-count">0</span></div>
+            <div id="chat-friend-list" class="chat-mini-list"></div>
+            <div id="chat-friend-empty" class="chat-list-empty">Add friends using their full email or ID</div>
+          </section>
+        </section>
+
+        <section id="chat-moments-side-view" class="chat-side-view chat-moments-side" data-chat-side-view="moments" hidden>
+          <span class="chat-empty-icon"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M12 3c2.5 0 3.8 2.4 2.5 4.4M20 8c1.2 2.2-.2 4.6-2.7 4.5M17 19c-2.1 1.4-4.6.1-4.6-2.4M7 19c-2.3-1.1-2.4-3.9-.2-5.1M4 8c.4-2.5 3-3.4 4.7-1.5"/></svg></span>
+          <strong>Moments</strong><small>Share updates with friends</small>
         </section>
       </aside>
 
       <main class="chat-thread-panel">
+        <section id="chat-moments" class="chat-moments" hidden>
+          <header class="chat-thread-head chat-moments-head"><span><strong>Moments</strong><small>Updates saved on this device</small></span></header>
+          <div class="chat-moments-body">
+            <form id="chat-moment-composer" class="chat-moment-composer">
+              <textarea id="chat-moment-input" maxlength="1000" placeholder="Share what is happening…" aria-label="Moment text"></textarea>
+              <button id="chat-moment-publish" type="submit">Publish</button>
+            </form>
+            <div id="chat-moment-list" class="chat-moment-list"></div>
+            <div id="chat-moment-empty" class="chat-moment-empty"><strong>No updates yet</strong><small>Your posts will appear here</small></div>
+          </div>
+        </section>
         <div id="chat-thread-empty" class="chat-thread-empty">
           <span class="chat-empty-icon chat-empty-icon-lg">
             <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 12a8 8 0 0 1-8 8H6l-4 3V8a6 6 0 0 1 6-6h5a8 8 0 0 1 8 8z"/></svg>
@@ -918,13 +992,23 @@
             <button id="chat-load-older" class="chat-load-older" type="button" hidden>View older messages</button>
           </div>
           <form id="chat-composer" class="chat-composer">
-            <button id="chat-image-btn" class="chat-icon-button chat-attach-button" type="button" title="Send image" aria-label="Send image">
-              <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m4 17 5-4 3 3 3-2 5 4"/></svg>
-            </button>
-            <textarea id="chat-message-input" rows="1" maxlength="8000" placeholder="Type a message…" aria-label="Message"></textarea>
-            <button id="chat-send-btn" class="chat-send-button" type="submit" aria-label="Send">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9"><path d="m5 12 14-7-4 14-3-6z"/><path d="m12 13 7-8"/></svg>
-            </button>
+            <textarea id="chat-message-input" maxlength="8000" placeholder="Type a message…" aria-label="Message"></textarea>
+            <div class="chat-composer-toolbar">
+              <button id="chat-emoji-btn" class="chat-tool-button" type="button" title="Emoji" aria-label="Emoji">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M8.5 10h.01M15.5 10h.01M8 14.5c1 1.5 2.3 2.2 4 2.2s3-.7 4-2.2"/></svg>
+              </button>
+              <button id="chat-image-btn" class="chat-tool-button" type="button" title="Send image" aria-label="Send image">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m4 17 5-4 3 3 3-2 5 4"/></svg>
+              </button>
+              <button id="chat-file-btn" class="chat-tool-button" type="button" title="Send file" aria-label="Send file">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7.5h7l2 2h9v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 7.5V5a2 2 0 0 1 2-2h5l2 2h5"/></svg>
+              </button>
+              <button id="chat-screenshot-btn" class="chat-tool-button" type="button" title="Screenshot" aria-label="Screenshot">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="m8 8.5 11 8M8 15.5l11-8"/></svg>
+              </button>
+            </div>
+            <div id="chat-emoji-popover" class="chat-emoji-popover" hidden aria-label="Emoji picker"></div>
+            <button id="chat-send-btn" class="chat-send-button" type="submit">Send</button>
           </form>
         </section>
       </main>
@@ -1010,6 +1094,7 @@
   <script src="js/board-engine.js"></script>
   <script src="js/board-media-meta.js"></script>
   <script src="js/canvas-workspace.js"></script>
+  <script src="js/vendor/perfect-freehand.js"></script>
   <script src="js/board-canvas.js"></script>
   <script src="../node_modules/drawflow/dist/drawflow.min.js"></script>
   <script src="js/canvas-node-mode.js"></script>

@@ -9,8 +9,12 @@ const ChatUiState = {
   historyHasMore: false,
   historyLoading: false,
   renderedMessageIds: new Set(),
-  refreshTimer: null
+  refreshTimer: null,
+  view: 'messages',
+  moments: []
 };
+
+const CHAT_EMOJI = ['😀', '😄', '😂', '😊', '😍', '🥳', '😎', '🤔', '😅', '😭', '😡', '👍', '👏', '🙏', '💪', '❤️', '🔥', '✨', '🎉', '💯', '👀', '🤝', '👌', '✅'];
 
 function chatEl(id) { return document.getElementById(id); }
 
@@ -87,6 +91,7 @@ function setChatState(next) {
     chatEl('chat-thread-empty').hidden = false;
   }
   ChatUiState.state = safeState;
+  if (previousUserId !== nextUserId) loadChatMoments();
   renderChatShell();
 }
 
@@ -108,6 +113,7 @@ function renderChatShell() {
   }
   const profile = state.profile || { displayName: state.user && state.user.email || t('Messs user', 'Messs 用户') };
   chatEl('chat-own-avatar').textContent = chatInitials(profile);
+  chatEl('chat-rail-avatar').textContent = chatInitials(profile);
   chatEl('chat-own-name').textContent = profile.displayName || t('Messs user', 'Messs 用户');
 
   const labels = {
@@ -425,6 +431,29 @@ function createChatMessage(message) {
       else if (row.isConnected) image.alt = result && result.message || t('Image unavailable', '图片暂不可用');
     });
     bubble.appendChild(image);
+  } else if (message.kind === 'file') {
+    bubble.classList.add('chat-message-file-bubble');
+    bubble.tabIndex = 0;
+    bubble.setAttribute('role', 'button');
+    const icon = document.createElement('span');
+    icon.className = 'chat-file-icon';
+    icon.innerHTML = '<svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v5h5M9 13h6M9 17h4"/></svg>';
+    const copy = document.createElement('span');
+    copy.className = 'chat-file-copy';
+    const name = document.createElement('strong');
+    name.textContent = message.fileName || t('Shared file', '共享文件');
+    const size = document.createElement('small');
+    size.textContent = formatChatFileSize(message.fileSize);
+    copy.append(name, size);
+    bubble.append(icon, copy);
+    const open = async () => {
+      const result = await window.messsAPI.openChatFile(message.clientId);
+      if (!result || !result.ok) chatNotice(result && result.message || t('File is unavailable.', '文件暂时无法打开。'));
+    };
+    bubble.addEventListener('click', open);
+    bubble.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); }
+    });
   } else {
     bubble.textContent = message.body || '';
   }
@@ -454,6 +483,79 @@ function createChatMessage(message) {
   }
   row.append(bubble, meta);
   return row;
+}
+
+function formatChatFileSize(value) {
+  const bytes = Number(value) || 0;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function switchChatView(view) {
+  const next = ['messages', 'contacts', 'moments'].includes(view) ? view : 'messages';
+  ChatUiState.view = next;
+  document.querySelectorAll('[data-chat-view]').forEach((button) => {
+    const active = button.dataset.chatView === next;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-current', active ? 'page' : 'false');
+  });
+  document.querySelectorAll('[data-chat-side-view]').forEach((panel) => {
+    panel.hidden = panel.dataset.chatSideView !== next;
+  });
+  chatEl('chat-moments').hidden = next !== 'moments';
+  if (next === 'moments') {
+    chatEl('chat-thread').hidden = true;
+    chatEl('chat-thread-empty').hidden = true;
+    renderChatMoments();
+  } else {
+    chatEl('chat-thread').hidden = !ChatUiState.activeConversationId;
+    chatEl('chat-thread-empty').hidden = !!ChatUiState.activeConversationId;
+  }
+}
+
+function loadChatMoments() {
+  const userId = ChatUiState.state && ChatUiState.state.user && ChatUiState.state.user.id || 'signed-out';
+  try {
+    const parsed = JSON.parse(localStorage.getItem(`messs-chat-moments:${userId}`) || '[]');
+    ChatUiState.moments = Array.isArray(parsed) ? parsed.slice(0, 100) : [];
+  } catch (error) { ChatUiState.moments = []; }
+}
+
+function renderChatMoments() {
+  const list = chatEl('chat-moment-list');
+  list.replaceChildren();
+  chatEl('chat-moment-empty').hidden = ChatUiState.moments.length > 0;
+  const profile = ChatUiState.state && ChatUiState.state.profile || {};
+  ChatUiState.moments.forEach((moment) => {
+    const article = document.createElement('article');
+    article.className = 'chat-moment';
+    article.appendChild(chatAvatar(profile));
+    const copy = document.createElement('div');
+    copy.className = 'chat-moment-copy';
+    const name = document.createElement('strong');
+    name.textContent = profile.displayName || t('Me', '我');
+    const body = document.createElement('p');
+    body.textContent = moment.body;
+    copy.append(name, body);
+    const time = document.createElement('time');
+    time.textContent = chatTime(moment.createdAt);
+    article.append(copy, time);
+    list.appendChild(article);
+  });
+}
+
+function publishChatMoment(event) {
+  event.preventDefault();
+  const input = chatEl('chat-moment-input');
+  const body = input.value.trim();
+  if (!body) return;
+  ChatUiState.moments.unshift({ id: crypto.randomUUID(), body, createdAt: new Date().toISOString() });
+  ChatUiState.moments = ChatUiState.moments.slice(0, 100);
+  const userId = ChatUiState.state && ChatUiState.state.user && ChatUiState.state.user.id || 'signed-out';
+  localStorage.setItem(`messs-chat-moments:${userId}`, JSON.stringify(ChatUiState.moments));
+  input.value = '';
+  renderChatMoments();
 }
 
 async function recallChatMessage(message, button) {
@@ -526,10 +628,54 @@ async function sendChatImageFromPicker() {
   }
 }
 
+async function sendChatFileFromPicker() {
+  if (!ChatUiState.activeConversationId) return;
+  const button = chatEl('chat-file-btn');
+  button.disabled = true;
+  try {
+    const result = await window.messsAPI.sendChatFile(ChatUiState.activeConversationId);
+    if (result.reason === 'cancelled') return;
+    if (!result.ok) return chatNotice(result.message || t('File could not be sent.', '文件发送失败。'));
+    await loadChatHistory(false);
+  } finally { button.disabled = false; }
+}
+
+async function sendChatScreenshot() {
+  if (!ChatUiState.activeConversationId) return;
+  const button = chatEl('chat-screenshot-btn');
+  button.disabled = true;
+  try {
+    const result = await window.messsAPI.sendChatScreenshot(ChatUiState.activeConversationId);
+    if (!result.ok) return chatNotice(result.message || t('Screenshot could not be sent.', '截图发送失败。'));
+    await loadChatHistory(false);
+  } finally { button.disabled = false; }
+}
+
+function initializeEmojiPicker() {
+  const picker = chatEl('chat-emoji-popover');
+  CHAT_EMOJI.forEach((emoji) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = emoji;
+    button.setAttribute('aria-label', emoji);
+    button.addEventListener('click', () => {
+      const input = chatEl('chat-message-input');
+      input.setRangeText(emoji, input.selectionStart, input.selectionEnd, 'end');
+      picker.hidden = true;
+      input.focus();
+      resizeChatComposer();
+    });
+    picker.appendChild(button);
+  });
+}
+
+function toggleEmojiPicker() {
+  const picker = chatEl('chat-emoji-popover');
+  picker.hidden = !picker.hidden;
+}
+
 function resizeChatComposer() {
-  const input = chatEl('chat-message-input');
-  input.style.height = 'auto';
-  input.style.height = `${Math.min(120, input.scrollHeight)}px`;
+  chatEl('chat-send-btn').disabled = !chatEl('chat-message-input').value.trim();
 }
 
 function openChatSettings() {
@@ -569,9 +715,15 @@ function refreshChatLanguage() {
   setAttr('#chat-mobile-back', 'aria-label', 'Back', '返回');
   setAttr('#chat-image-btn', 'title', 'Send image', '发送图片');
   setAttr('#chat-image-btn', 'aria-label', 'Send image', '发送图片');
+  setAttr('#chat-file-btn', 'title', 'Send file', '发送文件');
+  setAttr('#chat-file-btn', 'aria-label', 'Send file', '发送文件');
+  setAttr('#chat-screenshot-btn', 'title', 'Screenshot', '截图');
+  setAttr('#chat-screenshot-btn', 'aria-label', 'Screenshot', '截图');
+  setAttr('#chat-emoji-btn', 'title', 'Emoji', '表情');
+  setAttr('#chat-emoji-btn', 'aria-label', 'Emoji', '表情');
   setAttr('#chat-message-input', 'placeholder', 'Type a message…', '输入消息…');
   setAttr('#chat-message-input', 'aria-label', 'Message', '消息');
-  setAttr('#chat-send-btn', 'aria-label', 'Send', '发送');
+  setText('#chat-send-btn', 'Send', '发送');
   setText('#chat-auth-empty strong', 'Sign in to start chatting', '登录后开始聊天');
   setText('#chat-auth-empty small', 'Sign in to Messs from More Settings', '请在更多设置中登录 Messs');
   setText('#chat-open-settings', 'Open Settings', '打开设置');
@@ -592,12 +744,23 @@ function refreshChatLanguage() {
 }
 
 function initRealtimeChat() {
+  loadChatMoments();
+  initializeEmojiPicker();
+  switchChatView('messages');
+  resizeChatComposer();
+  document.querySelectorAll('[data-chat-view]').forEach((button) => {
+    button.addEventListener('click', () => switchChatView(button.dataset.chatView));
+  });
   document.querySelector('.section-tab[data-section="chat"]')?.addEventListener('click', () => ensureChatInitialized(true));
   chatEl('chat-sync-btn').addEventListener('click', syncChatNow);
   chatEl('chat-user-search-form').addEventListener('submit', searchChatUser);
   chatEl('chat-load-older').addEventListener('click', () => loadChatHistory(true));
   chatEl('chat-composer').addEventListener('submit', submitChatMessage);
   chatEl('chat-image-btn').addEventListener('click', sendChatImageFromPicker);
+  chatEl('chat-file-btn').addEventListener('click', sendChatFileFromPicker);
+  chatEl('chat-screenshot-btn').addEventListener('click', sendChatScreenshot);
+  chatEl('chat-emoji-btn').addEventListener('click', toggleEmojiPicker);
+  chatEl('chat-moment-composer').addEventListener('submit', publishChatMoment);
   chatEl('chat-mobile-back').addEventListener('click', closeChatThread);
   chatEl('chat-open-settings').addEventListener('click', openChatSettings);
   chatEl('chat-message-input').addEventListener('input', resizeChatComposer);
@@ -609,9 +772,21 @@ function initRealtimeChat() {
   });
   window.messsAPI.onChatEvent((event) => {
     if (event && event.state) setChatState(event.state);
-    if (event && (event.type === 'message' || event.type === 'message-recalled' || event.type === 'image-cached' || event.type === 'synced')) {
+    if (event && (event.type === 'message' || event.type === 'message-recalled' || event.type === 'image-cached' || event.type === 'file-cached' || event.type === 'synced')) {
       scheduleActiveChatRefresh(event);
     }
+  });
+  window.messsAPI.onOpenChatConversation((conversationId) => {
+    const chatTab = document.querySelector('.section-tab[data-section="chat"]');
+    if (chatTab) chatTab.click();
+    switchChatView('messages');
+    ensureChatInitialized().then(() => {
+      if (conversationId) openChatConversation(conversationId);
+    });
+  });
+  document.addEventListener('pointerdown', (event) => {
+    const picker = chatEl('chat-emoji-popover');
+    if (!picker.hidden && !picker.contains(event.target) && event.target !== chatEl('chat-emoji-btn')) picker.hidden = true;
   });
   document.addEventListener('messs:language-changed', refreshChatLanguage);
 }

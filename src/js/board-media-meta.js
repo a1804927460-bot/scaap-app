@@ -1672,7 +1672,7 @@ async function runBoardButlerGenerate3d(file, item, providerId, options = {}) {
       throw boardButlerError(created, t('Could not start 3D generation.', '无法发起 3D 生成。', '3D 생성을 시작하지 못했습니다.'));
     }
     const taskToken = created.taskToken;
-    let status = String(created.status || 'queued').toLowerCase();
+    let status = normalizeBoardButlerJobStatus(created.status);
     let retryAfterMs = boardButlerPollDelay(created.retryAfterMs);
     let lastResult = created;
     let transientStatusFailures = 0;
@@ -1693,7 +1693,7 @@ async function runBoardButlerGenerate3d(file, item, providerId, options = {}) {
         throw boardButlerError(lastResult, t('Could not check 3D generation.', '无法查询 3D 生成进度。', '3D 생성 상태를 확인하지 못했습니다.'));
       }
       transientStatusFailures = 0;
-      status = String(lastResult.status || 'processing').toLowerCase();
+      status = normalizeBoardButlerJobStatus(lastResult.status || 'processing');
       retryAfterMs = boardButlerPollDelay(lastResult.retryAfterMs);
     }
     if (status !== 'succeeded') {
