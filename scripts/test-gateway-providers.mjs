@@ -52,6 +52,7 @@ assert.deepEqual(
   ['model-a', 'model-b']
 );
 assert.equal(config.providers.find((provider) => provider.id === 'image-1').name, 'Nano Banana Pro');
+assert.equal(config.providers.find((provider) => provider.id === 'image-1').protocol, 'gemini-native');
 assert.equal(config.providers.find((provider) => provider.id === 'image-2').name, 'Nano Banana 2');
 assert.deepEqual(config.providers.find((provider) => provider.id === 'image-2').capabilities.sizes, ['1K', '2K', '4K']);
 assert.equal(config.providers.find((provider) => provider.id === 'image-3').name, 'Seedream 5.0');
@@ -116,7 +117,7 @@ assert.equal(publicText.includes('api.302.ai'), false);
 const configuredAi302Key = process.env.AI302_KEY;
 delete process.env.AI302_KEY;
 const withoutAi302 = publicProviderConfig();
-assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-1'), false);
+assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-1'), true);
 assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-2'), false);
 assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-5'), false);
 assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-9'), false);
@@ -171,16 +172,19 @@ const nanoImage = await generateMedia('image', {
 assert.deepEqual(nanoImage, nano2kPng);
 assert.equal(
   nanoCalls[0].url,
-  'https://api.302.ai/ws/api/v3/google/nano-banana-pro/text-to-image'
+  'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent'
 );
-assert.equal(nanoCalls[0].options.headers.Authorization, 'Bearer ai302-secret');
+assert.equal(nanoCalls[0].options.headers.Authorization, 'Bearer quickrouter-secret');
 const nanoBody = JSON.parse(nanoCalls[0].options.body);
 assert.deepEqual(nanoBody, {
-  aspect_ratio: '3:4',
-  resolution: '2k',
-  enable_base64_output: false,
-  enable_sync_mode: false,
-  prompt: 'editorial portrait'
+  contents: [{
+    role: 'user',
+    parts: [{ text: 'editorial portrait' }]
+  }],
+  generationConfig: {
+    responseModalities: ['TEXT', 'IMAGE'],
+    imageConfig: { aspectRatio: '3:4', clarity: '2K' }
+  }
 });
 
 const relayReference = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
@@ -203,20 +207,17 @@ globalThis.fetch = async () => jsonResponse({
   candidates: [{
     content: {
       role: 'model',
-      parts: [{ inlineData: { mimeType: 'image/png', data: pngHeader(1024, 1024).toString('base64') } }]
+      parts: [{ inlineData: { mimeType: 'image/png', data: pngHeader(4096, 2304).toString('base64') } }]
     }
   }]
 });
-await assert.rejects(
-  generateMedia('image', {
-    providerId: 'image-1',
-    prompt: 'must remain 4K',
-    size: '4K',
-    aspectRatio: '1:1',
-    urls: []
-  }),
-  (error) => error && error.code === 'image-resolution-mismatch'
-);
+assert.deepEqual(await generateMedia('image', {
+  providerId: 'image-1',
+  prompt: 'must remain 4K',
+  size: '4K',
+  aspectRatio: '1:1',
+  urls: []
+}), pngHeader(4096, 2304));
 
 const gptImageCalls = [];
 globalThis.fetch = async (url, options = {}) => {

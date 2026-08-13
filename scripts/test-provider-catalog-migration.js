@@ -50,12 +50,13 @@ assert.deepEqual(
 );
 const nanoBananaPro = media.imageProviders.find((provider) => provider.id === 'image-1');
 assert.ok(nanoBananaPro);
-assert.equal(nanoBananaPro.endpoint, 'https://api.302.ai/ws/api/v3/google/nano-banana-pro/text-to-image');
+assert.equal(nanoBananaPro.endpoint, 'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent');
+assert.equal(nanoBananaPro.protocol, 'gemini-native');
 assert.deepEqual(nanoBananaPro.capabilities.sizes, ['1K', '2K', '4K']);
 assert.equal(nanoBananaPro.capabilities.ratios.includes('auto'), false);
 assert.deepEqual(media.imageProviders.find((provider) => provider.id === 'image-2').capabilities.sizes, ['1K', '2K', '4K']);
 assert.deepEqual(media.imageProviders.find((provider) => provider.id === 'image-9').capabilities.referenceRatios, ['auto']);
-assert.equal(require('../lib/provider-catalog').catalogProvider('image-1').keyEnv, 'AI302_KEY');
+assert.equal(require('../lib/provider-catalog').catalogProvider('image-1').keyEnv, 'QUICKROUTER_API_KEY');
 for (const id of [
   'image-2', 'image-3', 'image-4', 'image-5', 'image-6', 'image-7', 'image-8',
   'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16'

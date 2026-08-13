@@ -453,13 +453,6 @@ async function testQuickRouterNativeGeminiImageFlow() {
 async function test302NanoBananaFlows() {
   const cases = [
     {
-      id: 'image-1', name: 'Nano Banana Pro', suffix: 'nano-banana-pro/text-to-image', size: '4K',
-      expectedBody: {
-        aspect_ratio: '16:9', resolution: '4k', enable_base64_output: false,
-        enable_sync_mode: false, prompt: 'cinematic scene'
-      }
-    },
-    {
       id: 'image-2', name: 'Nano Banana 2', suffix: 'nano-banana-2/edit', size: '2K',
       urls: ['https://gateway.test/reference.png'],
       expectedBody: {

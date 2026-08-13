@@ -1,12 +1,12 @@
 {
-  "version": 22,
+  "version": 23,
   "providers": [
     {
       "id": "image-1",
       "kind": "image",
       "name": "Nano Banana Pro",
-      "endpoint": "https://api.302.ai/ws/api/v3/google/nano-banana-pro/text-to-image",
-      "protocol": "ai302-nano-banana-v3",
+      "endpoint": "https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent",
+      "protocol": "gemini-native",
       "requiresActivation": false,
       "capabilities": {
         "sizes": ["1K", "2K", "4K"],
@@ -14,7 +14,7 @@
         "maxReferenceImages": 14,
         "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
       },
-      "keyEnv": "AI302_KEY"
+      "keyEnv": "QUICKROUTER_API_KEY"
     },
     {
       "id": "image-2",
