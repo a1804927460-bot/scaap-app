@@ -299,6 +299,43 @@ function providerSignal(signal, timeoutMs = 25_000) {
   return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 }
 
+function retryableProviderRequestError(error) {
+  const status = Number(error && error.status);
+  const name = String(error && error.name || '');
+  return error && error.retryable === true
+    || status === 408
+    || status === 425
+    || status === 429
+    || status >= 500
+    || ['AbortError', 'TimeoutError', 'TypeError'].includes(name);
+}
+
+async function providerRequestWithRetry(provider, request, signal, attempts = 3) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await responseJson(await request(), provider.name);
+    } catch (error) {
+      lastError = error;
+      if (!retryableProviderRequestError(error) || attempt + 1 >= attempts || (signal && signal.aborted)) throw error;
+      const suppliedDelay = Number(error && error.retryAfterMs);
+      const delayMs = Number.isFinite(suppliedDelay) && suppliedDelay > 0
+        ? Math.min(10_000, suppliedDelay)
+        : 750 * (attempt + 1);
+      await delayWithSignal(delayMs, signal);
+    }
+  }
+  throw lastError;
+}
+
+function providerTaskHeaders(provider, body) {
+  const requestId = String(body && body.operationId || '').trim();
+  return {
+    ...providerHeaders(provider, true),
+    ...(requestId ? { 'Idempotency-Key': requestId, 'X-Request-Id': requestId } : {})
+  };
+}
+
 function providerHeaders(provider, includeJson = false) {
   return {
     Authorization: `Bearer ${provider.apiKey}`,
@@ -386,11 +423,10 @@ async function createMiniMaxVideoTask(provider, body, signal) {
     image_url: { url: String(url) },
     role: index === 0 ? 'first_frame' : 'last_frame'
   }));
-  const headers = providerHeaders(provider, true);
-  const created = await responseJson(await fetch(provider.endpoint, {
-    method: 'POST', headers, signal: providerSignal(signal),
-    body: JSON.stringify({ model: provider.model || 'MiniMax-H3', content, resolution, duration, ratio, aigc_watermark: false })
-  }), provider.name);
+  const requestBody = JSON.stringify({ model: provider.model || 'MiniMax-H3', content, resolution, duration, ratio, aigc_watermark: false });
+  const created = await providerRequestWithRetry(provider, () => fetch(provider.endpoint, {
+    method: 'POST', headers: providerTaskHeaders(provider, body), signal: providerSignal(signal), body: requestBody
+  }), signal);
   const taskId = String(created.task_id || '');
   if (!taskId || taskId.length > 256) {
     throw Object.assign(new Error(`${provider.name} did not return a valid task ID.`), {
@@ -423,12 +459,12 @@ async function createSeedanceVideoTask(provider, body, signal) {
     watermark: false,
     ...(capabilities.serviceTier ? { service_tier: String(capabilities.serviceTier) } : {})
   };
-  const created = await responseJson(await fetch(provider.endpoint, {
+  const created = await providerRequestWithRetry(provider, () => fetch(provider.endpoint, {
     method: 'POST',
-    headers: providerHeaders(provider, true),
+    headers: providerTaskHeaders(provider, body),
     signal: providerSignal(signal),
     body: JSON.stringify(requestBody)
-  }), provider.name);
+  }), signal);
   const taskId = String(created.id || '').trim();
   if (!taskId || taskId.length > 256) {
     throw Object.assign(new Error(`${provider.name} did not return a valid task ID.`), {

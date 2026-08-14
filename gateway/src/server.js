@@ -943,7 +943,7 @@ async function handle(request, response) {
 
     const startedAt = Date.now();
     try {
-      const providerTask = await createVideoTask(body);
+      const providerTask = await createVideoTask({ ...body, operationId });
       await attachVideoTaskWithRetry(operationId, providerTask.taskId);
       return send(response, 202, {
         requestId: operationId,

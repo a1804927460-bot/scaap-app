@@ -500,6 +500,37 @@ assert.deepEqual(JSON.parse(seedance25CreateCall.options.body), {
 });
 assert.deepEqual(await pollVideoTask('video-3', 'seedance-25-task'), { status: 'running' });
 
+for (const providerId of ['video-1', 'video-2', 'video-3']) {
+  let createAttempts = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    createAttempts += 1;
+    if (createAttempts < 3) {
+      return {
+        ok: false,
+        status: 503,
+        headers: { get: () => null },
+        text: async () => JSON.stringify({ error: { message: 'Temporary channel configuration network error.' } })
+      };
+    }
+    const body = JSON.parse(options.body);
+    return jsonResponse(providerId === 'video-1'
+      ? { task_id: `${providerId}-retried-task` }
+      : { id: `${providerId}-retried-task`, model: body.model });
+  };
+  const operationId = `11111111-2222-4333-8444-${providerId.replace('video-', '').padStart(12, '0')}`;
+  const created = await createVideoTask({
+    providerId,
+    operationId,
+    prompt: 'retry a temporary upstream channel failure',
+    resolution: providerId === 'video-1' ? '768P' : '480P',
+    duration: 4,
+    aspectRatio: providerId === 'video-1' ? '16:9' : 'adaptive',
+    urls: []
+  });
+  assert.equal(created.taskId, `${providerId}-retried-task`);
+  assert.equal(createAttempts, 3);
+}
+
 await assert.rejects(
   createVideoTask({
     providerId: 'video-2',
