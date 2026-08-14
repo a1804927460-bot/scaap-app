@@ -50,8 +50,9 @@ for (const id of ['image-2', 'image-5', 'image-7', 'image-9', 'image-11', 'image
   assert.equal(media.imageProviders.find((provider) => provider.id === id).name, '');
 }
 assert.equal(require('../lib/provider-catalog').catalogProvider('image-1').keyEnv, 'QUICKROUTER_API_KEY');
+assert.equal(require('../lib/provider-catalog').catalogProvider('image-6').keyEnv, 'QUICKROUTER_API_KEY');
 for (const id of [
-  'image-2', 'image-3', 'image-4', 'image-5', 'image-6', 'image-7', 'image-8',
+  'image-2', 'image-3', 'image-4', 'image-5', 'image-7', 'image-8',
   'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16'
 ]) {
   assert.equal(require('../lib/provider-catalog').catalogProvider(id).keyEnv, 'AI302_KEY');
@@ -59,6 +60,7 @@ for (const id of [
 const gptImage2 = media.imageProviders.find((provider) => provider.id === 'image-6');
 assert.ok(gptImage2);
 assert.equal(gptImage2.model, 'gpt-image-2');
+assert.equal(gptImage2.endpoint, 'https://api.quickrouter.ai/v1/images/generations');
 assert.deepEqual(gptImage2.capabilities.sizes, ['1024x1024', '1536x1024', '1024x1536', 'auto']);
 assert.deepEqual(gptImage2.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
 for (const id of ['image-8']) {

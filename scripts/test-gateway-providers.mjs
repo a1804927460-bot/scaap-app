@@ -121,7 +121,7 @@ assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-2'
 assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-5'), false);
 assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-9'), false);
 for (const id of ['image-3', 'image-4', 'image-6', 'image-7', 'image-8', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16']) {
-  assert.equal(withoutAi302.providers.some((provider) => provider.id === id), false);
+  assert.equal(withoutAi302.providers.some((provider) => provider.id === id), id === 'image-6');
 }
 assert.equal(withoutAi302.providers.some((provider) => provider.id === 'video-2'), false);
 assert.equal(withoutAi302.providers.some((provider) => provider.id === 'video-3'), false);
@@ -129,6 +129,14 @@ for (const id of ['video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-
   assert.equal(withoutAi302.providers.some((provider) => provider.id === id), false);
 }
 process.env.AI302_KEY = configuredAi302Key;
+
+const configuredQuickRouterKey = process.env.Quick_API_KEY;
+delete process.env.Quick_API_KEY;
+const withoutQuickRouter = publicProviderConfig();
+assert.equal(withoutQuickRouter.providers.some((provider) => provider.id === 'image-1'), false);
+assert.equal(withoutQuickRouter.providers.some((provider) => provider.id === 'image-6'), false);
+assert.equal(withoutQuickRouter.providers.some((provider) => provider.id === 'image-3'), true);
+process.env.Quick_API_KEY = configuredQuickRouterKey;
 
 function jsonResponse(payload, status = 200) {
   return {
@@ -251,14 +259,15 @@ const gptImage = await generateMedia('image', {
   urls: []
 });
 assert.deepEqual(gptImage, Buffer.from('iVBORw==', 'base64'));
-assert.equal(gptImageCalls[0].url, 'https://api.302.ai/v1/images/generations');
-assert.equal(gptImageCalls[0].options.headers.Authorization, 'Bearer ai302-secret');
+assert.equal(gptImageCalls[0].url, 'https://api.quickrouter.ai/v1/images/generations');
+assert.equal(gptImageCalls[0].options.headers.Authorization, 'Bearer quickrouter-secret');
 assert.deepEqual(JSON.parse(gptImageCalls[0].options.body), {
   model: 'gpt-image-2',
   prompt: 'minimal product photograph',
   n: 1,
   size: '1536x1024',
-  quality: 'high'
+  quality: 'high',
+  format: 'png'
 });
 
 await generateMedia('image', {
@@ -269,11 +278,12 @@ await generateMedia('image', {
   aspectRatio: '2:3',
   urls: ['data:image/webp;base64,UklGRg==']
 });
-assert.equal(gptImageCalls[1].url, 'https://api.302.ai/v1/images/edits');
+assert.equal(gptImageCalls[1].url, 'https://api.quickrouter.ai/v1/images/edits');
 assert.ok(gptImageCalls[1].options.body instanceof FormData);
 assert.equal(gptImageCalls[1].options.body.get('model'), 'gpt-image-2');
 assert.equal(gptImageCalls[1].options.body.get('size'), '1024x1536');
 assert.equal(gptImageCalls[1].options.body.get('quality'), 'medium');
+assert.equal(gptImageCalls[1].options.body.get('format'), 'png');
 assert.equal(gptImageCalls[1].options.body.get('image').type, 'image/webp');
 assert.equal(gptImageCalls[1].options.headers['Content-Type'], undefined);
 

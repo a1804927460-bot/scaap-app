@@ -295,7 +295,8 @@ async function testGptImage2FlowAndReferenceLimits() {
   assert.ok(provider);
   assert.strictEqual(provider.name, 'GPT Image 2');
   assert.strictEqual(provider.model, 'gpt-image-2');
-  assert.strictEqual(provider.endpoint, 'https://api.302.ai/v1/images/generations');
+  assert.strictEqual(provider.endpoint, 'https://api.quickrouter.ai/v1/images/generations');
+  assert.strictEqual(provider.keyEnv, 'QUICKROUTER_API_KEY');
   assert.deepStrictEqual(provider.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
 
   const config = normalizeConfig({
@@ -312,11 +313,12 @@ async function testGptImage2FlowAndReferenceLimits() {
     prompt: 'clean product photograph',
     n: 1,
     size: '1536x1024',
-    quality: 'high'
+    quality: 'high',
+    format: 'png'
   });
   assert.strictEqual(
     resolveOpenAiImageEditsEndpoint(provider.endpoint),
-    'https://api.302.ai/v1/images/edits'
+    'https://api.quickrouter.ai/v1/images/edits'
   );
 
   const calls = [];
@@ -340,22 +342,24 @@ async function testGptImage2FlowAndReferenceLimits() {
   });
   assert.deepStrictEqual(generated, Buffer.from('iVBORw==', 'base64'));
   assert.deepStrictEqual(edited, Buffer.from('iVBORw==', 'base64'));
-  assert.strictEqual(calls[0].url, 'https://api.302.ai/v1/images/generations');
+  assert.strictEqual(calls[0].url, 'https://api.quickrouter.ai/v1/images/generations');
   assert.strictEqual(calls[0].options.headers.Authorization, 'Bearer server-only-secret');
   assert.deepStrictEqual(JSON.parse(calls[0].options.body), {
     model: 'gpt-image-2',
     prompt: 'clean product photograph',
     n: 1,
     size: '1024x1024',
-    quality: 'low'
+    quality: 'low',
+    format: 'png'
   });
-  assert.strictEqual(calls[1].url, 'https://api.302.ai/v1/images/edits');
+  assert.strictEqual(calls[1].url, 'https://api.quickrouter.ai/v1/images/edits');
   assert.strictEqual(calls[1].options.headers.Authorization, 'Bearer server-only-secret');
   assert.strictEqual(calls[1].options.headers['Content-Type'], undefined);
   assert.ok(calls[1].options.body instanceof FormData);
   assert.strictEqual(calls[1].options.body.get('model'), 'gpt-image-2');
   assert.strictEqual(calls[1].options.body.get('size'), '1024x1536');
   assert.strictEqual(calls[1].options.body.get('quality'), 'medium');
+  assert.strictEqual(calls[1].options.body.get('format'), 'png');
   assert.strictEqual(calls[1].options.body.getAll('image').length, 1);
   assert.strictEqual(calls[1].options.body.get('image').type, 'image/png');
 
