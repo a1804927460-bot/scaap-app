@@ -1314,25 +1314,6 @@ body.is-activation-locked .section-tabs { pointer-events: none; opacity: .45; }
   height: 100%;
   object-fit: cover;
 }
-.board-video-play-indicator {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 42px;
-  height: 42px;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(255,255,255,.2);
-  border-radius: 50%;
-  background: rgba(12, 14, 18, .62);
-  color: #fff;
-  box-shadow: 0 5px 20px rgba(0,0,0,.24);
-  backdrop-filter: blur(8px);
-  pointer-events: none;
-  transform: translate(-50%, -50%);
-  transition: opacity 140ms var(--ease-out), transform 140ms var(--ease-out);
-  z-index: 3;
-}
 .board-video-duration {
   position: absolute;
   right: 7px;
@@ -1374,12 +1355,6 @@ body.is-activation-locked .section-tabs { pointer-events: none; opacity: .45; }
 .mini-video-player > video { z-index: 2; opacity: 0; }
 .mini-video-player.has-frame > video { opacity: 1; }
 .mini-video-player.has-frame > .mini-video-poster { opacity: 0; }
-.mini-video-player.is-playing .board-video-play-indicator { opacity: 0; transform: translate(-50%, -50%) scale(.9); }
-.mini-video-player.is-recovering .board-video-play-indicator { animation: mini-video-recovering 760ms ease-in-out infinite alternate; }
-@keyframes mini-video-recovering {
-  from { opacity: .42; transform: translate(-50%, -50%) scale(.9); }
-  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-}
 .mini-video-player video {
   width: 100%;
   height: 100%;
@@ -1387,6 +1362,10 @@ body.is-activation-locked .section-tabs { pointer-events: none; opacity: .45; }
   display: block;
   pointer-events: none;
 }
+.mini-video-player,
+.mini-video-player > .mini-video-poster,
+.board-video-thumbnail,
+.board-video-thumbnail > img { pointer-events: none; }
 
 .text-preview-shell {
   width: min(680px, 92%);
@@ -6400,7 +6379,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   z-index: 200;
   display: flex;
   align-items: stretch;
-  background: var(--bg-base);
+  background: var(--bg-frame, var(--bg-base));
   border-bottom: 1px solid var(--border-hairline);
   -webkit-app-region: drag;
   user-select: none;

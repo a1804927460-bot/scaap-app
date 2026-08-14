@@ -44,15 +44,14 @@ assert.match(
   /\.mini-video-player video\s*\{[\s\S]*?pointer-events:\s*none;/,
   'The video surface must leave board dragging to the parent item.'
 );
+assert.doesNotMatch(boardSource, /board-video-play-indicator/,
+  'Canvas videos must not cover their content with a central play button.');
+assert.doesNotMatch(boardSource, /'\.mini-video-player'/,
+  'The video player surface must not be classified as a canvas UI layer that blocks dragging.');
 assert.match(
   boardSource,
   /content\.addEventListener\('mouseenter',[\s\S]*?_boardPlayPreview[\s\S]*?content\.addEventListener\('mouseleave',[\s\S]*?_boardStopPreview/,
   'Canvas videos must play on hover and stop when the pointer leaves.'
-);
-assert.match(
-  boardSource,
-  /content\.addEventListener\('click',[\s\S]*?lastDragEndedAt[\s\S]*?pinnedPlayback = !pinnedPlayback[\s\S]*?_boardPlayPreview[\s\S]*?_boardStopPreview/,
-  'Canvas videos must support click-to-pin playback without treating a completed drag as a click.'
 );
 assert.match(
   boardSource,

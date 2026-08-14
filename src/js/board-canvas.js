@@ -11,7 +11,8 @@ const BOARD_DOM_ITEM_EXIT_LIMIT = 240;
 const BOARD_DOM_RETAIN_LIMIT = BOARD_DOM_ITEM_LIMIT;
 const BOARD_OVERVIEW_ITEM_THRESHOLD = 180;
 const BOARD_FULL_IMAGE_LIMIT = 8;
-const BOARD_FULL_IMAGE_CACHE_LIMIT = 8;
+const BOARD_FULL_IMAGE_CACHE_LIMIT = 24;
+const BOARD_FULL_IMAGE_READY_LIMIT = 400;
 const BOARD_THUMBNAIL_MAX_EDGE = 400;
 const BOARD_FULL_IMAGE_MIN_SCREEN_EDGE = 220;
 const BOARD_SELECTED_FULL_IMAGE_MIN_SCREEN_EDGE = 150;
@@ -24,9 +25,9 @@ const BOARD_OVERVIEW_IMAGE_CACHE_LIMIT = 1800;
 const BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET = 24_000_000;
 const BOARD_OVERVIEW_IMAGE_CONCURRENCY = 16;
 const BOARD_OVERVIEW_IMAGE_MAX_EDGE = 192;
-const BOARD_WHEEL_MAX_DELTA = 120;
-const BOARD_WHEEL_PAN_GAIN = 0.78;
-const BOARD_WHEEL_ZOOM_RATE = 0.00125;
+const BOARD_WHEEL_MAX_DELTA = 96;
+const BOARD_WHEEL_PAN_GAIN = 0.64;
+const BOARD_WHEEL_ZOOM_RATE = 0.001;
 const BOARD_MOVE_HISTORY_LIMIT = 100;
 
 // Anything matching this boundary owns its interaction. Canvas listeners run
@@ -40,7 +41,6 @@ const BOARD_UI_EVENT_SELECTOR = [
   '.board-edit-hint',
   '.generated-media-detail-trigger',
   '.mini-audio-player',
-  '.mini-video-player',
   '.ai-image-popover',
   '.board-quick-generate',
   '.board-agent-panel',
@@ -110,6 +110,7 @@ const Board = {
   overviewHideFrame: 0,
   overviewImageFailed: new Set(),
   fullImageCache: new Map(),
+  fullImageReadyFileIds: new Set(),
   fullImagePending: new Map(),
   fullImagePrewarmTimer: 0,
   failedFullImageSources: new Set(),
@@ -336,6 +337,17 @@ function cacheBoardFullImage(source, image) {
   }
 }
 
+function rememberBoardFullImage(element) {
+  const item = element && Board.itemsById.get(element.dataset.boardId);
+  const fileId = String(item && item.fileId || '');
+  if (!fileId) return;
+  Board.fullImageReadyFileIds.delete(fileId);
+  Board.fullImageReadyFileIds.add(fileId);
+  while (Board.fullImageReadyFileIds.size > BOARD_FULL_IMAGE_READY_LIMIT) {
+    Board.fullImageReadyFileIds.delete(Board.fullImageReadyFileIds.values().next().value);
+  }
+}
+
 function preloadBoardFullImage(source) {
   if (!source || Board.failedFullImageSources.has(source)) return Promise.resolve(null);
   const cached = cachedBoardFullImage(source);
@@ -459,6 +471,7 @@ function transitionBoardImageQuality(element, quality) {
       next.classList.remove('is-pending');
       next.classList.add('is-active', 'is-quality-crossfading');
       active.classList.remove('is-active');
+      if (quality === 'full') rememberBoardFullImage(element);
       stack.dataset.pendingQuality = '';
       window.setTimeout(() => {
         next.classList.remove('is-quality-crossfading');
@@ -632,25 +645,10 @@ function stepBoardZoom(now) {
   Board.zoomFrame = 0;
   const target = Board.zoomTarget;
   if (!target) return;
-  const elapsed = Board.zoomLastTime ? Math.min(48, now - Board.zoomLastTime) : 16;
-  Board.zoomLastTime = now;
-  const blend = 1 - Math.exp(-elapsed / 48);
-  Board.panX += (target.panX - Board.panX) * blend;
-  Board.panY += (target.panY - Board.panY) * blend;
-  Board.zoom += (target.zoom - Board.zoom) * blend;
+  Object.assign(Board, target);
+  Board.zoomTarget = null;
+  Board.zoomLastTime = 0;
   applyBoardTransform();
-
-  const settled = Math.abs(target.zoom - Board.zoom) < 0.0005 &&
-    Math.abs(target.panX - Board.panX) < 0.12 &&
-    Math.abs(target.panY - Board.panY) < 0.12;
-  if (settled) {
-    Object.assign(Board, target);
-    Board.zoomTarget = null;
-    Board.zoomLastTime = 0;
-    applyBoardTransform();
-    return;
-  }
-  Board.zoomFrame = requestAnimationFrame(stepBoardZoom);
 }
 
 function clientToBoardCoords(clientX, clientY) {
@@ -863,7 +861,9 @@ function renderBoardItemContent(content, f, item) {
   if (isImageExt(f.ext)) {
     const thumbSource = resolveImageDisplaySource(f, false);
     const fullSource = resolveImageDisplaySource(f, true);
-    const quality = cachedBoardFullImage(fullSource) ? 'full' : 'thumb';
+    const quality = Board.fullImageReadyFileIds.has(String(f.id || '')) || cachedBoardFullImage(fullSource)
+      ? 'full'
+      : 'thumb';
     const initialSource = quality === 'full' ? fullSource : thumbSource;
     const stack = document.createElement('div');
     stack.className = 'board-image-stack';
@@ -950,14 +950,10 @@ function renderBoardItemContent(content, f, item) {
       preview.classList.add('is-thumbnail-failed');
       syncBoardOverviewFallback();
     });
-    const playIndicator = document.createElement('span');
-    playIndicator.className = 'board-video-play-indicator';
-    playIndicator.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="m8 5 11 7-11 7z"/></svg>';
-    preview.append(img, playIndicator, createBoardVideoDurationBadge(f));
+    preview.append(img, createBoardVideoDurationBadge(f));
     content.appendChild(preview);
 
     let hovering = false;
-    let pinnedPlayback = false;
     let playerPromise = null;
     const ensurePlayer = () => {
       if (!playerPromise) {
@@ -986,18 +982,9 @@ function renderBoardItemContent(content, f, item) {
     });
     content.addEventListener('mouseleave', () => {
       hovering = false;
-      if (pinnedPlayback || !playerPromise) return;
+      if (!playerPromise) return;
       playerPromise.then((player) => {
         if (player && typeof player._boardStopPreview === 'function') player._boardStopPreview();
-      });
-    });
-    content.addEventListener('click', () => {
-      if (Date.now() - Board.lastDragEndedAt <= 120) return;
-      pinnedPlayback = !pinnedPlayback;
-      ensurePlayer().then((player) => {
-        if (!player) return;
-        if (pinnedPlayback && typeof player._boardPlayPreview === 'function') player._boardPlayPreview();
-        else if (!pinnedPlayback && typeof player._boardStopPreview === 'function') player._boardStopPreview();
       });
     });
     return;
@@ -2693,11 +2680,8 @@ function buildMiniVideoPlayer(result, f) {
   video.draggable = false;
   video.playsInline = true;
   video.disablePictureInPicture = true;
-  const playIndicator = document.createElement('span');
-  playIndicator.className = 'board-video-play-indicator';
-  playIndicator.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="m8 5 11 7-11 7z"/></svg>';
   const durationBadge = createBoardVideoDurationBadge(f);
-  wrap.append(poster, video, playIndicator, durationBadge);
+  wrap.append(poster, video, durationBadge);
 
   let wantsPreview = false;
   const abortController = new AbortController();

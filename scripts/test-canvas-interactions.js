@@ -113,8 +113,14 @@ assert.match(
   /modelPickerMenu\.addEventListener\('wheel',[\s\S]*?event\.stopPropagation\(\)[\s\S]*?passive:\s*true/,
   'Scrolling the model picker must not zoom or pan the board behind it.'
 );
-assert.match(boardSource, /const BOARD_WHEEL_PAN_GAIN = 0\.78;/);
-assert.match(boardSource, /const BOARD_WHEEL_ZOOM_RATE = 0\.00125;/);
+assert.match(boardSource, /const BOARD_WHEEL_MAX_DELTA = 96;/);
+assert.match(boardSource, /const BOARD_WHEEL_PAN_GAIN = 0\.64;/);
+assert.match(boardSource, /const BOARD_WHEEL_ZOOM_RATE = 0\.001;/);
+assert.match(
+  boardSource,
+  /function stepBoardZoom[\s\S]*?Object\.assign\(Board, target\)[\s\S]*?Board\.zoomTarget = null/,
+  'Wheel motion must follow each animation frame at a linear rate without an inertial tail.'
+);
 assert.match(boardSource, /function setBoardPanTarget[\s\S]*?requestAnimationFrame\(stepBoardZoom\)/);
 assert.match(
   boardSource,
@@ -274,8 +280,13 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /const quality = cachedBoardFullImage\(fullSource\) \? 'full' : 'thumb';[\s\S]*?img\.loading = 'eager'/,
-  'Remounted images must reuse decoded full images instead of flashing back to a lazy thumbnail.'
+  /fullImageReadyFileIds\.has\(String\(f\.id \|\| ''\)\) \|\| cachedBoardFullImage\(fullSource\)[\s\S]*?img\.loading = 'eager'/,
+  'Remounted images must remember decoded full sources instead of flashing back to a thumbnail after cache eviction.'
+);
+assert.match(
+  boardSource,
+  /function rememberBoardFullImage[\s\S]*?item\.fileId[\s\S]*?BOARD_FULL_IMAGE_READY_LIMIT/,
+  'Full-image continuity must use bounded file IDs rather than retaining potentially large data URLs.'
 );
 const transformSource = boardSource.slice(
   boardSource.indexOf('function applyBoardTransform'),
@@ -433,6 +444,13 @@ assert.match(
   'Missing legacy media dimensions must be repaired after the source decodes.'
 );
 assert.match(themeSource, /\[data-theme="dark"\][\s\S]*?--bg-base:\s*#111111;[\s\S]*?--bg-surface-2:\s*#282828;/);
+assert.match(
+  themeSource,
+  /\[data-theme="light"\][\s\S]*?--bg-base:\s*#fafafa;[\s\S]*?--bg-surface:\s*#f5f5f7;[\s\S]*?--bg-frame:\s*#e3e3e8;/,
+  'Light mode must use the neutral gray-white hierarchy from the supplied reference.'
+);
+assert.match(boardStyles, /\.app-titlebar \{[\s\S]*?background:\s*var\(--bg-frame, var\(--bg-base\)\)/,
+  'The light title bar must use the sampled frame gray while dark mode keeps its fallback.');
 assert.match(
   themeSource,
   /\[data-theme="dark"\][\s\S]*?--board-workspace-bg:\s*color-mix\(in srgb, var\(--bg-deep\) 94%, #090b10 6%\)/,

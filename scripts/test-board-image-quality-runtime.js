@@ -49,6 +49,7 @@ async function run() {
         const makeHost = (id, thumbSource, fullSource) => {
           const host = document.createElement('div');
           host.className = 'board-item';
+          host.dataset.boardId = id;
           const stack = document.createElement('div');
           stack.className = 'board-image-stack';
           stack.dataset.pendingQuality = '';
@@ -65,6 +66,7 @@ async function run() {
         };
 
         const first = makeHost('first', ${JSON.stringify(thumb)}, ${JSON.stringify(full)});
+        Board.itemsById.set('first', { id: 'first', fileId: 'file-first' });
         transitionBoardImageQuality(first, 'full');
         window.__qualityInitial = activeBoardImage(first).dataset.quality;
         window.__qualityFirst = first;
@@ -107,12 +109,13 @@ async function run() {
         layerCount: window.__qualityFirst.querySelectorAll('.board-image-layer').length,
         remountedQuality: remounted?.dataset.quality,
         remountedLoading: remounted?.loading,
-        cacheSize: Board.fullImageCache.size
+        cacheSize: Board.fullImageCache.size,
+        remembersFullSource: Board.fullImageReadyFileIds.has('file-first')
       };
     })()`);
     if (result.initialQuality !== 'thumb' || result.finalQuality !== 'full' ||
         result.layerCount !== 1 || result.remountedQuality !== 'full' ||
-        result.remountedLoading !== 'eager' || result.cacheSize < 2) {
+        result.remountedLoading !== 'eager' || result.cacheSize < 2 || !result.remembersFullSource) {
       throw new Error(`Image quality transition regression: ${JSON.stringify(result)}`);
     }
     process.stdout.write(`BOARD_IMAGE_QUALITY_RUNTIME_OK cache=${result.cacheSize}\n`);
