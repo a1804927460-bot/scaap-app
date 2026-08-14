@@ -372,6 +372,26 @@ assert.doesNotMatch(
   'Individual image layers must not be promoted and demoted during every interaction.'
 );
 assert.match(boardSource, /--board-selection-width[\s\S]*?1\.2 \/ Math\.max\(Board\.zoom/);
+assert.match(
+  boardSource,
+  /function boardToolbarScreenScale\(zoom\)[\s\S]*?BOARD_TOOLBAR_COMPACT_START_ZOOM[\s\S]*?BOARD_TOOLBAR_MIN_SCREEN_SCALE[\s\S]*?eased/,
+  'Canvas action capsules must become gently more compact only at high zoom.'
+);
+assert.match(
+  boardSource,
+  /--board-toolbar-scale[\s\S]*?boardToolbarScreenScale\(Board\.zoom\) \/ Math\.max\(Board\.zoom[\s\S]*?--board-toolbar-gap[\s\S]*?BOARD_TOOLBAR_SCREEN_GAP \/ Math\.max\(Board\.zoom/,
+  'Canvas action capsules and their media gap must compensate for the parent canvas scale.'
+);
+assert.match(
+  boardStyles,
+  /\.board-image-toolbar \{[\s\S]*?--board-toolbar-effective-scale:\s*var\(--board-toolbar-scale, 1\)[\s\S]*?bottom:\s*calc\(100% \+ var\(--board-toolbar-gap, 7px\)\)[\s\S]*?scale\(var\(--board-toolbar-effective-scale\)\)/,
+  'Image and video action capsules must consume the dedicated zoom-compensated toolbar variables.'
+);
+assert.match(
+  boardStyles,
+  /\.board-canvas\.is-transforming \.board-image-toolbar \{\s*transition:\s*none;/,
+  'Action capsules must track active wheel zoom without a delayed size trail.'
+);
 assert.match(boardStyles, /\.board-item\.is-selected \{[\s\S]*?outline:\s*var\(--board-selection-width/);
 assert.match(boardStyles, /width:\s*min\(940px, calc\(100% - 40px\)\)/, 'The generation composer must keep the wider centered footprint.');
 assert.doesNotMatch(sidebarSource, /Return home|\\u8fd4\\u56de\\u9996\\u9875/, 'The brand menu must not offer a return-to-home action.');

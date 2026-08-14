@@ -110,6 +110,55 @@ async function run() {
       throw new Error(`Video fullscreen toolbar is misplaced: ${JSON.stringify(toolbar)}`);
     }
 
+    const compactToolbarExpected = await window.webContents.executeJavaScript(`(() => {
+      const card = document.querySelector('.board-item-video');
+      const zoom = 3.06;
+      const progress = Math.min(1, Math.max(0, (zoom - 1.6) / (3.2 - 1.6)));
+      const eased = progress * progress * (3 - 2 * progress);
+      const screenScale = 1 - (1 - 0.86) * eased;
+      card.style.width = '260px';
+      card.style.height = '146px';
+      card.style.transformOrigin = 'center center';
+      card.style.transform = 'scale(' + zoom + ')';
+      card.style.setProperty('--board-toolbar-scale', String(screenScale / zoom));
+      card.style.setProperty('--board-toolbar-gap', String(7 / zoom) + 'px');
+      return { zoom, screenScale };
+    })()`);
+    await new Promise((resolve) => setTimeout(resolve, 220));
+    const compactToolbarMeasurement = await window.webContents.executeJavaScript(`(() => {
+      const card = document.querySelector('.board-item-video');
+      const bar = card.querySelector('.board-video-butler-toolbar');
+      const cardRect = card.getBoundingClientRect();
+      const barRect = bar.getBoundingClientRect();
+      return {
+        width: barRect.width,
+        height: barRect.height,
+        gap: cardRect.top - barRect.bottom,
+        transform: getComputedStyle(bar).transform,
+        scaleVariable: getComputedStyle(bar).getPropertyValue('--board-toolbar-scale')
+      };
+    })()`);
+    const compactToolbar = {
+      ...compactToolbarExpected,
+      ...compactToolbarMeasurement
+    };
+    if (
+      compactToolbar.width >= (toolbar.bar.right - toolbar.bar.left) * 0.91 ||
+      compactToolbar.width < (toolbar.bar.right - toolbar.bar.left) * 0.82 ||
+      compactToolbar.height < 24 || compactToolbar.height > 27 ||
+      Math.abs(compactToolbar.gap - 7) > 1
+    ) {
+      throw new Error(`High-zoom video toolbar did not compact smoothly: ${JSON.stringify(compactToolbar)}`);
+    }
+    await window.webContents.executeJavaScript(`(() => {
+      const card = document.querySelector('.board-item-video');
+      card.style.width = '640px';
+      card.style.height = '360px';
+      card.style.transform = '';
+      card.style.removeProperty('--board-toolbar-scale');
+      card.style.removeProperty('--board-toolbar-gap');
+    })()`);
+
     await window.webContents.executeJavaScript("document.querySelector('.board-video-fullscreen').click()");
     const fullscreen = await window.webContents.executeJavaScript(`(() => {
       const overlay = document.getElementById('fullscreen-overlay');
@@ -174,7 +223,7 @@ async function run() {
     if (!imageBackdropClick.mediaClickKeptOpen || !imageBackdropClick.backdropClickClosed) {
       throw new Error(`Fullscreen image outside-click behavior is invalid: ${JSON.stringify(imageBackdropClick)}`);
     }
-    process.stdout.write(`CANVAS_VIDEO_FULLSCREEN_OK toolbar=${Math.round(toolbar.bar.right - toolbar.bar.left)} player=${Math.round(fullscreen.rect.right - fullscreen.rect.left)}x${Math.round(fullscreen.rect.bottom - fullscreen.rect.top)} played=${playback.currentTime.toFixed(2)}\n`);
+    process.stdout.write(`CANVAS_VIDEO_FULLSCREEN_OK toolbar=${Math.round(toolbar.bar.right - toolbar.bar.left)} compact=${compactToolbar.width.toFixed(1)}x${compactToolbar.height.toFixed(1)} gap=${compactToolbar.gap.toFixed(1)} player=${Math.round(fullscreen.rect.right - fullscreen.rect.left)}x${Math.round(fullscreen.rect.bottom - fullscreen.rect.top)} played=${playback.currentTime.toFixed(2)}\n`);
   } finally {
     if (!window.isDestroyed()) window.destroy();
     fs.rmSync(tempDir, { recursive: true, force: true });

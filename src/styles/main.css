@@ -3776,9 +3776,10 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .board-item.is-dragging .board-media-meta { opacity: .84; }
 
 .board-image-toolbar {
+  --board-toolbar-effective-scale: var(--board-toolbar-scale, 1);
   position: absolute;
   right: 0;
-  bottom: calc(100% + 7px);
+  bottom: calc(100% + var(--board-toolbar-gap, 7px));
   z-index: 8;
   height: 30px;
   display: flex;
@@ -3792,7 +3793,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   box-shadow: 0 7px 20px rgba(0, 0, 0, .14);
   opacity: 0;
   pointer-events: none;
-  transform: scale(var(--board-label-scale, 1)) translateY(3px);
+  transform: scale(var(--board-toolbar-effective-scale)) translateY(3px);
   transform-origin: right bottom;
   transition: opacity 120ms var(--ease-out), transform 160ms var(--ease-spring);
 }
@@ -3800,7 +3801,10 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .board-item-video.is-selected.is-single-selection .board-image-toolbar {
   opacity: 1;
   pointer-events: auto;
-  transform: scale(var(--board-label-scale, 1)) translateY(0);
+  transform: scale(var(--board-toolbar-effective-scale)) translateY(0);
+}
+.board-canvas.is-transforming .board-image-toolbar {
+  transition: none;
 }
 .board-image-toolbar-button {
   width: 25px;

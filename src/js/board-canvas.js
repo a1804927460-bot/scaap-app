@@ -29,6 +29,10 @@ const BOARD_WHEEL_MAX_DELTA = 96;
 const BOARD_WHEEL_PAN_GAIN = 0.64;
 const BOARD_WHEEL_ZOOM_RATE = 0.001;
 const BOARD_MOVE_HISTORY_LIMIT = 100;
+const BOARD_TOOLBAR_COMPACT_START_ZOOM = 1.6;
+const BOARD_TOOLBAR_COMPACT_END_ZOOM = 3.2;
+const BOARD_TOOLBAR_MIN_SCREEN_SCALE = 0.86;
+const BOARD_TOOLBAR_SCREEN_GAP = 7;
 
 // Anything matching this boundary owns its interaction. Canvas listeners run
 // in the capture phase in a few places, so stopping propagation on a button is
@@ -253,6 +257,18 @@ function boardTransform() {
 function boardZoomBucket() {
   Board.zoomLod = BoardEngine.resolveZoomLod(Board.zoom, Board.zoomLod);
   return Board.zoomLod;
+}
+
+function boardToolbarScreenScale(zoom) {
+  const normalizedZoom = Math.max(0.001, Number(zoom) || 1);
+  if (normalizedZoom <= BOARD_TOOLBAR_COMPACT_START_ZOOM) return 1;
+  const progress = Math.min(
+    1,
+    (normalizedZoom - BOARD_TOOLBAR_COMPACT_START_ZOOM) /
+      (BOARD_TOOLBAR_COMPACT_END_ZOOM - BOARD_TOOLBAR_COMPACT_START_ZOOM)
+  );
+  const eased = progress * progress * (3 - 2 * progress);
+  return 1 - (1 - BOARD_TOOLBAR_MIN_SCREEN_SCALE) * eased;
 }
 
 function updateInfiniteGrid() {
@@ -572,6 +588,14 @@ function applyBoardTransform() {
     canvas.classList.add('is-transforming');
     canvas.style.transform = boardTransform();
     canvas.style.setProperty('--board-label-scale', String(Math.min(7, Math.max(1, 1 / Board.zoom))));
+    canvas.style.setProperty(
+      '--board-toolbar-scale',
+      String(boardToolbarScreenScale(Board.zoom) / Math.max(Board.zoom, 0.001))
+    );
+    canvas.style.setProperty(
+      '--board-toolbar-gap',
+      `${BOARD_TOOLBAR_SCREEN_GAP / Math.max(Board.zoom, 0.001)}px`
+    );
     canvas.style.setProperty(
       '--board-selection-width',
       `${Math.min(40, Math.max(0.2, 1.2 / Math.max(Board.zoom, 0.001)))}px`
