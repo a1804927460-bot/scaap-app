@@ -49,6 +49,14 @@ jobs:
               Start-Sleep -Seconds (15 * $attempt)
             }
           }
+          if (-not (Test-Path $libreOfficeExe)) {
+            $libreOfficeVersion = '26.2.3'
+            $libreOfficeMsi = Join-Path $env:RUNNER_TEMP "LibreOffice-$libreOfficeVersion.msi"
+            $libreOfficeUrl = "https://download.documentfoundation.org/libreoffice/stable/$libreOfficeVersion/win/x86_64/LibreOffice_${libreOfficeVersion}_Win_x86-64.msi"
+            Invoke-WebRequest -Uri $libreOfficeUrl -OutFile $libreOfficeMsi -UseBasicParsing
+            $install = Start-Process msiexec.exe -ArgumentList @('/i', $libreOfficeMsi, '/qn', '/norestart') -Wait -PassThru
+            if ($install.ExitCode -notin @(0, 3010)) { throw "LibreOffice MSI failed with exit code $($install.ExitCode)." }
+          }
           choco install imagemagick.app --no-progress -y --execution-timeout=600
           $imageMagick = Get-ChildItem -Directory $env:ProgramFiles |
             Where-Object Name -Like 'ImageMagick-*' |

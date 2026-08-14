@@ -43,6 +43,7 @@ assert.match(workflow, /MESSS_SIGNING_ENABLED/);
 assert.match(workflow, /signature\.Status -ne 'NotSigned'/);
 assert.match(workflow, /CSC_LINK and CSC_KEY_PASSWORD must be configured together/);
 assert.match(workflow, /for \(\$attempt = 1; \$attempt -le 3; \$attempt\+\+\)[\s\S]*?choco install libreoffice-fresh[\s\S]*?choco cache remove --all/);
+assert.match(workflow, /download\.documentfoundation\.org\/libreoffice\/stable[\s\S]*?Start-Process msiexec\.exe/);
 assert.match(workflow, /choco install imagemagick\.app/);
 assert.match(workflow, /Copy-Item \$libreOffice build-resources\/tools\/libreoffice -Recurse/);
 assert.match(workflow, /Copy-Item \$imageMagick\.FullName build-resources\/tools\/imagemagick -Recurse/);
