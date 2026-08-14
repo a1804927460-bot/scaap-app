@@ -38,13 +38,23 @@ jobs:
       - name: Bundle document preview tools
         shell: pwsh
         run: |
-          choco install libreoffice-fresh imagemagick.app --no-progress -y
           $libreOffice = Join-Path $env:ProgramFiles 'LibreOffice'
+          $libreOfficeExe = Join-Path $libreOffice 'program\soffice.exe'
+          if (-not (Test-Path $libreOfficeExe)) {
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              choco install libreoffice-fresh --no-progress -y --execution-timeout=1200
+              if (Test-Path $libreOfficeExe) { break }
+              Write-Warning "LibreOffice install attempt $attempt failed; clearing Chocolatey caches before retry."
+              choco cache remove --all --confirm 2>$null
+              Start-Sleep -Seconds (15 * $attempt)
+            }
+          }
+          choco install imagemagick.app --no-progress -y --execution-timeout=600
           $imageMagick = Get-ChildItem -Directory $env:ProgramFiles |
             Where-Object Name -Like 'ImageMagick-*' |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
-          if (-not (Test-Path (Join-Path $libreOffice 'program\soffice.exe'))) { throw 'LibreOffice was not installed.' }
+          if (-not (Test-Path $libreOfficeExe)) { throw 'LibreOffice was not installed after three attempts.' }
           if (-not $imageMagick -or -not (Test-Path (Join-Path $imageMagick.FullName 'magick.exe'))) { throw 'ImageMagick was not installed.' }
           Remove-Item build-resources/tools/libreoffice -Recurse -Force
           Remove-Item build-resources/tools/imagemagick -Recurse -Force
