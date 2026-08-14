@@ -223,6 +223,61 @@ async function testGatewaySessionRecovery() {
   assert.strictEqual(providerRefreshCalls, 0);
 }
 
+async function testChunkedTopazUpload() {
+  const chunkSize = 4 * 1024 * 1024;
+  const video = Buffer.alloc(chunkSize + 12, 0x19);
+  video.writeUInt32BE(24, 0);
+  video.write('ftyp', 4, 'ascii');
+  const calls = [];
+  let retriedChunk = false;
+  const client = new AiGatewayClient({
+    baseUrl: 'https://gateway.example.com',
+    getAccessToken: async () => 'user-jwt',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (url.endsWith('/v1/tools/video/uploads')) {
+        return new Response(JSON.stringify({
+          uploadId: 'u'.repeat(43), chunkSize, totalBytes: video.length
+        }), { status: 201 });
+      }
+      if (url.endsWith(`/${'u'.repeat(43)}/0`) && !retriedChunk) {
+        retriedChunk = true;
+        throw new TypeError('temporary network failure');
+      }
+      if (url.includes(`/v1/tools/video/uploads/${'u'.repeat(43)}/`)) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      if (url.endsWith('/v1/tools/video/upscale')) {
+        return new Response(JSON.stringify({ taskToken: 'v'.repeat(43), status: 'queued' }), { status: 202 });
+      }
+      throw new Error(`unexpected request ${url}`);
+    }
+  });
+  const result = await client.upscaleVideo(video, {
+    modelId: 'topaz-video-upscale',
+    sourceMime: 'video/mp4',
+    output: { resolution: { width: 1920, height: 1080 } }
+  });
+  assert.strictEqual(result.status, 'queued');
+  const chunkCalls = calls.filter((call) => call.url.includes('/v1/tools/video/uploads/') && call.options.method === 'PUT');
+  assert.strictEqual(chunkCalls.length, 3);
+  assert.strictEqual(chunkCalls.filter((call) => call.url.endsWith('/0')).length, 2);
+  assert.strictEqual(chunkCalls.filter((call) => call.url.endsWith('/1')).length, 1);
+  assert.strictEqual(chunkCalls[0].options.headers['Content-Type'], 'application/octet-stream');
+  assert.ok(Buffer.isBuffer(chunkCalls[0].options.body));
+  const submit = calls.find((call) => call.url.endsWith('/v1/tools/video/upscale'));
+  const submitBody = JSON.parse(submit.options.body);
+  assert.deepStrictEqual(submitBody, {
+    modelId: 'topaz-video-upscale',
+    uploadId: 'u'.repeat(43),
+    options: {
+      modelId: 'topaz-video-upscale',
+      output: { resolution: { width: 1920, height: 1080 } }
+    }
+  });
+  assert.strictEqual(JSON.stringify(submitBody).includes('data:video'), false);
+}
+
 function testButlerDesktopBridgeSurface() {
   const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
   const mainSource = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
@@ -235,6 +290,7 @@ function testButlerDesktopBridgeSurface() {
     assert.match(mainSource, new RegExp(channel));
   });
   assert.match(mainSource, /sanitizeImageForButler/);
+  assert.match(clientSource, /\/v1\/tools\/video\/uploads[\s\S]*rawBody:\s*chunk[\s\S]*uploadId/);
   assert.match(mainSource, /assertValidGlbBuffer\(buffer\)/);
   assert.match(mainSource, /'pending_queue'[\s\S]*?'waiting_to_run'[\s\S]*?\? 'queued'/,
     'The desktop bridge must keep provider queue aliases in a non-terminal state.');
@@ -282,6 +338,7 @@ async function testOfflineRefreshKeepsLocalIdentity() {
   await testSupabaseSessionStorage();
   await testOfflineRefreshKeepsLocalIdentity();
   await testGatewayClient();
+  await testChunkedTopazUpload();
   await testGatewaySessionRecovery();
   testButlerDesktopBridgeSurface();
   console.log('security client tests passed');

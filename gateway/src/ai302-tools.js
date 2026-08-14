@@ -26,8 +26,11 @@ const TASK_TOKEN_AAD = Buffer.from('messs:ai302-3d-task:v1', 'utf8');
 const VIDEO_TASK_TOKEN_AAD = Buffer.from('messs:ai302-video-task:v1', 'utf8');
 const RELAY_ASSET_TTL_MS = 15 * 60 * 1000;
 const VIDEO_RELAY_ASSET_TTL_MS = 2 * 60 * 60 * 1000;
+const VIDEO_UPLOAD_TTL_MS = 30 * 60 * 1000;
+export const VIDEO_UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
 const MAX_RELAY_ASSET_ENTRIES = 64;
 const MAX_RELAY_ASSET_BYTES = 128 * 1024 * 1024;
+const MAX_VIDEO_UPLOAD_SESSIONS = 16;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const ALLOWED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const ALLOWED_VIDEO_MIME = new Set(['video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska']);
@@ -54,7 +57,7 @@ const TOPAZ_VIDEO_FILTER_MODELS = new Set([
   'aaa-9', 'ahq-12', 'alq-13', 'alqs-2', 'amq-13', 'amqs-2', 'ddv-3',
   'dtd-4', 'dtds-2', 'dtv-4', 'dtvs-2', 'gcg-5', 'ghq-5', 'iris-2',
   'iris-3', 'nxf-1', 'nyx-3', 'prob-4', 'rhea-1', 'rxl-1', 'thd-3',
-  'thf-4', 'thm-2', 'aion-1', 'apf-2', 'apo-8', 'chf-3', 'chr-2'
+  'thf-4', 'thm-2'
 ]);
 const PRIVATE_INPUT_PATTERNS = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,
@@ -63,7 +66,9 @@ const PRIVATE_INPUT_PATTERNS = [
   /\b(?:postgres|postgresql|mysql):\/\/[^\s:/]+:[^\s@]+@/i
 ];
 const relayAssets = new Map();
+const videoUploadSessions = new Map();
 let relayAssetBytes = 0;
+let videoUploadBytes = 0;
 const crcTable = new Uint32Array(256);
 for (let index = 0; index < crcTable.length; index += 1) {
   let value = index;
@@ -536,6 +541,131 @@ export function cleanupAi302RelayAssets(now = Date.now()) {
   }
 }
 
+export function cleanupVideoUploadSessions(now = Date.now()) {
+  const currentTime = Number(now);
+  for (const [uploadId, session] of videoUploadSessions) {
+    if (session.expiresAt <= currentTime) {
+      videoUploadBytes -= session.totalBytes;
+      videoUploadSessions.delete(uploadId);
+    }
+  }
+}
+
+function validVideoUploadId(value) {
+  const uploadId = String(value || '').trim();
+  if (!/^[A-Za-z0-9_-]{43}$/.test(uploadId)) {
+    throw toolError('video-upload-not-found', 'The video upload session was not found.', 404);
+  }
+  return uploadId;
+}
+
+function ownedVideoUpload(value, userId, now = Date.now()) {
+  const uploadId = validVideoUploadId(value);
+  cleanupVideoUploadSessions(now);
+  const session = videoUploadSessions.get(uploadId);
+  if (!session || session.userId !== String(userId || '')) {
+    throw toolError('video-upload-not-found', 'The video upload session was not found.', 404);
+  }
+  session.expiresAt = Number(now) + VIDEO_UPLOAD_TTL_MS;
+  return { uploadId, session };
+}
+
+export function createVideoUploadSession({ userId, size, mime } = {}, options = {}) {
+  const ownerId = String(userId || '').trim();
+  const totalBytes = Math.round(Number(size));
+  const normalizedMime = String(mime || '').trim().toLowerCase();
+  const extension = normalizedMime === 'video/quicktime' ? 'mov'
+    : normalizedMime === 'video/x-matroska' ? 'mkv'
+      : normalizedMime.slice('video/'.length);
+  if (!ownerId || ownerId.length > 256 || /[\u0000-\u001f\u007f]/.test(ownerId)) {
+    throw toolError('invalid-tool-user', 'The authenticated user is invalid.', 400);
+  }
+  if (!Number.isSafeInteger(totalBytes) || totalBytes < 12 || totalBytes > MAX_VIDEO_INPUT_BYTES) {
+    throw toolError('video-too-large', 'The video exceeds the supported upload size.', 413);
+  }
+  if (!ALLOWED_VIDEO_MIME.has(normalizedMime)) {
+    throw toolError('invalid-video-data', 'The video MIME type is not supported.', 400);
+  }
+  const now = Number(options.now ?? Date.now());
+  cleanupVideoUploadSessions(now);
+  if (videoUploadSessions.size >= MAX_VIDEO_UPLOAD_SESSIONS || videoUploadBytes + totalBytes > MAX_RELAY_ASSET_BYTES) {
+    throw toolError('tool-asset-capacity-exceeded', 'The temporary video upload service is busy.', 503);
+  }
+  let uploadId;
+  do { uploadId = crypto.randomBytes(32).toString('base64url'); } while (videoUploadSessions.has(uploadId));
+  videoUploadSessions.set(uploadId, {
+    userId: ownerId,
+    totalBytes,
+    mime: normalizedMime,
+    extension,
+    chunks: new Map(),
+    receivedBytes: 0,
+    expiresAt: now + VIDEO_UPLOAD_TTL_MS
+  });
+  videoUploadBytes += totalBytes;
+  return { uploadId, chunkSize: VIDEO_UPLOAD_CHUNK_BYTES, totalBytes };
+}
+
+export function appendVideoUploadChunk({ uploadId, userId, index, chunk } = {}, options = {}) {
+  const now = Number(options.now ?? Date.now());
+  const owned = ownedVideoUpload(uploadId, userId, now);
+  const chunkIndex = Math.round(Number(index));
+  if (!Number.isSafeInteger(chunkIndex) || chunkIndex < 0) {
+    throw toolError('invalid-video-upload-chunk', 'The video upload chunk is invalid.', 400);
+  }
+  const expectedChunks = Math.ceil(owned.session.totalBytes / VIDEO_UPLOAD_CHUNK_BYTES);
+  if (chunkIndex >= expectedChunks || !Buffer.isBuffer(chunk) || !chunk.length || chunk.length > VIDEO_UPLOAD_CHUNK_BYTES) {
+    throw toolError('invalid-video-upload-chunk', 'The video upload chunk is invalid.', 400);
+  }
+  const expectedLength = chunkIndex === expectedChunks - 1
+    ? owned.session.totalBytes - chunkIndex * VIDEO_UPLOAD_CHUNK_BYTES
+    : VIDEO_UPLOAD_CHUNK_BYTES;
+  if (chunk.length !== expectedLength) {
+    throw toolError('invalid-video-upload-chunk', 'The video upload chunk length is invalid.', 400);
+  }
+  const existing = owned.session.chunks.get(chunkIndex);
+  if (existing) {
+    if (existing.length !== chunk.length || !crypto.timingSafeEqual(existing, chunk)) {
+      throw toolError('video-upload-chunk-conflict', 'The video upload chunk does not match the previous retry.', 409);
+    }
+    return { uploadId: owned.uploadId, index: chunkIndex, receivedBytes: owned.session.receivedBytes };
+  }
+  const stored = Buffer.from(chunk);
+  owned.session.chunks.set(chunkIndex, stored);
+  owned.session.receivedBytes += stored.length;
+  return { uploadId: owned.uploadId, index: chunkIndex, receivedBytes: owned.session.receivedBytes };
+}
+
+export function consumeVideoUpload({ uploadId, userId } = {}, options = {}) {
+  const owned = ownedVideoUpload(uploadId, userId, Number(options.now ?? Date.now()));
+  const expectedChunks = Math.ceil(owned.session.totalBytes / VIDEO_UPLOAD_CHUNK_BYTES);
+  if (owned.session.chunks.size !== expectedChunks || owned.session.receivedBytes !== owned.session.totalBytes) {
+    throw toolError('video-upload-incomplete', 'The video upload is incomplete.', 409);
+  }
+  const chunks = [];
+  for (let index = 0; index < expectedChunks; index += 1) {
+    const chunk = owned.session.chunks.get(index);
+    if (!chunk) throw toolError('video-upload-incomplete', 'The video upload is incomplete.', 409);
+    chunks.push(chunk);
+  }
+  const buffer = Buffer.concat(chunks, owned.session.totalBytes);
+  validateVideo(buffer, owned.session.mime);
+  videoUploadBytes -= owned.session.totalBytes;
+  videoUploadSessions.delete(owned.uploadId);
+  return {
+    buffer,
+    mime: owned.session.mime,
+    extension: owned.session.extension
+  };
+}
+
+export function deleteVideoUploadSession(uploadId, userId, options = {}) {
+  const owned = ownedVideoUpload(uploadId, userId, Number(options.now ?? Date.now()));
+  videoUploadBytes -= owned.session.totalBytes;
+  videoUploadSessions.delete(owned.uploadId);
+  return true;
+}
+
 function deleteRelayAsset(token) {
   const asset = relayAssets.get(token);
   if (!asset) return;
@@ -559,12 +689,20 @@ function storeRelayAsset(image, options = {}) {
   relayAssets.set(token, {
     buffer: image.buffer,
     mime: image.mime,
+    extension: image.extension || (image.mime === 'video/quicktime' ? 'mov'
+      : image.mime === 'video/x-matroska' ? 'mkv'
+        : String(image.mime || '').split('/')[1] || 'bin'),
     expiresAt: now + ttlMs
   });
   relayAssetBytes += image.buffer.length;
+  const filenameSuffix = ALLOWED_VIDEO_MIME.has(image.mime)
+    ? `.${image.extension || (image.mime === 'video/quicktime' ? 'mov'
+      : image.mime === 'video/x-matroska' ? 'mkv'
+        : String(image.mime || '').split('/')[1] || 'mp4')}`
+    : '';
   return {
     token,
-    url: `${publicOrigin}/v1/tools/assets/${token}`
+    url: `${publicOrigin}/v1/tools/assets/${token}${filenameSuffix}`
   };
 }
 
@@ -1035,7 +1173,7 @@ export function normalizeVideoUpscaleOptions(value = {}) {
   const audioTransfer = String(outputSource.audioTransfer || 'Copy').trim();
   const videoEncoder = String(outputSource.videoEncoder || 'H264').trim();
   const dynamicCompressionLevel = String(outputSource.dynamicCompressionLevel || 'High').trim();
-  const container = String(outputSource.container || 'mp4').trim().toLowerCase();
+  let container = String(outputSource.container || 'mp4').trim().toLowerCase();
   if (!['AAC', 'AC3', 'PCM'].includes(audioCodec)
       || !['Copy', 'Convert', 'None'].includes(audioTransfer)
       || !['AV1', 'FFV1', 'H264', 'H265', 'ProRes', 'QuickTime Animation', 'QuickTime R210', 'QuickTime V210', 'VP9'].includes(videoEncoder)
@@ -1043,10 +1181,14 @@ export function normalizeVideoUpscaleOptions(value = {}) {
       || !['mp4', 'mov', 'mkv'].includes(container)) {
     throw toolError('invalid-video-upscale-options', 'The requested video output format is invalid.', 400);
   }
-  const videoProfile = String(outputSource.videoProfile || (videoEncoder === 'H264' ? 'High' : 'Main')).trim();
-  if (!videoProfile || videoProfile.length > 64 || /[\u0000-\u001f\u007f]/.test(videoProfile)) {
+  const videoProfile = ['H264', 'H265'].includes(videoEncoder)
+    ? String(outputSource.videoProfile || (videoEncoder === 'H264' ? 'High' : 'Main')).trim()
+    : '';
+  if (videoProfile && (videoProfile.length > 64 || /[\u0000-\u001f\u007f]/.test(videoProfile))) {
     throw toolError('invalid-video-upscale-options', 'The video output profile is invalid.', 400);
   }
+  if (['ProRes', 'QuickTime Animation', 'QuickTime R210', 'QuickTime V210'].includes(videoEncoder)) container = 'mov';
+  if (['VP9', 'FFV1'].includes(videoEncoder)) container = 'mkv';
   return {
     filters,
     output: {
@@ -1055,7 +1197,7 @@ export function normalizeVideoUpscaleOptions(value = {}) {
       audioCodec,
       audioTransfer,
       videoEncoder,
-      videoProfile,
+      ...(videoProfile ? { videoProfile } : {}),
       dynamicCompressionLevel,
       cropToFit: outputSource.cropToFit === true,
       container
@@ -1659,14 +1801,26 @@ export async function downloadThreeDModel({ taskToken, userId } = {}, options = 
   return glb;
 }
 
-export async function createVideoUpscaleTask({ videoDataUrl, toolOptions, userId } = {}, options = {}) {
+export async function createVideoUpscaleTask({ videoDataUrl, videoAsset, toolOptions, userId } = {}, options = {}) {
   const apiKey = configuredApiKey(options.apiKey);
   const taskKey = configuredTaskSecret(apiKey, options.taskSecret);
   const ownerId = String(userId || '').trim();
   if (!ownerId || ownerId.length > 256 || /[\u0000-\u001f\u007f]/.test(ownerId)) {
     throw toolError('invalid-tool-user', 'The authenticated user is invalid.', 400);
   }
-  const video = parseVideoDataUrl(videoDataUrl, { maxBytes: MAX_VIDEO_INPUT_BYTES });
+  const video = videoAsset && Buffer.isBuffer(videoAsset.buffer)
+    ? {
+        buffer: videoAsset.buffer,
+        mime: String(videoAsset.mime || '').toLowerCase(),
+        extension: String(videoAsset.extension || '').toLowerCase()
+      }
+    : parseVideoDataUrl(videoDataUrl, { maxBytes: MAX_VIDEO_INPUT_BYTES });
+  if (videoAsset) {
+    if (!ALLOWED_VIDEO_MIME.has(video.mime) || !['mp4', 'mov', 'webm', 'mkv'].includes(video.extension)) {
+      throw toolError('invalid-video-data', 'The uploaded video format is invalid.', 400);
+    }
+    validateVideo(video.buffer, video.mime);
+  }
   const normalized = normalizeVideoUpscaleOptions(toolOptions);
   const relay = storeRelayAsset(video, {
     ...options,
@@ -1736,6 +1890,13 @@ export async function createVideoUpscaleTask({ videoDataUrl, toolOptions, userId
     };
   } catch (error) {
     deleteRelayAsset(relay.token);
+    if (error && error.code === 'ai302-upstream-error' && [400, 404, 409, 415, 422].includes(Number(error.upstreamStatus))) {
+      throw toolError(
+        'video-upscale-request-rejected',
+        'Topaz rejected the source video or output settings. Use a documented model and a compatible video format.',
+        422
+      );
+    }
     throw error;
   }
 }

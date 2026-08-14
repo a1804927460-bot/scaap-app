@@ -10,6 +10,7 @@ const landscape = parseFfmpegVideoMetadata(`
 assert.deepStrictEqual(landscape, {
   sourceWidth: 1920,
   sourceHeight: 1080,
+  hasAudio: false,
   sourceDuration: 6.04
 });
 
@@ -22,6 +23,7 @@ const rotated = parseFfmpegVideoMetadata(`
 assert.deepStrictEqual(rotated, {
   sourceWidth: 2160,
   sourceHeight: 3840,
+  hasAudio: false,
   sourceDuration: 62.5
 });
 
@@ -32,8 +34,16 @@ const anamorphic = parseFfmpegVideoMetadata(`
 assert.deepStrictEqual(anamorphic, {
   sourceWidth: 768,
   sourceHeight: 576,
+  hasAudio: false,
   sourceDuration: 5
 });
+
+const withAudio = parseFfmpegVideoMetadata(`
+  Duration: 00:00:03.00, start: 0.000000, bitrate: 2400 kb/s
+  Stream #0:0: Video: h264, yuv420p, 1280x720, 30 fps
+  Stream #0:1: Audio: aac, 48000 Hz, stereo, fltp
+`);
+assert.strictEqual(withAudio.hasAudio, true);
 
 assert.strictEqual(parseFfmpegVideoMetadata('Input file has no video stream'), null);
 

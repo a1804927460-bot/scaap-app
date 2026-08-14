@@ -63,7 +63,17 @@ assert.match(
   /const pendingEntry = \{[\s\S]*?isLoading:\s*true[\s\S]*?boardReferences\.set\(file\.id, pendingEntry\);[\s\S]*?await window\.messsAPI\.readFileAsDataUrl\(file\.id\)[\s\S]*?boardReferences\.get\(file\.id\) !== pendingEntry[\s\S]*?pendingEntry\.dataUrl = dataUrl/,
   'Reference order must be reserved at click time rather than asynchronous file-read completion time.'
 );
-assert.match(boardSource, /order\.textContent = String\(\[\.\.\.boardReferences\.keys\(\)\]\.indexOf\(fileId\) \+ 1\)/);
+assert.match(boardSource, /activeVideoMode\.id === 'first-frame'[\s\S]*?t\('First', '首'\)[\s\S]*?activeVideoMode\.id === 'first-last-frame'[\s\S]*?t\('Last', '尾'\)/);
+assert.match(
+  boardSource,
+  /function videoModeLabel[\s\S]*?text:[\s\S]*?'first-frame':[\s\S]*?'first-last-frame':[\s\S]*?omni:[\s\S]*?function renderVideoModes[\s\S]*?function setVideoMode/,
+  'Video composer must expose text, first-frame, first-last-frame, and omni modes.'
+);
+assert.match(
+  boardSource,
+  /videoMode:\s*kind === 'video' \? selectedMode\.id : null/,
+  'The selected video mode must be submitted to the desktop and gateway.'
+);
 assert.match(boardStyles, /\.ai-composer-reference-order \{[\s\S]*?pointer-events:\s*none/);
 assert.match(
   boardSource,

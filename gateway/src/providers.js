@@ -366,19 +366,53 @@ function normalizeVideoTaskStatus(value) {
   return 'queued';
 }
 
+const VIDEO_MODE_IDS = new Set(['text', 'first-frame', 'first-last-frame', 'omni']);
+
+function videoModeDefinition(capabilities, value, referenceCount) {
+  const modes = Array.isArray(capabilities.videoModes) ? capabilities.videoModes : [];
+  const requested = String(value || '').trim().toLowerCase();
+  const fallback = referenceCount > 2
+    ? 'omni'
+    : referenceCount === 2
+      ? 'first-last-frame'
+      : referenceCount === 1 ? 'first-frame' : 'text';
+  const id = VIDEO_MODE_IDS.has(requested) ? requested : fallback;
+  const mode = modes.find((entry) => entry && entry.id === id) || (!modes.length
+    ? (() => {
+        const configuredMinimum = Math.max(0, Number(capabilities.minReferenceImages) || 0);
+        const configuredMaximum = Math.max(configuredMinimum, Number(capabilities.maxReferenceImages) || 0);
+        const legacyRoles = Array.isArray(capabilities.referenceRoles)
+          ? capabilities.referenceRoles.map(String).filter(Boolean)
+          : ['first_frame', 'last_frame'];
+        if (id === 'text') {
+          return { id, minReferences: configuredMinimum, maxReferences: configuredMinimum ? configuredMaximum : 0 };
+        }
+        if (id === 'first-frame') {
+          return { id, minReferences: 1, maxReferences: 1, roles: legacyRoles.slice(0, 1) };
+        }
+        if (id === 'first-last-frame') {
+          return { id, minReferences: 2, maxReferences: Math.max(2, configuredMaximum), roles: legacyRoles };
+        }
+        return { id, minReferences: 1, maxReferences: configuredMaximum, roles: ['reference_image'] };
+      })()
+    : null);
+  if (!mode) {
+    throw Object.assign(new Error('The selected video generation mode is not supported.'), {
+      status: 400,
+      code: 'invalid-video-mode'
+    });
+  }
+  return mode;
+}
+
 function validatedVideoTaskInput(provider, body) {
   const capabilities = provider.capabilities && typeof provider.capabilities === 'object'
     ? provider.capabilities
     : {};
   const submittedUrls = Array.isArray(body.urls) ? body.urls.filter(Boolean) : [];
-  const configuredMinimum = Number(capabilities.minReferenceImages);
-  const minReferenceImages = Number.isInteger(configuredMinimum) && configuredMinimum >= 0
-    ? Math.min(14, configuredMinimum)
-    : 0;
-  const configuredLimit = Number(capabilities.maxReferenceImages);
-  const maxReferenceImages = Number.isInteger(configuredLimit) && configuredLimit >= 0
-    ? Math.min(14, configuredLimit)
-    : 2;
+  const mode = videoModeDefinition(capabilities, body.videoMode, submittedUrls.length);
+  const minReferenceImages = Math.max(0, Math.min(14, Number(mode.minReferences) || 0));
+  const maxReferenceImages = Math.max(minReferenceImages, Math.min(14, Number(mode.maxReferences) || 0));
   if (submittedUrls.length > maxReferenceImages) {
     throw Object.assign(new Error(`${provider.name} accepts at most ${maxReferenceImages} reference images.`), {
       status: 400,
@@ -395,16 +429,18 @@ function validatedVideoTaskInput(provider, body) {
   const ratio = String(body.aspectRatio || '');
   const resolution = String(body.resolution || '').toUpperCase();
   const duration = Number(body.duration);
-  const validRatios = urls.length
-    ? (Array.isArray(capabilities.frameReferenceRatios) ? capabilities.frameReferenceRatios : ['adaptive'])
-    : (Array.isArray(capabilities.ratios) ? capabilities.ratios : []);
+  const validRatios = Array.isArray(mode.ratios) && mode.ratios.length
+    ? mode.ratios
+    : (mode.id === 'first-frame' || mode.id === 'first-last-frame')
+      ? (Array.isArray(capabilities.frameReferenceRatios) ? capabilities.frameReferenceRatios : ['adaptive'])
+      : (Array.isArray(capabilities.ratios) ? capabilities.ratios : []);
   if (!validRatios.includes(ratio)) {
     throw Object.assign(new Error(`${provider.name} does not support this aspect ratio for the selected generation mode.`), {
       status: 400,
       code: 'invalid-aspect-ratio'
     });
   }
-  const resolutionSource = urls.length && Array.isArray(capabilities.referenceResolutions)
+  const resolutionSource = mode.id !== 'text' && Array.isArray(capabilities.referenceResolutions)
     ? capabilities.referenceResolutions
     : capabilities.resolutions;
   const validResolutions = Array.isArray(resolutionSource)
@@ -425,16 +461,18 @@ function validatedVideoTaskInput(provider, body) {
       code: 'invalid-duration'
     });
   }
-  return { capabilities, duration, ratio, resolution, urls };
+  const configuredRoles = Array.isArray(mode.roles) ? mode.roles.map(String).filter(Boolean) : [];
+  const roles = urls.map((_url, index) => configuredRoles[index] || configuredRoles[0] || 'reference_image');
+  return { capabilities, duration, mode: mode.id, ratio, resolution, roles, urls };
 }
 
 async function createMiniMaxVideoTask(provider, body, signal) {
-  const { duration, ratio, resolution, urls } = validatedVideoTaskInput(provider, body);
+  const { duration, ratio, resolution, roles, urls } = validatedVideoTaskInput(provider, body);
   const content = [{ type: 'text', text: String(body.prompt || '').trim() }];
   urls.forEach((url, index) => content.push({
     type: 'image_url',
     image_url: { url: String(url) },
-    role: index === 0 ? 'first_frame' : 'last_frame'
+    role: roles[index]
   }));
   const requestBody = JSON.stringify({ model: provider.model || 'MiniMax-H3', content, resolution, duration, ratio, aigc_watermark: false });
   const created = await providerRequestWithRetry(provider, () => fetch(provider.endpoint, {
@@ -452,15 +490,12 @@ async function createMiniMaxVideoTask(provider, body, signal) {
 }
 
 async function createSeedanceVideoTask(provider, body, signal) {
-  const { capabilities, duration, ratio, resolution, urls } = validatedVideoTaskInput(provider, body);
+  const { capabilities, duration, ratio, resolution, roles, urls } = validatedVideoTaskInput(provider, body);
   const content = [{ type: 'text', text: String(body.prompt || '').trim() }];
-  const referenceRoles = Array.isArray(capabilities.referenceRoles) ? capabilities.referenceRoles : [];
   urls.forEach((url, index) => content.push({
     type: 'image_url',
     image_url: { url: String(url) },
-    ...(referenceRoles[index]
-      ? { role: String(referenceRoles[index]) }
-      : (capabilities.referenceRole ? { role: String(capabilities.referenceRole) } : {}))
+    role: roles[index]
   }));
   const requestBody = {
     model: provider.model,

@@ -3,6 +3,9 @@ import crypto from 'node:crypto';
 import { authenticate } from './auth.js';
 import { publicGatewayError } from './public-errors.js';
 import {
+  appendVideoUploadChunk,
+  consumeVideoUpload,
+  createVideoUploadSession,
   createThreeDTask,
   createVideoUpscaleTask,
   downloadThreeDModel,
@@ -167,7 +170,7 @@ function sendRelayAsset(request, response, asset) {
   response.writeHead(status, {
     'Content-Type': asset.mime,
     'Content-Length': length,
-    'Content-Disposition': 'inline',
+    'Content-Disposition': `inline; filename="input.${asset.extension || 'bin'}"`,
     'Accept-Ranges': 'bytes',
     ...(status === 206 ? { 'Content-Range': `bytes ${start}-${end}/${total}` } : {}),
     'Cache-Control': 'private, no-store',
@@ -230,13 +233,31 @@ function validateBody(body, kind) {
     throw Object.assign(new Error('The conversation appears to contain a private credential.'), { status: 400, code: 'privacy-blocked' });
   }
   const configuredReferenceLimit = Number(capabilities.maxReferenceImages);
-  const maxReferenceImages = Number.isInteger(configuredReferenceLimit) && configuredReferenceLimit >= 0
+  let maxReferenceImages = Number.isInteger(configuredReferenceLimit) && configuredReferenceLimit >= 0
     ? Math.min(14, configuredReferenceLimit)
     : 14;
   const configuredReferenceMinimum = Number(capabilities.minReferenceImages);
-  const minReferenceImages = Number.isInteger(configuredReferenceMinimum) && configuredReferenceMinimum > 0
+  let minReferenceImages = Number.isInteger(configuredReferenceMinimum) && configuredReferenceMinimum > 0
     ? Math.min(maxReferenceImages, configuredReferenceMinimum)
     : 0;
+  const requestedVideoMode = String(body.videoMode || '').trim().toLowerCase();
+  let videoMode = '';
+  let selectedVideoMode = null;
+  if (kind === 'video' && Array.isArray(capabilities.videoModes)) {
+    const fallbackReferenceCount = Array.isArray(body.urls) ? body.urls.length : 0;
+    const fallbackMode = fallbackReferenceCount > 2
+      ? 'omni'
+      : fallbackReferenceCount === 2
+        ? 'first-last-frame'
+        : fallbackReferenceCount === 1 ? 'first-frame' : 'text';
+    videoMode = requestedVideoMode || fallbackMode;
+    selectedVideoMode = capabilities.videoModes.find((entry) => entry && entry.id === videoMode) || null;
+    if (!selectedVideoMode) {
+      throw invalidOption('invalid-video-mode', 'The selected video generation mode is not supported.');
+    }
+    minReferenceImages = Math.max(0, Math.min(14, Number(selectedVideoMode.minReferences) || 0));
+    maxReferenceImages = Math.max(minReferenceImages, Math.min(14, Number(selectedVideoMode.maxReferences) || 0));
+  }
   if ((Array.isArray(body.urls) ? body.urls.length : 0) < minReferenceImages) {
     throw invalidOption('reference-required', `The selected model requires at least ${minReferenceImages} reference image${minReferenceImages === 1 ? '' : 's'}.`);
   }
@@ -338,7 +359,11 @@ function validateBody(body, kind) {
     const referenceRatios = Array.isArray(capabilities.frameReferenceRatios) && capabilities.frameReferenceRatios.length
       ? new Set(capabilities.frameReferenceRatios.map(String))
       : textRatios;
-    const allowedRatios = urls.length ? referenceRatios : textRatios;
+    const modeRatios = selectedVideoMode && Array.isArray(selectedVideoMode.ratios) && selectedVideoMode.ratios.length
+      ? new Set(selectedVideoMode.ratios.map(String))
+      : null;
+    const frameMode = videoMode === 'first-frame' || videoMode === 'first-last-frame';
+    const allowedRatios = modeRatios || (frameMode ? referenceRatios : textRatios);
     if (!allowedRatios.has(requestedRatio)) {
       throw invalidOption(
         'invalid-aspect-ratio',
@@ -359,6 +384,7 @@ function validateBody(body, kind) {
     resolution: kind === 'video' ? requestedResolution : '768P',
     aspectRatio: kind === 'chat' ? 'auto' : requestedRatio,
     duration: kind === 'video' ? requestedDuration : Math.max(1, Math.min(30, Number(body.duration) || 6)),
+    videoMode: kind === 'video' ? videoMode : null,
     sourceWidth: Math.max(0, Math.min(16384, Number(body.sourceWidth) || 0)),
     sourceHeight: Math.max(0, Math.min(16384, Number(body.sourceHeight) || 0)),
     enhancePrompt: body.enhancePrompt !== false,
@@ -366,6 +392,23 @@ function validateBody(body, kind) {
     styleId: /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(requestedStyleId) ? requestedStyleId : null,
     styleStrength: requestedStyleStrength
   };
+}
+
+async function readBuffer(request, maximumBytes) {
+  const declaredLength = Number(request.headers['content-length']) || 0;
+  if (declaredLength > maximumBytes) {
+    throw Object.assign(new Error('Request body is too large.'), { status: 413, code: 'body-too-large' });
+  }
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > maximumBytes) {
+      throw Object.assign(new Error('Request body is too large.'), { status: 413, code: 'body-too-large' });
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks, size);
 }
 
 function deniedReservation(response, reservation) {
@@ -533,7 +576,7 @@ async function handle(request, response) {
   // relay contains no user identity or upstream credential, so it is the only
   // public Butler endpoint; all task routes below still require Supabase auth.
   if (['GET', 'HEAD'].includes(request.method) && url.pathname.startsWith('/v1/tools/assets/')) {
-    const match = /^\/v1\/tools\/assets\/([A-Za-z0-9_-]{43})$/.exec(url.pathname);
+    const match = /^\/v1\/tools\/assets\/([A-Za-z0-9_-]{43})(?:\.[a-z0-9]{2,8})?$/.exec(url.pathname);
     if (!match) return send(response, 404, { code: 'tool-asset-not-found', message: 'Temporary image not found.' });
     try {
       const asset = getAi302RelayAsset(match[1]);
@@ -582,6 +625,26 @@ async function handle(request, response) {
   if (request.method === 'GET' && url.pathname === '/v1/models') {
     const requestedProviderId = String(url.searchParams.get('providerId') || 'chat-1').trim().toLowerCase();
     return send(response, 200, await models(requestedProviderId));
+  }
+  if (request.method === 'POST' && url.pathname === '/v1/tools/video/uploads') {
+    if (!ai302Enabled(AI302_FLAGS.topaz)) return disabledTool(response);
+    const body = await readJson(request);
+    return send(response, 201, createVideoUploadSession({
+      userId: user.id,
+      size: body && body.size,
+      mime: body && body.mime
+    }));
+  }
+  const videoChunkMatch = /^\/v1\/tools\/video\/uploads\/([A-Za-z0-9_-]{43})\/(\d{1,4})$/.exec(url.pathname);
+  if (request.method === 'PUT' && videoChunkMatch) {
+    if (!ai302Enabled(AI302_FLAGS.topaz)) return disabledTool(response);
+    const chunk = await readBuffer(request, 4 * 1024 * 1024);
+    return send(response, 200, appendVideoUploadChunk({
+      uploadId: videoChunkMatch[1],
+      index: Number(videoChunkMatch[2]),
+      chunk,
+      userId: user.id
+    }));
   }
   if (request.method === 'GET' && url.pathname === '/v1/media/image/styles') {
     const providerId = String(url.searchParams.get('providerId') || '').trim().toLowerCase();
@@ -894,13 +957,20 @@ async function handle(request, response) {
         availableCredits
       });
     }
-    const task = await runIdempotentImageOperation(user.id, requestId, () => createVideoUpscaleTask({
-      videoDataUrl: body && body.videoDataUrl, toolOptions: body && body.options, userId: user.id
-    }, {
-      reserveCredits: ({ requestId: accountingRequestId, providerId, credits, providerCost, resolution, duration }) => reserveToolUsage(
-        user.id, accountingRequestId, { providerId, credits, providerCost, resolution, duration }
-      )
-    }));
+    const task = await runIdempotentImageOperation(user.id, requestId, async () => {
+      const uploadId = String(body && body.uploadId || '').trim();
+      const videoAsset = uploadId ? consumeVideoUpload({ uploadId, userId: user.id }) : null;
+      return createVideoUpscaleTask({
+        videoDataUrl: body && body.videoDataUrl,
+        videoAsset,
+        toolOptions: body && body.options,
+        userId: user.id
+      }, {
+        reserveCredits: ({ requestId: accountingRequestId, providerId, credits, providerCost, resolution, duration }) => reserveToolUsage(
+          user.id, accountingRequestId, { providerId, credits, providerCost, resolution, duration }
+        )
+      });
+    });
     return send(response, 202, task);
   }
 
@@ -1122,6 +1192,11 @@ const server = http.createServer((request, response) => {
       'tool-result-too-large': 'The tool result exceeds the supported size.',
       'invalid-video-result': 'The enhanced video result is invalid.',
       'video-upscale-failed': 'Video enhancement failed.',
+      'video-upscale-request-rejected': 'Topaz rejected the source video or output settings. Choose a compatible model and format.',
+      'video-upload-not-found': 'The video upload expired. Start the enhancement again.',
+      'video-upload-incomplete': 'The video upload is incomplete. Start the enhancement again.',
+      'invalid-video-upload-chunk': 'A video upload chunk is invalid.',
+      'video-upload-chunk-conflict': 'A retried video upload chunk did not match.',
       'video-tool-task-not-ready': 'The enhanced video is not ready yet.',
       'video-tool-task-not-found': 'The video enhancement task was not found.',
       'insufficient-credits': 'Not enough points are available for this request.',

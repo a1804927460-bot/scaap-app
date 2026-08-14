@@ -571,6 +571,26 @@ async function run() {
     throw new Error(`GLB PBR textures were not retained: ${JSON.stringify(pbrMaterialStats)}`);
   }
   const desktop = await captureModelPixels(window, 'desktop', { requireColor: true });
+  const viewerUi = await window.webContents.executeJavaScript(`(() => ({
+    modes: [...document.querySelectorAll('[data-model-display-mode]')].map((button) => button.dataset.modelDisplayMode),
+    textureRows: document.querySelectorAll('.board-model-material-maps li.is-present').length,
+    dimensions: document.querySelector('[data-model-stat="dimensions"]')?.textContent || ''
+  }))()`);
+  if (viewerUi.modes.join(',') !== 'pbr,shaded,clay' || viewerUi.textureRows < requiredTextureSlots.length || !viewerUi.dimensions.includes('x')) {
+    throw new Error(`Model material controls or PBR properties are incomplete: ${JSON.stringify(viewerUi)}`);
+  }
+  await window.webContents.executeJavaScript("document.querySelector('[data-model-display-mode=\"shaded\"]').click()")
+  await wait(180);
+  const shaded = await captureModelPixels(window, 'shaded', { requireColor: false });
+  await window.webContents.executeJavaScript("document.querySelector('[data-model-display-mode=\"clay\"]').click()")
+  await wait(180);
+  const clay = await captureModelPixels(window, 'clay', { requireColor: true });
+  await window.webContents.executeJavaScript("document.querySelector('[data-model-display-mode=\"pbr\"]').click()")
+  await wait(180);
+  const restoredPbr = await captureModelPixels(window, 'pbr-restored', { requireColor: true });
+  if (shaded.modelPixels < 120 || clay.modelPixels < 120 || restoredPbr.colorfulPixels < 120) {
+    throw new Error('PBR, Shaded, and Clay preview modes must all render and PBR must restore the source texture.');
+  }
   if (process.env.MESSS_MODEL_VIEWER_ONLY === '1' && realGlbPath) {
     await window.webContents.executeJavaScript('closeBoardModelViewer()');
     await wait(250);

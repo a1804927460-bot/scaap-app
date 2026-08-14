@@ -4,9 +4,12 @@ import test from 'node:test';
 import zlib from 'node:zlib';
 import {
   createThreeDTask,
+  createVideoUploadSession,
   createVideoUpscaleTask,
   downloadThreeDModel,
   downloadVideoUpscaleResult,
+  appendVideoUploadChunk,
+  consumeVideoUpload,
   getAi302RelayAsset,
   getThreeDStatus,
   getVideoUpscaleStatus,
@@ -640,7 +643,8 @@ test('Topaz video creation uses the documented relay contract and server-only re
   });
   const relayUrl = new URL(upstreamBody.file);
   assert.equal(relayUrl.origin, 'https://gateway.example.com');
-  const relay = getAi302RelayAsset(relayUrl.pathname.split('/').at(-1), { now: 1_800_000_001_000 });
+  assert.match(relayUrl.pathname, /\.[a-z0-9]+$/);
+  const relay = getAi302RelayAsset(relayUrl.pathname.split('/').at(-1).split('.')[0], { now: 1_800_000_001_000 });
   assert.equal(relay.mime, 'video/mp4');
   assert.deepEqual(relay.buffer, input);
 
@@ -756,6 +760,59 @@ test('Topaz result download validates the provider URL and returns only video by
   );
 });
 
+test('Topaz chunk uploads are owner-bound, retry-safe, and consumed only when complete', () => {
+  const first = Buffer.alloc(4 * 1024 * 1024, 0x11);
+  mp4Fixture().copy(first, 0);
+  const second = Buffer.alloc(12, 0x33);
+  const totalBytes = first.length + second.length;
+  const created = createVideoUploadSession({
+    userId: 'video-chunk-owner',
+    size: totalBytes,
+    mime: 'video/mp4'
+  }, { now: 1_800_100_000_000 });
+  assert.equal(created.chunkSize, first.length);
+  assert.throws(
+    () => appendVideoUploadChunk({
+      uploadId: created.uploadId, userId: 'another-owner', index: 0, chunk: first
+    }, { now: 1_800_100_001_000 }),
+    { code: 'video-upload-not-found' }
+  );
+  appendVideoUploadChunk({
+    uploadId: created.uploadId, userId: 'video-chunk-owner', index: 1, chunk: second
+  }, { now: 1_800_100_001_000 });
+  assert.throws(
+    () => consumeVideoUpload({ uploadId: created.uploadId, userId: 'video-chunk-owner' }, { now: 1_800_100_002_000 }),
+    { code: 'video-upload-incomplete' }
+  );
+  const accepted = appendVideoUploadChunk({
+    uploadId: created.uploadId, userId: 'video-chunk-owner', index: 0, chunk: first
+  }, { now: 1_800_100_003_000 });
+  assert.equal(accepted.receivedBytes, totalBytes);
+  const retried = appendVideoUploadChunk({
+    uploadId: created.uploadId, userId: 'video-chunk-owner', index: 0, chunk: first
+  }, { now: 1_800_100_004_000 });
+  assert.equal(retried.receivedBytes, totalBytes);
+  assert.throws(
+    () => appendVideoUploadChunk({
+      uploadId: created.uploadId,
+      userId: 'video-chunk-owner',
+      index: 0,
+      chunk: Buffer.alloc(first.length, 0x22)
+    }, { now: 1_800_100_005_000 }),
+    { code: 'video-upload-chunk-conflict' }
+  );
+  const video = consumeVideoUpload({
+    uploadId: created.uploadId, userId: 'video-chunk-owner'
+  }, { now: 1_800_100_006_000 });
+  assert.equal(video.mime, 'video/mp4');
+  assert.equal(video.extension, 'mp4');
+  assert.deepEqual(video.buffer, Buffer.concat([first, second]));
+  assert.throws(
+    () => consumeVideoUpload({ uploadId: created.uploadId, userId: 'video-chunk-owner' }, { now: 1_800_100_007_000 }),
+    { code: 'video-upload-not-found' }
+  );
+});
+
 test('Topaz creation unwraps generic 302 status envelopes and accepts task field aliases', async () => {
   const created = await createVideoUpscaleTask({
     videoDataUrl: videoDataUrl(mp4Fixture()),
@@ -866,7 +923,40 @@ test('Topaz video inputs and output options fail closed', () => {
     () => normalizeVideoUpscaleOptions({ filters: [{ model: 'untrusted-filter' }] }),
     { code: 'invalid-video-upscale-options' }
   );
+  assert.throws(
+    () => normalizeVideoUpscaleOptions({ filters: [{ model: 'aion-1' }] }),
+    { code: 'invalid-video-upscale-options' }
+  );
+  assert.deepEqual(
+    normalizeVideoUpscaleOptions({ output: { videoEncoder: 'ProRes', container: 'mp4' } }).output,
+    {
+      resolution: { width: 1920, height: 1080 },
+      frameRate: 30,
+      audioCodec: 'AAC',
+      audioTransfer: 'Copy',
+      videoEncoder: 'ProRes',
+      dynamicCompressionLevel: 'High',
+      cropToFit: false,
+      container: 'mov'
+    }
+  );
   assert.throws(() => quoteTopazRetailCredits(1.5), { code: 'invalid-provider-cost' });
+});
+
+test('Topaz documents a creation rejection instead of returning a generic start failure', async () => {
+  await assert.rejects(
+    () => createVideoUpscaleTask({
+      videoDataUrl: videoDataUrl(mp4Fixture()),
+      toolOptions: { output: { resolution: { width: 1920, height: 1080 } } },
+      userId: 'video-rejected-owner'
+    }, {
+      apiKey: 'server-only-302-key',
+      taskSecret: 'video-rejected-secret',
+      publicBaseUrl: 'https://gateway.example.com',
+      fetchImpl: async () => jsonResponse({ message: 'source format rejected' }, 422)
+    }),
+    (error) => error && error.code === 'video-upscale-request-rejected' && error.status === 422
+  );
 });
 
 test('unsafe background-result redirects and missing public relay configuration fail closed', async () => {

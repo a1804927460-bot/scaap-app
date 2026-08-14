@@ -1152,8 +1152,7 @@ function openBoardButlerVideoUpscalePanel(anchor, file, item) {
       { value: 'prob-4', label: 'Proteus 4' },
       { value: 'iris-3', label: 'Iris 3' },
       { value: 'rhea-1', label: 'Rhea 1' },
-      { value: 'nyx-3', label: 'Nyx 3' },
-      { value: 'aion-1', label: 'Aion 1' }
+      { value: 'nyx-3', label: 'Nyx 3' }
     ],
     'prob-4'
   ));
@@ -1258,7 +1257,9 @@ function openBoardButlerVideoUpscalePanel(anchor, file, item) {
         audioCodec: 'AAC',
         audioTransfer: 'Copy',
         videoEncoder,
-        videoProfile: videoEncoder === 'H264' ? 'High' : 'Main',
+        ...(['H264', 'H265'].includes(videoEncoder)
+          ? { videoProfile: videoEncoder === 'H264' ? 'High' : 'Main' }
+          : {}),
         dynamicCompressionLevel: 'High',
         cropToFit: formData.get('butler-video-crop') === 'on',
         container: String(formData.get('butler-video-container') || 'mp4')

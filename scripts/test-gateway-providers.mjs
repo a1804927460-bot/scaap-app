@@ -101,8 +101,13 @@ const seedance25Provider = config.providers.find((provider) => provider.id === '
 assert.equal(seedance20Provider.name, 'Seedance 2.0');
 assert.equal(seedance20Provider.model, 'doubao-seedance-2-0-260128');
 assert.equal(seedance20Provider.protocol, 'seedance-video-v3');
-assert.deepEqual(seedance20Provider.capabilities.resolutions, ['480P', '720P']);
+assert.deepEqual(seedance20Provider.capabilities.resolutions, ['480P', '720P', '1080P', '4K']);
 assert.equal(seedance20Provider.capabilities.maxReferenceImages, 9);
+assert.deepEqual(seedance20Provider.capabilities.videoModes.map((mode) => mode.id), [
+  'text', 'first-frame', 'first-last-frame', 'omni'
+]);
+assert.deepEqual(seedance20Provider.capabilities.videoModes[2].roles, ['first_frame', 'last_frame']);
+assert.deepEqual(seedance20Provider.capabilities.videoModes[3].roles, ['reference_image']);
 assert.equal(seedance25Provider.name, 'Seedance 2.5');
 assert.equal(seedance25Provider.model, 'doubao-seedance-2-5-260628');
 assert.equal(seedance25Provider.protocol, 'seedance-video-v3');
@@ -398,6 +403,7 @@ await createVideoTask({
   resolution: '768P',
   duration: 4,
   aspectRatio: 'adaptive',
+  videoMode: 'first-last-frame',
   urls: ['https://cdn.example/first.png', 'https://cdn.example/last.png']
 });
 const frameRequest = miniMaxCalls
@@ -484,6 +490,7 @@ const createdSeedance20 = await createVideoTask({
   resolution: '720P',
   duration: 8,
   aspectRatio: '16:9',
+  videoMode: 'omni',
   urls: ['https://cdn.example/front.png', 'https://cdn.example/side.png']
 });
 assert.deepEqual(createdSeedance20, { providerId: 'video-2', taskId: 'seedance-20-task' });
@@ -512,6 +519,7 @@ const createdSeedance25 = await createVideoTask({
   resolution: '480P',
   duration: 4,
   aspectRatio: 'adaptive',
+  videoMode: 'text',
   urls: []
 });
 assert.deepEqual(createdSeedance25, { providerId: 'video-3', taskId: 'seedance-25-task' });
@@ -565,9 +573,10 @@ await assert.rejects(
   createVideoTask({
     providerId: 'video-2',
     prompt: 'unsupported resolution',
-    resolution: '1080P',
+    resolution: '8K',
     duration: 5,
     aspectRatio: '16:9',
+    videoMode: 'text',
     urls: []
   }),
   (error) => error && error.code === 'invalid-resolution'

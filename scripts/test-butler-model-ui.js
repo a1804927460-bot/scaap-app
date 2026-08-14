@@ -56,6 +56,7 @@ assert.match(boardMedia, /numLayers:[\s\S]*Math\.max\(2[\s\S]*Math\.min\(8/, 'La
 assert.match(boardMedia, /maskDataUrl[\s\S]*maskWidth[\s\S]*maskHeight/, 'Erase must submit a real PNG mask with dimensions.');
 assert.match(boardMedia, /videoUpscale: Object\.freeze/, 'Video enhancement must have an isolated bridge hook.');
 assert.match(boardMedia, /topaz-video-upscale/, 'Video enhancement must use the Topaz action key.');
+assert.doesNotMatch(boardMedia, /aion-1/, 'Video enhancement must expose only models documented by the 302 Topaz endpoint.');
 assert.match(boardMedia, /board-butler-cost-estimate/, 'Video enhancement must show a parameter-sensitive points estimate.');
 assert.match(boardMedia, /function updateBoardButlerVideoState[\s\S]*?'credits'[\s\S]*?'creditsCharged'[\s\S]*?result/, 'The accepted Topaz quote must update the visible task cost.');
 assert.match(boardMedia, /task\.creditsCharged \?\? task\.credits[\s\S]*?const points[\s\S]*?task\.status === 'success'[\s\S]*?\$\{done\}[^\n]*\$\{points\}/, 'The completed Topaz task must show the actual charged points.');
@@ -99,6 +100,7 @@ assert.match(main, /async function butlerSourceVideo[\s\S]*realpath\(store\.libr
 assert.match(main, /MAX_BUTLER_VIDEO_BYTES = 48 \* 1024 \* 1024[\s\S]*butler-video-too-large/, 'Video relay input must be bounded before base64 encoding.');
 assert.match(main, /Math\.min\(boundWidth \/ sourceWidth, boundHeight \/ sourceHeight\)/, 'Video output sizing must preserve the source aspect ratio.');
 assert.match(main, /ipcMain\.handle\('butler:upscaleVideo'[\s\S]*ipcMain\.handle\('butler:getVideoToolStatus'[\s\S]*ipcMain\.handle\('butler:downloadVideoToolResult'/, 'Desktop video tasks must support create, poll, and archive.');
+assert.match(main, /videoBuffer:\s*buffer[\s\S]*upscaleVideo\(source\.videoBuffer, source\.toolOptions\)/, 'Desktop video enhancement must use bounded chunk upload instead of a base64 JSON envelope.');
 assert.match(main, /const butlerVideoTasks = new Map\(\)[\s\S]*const butlerVideoDownloads = new Map\(\)/, 'Video tasks and downloads must be independently concurrent and deduplicated.');
 assert.match(main, /addButlerVideoOutputFile[\s\S]*butlerOperation:[\s\S]*kind: 'video-upscale'/, 'Enhanced videos must be archived with Butler provenance.');
 assert.match(main, /creditsCharged !== undefined \? currentTask\.creditsCharged : currentTask\.credits/, 'Enhanced videos must archive the settled charge when available.');

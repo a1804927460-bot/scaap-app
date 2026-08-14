@@ -3576,6 +3576,32 @@ function supportedVideoDuration(value, capabilities = {}) {
   ), supported[0] || 6);
 }
 
+function supportedVideoModes(capabilities = {}) {
+  const configured = Array.isArray(capabilities.videoModes) ? capabilities.videoModes : [];
+  return configured.filter((entry) => entry && typeof entry === 'object' && entry.id);
+}
+
+function supportedVideoMode(value, capabilities = {}) {
+  const modes = supportedVideoModes(capabilities);
+  const requested = String(value || '').trim().toLowerCase();
+  return modes.find((entry) => entry.id === requested) || modes[0] || {
+    id: 'text', minReferences: 0, maxReferences: 0
+  };
+}
+
+function videoModeReferenceLimit(mode, capabilities = {}) {
+  const configured = Number(mode && mode.maxReferences);
+  if (Number.isInteger(configured) && configured >= 0) return configured;
+  const fallback = Number(capabilities.maxReferenceImages);
+  return Number.isInteger(fallback) && fallback >= 0 ? fallback : 2;
+}
+
+function videoModeRatios(mode, capabilities = {}) {
+  if (mode && Array.isArray(mode.ratios) && mode.ratios.length) return mode.ratios.map(String);
+  const frameMode = mode && (mode.id === 'first-frame' || mode.id === 'first-last-frame');
+  return supportedVideoRatios(capabilities, frameMode);
+}
+
 function resolutionDisplayHint(value) {
   const normalized = String(value || '').trim().toUpperCase();
   const labels = {
@@ -3765,15 +3791,18 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       <button type="button" class="ai-composer-close">
         <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
-      <div class="ai-composer-mode" role="tablist" aria-label="生成类型">
-        <button type="button" data-ai-kind="image" role="tab">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M3 17l5-5 4 4 3-3 6 6"/></svg>
-          图片
-        </button>
-        <button type="button" data-ai-kind="video" role="tab">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="15" height="14" rx="2"/><path d="M17 10l5-3v10l-5-3z"/></svg>
-          视频
-        </button>
+      <div class="ai-composer-mode-row">
+        <div class="ai-composer-mode" role="tablist" aria-label="生成类型">
+          <button type="button" data-ai-kind="image" role="tab">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M3 17l5-5 4 4 3-3 6 6"/></svg>
+            图片
+          </button>
+          <button type="button" data-ai-kind="video" role="tab">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="15" height="14" rx="2"/><path d="M17 10l5-3v10l-5-3z"/></svg>
+            视频
+          </button>
+        </div>
+        <div class="ai-video-mode" role="tablist" aria-label="视频生成模式" hidden></div>
       </div>
       <div class="ai-composer-reference-strip" aria-label="参考图" hidden></div>
       <textarea class="ai-composer-prompt" rows="4" spellcheck="false"></textarea>
@@ -3846,6 +3875,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
 
   const form = pop.querySelector('form');
   const prompt = pop.querySelector('.ai-composer-prompt');
+  const videoModeControl = pop.querySelector('.ai-video-mode');
   const referenceStrip = pop.querySelector('.ai-composer-reference-strip');
   const modelSelect = pop.querySelector('.ai-model-select');
   const modelPicker = pop.querySelector('.ai-model-picker');
@@ -3867,6 +3897,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   const providers = getConfiguredImageProviders(aiConfig);
   const videoProviders = getConfiguredVideoProviders(aiConfig);
   let kind = initialKind === 'video' ? 'video' : 'image';
+  let videoMode = 'text';
   let ratio = kind === 'video' ? (aiConfig.videoAspectRatio || '16:9') : (aiConfig.imageAspectRatio || '1:1');
   let size = aiConfig.imageSize || '1K';
   let count = 1;
@@ -3926,6 +3957,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   function renderBoardReferences() {
     referenceStrip.innerHTML = '';
     referenceStrip.hidden = boardReferences.size === 0;
+    const activeVideoMode = kind === 'video'
+      ? supportedVideoMode(videoMode, selectedVideoCapabilities())
+      : null;
     boardReferences.forEach((entry, fileId) => {
       const thumb = document.createElement('div');
       thumb.className = 'ai-composer-reference-thumb' + (entry.isLoading ? ' is-loading' : '');
@@ -3941,7 +3975,12 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       image.draggable = false;
       const order = document.createElement('span');
       order.className = 'ai-composer-reference-order';
-      order.textContent = String([...boardReferences.keys()].indexOf(fileId) + 1);
+      const referenceIndex = [...boardReferences.keys()].indexOf(fileId);
+      order.textContent = activeVideoMode && activeVideoMode.id === 'first-frame'
+        ? t('First', '首')
+        : activeVideoMode && activeVideoMode.id === 'first-last-frame'
+          ? (referenceIndex === 0 ? t('First', '首') : t('Last', '尾'))
+          : String(referenceIndex + 1);
       order.setAttribute('aria-hidden', 'true');
       const remove = document.createElement('button');
       remove.type = 'button';
@@ -4020,10 +4059,19 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       return;
     }
     const capabilities = kind === 'video' ? selectedVideoCapabilities() : selectedImageCapabilities();
-    const configuredLimit = Number(capabilities.maxReferenceImages);
+    if (kind === 'video') {
+      const currentMode = supportedVideoMode(videoMode, capabilities);
+      if (currentMode.id === 'text') setVideoMode('first-frame');
+      else if (currentMode.id === 'first-frame' && boardReferences.size >= 1) setVideoMode('first-last-frame');
+      else if (currentMode.id === 'first-last-frame' && boardReferences.size >= 2) setVideoMode('omni');
+    }
+    const activeVideoMode = kind === 'video' ? supportedVideoMode(videoMode, capabilities) : null;
+    const configuredLimit = kind === 'video'
+      ? videoModeReferenceLimit(activeVideoMode, capabilities)
+      : Number(capabilities.maxReferenceImages);
     const limit = Number.isFinite(configuredLimit) && configuredLimit >= 0
       ? Math.floor(configuredLimit)
-      : (kind === 'video' ? 2 : 14);
+      : 14;
     if (limit === 0) {
       showToast(t('This model does not accept reference images.', '此模型不支持参考图。'), 'AI');
       return;
@@ -4094,6 +4142,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const autoLabel = t('Auto', '自动');
 
     mode.setAttribute('aria-label', t('Generation type', '生成类型'));
+    videoModeControl.setAttribute('aria-label', t('Video generation mode', '视频生成模式'));
     setModeButtonLabel(imageButton, t('Image', '图片'));
     setModeButtonLabel(videoButton, t('Video', '视频'));
     modelSelect.setAttribute('aria-label', t('Generation model', '生成模型'));
@@ -4268,6 +4317,59 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       : {};
   }
 
+  function videoModeLabel(modeId) {
+    const labels = {
+      text: t('Text', '文生'),
+      'first-frame': t('First frame', '首帧'),
+      'first-last-frame': t('First + last', '首尾帧'),
+      omni: t('Omni', '全能')
+    };
+    return labels[modeId] || modeId;
+  }
+
+  function renderVideoModes() {
+    const capabilities = selectedVideoCapabilities();
+    const modes = kind === 'video' ? supportedVideoModes(capabilities) : [];
+    videoModeControl.hidden = kind !== 'video' || modes.length === 0;
+    videoModeControl.innerHTML = '';
+    if (!modes.length) return;
+    const selectedMode = supportedVideoMode(videoMode, capabilities);
+    videoMode = selectedMode.id;
+    modes.forEach((entry) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.videoMode = entry.id;
+      button.setAttribute('role', 'tab');
+      button.textContent = videoModeLabel(entry.id);
+      const active = entry.id === videoMode;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-selected', String(active));
+      button.addEventListener('click', () => setVideoMode(entry.id));
+      videoModeControl.appendChild(button);
+    });
+  }
+
+  function setVideoMode(nextMode, { trimReferences = true } = {}) {
+    if (kind !== 'video') return;
+    const capabilities = selectedVideoCapabilities();
+    const selectedMode = supportedVideoMode(nextMode, capabilities);
+    videoMode = selectedMode.id;
+    const referenceLimit = videoModeReferenceLimit(selectedMode, capabilities);
+    if (trimReferences && boardReferences.size > referenceLimit) {
+      [...boardReferences.keys()].slice(referenceLimit).forEach((fileId) => boardReferences.delete(fileId));
+      syncAiComposerReferenceClasses();
+    }
+    const ratios = videoModeRatios(selectedMode, capabilities);
+    if (!ratios.includes(ratio)) ratio = ratios[0];
+    renderVideoModes();
+    renderBoardReferences();
+    renderRatios();
+    syncSegments();
+    updateSummary();
+    refreshLanguage();
+    updateCreditEstimate();
+  }
+
   async function syncHiggsfieldOptions() {
     const provider = selectedImageProvider();
     const capabilities = selectedImageCapabilities();
@@ -4304,14 +4406,16 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   function syncGenerationOptions() {
     const capabilities = kind === 'video' ? selectedVideoCapabilities() : selectedImageCapabilities();
     if (kind === 'video') {
-      const configuredLimit = Number(capabilities.maxReferenceImages);
-      const limit = Number.isFinite(configuredLimit) && configuredLimit > 0 ? Math.floor(configuredLimit) : 2;
+      const selectedMode = supportedVideoMode(videoMode, capabilities);
+      videoMode = selectedMode.id;
+      const limit = videoModeReferenceLimit(selectedMode, capabilities);
       if (boardReferences.size > limit) {
         [...boardReferences.keys()].slice(limit).forEach((fileId) => boardReferences.delete(fileId));
         renderBoardReferences();
         syncAiComposerReferenceClasses();
       }
-      ratio = supportedVideoAspectRatio(ratio, capabilities, boardReferences.size > 0);
+      const ratios = videoModeRatios(selectedMode, capabilities);
+      if (!ratios.includes(ratio)) ratio = ratios[0];
     } else {
       const configuredLimit = Number(capabilities.maxReferenceImages);
       if (Number.isFinite(configuredLimit) && configuredLimit >= 0 && boardReferences.size > configuredLimit) {
@@ -4363,6 +4467,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       : Math.max(minimum, Math.min(maximum, Math.round(duration)));
     durationRange.value = String(duration);
     pop.querySelector('.ai-resolution-block').hidden = resolutions.length === 0;
+    renderVideoModes();
     renderRatios();
     syncSegments();
     updateSummary();
@@ -4374,7 +4479,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   function renderRatios() {
     const capabilities = kind === 'video' ? selectedVideoCapabilities() : selectedImageCapabilities();
     const ratios = kind === 'video'
-      ? supportedVideoRatios(capabilities, boardReferences.size > 0)
+      ? videoModeRatios(supportedVideoMode(videoMode, capabilities), capabilities)
       : supportedImageRatios(capabilities, boardReferences.size > 0);
     if (!ratios.includes(ratio)) ratio = ratios[0];
     ratioGrid.innerHTML = '';
@@ -4428,8 +4533,11 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   function updateMode(nextKind) {
     kind = nextKind === 'video' ? 'video' : 'image';
     if (kind === 'video') {
-      const configuredLimit = Number(selectedVideoCapabilities().maxReferenceImages);
-      const limit = Number.isFinite(configuredLimit) && configuredLimit > 0 ? Math.floor(configuredLimit) : 2;
+      const capabilities = selectedVideoCapabilities();
+      if (videoMode === 'text' && boardReferences.size) {
+        videoMode = boardReferences.size >= 2 ? 'first-last-frame' : 'first-frame';
+      }
+      const limit = videoModeReferenceLimit(supportedVideoMode(videoMode, capabilities), capabilities);
       if (boardReferences.size > limit) {
         [...boardReferences.keys()].slice(limit).forEach((fileId) => boardReferences.delete(fileId));
         renderBoardReferences();
@@ -4466,6 +4574,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     modelPickerMenu.hidden = isOpen;
     modelPickerTrigger.setAttribute('aria-expanded', String(!isOpen));
   });
+  videoModeControl.addEventListener('pointerdown', (event) => event.stopPropagation());
   // The picker is nested inside the board viewport. Let the list consume its
   // own wheel input instead of bubbling it into the board zoom/pan handler.
   modelPickerMenu.addEventListener('wheel', (event) => {
@@ -4564,6 +4673,20 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const videoCapabilities = kind === 'video' && selectedProvider && selectedProvider.capabilities
       ? selectedProvider.capabilities
       : {};
+    const selectedMode = kind === 'video' ? supportedVideoMode(videoMode, videoCapabilities) : null;
+    const minimumReferences = selectedMode ? Math.max(0, Number(selectedMode.minReferences) || 0) : 0;
+    const maximumReferences = selectedMode ? videoModeReferenceLimit(selectedMode, videoCapabilities) : 14;
+    if (kind === 'video' && boardReferences.size < minimumReferences) {
+      const message = selectedMode.id === 'first-last-frame'
+        ? t('Select a first-frame and a last-frame image.', '请选择首帧图和尾帧图。')
+        : t('Select at least one reference image for this mode.', '此模式请至少选择一张参考图。');
+      showToast(message, 'AI');
+      return;
+    }
+    if (kind === 'video' && boardReferences.size > maximumReferences) {
+      showToast(t(`Up to ${maximumReferences} reference images can be used.`, `最多可使用 ${maximumReferences} 张参考图。`), 'AI');
+      return;
+    }
     const request = {
       kind,
       prompt: text,
@@ -4572,8 +4695,11 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       count,
       duration: kind === 'video' ? supportedVideoDuration(duration, videoCapabilities) : duration,
       aspectRatio: kind === 'video'
-        ? supportedVideoAspectRatio(ratio, videoCapabilities, boardReferences.size > 0)
+        ? (videoModeRatios(selectedMode, videoCapabilities).includes(ratio)
+          ? ratio
+          : videoModeRatios(selectedMode, videoCapabilities)[0])
         : ratio,
+      videoMode: kind === 'video' ? selectedMode.id : null,
       imageProviderId: kind === 'image' && selectedProvider ? selectedProvider.id : null,
       videoProviderId: kind === 'video' && selectedProvider ? selectedProvider.id : null,
       modelName: selectedProvider ? selectedProvider.name : (aiConfig.videoProviderName || '视频生成'),
@@ -4615,12 +4741,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     }
     if (kind === 'video') {
       const capabilities = selectedVideoCapabilities();
+      videoMode = supportedVideoMode(preset.videoMode, capabilities).id;
       size = supportedVideoResolution(preset.resolution || preset.size, capabilities);
-      ratio = supportedVideoAspectRatio(
-        preset.aspectRatio || ratio,
-        capabilities,
-        boardReferences.size > 0
-      );
+      const allowedRatios = videoModeRatios(supportedVideoMode(videoMode, capabilities), capabilities);
+      ratio = allowedRatios.includes(preset.aspectRatio) ? preset.aspectRatio : allowedRatios[0];
       duration = supportedVideoDuration(preset.duration || duration, capabilities);
     } else {
       const capabilities = selectedImageCapabilities();
@@ -4889,6 +5013,14 @@ async function submitBoardQuickGeneration(kind, promptText, options = {}) {
     const urls = referenceData.urls;
     const isVideo = kind === 'video';
     const videoCapabilities = isVideo && provider.capabilities ? provider.capabilities : {};
+    const videoMode = isVideo
+      ? supportedVideoMode(
+        options.videoMode || (referenceFileIds.length > 2
+          ? 'omni'
+          : referenceFileIds.length === 2 ? 'first-last-frame' : referenceFileIds.length === 1 ? 'first-frame' : 'text'),
+        videoCapabilities
+      )
+      : null;
     const imageCapabilities = !isVideo && provider.capabilities ? provider.capabilities : {};
     const videoResolution = isVideo
       ? supportedVideoResolution(null, videoCapabilities)
@@ -4910,8 +5042,11 @@ async function submitBoardQuickGeneration(kind, promptText, options = {}) {
         ? supportedVideoDuration(config.videoDuration, videoCapabilities)
         : Number(config.videoDuration) || 6,
       aspectRatio: isVideo
-        ? supportedVideoAspectRatio(original.aspectRatio, videoCapabilities, referenceFileIds.length > 0)
+        ? (videoModeRatios(videoMode, videoCapabilities).includes(original.aspectRatio)
+          ? original.aspectRatio
+          : videoModeRatios(videoMode, videoCapabilities)[0])
         : imageRatio,
+      videoMode: isVideo ? videoMode.id : null,
       sourceWidth: original.sourceWidth,
       sourceHeight: original.sourceHeight,
       imageProviderId: kind === 'image' && provider ? provider.id : null,
@@ -4997,6 +5132,14 @@ async function retryGeneratedMediaFromDetails(file) {
     const videoResolution = isVideo
       ? supportedVideoResolution(generation.resolution || generation.size, videoCapabilities)
       : undefined;
+    const videoMode = isVideo
+      ? supportedVideoMode(
+        generation.videoMode || (references.referenceFileIds.length > 2
+          ? 'omni'
+          : references.referenceFileIds.length === 2 ? 'first-last-frame' : references.referenceFileIds.length === 1 ? 'first-frame' : 'text'),
+        videoCapabilities
+      )
+      : null;
     const imageCapabilities = imageProvider && imageProvider.capabilities
       ? imageProvider.capabilities
       : {};
@@ -5025,8 +5168,11 @@ async function retryGeneratedMediaFromDetails(file) {
         ? supportedVideoDuration(generation.duration, videoCapabilities)
         : Number(generation.duration) || 6,
       aspectRatio: isVideo
-        ? supportedVideoAspectRatio(generation.aspectRatio, videoCapabilities, references.referenceFileIds.length > 0)
+        ? (videoModeRatios(videoMode, videoCapabilities).includes(generation.aspectRatio)
+          ? generation.aspectRatio
+          : videoModeRatios(videoMode, videoCapabilities)[0])
         : imageRatio,
+      videoMode: isVideo ? videoMode.id : null,
       sourceWidth: file.sourceWidth || null,
       sourceHeight: file.sourceHeight || null,
       imageProviderId: generation.kind === 'video' ? null : generation.providerId,

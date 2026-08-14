@@ -679,6 +679,7 @@ function fileToPayload(f) {
       resolution: f.aiGeneration.resolution || null,
       duration: f.aiGeneration.duration,
       requestedDuration: f.aiGeneration.requestedDuration || null,
+      videoMode: f.aiGeneration.videoMode || null,
       referenceFileIds: Array.isArray(f.aiGeneration.referenceFileIds)
         ? [...f.aiGeneration.referenceFileIds]
         : [],
@@ -1438,7 +1439,7 @@ function normalizeButlerVideoOptions(metadata, requested = {}) {
     'aaa-9', 'ahq-12', 'alq-13', 'alqs-2', 'amq-13', 'amqs-2', 'ddv-3',
     'dtd-4', 'dtds-2', 'dtv-4', 'dtvs-2', 'gcg-5', 'ghq-5', 'iris-2',
     'iris-3', 'nxf-1', 'nyx-3', 'prob-4', 'rhea-1', 'rxl-1', 'thd-3',
-    'thf-4', 'thm-2', 'aion-1', 'apf-2', 'apo-8', 'chf-3', 'chr-2'
+    'thf-4', 'thm-2'
   ]);
   const filters = (requestedFilters.length ? requestedFilters : [{ model: 'prob-4' }]).map((filter) => {
     const source = filter && typeof filter === 'object' && !Array.isArray(filter) ? filter : {};
@@ -1470,15 +1471,19 @@ function normalizeButlerVideoOptions(metadata, requested = {}) {
   const audioCodec = ['AAC', 'AC3', 'PCM'].includes(String(requestedOutput.audioCodec || '').toUpperCase())
     ? String(requestedOutput.audioCodec).toUpperCase()
     : 'AAC';
-  const audioTransfer = ['Copy', 'Convert', 'None'].includes(String(requestedOutput.audioTransfer || ''))
+  let audioTransfer = ['Copy', 'Convert', 'None'].includes(String(requestedOutput.audioTransfer || ''))
     ? String(requestedOutput.audioTransfer)
     : 'Copy';
+  if (metadata && metadata.hasAudio === false) audioTransfer = 'None';
   const dynamicCompressionLevel = ['Low', 'Mid', 'High'].includes(String(requestedOutput.dynamicCompressionLevel || ''))
     ? String(requestedOutput.dynamicCompressionLevel)
     : 'High';
   const container = ['mp4', 'mov', 'mkv'].includes(String(requestedOutput.container || '').toLowerCase())
     ? String(requestedOutput.container).toLowerCase()
     : 'mp4';
+  const compatibleContainer = ['ProRes', 'QuickTime Animation', 'QuickTime R210', 'QuickTime V210'].includes(videoEncoder)
+    ? 'mov'
+    : ['VP9', 'FFV1'].includes(videoEncoder) ? 'mkv' : container;
   return {
     modelId: BUTLER_VIDEO_TOOL_ID,
     filters,
@@ -1488,10 +1493,12 @@ function normalizeButlerVideoOptions(metadata, requested = {}) {
       audioCodec,
       audioTransfer,
       videoEncoder,
-      videoProfile: String(requestedOutput.videoProfile || (videoEncoder === 'H264' ? 'High' : 'Main')).trim().slice(0, 64),
+      ...(['H264', 'H265'].includes(videoEncoder) ? {
+        videoProfile: String(requestedOutput.videoProfile || (videoEncoder === 'H264' ? 'High' : 'Main')).trim().slice(0, 64)
+      } : {}),
       dynamicCompressionLevel,
       cropToFit: requestedOutput.cropToFit === true,
-      container
+      container: compatibleContainer
     },
     sourceDuration: Math.max(0, Math.min(21_600, Number(metadata && metadata.sourceDuration) || 0))
   };
@@ -1557,14 +1564,15 @@ async function butlerSourceVideo(fileId, requestedOptions = {}) {
   const metadata = {
     sourceWidth: Number(probed && probed.sourceWidth) || Number(file.sourceWidth) || 0,
     sourceHeight: Number(probed && probed.sourceHeight) || Number(file.sourceHeight) || 0,
-    sourceDuration: Number(probed && probed.sourceDuration) || Number(file.sourceDuration) || 0
+    sourceDuration: Number(probed && probed.sourceDuration) || Number(file.sourceDuration) || 0,
+    hasAudio: probed && typeof probed.hasAudio === 'boolean' ? probed.hasAudio : null
   };
   const toolOptions = normalizeButlerVideoOptions(metadata, requestedOptions);
   return {
     file,
     metadata,
-    toolOptions,
-    videoDataUrl: `data:${mimeType};base64,${buffer.toString('base64')}`
+    toolOptions: { ...toolOptions, sourceMime: mimeType },
+    videoBuffer: buffer
   };
 }
 
@@ -2362,6 +2370,7 @@ async function generateAiMediaBuffer(kind, prompt, options = {}) {
         sourceWidth: options.sourceWidth,
         sourceHeight: options.sourceHeight,
         duration: options.duration,
+        videoMode: options.videoMode,
         enhancePrompt: options.enhancePrompt,
         seed: options.seed,
         styleId: options.styleId,
@@ -2962,6 +2971,7 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
           : Math.max(1, Number(request.duration) || 6))
         : null,
       requestedDuration: mediaKind === 'video' ? Math.max(1, Number(request.duration) || 6) : null,
+      videoMode: mediaKind === 'video' ? String(request.videoMode || 'text').trim().slice(0, 32) : null,
       referenceFileIds,
       referenceCount,
       createdAt: new Date().toISOString()
@@ -3271,13 +3281,28 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   const duration = Number(request.duration);
   const aspectRatio = String(request.aspectRatio || '').trim();
   const referenceCount = Array.isArray(request.urls) ? request.urls.length : 0;
-  const hasFrameReference = referenceCount > 0;
+  const requestedVideoMode = String(request.videoMode || '').trim().toLowerCase();
+  const fallbackVideoMode = referenceCount > 2
+    ? 'omni'
+    : referenceCount === 2
+      ? 'first-last-frame'
+      : referenceCount === 1 ? 'first-frame' : 'text';
+  const videoMode = requestedVideoMode || fallbackVideoMode;
+  const videoModes = Array.isArray(capabilities.videoModes) ? capabilities.videoModes : [];
+  const selectedVideoMode = videoModes.find((entry) => entry && entry.id === videoMode) || null;
+  if (!selectedVideoMode) {
+    throw invalidAiMediaOption('invalid-video-mode', `${String(provider.name || 'The selected video model')} does not support this generation mode.`);
+  }
+  const hasFrameReference = videoMode === 'first-frame' || videoMode === 'first-last-frame';
   const configuredReferenceLimit = Number(capabilities.maxReferenceImages);
-  const referenceLimit = Number.isInteger(configuredReferenceLimit) && configuredReferenceLimit >= 0
-    ? Math.min(14, configuredReferenceLimit)
-    : 2;
+  const modeReferenceLimit = Number(selectedVideoMode.maxReferences);
+  const referenceLimit = Number.isInteger(modeReferenceLimit) && modeReferenceLimit >= 0
+    ? Math.min(14, modeReferenceLimit)
+    : Number.isInteger(configuredReferenceLimit) && configuredReferenceLimit >= 0
+      ? Math.min(14, configuredReferenceLimit)
+      : 2;
   const providerName = String(provider.name || 'The selected video model').trim();
-  const configuredReferenceMinimum = Number(capabilities.minReferenceImages);
+  const configuredReferenceMinimum = Number(selectedVideoMode.minReferences);
   const referenceMinimum = Number.isInteger(configuredReferenceMinimum) && configuredReferenceMinimum > 0
     ? Math.min(referenceLimit, configuredReferenceMinimum)
     : 0;
@@ -3293,7 +3318,12 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   if (!Number.isInteger(duration) || !supportedDurations.has(duration)) {
     throw invalidAiMediaOption('invalid-duration', `${providerName} does not support the selected duration.`);
   }
-  const supportedRatios = hasFrameReference ? frameRatios : textRatios;
+  const modeRatios = new Set(
+    (Array.isArray(selectedVideoMode.ratios) ? selectedVideoMode.ratios : [])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  );
+  const supportedRatios = modeRatios.size ? modeRatios : hasFrameReference ? frameRatios : textRatios;
   if (!supportedRatios.has(aspectRatio)) {
     throw invalidAiMediaOption(
       'invalid-aspect-ratio',
@@ -3305,6 +3335,7 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   normalized.resolution = resolution;
   normalized.duration = duration;
   normalized.aspectRatio = aspectRatio;
+  normalized.videoMode = videoMode;
   return normalized;
 }
 
@@ -3716,6 +3747,11 @@ function butlerFailure(error, fallbackMessage) {
     'video-tool-task-not-found': 'The video enhancement task was not found or has expired.',
     'video-tool-task-not-ready': 'The enhanced video is not ready yet.',
     'video-upscale-failed': 'Video enhancement failed.',
+    'video-upscale-request-rejected': 'Topaz rejected this video or output combination. Try Proteus 4 with H.264 or H.265.',
+    'video-upload-not-found': 'The video upload expired. Please start the enhancement again.',
+    'video-upload-incomplete': 'The video upload was interrupted. Please try again.',
+    'invalid-video-upload-chunk': 'Part of the video upload was rejected. Please try again.',
+    'video-upload-chunk-conflict': 'The video upload retry did not match the original data. Please start again.',
     'insufficient-credits': 'There are not enough points for this Butler request.',
     'account-suspended': 'This account cannot start paid AI tasks.',
     'credit-service-not-configured': 'The points service is not configured on the server.',
@@ -4781,7 +4817,7 @@ function registerIpcHandlers() {
         throw error;
       }
       const source = await butlerSourceVideo(fileId, requestedOptions);
-      const payload = await aiGateway.upscaleVideo(source.videoDataUrl, source.toolOptions);
+      const payload = await aiGateway.upscaleVideo(source.videoBuffer, source.toolOptions);
       const taskToken = normalizeButlerVideoTaskToken(payload && payload.taskToken);
       const status = normalizeButlerVideoStatus(payload || { status: 'queued' });
       rememberButlerVideoTask(taskToken, {
@@ -4984,6 +5020,7 @@ function registerIpcHandlers() {
         sourceWidth: request.sourceWidth,
         sourceHeight: request.sourceHeight,
         duration: request.duration,
+        videoMode: request.videoMode,
         enhancePrompt: request.enhancePrompt,
         seed: request.seed,
         styleId: request.styleId,

@@ -18,6 +18,10 @@ const BoardModelViewer = {
   keyLight: null,
   rimLight: null,
   materialStats: null,
+  modelStats: null,
+  originalMaterials: new Map(),
+  overrideMaterials: new Set(),
+  displayMode: 'pbr',
   lightDragCleanup: null,
   keyHandler: null,
   loadGeneration: 0
@@ -55,7 +59,11 @@ function closeBoardModelViewer() {
     BoardModelViewer.mixer.stopAllAction();
     BoardModelViewer.mixer.uncacheRoot(BoardModelViewer.root);
   }
+  restoreBoardModelMaterials();
   disposeBoardModelObject(BoardModelViewer.root);
+  BoardModelViewer.overrideMaterials.forEach((material) => material.dispose());
+  BoardModelViewer.overrideMaterials.clear();
+  BoardModelViewer.originalMaterials.clear();
   disposeBoardModelObject(BoardModelViewer.environmentScene);
   if (BoardModelViewer.environmentTarget) BoardModelViewer.environmentTarget.dispose();
   if (BoardModelViewer.pmremGenerator) BoardModelViewer.pmremGenerator.dispose();
@@ -83,6 +91,8 @@ function closeBoardModelViewer() {
   BoardModelViewer.keyLight = null;
   BoardModelViewer.rimLight = null;
   BoardModelViewer.materialStats = null;
+  BoardModelViewer.modelStats = null;
+  BoardModelViewer.displayMode = 'pbr';
   BoardModelViewer.lightDragCleanup = null;
   BoardModelViewer.keyHandler = null;
 }
@@ -127,6 +137,121 @@ function prepareBoardModelMaterials(root, renderer, THREE) {
     if (hasTexture) texturedMeshes += 1;
   });
   return { meshes, texturedMeshes, textureSlots };
+}
+
+function cacheBoardModelMaterials(root) {
+  BoardModelViewer.originalMaterials.clear();
+  if (!root) return;
+  root.traverse((object) => {
+    if (object && object.isMesh) BoardModelViewer.originalMaterials.set(object, object.material);
+  });
+}
+
+function restoreBoardModelMaterials() {
+  BoardModelViewer.originalMaterials.forEach((material, mesh) => {
+    if (mesh) mesh.material = material;
+  });
+}
+
+function createBoardModelOverrideMaterial(THREE, mode) {
+  const material = new THREE.MeshStandardMaterial(mode === 'clay'
+    ? { color: 0xb97855, roughness: 0.86, metalness: 0.02 }
+    : { color: 0xb9bec7, roughness: 0.58, metalness: 0.12 });
+  BoardModelViewer.overrideMaterials.add(material);
+  return material;
+}
+
+function setBoardModelDisplayMode(mode) {
+  if (!['pbr', 'shaded', 'clay'].includes(mode) || !BoardModelViewer.root) return;
+  const THREE = window.MesssModelViewerVendor && window.MesssModelViewerVendor.THREE;
+  if (!THREE) return;
+  BoardModelViewer.overrideMaterials.forEach((material) => material.dispose());
+  BoardModelViewer.overrideMaterials.clear();
+  BoardModelViewer.originalMaterials.forEach((originalMaterial, mesh) => {
+    if (!mesh) return;
+    if (mode === 'pbr') {
+      mesh.material = originalMaterial;
+      return;
+    }
+    const count = Array.isArray(originalMaterial) ? originalMaterial.length : 1;
+    const replacements = Array.from({ length: count }, () => createBoardModelOverrideMaterial(THREE, mode));
+    mesh.material = Array.isArray(originalMaterial) ? replacements : replacements[0];
+  });
+  BoardModelViewer.displayMode = mode;
+  const overlay = BoardModelViewer.overlay;
+  if (overlay) {
+    overlay.querySelectorAll('[data-model-display-mode]').forEach((button) => {
+      const active = button.dataset.modelDisplayMode === mode;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-selected', String(active));
+    });
+  }
+}
+
+function boardModelSceneStats(root, THREE) {
+  const materials = new Set();
+  const textures = new Set();
+  const bounds = new THREE.Box3().setFromObject(root);
+  let meshes = 0;
+  let triangles = 0;
+  root.traverse((object) => {
+    if (!object || !object.isMesh) return;
+    meshes += 1;
+    const geometry = object.geometry;
+    if (geometry) {
+      const count = geometry.index ? geometry.index.count : geometry.attributes.position && geometry.attributes.position.count;
+      triangles += Math.floor((Number(count) || 0) / 3);
+    }
+    (Array.isArray(object.material) ? object.material : [object.material]).filter(Boolean).forEach((material) => {
+      materials.add(material);
+      Object.values(material).forEach((value) => {
+        if (value && value.isTexture) textures.add(value);
+      });
+    });
+  });
+  const size = bounds.getSize(new THREE.Vector3());
+  return { meshes, materials: materials.size, textures: textures.size, triangles, size };
+}
+
+function updateBoardModelSidebar() {
+  const overlay = BoardModelViewer.overlay;
+  const stats = BoardModelViewer.modelStats;
+  const materialStats = BoardModelViewer.materialStats;
+  if (!overlay || !stats || !materialStats) return;
+  const values = {
+    meshes: stats.meshes,
+    materials: stats.materials,
+    textures: stats.textures,
+    triangles: stats.triangles.toLocaleString(),
+    dimensions: [stats.size.x, stats.size.y, stats.size.z].map((value) => {
+      const absolute = Math.abs(value);
+      return absolute >= 100 ? value.toFixed(0) : absolute >= 10 ? value.toFixed(1) : value.toFixed(2);
+    }).join(' x ')
+  };
+  Object.entries(values).forEach(([key, value]) => {
+    const element = overlay.querySelector(`[data-model-stat="${key}"]`);
+    if (element) element.textContent = String(value);
+  });
+  const slots = materialStats.textureSlots || {};
+  const mapDefinitions = [
+    ['map', t('Base color', '基础颜色', '기본 색상')],
+    ['normalMap', t('Normal', '法线', '노멀')],
+    ['roughnessMap', t('Roughness', '粗糙度', '거칠기')],
+    ['metalnessMap', t('Metallic', '金属度', '금속성')],
+    ['aoMap', t('Ambient occlusion', '环境光遮蔽', '앰비언트 오클루전')],
+    ['emissiveMap', t('Emissive', '自发光', '발광')]
+  ];
+  const list = overlay.querySelector('.board-model-material-maps');
+  if (list) {
+    list.innerHTML = '';
+    mapDefinitions.forEach(([slot, label]) => {
+      const row = document.createElement('li');
+      const count = Number(slots[slot]) || 0;
+      row.className = count ? 'is-present' : 'is-missing';
+      row.innerHTML = `<span>${label}</span><strong>${count ? t(`${count} map${count === 1 ? '' : 's'}`, `${count} 张`, `${count}개`) : t('None', '无', '없음')}</strong>`;
+      list.appendChild(row);
+    });
+  }
 }
 
 async function renderBoardModelAfterTextureUpload(renderer, scene, camera) {
@@ -253,8 +378,13 @@ function frameBoardModel(root, camera, controls, THREE) {
   const center = bounds.getCenter(new THREE.Vector3());
   const size = bounds.getSize(new THREE.Vector3());
   root.position.sub(center);
+  root.updateMatrixWorld(true);
   const maxSize = Math.max(size.x, size.y, size.z, 0.01);
-  const distance = (maxSize / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)))) * 1.42;
+  const verticalHalfFov = THREE.MathUtils.degToRad(camera.fov * 0.5);
+  const horizontalHalfFov = Math.atan(Math.tan(verticalHalfFov) * Math.max(0.1, camera.aspect));
+  const fitHalfFov = Math.max(0.08, Math.min(verticalHalfFov, horizontalHalfFov));
+  const radius = Math.max(0.01, size.length() * 0.5);
+  const distance = (radius / Math.sin(fitHalfFov)) * 1.12;
   camera.near = Math.max(maxSize / 1000, 0.001);
   camera.far = Math.max(maxSize * 1000, 100);
   camera.position.set(distance * 0.72, distance * 0.48, distance);
@@ -318,9 +448,36 @@ function createBoardModelViewerOverlay(file) {
           </button>
         </div>
       </header>
-      <div class="board-model-viewer-stage">
-        <div class="board-model-light-indicator" aria-hidden="true"><span></span></div>
-        <div class="board-model-viewer-status" role="status" aria-live="polite"></div>
+      <div class="board-model-viewer-body">
+        <div class="board-model-viewer-stage">
+          <div class="board-model-light-indicator" aria-hidden="true"><span></span></div>
+          <div class="board-model-viewer-status" role="status" aria-live="polite"></div>
+        </div>
+        <aside class="board-model-viewer-sidebar">
+          <div class="board-model-display-modes" role="tablist" aria-label="${t('Preview material mode', '预览材质模式', '미리보기 재질 모드')}">
+            <button type="button" class="is-active" data-model-display-mode="pbr" role="tab" aria-selected="true">PBR</button>
+            <button type="button" data-model-display-mode="shaded" role="tab" aria-selected="false">Shaded</button>
+            <button type="button" data-model-display-mode="clay" role="tab" aria-selected="false">Clay</button>
+          </div>
+          <section class="board-model-properties">
+            <h3>${t('Model', '模型', '모델')}</h3>
+            <dl>
+              <div><dt>${t('Meshes', '网格', '메시')}</dt><dd data-model-stat="meshes">-</dd></div>
+              <div><dt>${t('Materials', '材质', '재질')}</dt><dd data-model-stat="materials">-</dd></div>
+              <div><dt>${t('Textures', '贴图', '텍스처')}</dt><dd data-model-stat="textures">-</dd></div>
+              <div><dt>${t('Triangles', '三角面', '삼각형')}</dt><dd data-model-stat="triangles">-</dd></div>
+              <div><dt>${t('Dimensions', '尺寸', '크기')}</dt><dd data-model-stat="dimensions">-</dd></div>
+            </dl>
+          </section>
+          <section class="board-model-properties">
+            <h3>${t('PBR maps', 'PBR 贴图', 'PBR 맵')}</h3>
+            <ul class="board-model-material-maps"></ul>
+          </section>
+          <button type="button" class="board-model-viewer-download-wide">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>
+            ${t('Download model', '下载模型', '모델 다운로드')}
+          </button>
+        </aside>
       </div>
     </section>
   `;
@@ -328,6 +485,13 @@ function createBoardModelViewerOverlay(file) {
   overlay.querySelector('.board-model-viewer-close').addEventListener('click', closeBoardModelViewer);
   overlay.querySelector('.board-model-viewer-download').addEventListener('click', (event) => {
     void exportBoardModel(file, event.currentTarget);
+  });
+  overlay.querySelector('.board-model-viewer-download-wide').addEventListener('click', (event) => {
+    void exportBoardModel(file, event.currentTarget);
+  });
+  overlay.querySelector('.board-model-display-modes').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-model-display-mode]');
+    if (button) setBoardModelDisplayMode(button.dataset.modelDisplayMode);
   });
   overlay.addEventListener('pointerdown', (event) => {
     if (event.target === overlay) closeBoardModelViewer();
@@ -590,9 +754,13 @@ function openBoardModelViewer(file) {
         throw Object.assign(new Error('The model does not contain a valid scene.'), { code: 'invalid-model-data' });
       }
       BoardModelViewer.materialStats = prepareBoardModelMaterials(root, renderer, THREE);
+      cacheBoardModelMaterials(root);
+      BoardModelViewer.modelStats = boardModelSceneStats(root, THREE);
       BoardModelViewer.root = root;
       scene.add(root);
       frameBoardModel(root, camera, controls, THREE);
+      setBoardModelDisplayMode('pbr');
+      updateBoardModelSidebar();
       if (Array.isArray(animations) && animations.length) {
         BoardModelViewer.mixer = new THREE.AnimationMixer(root);
         animations.forEach((clip) => BoardModelViewer.mixer.clipAction(clip).play());

@@ -80,13 +80,13 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /submitBoardQuickGeneration[\s\S]*?resolution:\s*videoResolution[\s\S]*?supportedVideoAspectRatio\(original\.aspectRatio, videoCapabilities, referenceFileIds\.length > 0\)/,
-  'Quick video generation must use the selected provider resolution and frame-reference ratios.'
+  /submitBoardQuickGeneration[\s\S]*?const videoMode = isVideo[\s\S]*?videoModeRatios\(videoMode, videoCapabilities\)[\s\S]*?resolution:\s*videoResolution[\s\S]*?videoMode:\s*isVideo \? videoMode\.id : null/,
+  'Quick video generation must use the selected provider resolution and generation-mode ratios.'
 );
 assert.match(
   boardSource,
-  /retryGeneratedMediaFromDetails[\s\S]*?videoProvider[\s\S]*?resolution:\s*videoResolution[\s\S]*?supportedVideoAspectRatio\(generation\.aspectRatio, videoCapabilities, references\.referenceFileIds\.length > 0\)/,
-  'Video retries must repair metadata against the original provider capabilities.'
+  /retryGeneratedMediaFromDetails[\s\S]*?videoProvider[\s\S]*?const videoMode = isVideo[\s\S]*?generation\.videoMode[\s\S]*?resolution:\s*videoResolution[\s\S]*?videoMode:\s*isVideo \? videoMode\.id : null/,
+  'Video retries must preserve the original generation mode and repair metadata against provider capabilities.'
 );
 assert.match(
   boardSource,
