@@ -877,6 +877,62 @@ function classifyArchiveFile(name) {
   return { mimeType, archiveKind };
 }
 
+function localMediaMimeType(filePath, fallback = 'application/octet-stream') {
+  const ext = path.extname(filePath).toLowerCase();
+  return BUTLER_VIDEO_MIME_BY_EXTENSION[ext] || ({
+    '.m4a': 'audio/mp4',
+    '.aac': 'audio/aac',
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.flac': 'audio/flac',
+    '.ogg': 'audio/ogg',
+    '.opus': 'audio/opus'
+  })[ext] || fallback;
+}
+
+function localFileProtocolResponse(request, filePath, mimeType) {
+  const rangeHeader = String(request.headers.get('range') || '').trim();
+  if (!rangeHeader) return net.fetch(pathToFileURL(filePath).toString());
+
+  const stat = fs.statSync(filePath);
+  const total = stat.size;
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(rangeHeader);
+  const unsatisfied = () => new Response(null, {
+    status: 416,
+    headers: {
+      'Accept-Ranges': 'bytes',
+      'Content-Range': `bytes */${total}`
+    }
+  });
+  if (!match || (!match[1] && !match[2]) || total <= 0) return unsatisfied();
+
+  let start;
+  let end;
+  if (!match[1]) {
+    const suffixLength = Number(match[2]);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return unsatisfied();
+    start = Math.max(0, total - suffixLength);
+    end = total - 1;
+  } else {
+    start = Number(match[1]);
+    end = match[2] ? Number(match[2]) : total - 1;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start >= total || end < start) {
+      return unsatisfied();
+    }
+    end = Math.min(end, total - 1);
+  }
+
+  return new Response(fs.createReadStream(filePath, { start, end }), {
+    status: 206,
+    headers: {
+      'Accept-Ranges': 'bytes',
+      'Content-Type': mimeType || localMediaMimeType(filePath),
+      'Content-Length': String(end - start + 1),
+      'Content-Range': `bytes ${start}-${end}/${total}`
+    }
+  });
+}
+
 function formatBinaryRows(buffer, bytesPerRow = 16) {
   const rows = [];
   for (let offset = 0; offset < buffer.length; offset += bytesPerRow) {
@@ -1037,6 +1093,7 @@ async function saveArchivedModelPreview(fileId, dataUrl) {
   }
   const cacheDir = path.join(previewCacheDir, normalizedId);
   const outputPath = path.join(cacheDir, 'model-preview.png');
+  const pbrMarkerPath = path.join(cacheDir, 'model-preview.pbr-v1');
   const temporaryPath = path.join(cacheDir, `.model-preview-${crypto.randomUUID()}.tmp.png`);
   await fs.promises.mkdir(cacheDir, { recursive: true });
   try {
@@ -1045,6 +1102,7 @@ async function saveArchivedModelPreview(fileId, dataUrl) {
       .png({ compressionLevel: 9, adaptiveFiltering: true })
       .toFile(temporaryPath);
     await fs.promises.rename(temporaryPath, outputPath);
+    await fs.promises.writeFile(pbrMarkerPath, 'pbr-v1\n', { encoding: 'utf8', mode: 0o600 });
   } finally {
     await fs.promises.rm(temporaryPath, { force: true }).catch(() => {});
   }
@@ -2398,6 +2456,21 @@ async function generateAiChatReply(prompt, messages, providerId, model) {
 
 function conciseAiErrorMessage(error, context = {}) {
   const raw = String(error && error.message || '').replace(/\s+/g, ' ').trim();
+  const code = String(error && error.code || '').trim().toLowerCase();
+  if (code === 'provider-auth-failed' || /invalid token(?:\s|\(|$)/i.test(raw)) {
+    return localizedMessage(
+      'The AI service credential has expired. Please try again later or contact the administrator.',
+      'AI 服务凭证已失效，请稍后重试或联系管理员。',
+      'AI 서비스 인증 정보가 만료되었습니다. 잠시 후 다시 시도하거나 관리자에게 문의하세요.'
+    );
+  }
+  if (['invalid-session', 'auth-required'].includes(code)) {
+    return localizedMessage(
+      'Your sign-in session has expired. Please sign in again.',
+      '登录状态已失效，请重新登录。',
+      '로그인 세션이 만료되었습니다. 다시 로그인하세요.'
+    );
+  }
   if (error && error.code === 'image-resolution-mismatch') {
     const requested = String(error.requestedResolution || '').trim().toUpperCase();
     const width = Math.round(Number(error.actualWidth) || 0);
@@ -3581,17 +3654,30 @@ function butlerFailure(error, fallbackMessage) {
     'butler-video-too-large': 'The video exceeds the Butler upload size limit.',
     'invalid-butler-video': 'The selected video could not be prepared safely.',
     'invalid-video-tool': 'The selected video tool is not supported.',
+    'invalid-video-upscale-options': 'One or more video enhancement settings are not supported.',
     'video-tool-task-not-found': 'The video enhancement task was not found or has expired.',
     'video-tool-task-not-ready': 'The enhanced video is not ready yet.',
     'video-upscale-failed': 'Video enhancement failed.',
     'insufficient-credits': 'There are not enough points for this Butler request.',
+    'account-suspended': 'This account cannot start paid AI tasks.',
+    'credit-service-not-configured': 'The points service is not configured on the server.',
+    'credit-schema-missing': 'The points service is being upgraded. Please try again shortly.',
+    'credit-service-failed': 'The points balance could not be checked. Please try again.',
+    'provider-auth-failed': 'The video provider rejected the server credential. Ask the administrator to update it.',
     'ai302-unauthorized': 'The 302 gateway credential is invalid. Ask the administrator to update it.',
     'ai302-balance-exhausted': 'The 302 account balance is insufficient.',
     'ai302-rate-limited': 'The 302 service is busy. Please try again shortly.',
     'ai302-timeout': 'The 302 service did not finish in time. This request was not submitted again automatically.',
     'ai302-unavailable': 'The 302 service is temporarily unavailable. Please try again later.',
     'ai302-upstream-error': 'The 302 service rejected this request.',
+    'ai302-invalid-response': 'The 302 video service returned an unsupported response. Please try again.',
+    'ai302-not-configured': 'The 302 video service is not configured on the server.',
+    'tool-disabled': 'Video enhancement is not enabled on the server.',
     'tool-public-url-not-configured': 'The gateway public URL is required for this tool.',
+    'tool-asset-capacity-exceeded': 'The video upload relay is busy. Please try again shortly.',
+    'body-too-large': 'The video exceeds the gateway upload size limit.',
+    'invalid-gateway-response': 'The secure AI gateway returned an invalid response.',
+    'gateway-request-failed': 'The secure AI gateway could not start this request.',
     'media-too-large': 'The generated result exceeds the safe download size.',
     'rate-limited': 'Too many Butler requests. Please wait and try again.'
   };
@@ -4609,9 +4695,6 @@ function registerIpcHandlers() {
           modelId: currentTask.providerId,
           credits: currentTask.creditsCharged !== undefined ? currentTask.creditsCharged : currentTask.credits
         });
-        if (currentTask.sourceFileId) {
-          await writeButlerModelPreview(record.id, sourceFile, currentTask.previewUrl).catch(() => false);
-        }
         rememberButler3dTask(taskToken, {
           ...currentTask,
           downloadedFileId: record.id,
@@ -5731,7 +5814,8 @@ app.whenReady().then(() => {
   aiGateway = new AiGatewayClient({
     fetchImpl: appFetch,
     baseUrl: runtimeConfig.aiGatewayUrl,
-    getAccessToken: () => supabaseAuth.getAccessToken()
+    getAccessToken: () => supabaseAuth.getAccessToken(),
+    refreshAccessToken: () => supabaseAuth.refresh()
   });
   if (app.isPackaged && runtimeConfig.gatewayConfigured) clearAllAiApiKeys();
   ensureCanvasState();
@@ -5752,7 +5836,11 @@ app.whenReady().then(() => {
     const f = store.getFile(id);
     if (!f) return new Response('Not found', { status: 404 });
     try {
-      return net.fetch(pathToFileURL(f.storedPath).toString());
+      return localFileProtocolResponse(
+        request,
+        f.storedPath,
+        localMediaMimeType(f.storedPath, f.mimeType || classifyArchiveFile(f.name).mimeType)
+      );
     } catch (err) {
       return new Response('Read error', { status: 500 });
     }
@@ -5794,7 +5882,10 @@ app.whenReady().then(() => {
         return new Response('Not found', { status: 404 });
       }
       const modelPreviewPath = path.join(previewCacheDir, file.id, 'model-preview.png');
-      if (!fs.existsSync(modelPreviewPath)) return new Response('Not found', { status: 404 });
+      const pbrMarkerPath = path.join(previewCacheDir, file.id, 'model-preview.pbr-v1');
+      if (!fs.existsSync(modelPreviewPath) || !fs.existsSync(pbrMarkerPath)) {
+        return new Response('Not found', { status: 404 });
+      }
       try {
         return net.fetch(pathToFileURL(modelPreviewPath).toString());
       } catch (err) {
@@ -5823,7 +5914,11 @@ app.whenReady().then(() => {
     const mediaPath = path.join(previewCacheDir, fileId, variant === 'audio' ? 'transcoded.m4a' : 'transcoded.mp4');
     if (!fs.existsSync(mediaPath)) return new Response('Not found', { status: 404 });
     try {
-      return net.fetch(pathToFileURL(mediaPath).toString());
+      return localFileProtocolResponse(
+        request,
+        mediaPath,
+        variant === 'audio' ? 'audio/mp4' : 'video/mp4'
+      );
     } catch (err) {
       return new Response('Read error', { status: 500 });
     }

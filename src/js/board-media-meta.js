@@ -2061,7 +2061,7 @@ function appendBoardImageToolbar(element, file, item) {
 }
 
 function appendBoardVideoButlerToolbar(element, file, item) {
-  if (!BOARD_BUTLER_VIDEO_EXTENSIONS.has(String(file && file.ext || '').toLowerCase())) return null;
+  if (!file || typeof isVideoExt !== 'function' || !isVideoExt(file.ext)) return null;
   const toolbar = document.createElement('div');
   toolbar.className = 'board-image-toolbar board-video-butler-toolbar';
   toolbar.dataset.boardInteractive = 'true';
@@ -2074,7 +2074,30 @@ function appendBoardVideoButlerToolbar(element, file, item) {
       if (eventName !== 'click') event.preventDefault();
     });
   });
-  appendBoardButlerTrigger(toolbar, file, item);
+  if (BOARD_BUTLER_VIDEO_EXTENSIONS.has(String(file.ext || '').toLowerCase())) {
+    appendBoardButlerTrigger(toolbar, file, item);
+  }
+  const fullscreen = document.createElement('button');
+  fullscreen.type = 'button';
+  fullscreen.className = 'board-image-toolbar-button is-fullscreen board-video-fullscreen';
+  fullscreen.dataset.boardInteractive = 'true';
+  fullscreen.draggable = false;
+  fullscreen.title = t('View fullscreen video', '全屏查看视频', '전체 화면으로 비디오 보기');
+  fullscreen.setAttribute('aria-label', fullscreen.title);
+  fullscreen.innerHTML = BOARD_IMAGE_TOOL_ICONS.fullscreen;
+  ['pointerdown', 'mousedown', 'click'].forEach((eventName) => {
+    fullscreen.addEventListener(eventName, (event) => {
+      event.stopPropagation();
+      if (eventName !== 'click') event.preventDefault();
+    });
+  });
+  fullscreen.addEventListener('click', () => {
+    const video = element.querySelector('.mini-video-player video');
+    if (typeof openFileFullscreenPreview === 'function') {
+      void openFileFullscreenPreview(file, video);
+    }
+  });
+  toolbar.appendChild(fullscreen);
   element.appendChild(toolbar);
   return toolbar;
 }

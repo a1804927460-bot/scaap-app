@@ -127,7 +127,7 @@ async function selectFileForPreview(id) {
   (renderers[result.type] || renderUnsupportedPreview)(id, result);
 }
 
-function createVideoPlayer(video, { fullscreen = false } = {}) {
+function createVideoPlayer(video, { fullscreen = false, onPlaybackFailure = null } = {}) {
   const shell = document.createElement('div');
   shell.className = `messs-video-player${fullscreen ? ' is-fullscreen-player' : ' is-inline-player'}`;
   video.controls = false;
@@ -198,7 +198,14 @@ function createVideoPlayer(video, { fullscreen = false } = {}) {
     volume.value = String(muted ? 0 : video.volume);
   };
   const togglePlayback = () => {
-    if (video.paused || video.ended) video.play().catch(() => {});
+    if (video.paused || video.ended) {
+      const playback = video.play();
+      if (playback && typeof playback.catch === 'function') {
+        playback.catch((error) => {
+          if (typeof onPlaybackFailure === 'function') onPlaybackFailure(error);
+        });
+      }
+    }
     else video.pause();
   };
 
@@ -264,6 +271,46 @@ function createVideoPlayer(video, { fullscreen = false } = {}) {
   };
 }
 
+function monitorVideoPlayback(video, signal, onFailure) {
+  let watchdog = 0;
+  let failed = false;
+  const clear = () => {
+    clearTimeout(watchdog);
+    watchdog = 0;
+  };
+  const fail = () => {
+    if (failed || signal.aborted) return;
+    failed = true;
+    clear();
+    onFailure();
+  };
+  const arm = () => {
+    if (failed || signal.aborted) return;
+    clear();
+    const startedAt = Number(video.currentTime) || 0;
+    watchdog = window.setTimeout(() => {
+      watchdog = 0;
+      if (signal.aborted || video.paused || Number(video.currentTime) > startedAt + 0.04) return;
+      fail();
+    }, 2600);
+  };
+  const handlePlayFailure = (error) => {
+    if (error && error.name === 'NotSupportedError') fail();
+    else arm();
+  };
+  const reset = () => {
+    clear();
+    failed = false;
+  };
+  video.addEventListener('playing', clear, { signal });
+  video.addEventListener('pause', clear, { signal });
+  video.addEventListener('waiting', () => { if (!video.paused) arm(); }, { signal });
+  video.addEventListener('stalled', () => { if (!video.paused) arm(); }, { signal });
+  video.addEventListener('error', fail, { signal });
+  signal.addEventListener('abort', clear, { once: true });
+  return { arm, clear, fail, reset, handlePlayFailure };
+}
+
 function renderVideoPreview(id, result) {
   const epoch = videoPreviewEpoch;
   const stage = document.getElementById('preview-stage');
@@ -271,12 +318,13 @@ function renderVideoPreview(id, result) {
   const video = document.createElement('video');
   video.src = result.url;
   video.autoplay = false;
-  const player = createVideoPlayer(video);
-  video.addEventListener('dblclick', openFullscreenPreview, { signal: player.signal });
-  video.addEventListener('error', () => handleVideoPlaybackFailure(id, result, video, epoch), {
-    once: true,
-    signal: player.signal
+  let playbackMonitor = null;
+  const recover = () => { void handleVideoPlaybackFailure(id, result, video, epoch); };
+  const player = createVideoPlayer(video, {
+    onPlaybackFailure: (error) => playbackMonitor && playbackMonitor.handlePlayFailure(error)
   });
+  playbackMonitor = monitorVideoPlayback(video, player.signal, recover);
+  video.addEventListener('dblclick', openFullscreenPreview, { signal: player.signal });
   VideoPreviewCleanup.current = player.cleanup;
   stage.appendChild(player.shell);
   setPreviewPanelState('video');
@@ -312,13 +360,17 @@ async function handleVideoPlaybackFailure(id, result, videoEl, epoch) {
   stage.innerHTML = '';
   const video = document.createElement('video');
   video.src = res.url;
-  const player = createVideoPlayer(video);
-  video.addEventListener('dblclick', openFullscreenPreview, { signal: player.signal });
-  video.addEventListener('error', () => {
+  let playbackMonitor = null;
+  const fail = () => {
     if (epoch === videoPreviewEpoch && AppState.activeFileId === id && video.isConnected) {
       renderUnsupportedPreview(id, { ...result, reason: 'render-failed' });
     }
-  }, { once: true, signal: player.signal });
+  };
+  const player = createVideoPlayer(video, {
+    onPlaybackFailure: (error) => playbackMonitor && playbackMonitor.handlePlayFailure(error)
+  });
+  playbackMonitor = monitorVideoPlayback(video, player.signal, fail);
+  video.addEventListener('dblclick', openFullscreenPreview, { signal: player.signal });
   VideoPreviewCleanup.current = player.cleanup;
   stage.appendChild(player.shell);
 }
@@ -1165,24 +1217,39 @@ function openFullscreenPreview() {
   showFullscreenMedia(media);
 }
 
-function openFileFullscreenPreview(file) {
-  if (!file || !isImageExt(file.ext)) return;
-  const primarySource = resolveImageDisplaySource(file, true);
-  const fallbackSource = resolveImageDisplaySource(file, false);
-  if (!primarySource) return;
-  const image = document.createElement('img');
-  image.src = primarySource;
-  image.alt = file.name || '';
-  image.decoding = 'async';
-  image.fetchPriority = 'high';
-  showFullscreenMedia(image, {
-    fallbackSrc: fallbackSource !== primarySource ? fallbackSource : '',
-    onPrimaryImageError: () => {
-      if (typeof Board !== 'undefined' && Board.failedFullImageSources) {
-        Board.failedFullImageSources.add(primarySource);
-      }
+async function openFileFullscreenPreview(file, sourceMedia = null) {
+  if (!file) return;
+  if (isVideoExt(file.ext)) {
+    let video = sourceMedia && sourceMedia.tagName === 'VIDEO' ? sourceMedia : null;
+    if (!video) {
+      const result = await window.messsAPI.getPreview(file.id);
+      if (!result || result.type !== 'video' || !result.url) return;
+      video = document.createElement('video');
+      video.src = result.url;
+      video.preload = 'auto';
+      video.playsInline = true;
     }
-  });
+    showFullscreenMedia(video, { videoFileId: file.id });
+    return;
+  }
+  if (isImageExt(file.ext)) {
+    const primarySource = resolveImageDisplaySource(file, true);
+    const fallbackSource = resolveImageDisplaySource(file, false);
+    if (!primarySource) return;
+    const image = document.createElement('img');
+    image.src = primarySource;
+    image.alt = file.name || '';
+    image.decoding = 'async';
+    image.fetchPriority = 'high';
+    showFullscreenMedia(image, {
+      fallbackSrc: fallbackSource !== primarySource ? fallbackSource : '',
+      onPrimaryImageError: () => {
+        if (typeof Board !== 'undefined' && Board.failedFullImageSources) {
+          Board.failedFullImageSources.add(primarySource);
+        }
+      }
+    });
+  }
 }
 
 function showFullscreenMedia(media, options = {}) {
@@ -1208,14 +1275,38 @@ function showFullscreenMedia(media, options = {}) {
     clone.volume = media.volume;
     clone.playbackRate = media.playbackRate;
     media.pause();
-    const player = createVideoPlayer(clone, { fullscreen: true });
+    let playbackMonitor = null;
+    let recovering = false;
+    const recover = async () => {
+      if (recovering || !options.videoFileId || clone.dataset.usingTranscode === 'true') return;
+      recovering = true;
+      const resumeAt = Number(clone.currentTime) || currentTime;
+      const response = await window.messsAPI.transcodeVideo(options.videoFileId).catch(() => null);
+      if (
+        !response || !response.ok || !response.url || overlay.hidden ||
+        FullscreenPreviewState.cloneVideo !== clone
+      ) return;
+      clone.dataset.usingTranscode = 'true';
+      clone.src = response.url;
+      clone.load();
+      playbackMonitor.reset();
+      clone.addEventListener('loadedmetadata', () => {
+        clone.currentTime = Math.min(resumeAt, Number.isFinite(clone.duration) ? clone.duration : resumeAt);
+        clone.play().catch((error) => playbackMonitor.handlePlayFailure(error));
+      }, { once: true, signal: player.signal });
+    };
+    const player = createVideoPlayer(clone, {
+      fullscreen: true,
+      onPlaybackFailure: (error) => playbackMonitor && playbackMonitor.handlePlayFailure(error)
+    });
+    playbackMonitor = monitorVideoPlayback(clone, player.signal, () => { void recover(); });
     FullscreenPreviewCleanup.current = player.cleanup;
-    FullscreenPreviewState.sourceVideo = media;
+    FullscreenPreviewState.sourceVideo = media.isConnected ? media : null;
     FullscreenPreviewState.cloneVideo = clone;
     fsStage.appendChild(player.shell);
     clone.addEventListener('loadedmetadata', () => {
       clone.currentTime = Math.min(currentTime, Number.isFinite(clone.duration) ? clone.duration : currentTime);
-      if (wasPlaying) clone.play().catch(() => {});
+      if (wasPlaying) clone.play().catch((error) => playbackMonitor.handlePlayFailure(error));
     }, { once: true });
     overlay.hidden = false;
     return;
@@ -1244,11 +1335,15 @@ function closeFullscreenPreview() {
 }
 
 function initFullscreenOverlay() {
-  document.getElementById('fullscreen-close').addEventListener('click', () => {
+  document.getElementById('fullscreen-close').addEventListener('click', (event) => {
+    event.stopPropagation();
     closeFullscreenPreview();
   });
-  document.getElementById('fullscreen-overlay').addEventListener('click', (e) => {
-    if (e.target.id === 'fullscreen-overlay') closeFullscreenPreview();
+  document.getElementById('fullscreen-overlay').addEventListener('click', (event) => {
+    const mediaHit = event.target.closest(
+      '#fullscreen-stage > img, #fullscreen-stage video, #fullscreen-stage .video-control-capsule'
+    );
+    if (!mediaHit) closeFullscreenPreview();
   });
   document.addEventListener('keydown', (e) => {
     const overlay = document.getElementById('fullscreen-overlay');

@@ -31,7 +31,7 @@ async function run() {
             <div class="board-item board-text-note qa-text"><div class="board-text-note-content">Confirmed text</div></div>
             <div class="board-item board-text-note is-text-editing qa-text qa-text-edit"><div class="board-text-note-content">Editing text</div></div>
             <canvas class="qa-doodle"></canvas>
-            <div class="ai-image-popover ai-composer"><form class="ai-composer-form"><div class="ai-composer-mode"><button class="is-active">Image</button><button>Video</button></div><textarea class="ai-composer-prompt" placeholder="Describe what you want to create"></textarea><div class="ai-composer-footer"><div class="ai-composer-controls"><button class="ai-options-toggle">Options</button></div><button class="ai-composer-submit">&#8593;</button></div></form></div>
+            <div class="ai-image-popover ai-composer"><form class="ai-composer-form"><div class="ai-composer-mode"><button class="is-active">Image</button><button>Video</button></div><div class="ai-composer-reference-strip" hidden></div><textarea class="ai-composer-prompt" placeholder="Describe what you want to create"></textarea><div class="ai-composer-footer"><div class="ai-composer-controls"><button class="ai-options-toggle">Options</button></div><button class="ai-composer-submit">&#8593;</button></div></form></div>
           </div>
           <div id="resize-handle-board-agent" class="resize-handle resize-handle-v"></div>
           <aside id="board-agent-panel" class="board-agent-panel">
@@ -44,6 +44,7 @@ async function run() {
             </form>
           </aside>
         </div>
+        <div id="board-bottom-bar" class="board-bottom-bar"><button class="icon-btn-sm">-</button><span class="zoom-label">100%</span><button class="icon-btn-sm">+</button></div>
       </section>
     </body></html>`, 'utf8');
 
@@ -89,12 +90,13 @@ async function run() {
     const logo = rect('.board-agent-welcome img');
     const composer = rect('.ai-composer');
     const viewport = rect('#board-viewport');
+    const bottomBar = rect('#board-bottom-bar');
     const agentForm = rect('.board-agent-form');
     const agentInput = rect('.board-agent-form textarea');
     const agentMenu = rect('.board-agent-model-menu');
     const confirmedText = getComputedStyle(document.querySelector('.qa-text:not(.is-text-editing)'));
     const editingText = getComputedStyle(document.querySelector('.qa-text-edit'));
-    return { agent, logo, composer, viewport, agentForm, agentInput, agentMenu, radius:getComputedStyle(document.querySelector('.board-agent-panel')).borderRadius, toggle:getComputedStyle(document.getElementById('board-agent-toggle')).display, confirmedText:{background:confirmedText.backgroundColor,borderWidth:confirmedText.borderTopWidth,shadow:confirmedText.boxShadow}, editingText:{background:editingText.backgroundColor,borderWidth:editingText.borderTopWidth,shadow:editingText.boxShadow} };
+    return { agent, logo, composer, viewport, bottomBar, agentForm, agentInput, agentMenu, radius:getComputedStyle(document.querySelector('.board-agent-panel')).borderRadius, toggle:getComputedStyle(document.getElementById('board-agent-toggle')).display, confirmedText:{background:confirmedText.backgroundColor,borderWidth:confirmedText.borderTopWidth,shadow:confirmedText.boxShadow}, editingText:{background:editingText.backgroundColor,borderWidth:editingText.borderTopWidth,shadow:editingText.boxShadow} };
   })()`);
   if (full.agent.width < 300 || full.agent.right > 1440 || full.agent.bottom > 900) throw new Error(`Agent escaped viewport: ${JSON.stringify(full)}`);
   if (full.radius !== '18px') throw new Error(`Agent radius mismatch: ${full.radius}`);
@@ -103,7 +105,7 @@ async function run() {
   if (full.agentMenu.left < full.agent.left || full.agentMenu.right > full.agent.right || full.agentMenu.top >= full.agentForm.top || full.agentMenu.bottom > full.agent.bottom) {
     throw new Error(`Agent model menu escaped its panel: ${JSON.stringify(full)}`);
   }
-  if (full.composer.width < 440 || full.composer.width > 860 || full.composer.height < 210 || full.composer.height > 240) {
+  if (full.composer.width < 440 || full.composer.width > 800 || full.composer.height < 130 || full.composer.height > 155) {
     throw new Error(`Composer size is outside the compact range: ${JSON.stringify(full.composer)}`);
   }
   const composerCenter = (full.composer.left + full.composer.right) / 2;
@@ -111,6 +113,19 @@ async function run() {
   if (Math.abs(composerCenter - viewportCenter) > 2) {
     throw new Error(`Composer is not centered in the drawable canvas: ${JSON.stringify(full)}`);
   }
+  const bottomBarCenter = (full.bottomBar.left + full.bottomBar.right) / 2;
+  if (Math.abs(bottomBarCenter - viewportCenter) > 2) {
+    throw new Error(`Bottom toolbar is not centered in the drawable canvas: ${JSON.stringify(full)}`);
+  }
+  const composerWithReference = await window.webContents.executeJavaScript(`(() => {
+    document.querySelector('.ai-composer-reference-strip').hidden = false;
+    const r = document.querySelector('.ai-composer').getBoundingClientRect();
+    return { width:r.width, height:r.height };
+  })()`);
+  if (composerWithReference.height < 185 || composerWithReference.height > 205) {
+    throw new Error(`Composer did not grow cleanly for references: ${JSON.stringify(composerWithReference)}`);
+  }
+  await window.webContents.executeJavaScript(`document.querySelector('.ai-composer-reference-strip').hidden = true`);
   if (full.confirmedText.background !== 'rgba(0, 0, 0, 0)' || full.confirmedText.borderWidth !== '0px' || full.confirmedText.shadow !== 'none' || full.editingText.background === 'rgba(0, 0, 0, 0)' || full.editingText.borderWidth !== '1px') {
     throw new Error(`Text editing chrome did not transition cleanly: ${JSON.stringify(full)}`);
   }

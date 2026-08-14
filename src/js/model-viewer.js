@@ -17,6 +17,7 @@ const BoardModelViewer = {
   hemisphereLight: null,
   keyLight: null,
   rimLight: null,
+  materialStats: null,
   lightDragCleanup: null,
   keyHandler: null,
   loadGeneration: 0
@@ -81,6 +82,7 @@ function closeBoardModelViewer() {
   BoardModelViewer.hemisphereLight = null;
   BoardModelViewer.keyLight = null;
   BoardModelViewer.rimLight = null;
+  BoardModelViewer.materialStats = null;
   BoardModelViewer.lightDragCleanup = null;
   BoardModelViewer.keyHandler = null;
 }
@@ -97,10 +99,11 @@ const BOARD_MODEL_COLOR_TEXTURE_SLOTS = new Set([
 ]);
 
 function prepareBoardModelMaterials(root, renderer, THREE) {
-  if (!root || !renderer) return { meshes: 0, texturedMeshes: 0 };
+  if (!root || !renderer) return { meshes: 0, texturedMeshes: 0, textureSlots: {} };
   const maxAnisotropy = Math.max(1, Math.min(16, renderer.capabilities.getMaxAnisotropy()));
   let meshes = 0;
   let texturedMeshes = 0;
+  const textureSlots = {};
   root.traverse((object) => {
     if (!object || !object.isMesh) return;
     meshes += 1;
@@ -113,6 +116,7 @@ function prepareBoardModelMaterials(root, renderer, THREE) {
       Object.entries(material).forEach(([slot, value]) => {
         if (!value || !value.isTexture) return;
         hasTexture = true;
+        textureSlots[slot] = (textureSlots[slot] || 0) + 1;
         value.anisotropy = maxAnisotropy;
         if (BOARD_MODEL_COLOR_TEXTURE_SLOTS.has(slot)) value.colorSpace = THREE.SRGBColorSpace;
         value.needsUpdate = true;
@@ -122,7 +126,7 @@ function prepareBoardModelMaterials(root, renderer, THREE) {
     });
     if (hasTexture) texturedMeshes += 1;
   });
-  return { meshes, texturedMeshes };
+  return { meshes, texturedMeshes, textureSlots };
 }
 
 function installBoardModelLightDrag(canvas, light, controls, THREE, lighting = {}) {
@@ -132,10 +136,10 @@ function installBoardModelLightDrag(canvas, light, controls, THREE, lighting = {
   const scene = lighting.scene || null;
   const indicator = lighting.indicator || null;
   const applyLightContrast = (isDragging) => {
-    light.intensity = isDragging ? 8.5 : 6.4;
-    if (hemisphereLight) hemisphereLight.intensity = isDragging ? 0.08 : 0.28;
-    if (rimLight) rimLight.intensity = isDragging ? 3.8 : 2.7;
-    if (scene && 'environmentIntensity' in scene) scene.environmentIntensity = isDragging ? 0.06 : 0.18;
+    light.intensity = isDragging ? 3.4 : 2.4;
+    if (hemisphereLight) hemisphereLight.intensity = isDragging ? 0.3 : 0.7;
+    if (rimLight) rimLight.intensity = isDragging ? 1.4 : 0.8;
+    if (scene && 'environmentIntensity' in scene) scene.environmentIntensity = isDragging ? 0.45 : 0.75;
   };
   const updateLight = () => {
     if (!drag) return;
@@ -435,13 +439,13 @@ async function renderBoardModelPreview(file) {
     renderer.setSize(512, 512, false);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.08;
+    renderer.toneMappingExposure = 1;
     renderer.setClearColor(0x111317, 1);
     prepareBoardModelMaterials(parsed.root, renderer, THREE);
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x20242b, 0.45));
-    const key = new THREE.DirectionalLight(0xfff4de, 5.2);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x20242b, 0.8));
+    const key = new THREE.DirectionalLight(0xfff7e8, 2.4);
     key.position.set(4, 7, 5);
-    const rim = new THREE.DirectionalLight(0x75a7ff, 1.8);
+    const rim = new THREE.DirectionalLight(0x9ebeff, 0.7);
     rim.position.set(-4, 2, -5);
     scene.add(key, key.target, rim, rim.target, parsed.root);
     if (vendor.RoomEnvironment) {
@@ -449,7 +453,7 @@ async function renderBoardModelPreview(file) {
       environmentScene = new vendor.RoomEnvironment();
       environmentTarget = pmremGenerator.fromScene(environmentScene, 0.04);
       scene.environment = environmentTarget.texture;
-      if ('environmentIntensity' in scene) scene.environmentIntensity = 0.2;
+      if ('environmentIntensity' in scene) scene.environmentIntensity = 0.75;
     }
     frameBoardModel(parsed.root, camera, controls, THREE);
     renderer.render(scene, camera);
@@ -526,7 +530,7 @@ function openBoardModelViewer(file) {
     renderer.domElement.className = 'board-model-viewer-canvas';
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.05;
+    renderer.toneMappingExposure = 1;
     renderer.setClearColor(0x111317, 1);
     stage.prepend(renderer.domElement);
     const scene = new THREE.Scene();
@@ -536,17 +540,17 @@ function openBoardModelViewer(file) {
     controls.dampingFactor = 0.075;
     controls.enablePan = true;
     controls.screenSpacePanning = true;
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x171a20, 0.28);
-    const key = new THREE.DirectionalLight(0xfff1d6, 6.4);
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x171a20, 0.7);
+    const key = new THREE.DirectionalLight(0xfff7e8, 2.4);
     key.position.set(4, 7, 5);
-    const rim = new THREE.DirectionalLight(0x72a5ff, 2.7);
+    const rim = new THREE.DirectionalLight(0x9ebeff, 0.8);
     rim.position.set(-4, 2, -5);
     scene.add(hemi, key, key.target, rim, rim.target);
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
     const environmentScene = new RoomEnvironment();
     const environmentTarget = pmremGenerator.fromScene(environmentScene, 0.04);
     scene.environment = environmentTarget.texture;
-    if ('environmentIntensity' in scene) scene.environmentIntensity = 0.18;
+    if ('environmentIntensity' in scene) scene.environmentIntensity = 0.75;
     BoardModelViewer.renderer = renderer;
     BoardModelViewer.scene = scene;
     BoardModelViewer.camera = camera;
@@ -577,7 +581,7 @@ function openBoardModelViewer(file) {
       if (!root || !root.isObject3D) {
         throw Object.assign(new Error('The model does not contain a valid scene.'), { code: 'invalid-model-data' });
       }
-      prepareBoardModelMaterials(root, renderer, THREE);
+      BoardModelViewer.materialStats = prepareBoardModelMaterials(root, renderer, THREE);
       BoardModelViewer.root = root;
       scene.add(root);
       frameBoardModel(root, camera, controls, THREE);

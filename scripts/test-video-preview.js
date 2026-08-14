@@ -10,11 +10,24 @@ const { transcodeVideoToWebCompatible } = require('../lib/preview');
 
 const boardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'board-canvas.js'), 'utf8');
 const boardStyles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles', 'main.css'), 'utf8');
+const previewSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'preview-canvas.js'), 'utf8');
+const mediaMetaSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'board-media-meta.js'), 'utf8');
+const mainSource = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
 
 assert.match(
   boardSource,
-  /video\.addEventListener\('error',[\s\S]*?video\.src\s*=\s*res\.url;[\s\S]*?video\.load\(\);[\s\S]*?if \(wantsPreview\) requestPlayback\(\)/,
-  'A failed native video must resume hover playback after its transcoded source is installed.'
+  /function recoverPlayableSource\(\)[\s\S]*?transcodeVideo\(f\.id\)[\s\S]*?cacheBoardPreview\(f\.id,[\s\S]*?installVideoSource\(res\.url, true\)/,
+  'A failed native canvas video must cache and install its transcoded source.'
+);
+assert.match(
+  boardSource,
+  /function armPlaybackWatchdog\(request\)[\s\S]*?startedAt[\s\S]*?video\.currentTime[\s\S]*?recoverPlayableSource\(\);[\s\S]*?\}, 2600\);/,
+  'Canvas video playback must recover when the browser stalls without emitting an error.'
+);
+assert.match(
+  boardSource,
+  /video\.addEventListener\('waiting',[\s\S]*?armPlaybackWatchdog\(playRequest\)[\s\S]*?video\.addEventListener\('stalled',[\s\S]*?armPlaybackWatchdog\(playRequest\)/,
+  'Waiting and stalled canvas videos must be covered by the playback watchdog.'
 );
 assert.match(
   boardSource,
@@ -35,6 +48,16 @@ assert.match(
   boardSource,
   /content\.addEventListener\('mouseenter',[\s\S]*?_boardPlayPreview[\s\S]*?content\.addEventListener\('mouseleave',[\s\S]*?_boardStopPreview/,
   'Canvas videos must play on hover and stop when the pointer leaves.'
+);
+assert.match(
+  boardSource,
+  /content\.addEventListener\('click',[\s\S]*?lastDragEndedAt[\s\S]*?pinnedPlayback = !pinnedPlayback[\s\S]*?_boardPlayPreview[\s\S]*?_boardStopPreview/,
+  'Canvas videos must support click-to-pin playback without treating a completed drag as a click.'
+);
+assert.match(
+  boardSource,
+  /poster\.addEventListener\('load',[\s\S]*?syncBoardOverviewFallback[\s\S]*?video\.addEventListener\('loadeddata',[\s\S]*?classList\.add\('has-frame'\)/,
+  'The video poster must remain until a decodable frame is ready and resync the canvas fallback after loading.'
 );
 assert.match(
   boardSource,
@@ -75,6 +98,36 @@ assert.doesNotMatch(
   boardSource,
   /aspectRatio:\s*kind === 'video' && boardReferences\.size \? 'adaptive' : ratio/,
   'Reference images must not force every video provider to the MiniMax adaptive ratio.'
+);
+assert.match(
+  previewSource,
+  /function monitorVideoPlayback[\s\S]*?startedAt[\s\S]*?video\.currentTime[\s\S]*?2600[\s\S]*?NotSupportedError[\s\S]*?waiting[\s\S]*?stalled/,
+  'The main file preview must recover from silent video stalls as well as codec errors.'
+);
+assert.match(
+  mainSource,
+  /function localFileProtocolResponse[\s\S]*?headers\.get\('range'\)[\s\S]*?status:\s*206[\s\S]*?'Accept-Ranges': 'bytes'[\s\S]*?'Content-Range': `bytes \$\{start\}-\$\{end\}\/\$\{total\}`/,
+  'Local media must return a standards-compliant partial response for reliable streaming and seeking.'
+);
+assert.match(
+  mainSource,
+  /protocol\.handle\('messs-file',[\s\S]*?localFileProtocolResponse\([\s\S]*?protocol\.handle\('messs-transcode',[\s\S]*?localFileProtocolResponse\(/,
+  'Original and transcoded media protocols must share the byte-range responder.'
+);
+assert.match(
+  mediaMetaSource,
+  /function appendBoardVideoButlerToolbar[\s\S]*?isVideoExt\(file\.ext\)[\s\S]*?BOARD_BUTLER_VIDEO_EXTENSIONS\.has[\s\S]*?board-video-fullscreen[\s\S]*?BOARD_IMAGE_TOOL_ICONS\.fullscreen[\s\S]*?openFileFullscreenPreview\(file, video\)/,
+  'Every selected canvas video must expose the same fullscreen action as an image, even when Butler does not support its container.'
+);
+assert.match(
+  previewSource,
+  /async function openFileFullscreenPreview\(file, sourceMedia = null\)[\s\S]*?isVideoExt\(file\.ext\)[\s\S]*?showFullscreenMedia\(video, \{ videoFileId: file\.id \}\)/,
+  'The file fullscreen helper must open canvas videos and preserve an already-mounted player when available.'
+);
+assert.match(
+  previewSource,
+  /function showFullscreenMedia[\s\S]*?videoFileId[\s\S]*?transcodeVideo\(options\.videoFileId\)[\s\S]*?playbackMonitor\.reset\(\)/,
+  'Fullscreen canvas video playback must retain the codec-recovery fallback.'
 );
 
 async function main() {

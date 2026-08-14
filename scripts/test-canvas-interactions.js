@@ -50,9 +50,32 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /aiImagePopoverClickCloser = \(e\) => \{[\s\S]*?if \(pop\.contains\(e\.target\)\) return;[\s\S]*?if \(e\.target\.closest\('#board-canvas \.board-item-image'\)\) return;[\s\S]*?closeAiImagePopover\(\);/,
+  /aiImagePopoverClickCloser = \(e\) => \{[\s\S]*?e\.composedPath[\s\S]*?eventPath\.includes\(pop\)[\s\S]*?if \(e\.target\.closest\('#board-canvas \.board-item-image'\)\) return;[\s\S]*?closeAiImagePopover\(\);/,
   'Selecting or removing an image reference must keep the AI composer open while other outside clicks still close it.'
 );
+assert.match(
+  boardSource,
+  /function setBoardReferenceOrder[\s\S]*?function commitBoardReferenceOrder[\s\S]*?referenceStrip\.addEventListener\('dragover'[\s\S]*?insertBefore\(dragged,[\s\S]*?referenceStrip\.addEventListener\('drop'[\s\S]*?commitBoardReferenceOrder\(\)/,
+  'Composer references must support drag-and-drop reordering and persist that order for generation.'
+);
+assert.match(
+  boardSource,
+  /const pendingEntry = \{[\s\S]*?isLoading:\s*true[\s\S]*?boardReferences\.set\(file\.id, pendingEntry\);[\s\S]*?await window\.messsAPI\.readFileAsDataUrl\(file\.id\)[\s\S]*?boardReferences\.get\(file\.id\) !== pendingEntry[\s\S]*?pendingEntry\.dataUrl = dataUrl/,
+  'Reference order must be reserved at click time rather than asynchronous file-read completion time.'
+);
+assert.match(boardSource, /order\.textContent = String\(\[\.\.\.boardReferences\.keys\(\)\]\.indexOf\(fileId\) \+ 1\)/);
+assert.match(boardStyles, /\.ai-composer-reference-order \{[\s\S]*?pointer-events:\s*none/);
+assert.match(
+  boardSource,
+  /function syncComposerSubmitAvailability[\s\S]*?referencesLoading[\s\S]*?submit\.disabled = !hasProvider \|\| referencesLoading[\s\S]*?form\.addEventListener\('submit'[\s\S]*?boardReferences\.values\(\)[\s\S]*?请等待参考图加载完成/,
+  'Generation must wait until every click-ordered reference has finished loading.'
+);
+assert.match(
+  boardSource,
+  /remove\.addEventListener\('click',[\s\S]*?event\.stopPropagation\(\);[\s\S]*?removeBoardReference\(fileId\)/,
+  'Removing one reference must not bubble into the composer outside-click closer.'
+);
+assert.match(boardStyles, /\.ai-composer-reference-thumb\.is-dragging[\s\S]*?cursor:\s*var\(--cursor-grabbing\)/);
 assert.match(
   boardSource,
   /function supportedImageRatios\([\s\S]*?capabilities\.referenceRatios[\s\S]*?function supportedImageAspectRatio/,
@@ -126,6 +149,16 @@ assert.match(
   'The Agent control must disappear on the compact canvas.'
 );
 assert.match(boardStyles, /\.board-agent-panel \{[\s\S]*?border-radius:\s*18px/);
+assert.match(
+  boardStyles,
+  /\.board-panel\.is-fullscreen:has\(\.board-agent-panel:not\(\.is-hidden\)\) \.board-bottom-bar \{[\s\S]*?left:\s*calc\(\(100% - var\(--agent-w, 320px\) - 12px\) \/ 2\)/,
+  'The fullscreen toolbar must stay centered in the drawable canvas when Agent is open.'
+);
+assert.match(
+  boardStyles,
+  /\.ai-image-popover\.ai-composer,[\s\S]*?height:\s*142px;[\s\S]*?\.ai-image-popover\.ai-composer:has\(\.ai-composer-reference-strip:not\(\[hidden\]\)\)[\s\S]*?height:\s*194px;/,
+  'The generation composer must stay flat by default and grow only for reference thumbnails.'
+);
 assert.match(indexHtml, /id="board-agent-references"[\s\S]*?id="board-agent-add-reference"[\s\S]*?id="board-agent-model-menu"[\s\S]*?data-agent-kind="image"[\s\S]*?data-agent-kind="video"/,
   'Canvas Agent must expose references plus image/video model selection.');
 assert.match(boardStyles, /\.board-agent-form textarea \{[\s\S]*?min-height:\s*58px;[\s\S]*?max-height:\s*112px;/,
@@ -274,6 +307,11 @@ assert.match(
   /function renderBoard\(\)[\s\S]*?rebuildBoardSpatialIndex\(\);[\s\S]*?reconcileMountedBoardItemsAfterDataChange\(\);[\s\S]*?reconcileBoardViewport\(true\);/,
   'Board data refreshes must preserve unchanged mounted media instead of flashing through a full remount.'
 );
+assert.match(
+  boardSource,
+  /function isBoardElementPaintReady[\s\S]*?image\.naturalWidth > 0[\s\S]*?function syncBoardOverviewFallback[\s\S]*?overviewHideFrame = requestAnimationFrame[\s\S]*?overviewHideFrame = requestAnimationFrame[\s\S]*?visibleBoardDomReady\(\)/,
+  'The painted overview must remain through two stable frames and only yield to successfully decoded DOM media.'
+);
 const renderBoardSource = boardSource.slice(
   boardSource.indexOf('function renderBoard()'),
   boardSource.indexOf('function syncBoardSelectionClasses')
@@ -310,7 +348,7 @@ assert.doesNotMatch(
 );
 assert.match(boardSource, /--board-selection-width[\s\S]*?1\.2 \/ Math\.max\(Board\.zoom/);
 assert.match(boardStyles, /\.board-item\.is-selected \{[\s\S]*?outline:\s*var\(--board-selection-width/);
-assert.match(boardStyles, /width:\s*min\(860px, calc\(100% - 40px\)\)/, 'The generation composer must keep the centered compact footprint.');
+assert.match(boardStyles, /width:\s*min\(800px, calc\(100% - 40px\)\)/, 'The generation composer must keep the centered compact footprint.');
 assert.doesNotMatch(sidebarSource, /Return home|\\u8fd4\\u56de\\u9996\\u9875/, 'The brand menu must not offer a return-to-home action.');
 assert.match(
   sidebarSource,
@@ -323,7 +361,12 @@ assert.match(
   'Sidebar Ctrl+A must be captured before the canvas-wide shortcut.'
 );
 assert.match(previewSource, /clone\.removeAttribute\('style'\)[\s\S]*?clone\.removeAttribute\('width'\)[\s\S]*?clone\.removeAttribute\('height'\)/);
-assert.match(previewSource, /function openFileFullscreenPreview\(file\)[\s\S]*?showFullscreenMedia\(image/);
+assert.match(previewSource, /async function openFileFullscreenPreview\(file, sourceMedia = null\)[\s\S]*?showFullscreenMedia\(image/);
+assert.match(
+  previewSource,
+  /fullscreen-overlay'\)\.addEventListener\('click',[\s\S]*?event\.target\.closest\([\s\S]*?#fullscreen-stage > img[\s\S]*?#fullscreen-stage video[\s\S]*?video-control-capsule[\s\S]*?if \(!mediaHit\) closeFullscreenPreview\(\)/,
+  'Clicking outside the actual fullscreen image or video controls must close the viewer.'
+);
 assert.match(boardStyles, /\.fullscreen-overlay \{[\s\S]*?z-index:\s*400;[\s\S]*?background:\s*rgba\(5, 6, 8, \.88\)/,
   'The fullscreen media viewer must render above the fullscreen board and Butler overlays.');
 assert.match(boardStyles, /\.fullscreen-stage > img \{[\s\S]*?max-width:\s*min\(88vw, 1600px\);[\s\S]*?max-height:\s*82vh;/);

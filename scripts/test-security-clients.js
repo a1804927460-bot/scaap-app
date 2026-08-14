@@ -154,6 +154,75 @@ async function testGatewayClient() {
   );
 }
 
+async function testGatewaySessionRecovery() {
+  let gatewayCalls = 0;
+  let refreshCalls = 0;
+  const authorization = [];
+  const client = new AiGatewayClient({
+    baseUrl: 'https://gateway.example.com',
+    getAccessToken: async () => 'stale-user-jwt',
+    refreshAccessToken: async () => {
+      refreshCalls += 1;
+      return 'fresh-user-jwt';
+    },
+    fetchImpl: async (_url, options) => {
+      gatewayCalls += 1;
+      authorization.push(options.headers.Authorization);
+      if (gatewayCalls === 1) {
+        return new Response(JSON.stringify({
+          code: 'invalid-session',
+          message: 'A valid Supabase session is required.'
+        }), { status: 401 });
+      }
+      return new Response(JSON.stringify({ text: 'recovered' }), { status: 200 });
+    }
+  });
+  assert.strictEqual(await client.chat({ prompt: 'retry once' }), 'recovered');
+  assert.strictEqual(gatewayCalls, 2);
+  assert.strictEqual(refreshCalls, 1);
+  assert.deepStrictEqual(authorization, ['Bearer stale-user-jwt', 'Bearer fresh-user-jwt']);
+
+  let rejectedCalls = 0;
+  let rejectedRefreshCalls = 0;
+  const rejectedClient = new AiGatewayClient({
+    baseUrl: 'https://gateway.example.com',
+    getAccessToken: async () => 'stale-user-jwt',
+    refreshAccessToken: async () => {
+      rejectedRefreshCalls += 1;
+      return 'still-rejected-user-jwt';
+    },
+    fetchImpl: async () => {
+      rejectedCalls += 1;
+      return new Response(JSON.stringify({ code: 'invalid-session' }), { status: 401 });
+    }
+  });
+  await assert.rejects(
+    () => rejectedClient.chat({ prompt: 'do not loop' }),
+    (error) => error.code === 'invalid-session'
+  );
+  assert.strictEqual(rejectedCalls, 2);
+  assert.strictEqual(rejectedRefreshCalls, 1);
+
+  let providerRefreshCalls = 0;
+  const providerFailureClient = new AiGatewayClient({
+    baseUrl: 'https://gateway.example.com',
+    getAccessToken: async () => 'valid-user-jwt',
+    refreshAccessToken: async () => {
+      providerRefreshCalls += 1;
+      return 'unneeded-user-jwt';
+    },
+    fetchImpl: async () => new Response(JSON.stringify({
+      code: 'provider-auth-failed',
+      message: 'The selected AI provider rejected its server credential.'
+    }), { status: 502 })
+  });
+  await assert.rejects(
+    () => providerFailureClient.chat({ prompt: 'provider key expired' }),
+    (error) => error.code === 'provider-auth-failed' && error.status === 502
+  );
+  assert.strictEqual(providerRefreshCalls, 0);
+}
+
 function testButlerDesktopBridgeSurface() {
   const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
   const mainSource = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
@@ -213,6 +282,7 @@ async function testOfflineRefreshKeepsLocalIdentity() {
   await testSupabaseSessionStorage();
   await testOfflineRefreshKeepsLocalIdentity();
   await testGatewayClient();
+  await testGatewaySessionRecovery();
   testButlerDesktopBridgeSurface();
   console.log('security client tests passed');
 })().catch((error) => {

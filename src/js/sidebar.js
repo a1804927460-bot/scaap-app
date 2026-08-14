@@ -1258,12 +1258,29 @@ async function renderAccountSummary(config) {
     const element = document.getElementById(id);
     if (element) element.textContent = value;
   });
+  renderAccountFooterCredits(membership);
   renderAccountProfileText();
   const google = document.getElementById('account-google-sign-in');
   const signOut = document.getElementById('account-sign-out');
   if (avatarButton) avatarButton.disabled = !accountUserId;
   if (google) google.hidden = authenticated;
   if (signOut) signOut.hidden = !authenticated;
+}
+
+function renderAccountFooterCredits(membership) {
+  const credits = membership && membership.credits || {};
+  const balance = Number.isFinite(Number(credits.balance)) ? Number(credits.balance) : 0;
+  const reserved = Number.isFinite(Number(credits.reserved)) ? Number(credits.reserved) : 0;
+  const available = Math.max(0, balance - reserved);
+  const footerCredits = document.getElementById('account-footer-credits');
+  if (!footerCredits) return;
+  const label = t('Available points', '可用积分', '사용 가능 포인트');
+  const unit = t(' points', ' 积分', ' 포인트');
+  const value = available.toLocaleString(appLocale());
+  footerCredits.querySelector('b').textContent = value;
+  footerCredits.querySelector('small').textContent = unit;
+  footerCredits.title = `${label}: ${value}`;
+  footerCredits.setAttribute('aria-label', `${label}: ${value}`);
 }
 
 function renderMembershipBalance(membership) {
@@ -1276,6 +1293,7 @@ function renderMembershipBalance(membership) {
   const planBadge = document.getElementById('account-plan-badge');
   if (creditCount) creditCount.textContent = balance.toLocaleString(appLocale());
   if (planBadge) planBadge.textContent = plan;
+  renderAccountFooterCredits(membership);
 }
 
 function renderCloudSecurity(config) {

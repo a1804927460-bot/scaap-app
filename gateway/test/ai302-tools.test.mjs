@@ -756,6 +756,32 @@ test('Topaz result download validates the provider URL and returns only video by
   );
 });
 
+test('Topaz creation unwraps generic 302 status envelopes and accepts task field aliases', async () => {
+  const created = await createVideoUpscaleTask({
+    videoDataUrl: videoDataUrl(mp4Fixture()),
+    toolOptions: { output: { resolution: { width: 1920, height: 1080 } } },
+    userId: 'wrapped-video-owner'
+  }, {
+    apiKey: 'server-only-302-key',
+    taskSecret: 'wrapped-video-secret',
+    publicBaseUrl: 'https://gateway.example.com',
+    now: 1_800_000_000_000,
+    fetchImpl: async () => jsonResponse({
+      status: 200,
+      message: 'success',
+      data: { task_id: 'wrapped-topaz-task', provider_cost: 9 }
+    }),
+    reserveCredits: async ({ credits, providerCost }) => ({
+      ok: credits === 27 && providerCost === 9,
+      availableCredits: 73
+    })
+  });
+  assert.equal(created.status, 'queued');
+  assert.equal(created.providerCost, 9);
+  assert.equal(created.credits, 27);
+  assert.equal(created.availableCredits, 73);
+});
+
 test('Topaz accepts wrapped 302 responses and derives progress from processing jobs', async () => {
   const input = mp4Fixture();
   const output = mp4Fixture();

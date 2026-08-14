@@ -53,6 +53,89 @@ function minimalTriangleGlb() {
   return Buffer.concat([header, jsonHeader, json, binaryHeader, binary]);
 }
 
+function pbrTriangleGlb(textures) {
+  const positions = Buffer.alloc(36);
+  [-1, -1, 0, 1, -1, 0, 0, 1, 0].forEach((value, index) => positions.writeFloatLE(value, index * 4));
+  const normals = Buffer.alloc(36);
+  [0, 0, 1, 0, 0, 1, 0, 0, 1].forEach((value, index) => normals.writeFloatLE(value, index * 4));
+  const uvs = Buffer.alloc(24);
+  [0, 0, 1, 0, 0.5, 1].forEach((value, index) => uvs.writeFloatLE(value, index * 4));
+  const indices = Buffer.alloc(6);
+  [0, 1, 2].forEach((value, index) => indices.writeUInt16LE(value, index * 2));
+  const chunks = [];
+  const views = [];
+  let byteOffset = 0;
+  const append = (buffer, target) => {
+    const padding = (4 - (byteOffset % 4)) % 4;
+    if (padding) {
+      chunks.push(Buffer.alloc(padding));
+      byteOffset += padding;
+    }
+    const view = { buffer: 0, byteOffset, byteLength: buffer.length };
+    if (target) view.target = target;
+    views.push(view);
+    chunks.push(buffer);
+    byteOffset += buffer.length;
+    return views.length - 1;
+  };
+  const positionView = append(positions, 34962);
+  const normalView = append(normals, 34962);
+  const uvView = append(uvs, 34962);
+  const indexView = append(indices, 34963);
+  const baseColorView = append(textures.baseColor);
+  const metallicRoughnessView = append(textures.metallicRoughness);
+  const normalTextureView = append(textures.normal);
+  const binary = padChunk(Buffer.concat(chunks), 0);
+  const document = {
+    asset: { version: '2.0', generator: 'Messs PBR visual test' },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: [{
+      attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2 },
+      indices: 3,
+      material: 0
+    }] }],
+    materials: [{
+      name: 'Embedded PBR material',
+      pbrMetallicRoughness: {
+        baseColorTexture: { index: 0 },
+        metallicRoughnessTexture: { index: 1 },
+        metallicFactor: 0.35,
+        roughnessFactor: 0.62
+      },
+      normalTexture: { index: 2, scale: 1 }
+    }],
+    textures: [{ source: 0 }, { source: 1 }, { source: 2 }],
+    images: [
+      { mimeType: 'image/png', bufferView: baseColorView },
+      { mimeType: 'image/png', bufferView: metallicRoughnessView },
+      { mimeType: 'image/png', bufferView: normalTextureView }
+    ],
+    buffers: [{ byteLength: binary.length }],
+    bufferViews: views,
+    accessors: [
+      { bufferView: positionView, componentType: 5126, count: 3, type: 'VEC3', min: [-1, -1, 0], max: [1, 1, 0] },
+      { bufferView: normalView, componentType: 5126, count: 3, type: 'VEC3' },
+      { bufferView: uvView, componentType: 5126, count: 3, type: 'VEC2' },
+      { bufferView: indexView, componentType: 5123, count: 3, type: 'SCALAR' }
+    ]
+  };
+  const json = padChunk(Buffer.from(JSON.stringify(document), 'utf8'));
+  const totalLength = 12 + 8 + json.length + 8 + binary.length;
+  const header = Buffer.alloc(12);
+  header.writeUInt32LE(0x46546c67, 0);
+  header.writeUInt32LE(2, 4);
+  header.writeUInt32LE(totalLength, 8);
+  const jsonHeader = Buffer.alloc(8);
+  jsonHeader.writeUInt32LE(json.length, 0);
+  jsonHeader.writeUInt32LE(0x4e4f534a, 4);
+  const binaryHeader = Buffer.alloc(8);
+  binaryHeader.writeUInt32LE(binary.length, 0);
+  binaryHeader.writeUInt32LE(0x004e4942, 4);
+  return Buffer.concat([header, jsonHeader, json, binaryHeader, binary]);
+}
+
 function minimalTriangleObj() {
   return Buffer.from([
     'o MesssTriangle',
@@ -112,7 +195,7 @@ async function waitForViewerState(window, expected, timeoutMs = 12000) {
   throw new Error(`Timed out waiting for model viewer state: ${expected}`);
 }
 
-async function captureModelPixels(window, label) {
+async function captureModelPixels(window, label, options = {}) {
   const layout = await window.webContents.executeJavaScript(`(() => {
     const viewport = { width: innerWidth, height: innerHeight };
     const dialog = document.querySelector('.board-model-viewer-dialog').getBoundingClientRect();
@@ -139,14 +222,21 @@ async function captureModelPixels(window, label) {
   const { data, info } = await sharp(screenshot.toPNG()).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const background = [data[0], data[1], data[2]];
   let modelPixels = 0;
+  let colorfulPixels = 0;
   for (let offset = 0; offset < data.length; offset += info.channels) {
     const difference = Math.abs(data[offset] - background[0]) +
       Math.abs(data[offset + 1] - background[1]) +
       Math.abs(data[offset + 2] - background[2]);
     if (difference > 32) modelPixels += 1;
+    const channelSpread = Math.max(data[offset], data[offset + 1], data[offset + 2]) -
+      Math.min(data[offset], data[offset + 1], data[offset + 2]);
+    if (difference > 32 && channelSpread > 28) colorfulPixels += 1;
   }
   if (modelPixels < 120) throw new Error(`${label} rendered model appears blank (${modelPixels} non-background pixels).`);
-  return { modelPixels, rect: layout.canvas };
+  if (options.requireColor !== false && colorfulPixels < 120) {
+    throw new Error(`${label} PBR base-color texture appears washed out (${colorfulPixels} colorful pixels).`);
+  }
+  return { modelPixels, colorfulPixels, rect: layout.canvas };
 }
 
 async function captureButlerLayout(window, label, width, height) {
@@ -371,8 +461,16 @@ async function run() {
   const styleUrl = pathToFileURL(path.join(root, 'src', 'styles', 'main.css')).href;
   const themeStyleUrl = pathToFileURL(path.join(root, 'src', 'styles', 'theme.css')).href;
   const boardMediaUrl = pathToFileURL(path.join(root, 'src', 'js', 'board-media-meta.js')).href;
+  const pbrTextures = {
+    baseColor: await sharp({ create: { width: 4, height: 4, channels: 4, background: { r: 238, g: 86, b: 28, alpha: 1 } } }).png().toBuffer(),
+    metallicRoughness: await sharp({ create: { width: 4, height: 4, channels: 4, background: { r: 255, g: 172, b: 92, alpha: 1 } } }).png().toBuffer(),
+    normal: await sharp({ create: { width: 4, height: 4, channels: 4, background: { r: 128, g: 128, b: 255, alpha: 1 } } }).png().toBuffer()
+  };
+  const realGlbPath = String(process.env.MESSS_MODEL_VIEWER_GLB_PATH || '').trim();
+  const realGlbFixtureName = realGlbPath ? 'real-pbr.glb' : '';
+  if (realGlbPath) fs.copyFileSync(realGlbPath, path.join(tempDir, realGlbFixtureName));
   const modelFixtures = {
-    glb: minimalTriangleGlb().toString('base64'),
+    glb: realGlbPath ? '' : pbrTriangleGlb(pbrTextures).toString('base64'),
     fbx: minimalTriangleFbx().toString('base64'),
     obj: minimalTriangleObj().toString('base64')
   };
@@ -385,6 +483,7 @@ async function run() {
       window.isVideoExt = (ext) => ext === '.mp4';
       window.AppState = { language: 'en', files: [], boardItems: [] };
       const modelFixtures = ${JSON.stringify(modelFixtures)};
+      const realGlbFixtureUrl = ${JSON.stringify(realGlbFixtureName)};
       const decodeFixture = (base64) => {
         const binary = atob(base64);
         const bytes = new Uint8Array(binary.length);
@@ -407,6 +506,10 @@ async function run() {
         },
         readModelData: async (id) => {
           const format = String(id).replace(/^fixture-/, '');
+          if (format === 'glb' && realGlbFixtureUrl) {
+            const response = await fetch(realGlbFixtureUrl);
+            return { ok: response.ok, format, data: new Uint8Array(await response.arrayBuffer()) };
+          }
           return { ok: true, format, data: decodeFixture(modelFixtures[format]) };
         },
         butler: {
@@ -435,10 +538,18 @@ async function run() {
   await window.loadFile(htmlPath);
   await waitForViewerState(window, 'ready');
   await wait(350);
-  const desktop = await captureModelPixels(window, 'desktop');
+  const pbrMaterialStats = await window.webContents.executeJavaScript(
+    'window.MesssBoardModelViewer.materialStats'
+  );
+  const requiredTextureSlots = ['map', 'metalnessMap', 'roughnessMap', 'normalMap'];
+  if (!pbrMaterialStats || pbrMaterialStats.texturedMeshes !== 1 ||
+      requiredTextureSlots.some((slot) => !(pbrMaterialStats.textureSlots[slot] >= 1))) {
+    throw new Error(`GLB PBR textures were not retained: ${JSON.stringify(pbrMaterialStats)}`);
+  }
+  const desktop = await captureModelPixels(window, 'desktop', { requireColor: !realGlbPath });
   window.setSize(520, 420);
   await wait(320);
-  const compact = await captureModelPixels(window, 'compact');
+  const compact = await captureModelPixels(window, 'compact', { requireColor: !realGlbPath });
   const interactionRect = compact.rect;
 
   const before = await window.webContents.executeJavaScript(
@@ -528,8 +639,14 @@ async function run() {
     );
     await waitForViewerState(window, 'ready');
     await wait(180);
-    formatPixels[format] = (await captureModelPixels(window, format)).modelPixels;
+    formatPixels[format] = (await captureModelPixels(window, format, { requireColor: false })).modelPixels;
     await window.webContents.executeJavaScript('closeBoardModelViewer()');
+  }
+  if (process.env.MESSS_MODEL_VIEWER_ONLY === '1') {
+    window.destroy();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    process.stdout.write(`MODEL_VIEWER_PBR_OK desktop=${desktop.modelPixels} colors=${desktop.colorfulPixels} compact=${compact.modelPixels} textures=${JSON.stringify(pbrMaterialStats.textureSlots)}\n`);
+    return;
   }
   await captureButlerLayout(window, 'desktop', 980, 720);
   await captureButlerLayout(window, 'compact', 520, 420);

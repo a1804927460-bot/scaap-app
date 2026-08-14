@@ -107,6 +107,7 @@ const Board = {
   overviewImageActive: 0,
   overviewImagePixels: 0,
   overviewRedrawFrame: 0,
+  overviewHideFrame: 0,
   overviewImageFailed: new Set(),
   fullImageCache: new Map(),
   fullImagePending: new Map(),
@@ -930,20 +931,41 @@ function renderBoardItemContent(content, f, item) {
     preview.className = 'board-video-thumbnail';
     const img = document.createElement('img');
     img.src = f.thumbUrl;
-    img.loading = 'lazy';
+    img.loading = 'eager';
     observeBoardMediaIntrinsicRatio(content, f, item, img);
     img.alt = f.name;
     img.draggable = false;
-    preview.append(img, createBoardVideoDurationBadge(f));
+    let thumbnailRetries = 0;
+    img.addEventListener('error', () => {
+      if (thumbnailRetries < 2 && img.isConnected) {
+        thumbnailRetries += 1;
+        window.setTimeout(() => {
+          if (!img.isConnected) return;
+          img.removeAttribute('src');
+          requestAnimationFrame(() => { if (img.isConnected) img.src = f.thumbUrl; });
+        }, thumbnailRetries * 450);
+        return;
+      }
+      img.dataset.paintFailed = 'true';
+      preview.classList.add('is-thumbnail-failed');
+      syncBoardOverviewFallback();
+    });
+    const playIndicator = document.createElement('span');
+    playIndicator.className = 'board-video-play-indicator';
+    playIndicator.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="m8 5 11 7-11 7z"/></svg>';
+    preview.append(img, playIndicator, createBoardVideoDurationBadge(f));
     content.appendChild(preview);
 
     let hovering = false;
+    let pinnedPlayback = false;
     let playerPromise = null;
-    content.addEventListener('mouseenter', () => {
-      hovering = true;
+    const ensurePlayer = () => {
       if (!playerPromise) {
         playerPromise = loadBoardPreview(f.id).then((result) => {
-          if (!content.isConnected || !result || result.type !== 'video') return null;
+          if (!content.isConnected || !result || result.type !== 'video') {
+            playerPromise = null;
+            return null;
+          }
           const player = buildMiniVideoPlayer(result, f);
           content.replaceChildren(player);
           return player;
@@ -952,7 +974,11 @@ function renderBoardItemContent(content, f, item) {
           return null;
         });
       }
-      playerPromise.then((player) => {
+      return playerPromise;
+    };
+    content.addEventListener('mouseenter', () => {
+      hovering = true;
+      ensurePlayer().then((player) => {
         if (hovering && player && typeof player._boardPlayPreview === 'function') {
           player._boardPlayPreview();
         }
@@ -960,9 +986,18 @@ function renderBoardItemContent(content, f, item) {
     });
     content.addEventListener('mouseleave', () => {
       hovering = false;
-      if (!playerPromise) return;
+      if (pinnedPlayback || !playerPromise) return;
       playerPromise.then((player) => {
         if (player && typeof player._boardStopPreview === 'function') player._boardStopPreview();
+      });
+    });
+    content.addEventListener('click', () => {
+      if (Date.now() - Board.lastDragEndedAt <= 120) return;
+      pinnedPlayback = !pinnedPlayback;
+      ensurePlayer().then((player) => {
+        if (!player) return;
+        if (pinnedPlayback && typeof player._boardPlayPreview === 'function') player._boardPlayPreview();
+        else if (!pinnedPlayback && typeof player._boardStopPreview === 'function') player._boardStopPreview();
       });
     });
     return;
@@ -1187,8 +1222,12 @@ function isMountableBoardItem(id) {
 
 function isBoardElementPaintReady(element) {
   if (!element) return false;
-  return [...element.querySelectorAll('.board-image-layer.is-active, .board-video-thumbnail > img, .board-model-thumbnail > img')]
-    .every((image) => image.complete);
+  const images = [...element.querySelectorAll(
+    '.board-image-layer.is-active, .board-video-thumbnail > img, .mini-video-poster, .board-model-thumbnail > img'
+  )];
+  return images.every((image) => (
+    (image.complete && image.naturalWidth > 0) || image.dataset.paintFailed === 'true'
+  ));
 }
 
 function visibleBoardDomReady() {
@@ -1202,8 +1241,27 @@ function visibleBoardDomReady() {
 function syncBoardOverviewFallback(viewportRect) {
   if (!Board.overviewCanvas || Board.lastZoomBucket === 'overview') return;
   if (visibleBoardDomReady()) {
-    Board.overviewCanvas.hidden = true;
+    if (Board.overviewHideFrame) return;
+    // Keep the painted fallback for two stable frames after the last media
+    // load. This covers the compositor gap during zoom/virtual remounts.
+    Board.overviewHideFrame = requestAnimationFrame(() => {
+      Board.overviewHideFrame = requestAnimationFrame(() => {
+        Board.overviewHideFrame = 0;
+        const canvas = document.getElementById('board-canvas');
+        if (
+          Board.overviewCanvas && Board.lastZoomBucket !== 'overview' &&
+          !Board.zoomFrame && !(canvas && canvas.classList.contains('is-transforming')) &&
+          visibleBoardDomReady()
+        ) {
+          Board.overviewCanvas.hidden = true;
+        }
+      });
+    });
     return;
+  }
+  if (Board.overviewHideFrame) {
+    cancelAnimationFrame(Board.overviewHideFrame);
+    Board.overviewHideFrame = 0;
   }
   const viewport = document.getElementById('board-viewport');
   const rect = viewportRect || (viewport && viewport.getBoundingClientRect());
@@ -2624,30 +2682,111 @@ function buildMiniVideoPlayer(result, f) {
   const wrap = document.createElement('div');
   wrap.className = 'mini-video-player';
 
+  const poster = document.createElement('img');
+  poster.className = 'mini-video-poster';
+  poster.src = f.thumbUrl || '';
+  poster.alt = '';
+  poster.loading = 'eager';
+  poster.draggable = false;
+  poster.addEventListener('load', () => syncBoardOverviewFallback(), { once: true });
+  poster.addEventListener('error', () => {
+    poster.dataset.paintFailed = 'true';
+    syncBoardOverviewFallback();
+  }, { once: true });
+
   const video = document.createElement('video');
   video.src = result.url;
-  video.poster = f.thumbUrl || '';
   video.preload = 'auto';
   video.muted = true;
   video.loop = true;
   video.draggable = false;
   video.playsInline = true;
+  video.disablePictureInPicture = true;
+  const playIndicator = document.createElement('span');
+  playIndicator.className = 'board-video-play-indicator';
+  playIndicator.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="m8 5 11 7-11 7z"/></svg>';
   const durationBadge = createBoardVideoDurationBadge(f);
-  wrap.append(video, durationBadge);
+  wrap.append(poster, video, playIndicator, durationBadge);
 
   let wantsPreview = false;
   const abortController = new AbortController();
   let playRequest = 0;
+  let playbackWatchdog = 0;
+  let fallbackPromise = null;
+  let cleanedUp = false;
+
+  function clearPlaybackWatchdog() {
+    clearTimeout(playbackWatchdog);
+    playbackWatchdog = 0;
+  }
+
+  function installVideoSource(url, transcoded = false) {
+    if (!url || cleanedUp || !video.isConnected) return;
+    clearPlaybackWatchdog();
+    video.pause();
+    wrap.classList.remove('has-frame', 'is-playing', 'is-playback-error');
+    video.src = url;
+    video.dataset.usingTranscode = transcoded ? 'true' : '';
+    video.load();
+    if (wantsPreview) requestPlayback();
+  }
+
+  function recoverPlayableSource() {
+    if (cleanedUp || video.dataset.usingTranscode === 'true') {
+      wrap.classList.add('is-playback-error');
+      return Promise.resolve(false);
+    }
+    if (fallbackPromise) return fallbackPromise;
+    video.dataset.triedTranscode = '1';
+    wrap.classList.add('is-recovering');
+    fallbackPromise = Promise.resolve(window.messsAPI.transcodeVideo(f.id))
+      .then((res) => {
+        if (!res || !res.ok || !res.url || cleanedUp) {
+          wrap.classList.add('is-playback-error');
+          return false;
+        }
+        cacheBoardPreview(f.id, { ...result, url: res.url, transcoded: true });
+        installVideoSource(res.url, true);
+        return true;
+      })
+      .catch(() => {
+        wrap.classList.add('is-playback-error');
+        return false;
+      })
+      .finally(() => {
+        fallbackPromise = null;
+        wrap.classList.remove('is-recovering');
+      });
+    return fallbackPromise;
+  }
+
+  function armPlaybackWatchdog(request) {
+    clearPlaybackWatchdog();
+    const startedAt = Number(video.currentTime) || 0;
+    playbackWatchdog = window.setTimeout(() => {
+      playbackWatchdog = 0;
+      if (!wantsPreview || request !== playRequest || cleanedUp || !video.isConnected) return;
+      if (!video.paused && Number(video.currentTime) > startedAt + 0.04) return;
+      void recoverPlayableSource();
+    }, 2600);
+  }
+
   function requestPlayback() {
     const request = ++playRequest;
+    armPlaybackWatchdog(request);
     const attempt = () => {
       if (!wantsPreview || request !== playRequest || !video.isConnected) return;
       stopOtherBoardVideos(video);
       const promise = video.play();
       if (promise && typeof promise.catch === 'function') {
-        promise.catch(() => {
+        promise.catch((error) => {
           if (!wantsPreview || request !== playRequest) return;
-          if (video.readyState === HTMLMediaElement.HAVE_NOTHING) video.load();
+          if (error && error.name === 'NotSupportedError') {
+            void recoverPlayableSource();
+            return;
+          }
+          video.load();
+          armPlaybackWatchdog(request);
         });
       }
     };
@@ -2665,10 +2804,13 @@ function buildMiniVideoPlayer(result, f) {
   wrap._boardStopPreview = () => {
     wantsPreview = false;
     playRequest += 1;
+    clearPlaybackWatchdog();
     video.pause();
     try { video.currentTime = 0; } catch (error) {}
   };
   wrap._boardCleanup = () => {
+    cleanedUp = true;
+    clearPlaybackWatchdog();
     abortController.abort();
     wrap._boardStopPreview();
     video.removeAttribute('src');
@@ -2680,18 +2822,29 @@ function buildMiniVideoPlayer(result, f) {
     durationBadge.textContent = formatBoardVideoDuration(video.duration);
     durationBadge.hidden = false;
     if (wantsPreview) requestPlayback();
-  });
+  }, { signal: abortController.signal });
 
-  video.addEventListener('error', async () => {
-    if (video.dataset.triedTranscode) return;
-    video.dataset.triedTranscode = '1';
-    const res = await window.messsAPI.transcodeVideo(f.id);
-    if (res.ok) {
-      video.src = res.url;
-      video.load();
-      if (wantsPreview) requestPlayback();
-    }
-  }, { once: true });
+  video.addEventListener('loadeddata', () => {
+    wrap.classList.add('has-frame');
+  }, { signal: abortController.signal });
+  video.addEventListener('playing', () => {
+    clearPlaybackWatchdog();
+    wrap.classList.add('has-frame', 'is-playing');
+    wrap.classList.remove('is-playback-error');
+  }, { signal: abortController.signal });
+  video.addEventListener('pause', () => {
+    wrap.classList.remove('is-playing');
+  }, { signal: abortController.signal });
+  video.addEventListener('waiting', () => {
+    if (wantsPreview && video.currentTime <= 0.05) armPlaybackWatchdog(playRequest);
+  }, { signal: abortController.signal });
+  video.addEventListener('stalled', () => {
+    if (wantsPreview) armPlaybackWatchdog(playRequest);
+  }, { signal: abortController.signal });
+
+  video.addEventListener('error', () => {
+    void recoverPlayableSource();
+  }, { signal: abortController.signal });
 
   return wrap;
 }
@@ -3700,40 +3853,135 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     setOptionsOpen(true);
   }
 
-  function renderBoardReferences() {
-    referenceStrip.innerHTML = '';
-    referenceStrip.hidden = boardReferences.size === 0;
-    boardReferences.forEach((entry) => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'ai-composer-reference-thumb';
-      button.title = t(`Remove ${entry.name}`, `移除 ${entry.name}`);
-      button.setAttribute('aria-label', button.title);
-      const image = document.createElement('img');
-      image.src = entry.thumbUrl || entry.dataUrl;
-      image.alt = entry.name;
-      const remove = document.createElement('span');
-      remove.setAttribute('aria-hidden', 'true');
-      remove.textContent = '×';
-      button.append(image, remove);
-      button.addEventListener('click', () => {
-        boardReferences.delete(entry.fileId);
-        renderBoardReferences();
-        if (kind === 'video' && !boardReferences.size) ratio = aiConfig.videoAspectRatio || '16:9';
-        syncGenerationOptions();
-        syncAiComposerReferenceClasses();
-      });
-      referenceStrip.appendChild(button);
+  function syncComposerSubmitAvailability() {
+    const availableProviders = kind === 'image' ? providers : videoProviders;
+    const hasProvider = availableProviders.some((provider) => provider.id === modelSelect.value);
+    const referencesLoading = [...boardReferences.values()].some((entry) => entry.isLoading);
+    submit.disabled = !hasProvider || referencesLoading;
+    submit.setAttribute('aria-busy', String(referencesLoading));
+  }
+
+  function setBoardReferenceOrder(fileIds) {
+    const previous = new Map(boardReferences);
+    boardReferences.clear();
+    fileIds.forEach((fileId) => {
+      if (previous.has(fileId)) boardReferences.set(fileId, previous.get(fileId));
+    });
+    previous.forEach((entry, fileId) => {
+      if (!boardReferences.has(fileId)) boardReferences.set(fileId, entry);
     });
   }
 
+  function commitBoardReferenceOrder() {
+    setBoardReferenceOrder(
+      [...referenceStrip.querySelectorAll('.ai-composer-reference-thumb')]
+        .map((element) => element.dataset.referenceFileId)
+        .filter(Boolean)
+    );
+  }
+
+  function removeBoardReference(fileId) {
+    boardReferences.delete(fileId);
+    renderBoardReferences();
+    if (kind === 'video' && !boardReferences.size) ratio = aiConfig.videoAspectRatio || '16:9';
+    syncGenerationOptions();
+    syncAiComposerReferenceClasses();
+  }
+
+  function renderBoardReferences() {
+    referenceStrip.innerHTML = '';
+    referenceStrip.hidden = boardReferences.size === 0;
+    boardReferences.forEach((entry, fileId) => {
+      const thumb = document.createElement('div');
+      thumb.className = 'ai-composer-reference-thumb' + (entry.isLoading ? ' is-loading' : '');
+      thumb.dataset.referenceFileId = fileId;
+      thumb.draggable = true;
+      thumb.tabIndex = 0;
+      thumb.title = t(`Drag to reorder ${entry.name}`, `拖动调整 ${entry.name} 的顺序`);
+      thumb.setAttribute('aria-label', thumb.title);
+      const image = document.createElement('img');
+      const previewUrl = entry.thumbUrl || entry.dataUrl;
+      if (previewUrl) image.src = previewUrl;
+      image.alt = entry.name;
+      image.draggable = false;
+      const order = document.createElement('span');
+      order.className = 'ai-composer-reference-order';
+      order.textContent = String([...boardReferences.keys()].indexOf(fileId) + 1);
+      order.setAttribute('aria-hidden', 'true');
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'ai-composer-reference-remove';
+      remove.title = t(`Remove ${entry.name}`, `移除 ${entry.name}`);
+      remove.setAttribute('aria-label', remove.title);
+      remove.textContent = '×';
+      remove.addEventListener('pointerdown', (event) => event.stopPropagation());
+      remove.addEventListener('click', (event) => {
+        // The clicked node disappears in this handler. Stop the original event
+        // here so the document closer cannot mistake it for an outside click.
+        event.preventDefault();
+        event.stopPropagation();
+        removeBoardReference(fileId);
+      });
+      thumb.append(image, order, remove);
+      thumb.addEventListener('dragstart', (event) => {
+        thumb.classList.add('is-dragging');
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('application/x-messs-reference-id', fileId);
+        }
+        event.stopPropagation();
+      });
+      thumb.addEventListener('dragend', (event) => {
+        thumb.classList.remove('is-dragging');
+        commitBoardReferenceOrder();
+        event.stopPropagation();
+      });
+      thumb.addEventListener('keydown', (event) => {
+        if (event.target !== thumb || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+        const orderedIds = [...boardReferences.keys()];
+        const fromIndex = orderedIds.indexOf(fileId);
+        const toIndex = event.key === 'ArrowLeft' ? fromIndex - 1 : fromIndex + 1;
+        if (fromIndex < 0 || toIndex < 0 || toIndex >= orderedIds.length) return;
+        event.preventDefault();
+        event.stopPropagation();
+        [orderedIds[fromIndex], orderedIds[toIndex]] = [orderedIds[toIndex], orderedIds[fromIndex]];
+        setBoardReferenceOrder(orderedIds);
+        renderBoardReferences();
+        referenceStrip.querySelector(`[data-reference-file-id="${CSS.escape(fileId)}"]`)?.focus();
+      });
+      referenceStrip.appendChild(thumb);
+    });
+    syncComposerSubmitAvailability();
+  }
+
+  referenceStrip.addEventListener('dragenter', (event) => {
+    if (!referenceStrip.querySelector('.ai-composer-reference-thumb.is-dragging')) return;
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  referenceStrip.addEventListener('dragover', (event) => {
+    const dragged = referenceStrip.querySelector('.ai-composer-reference-thumb.is-dragging');
+    if (!dragged) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    const target = event.target.closest('.ai-composer-reference-thumb');
+    if (!target || target === dragged || !referenceStrip.contains(target)) return;
+    const bounds = target.getBoundingClientRect();
+    const insertBefore = event.clientX < bounds.left + bounds.width / 2;
+    referenceStrip.insertBefore(dragged, insertBefore ? target : target.nextSibling);
+  });
+  referenceStrip.addEventListener('dragleave', (event) => event.stopPropagation());
+  referenceStrip.addEventListener('drop', (event) => {
+    if (!referenceStrip.querySelector('.ai-composer-reference-thumb.is-dragging')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    commitBoardReferenceOrder();
+  });
+
   async function toggleBoardReference(fileId) {
     if (boardReferences.has(fileId)) {
-      boardReferences.delete(fileId);
-      renderBoardReferences();
-      if (kind === 'video' && !boardReferences.size) ratio = aiConfig.videoAspectRatio || '16:9';
-      syncGenerationOptions();
-      syncAiComposerReferenceClasses();
+      removeBoardReference(fileId);
       return;
     }
     const capabilities = kind === 'video' ? selectedVideoCapabilities() : selectedImageCapabilities();
@@ -3754,19 +4002,43 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     }
     const file = AppState.files.find((entry) => entry.id === fileId);
     if (!file || !isImageExt(file.ext)) return;
-    const dataUrl = await window.messsAPI.readFileAsDataUrl(file.id);
-    if (!dataUrl) throw new Error(t('Could not read the reference image.', '无法读取参考图。'));
-    boardReferences.set(file.id, {
+
+    // Reserve the Map slot at click time, before the asynchronous file read.
+    // Map insertion order is the generation order, so a slower first image
+    // can never be overtaken by a faster image clicked afterwards.
+    const pendingEntry = {
       fileId: file.id,
       name: file.name,
-      dataUrl,
+      dataUrl: null,
       thumbUrl: file.thumbUrl || file.url,
       sourceWidth: Number(file.sourceWidth) || null,
-      sourceHeight: Number(file.sourceHeight) || null
-    });
+      sourceHeight: Number(file.sourceHeight) || null,
+      isLoading: true
+    };
+    boardReferences.set(file.id, pendingEntry);
     renderBoardReferences();
     syncGenerationOptions();
     syncAiComposerReferenceClasses();
+
+    try {
+      const dataUrl = await window.messsAPI.readFileAsDataUrl(file.id);
+      if (!dataUrl) throw new Error(t('Could not read the reference image.', '无法读取参考图。'));
+      // The user may remove this image while it is loading. Only fill the
+      // reserved slot; never append a stale result back to the end.
+      if (boardReferences.get(file.id) !== pendingEntry) return;
+      pendingEntry.dataUrl = dataUrl;
+      pendingEntry.isLoading = false;
+      renderBoardReferences();
+      updateCreditEstimate();
+    } catch (error) {
+      if (boardReferences.get(file.id) === pendingEntry) {
+        boardReferences.delete(file.id);
+        renderBoardReferences();
+        syncGenerationOptions();
+        syncAiComposerReferenceClasses();
+      }
+      throw error;
+    }
   }
 
   function setModeButtonLabel(button, label) {
@@ -3875,7 +4147,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     if (selected) appendAiModelLabel(modelPickerLabel, selected, { sparkle: false });
     // A running request must not disable a newly opened composer. Each
     // submission owns its own request and placeholder state.
-    submit.disabled = !selected;
+    syncComposerSubmitAvailability();
     modelPickerMenu.querySelectorAll('.ai-model-picker-option').forEach((option) => {
       const active = selected && option.dataset.value === selected.id;
       option.classList.toggle('is-active', active);
@@ -4228,6 +4500,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if ([...boardReferences.values()].some((entry) => entry.isLoading)) {
+      showToast(t('Wait for the reference images to finish loading.', '请等待参考图加载完成。'), 'AI');
+      return;
+    }
     const text = prompt.value.trim();
     if (!text) {
       showToast(t('Enter a generation prompt first.', '请先输入生成提示词。'), 'AI');
@@ -4867,7 +5143,8 @@ async function showAiImagePopover(initialKind = 'image') {
   setTimeout(() => textarea.focus(), 0);
 
   aiImagePopoverClickCloser = (e) => {
-    if (pop.contains(e.target)) return;
+    const eventPath = typeof e.composedPath === 'function' ? e.composedPath() : [];
+    if (pop.contains(e.target) || eventPath.includes(pop)) return;
     if (e.target.closest('#board-mode-toggle, #board-tool-ai-image, #board-tool-ai-video')) return;
     // Canvas images toggle AI reference state; they must not dismiss the active composer.
     if (e.target.closest('#board-canvas .board-item-image')) return;

@@ -1,6 +1,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { authenticate } from './auth.js';
+import { publicGatewayError } from './public-errors.js';
 import {
   createThreeDTask,
   createVideoUpscaleTask,
@@ -1082,8 +1083,8 @@ async function handle(request, response) {
 
 const server = http.createServer((request, response) => {
   handle(request, response).catch((error) => {
-    const status = Number(error.status) || (error.name === 'AbortError' ? 499 : 500);
-    const code = String(error.code || (status >= 500 ? 'gateway-error' : 'bad-request'));
+    const publicError = publicGatewayError(error);
+    const { status, code } = publicError;
     const safeMessages = {
       'quota-not-configured': 'AI quota service is not configured.',
       'quota-service-failed': 'AI quota check is temporarily unavailable.',
@@ -1095,6 +1096,7 @@ const server = http.createServer((request, response) => {
       'redemption-service-failed': 'Code redemption is temporarily unavailable.',
       'provider-not-configured': 'The selected AI model is not configured on the server.',
       'provider-secret-missing': 'The selected AI model is missing its server credential.',
+      'provider-auth-failed': 'The selected AI provider rejected its server credential.',
       'video-job-service-not-configured': 'Background video generation is not configured.',
       'video-job-schema-missing': 'Background video generation is being upgraded. Please try again shortly.',
       'video-job-service-failed': 'Background video generation is temporarily unavailable.',
@@ -1140,7 +1142,7 @@ const server = http.createServer((request, response) => {
     }));
     if (!response.headersSent) send(response, status, {
       code,
-      message: safeMessages[code] || (status >= 500 ? 'The AI gateway could not complete this request.' : error.message)
+      message: safeMessages[code] || (status >= 500 ? 'The AI gateway could not complete this request.' : publicError.message)
     });
   });
 });

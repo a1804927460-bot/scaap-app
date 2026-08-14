@@ -1084,27 +1084,44 @@ function normalizeTopazVideoStatus(job) {
   throw toolError('ai302-invalid-response', 'The video enhancement service returned an unsupported task status.', 502);
 }
 
-function hasTopazPayloadFields(value) {
-  return value && typeof value === 'object' && !Array.isArray(value) && [
-    'requestId', 'request_id', 'cost', 'status', 'progress', 'download', 'processingJobs'
-  ].some((key) => Object.hasOwn(value, key));
+function topazPayloadScore(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return -1;
+  let score = 0;
+  if (['requestId', 'request_id', 'taskId', 'task_id', 'jobId', 'job_id'].some((key) => Object.hasOwn(value, key))) score += 5;
+  if (['cost', 'providerCost', 'provider_cost'].some((key) => Object.hasOwn(value, key))) score += 4;
+  if (Object.hasOwn(value, 'processingJobs')) score += 4;
+  if (Object.hasOwn(value, 'download')) score += 3;
+  if (Object.hasOwn(value, 'output') || Object.hasOwn(value, 'url')) score += 2;
+  if (Object.hasOwn(value, 'progress')) score += 1;
+  const status = String(value.status || '').trim().toUpperCase().replace(/[ -]+/g, '_');
+  if (
+    QUEUED_STATES.has(status) || PROCESSING_STATES.has(status) || SUCCESS_STATES.has(status) || FAILURE_STATES.has(status)
+    || ['UPLOADING', 'ACCEPTED', 'SUBMITTED', 'ENCODING', 'ENHANCING', 'COMPLETE', 'FINISHED', 'READY', 'ABORTED', 'REJECTED'].includes(status)
+  ) score += 2;
+  return score;
 }
 
 function topazResponseObject(payload) {
   let value = payload;
+  let best = null;
+  let bestScore = -1;
   for (let depth = 0; depth < 3; depth += 1) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) break;
-    if (hasTopazPayloadFields(value)) break;
+    const score = topazPayloadScore(value);
+    if (score > bestScore) {
+      best = value;
+      bestScore = score;
+    }
     const nested = ['data', 'result', 'response']
       .map((key) => value[key])
       .find((entry) => entry && typeof entry === 'object' && !Array.isArray(entry));
     if (!nested) break;
     value = nested;
   }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+  if (!best || bestScore <= 0) {
     throw toolError('ai302-invalid-response', 'The video enhancement service returned an invalid response.', 502);
   }
-  return value;
+  return best;
 }
 
 function topazDownloadUrl(payload) {
@@ -1672,8 +1689,10 @@ export async function createVideoUpscaleTask({ videoDataUrl, toolOptions, userId
       timeoutMs: LONG_RUNNING_REQUEST_TIMEOUT_MS
     });
     const result = topazResponseObject(payload);
-    const providerJobId = String(result.requestId || result.request_id || '').trim();
-    const providerCost = Number(result.cost);
+    const providerJobId = String(
+      result.requestId || result.request_id || result.taskId || result.task_id || result.jobId || result.job_id || ''
+    ).trim();
+    const providerCost = Number(result.cost ?? result.providerCost ?? result.provider_cost);
     if (!providerJobId || providerJobId.length > 512 || /[\u0000-\u001f\u007f]/.test(providerJobId)
         || !Number.isInteger(providerCost) || providerCost < 0 || providerCost > 1_000_000) {
       throw toolError('ai302-invalid-response', 'The video enhancement service did not return a valid task.', 502);
