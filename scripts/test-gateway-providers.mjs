@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import fs from 'node:fs';
 
 const require = createRequire(import.meta.url);
+const gatewayServerSource = fs.readFileSync(new URL('../gateway/src/server.js', import.meta.url), 'utf8');
 const { PROVIDER_CATALOG_VERSION } = require('../lib/provider-catalog');
 
 process.env.Quick_API_KEY = 'quickrouter-secret';
@@ -32,6 +34,7 @@ const {
   createVideoTask,
   generateMedia,
   pollVideoTask,
+  providerPromptLimit,
   publicProviderConfig
 } = await import('../gateway/src/providers.js');
 const config = publicProviderConfig();
@@ -68,8 +71,25 @@ assert.equal(gptImage2Provider.model, 'gpt-image-2');
 assert.equal(gptImage2Provider.protocol, 'openai-image');
 assert.deepEqual(gptImage2Provider.capabilities.sizes, ['1024x1024', '1536x1024', '1024x1536', 'auto']);
 assert.deepEqual(gptImage2Provider.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
+assert.deepEqual(gptImage2Provider.capabilities.sizeRatios, {
+  '1024x1024': '1:1',
+  '1536x1024': '3:2',
+  '1024x1536': '2:3',
+  auto: 'auto'
+});
+assert.equal(gptImage2Provider.capabilities.promptMaxCharacters, 1000);
+assert.equal(gptImage2Provider.capabilities.referencePromptMaxCharacters, 32000);
 assert.deepEqual(gptImage2Provider.capabilities.referenceMimeTypes, ['image/png', 'image/jpeg', 'image/webp']);
 assert.equal(gptImage2Provider.capabilities.maxReferenceImageBytes, (25 * 1024 * 1024) - 1);
+assert.equal(providerPromptLimit('image', 'image-6', false), 1000);
+assert.equal(providerPromptLimit('image', 'image-6', true), 32000);
+assert.equal(providerPromptLimit('image', 'image-1', false), 12000);
+assert.equal(providerPromptLimit('video', 'video-1', false), 7000);
+assert.match(
+  gatewayServerSource,
+  /const sizeRatios = capabilities\.sizeRatios[\s\S]*?mappedRatio !== requestedRatio[\s\S]*?invalid-size-ratio/,
+  'Gateway must reject contradictory mapped image sizes and ratios.'
+);
 assert.deepEqual(
   config.providers.find((provider) => provider.id === 'video-1').capabilities.resolutions,
   ['768P', '2K']

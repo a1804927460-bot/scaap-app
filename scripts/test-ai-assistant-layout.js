@@ -36,5 +36,10 @@ assert(css.includes('.ai-assistant-home h2 { font-size: 24px; }'),
   'the AI heading should use the larger coordinated type scale');
 assert(css.includes('.ai-chat-history-item {') && css.includes('font-size: 15px;'),
   'AI history text should match the larger reference scale');
+assert.match(
+  assistantSource,
+  /function syncAssistantImageSizeRatio[\s\S]*?imageSizeForRatio[\s\S]*?imageRatioForSize[\s\S]*?id === 'ai-assistant-ratio'[\s\S]*?id === 'ai-assistant-size'/,
+  'GPT image size and ratio selections must stay synchronized in the assistant.'
+);
 
 console.log('AI assistant layout checks passed');

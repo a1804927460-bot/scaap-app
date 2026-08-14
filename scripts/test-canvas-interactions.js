@@ -83,8 +83,19 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /submitBoardQuickGeneration[\s\S]*?supportedImageSize\(config\.imageSize, imageCapabilities\)[\s\S]*?supportedImageAspectRatio\(original\.aspectRatio, imageCapabilities, referenceFileIds\.length > 0\)/,
-  'Quick image generation must normalize resolution and ratio through the selected provider capabilities.'
+  /function imageRatioForSize[\s\S]*?capabilities\.sizeRatios[\s\S]*?function imageSizeForRatio[\s\S]*?function supportedImageSizeForRatio/,
+  'Mapped image sizes and ratios must be normalized as one coherent option.'
+);
+assert.match(
+  boardSource,
+  /submitBoardQuickGeneration[\s\S]*?supportedImageSizeForRatio\(config\.imageSize, original\.aspectRatio, imageCapabilities, referenceFileIds\.length\)[\s\S]*?imageRatioForSize\(imageSize, imageCapabilities\)[\s\S]*?supportedImageAspectRatio\(original\.aspectRatio, imageCapabilities, referenceFileIds\.length > 0\)/,
+  'Quick image generation must preserve source orientation while selecting a provider size.'
+);
+assert.match(workspaceSource, /submitCanvasAgentGeneration[\s\S]*?supportedImageSizeForRatio\(config\.imageSize, original\.aspectRatio, capabilities, references\.referenceFileIds\.length\)/);
+assert.match(
+  mainSource,
+  /const sizeRatios = capabilities\.sizeRatios[\s\S]*?mappedRatio !== aspectRatio[\s\S]*?invalid-size-ratio/,
+  'Desktop validation must reject contradictory mapped image sizes and ratios.'
 );
 assert.match(
   boardSource,

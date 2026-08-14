@@ -511,7 +511,16 @@ function syncAssistantMediaOptions() {
     option.textContent = value === 'Default' ? t('Default', '默认', '기본') : value;
     sizeSelect.appendChild(option);
   });
-  sizeSelect.value = resolutions.includes(previousSize) ? previousSize : resolutions[0];
+  if (isVideo) {
+    sizeSelect.value = resolutions.includes(previousSize) ? previousSize : resolutions[0];
+  } else {
+    sizeSelect.value = supportedImageSizeForRatio(
+      previousSize,
+      (AiAssistant.config && AiAssistant.config.imageAspectRatio) || '1:1',
+      capabilities,
+      AiAssistant.attachments.length
+    );
+  }
 
   durationSelect.innerHTML = '';
   durations.forEach((value) => {
@@ -524,6 +533,7 @@ function syncAssistantMediaOptions() {
     ? String(previousDuration)
     : String(durations[0]);
   renderAssistantRatios();
+  if (!isVideo) syncAssistantImageSizeRatio('size');
   refreshAssistantOptionSummary();
   updateAssistantCreditEstimate();
 }
@@ -643,6 +653,22 @@ function renderAssistantRatios() {
   select.value = ratios.includes(selected) ? selected : ratios[0];
   select.disabled = ratios.length < 2;
   refreshAssistantOptionSummary();
+}
+
+function syncAssistantImageSizeRatio(source) {
+  if (AiAssistant.kind !== 'image') return;
+  const sizeSelect = document.getElementById('ai-assistant-size');
+  const ratioSelect = document.getElementById('ai-assistant-ratio');
+  const capabilities = assistantImageCapabilities();
+  if (source === 'ratio') {
+    sizeSelect.value = imageSizeForRatio(
+      ratioSelect.value,
+      capabilities,
+      AiAssistant.attachments.length
+    ) || sizeSelect.value;
+  } else {
+    ratioSelect.value = imageRatioForSize(sizeSelect.value, capabilities) || ratioSelect.value;
+  }
 }
 
 function refreshAssistantOptionSummary() {
@@ -1065,6 +1091,8 @@ function initAiAssistant() {
   });
   ['ai-assistant-ratio', 'ai-assistant-size', 'ai-assistant-count', 'ai-assistant-duration'].forEach((id) => {
     document.getElementById(id).addEventListener('change', () => {
+      if (id === 'ai-assistant-ratio') syncAssistantImageSizeRatio('ratio');
+      if (id === 'ai-assistant-size') syncAssistantImageSizeRatio('size');
       refreshAssistantOptionSummary();
       updateAssistantCreditEstimate();
     });

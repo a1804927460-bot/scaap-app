@@ -111,6 +111,19 @@ export function providerCapabilities(kind, id) {
     : null;
 }
 
+export function providerPromptLimit(kind, id, hasReferences = false) {
+  const capabilities = providerCapabilities(kind, id) || {};
+  const fallback = kind === 'video' ? 7_000 : 12_000;
+  const configured = Number(
+    hasReferences && capabilities.referencePromptMaxCharacters !== undefined
+      ? capabilities.referencePromptMaxCharacters
+      : capabilities.promptMaxCharacters
+  );
+  return Number.isInteger(configured) && configured > 0
+    ? Math.min(32_000, configured)
+    : fallback;
+}
+
 function providerFor(kind, id) {
   const selected = configuredProvider(kind, id);
   if (!selected) throw Object.assign(new Error(`No ${kind} provider is configured.`), { code: 'provider-not-configured' });

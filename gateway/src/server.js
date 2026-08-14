@@ -33,6 +33,7 @@ import {
   models,
   pollVideoTask,
   providerCapabilities,
+  providerPromptLimit,
   publicProviderConfig
 } from './providers.js';
 import {
@@ -207,7 +208,11 @@ function validateBody(body, kind) {
   const prompt = String(body.prompt || '').trim();
   const providerId = String(body.providerId || '').trim().toLowerCase().slice(0, 64);
   const capabilities = providerCapabilities(kind, providerId) || {};
-  const maxPromptLength = kind === 'video' ? 7_000 : 12_000;
+  const maxPromptLength = providerPromptLimit(
+    kind,
+    providerId,
+    Array.isArray(body.urls) && body.urls.length > 0
+  );
   if (!prompt || prompt.length > maxPromptLength) {
     throw Object.assign(new Error(`Prompt must contain 1 to ${maxPromptLength} characters.`), { status: 400, code: 'invalid-prompt' });
   }
@@ -298,6 +303,13 @@ function validateBody(body, kind) {
           ? 'The selected image model does not support this aspect ratio with reference images.'
           : 'The selected image aspect ratio is not supported.'
       );
+    }
+    const sizeRatios = capabilities.sizeRatios;
+    const mappedRatio = sizeRatios && typeof sizeRatios === 'object' && !Array.isArray(sizeRatios)
+      ? String(sizeRatios[requestedSize] || '').trim()
+      : '';
+    if (mappedRatio && mappedRatio !== requestedRatio) {
+      throw invalidOption('invalid-size-ratio', 'The selected image resolution does not match the aspect ratio.');
     }
     if (allowedQualities && !allowedQualities.has(requestedQuality)) {
       throw invalidOption('invalid-quality', 'The selected image quality is not supported.');

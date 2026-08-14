@@ -816,7 +816,13 @@ async function submitCanvasAgentGeneration(prompt) {
     ? sourceImageGenerationOptionsForFile(sourceFile)
     : { aspectRatio: kind === 'video' ? '16:9' : '1:1', sourceWidth: null, sourceHeight: null };
   const capabilities = provider.capabilities || {};
-  const resolution = kind === 'video' ? supportedVideoResolution(null, capabilities) : supportedImageSize(config.imageSize, capabilities);
+  const resolution = kind === 'video'
+    ? supportedVideoResolution(null, capabilities)
+    : supportedImageSizeForRatio(config.imageSize, original.aspectRatio, capabilities, references.referenceFileIds.length);
+  const imageRatio = kind === 'image'
+    ? (imageRatioForSize(resolution, capabilities)
+      || supportedImageAspectRatio(original.aspectRatio, capabilities, references.referenceFileIds.length > 0))
+    : undefined;
   await generateAiMediaForBoardV3({
     kind,
     prompt,
@@ -826,7 +832,7 @@ async function submitCanvasAgentGeneration(prompt) {
     duration: kind === 'video' ? supportedVideoDuration(config.videoDuration, capabilities) : Number(config.videoDuration) || 6,
     aspectRatio: kind === 'video'
       ? supportedVideoAspectRatio(original.aspectRatio, capabilities, references.referenceFileIds.length > 0)
-      : supportedImageAspectRatio(original.aspectRatio, capabilities, references.referenceFileIds.length > 0),
+      : imageRatio,
     sourceWidth: original.sourceWidth,
     sourceHeight: original.sourceHeight,
     imageProviderId: kind === 'image' ? provider.id : null,

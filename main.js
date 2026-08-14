@@ -3157,6 +3157,13 @@ function normalizeAiMediaGenerationRequest(request, kind) {
     if (supportedRatios.size && !supportedRatios.has(aspectRatio)) {
       throw invalidAiMediaOption('invalid-aspect-ratio', 'The selected image model does not support this aspect ratio.');
     }
+    const sizeRatios = capabilities.sizeRatios;
+    const mappedRatio = sizeRatios && typeof sizeRatios === 'object' && !Array.isArray(sizeRatios)
+      ? String(sizeRatios[size] || '').trim()
+      : '';
+    if (mappedRatio && mappedRatio !== aspectRatio) {
+      throw invalidAiMediaOption('invalid-size-ratio', 'The selected image resolution does not match the aspect ratio.');
+    }
     normalized.imageProviderId = providerId;
     normalized.size = size;
     normalized.quality = quality;

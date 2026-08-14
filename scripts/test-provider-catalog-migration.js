@@ -63,6 +63,14 @@ assert.equal(gptImage2.model, 'gpt-image-2');
 assert.equal(gptImage2.endpoint, 'https://api.quickrouter.ai/v1/images/generations');
 assert.deepEqual(gptImage2.capabilities.sizes, ['1024x1024', '1536x1024', '1024x1536', 'auto']);
 assert.deepEqual(gptImage2.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
+assert.deepEqual(gptImage2.capabilities.sizeRatios, {
+  '1024x1024': '1:1',
+  '1536x1024': '3:2',
+  '1024x1536': '2:3',
+  auto: 'auto'
+});
+assert.equal(gptImage2.capabilities.promptMaxCharacters, 1000);
+assert.equal(gptImage2.capabilities.referencePromptMaxCharacters, 32000);
 for (const id of ['image-8']) {
   const higgsfield = media.imageProviders.find((provider) => provider.id === id);
   assert.ok(higgsfield);

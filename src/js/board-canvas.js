@@ -3490,6 +3490,41 @@ function supportedImageAspectRatio(value, capabilities = {}, hasReferenceImages 
   return supported[0] || '1:1';
 }
 
+function imageRatioForSize(size, capabilities = {}) {
+  const mappings = capabilities.sizeRatios;
+  if (!mappings || typeof mappings !== 'object' || Array.isArray(mappings)) return '';
+  return String(mappings[String(size || '').trim()] || '').trim();
+}
+
+function imageSizeForRatio(ratio, capabilities = {}, referenceCount = 0) {
+  const mappings = capabilities.sizeRatios;
+  if (!mappings || typeof mappings !== 'object' || Array.isArray(mappings)) return '';
+  const requested = String(ratio || '').trim();
+  const supported = supportedImageSizes(capabilities, referenceCount);
+  const match = supported.find((size) => String(mappings[size] || '').trim() === requested);
+  return match || '';
+}
+
+function supportedImageSizeForRatio(size, ratio, capabilities = {}, referenceCount = 0) {
+  const supportedSize = supportedImageSize(size, capabilities, referenceCount);
+  const requestedRatio = String(ratio || '').trim();
+  let supportedRatio = supportedImageAspectRatio(requestedRatio, capabilities, referenceCount > 0);
+  if (capabilities.sizeRatios && !supportedImageRatios(capabilities, referenceCount > 0).includes(requestedRatio)) {
+    const numeric = BoardEngine.parseAspectRatio(requestedRatio, NaN);
+    const mappedRatios = [...new Set(Object.values(capabilities.sizeRatios).map(String))]
+      .map((value) => ({ value, numeric: BoardEngine.parseAspectRatio(value, NaN) }))
+      .filter((entry) => Number.isFinite(entry.numeric));
+    if (Number.isFinite(numeric) && mappedRatios.length) {
+      supportedRatio = mappedRatios.reduce((nearest, candidate) => (
+        Math.abs(candidate.numeric - numeric) < Math.abs(nearest.numeric - numeric) ? candidate : nearest
+      )).value;
+    }
+  }
+  const mappedRatio = imageRatioForSize(supportedSize, capabilities);
+  if (!mappedRatio || mappedRatio === supportedRatio) return supportedSize;
+  return imageSizeForRatio(supportedRatio, capabilities, referenceCount) || supportedSize;
+}
+
 function supportedVideoResolutions(capabilities = {}) {
   return normalizedCapabilityValues(capabilities.resolutions, DEFAULT_VIDEO_RESOLUTIONS)
     .map((entry) => entry.toUpperCase());
@@ -4289,7 +4324,13 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       ? supportedVideoResolutions(capabilities)
       : supportedImageSizes(capabilities, boardReferences.size);
     const durations = kind === 'video' ? supportedVideoDurations(capabilities) : [6, 8, 10, 15];
-    if (!resolutions.includes(size)) size = resolutions[0];
+    if (kind === 'image') {
+      size = supportedImageSizeForRatio(size, ratio, capabilities, boardReferences.size);
+      ratio = imageRatioForSize(size, capabilities)
+        || supportedImageAspectRatio(ratio, capabilities, boardReferences.size > 0);
+    } else if (!resolutions.includes(size)) {
+      size = resolutions[0];
+    }
     const supportedCounts = kind === 'image' && Array.isArray(capabilities.counts) && capabilities.counts.length
       ? capabilities.counts.map(Number).filter((value) => Number.isInteger(value) && value >= 1 && value <= 4)
       : [1, 2, 3, 4];
@@ -4350,6 +4391,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       button.innerHTML = `<span class="ai-ratio-shape${automatic ? ' is-auto' : ''}" style="width:${iconWidth}px;height:${iconHeight}px"></span><small>${automatic ? t('Auto', '自动') : value}</small>`;
       button.addEventListener('click', () => {
         ratio = value;
+        if (kind === 'image') {
+          size = imageSizeForRatio(ratio, capabilities, boardReferences.size) || size;
+          syncSegments();
+        }
         renderRatios();
         updateSummary();
         keepOptionsOpen();
@@ -4451,6 +4496,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const button = event.target.closest('[data-value]');
     if (!button) return;
     size = button.dataset.value;
+    if (kind === 'image') {
+      ratio = imageRatioForSize(size, selectedImageCapabilities()) || ratio;
+      renderRatios();
+    }
     syncSegments();
     updateSummary();
     refreshLanguage();
@@ -4575,12 +4624,13 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       duration = supportedVideoDuration(preset.duration || duration, capabilities);
     } else {
       const capabilities = selectedImageCapabilities();
-      size = supportedImageSize(preset.size, capabilities);
       ratio = supportedImageAspectRatio(
         preset.aspectRatio || ratio,
         capabilities,
         boardReferences.size > 0
       );
+      size = supportedImageSizeForRatio(preset.size, ratio, capabilities, boardReferences.size);
+      ratio = imageRatioForSize(size, capabilities) || ratio;
     }
     count = Math.max(1, Math.min(4, Number(preset.count) || 1));
     syncGenerationOptions();
@@ -4845,7 +4895,11 @@ async function submitBoardQuickGeneration(kind, promptText, options = {}) {
       : undefined;
     const imageSize = isVideo
       ? undefined
-      : supportedImageSize(config.imageSize, imageCapabilities);
+      : supportedImageSizeForRatio(config.imageSize, original.aspectRatio, imageCapabilities, referenceFileIds.length);
+    const imageRatio = isVideo
+      ? undefined
+      : (imageRatioForSize(imageSize, imageCapabilities)
+        || supportedImageAspectRatio(original.aspectRatio, imageCapabilities, referenceFileIds.length > 0));
     return await generateAiMediaForBoardV3({
       kind,
       prompt: promptText,
@@ -4857,7 +4911,7 @@ async function submitBoardQuickGeneration(kind, promptText, options = {}) {
         : Number(config.videoDuration) || 6,
       aspectRatio: isVideo
         ? supportedVideoAspectRatio(original.aspectRatio, videoCapabilities, referenceFileIds.length > 0)
-        : supportedImageAspectRatio(original.aspectRatio, imageCapabilities, referenceFileIds.length > 0),
+        : imageRatio,
       sourceWidth: original.sourceWidth,
       sourceHeight: original.sourceHeight,
       imageProviderId: kind === 'image' && provider ? provider.id : null,
@@ -4946,10 +5000,25 @@ async function retryGeneratedMediaFromDetails(file) {
     const imageCapabilities = imageProvider && imageProvider.capabilities
       ? imageProvider.capabilities
       : {};
+    const imageSize = isVideo
+      ? undefined
+      : supportedImageSizeForRatio(
+        generation.size,
+        generation.aspectRatio,
+        imageCapabilities,
+        references.referenceFileIds.length
+      );
+    const imageRatio = isVideo
+      ? undefined
+      : (imageRatioForSize(imageSize, imageCapabilities) || supportedImageAspectRatio(
+        generation.aspectRatio,
+        imageCapabilities,
+        references.referenceFileIds.length > 0
+      ));
     await generateAiMediaForBoardV3({
       kind: isVideo ? 'video' : 'image',
       prompt: generation.prompt,
-      size: isVideo ? videoResolution : supportedImageSize(generation.size, imageCapabilities),
+      size: isVideo ? videoResolution : imageSize,
       resolution: videoResolution,
       count: 1,
       duration: isVideo
@@ -4957,11 +5026,7 @@ async function retryGeneratedMediaFromDetails(file) {
         : Number(generation.duration) || 6,
       aspectRatio: isVideo
         ? supportedVideoAspectRatio(generation.aspectRatio, videoCapabilities, references.referenceFileIds.length > 0)
-        : supportedImageAspectRatio(
-          generation.aspectRatio,
-          imageCapabilities,
-          references.referenceFileIds.length > 0
-        ),
+        : imageRatio,
       sourceWidth: file.sourceWidth || null,
       sourceHeight: file.sourceHeight || null,
       imageProviderId: generation.kind === 'video' ? null : generation.providerId,
