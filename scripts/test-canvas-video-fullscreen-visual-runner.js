@@ -3,8 +3,10 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 const { pathToFileURL } = require('url');
 const { app, BrowserWindow } = require('electron');
+const ffmpegPath = require('ffmpeg-static');
 
 app.commandLine.appendSwitch('use-angle', 'swiftshader');
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
@@ -13,6 +15,15 @@ async function run() {
   const root = path.join(__dirname, '..');
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'messs-video-fullscreen-'));
   const htmlPath = path.join(tempDir, 'video-fullscreen.html');
+  const videoPath = path.join(tempDir, 'prepared-preview.mp4');
+  const generated = spawnSync(ffmpegPath, [
+    '-hide_banner', '-loglevel', 'error', '-y',
+    '-f', 'lavfi', '-i', 'testsrc2=s=640x360:d=3:r=24',
+    '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+    videoPath
+  ], { encoding: 'utf8', windowsHide: true });
+  if (generated.status !== 0) throw new Error(generated.stderr || 'Could not create the playback fixture.');
+  const videoSource = pathToFileURL(videoPath).href;
   const styleUrl = pathToFileURL(path.join(root, 'src', 'styles', 'main.css')).href;
   const themeUrl = pathToFileURL(path.join(root, 'src', 'styles', 'theme.css')).href;
   const storeUrl = pathToFileURL(path.join(root, 'src', 'js', 'store-client.js')).href;
@@ -35,7 +46,7 @@ async function run() {
         window.showToast = () => {};
         window.resolveImageDisplaySource = () => '';
         window.messsAPI = {
-          getPreview: async () => ({ type: 'video', url: 'data:video/mp4;base64,' }),
+          getPreview: async () => ({ type: 'video', url: ${JSON.stringify(videoSource)}, transcoded: true }),
           transcodeVideo: async () => ({ ok: false })
         };
       </script>
@@ -52,7 +63,9 @@ async function run() {
         const player = document.createElement('div');
         player.className = 'mini-video-player';
         const video = document.createElement('video');
-        video.src = 'data:video/mp4;base64,';
+        video.src = ${JSON.stringify(videoSource)};
+        video.muted = true;
+        video.dataset.usingTranscode = 'true';
         player.appendChild(video);
         content.appendChild(player);
         card.appendChild(content);
@@ -121,6 +134,20 @@ async function run() {
       throw new Error(`Canvas video fullscreen viewer is invalid: ${JSON.stringify(fullscreen)}`);
     }
 
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const playback = await window.webContents.executeJavaScript(`(() => {
+      const video = document.querySelector('#fullscreen-stage video');
+      return video && {
+        currentTime: video.currentTime,
+        readyState: video.readyState,
+        paused: video.paused,
+        error: video.error && video.error.code
+      };
+    })()`);
+    if (!playback || playback.error || playback.readyState < 2 || playback.paused || playback.currentTime < 0.2) {
+      throw new Error(`Prepared video did not begin playing immediately: ${JSON.stringify(playback)}`);
+    }
+
     const mediaClickKeptOpen = await window.webContents.executeJavaScript(`(() => {
       document.querySelector('#fullscreen-stage video').click();
       return !document.getElementById('fullscreen-overlay').hidden;
@@ -147,7 +174,7 @@ async function run() {
     if (!imageBackdropClick.mediaClickKeptOpen || !imageBackdropClick.backdropClickClosed) {
       throw new Error(`Fullscreen image outside-click behavior is invalid: ${JSON.stringify(imageBackdropClick)}`);
     }
-    process.stdout.write(`CANVAS_VIDEO_FULLSCREEN_OK toolbar=${Math.round(toolbar.bar.right - toolbar.bar.left)} player=${Math.round(fullscreen.rect.right - fullscreen.rect.left)}x${Math.round(fullscreen.rect.bottom - fullscreen.rect.top)}\n`);
+    process.stdout.write(`CANVAS_VIDEO_FULLSCREEN_OK toolbar=${Math.round(toolbar.bar.right - toolbar.bar.left)} player=${Math.round(fullscreen.rect.right - fullscreen.rect.left)}x${Math.round(fullscreen.rect.bottom - fullscreen.rect.top)} played=${playback.currentTime.toFixed(2)}\n`);
   } finally {
     if (!window.isDestroyed()) window.destroy();
     fs.rmSync(tempDir, { recursive: true, force: true });

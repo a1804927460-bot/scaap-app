@@ -131,7 +131,7 @@ function createVideoPlayer(video, { fullscreen = false, onPlaybackFailure = null
   const shell = document.createElement('div');
   shell.className = `messs-video-player${fullscreen ? ' is-fullscreen-player' : ' is-inline-player'}`;
   video.controls = false;
-  video.preload = 'metadata';
+  video.preload = fullscreen ? 'auto' : 'metadata';
   video.playsInline = true;
   shell.appendChild(video);
 
@@ -317,6 +317,7 @@ function renderVideoPreview(id, result) {
   stage.innerHTML = '';
   const video = document.createElement('video');
   video.src = result.url;
+  video.dataset.usingTranscode = result.transcoded ? 'true' : '';
   video.autoplay = false;
   let playbackMonitor = null;
   const recover = () => { void handleVideoPlaybackFailure(id, result, video, epoch); };
@@ -338,7 +339,7 @@ function renderVideoPreview(id, result) {
  */
 async function handleVideoPlaybackFailure(id, result, videoEl, epoch) {
   if (epoch !== videoPreviewEpoch || AppState.activeFileId !== id || !videoEl.isConnected) return;
-  if (videoEl.dataset.triedTranscode) {
+  if (videoEl.dataset.triedTranscode || videoEl.dataset.usingTranscode === 'true') {
     renderUnsupportedPreview(id, { ...result, reason: 'render-failed' });
     return;
   }
@@ -1228,8 +1229,10 @@ async function openFileFullscreenPreview(file, sourceMedia = null) {
       video.src = result.url;
       video.preload = 'auto';
       video.playsInline = true;
+      video.muted = true;
+      video.dataset.usingTranscode = result.transcoded ? 'true' : '';
     }
-    showFullscreenMedia(video, { videoFileId: file.id });
+    showFullscreenMedia(video, { videoFileId: file.id, autoplay: true });
     return;
   }
   if (isImageExt(file.ext)) {
@@ -1271,6 +1274,7 @@ function showFullscreenMedia(media, options = {}) {
   } else if (clone.tagName === 'VIDEO') {
     const currentTime = Number(media.currentTime) || 0;
     const wasPlaying = !media.paused && !media.ended;
+    const shouldAutoplay = options.autoplay === true || wasPlaying;
     clone.muted = media.muted;
     clone.volume = media.volume;
     clone.playbackRate = media.playbackRate;
@@ -1306,9 +1310,10 @@ function showFullscreenMedia(media, options = {}) {
     fsStage.appendChild(player.shell);
     clone.addEventListener('loadedmetadata', () => {
       clone.currentTime = Math.min(currentTime, Number.isFinite(clone.duration) ? clone.duration : currentTime);
-      if (wasPlaying) clone.play().catch((error) => playbackMonitor.handlePlayFailure(error));
+      if (shouldAutoplay) clone.play().catch((error) => playbackMonitor.handlePlayFailure(error));
     }, { once: true });
     overlay.hidden = false;
+    clone.load();
     return;
   }
   fsStage.appendChild(clone);

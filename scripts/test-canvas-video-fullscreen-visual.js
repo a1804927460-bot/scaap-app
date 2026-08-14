@@ -17,5 +17,5 @@ const result = spawnSync(electronPath, [path.join(__dirname, 'test-canvas-video-
 
 if (result.error) throw result.error;
 assert.strictEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
-assert.match(result.stdout, /CANVAS_VIDEO_FULLSCREEN_OK toolbar=\d+ player=\d+x\d+/);
+assert.match(result.stdout, /CANVAS_VIDEO_FULLSCREEN_OK toolbar=\d+ player=\d+x\d+ played=\d+\.\d+/);
 process.stdout.write(`Canvas video fullscreen visual test passed (${result.stdout.trim()}).\n`);

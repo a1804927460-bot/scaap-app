@@ -664,6 +664,7 @@ function fileToPayload(f) {
     sourceHeight: f.sourceHeight || null,
     sourceDuration: Number.isFinite(Number(f.sourceDuration)) ? Number(f.sourceDuration) : null,
     mediaMetadataVersion: Number(f.mediaMetadataVersion) || null,
+    videoPreviewReady: f.videoPreviewReady === true,
     mimeType: f.mimeType || 'application/octet-stream',
     archiveKind: f.archiveKind || 'file',
     fingerprint: f.fingerprint || null,
@@ -892,10 +893,19 @@ function localMediaMimeType(filePath, fallback = 'application/octet-stream') {
 
 function localFileProtocolResponse(request, filePath, mimeType) {
   const rangeHeader = String(request.headers.get('range') || '').trim();
-  if (!rangeHeader) return net.fetch(pathToFileURL(filePath).toString());
-
   const stat = fs.statSync(filePath);
   const total = stat.size;
+  if (!rangeHeader) {
+    return new Response(fs.createReadStream(filePath), {
+      status: 200,
+      headers: {
+        'Accept-Ranges': 'bytes',
+        'Content-Type': mimeType || localMediaMimeType(filePath),
+        'Content-Length': String(total)
+      }
+    });
+  }
+
   const match = /^bytes=(\d*)-(\d*)$/i.exec(rangeHeader);
   const unsatisfied = () => new Response(null, {
     status: 416,
@@ -2860,7 +2870,47 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
   const archiveDir = canvasStorageDir(canvas);
   await fs.promises.mkdir(archiveDir, { recursive: true });
   const storedPath = path.join(archiveDir, `${id}.${extension}`);
-  await fs.promises.writeFile(storedPath, buffer);
+  const temporaryPath = path.join(archiveDir, `.${id}.${extension}.${crypto.randomUUID()}.part`);
+  try {
+    const handle = await fs.promises.open(temporaryPath, 'wx', 0o600);
+    try {
+      await handle.writeFile(buffer);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    const writtenStat = await fs.promises.stat(temporaryPath);
+    if (!writtenStat.isFile() || writtenStat.size !== buffer.length) {
+      const error = new Error('The generated media archive was not written completely.');
+      error.code = 'generated-media-write-incomplete';
+      throw error;
+    }
+    await fs.promises.rename(temporaryPath, storedPath);
+  } catch (error) {
+    await fs.promises.rm(temporaryPath, { force: true }).catch(() => {});
+    throw error;
+  }
+
+  let videoPreviewReady = false;
+  if (mediaKind === 'video') {
+    try {
+      const validation = await preview.validateVideoFile(storedPath);
+      if (!validation.ok) {
+        const error = new Error('The generated video could not be decoded after download.');
+        error.code = 'generated-video-invalid';
+        throw error;
+      }
+      await preview.transcodeVideoToWebCompatible(storedPath, previewCacheDir, id);
+      videoPreviewReady = true;
+    } catch (error) {
+      await Promise.all([
+        fs.promises.rm(storedPath, { force: true }).catch(() => {}),
+        fs.promises.rm(path.join(previewCacheDir, id), { recursive: true, force: true }).catch(() => {})
+      ]);
+      if (!error.code) error.code = 'video-preview-preparation-failed';
+      throw error;
+    }
+  }
   const sourceDimensions = await readSourceMediaMetadata(storedPath, `.${extension}`);
   const referenceFileIds = Array.isArray(request.referenceFileIds)
     ? request.referenceFileIds
@@ -2887,6 +2937,7 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
     sizeBytes: buffer.length,
     ...sourceDimensions,
     ...(mediaKind === 'video' && sourceDimensions ? { mediaMetadataVersion: 1 } : {}),
+    ...(mediaKind === 'video' ? { videoPreviewReady } : {}),
     ...classifyArchiveFile(name),
     aiGeneration: {
       kind: mediaKind,
@@ -5140,10 +5191,22 @@ function registerIpcHandlers() {
       return { type: 'image', url: 'messs-file://' + f.id, name: f.name };
     }
     if (preview.isVideoExt(ext)) {
-      // Let Chromium try the original container first. If its codec is not
-      // supported, the renderer requests the cached FFmpeg fallback from
-      // files:transcodeVideo. This keeps opening a long MOV/MKV responsive
-      // and avoids doing expensive work for containers Chromium can decode.
+      const compatiblePreview = await preview.findWebCompatibleVideoPreview(
+        f.storedPath,
+        previewCacheDir,
+        f.id
+      ).catch(() => null);
+      if (compatiblePreview) {
+        return {
+          type: 'video',
+          url: `messs-transcode://${f.id}`,
+          name: f.name,
+          transcoded: true
+        };
+      }
+      // Imported web containers still open directly first. If Chromium
+      // rejects their codec, both canvas and fullscreen request the same
+      // deduplicated, disk-cached FFmpeg fallback.
       return { type: 'video', url: 'messs-file://' + f.id, name: f.name };
     }
     if (preview.isAudioExt(ext)) {

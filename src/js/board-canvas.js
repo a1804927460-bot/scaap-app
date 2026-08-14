@@ -527,6 +527,11 @@ function scheduleMountedImageQuality(delay = BOARD_QUALITY_SETTLE_MS) {
   }, delay);
 }
 
+function invalidateBoardPreview(fileId) {
+  BoardPreviewCache.delete(fileId);
+  BoardPreviewPending.delete(fileId);
+}
+
 function markBoardInteraction() {
   Board.interactingUntil = Date.now() + BOARD_QUALITY_SETTLE_MS;
   scheduleMountedImageQuality(BOARD_QUALITY_SETTLE_MS);
@@ -987,6 +992,7 @@ function renderBoardItemContent(content, f, item) {
         if (player && typeof player._boardStopPreview === 'function') player._boardStopPreview();
       });
     });
+    if (f.videoPreviewReady === true) void ensurePlayer();
     return;
   }
 
@@ -2680,6 +2686,7 @@ function buildMiniVideoPlayer(result, f) {
   video.draggable = false;
   video.playsInline = true;
   video.disablePictureInPicture = true;
+  video.dataset.usingTranscode = result.transcoded ? 'true' : '';
   const durationBadge = createBoardVideoDurationBadge(f);
   wrap.append(poster, video, durationBadge);
 
@@ -3611,6 +3618,7 @@ function createAiPlaceholders(request) {
 
 async function replaceAiPlaceholders(placeholders, files, request, persistedItems = []) {
   const updates = [];
+  files.forEach((file) => invalidateBoardPreview(file.id));
   const placeholderIds = new Set(placeholders.map((placeholder) => placeholder.id));
   const replacedIds = new Set();
   const persistedById = new Map(

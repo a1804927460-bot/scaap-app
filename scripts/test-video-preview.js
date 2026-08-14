@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
-const { transcodeVideoToWebCompatible } = require('../lib/preview');
+const { findWebCompatibleVideoPreview, transcodeVideoToWebCompatible } = require('../lib/preview');
 
 const boardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'board-canvas.js'), 'utf8');
 const boardStyles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles', 'main.css'), 'utf8');
@@ -105,8 +105,18 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /function localFileProtocolResponse[\s\S]*?headers\.get\('range'\)[\s\S]*?status:\s*206[\s\S]*?'Accept-Ranges': 'bytes'[\s\S]*?'Content-Range': `bytes \$\{start\}-\$\{end\}\/\$\{total\}`/,
+  /function localFileProtocolResponse[\s\S]*?headers\.get\('range'\)[\s\S]*?status:\s*200[\s\S]*?'Accept-Ranges': 'bytes'[\s\S]*?status:\s*206[\s\S]*?'Content-Range': `bytes \$\{start\}-\$\{end\}\/\$\{total\}`/,
   'Local media must return a standards-compliant partial response for reliable streaming and seeking.'
+);
+assert.match(
+  mainSource,
+  /async function addGeneratedMediaFile[\s\S]*?\.part`\)[\s\S]*?handle\.sync\(\)[\s\S]*?rename\(temporaryPath, storedPath\)[\s\S]*?validateVideoFile\(storedPath\)[\s\S]*?transcodeVideoToWebCompatible\(storedPath, previewCacheDir, id\)/,
+  'Generated videos must be atomically archived, decoded and made browser-compatible before success is returned.'
+);
+assert.match(
+  mainSource,
+  /files:getPreview[\s\S]*?findWebCompatibleVideoPreview[\s\S]*?messs-transcode:\/\/\$\{f\.id\}[\s\S]*?transcoded:\s*true/,
+  'Every later preview must reuse the prepared or previously cached compatible video.'
 );
 assert.match(
   mainSource,
@@ -120,8 +130,13 @@ assert.match(
 );
 assert.match(
   previewSource,
-  /async function openFileFullscreenPreview\(file, sourceMedia = null\)[\s\S]*?isVideoExt\(file\.ext\)[\s\S]*?showFullscreenMedia\(video, \{ videoFileId: file\.id \}\)/,
-  'The file fullscreen helper must open canvas videos and preserve an already-mounted player when available.'
+  /async function openFileFullscreenPreview\(file, sourceMedia = null\)[\s\S]*?isVideoExt\(file\.ext\)[\s\S]*?showFullscreenMedia\(video, \{ videoFileId: file\.id, autoplay: true \}\)/,
+  'The file fullscreen helper must open canvas videos, preserve mounted players and start playback immediately.'
+);
+assert.match(
+  boardSource,
+  /if \(f\.videoPreviewReady === true\) void ensurePlayer\(\);/,
+  'A freshly generated video must prepare its first canvas frame before the first hover.'
 );
 assert.match(
   previewSource,
@@ -148,6 +163,8 @@ async function main() {
 
     const cached = await transcodeVideoToWebCompatible(source, path.join(root, 'cache'), 'fixture');
     assert.strictEqual(cached, output);
+    const discovered = await findWebCompatibleVideoPreview(source, path.join(root, 'cache'), 'fixture');
+    assert.strictEqual(discovered, output, 'Prepared playback must be discoverable without another transcode.');
     process.stdout.write('Video preview tests passed.\n');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
