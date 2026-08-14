@@ -1651,15 +1651,6 @@ function createBoardItemElement(item) {
     ) {
       toggleAiComposerBoardReference(f, item.fileId);
     }
-    const agentPanel = document.getElementById('board-agent-panel');
-    if (
-      isImage &&
-      agentPanel && !agentPanel.classList.contains('is-hidden') &&
-      Date.now() - Board.lastDragEndedAt > 120 &&
-      typeof syncCanvasAgentReferencesToSelection === 'function'
-    ) {
-      syncCanvasAgentReferencesToSelection();
-    }
     if (typeof renderCanvasAgentContext === 'function') renderCanvasAgentContext();
   });
 

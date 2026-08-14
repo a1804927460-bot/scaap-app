@@ -495,10 +495,32 @@ async function run() {
         saveModelPreview: async (id, dataUrl) => {
           const format = String(id).replace(/^fixture-/, '');
           const validPng = /^data:image\\/png;base64,[A-Za-z0-9+/]+=*$/.test(String(dataUrl || ''));
+          let colorfulPixels = 0;
+          if (validPng) {
+            const image = new Image();
+            image.src = dataUrl;
+            await image.decode();
+            const canvas = document.createElement('canvas');
+            canvas.width = image.naturalWidth;
+            canvas.height = image.naturalHeight;
+            const context = canvas.getContext('2d', { willReadFrequently: true });
+            context.drawImage(image, 0, 0);
+            const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+            const background = [pixels[0], pixels[1], pixels[2]];
+            for (let offset = 0; offset < pixels.length; offset += 4) {
+              const difference = Math.abs(pixels[offset] - background[0]) +
+                Math.abs(pixels[offset + 1] - background[1]) +
+                Math.abs(pixels[offset + 2] - background[2]);
+              const spread = Math.max(pixels[offset], pixels[offset + 1], pixels[offset + 2]) -
+                Math.min(pixels[offset], pixels[offset + 1], pixels[offset + 2]);
+              if (difference > 32 && spread > 28) colorfulPixels += 1;
+            }
+          }
           window.__savedModelPreviews = window.__savedModelPreviews || {};
           window.__savedModelPreviews[format] = {
             validPng,
-            length: String(dataUrl || '').length
+            length: String(dataUrl || '').length,
+            colorfulPixels
           };
           return validPng
             ? { ok: true, url: 'messs-preview://' + id + '/model?v=fixture' }
@@ -541,15 +563,36 @@ async function run() {
   const pbrMaterialStats = await window.webContents.executeJavaScript(
     'window.MesssBoardModelViewer.materialStats'
   );
-  const requiredTextureSlots = ['map', 'metalnessMap', 'roughnessMap', 'normalMap'];
+  const requiredTextureSlots = realGlbPath
+    ? ['map']
+    : ['map', 'metalnessMap', 'roughnessMap', 'normalMap'];
   if (!pbrMaterialStats || pbrMaterialStats.texturedMeshes !== 1 ||
       requiredTextureSlots.some((slot) => !(pbrMaterialStats.textureSlots[slot] >= 1))) {
     throw new Error(`GLB PBR textures were not retained: ${JSON.stringify(pbrMaterialStats)}`);
   }
-  const desktop = await captureModelPixels(window, 'desktop', { requireColor: !realGlbPath });
+  const desktop = await captureModelPixels(window, 'desktop', { requireColor: true });
+  if (process.env.MESSS_MODEL_VIEWER_ONLY === '1' && realGlbPath) {
+    await window.webContents.executeJavaScript('closeBoardModelViewer()');
+    await wait(250);
+    const previewUrl = await window.webContents.executeJavaScript(
+      "requestBoardModelPreview({ id: 'fixture-glb', name: 'fixture.glb', ext: '.glb' })"
+    );
+    const previewRecord = await window.webContents.executeJavaScript(
+      'window.__savedModelPreviews?.glb || null'
+    );
+    if (!previewRecord || !previewRecord.validPng || previewRecord.length < 256 ||
+        previewRecord.colorfulPixels < 120 ||
+        previewUrl !== 'messs-preview://fixture-glb/model?v=fixture') {
+      throw new Error(`Real GLB thumbnail lost its PBR texture: ${JSON.stringify({ previewUrl, previewRecord })}`);
+    }
+    window.destroy();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    process.stdout.write(`MODEL_VIEWER_REAL_PBR_OK desktop=${desktop.modelPixels} colors=${desktop.colorfulPixels} thumbnailColors=${previewRecord.colorfulPixels} textures=${JSON.stringify(pbrMaterialStats.textureSlots)}\n`);
+    return;
+  }
   window.setSize(520, 420);
   await wait(320);
-  const compact = await captureModelPixels(window, 'compact', { requireColor: !realGlbPath });
+  const compact = await captureModelPixels(window, 'compact', { requireColor: true });
   const interactionRect = compact.rect;
 
   const before = await window.webContents.executeJavaScript(
@@ -630,6 +673,9 @@ async function run() {
     if (!previewRecord || !previewRecord.validPng || previewRecord.length < 256 ||
         previewUrl !== `messs-preview://fixture-${format}/model?v=fixture`) {
       throw new Error(`${format.toUpperCase()} thumbnail generation failed: ${JSON.stringify({ previewUrl, previewRecord })}`);
+    }
+    if (format === 'glb' && previewRecord.colorfulPixels < 120) {
+      throw new Error(`GLB thumbnail lost its base-color texture: ${JSON.stringify(previewRecord)}`);
     }
     previewResults[format] = previewRecord.length;
   }

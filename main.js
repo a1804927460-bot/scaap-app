@@ -1093,7 +1093,7 @@ async function saveArchivedModelPreview(fileId, dataUrl) {
   }
   const cacheDir = path.join(previewCacheDir, normalizedId);
   const outputPath = path.join(cacheDir, 'model-preview.png');
-  const pbrMarkerPath = path.join(cacheDir, 'model-preview.pbr-v1');
+  const pbrMarkerPath = path.join(cacheDir, 'model-preview.pbr-v2');
   const temporaryPath = path.join(cacheDir, `.model-preview-${crypto.randomUUID()}.tmp.png`);
   await fs.promises.mkdir(cacheDir, { recursive: true });
   try {
@@ -1102,7 +1102,7 @@ async function saveArchivedModelPreview(fileId, dataUrl) {
       .png({ compressionLevel: 9, adaptiveFiltering: true })
       .toFile(temporaryPath);
     await fs.promises.rename(temporaryPath, outputPath);
-    await fs.promises.writeFile(pbrMarkerPath, 'pbr-v1\n', { encoding: 'utf8', mode: 0o600 });
+    await fs.promises.writeFile(pbrMarkerPath, 'pbr-v2\n', { encoding: 'utf8', mode: 0o600 });
   } finally {
     await fs.promises.rm(temporaryPath, { force: true }).catch(() => {});
   }
@@ -5889,7 +5889,7 @@ app.whenReady().then(() => {
         return new Response('Not found', { status: 404 });
       }
       const modelPreviewPath = path.join(previewCacheDir, file.id, 'model-preview.png');
-      const pbrMarkerPath = path.join(previewCacheDir, file.id, 'model-preview.pbr-v1');
+      const pbrMarkerPath = path.join(previewCacheDir, file.id, 'model-preview.pbr-v2');
       if (!fs.existsSync(modelPreviewPath) || !fs.existsSync(pbrMarkerPath)) {
         return new Response('Not found', { status: 404 });
       }

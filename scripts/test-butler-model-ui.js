@@ -119,11 +119,12 @@ assert.match(preload, /readModelData:[^\n]+files:readModelData/, 'The isolated p
 assert.match(preload, /saveModelPreview:[^\n]+files:saveModelPreview/, 'The isolated preload must expose only validated model thumbnail writes.');
 assert.match(main, /async function readArchivedModelData[\s\S]*realpath\(store\.libraryDir\)[\s\S]*MAX_MODEL_PREVIEW_BYTES/, 'Model preview reads must stay inside the archive and enforce a size limit.');
 assert.match(main, /async function saveArchivedModelPreview[\s\S]*data:image\\\/png;base64[\s\S]*model-preview\.png/, 'Generated model thumbnails must be validated and stored in the preview cache.');
-assert.match(main, /model-preview\.pbr-v1[\s\S]*writeFile\(pbrMarkerPath, 'pbr-v1/, 'Only thumbnails rendered from the model itself may be reused as PBR previews.');
+assert.match(main, /model-preview\.pbr-v2[\s\S]*writeFile\(pbrMarkerPath, 'pbr-v2/, 'Only texture-ready thumbnails rendered from the model itself may be reused as PBR previews.');
 assert.doesNotMatch(main, /await writeButlerModelPreview\(record\.id, sourceFile/, 'A source reference image must never masquerade as the generated model thumbnail.');
 assert.match(main, /ipcMain\.handle\('files:readModelData'/, 'The main process must own model binary reads.');
 assert.match(modelViewer, /event\.shiftKey[\s\S]*event\.button !== 2[\s\S]*drag\.azimuth/, 'Shift plus right-drag must rotate the model key light through 360 degrees.');
 assert.match(modelViewer, /BOARD_MODEL_COLOR_TEXTURE_SLOTS[\s\S]*function prepareBoardModelMaterials[\s\S]*value\.anisotropy[\s\S]*value\.colorSpace = THREE\.SRGBColorSpace/, 'Textured model materials must be prepared for accurate color and sharp rendering.');
+assert.match(modelViewer, /function renderBoardModelAfterTextureUpload[\s\S]*requestAnimationFrame[\s\S]*await renderBoardModelAfterTextureUpload/, 'Model thumbnails must wait for GPU texture upload before capturing the preview.');
 assert.ok((modelViewer.match(/prepareBoardModelMaterials\(/g) || []).length >= 3, 'Material preparation must run for both model thumbnails and the full viewer.');
 assert.match(modelViewer, /light\.intensity = isDragging \? 3\.4 : 2\.4[\s\S]*hemisphereLight\.intensity = isDragging \? 0\.3 : 0\.7[\s\S]*rimLight\.intensity = isDragging \? 1\.4 : 0\.8[\s\S]*scene\.environmentIntensity = isDragging \? 0\.45 : 0\.75/, 'Light dragging must preserve PBR material color while producing clear key, fill and environment contrast.');
 assert.match(modelViewer, /textureSlots\[slot\][\s\S]*BoardModelViewer\.materialStats = prepareBoardModelMaterials/, 'The viewer must retain and report the GLB PBR texture slots instead of replacing its materials.');

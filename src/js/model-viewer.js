@@ -129,6 +129,14 @@ function prepareBoardModelMaterials(root, renderer, THREE) {
   return { meshes, texturedMeshes, textureSlots };
 }
 
+async function renderBoardModelAfterTextureUpload(renderer, scene, camera) {
+  renderer.render(scene, camera);
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  renderer.render(scene, camera);
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  renderer.render(scene, camera);
+}
+
 function installBoardModelLightDrag(canvas, light, controls, THREE, lighting = {}) {
   let drag = null;
   const hemisphereLight = lighting.hemisphereLight || null;
@@ -456,7 +464,7 @@ async function renderBoardModelPreview(file) {
       if ('environmentIntensity' in scene) scene.environmentIntensity = 0.75;
     }
     frameBoardModel(parsed.root, camera, controls, THREE);
-    renderer.render(scene, camera);
+    await renderBoardModelAfterTextureUpload(renderer, scene, camera);
     const dataUrl = renderer.domElement.toDataURL('image/png');
     const saved = await window.messsAPI.saveModelPreview(file.id, dataUrl);
     if (!saved || !saved.ok || !saved.url) return '';
