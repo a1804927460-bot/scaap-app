@@ -4029,6 +4029,13 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   padding: 6px 8px 6px 11px;
   border-bottom: 1px solid #e0e3e8;
 }
+.board-butler-config-header {
+  cursor: var(--cursor-grab);
+  touch-action: none;
+}
+.board-butler-config-header.is-dragging,
+.board-butler-config-header.is-dragging * { cursor: var(--cursor-grabbing) !important; }
+.board-butler-config-header button { cursor: var(--cursor-click); }
 .board-butler-config-icon {
   width: 26px;
   height: 26px;
@@ -5241,7 +5248,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   right: auto;
   bottom: 18px;
   left: 50%;
-  width: min(800px, calc(100% - 40px));
+  width: min(940px, calc(100% - 40px));
   max-width: calc(100% - 32px);
   min-height: 0;
   height: 142px;

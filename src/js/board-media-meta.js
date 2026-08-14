@@ -318,6 +318,70 @@ function positionBoardButlerPanel(panel, anchor) {
   panel.style.top = `${Math.round(top)}px`;
 }
 
+function clampBoardButlerPanelToViewport(panel) {
+  if (!panel || !panel.isConnected) return;
+  const margin = 12;
+  const rect = panel.getBoundingClientRect();
+  const maxLeft = Math.max(margin, window.innerWidth - rect.width - margin);
+  const maxTop = Math.max(margin, window.innerHeight - rect.height - margin);
+  const left = Math.max(margin, Math.min(Number.parseFloat(panel.style.left) || rect.left, maxLeft));
+  const top = Math.max(margin, Math.min(Number.parseFloat(panel.style.top) || rect.top, maxTop));
+  panel.style.left = `${Math.round(left)}px`;
+  panel.style.top = `${Math.round(top)}px`;
+}
+
+function makeBoardButlerPanelDraggable(panel) {
+  const header = panel && panel.querySelector('.board-butler-config-header');
+  if (!header) return () => {};
+  let drag = null;
+
+  const finish = () => {
+    if (!drag) return;
+    drag = null;
+    header.classList.remove('is-dragging');
+    clampBoardButlerPanelToViewport(panel);
+  };
+  const move = (event) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const maxLeft = Math.max(12, window.innerWidth - panel.offsetWidth - 12);
+    const maxTop = Math.max(12, window.innerHeight - panel.offsetHeight - 12);
+    panel.style.left = `${Math.round(Math.max(12, Math.min(drag.left + event.clientX - drag.clientX, maxLeft)))}px`;
+    panel.style.top = `${Math.round(Math.max(12, Math.min(drag.top + event.clientY - drag.clientY, maxTop)))}px`;
+  };
+  const start = (event) => {
+    if (event.button !== 0 || event.target.closest('button, input, textarea, select, a')) return;
+    const rect = panel.getBoundingClientRect();
+    drag = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      left: rect.left,
+      top: rect.top
+    };
+    header.classList.add('is-dragging');
+    header.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  };
+  const resizeObserver = typeof ResizeObserver === 'function'
+    ? new ResizeObserver(() => clampBoardButlerPanelToViewport(panel))
+    : null;
+  const handleWindowResize = () => clampBoardButlerPanelToViewport(panel);
+
+  header.addEventListener('pointerdown', start);
+  header.addEventListener('pointermove', move);
+  header.addEventListener('pointerup', finish);
+  header.addEventListener('pointercancel', finish);
+  header.addEventListener('lostpointercapture', finish);
+  window.addEventListener('resize', handleWindowResize);
+  if (resizeObserver) resizeObserver.observe(panel);
+
+  return () => {
+    finish();
+    resizeObserver?.disconnect();
+    window.removeEventListener('resize', handleWindowResize);
+  };
+}
+
 function boardButlerApi() {
   return window.messsAPI && window.messsAPI.butler;
 }
@@ -694,6 +758,7 @@ function createBoardButlerConfigPanel(anchor, icon, title, modelName) {
   document.body.appendChild(panel);
   boardButlerPanel = panel;
   positionBoardButlerPanel(panel, anchor);
+  panel._cleanup = makeBoardButlerPanelDraggable(panel);
   closeBoardButlerMenu();
   requestAnimationFrame(() => panel.classList.add('is-visible'));
   window.setTimeout(() => {

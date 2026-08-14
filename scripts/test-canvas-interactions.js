@@ -373,7 +373,7 @@ assert.doesNotMatch(
 );
 assert.match(boardSource, /--board-selection-width[\s\S]*?1\.2 \/ Math\.max\(Board\.zoom/);
 assert.match(boardStyles, /\.board-item\.is-selected \{[\s\S]*?outline:\s*var\(--board-selection-width/);
-assert.match(boardStyles, /width:\s*min\(800px, calc\(100% - 40px\)\)/, 'The generation composer must keep the centered compact footprint.');
+assert.match(boardStyles, /width:\s*min\(940px, calc\(100% - 40px\)\)/, 'The generation composer must keep the wider centered footprint.');
 assert.doesNotMatch(sidebarSource, /Return home|\\u8fd4\\u56de\\u9996\\u9875/, 'The brand menu must not offer a return-to-home action.');
 assert.match(
   sidebarSource,
@@ -446,8 +446,18 @@ assert.match(
 assert.match(themeSource, /\[data-theme="dark"\][\s\S]*?--bg-base:\s*#111111;[\s\S]*?--bg-surface-2:\s*#282828;/);
 assert.match(
   themeSource,
-  /\[data-theme="light"\][\s\S]*?--bg-base:\s*#fafafa;[\s\S]*?--bg-surface:\s*#f5f5f7;[\s\S]*?--bg-frame:\s*#e3e3e8;/,
+  /\[data-theme="light"\][\s\S]*?--bg-base:\s*#fafafa;[\s\S]*?--bg-surface:\s*#f5f5f7;[\s\S]*?--bg-frame:\s*#e3e3e8;[\s\S]*?--board-workspace-bg:\s*#eeeeec;/,
   'Light mode must use the neutral gray-white hierarchy from the supplied reference.'
+);
+assert.doesNotMatch(
+  boardSource,
+  /replaceAiPlaceholders[\s\S]*?requestAnimationFrame\(\(\) => fitBoardItemsToViewport\(updates\)\)/,
+  'Replacing a generation placeholder must preserve the current canvas view instead of flashing through auto-fit.'
+);
+assert.match(
+  boardSource,
+  /function keepBoardSelectionAboveComposer[\s\S]*?Board\.panY -=[\s\S]*?applyBoardTransform\(\)/,
+  'Opening the generation composer must pan covered selections into the visible canvas without changing zoom.'
 );
 assert.match(boardStyles, /\.app-titlebar \{[\s\S]*?background:\s*var\(--bg-frame, var\(--bg-base\)\)/,
   'The light title bar must use the sampled frame gray while dark mode keeps its fallback.');

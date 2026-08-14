@@ -3708,13 +3708,6 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
   canvasWorkspaceTouch(request.canvasId || activeCanvasId());
   await canvasWorkspaceSave();
   renderBoard();
-  if (
-    updates.length &&
-    activeCanvasId() === (request.canvasId || activeCanvasId()) &&
-    !(typeof CanvasNodeMode !== 'undefined' && CanvasNodeMode.mode === 'node')
-  ) {
-    requestAnimationFrame(() => fitBoardItemsToViewport(updates));
-  }
   if (typeof renderCanvasLibrary === 'function') renderCanvasLibrary();
 }
 
@@ -5179,6 +5172,8 @@ async function showAiImagePopover(initialKind = 'image') {
   const pop = buildAiComposer(config, initialKind);
   loading.replaceWith(pop);
 
+  requestAnimationFrame(() => keepBoardSelectionAboveComposer(pop));
+
   const textarea = pop.querySelector('.ai-composer-prompt');
   setTimeout(() => textarea.focus(), 0);
 
@@ -5319,6 +5314,35 @@ function showTextToolPanel(note, contentEl) {
 function hideTextToolPanel() {
   activeTextNoteId = null;
   document.getElementById('text-tool-panel').hidden = true;
+}
+
+function keepBoardSelectionAboveComposer(composer) {
+  const viewport = document.getElementById('board-viewport');
+  if (!composer || !composer.isConnected || !viewport) return;
+  const composerRect = composer.getBoundingClientRect();
+  const viewportRect = viewport.getBoundingClientRect();
+  const selected = [...document.querySelectorAll('#board-canvas .board-item.is-selected')]
+    .map((element) => element.getBoundingClientRect())
+    .filter((rect) => (
+      rect.width > 0 && rect.height > 0 &&
+      rect.right > composerRect.left && rect.left < composerRect.right &&
+      rect.bottom > composerRect.top && rect.top < composerRect.bottom
+    ));
+  const covered = selected.length ? selected : [...document.querySelectorAll('#board-canvas .board-item')]
+    .map((element) => element.getBoundingClientRect())
+    .filter((rect) => (
+      rect.width > 0 && rect.height > 0 &&
+      rect.right > composerRect.left && rect.left < composerRect.right &&
+      rect.bottom > composerRect.top && rect.top < composerRect.bottom
+    ));
+  if (!covered.length) return;
+  const lowestVisibleBottom = Math.max(...covered.map((rect) => Math.min(rect.bottom, viewportRect.bottom)));
+  const safeBottom = composerRect.top - 18;
+  const overlap = lowestVisibleBottom - safeBottom;
+  if (overlap <= 0) return;
+  Board.panY -= Math.min(overlap, viewportRect.height * 0.32);
+  Board.zoomTarget = null;
+  applyBoardTransform();
 }
 
 function activeTextNoteElements() {

@@ -134,6 +134,8 @@ assert.match(modelViewer, /cancelAnimationFrame[\s\S]*disposeBoardModelObject[\s
 assert.match(styles, /\.board-model-viewer-overlay[\s\S]*place-items:\s*center/, 'The full-screen model dialog must be centered.');
 assert.match(styles, /\.board-butler-menu\s*\{[\s\S]*display:\s*flex/, 'The Butler flyout must use the horizontal pill layout.');
 assert.match(styles, /\.board-butler-config-panel[\s\S]*\.board-butler-segmented/, 'Butler parameter panels must share the compact control language.');
+assert.match(boardMedia, /function makeBoardButlerPanelDraggable[\s\S]*?setPointerCapture[\s\S]*?clampBoardButlerPanelToViewport/, 'Butler parameter panels must be draggable and remain fully inside the window.');
+assert.match(boardMedia, /ResizeObserver[\s\S]*?clampBoardButlerPanelToViewport/, 'Growing Butler option panels must be reclamped after their content is rendered.');
 assert.match(styles, /\.board-butler-mask-overlay[\s\S]*\.board-butler-mask-stage/, 'Erase must use a dedicated mask workspace.');
 assert.match(styles, /\.board-item-video\.is-selected\.is-single-selection \.board-image-toolbar/, 'Video Butler toolbar must appear for a selected video.');
 assert.match(styles, /\.generated-media-detail-trigger\.is-inline\s*\{[\s\S]*?position:\s*static;[\s\S]*?flex:\s*0 0 25px;/,

@@ -105,7 +105,7 @@ async function run() {
   if (full.agentMenu.left < full.agent.left || full.agentMenu.right > full.agent.right || full.agentMenu.top >= full.agentForm.top || full.agentMenu.bottom > full.agent.bottom) {
     throw new Error(`Agent model menu escaped its panel: ${JSON.stringify(full)}`);
   }
-  if (full.composer.width < 440 || full.composer.width > 800 || full.composer.height < 130 || full.composer.height > 155) {
+  if (full.composer.width < 560 || full.composer.width > 940 || full.composer.height < 130 || full.composer.height > 155) {
     throw new Error(`Composer size is outside the compact range: ${JSON.stringify(full.composer)}`);
   }
   const composerCenter = (full.composer.left + full.composer.right) / 2;

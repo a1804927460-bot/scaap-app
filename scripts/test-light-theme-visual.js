@@ -47,7 +47,7 @@ async function run() {
       frame: '#e3e3e8',
       surface: '#f5f5f7',
       titlebar: 'rgb(227, 227, 232)',
-      canvas: 'rgb(250, 250, 250)'
+      canvas: 'rgb(238, 238, 236)'
     });
     fs.mkdirSync(outputDir, { recursive: true });
     fs.writeFileSync(path.join(outputDir, 'light-theme.png'), (await window.webContents.capturePage()).toPNG());
