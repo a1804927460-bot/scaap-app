@@ -71,6 +71,21 @@ assert.match(
 );
 assert.match(
   boardSource,
+  /class="ai-composer-reference-strip"[\s\S]*?class="ai-composer-prompt"[\s\S]*?class="ai-model-picker"[\s\S]*?class="ai-video-mode-picker"/,
+  'Selected references must stay in the header while the compact video mode picker sits beside the model.'
+);
+assert.match(
+  boardSource,
+  /function videoReferenceSelectionLimit[\s\S]*?supportedVideoModes[\s\S]*?if \(currentMode\.id === 'text'\) setVideoMode\('first-frame'\)[\s\S]*?videoReferenceSelectionLimit\(capabilities\)/,
+  'Clicking a canvas image in video mode must switch out of text-only mode before applying the provider reference limit.'
+);
+assert.doesNotMatch(
+  boardSource,
+  /function setVideoMode\([\s\S]{0,800}?boardReferences\.delete/,
+  'Changing the video mode must never silently delete selected reference images.'
+);
+assert.match(
+  boardSource,
   /videoMode:\s*kind === 'video' \? selectedMode\.id : null/,
   'The selected video mode must be submitted to the desktop and gateway.'
 );
@@ -183,9 +198,10 @@ assert.match(
 );
 assert.match(
   boardStyles,
-  /\.ai-image-popover\.ai-composer,[\s\S]*?height:\s*142px;[\s\S]*?\.ai-image-popover\.ai-composer:has\(\.ai-composer-reference-strip:not\(\[hidden\]\)\)[\s\S]*?height:\s*194px;/,
-  'The generation composer must stay flat by default and grow only for reference thumbnails.'
+  /\.ai-image-popover\.ai-composer,[\s\S]*?height:\s*142px;[\s\S]*?\.ai-composer-reference-strip \{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*36px;/,
+  'The generation composer must stay flat while reference thumbnails share its header row.'
 );
+assert.match(boardStyles, /\.ai-video-mode-picker \{[\s\S]*?position:\s*relative;[\s\S]*?\.ai-video-mode-menu \{[\s\S]*?bottom:\s*calc\(100% \+ 7px\)/);
 assert.match(indexHtml, /id="board-agent-references"[\s\S]*?id="board-agent-add-reference"[\s\S]*?id="board-agent-model-menu"[\s\S]*?data-agent-kind="image"[\s\S]*?data-agent-kind="video"/,
   'Canvas Agent must expose references plus image/video model selection.');
 assert.match(boardStyles, /\.board-agent-form textarea \{[\s\S]*?min-height:\s*58px;[\s\S]*?max-height:\s*112px;/,

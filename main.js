@@ -46,6 +46,7 @@ const { ChatService } = require('./lib/chat-service');
 const { probeVideoMetadata, shutdownProcesses: shutdownMediaMetadataProcesses } = require('./lib/media-metadata');
 const { authenticatedUserId, profileAvatarPath } = require('./lib/profile-avatar');
 const { normalizeLanguage, translate: translateLanguage } = require('./lib/i18n');
+const { createLocalFileResponse } = require('./lib/local-file-response');
 
 const DEFAULT_CATALOG_IMAGE = providerCatalog('image')[0];
 const DEFAULT_CATALOG_VIDEO = providerCatalog('video')[0];
@@ -893,55 +894,7 @@ function localMediaMimeType(filePath, fallback = 'application/octet-stream') {
 }
 
 function localFileProtocolResponse(request, filePath, mimeType) {
-  const rangeHeader = String(request.headers.get('range') || '').trim();
-  const stat = fs.statSync(filePath);
-  const total = stat.size;
-  if (!rangeHeader) {
-    return new Response(fs.createReadStream(filePath), {
-      status: 200,
-      headers: {
-        'Accept-Ranges': 'bytes',
-        'Content-Type': mimeType || localMediaMimeType(filePath),
-        'Content-Length': String(total)
-      }
-    });
-  }
-
-  const match = /^bytes=(\d*)-(\d*)$/i.exec(rangeHeader);
-  const unsatisfied = () => new Response(null, {
-    status: 416,
-    headers: {
-      'Accept-Ranges': 'bytes',
-      'Content-Range': `bytes */${total}`
-    }
-  });
-  if (!match || (!match[1] && !match[2]) || total <= 0) return unsatisfied();
-
-  let start;
-  let end;
-  if (!match[1]) {
-    const suffixLength = Number(match[2]);
-    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return unsatisfied();
-    start = Math.max(0, total - suffixLength);
-    end = total - 1;
-  } else {
-    start = Number(match[1]);
-    end = match[2] ? Number(match[2]) : total - 1;
-    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start >= total || end < start) {
-      return unsatisfied();
-    }
-    end = Math.min(end, total - 1);
-  }
-
-  return new Response(fs.createReadStream(filePath, { start, end }), {
-    status: 206,
-    headers: {
-      'Accept-Ranges': 'bytes',
-      'Content-Type': mimeType || localMediaMimeType(filePath),
-      'Content-Length': String(end - start + 1),
-      'Content-Range': `bytes ${start}-${end}/${total}`
-    }
-  });
+  return createLocalFileResponse(request, filePath, mimeType || localMediaMimeType(filePath));
 }
 
 function formatBinaryRows(buffer, bytesPerRow = 16) {

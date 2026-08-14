@@ -13,6 +13,7 @@ const boardStyles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles', 
 const previewSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'preview-canvas.js'), 'utf8');
 const mediaMetaSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'board-media-meta.js'), 'utf8');
 const mainSource = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+const localFileResponseSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'local-file-response.js'), 'utf8');
 
 assert.match(
   boardSource,
@@ -104,10 +105,16 @@ assert.match(
   'The main file preview must recover from silent video stalls as well as codec errors.'
 );
 assert.match(
-  mainSource,
-  /function localFileProtocolResponse[\s\S]*?headers\.get\('range'\)[\s\S]*?status:\s*200[\s\S]*?'Accept-Ranges': 'bytes'[\s\S]*?status:\s*206[\s\S]*?'Content-Range': `bytes \$\{start\}-\$\{end\}\/\$\{total\}`/,
+  localFileResponseSource,
+  /function createLocalFileResponse[\s\S]*?headers\.get\('range'\)[\s\S]*?status:\s*200[\s\S]*?'Accept-Ranges': 'bytes'[\s\S]*?status:\s*206[\s\S]*?'Content-Range': `bytes \$\{start\}-\$\{end\}\/\$\{total\}`/,
   'Local media must return a standards-compliant partial response for reliable streaming and seeking.'
 );
+assert.match(
+  localFileResponseSource,
+  /function createCancelableFileWebStream[\s\S]*?if \(settled\) return;[\s\S]*?cancel\(\)[\s\S]*?fileStream\.destroy\(\)/,
+  'Cancelled protocol media streams must settle once and destroy their file reader safely.'
+);
+assert.match(mainSource, /function localFileProtocolResponse[\s\S]*?createLocalFileResponse\(request, filePath/);
 assert.match(
   mainSource,
   /async function addGeneratedMediaFile[\s\S]*?\.part`\)[\s\S]*?handle\.sync\(\)[\s\S]*?rename\(temporaryPath, storedPath\)[\s\S]*?validateVideoFile\(storedPath\)[\s\S]*?transcodeVideoToWebCompatible\(storedPath, previewCacheDir, id\)/,

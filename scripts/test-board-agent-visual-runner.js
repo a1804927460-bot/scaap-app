@@ -31,7 +31,7 @@ async function run() {
             <div class="board-item board-text-note qa-text"><div class="board-text-note-content">Confirmed text</div></div>
             <div class="board-item board-text-note is-text-editing qa-text qa-text-edit"><div class="board-text-note-content">Editing text</div></div>
             <canvas class="qa-doodle"></canvas>
-            <div class="ai-image-popover ai-composer"><form class="ai-composer-form"><div class="ai-composer-mode"><button class="is-active">Image</button><button>Video</button></div><div class="ai-composer-reference-strip" hidden></div><textarea class="ai-composer-prompt" placeholder="Describe what you want to create"></textarea><div class="ai-composer-footer"><div class="ai-composer-controls"><button class="ai-options-toggle">Options</button></div><button class="ai-composer-submit">&#8593;</button></div></form></div>
+            <div class="ai-image-popover ai-composer"><form class="ai-composer-form"><div class="ai-composer-mode-row"><div class="ai-composer-mode"><button class="is-active">Image</button><button>Video</button></div><div class="ai-composer-reference-strip" hidden><div class="ai-composer-reference-thumb"><img src="${logoUrl}" alt="Reference"><span class="ai-composer-reference-order">1</span></div></div></div><textarea class="ai-composer-prompt" placeholder="Describe what you want to create"></textarea><div class="ai-composer-footer"><div class="ai-composer-controls"><button class="ai-model-picker-trigger">Seedance 2.0 Fast</button><div class="ai-video-mode-picker"><button class="ai-video-mode-trigger"><span>First frame</span></button></div><button class="ai-options-toggle">Options</button></div><button class="ai-composer-submit">&#8593;</button></div></form></div>
           </div>
           <div id="resize-handle-board-agent" class="resize-handle resize-handle-v"></div>
           <aside id="board-agent-panel" class="board-agent-panel">
@@ -119,11 +119,14 @@ async function run() {
   }
   const composerWithReference = await window.webContents.executeJavaScript(`(() => {
     document.querySelector('.ai-composer-reference-strip').hidden = false;
-    const r = document.querySelector('.ai-composer').getBoundingClientRect();
-    return { width:r.width, height:r.height };
+    const composer = document.querySelector('.ai-composer').getBoundingClientRect();
+    const header = document.querySelector('.ai-composer-mode-row').getBoundingClientRect();
+    const reference = document.querySelector('.ai-composer-reference-thumb').getBoundingClientRect();
+    const videoMode = document.querySelector('.ai-video-mode-picker').getBoundingClientRect();
+    return { composer:{width:composer.width,height:composer.height}, header:{top:header.top,bottom:header.bottom}, reference:{top:reference.top,bottom:reference.bottom}, videoMode:{width:videoMode.width,height:videoMode.height} };
   })()`);
-  if (composerWithReference.height < 185 || composerWithReference.height > 205) {
-    throw new Error(`Composer did not grow cleanly for references: ${JSON.stringify(composerWithReference)}`);
+  if (Math.abs(composerWithReference.composer.height - full.composer.height) > 1 || composerWithReference.reference.top < composerWithReference.header.top || composerWithReference.reference.bottom > composerWithReference.header.bottom + 1 || composerWithReference.videoMode.width < 68) {
+    throw new Error(`Composer references or video mode escaped the compact layout: ${JSON.stringify(composerWithReference)}`);
   }
   await window.webContents.executeJavaScript(`document.querySelector('.ai-composer-reference-strip').hidden = true`);
   if (full.confirmedText.background !== 'rgba(0, 0, 0, 0)' || full.confirmedText.borderWidth !== '0px' || full.confirmedText.shadow !== 'none' || full.editingText.background === 'rgba(0, 0, 0, 0)' || full.editingText.borderWidth !== '1px') {

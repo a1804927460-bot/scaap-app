@@ -5415,7 +5415,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .ai-composer-mode-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
   padding-right: 34px;
 }
@@ -5441,47 +5441,22 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   color: var(--text-primary);
   box-shadow: var(--shadow-subtle);
 }
-.ai-video-mode[hidden] { display: none; }
-.ai-video-mode {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  padding: 3px;
-  border: 1px solid var(--border-hairline);
-  border-radius: 8px;
-  background: transparent;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.ai-video-mode::-webkit-scrollbar { display: none; }
-.ai-video-mode button {
-  height: 26px;
-  flex: 0 0 auto;
-  padding: 0 11px;
-  border-radius: 5px;
-  color: var(--text-tertiary);
-  font-size: 12px;
-  white-space: nowrap;
-}
-.ai-video-mode button:hover { color: var(--text-primary); }
-.ai-video-mode button.is-active {
-  background: var(--text-primary);
-  color: var(--bg-elevated);
-}
 .ai-composer-reference-strip[hidden] { display: none; }
 .ai-composer-reference-strip {
   display: flex;
-  gap: 8px;
-  min-height: 46px;
-  margin: 7px 0 0;
-  padding: 2px 1px 4px;
+  flex: 1 1 auto;
+  gap: 6px;
+  min-width: 0;
+  min-height: 36px;
+  margin: 0;
+  padding: 1px;
   overflow-x: auto;
 }
 .ai-composer-reference-thumb {
   position: relative;
-  width: 42px;
-  height: 42px;
-  flex: 0 0 42px;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
   padding: 0;
   border: 2px solid var(--accent);
   border-radius: 7px;
@@ -5545,6 +5520,50 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .ai-composer-prompt { flex: 1 1 auto; min-height: 0; padding: 6px 2px 3px; font-size: 14px; line-height: 1.4; }
 .ai-composer-footer { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ai-composer-controls, .ai-composer-submit-wrap { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.ai-video-mode-picker { position: relative; flex: 0 0 auto; }
+.ai-video-mode-picker[hidden], .ai-video-mode-menu[hidden] { display: none; }
+.ai-video-mode-trigger {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.ai-video-mode-trigger:hover,
+.ai-video-mode-trigger[aria-expanded="true"] { color: var(--text-primary); background: var(--bg-surface-2); }
+.ai-video-mode-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 7px);
+  width: max-content;
+  min-width: 126px;
+  padding: 5px;
+  border: 1px solid var(--border-hairline);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-elevated);
+  z-index: 30;
+}
+.ai-video-mode-option {
+  width: 100%;
+  min-height: 31px;
+  display: flex;
+  align-items: center;
+  padding: 5px 8px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-align: left;
+}
+.ai-video-mode-option:hover { color: var(--text-primary); background: var(--bg-surface-2); }
+.ai-video-mode-option.is-active { color: var(--accent); background: var(--accent-soft); }
 .ai-model-select,
 .ai-options-toggle {
   height: 32px;
@@ -5586,11 +5605,6 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 }
 .ai-composer-submit:hover { filter: brightness(1.06); }
 .ai-composer-submit:disabled { opacity: .55; cursor: var(--cursor-wait); }
-/* Reference thumbnails are opt-in. Keep the default composer flat, then add
-   only the row height actually needed when references are present. */
-.ai-image-popover.ai-composer:has(.ai-composer-reference-strip:not([hidden])) {
-  height: 194px;
-}
 .ai-options-panel {
   position: absolute;
   left: 204px;
@@ -5694,9 +5708,6 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
     width: calc(100% - 20px);
     height: 148px;
     bottom: 10px;
-  }
-  .ai-image-popover.ai-composer:has(.ai-composer-reference-strip:not([hidden])) {
-    height: 198px;
   }
   .board-quick-generate { width: calc(100% - 28px); }
   .ai-options-panel { left: 12px; right: 12px; width: auto; }

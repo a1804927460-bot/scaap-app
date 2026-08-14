@@ -3578,7 +3578,18 @@ function supportedVideoDuration(value, capabilities = {}) {
 
 function supportedVideoModes(capabilities = {}) {
   const configured = Array.isArray(capabilities.videoModes) ? capabilities.videoModes : [];
-  return configured.filter((entry) => entry && typeof entry === 'object' && entry.id);
+  const modes = configured.filter((entry) => entry && typeof entry === 'object' && entry.id);
+  if (modes.length) return modes;
+  const configuredLimit = Number(capabilities.maxReferenceImages);
+  const maximumReferences = Number.isInteger(configuredLimit) && configuredLimit >= 0
+    ? Math.min(14, configuredLimit)
+    : 2;
+  return [
+    { id: 'text', minReferences: 0, maxReferences: 0 },
+    ...(maximumReferences >= 1 ? [{ id: 'first-frame', minReferences: 1, maxReferences: 1 }] : []),
+    ...(maximumReferences >= 2 ? [{ id: 'first-last-frame', minReferences: 2, maxReferences: 2 }] : []),
+    ...(maximumReferences >= 1 ? [{ id: 'omni', minReferences: 1, maxReferences: maximumReferences }] : [])
+  ];
 }
 
 function supportedVideoMode(value, capabilities = {}) {
@@ -3594,6 +3605,14 @@ function videoModeReferenceLimit(mode, capabilities = {}) {
   if (Number.isInteger(configured) && configured >= 0) return configured;
   const fallback = Number(capabilities.maxReferenceImages);
   return Number.isInteger(fallback) && fallback >= 0 ? fallback : 2;
+}
+
+function videoReferenceSelectionLimit(capabilities = {}) {
+  const configured = Number(capabilities.maxReferenceImages);
+  if (Number.isInteger(configured) && configured >= 0) return Math.min(14, configured);
+  return supportedVideoModes(capabilities).reduce((maximum, mode) => (
+    Math.max(maximum, videoModeReferenceLimit(mode, capabilities))
+  ), 0);
 }
 
 function videoModeRatios(mode, capabilities = {}) {
@@ -3802,9 +3821,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
             视频
           </button>
         </div>
-        <div class="ai-video-mode" role="tablist" aria-label="视频生成模式" hidden></div>
+        <div class="ai-composer-reference-strip" aria-label="参考图" hidden></div>
       </div>
-      <div class="ai-composer-reference-strip" aria-label="参考图" hidden></div>
       <textarea class="ai-composer-prompt" rows="4" spellcheck="false"></textarea>
       <div class="ai-composer-footer">
         <div class="ai-composer-controls">
@@ -3815,6 +3833,14 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
               <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 10l5 5 5-5"/></svg>
             </button>
             <div class="ai-model-picker-menu" role="listbox" hidden></div>
+          </div>
+          <div class="ai-video-mode-picker" hidden>
+            <button type="button" class="ai-video-mode-trigger" aria-haspopup="listbox" aria-expanded="false">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 4v16M16 4v16M3 9h5M3 15h5M16 9h5M16 15h5"/></svg>
+              <span class="ai-video-mode-label"></span>
+              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 10l5 5 5-5"/></svg>
+            </button>
+            <div class="ai-video-mode-menu" role="listbox" hidden></div>
           </div>
           <button type="button" class="ai-options-toggle" aria-haspopup="true"></button>
         </div>
@@ -3875,7 +3901,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
 
   const form = pop.querySelector('form');
   const prompt = pop.querySelector('.ai-composer-prompt');
-  const videoModeControl = pop.querySelector('.ai-video-mode');
+  const videoModeControl = pop.querySelector('.ai-video-mode-picker');
+  const videoModeTrigger = pop.querySelector('.ai-video-mode-trigger');
+  const videoModeLabelElement = pop.querySelector('.ai-video-mode-label');
+  const videoModeMenu = pop.querySelector('.ai-video-mode-menu');
   const referenceStrip = pop.querySelector('.ai-composer-reference-strip');
   const modelSelect = pop.querySelector('.ai-model-select');
   const modelPicker = pop.querySelector('.ai-model-picker');
@@ -3948,6 +3977,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
 
   function removeBoardReference(fileId) {
     boardReferences.delete(fileId);
+    if (kind === 'video' && boardReferences.size === 0) videoMode = 'text';
     renderBoardReferences();
     if (kind === 'video' && !boardReferences.size) ratio = aiConfig.videoAspectRatio || '16:9';
     syncGenerationOptions();
@@ -3976,7 +4006,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       const order = document.createElement('span');
       order.className = 'ai-composer-reference-order';
       const referenceIndex = [...boardReferences.keys()].indexOf(fileId);
-      order.textContent = activeVideoMode && activeVideoMode.id === 'first-frame'
+      order.textContent = activeVideoMode && activeVideoMode.id === 'first-frame' && referenceIndex === 0
         ? t('First', '首')
         : activeVideoMode && activeVideoMode.id === 'first-last-frame'
           ? (referenceIndex === 0 ? t('First', '首') : t('Last', '尾'))
@@ -4062,12 +4092,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     if (kind === 'video') {
       const currentMode = supportedVideoMode(videoMode, capabilities);
       if (currentMode.id === 'text') setVideoMode('first-frame');
-      else if (currentMode.id === 'first-frame' && boardReferences.size >= 1) setVideoMode('first-last-frame');
-      else if (currentMode.id === 'first-last-frame' && boardReferences.size >= 2) setVideoMode('omni');
     }
-    const activeVideoMode = kind === 'video' ? supportedVideoMode(videoMode, capabilities) : null;
     const configuredLimit = kind === 'video'
-      ? videoModeReferenceLimit(activeVideoMode, capabilities)
+      ? videoReferenceSelectionLimit(capabilities)
       : Number(capabilities.maxReferenceImages);
     const limit = Number.isFinite(configuredLimit) && configuredLimit >= 0
       ? Math.floor(configuredLimit)
@@ -4142,7 +4169,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const autoLabel = t('Auto', '自动');
 
     mode.setAttribute('aria-label', t('Generation type', '生成类型'));
-    videoModeControl.setAttribute('aria-label', t('Video generation mode', '视频生成模式'));
+    videoModeTrigger.title = t('Choose video reference mode', '选择视频参考模式');
+    videoModeTrigger.setAttribute('aria-label', videoModeTrigger.title);
     setModeButtonLabel(imageButton, t('Image', '图片'));
     setModeButtonLabel(videoButton, t('Video', '视频'));
     modelSelect.setAttribute('aria-label', t('Generation model', '生成模型'));
@@ -4319,10 +4347,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
 
   function videoModeLabel(modeId) {
     const labels = {
-      text: t('Text', '文生'),
+      text: t('Text to video', '文生视频'),
       'first-frame': t('First frame', '首帧'),
-      'first-last-frame': t('First + last', '首尾帧'),
-      omni: t('Omni', '全能')
+      'first-last-frame': t('First + last frame', '首尾帧'),
+      omni: t('Omni reference', '全能参考')
     };
     return labels[modeId] || modeId;
   }
@@ -4331,34 +4359,35 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const capabilities = selectedVideoCapabilities();
     const modes = kind === 'video' ? supportedVideoModes(capabilities) : [];
     videoModeControl.hidden = kind !== 'video' || modes.length === 0;
-    videoModeControl.innerHTML = '';
+    videoModeMenu.innerHTML = '';
     if (!modes.length) return;
     const selectedMode = supportedVideoMode(videoMode, capabilities);
     videoMode = selectedMode.id;
+    videoModeLabelElement.textContent = videoModeLabel(selectedMode.id);
     modes.forEach((entry) => {
       const button = document.createElement('button');
       button.type = 'button';
+      button.className = 'ai-video-mode-option';
       button.dataset.videoMode = entry.id;
-      button.setAttribute('role', 'tab');
+      button.setAttribute('role', 'option');
       button.textContent = videoModeLabel(entry.id);
       const active = entry.id === videoMode;
       button.classList.toggle('is-active', active);
       button.setAttribute('aria-selected', String(active));
-      button.addEventListener('click', () => setVideoMode(entry.id));
-      videoModeControl.appendChild(button);
+      button.addEventListener('click', () => {
+        setVideoMode(entry.id);
+        videoModeMenu.hidden = true;
+        videoModeTrigger.setAttribute('aria-expanded', 'false');
+      });
+      videoModeMenu.appendChild(button);
     });
   }
 
-  function setVideoMode(nextMode, { trimReferences = true } = {}) {
+  function setVideoMode(nextMode) {
     if (kind !== 'video') return;
     const capabilities = selectedVideoCapabilities();
     const selectedMode = supportedVideoMode(nextMode, capabilities);
     videoMode = selectedMode.id;
-    const referenceLimit = videoModeReferenceLimit(selectedMode, capabilities);
-    if (trimReferences && boardReferences.size > referenceLimit) {
-      [...boardReferences.keys()].slice(referenceLimit).forEach((fileId) => boardReferences.delete(fileId));
-      syncAiComposerReferenceClasses();
-    }
     const ratios = videoModeRatios(selectedMode, capabilities);
     if (!ratios.includes(ratio)) ratio = ratios[0];
     renderVideoModes();
@@ -4408,12 +4437,6 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     if (kind === 'video') {
       const selectedMode = supportedVideoMode(videoMode, capabilities);
       videoMode = selectedMode.id;
-      const limit = videoModeReferenceLimit(selectedMode, capabilities);
-      if (boardReferences.size > limit) {
-        [...boardReferences.keys()].slice(limit).forEach((fileId) => boardReferences.delete(fileId));
-        renderBoardReferences();
-        syncAiComposerReferenceClasses();
-      }
       const ratios = videoModeRatios(selectedMode, capabilities);
       if (!ratios.includes(ratio)) ratio = ratios[0];
     } else {
@@ -4535,13 +4558,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     if (kind === 'video') {
       const capabilities = selectedVideoCapabilities();
       if (videoMode === 'text' && boardReferences.size) {
-        videoMode = boardReferences.size >= 2 ? 'first-last-frame' : 'first-frame';
-      }
-      const limit = videoModeReferenceLimit(supportedVideoMode(videoMode, capabilities), capabilities);
-      if (boardReferences.size > limit) {
-        [...boardReferences.keys()].slice(limit).forEach((fileId) => boardReferences.delete(fileId));
-        renderBoardReferences();
-        syncAiComposerReferenceClasses();
+        videoMode = 'first-frame';
       }
     }
     pop.dataset.kind = kind;
@@ -4575,9 +4592,21 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     modelPickerTrigger.setAttribute('aria-expanded', String(!isOpen));
   });
   videoModeControl.addEventListener('pointerdown', (event) => event.stopPropagation());
+  videoModeTrigger.addEventListener('click', () => {
+    const isOpen = !videoModeMenu.hidden;
+    videoModeMenu.hidden = isOpen;
+    videoModeTrigger.setAttribute('aria-expanded', String(!isOpen));
+    if (!isOpen) {
+      modelPickerMenu.hidden = true;
+      modelPickerTrigger.setAttribute('aria-expanded', 'false');
+    }
+  });
   // The picker is nested inside the board viewport. Let the list consume its
   // own wheel input instead of bubbling it into the board zoom/pan handler.
   modelPickerMenu.addEventListener('wheel', (event) => {
+    event.stopPropagation();
+  }, { passive: true });
+  videoModeMenu.addEventListener('wheel', (event) => {
     event.stopPropagation();
   }, { passive: true });
   modelSelect.addEventListener('change', () => {
@@ -4589,6 +4618,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     if (!modelPicker.contains(event.target)) {
       modelPickerMenu.hidden = true;
       modelPickerTrigger.setAttribute('aria-expanded', 'false');
+    }
+    if (!videoModeControl.contains(event.target)) {
+      videoModeMenu.hidden = true;
+      videoModeTrigger.setAttribute('aria-expanded', 'false');
     }
   });
   optionsToggle.addEventListener('click', () => {
