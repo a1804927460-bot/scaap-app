@@ -1927,6 +1927,23 @@ function normalizeVideoProviders(value, fallbackEndpoint, fallbackName) {
   });
 }
 
+function normalizedVideoModes(capabilities = {}) {
+  const configured = Array.isArray(capabilities.videoModes)
+    ? capabilities.videoModes.filter((entry) => entry && typeof entry === 'object' && entry.id)
+    : [];
+  if (configured.length) return configured;
+  const configuredMinimum = Math.max(0, Number(capabilities.minReferenceImages) || 0);
+  const configuredMaximum = Number(capabilities.maxReferenceImages);
+  const maximumReferences = Number.isInteger(configuredMaximum) && configuredMaximum >= 0
+    ? Math.min(14, configuredMaximum)
+    : 2;
+  return [
+    ...(configuredMinimum === 0 ? [{ id: 'text', minReferences: 0, maxReferences: 0 }] : []),
+    ...(maximumReferences >= 1 ? [{ id: 'first-frame', minReferences: 1, maxReferences: 1 }] : []),
+    ...(maximumReferences >= 2 ? [{ id: 'first-last-frame', minReferences: 2, maxReferences: 2 }] : [])
+  ];
+}
+
 function normalizeChatModels(value, fallbackModel) {
   const source = Array.isArray(value)
     ? value
@@ -3241,7 +3258,7 @@ function normalizeAiMediaGenerationRequest(request, kind) {
       ? 'first-last-frame'
       : referenceCount === 1 ? 'first-frame' : 'text';
   const videoMode = requestedVideoMode || fallbackVideoMode;
-  const videoModes = Array.isArray(capabilities.videoModes) ? capabilities.videoModes : [];
+  const videoModes = normalizedVideoModes(capabilities);
   const selectedVideoMode = videoModes.find((entry) => entry && entry.id === videoMode) || null;
   if (!selectedVideoMode) {
     throw invalidAiMediaOption('invalid-video-mode', `${String(provider.name || 'The selected video model')} does not support this generation mode.`);

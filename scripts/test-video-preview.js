@@ -117,6 +117,11 @@ assert.match(
 assert.match(mainSource, /function localFileProtocolResponse[\s\S]*?createLocalFileResponse\(request, filePath/);
 assert.match(
   mainSource,
+  /function normalizedVideoModes[\s\S]*?configuredMinimum === 0[\s\S]*?'first-frame'[\s\S]*?'first-last-frame'[\s\S]*?const videoModes = normalizedVideoModes\(capabilities\)/,
+  'Desktop request validation must infer the same frame modes shown for legacy video models.'
+);
+assert.match(
+  mainSource,
   /async function addGeneratedMediaFile[\s\S]*?\.part`\)[\s\S]*?handle\.sync\(\)[\s\S]*?rename\(temporaryPath, storedPath\)[\s\S]*?validateVideoFile\(storedPath\)[\s\S]*?transcodeVideoToWebCompatible\(storedPath, previewCacheDir, id\)/,
   'Generated videos must be atomically archived, decoded and made browser-compatible before success is returned.'
 );

@@ -3580,15 +3580,15 @@ function supportedVideoModes(capabilities = {}) {
   const configured = Array.isArray(capabilities.videoModes) ? capabilities.videoModes : [];
   const modes = configured.filter((entry) => entry && typeof entry === 'object' && entry.id);
   if (modes.length) return modes;
+  const configuredMinimum = Math.max(0, Number(capabilities.minReferenceImages) || 0);
   const configuredLimit = Number(capabilities.maxReferenceImages);
   const maximumReferences = Number.isInteger(configuredLimit) && configuredLimit >= 0
     ? Math.min(14, configuredLimit)
     : 2;
   return [
-    { id: 'text', minReferences: 0, maxReferences: 0 },
+    ...(configuredMinimum === 0 ? [{ id: 'text', minReferences: 0, maxReferences: 0 }] : []),
     ...(maximumReferences >= 1 ? [{ id: 'first-frame', minReferences: 1, maxReferences: 1 }] : []),
-    ...(maximumReferences >= 2 ? [{ id: 'first-last-frame', minReferences: 2, maxReferences: 2 }] : []),
-    ...(maximumReferences >= 1 ? [{ id: 'omni', minReferences: 1, maxReferences: maximumReferences }] : [])
+    ...(maximumReferences >= 2 ? [{ id: 'first-last-frame', minReferences: 2, maxReferences: 2 }] : [])
   ];
 }
 

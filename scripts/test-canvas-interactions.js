@@ -79,6 +79,11 @@ assert.match(
   /function videoReferenceSelectionLimit[\s\S]*?supportedVideoModes[\s\S]*?if \(currentMode\.id === 'text'\) setVideoMode\('first-frame'\)[\s\S]*?videoReferenceSelectionLimit\(capabilities\)/,
   'Clicking a canvas image in video mode must switch out of text-only mode before applying the provider reference limit.'
 );
+assert.match(
+  boardSource,
+  /function supportedVideoModes[\s\S]*?configuredMinimum === 0[\s\S]*?'first-frame'[\s\S]*?'first-last-frame'[\s\S]*?function supportedVideoMode/,
+  'Legacy video models must expose only the text/frame modes allowed by their documented reference limits.'
+);
 assert.doesNotMatch(
   boardSource,
   /function setVideoMode\([\s\S]{0,800}?boardReferences\.delete/,
