@@ -717,6 +717,17 @@ function addCanvasAgentReferenceIds(fileIds) {
   return added;
 }
 
+function syncCanvasAgentReferencesToSelection() {
+  const selectedIds = selectedCanvasAgentImageIds();
+  const selectedSet = new Set(selectedIds);
+  [...CanvasWorkspace.agentReferenceFileIds].forEach((fileId) => {
+    if (!selectedSet.has(fileId)) CanvasWorkspace.agentReferenceFileIds.delete(fileId);
+  });
+  addCanvasAgentReferenceIds(selectedIds);
+  renderCanvasAgentReferences();
+  if (typeof syncAiComposerReferenceClasses === 'function') syncAiComposerReferenceClasses();
+}
+
 function renderCanvasAgentReferences() {
   const strip = document.getElementById('board-agent-references');
   if (!strip) return;
@@ -738,10 +749,17 @@ function renderCanvasAgentReferences() {
     const remove = document.createElement('span');
     remove.textContent = '×';
     button.append(image, remove);
-    button.addEventListener('click', () => {
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       CanvasWorkspace.agentReferenceFileIds.delete(fileId);
+      AppState.boardItems.forEach((item) => {
+        if (item.fileId === fileId) item.selected = false;
+      });
       renderCanvasAgentReferences();
+      if (typeof syncBoardSelectionClasses === 'function') syncBoardSelectionClasses();
       if (typeof syncAiComposerReferenceClasses === 'function') syncAiComposerReferenceClasses();
+      renderCanvasAgentContext();
     });
     strip.appendChild(button);
   });

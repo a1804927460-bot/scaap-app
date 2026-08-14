@@ -29,6 +29,45 @@ const BOARD_WHEEL_PAN_GAIN = 0.78;
 const BOARD_WHEEL_ZOOM_RATE = 0.00125;
 const BOARD_MOVE_HISTORY_LIMIT = 100;
 
+// Anything matching this boundary owns its interaction. Canvas listeners run
+// in the capture phase in a few places, so stopping propagation on a button is
+// not sufficient: the viewport must reject the event before it starts a pan,
+// selection box, zoom, item drag, or reference-image selection underneath.
+const BOARD_UI_EVENT_SELECTOR = [
+  '[data-board-ui-layer="true"]',
+  '[data-board-interactive="true"]',
+  '.board-image-toolbar',
+  '.board-edit-hint',
+  '.generated-media-detail-trigger',
+  '.mini-audio-player',
+  '.mini-video-player',
+  '.ai-image-popover',
+  '.board-quick-generate',
+  '.board-agent-panel',
+  '.board-bottom-bar',
+  '.shortcuts-popover',
+  '.board-butler-menu',
+  '.board-butler-config-panel',
+  '.board-butler-mask-overlay',
+  '.generated-media-detail-overlay',
+  '.context-menu',
+  '.canvas-name-dialog-overlay',
+  '#text-tool-panel',
+  '#doodle-color-panel'
+].join(',');
+
+function isBoardUiEventTarget(target) {
+  const element = target && target.nodeType === Node.ELEMENT_NODE
+    ? target
+    : (target && target.parentElement);
+  return !!(element && element.closest && element.closest(BOARD_UI_EVENT_SELECTOR));
+}
+
+function markBoardUiLayer(element) {
+  if (element) element.dataset.boardUiLayer = 'true';
+  return element;
+}
+
 const Board = {
   panX: 200,
   panY: 200,
@@ -1537,11 +1576,12 @@ function createBoardItemElement(item) {
   el.dataset.boardId = item.id;
   const hasMediaDetails = !!(f.aiGeneration || f.sourceFolder === 'AI Generated' || f.butlerOperation);
   el.addEventListener('click', (e) => {
+    if (isBoardUiEventTarget(e.target)) return;
     if (e.ctrlKey || e.metaKey || e.shiftKey) {
       e.stopPropagation();
       item.selected = !item.selected;
       syncBoardSelectionClasses();
-    } else if (!item.selected) {
+    } else if (!item.selected || AppState.boardItems.some((boardItem) => boardItem.selected && boardItem.id !== item.id)) {
       AppState.boardItems.forEach((boardItem) => { boardItem.selected = false; });
       item.selected = true;
       syncBoardSelectionClasses();
@@ -1558,9 +1598,9 @@ function createBoardItemElement(item) {
       isImage &&
       agentPanel && !agentPanel.classList.contains('is-hidden') &&
       Date.now() - Board.lastDragEndedAt > 120 &&
-      typeof addCanvasAgentReference === 'function'
+      typeof syncCanvasAgentReferencesToSelection === 'function'
     ) {
-      addCanvasAgentReference(item.fileId);
+      syncCanvasAgentReferencesToSelection();
     }
     if (typeof renderCanvasAgentContext === 'function') renderCanvasAgentContext();
   });
@@ -1847,6 +1887,7 @@ function makeBoardItemDraggable(el, item) {
     // Middle-button and Alt+left gestures always belong to canvas panning,
     // even when they begin over an image or video.
     if (e.button !== 0 || e.altKey) return;
+    if (isBoardUiEventTarget(e.target)) return;
     // Toolbar controls and native form controls own their pointer gesture;
     // they must never fall through to board-item dragging.
     if (e.target.closest && e.target.closest(
@@ -2239,6 +2280,7 @@ function initBoardCanvas() {
   let panMoveRunner = null;
 
   viewport.addEventListener('pointerdown', (e) => {
+    if (isBoardUiEventTarget(e.target)) return;
     const isPanGesture = e.button === 1 || (e.button === 0 && e.altKey);
     if (!isPanGesture) return;
     e.preventDefault();
@@ -2262,6 +2304,7 @@ function initBoardCanvas() {
   }, true);
 
   viewport.addEventListener('mousedown', (e) => {
+    if (isBoardUiEventTarget(e.target)) return;
     if (e.button === 1 || (e.button === 0 && e.altKey)) return;
     if (e.target.closest('.board-item')) return;
 
@@ -2333,6 +2376,7 @@ function initBoardCanvas() {
   window.addEventListener('blur', () => finishBoardPan());
 
   viewport.addEventListener('wheel', (e) => {
+    if (isBoardUiEventTarget(e.target)) return;
     e.preventDefault();
     markBoardInteraction();
     const modeScale = e.deltaMode === 1
@@ -2354,6 +2398,7 @@ function initBoardCanvas() {
   }, { passive: false });
 
   viewport.addEventListener('click', (event) => {
+    if (isBoardUiEventTarget(event.target)) return;
     if (!activeAiComposer() || event.button !== 0) return;
     if (event.target.closest('.board-item')) return;
     if (Date.now() - Board.lastPanEndedAt < 160) return;
@@ -3047,6 +3092,7 @@ function buildAiImagePopover(aiConfig) {
   const pop = document.createElement('div');
   pop.id = 'ai-image-popover';
   pop.className = 'ai-image-popover' + (isBoardFullscreen() ? '' : ' is-panel-popover');
+  markBoardUiLayer(pop);
 
   const title = document.createElement('div');
   title.className = 'ai-image-title';
@@ -3525,6 +3571,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   const pop = document.createElement('div');
   pop.id = 'ai-image-popover';
   pop.className = 'ai-image-popover ai-composer' + (isBoardFullscreen() ? '' : ' is-panel-popover');
+  markBoardUiLayer(pop);
   pop.innerHTML = `
     <form class="ai-composer-form">
       <button type="button" class="ai-composer-close">
@@ -4700,6 +4747,7 @@ function showBoardQuickGenerate() {
   const quick = document.createElement('form');
   quick.id = 'board-quick-generate';
   quick.className = 'board-quick-generate';
+  markBoardUiLayer(quick);
   quick.innerHTML = `
     <button type="button" class="board-quick-kind" data-kind="image" title="${t('Open image generation', '打开图片生成')}" aria-label="${t('Open image generation', '打开图片生成')}">
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M3 17l5-5 4 4 3-3 6 6"/></svg>
@@ -4789,6 +4837,7 @@ async function showAiImagePopover(initialKind = 'image') {
   const loading = document.createElement('div');
   loading.id = 'ai-image-popover';
   loading.className = 'ai-image-popover ai-composer ai-composer-loading' + (isBoardFullscreen() ? '' : ' is-panel-popover');
+  markBoardUiLayer(loading);
   loading.dataset.kind = initialKind;
   loading.innerHTML = `
     <button type="button" class="ai-composer-close" title="${t('Close', '关闭')}" aria-label="${t('Close', '关闭')}">x</button>
@@ -4849,6 +4898,7 @@ function initBoardBottomBar() {
     const pop = document.createElement('div');
     pop.id = 'shortcuts-popover';
     pop.className = 'shortcuts-popover';
+    markBoardUiLayer(pop);
     renderShortcutsPopover(pop);
     document.getElementById('board-bottom-bar').appendChild(pop);
     setTimeout(() => document.addEventListener('click', function closeOnce(e) {

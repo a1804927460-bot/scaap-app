@@ -130,8 +130,24 @@ assert.match(indexHtml, /id="board-agent-references"[\s\S]*?id="board-agent-add-
   'Canvas Agent must expose references plus image/video model selection.');
 assert.match(boardStyles, /\.board-agent-form textarea \{[\s\S]*?min-height:\s*58px;[\s\S]*?max-height:\s*112px;/,
   'The Canvas Agent prompt must be approximately half its previous height.');
-assert.match(boardSource, /agentPanel && !agentPanel\.classList\.contains\('is-hidden'\)[\s\S]*?addCanvasAgentReference\(item\.fileId\)/,
-  'Clicking an image while Agent is open must add it as a reference.');
+assert.match(boardSource, /agentPanel && !agentPanel\.classList\.contains\('is-hidden'\)[\s\S]*?syncCanvasAgentReferencesToSelection\(\)/,
+  'Clicking an image while Agent is open must synchronize references with canvas selection.');
+assert.match(
+  boardSource,
+  /const BOARD_UI_EVENT_SELECTOR[\s\S]*?function isBoardUiEventTarget[\s\S]*?viewport\.addEventListener\('pointerdown',[\s\S]*?isBoardUiEventTarget\(e\.target\)[\s\S]*?viewport\.addEventListener\('mousedown',[\s\S]*?isBoardUiEventTarget\(e\.target\)[\s\S]*?viewport\.addEventListener\('wheel',[\s\S]*?isBoardUiEventTarget\(e\.target\)/,
+  'Top-level canvas UI must reject pointer, selection, and wheel events before they reach the board.'
+);
+assert.match(
+  workspaceSource,
+  /button\.addEventListener\('click', \(event\) => \{[\s\S]*?event\.stopPropagation\(\)[\s\S]*?agentReferenceFileIds\.delete\(fileId\)[\s\S]*?item\.fileId === fileId[\s\S]*?item\.selected = false[\s\S]*?syncBoardSelectionClasses/,
+  'Removing an Agent reference must also cancel that image selection on the canvas.'
+);
+assert.match(
+  workspaceSource,
+  /function syncCanvasAgentReferencesToSelection[\s\S]*?selectedCanvasAgentImageIds\(\)[\s\S]*?agentReferenceFileIds\.delete\(fileId\)[\s\S]*?addCanvasAgentReferenceIds\(selectedIds\)/,
+  'Agent references must mirror the currently selected canvas images instead of accumulating old clicks.'
+);
+assert.match(indexHtml, /id="board-agent-panel"[^>]*data-board-ui-layer="true"/);
 assert.match(workspaceSource, /function addCanvasAgentReference[\s\S]*?agentReferenceFileIds[\s\S]*?function submitCanvasAgentGeneration[\s\S]*?generateAiMediaForBoardV3/,
   'Agent references and model selection must submit through the real board generation pipeline.');
 assert.match(workspaceSource, /function canvasAgentMediaProviders[\s\S]*?getConfiguredVideoProviders[\s\S]*?getConfiguredImageProviders[\s\S]*?function renderCanvasAgentModels/,
