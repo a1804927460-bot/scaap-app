@@ -182,7 +182,7 @@ assert.deepEqual(nanoBody, {
   }],
   generationConfig: {
     responseModalities: ['TEXT', 'IMAGE'],
-    imageConfig: { aspectRatio: '3:4', clarity: '2K' }
+    imageConfig: { aspectRatio: '3:4', imageSize: '2K' }
   }
 });
 
@@ -217,6 +217,25 @@ assert.deepEqual(await generateMedia('image', {
   aspectRatio: '1:1',
   urls: []
 }), pngHeader(4096, 2304));
+
+globalThis.fetch = async () => jsonResponse({
+  candidates: [{
+    content: {
+      role: 'model',
+      parts: [{ inlineData: { mimeType: 'image/png', data: pngHeader(1376, 768).toString('base64') } }]
+    }
+  }]
+});
+await assert.rejects(
+  generateMedia('image', {
+    providerId: 'image-1',
+    prompt: 'reject fake 4K',
+    size: '4K',
+    aspectRatio: '16:9',
+    urls: []
+  }),
+  (error) => error && error.code === 'image-resolution-mismatch' && error.actualWidth === 1376
+);
 
 const gptImageCalls = [];
 globalThis.fetch = async (url, options = {}) => {

@@ -18,6 +18,8 @@ const preload = read('preload.js');
 const bundlePath = path.join(root, 'src', 'vendor', 'model-viewer.bundle.js');
 
 assert.match(boardMedia, /className = 'board-butler-trigger'/, 'The selected-image toolbar must expose the Butler capsule.');
+assert.match(boardMedia, /requestedMinimum = requestedSize === '4K' \? 3072[\s\S]*?requestedSize === '2K' \? 1536/, 'Generated-image details must verify requested quality against actual pixels.');
+assert.match(boardMedia, /t\('Requested', '请求'\)[\s\S]*?t\('Actual', '实际'\)/, 'A legacy low-resolution result must not be labelled as its requested quality.');
 assert.doesNotMatch(boardMedia, /key:\s*'more'/, 'The old three-dot toolbar action must be removed.');
 assert.match(boardMedia, /window\.messsAPI && window\.messsAPI\.butler/, 'Butler must use the isolated preload namespace.');
 assert.match(boardMedia, /api\.removeBackground\(file\.id, options\)/, 'Background removal must send only documented settings with the file id.');

@@ -4102,6 +4102,11 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     modelPickerMenu.hidden = isOpen;
     modelPickerTrigger.setAttribute('aria-expanded', String(!isOpen));
   });
+  // The picker is nested inside the board viewport. Let the list consume its
+  // own wheel input instead of bubbling it into the board zoom/pan handler.
+  modelPickerMenu.addEventListener('wheel', (event) => {
+    event.stopPropagation();
+  }, { passive: true });
   modelSelect.addEventListener('change', () => {
     const selected = [...modelSelect.options].find((option) => option.value === modelSelect.value);
     if (selected) modelPickerLabel.textContent = selected.textContent;

@@ -12,10 +12,17 @@ function showUpdateBanner(state = latestUpdaterState, force = false) {
 
   const status = state.status;
   const version = state.availableVersion || downloadedUpdateVersion || '';
-  const isRelevant = ['available', 'downloading', 'downloaded'].includes(status);
+  const isRelevant = ['available', 'downloading', 'downloaded', 'installing'].includes(status);
   if (!isRelevant || (!force && dismissedUpdateVersion && dismissedUpdateVersion === version)) return;
 
-  if (status === 'downloaded') {
+  if (status === 'installing') {
+    text.textContent = t(
+      'The update installer is opening. Complete the installer and approve the Windows prompt if shown.',
+      '正在打开更新安装程序，请完成安装；如出现 Windows 提示，请允许本次更新。'
+    );
+    installBtn.disabled = true;
+    installBtn.textContent = t('Opening installer...', '正在打开安装程序...');
+  } else if (status === 'downloaded') {
     downloadedUpdateVersion = version || downloadedUpdateVersion;
     text.textContent = t(
       `Version ${version || ''} is ready. Restart to update.`,
@@ -58,6 +65,7 @@ function updaterStatusText(state) {
     available: t(`Version ${version || ''} is available`, `发现版本 ${version || ''}`),
     downloading: t(`Downloading ${version || ''} · ${progress}%`, `正在下载 ${version || ''} · ${progress}%`),
     downloaded: t(`Version ${version || ''} is ready to install`, `版本 ${version || ''} 已可安装`),
+    installing: t('Opening the update installer...', '正在打开更新安装程序...'),
     'up-to-date': t('You are up to date', '当前已是最新版本'),
     error: t('Update check failed', '更新检查失败')
   };
@@ -122,7 +130,27 @@ function initUpdater() {
     });
   });
 
-  document.getElementById('update-install-btn').addEventListener('click', () => window.messsAPI.installUpdateNow());
+  document.getElementById('update-install-btn').addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = t('Opening installer...', '正在打开安装程序...');
+    renderUpdaterState({ ...(latestUpdaterState || {}), status: 'installing', progress: 100 });
+    try {
+      const result = await window.messsAPI.installUpdateNow();
+      if (!result || !result.ok) {
+        button.disabled = false;
+        renderUpdaterState({ ...(latestUpdaterState || {}), status: 'downloaded', progress: 100 });
+        showToast(t(
+          'The update installer could not be opened. Please try again.',
+          '无法打开更新安装程序，请重试。'
+        ));
+      }
+    } catch (error) {
+      button.disabled = false;
+      renderUpdaterState({ ...(latestUpdaterState || {}), status: 'downloaded', progress: 100 });
+      showToast(t('The update installer could not be opened.', '无法打开更新安装程序。'));
+    }
+  });
   document.getElementById('update-dismiss-btn').addEventListener('click', () => {
     const banner = document.getElementById('update-banner');
     dismissedUpdateVersion = latestUpdaterState && latestUpdaterState.availableVersion

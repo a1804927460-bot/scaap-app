@@ -12,6 +12,7 @@ const builder = fs.readFileSync(path.join(root, 'electron-builder.release.yml'),
 const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'release.yml'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'src', 'index.html'), 'utf8');
 const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+const updaterUi = fs.readFileSync(path.join(root, 'src', 'js', 'updater.js'), 'utf8');
 const installerInclude = fs.readFileSync(path.join(root, 'build-resources', 'installer.nsh'), 'utf8');
 const catalog = require('../config/provider-catalog.json');
 
@@ -30,6 +31,7 @@ assert.match(installerInclude, /\$\{isUpdated\}[\s\S]*?taskkill\.exe[\s\S]*?\/F[
 assert.doesNotMatch(installerInclude, /taskkill\.exe[^\r\n]*\/T/, 'The installer must not terminate its own child process tree.');
 assert.match(installerInclude, /Get-CimInstance Win32_Process[\s\S]*?ExecutablePath[\s\S]*?\$INSTDIR\\resources\\tools\\\*[\s\S]*?Invoke-CimMethod -MethodName Terminate/);
 assert.doesNotMatch(installerInclude, /taskkill\.exe[^\r\n]*(?:soffice|ffmpeg|magick)/i, 'Bundled helpers must be terminated by install path, not a broad image-name match.');
+assert.match(installerInclude, /!macro customInstall[\s\S]*?\$\{isUpdated\}[\s\S]*?CreateShortCut "\$newStartMenuLink"[\s\S]*?CreateShortCut "\$newDesktopLink"/);
 assert.match(workflow, /secrets\.RELEASES_TOKEN/);
 assert.match(workflow, /secrets\.CSC_LINK/);
 assert.match(workflow, /secrets\.CSC_KEY_PASSWORD/);
@@ -51,7 +53,12 @@ assert.ok(
 );
 assert.match(main, /owner:\s*'a1804927460-bot'/);
 assert.match(main, /repo:\s*'messs-releases'/);
-assert.match(main, /autoUpdater\.quitAndInstall\(true,\s*true\)/);
+assert.match(main, /autoUpdater\.autoInstallOnAppQuit\s*=\s*false/);
+assert.match(main, /autoUpdater\.quitAndInstall\(false,\s*false\)/);
+assert.doesNotMatch(main, /quitAndInstall\([\s\S]{0,160}setTimeout\(\(\)\s*=>\s*app\.exit/);
+assert.match(updaterUi, /\['available',\s*'downloading',\s*'downloaded',\s*'installing'\]/);
+assert.match(updaterUi, /status\s*===\s*'installing'[\s\S]*?Opening installer/);
+assert.match(main, /image-resolution-mismatch[\s\S]*?points were refunded[\s\S]*?积分已退还/);
 assert.match(main, /preview\.shutdownProcesses\(\)/);
 assert.match(main, /thumbnails\.shutdownProcesses\(\)/);
 assert.match(main, /shutdownMediaMetadataProcesses\(\)/);

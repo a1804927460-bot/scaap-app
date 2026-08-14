@@ -2245,7 +2245,13 @@ function showGeneratedMediaDetails(file, anchorElement) {
   }
   if (generation.size) {
     const size = document.createElement('span');
-    size.textContent = `${t('Quality', '画质')} ${generation.size}`;
+    const requestedSize = String(generation.size).toUpperCase();
+    const actualLongEdge = Math.max(Number(file.sourceWidth) || 0, Number(file.sourceHeight) || 0);
+    const requestedMinimum = requestedSize === '4K' ? 3072 : (requestedSize === '2K' ? 1536 : 0);
+    const verifiedSize = requestedMinimum === 0 || actualLongEdge >= requestedMinimum;
+    size.textContent = verifiedSize
+      ? `${t('Quality', '画质')} ${requestedSize}`
+      : `${t('Requested', '请求')} ${requestedSize} · ${t('Actual', '实际')} ${dimensions || t('Unknown', '未知')}`;
     chips.appendChild(size);
   }
   if (operationCredits !== null) {

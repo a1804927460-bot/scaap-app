@@ -74,6 +74,11 @@ assert.match(
   /viewport\.addEventListener\('wheel',[\s\S]*?const horizontalPan = e\.shiftKey[\s\S]*?setBoardPanTarget[\s\S]*?setBoardZoomTarget/,
   'Plain vertical wheel input must zoom around the pointer while Shift or horizontal trackpad input pans.'
 );
+assert.match(
+  boardSource,
+  /modelPickerMenu\.addEventListener\('wheel',[\s\S]*?event\.stopPropagation\(\)[\s\S]*?passive:\s*true/,
+  'Scrolling the model picker must not zoom or pan the board behind it.'
+);
 assert.match(boardSource, /const BOARD_WHEEL_PAN_GAIN = 0\.78;/);
 assert.match(boardSource, /const BOARD_WHEEL_ZOOM_RATE = 0\.00125;/);
 assert.match(boardSource, /function setBoardPanTarget[\s\S]*?requestAnimationFrame\(stepBoardZoom\)/);

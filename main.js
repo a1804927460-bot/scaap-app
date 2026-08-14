@@ -405,7 +405,10 @@ function checkForUpdatesQuietly() {
 function setupAutoUpdater() {
   updaterState.enabled = store.data.settings.autoUpdateEnabled !== false;
   autoUpdater.autoDownload = updaterState.enabled;
-  autoUpdater.autoInstallOnAppQuit = updaterState.enabled;
+  // A per-machine NSIS update needs elevation. Installing silently during an
+  // ordinary quit can leave the app closed with no feedback when UAC is
+  // cancelled or the installer cannot start, so installation is explicit.
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.autoRunAppAfterInstall = true;
   const publishInfo = getPublishInfo();
   if (publishInfo) {
@@ -714,10 +717,10 @@ async function installDownloadedUpdate() {
     ]);
   }
 
-  // Silent mode avoids leaving the assisted installer open while Electron is
-  // shutting down. Force-run starts the newly installed build afterwards.
-  autoUpdater.quitAndInstall(true, true);
-  setTimeout(() => app.exit(0), 5_000).unref();
+  // Keep the assisted installer visible so elevation or installer failures
+  // cannot look like the app simply uninstalled itself. With a non-silent
+  // install electron-updater uses autoRunAppAfterInstall to restart Messs.
+  autoUpdater.quitAndInstall(false, false);
   return { ok: true, installing: true };
 }
 
@@ -2395,6 +2398,23 @@ async function generateAiChatReply(prompt, messages, providerId, model) {
 
 function conciseAiErrorMessage(error, context = {}) {
   const raw = String(error && error.message || '').replace(/\s+/g, ' ').trim();
+  if (error && error.code === 'image-resolution-mismatch') {
+    const requested = String(error.requestedResolution || '').trim().toUpperCase();
+    const width = Math.round(Number(error.actualWidth) || 0);
+    const height = Math.round(Number(error.actualHeight) || 0);
+    return localizedMessage(
+      `${requested || 'The requested resolution'} was requested, but the provider returned ${width} x ${height}. The low-resolution result was rejected and your points were refunded. Please retry.`,
+      `请求了 ${requested || '高清'}，但服务商实际返回 ${width} x ${height}。低分辨率结果已拒收，本次积分已退还，请重试。`,
+      `${requested || '고해상도'} 요청에 대해 제공자가 ${width} x ${height} 이미지를 반환했습니다. 저해상도 결과는 거부되었고 포인트는 환불되었습니다. 다시 시도해 주세요.`
+    );
+  }
+  if (error && error.code === 'image-resolution-unverified') {
+    return localizedMessage(
+      'The provider result dimensions could not be verified. The result was rejected and your points were refunded. Please retry.',
+      '无法验证服务商返回图片的真实分辨率，结果已拒收，本次积分已退还，请重试。',
+      '제공자 결과의 실제 해상도를 확인할 수 없습니다. 결과는 거부되었고 포인트는 환불되었습니다. 다시 시도해 주세요.'
+    );
+  }
   if (/no available channel for model|no channel available|model.*not.*available/i.test(raw)) {
     const model = String(context.model || '').trim();
     return model
@@ -5703,7 +5723,7 @@ app.whenReady().then(() => {
     store.scheduleSave();
     updaterState.enabled = next;
     autoUpdater.autoDownload = next;
-    autoUpdater.autoInstallOnAppQuit = next;
+    autoUpdater.autoInstallOnAppQuit = false;
     const state = setUpdaterState({ status: next ? 'idle' : 'disabled', message: null });
     if (next && app.isPackaged) checkForUpdates(false);
     return state;

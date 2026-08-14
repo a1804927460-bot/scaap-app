@@ -411,7 +411,8 @@ function testGeminiImageBody() {
 
 async function testQuickRouterNativeGeminiImageFlow() {
   const calls = [];
-  const pngBase64 = 'iVBORw==';
+  const pngBuffer = pngHeader(4096, 2304);
+  const pngBase64 = pngBuffer.toString('base64');
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url, options });
     return jsonResponse({
@@ -438,7 +439,7 @@ async function testQuickRouterNativeGeminiImageFlow() {
     aspectRatio: '16:9'
   });
 
-  assert.deepStrictEqual(buffer, Buffer.from(pngBase64, 'base64'));
+  assert.deepStrictEqual(buffer, pngBuffer);
   assert.strictEqual(calls.length, 1);
   assert.strictEqual(
     calls[0].url,
@@ -446,7 +447,7 @@ async function testQuickRouterNativeGeminiImageFlow() {
   );
   assert.deepStrictEqual(JSON.parse(calls[0].options.body).generationConfig.imageConfig, {
     aspectRatio: '16:9',
-    clarity: '4K'
+    imageSize: '4K'
   });
 }
 

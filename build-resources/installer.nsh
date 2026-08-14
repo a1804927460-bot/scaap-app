@@ -9,3 +9,22 @@
     Sleep 1500
   ${endif}
 !macroend
+
+!macro customInstall
+  ${if} ${isUpdated}
+    ; electron-builder keeps shortcuts when upgrading, but an older
+    ; uninstaller or interrupted update may already have removed them. Always
+    ; repair both launch entries after the new application files are in place.
+    CreateDirectory "$SMPROGRAMS"
+    CreateShortCut "$newStartMenuLink" "$appExe" "" "$appExe" 0 "" "" "${APP_DESCRIPTION}"
+    ClearErrors
+    WinShell::SetLnkAUMI "$newStartMenuLink" "${APP_ID}"
+
+    ${ifNot} ${isNoDesktopShortcut}
+      CreateShortCut "$newDesktopLink" "$appExe" "" "$appExe" 0 "" "" "${APP_DESCRIPTION}"
+      ClearErrors
+      WinShell::SetLnkAUMI "$newDesktopLink" "${APP_ID}"
+    ${endif}
+    System::Call 'Shell32::SHChangeNotify(i 0x8000000, i 0, i 0, i 0)'
+  ${endif}
+!macroend
