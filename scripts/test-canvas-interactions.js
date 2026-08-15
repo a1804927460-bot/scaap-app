@@ -213,6 +213,11 @@ assert.match(
   /\.ai-image-popover\.ai-composer,[\s\S]*?height:\s*142px;[\s\S]*?\.ai-composer-reference-strip \{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*36px;/,
   'The generation composer must stay flat while reference thumbnails share its header row.'
 );
+assert.match(
+  boardStyles,
+  /\.ai-image-popover\.ai-composer,[\s\S]*?\.ai-image-popover\.ai-composer\.is-panel-popover \{[\s\S]*?bottom:\s*74px;/,
+  'Compact and fullscreen generation composers must clear the persistent bottom toolbar.'
+);
 assert.match(boardStyles, /\.ai-video-mode-picker \{[\s\S]*?position:\s*relative;[\s\S]*?\.ai-video-mode-menu \{[\s\S]*?bottom:\s*calc\(100% \+ 7px\)/);
 assert.match(indexHtml, /id="board-agent-references"[\s\S]*?id="board-agent-add-reference"[\s\S]*?id="board-agent-model-menu"[\s\S]*?data-agent-kind="image"[\s\S]*?data-agent-kind="video"/,
   'Canvas Agent must expose references plus image/video model selection.');

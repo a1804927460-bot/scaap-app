@@ -151,12 +151,19 @@ async function run() {
 
   const compact = await window.webContents.executeJavaScript(`(() => {
     document.getElementById('board-panel').classList.remove('is-fullscreen');
+    const composer = document.querySelector('.ai-composer').getBoundingClientRect();
+    const bottomBar = document.getElementById('board-bottom-bar').getBoundingClientRect();
     return {
       toggle:getComputedStyle(document.getElementById('board-agent-toggle')).display,
-      agent:getComputedStyle(document.getElementById('board-agent-panel')).display
+      agent:getComputedStyle(document.getElementById('board-agent-panel')).display,
+      composer:{top:composer.top,bottom:composer.bottom},
+      bottomBar:{top:bottomBar.top,bottom:bottomBar.bottom}
     };
   })()`);
   if (compact.toggle !== 'none' || compact.agent !== 'none') throw new Error(`Compact canvas exposed Agent: ${JSON.stringify(compact)}`);
+  if (compact.composer.bottom > compact.bottomBar.top - 10) {
+    throw new Error(`Compact composer overlaps the bottom toolbar: ${JSON.stringify(compact)}`);
+  }
   window.destroy();
   fs.rmSync(tempDir, { recursive: true, force: true });
   process.stdout.write(`BOARD_AGENT_VISUAL_OK agent=${Math.round(full.agent.width)}x${Math.round(full.agent.height)} composer=${Math.round(full.composer.width)}x${Math.round(full.composer.height)} doodlePixels=${freehand.alphaPixels}\n`);

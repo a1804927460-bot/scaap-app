@@ -5253,7 +5253,10 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .ai-image-popover.ai-composer.is-panel-popover {
   top: auto;
   right: auto;
-  bottom: 18px;
+  /* Keep the composer above the persistent canvas toolbar in both compact
+     and fullscreen layouts. The toolbar is 40px tall and sits 16px above
+     the edge, leaving a deliberate 18px interaction gap. */
+  bottom: 74px;
   left: 50%;
   width: min(940px, calc(100% - 40px));
   max-width: calc(100% - 32px);
@@ -5330,7 +5333,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   from { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
   to { opacity: 0; transform: translateX(-50%) translateY(10px) scale(.975); }
 }
-.board-panel.is-fullscreen .ai-composer { bottom: 76px; }
+.board-panel.is-fullscreen .ai-composer { bottom: 74px; }
 .board-quick-generate {
   position: absolute;
   z-index: 145;
@@ -5725,7 +5728,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   .ai-image-popover.ai-composer.is-panel-popover {
     width: calc(100% - 20px);
     height: 148px;
-    bottom: 10px;
+    bottom: 68px;
   }
   .board-quick-generate { width: calc(100% - 28px); }
   .ai-options-panel { left: 12px; right: 12px; width: auto; }
