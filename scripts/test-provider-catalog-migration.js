@@ -110,7 +110,11 @@ for (const id of ['video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-
   assert.equal(media.videoProviders.find((provider) => provider.id === id).name, '');
 }
 assert.equal(media.chatProviderName, 'Messs AI');
-assert.equal(media.chatModel, 'gemini-3.1-flash-lite');
+assert.equal(media.chatModel, 'gemini-3.7-flash');
+const agentChat = media.chatProviders.find((provider) => provider.id === 'chat-1');
+assert.equal(agentChat.endpoint, 'https://api.302.ai/v1/chat/completions');
+assert.equal(agentChat.protocol, 'openai-chat');
+assert.deepEqual(agentChat.models, ['gemini-3.7-flash']);
 const advancedChat = media.chatProviders.find((provider) => provider.id === 'chat-2');
 assert.ok(advancedChat);
 assert.equal(advancedChat.name, 'AI Chat');
@@ -166,8 +170,7 @@ assert.equal(assertGatewayProvider(current, 'video', 'video-1').name, 'MiniMax H
 assert.equal(assertGatewayProvider(current, 'video', 'video-2').name, 'Seedance 2.0');
 assert.equal(assertGatewayProvider(current, 'video', 'video-3').name, 'Seedance 2.5');
 assert.deepEqual(assertGatewayProvider(current, 'chat', 'chat-1').models, [
-  'gemini-3.1-flash-lite',
-  'gemini-3.6-flash'
+  'gemini-3.7-flash'
 ]);
 assert.deepEqual(assertGatewayProvider(current, 'chat', 'chat-2').models, [
   'gpt-5.6-luna',
@@ -184,6 +187,7 @@ assert.match(mainSource, /'512x512', '720p', '1080p'/);
 assert.match(mainSource, /configuredReferenceMinimum/);
 assert.match(sidebarSource, /length: Math\.max\(10, list\.length\)/);
 assert.match(assistantSource, /'gpt-5\.6-luna': 'GPT-5\.6Luna'/);
+assert.match(assistantSource, /'gemini-3\.7-flash': 'Gemini 3\.7 Flash'/);
 assert.match(assistantSource, /'doubao-seed-2-1-pro-260628': 'Doubao2\.1pro'/);
 assert.match(assistantSource, /'deepseek-v4-pro': 'DeepSeek-V4-Pro'/);
 assert.equal(

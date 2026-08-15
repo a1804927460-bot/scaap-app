@@ -2163,6 +2163,7 @@ function enterBoardFullscreen() {
   document.getElementById('board-fullscreen-toggle').setAttribute('aria-label', fullscreenTitle);
   document.getElementById('board-bottom-bar').hidden = false;
   syncBoardBottomZoomLabel();
+  syncAiComposerFullscreenState();
   if (typeof setCanvasAgentOpen === 'function') setCanvasAgentOpen(true);
 }
 
@@ -2175,6 +2176,7 @@ function exitBoardFullscreen() {
   document.getElementById('board-fullscreen-toggle').title = fullscreenTitle;
   document.getElementById('board-fullscreen-toggle').setAttribute('aria-label', fullscreenTitle);
   document.getElementById('board-bottom-bar').hidden = false;
+  syncAiComposerFullscreenState();
 }
 
 function toggleBoardFullscreen() {
@@ -3075,6 +3077,22 @@ function setAiImageButtonsActive(active) {
 function activeAiComposer() {
   const pop = document.getElementById('ai-image-popover');
   return pop && pop.classList.contains('ai-composer') ? pop : null;
+}
+
+function syncAiComposerFullscreenState() {
+  const pop = document.getElementById('ai-image-popover');
+  if (!pop || !pop.classList.contains('ai-composer')) return;
+  const prompt = pop.querySelector('.ai-composer-prompt');
+  const selectionStart = prompt && Number.isInteger(prompt.selectionStart) ? prompt.selectionStart : null;
+  const selectionEnd = prompt && Number.isInteger(prompt.selectionEnd) ? prompt.selectionEnd : null;
+  pop.classList.toggle('is-panel-popover', !isBoardFullscreen());
+  requestAnimationFrame(() => {
+    if (!prompt || !prompt.isConnected || prompt.disabled) return;
+    prompt.focus({ preventScroll: true });
+    if (selectionStart !== null && selectionEnd !== null) {
+      prompt.setSelectionRange(selectionStart, selectionEnd);
+    }
+  });
 }
 
 function isAiComposerReference(fileId) {
@@ -5464,7 +5482,7 @@ async function showAiImagePopover(initialKind = 'image') {
   aiImagePopoverClickCloser = (e) => {
     const eventPath = typeof e.composedPath === 'function' ? e.composedPath() : [];
     if (pop.contains(e.target) || eventPath.includes(pop)) return;
-    if (e.target.closest('#board-mode-toggle, #board-tool-ai-image, #board-tool-ai-video')) return;
+    if (e.target.closest('#board-mode-toggle, #board-tool-ai-image, #board-tool-ai-video, #board-fullscreen-toggle, #board-bottom-fullscreen-toggle')) return;
     // Canvas images toggle AI reference state; they must not dismiss the active composer.
     if (e.target.closest('#board-canvas .board-item-image, #board-canvas .board-item-video')) return;
     if (e.target.closest('#board-viewport') && boardReferenceMediaItemAtClientPoint(e.clientX, e.clientY)) return;

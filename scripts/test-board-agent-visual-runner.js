@@ -98,8 +98,11 @@ async function run() {
     const editingText = getComputedStyle(document.querySelector('.qa-text-edit'));
     return { agent, logo, composer, viewport, bottomBar, agentForm, agentInput, agentMenu, radius:getComputedStyle(document.querySelector('.board-agent-panel')).borderRadius, toggle:getComputedStyle(document.getElementById('board-agent-toggle')).display, confirmedText:{background:confirmedText.backgroundColor,borderWidth:confirmedText.borderTopWidth,shadow:confirmedText.boxShadow}, editingText:{background:editingText.backgroundColor,borderWidth:editingText.borderTopWidth,shadow:editingText.boxShadow} };
   })()`);
-  if (full.agent.width < 300 || full.agent.right > 1440 || full.agent.bottom > 900) throw new Error(`Agent escaped viewport: ${JSON.stringify(full)}`);
-  if (full.radius !== '18px') throw new Error(`Agent radius mismatch: ${full.radius}`);
+  if (full.agent.width < 300 || full.agent.right > 1440 || full.agent.bottom > full.viewport.bottom + 1) throw new Error(`Agent escaped workspace: ${JSON.stringify(full)}`);
+  if (full.radius !== '0px') throw new Error(`Agent outer shell must not repeat the composer radius: ${full.radius}`);
+  if (Math.abs(full.agent.top - full.viewport.top) > 1 || Math.abs(full.agent.bottom - full.viewport.bottom) > 1) {
+    throw new Error(`Agent does not fill the workspace height: ${JSON.stringify(full)}`);
+  }
   if (Math.abs((full.logo.left + full.logo.right) / 2 - (full.agent.left + full.agent.right) / 2) > 2) throw new Error(`Agent logo is not centered: ${JSON.stringify(full)}`);
   if (full.agentInput.height > 70) throw new Error(`Agent input was not shortened: ${JSON.stringify(full)}`);
   if (full.agentMenu.left < full.agent.left || full.agentMenu.right > full.agent.right || full.agentMenu.top >= full.agentForm.top || full.agentMenu.bottom > full.agent.bottom) {

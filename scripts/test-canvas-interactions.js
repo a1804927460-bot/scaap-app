@@ -50,8 +50,18 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /aiImagePopoverClickCloser = \(e\) => \{[\s\S]*?e\.composedPath[\s\S]*?eventPath\.includes\(pop\)[\s\S]*?board-item-image, #board-canvas \.board-item-video[\s\S]*?closeAiImagePopover\(\);/,
+  /aiImagePopoverClickCloser = \(e\) => \{[\s\S]*?e\.composedPath[\s\S]*?eventPath\.includes\(pop\)[\s\S]*?#board-fullscreen-toggle[\s\S]*?#board-bottom-fullscreen-toggle[\s\S]*?board-item-image, #board-canvas \.board-item-video[\s\S]*?closeAiImagePopover\(\);/,
   'Selecting or removing image/video references must keep the AI composer open while other outside clicks still close it.'
+);
+assert.match(
+  boardSource,
+  /function syncAiComposerFullscreenState\(\)[\s\S]*?selectionStart[\s\S]*?classList\.toggle\('is-panel-popover', !isBoardFullscreen\(\)\)[\s\S]*?prompt\.focus\(\{ preventScroll: true \}\)[\s\S]*?setSelectionRange/,
+  'Fullscreen changes must preserve the open composer, prompt focus, and caret selection.'
+);
+assert.match(
+  boardSource,
+  /function enterBoardFullscreen\(\)[\s\S]*?syncAiComposerFullscreenState\(\)[\s\S]*?function exitBoardFullscreen\(\)[\s\S]*?syncAiComposerFullscreenState\(\)/,
+  'Entering and leaving fullscreen must reflow the existing composer instead of recreating it.'
 );
 assert.match(
   boardSource,
@@ -202,10 +212,19 @@ assert.match(
   /\.board-panel:not\(\.is-fullscreen\) #board-agent-toggle[\s\S]*?display:\s*none;/,
   'The Agent control must disappear on the compact canvas.'
 );
-assert.match(boardStyles, /\.board-agent-panel \{[\s\S]*?border-radius:\s*18px/);
 assert.match(
   boardStyles,
-  /\.board-panel\.is-fullscreen:has\(\.board-agent-panel:not\(\.is-hidden\)\) \.board-bottom-bar \{[\s\S]*?left:\s*calc\(\(100% - var\(--agent-w, 320px\) - 12px\) \/ 2\)/,
+  /\.board-agent-panel \{[\s\S]*?margin:\s*0;[\s\S]*?border:\s*0;[\s\S]*?border-radius:\s*0;/,
+  'The docked Agent must fill the workspace edge without a duplicate rounded outer shell.'
+);
+assert.match(
+  boardStyles,
+  /#resize-handle-board-agent \{[\s\S]*?top:\s*0;[\s\S]*?bottom:\s*0;[\s\S]*?#resize-handle-board-agent::before \{[\s\S]*?top:\s*0;[\s\S]*?bottom:\s*0;[\s\S]*?background:\s*#fff;/,
+  'The Agent divider must be white and span the full workspace height.'
+);
+assert.match(
+  boardStyles,
+  /\.board-panel\.is-fullscreen:has\(\.board-agent-panel:not\(\.is-hidden\)\) \.board-bottom-bar \{[\s\S]*?left:\s*calc\(\(100% - var\(--agent-w, 320px\)\) \/ 2\)/,
   'The fullscreen toolbar must stay centered in the drawable canvas when Agent is open.'
 );
 assert.match(

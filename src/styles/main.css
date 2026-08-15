@@ -3384,11 +3384,11 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   position: relative;
   display: flex;
   flex-direction: column;
-  margin: 12px 12px 12px 0;
-  border: 1px solid var(--border-hairline);
-  border-radius: 18px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
   background: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
-  box-shadow: 0 18px 54px rgba(0, 0, 0, .16);
+  box-shadow: none;
   backdrop-filter: blur(24px) saturate(1.08);
   overflow: hidden;
   transition: width 360ms var(--ease-spring), flex-basis 360ms var(--ease-spring),
@@ -5018,7 +5018,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
    shares that panel with the Agent. Offset it by the live Agent width so its
    visual centre stays on the canvas as the sidebar is opened or resized. */
 .board-panel.is-fullscreen:has(.board-agent-panel:not(.is-hidden)) .board-bottom-bar {
-  left: calc((100% - var(--agent-w, 320px) - 12px) / 2);
+  left: calc((100% - var(--agent-w, 320px)) / 2);
 }
 .board-bottom-group { display: flex; align-items: center; gap: 4px; padding: 0 4px; }
 .board-bottom-group + .board-bottom-group { border-left: 1px solid var(--border-hairline); padding-left: 12px; }
@@ -6946,11 +6946,17 @@ body { font-size: var(--font-ui-md); }
   cursor: var(--cursor-nesw-resize);
 }
 #resize-handle-board-agent {
-  top: 8px;
-  bottom: 8px;
-  right: calc(var(--agent-w, 320px) + 2px);
+  top: 0;
+  bottom: 0;
+  right: calc(var(--agent-w, 320px) - 10px);
 }
-#resize-handle-board-agent::before { top: 24%; bottom: 24%; }
+#resize-handle-board-agent::before {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  border-radius: 0;
+  background: #fff;
+}
 .board-workspace-body:has(.board-agent-panel.is-hidden) #resize-handle-board-agent { display: none; }
 .main-app.sidebar-collapsed #resize-handle-sidebar { display: none; }
 .main-app.sidebar-collapsed #resize-corner-left { display: none; }

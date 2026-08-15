@@ -290,6 +290,7 @@ function configuredAssistantProviders(kind) {
         }];
     const options = [];
     const displayNames = {
+      'gemini-3.7-flash': 'Gemini 3.7 Flash',
       'gpt-5.6-luna': 'GPT-5.6Luna',
       'doubao-seed-2-1-pro-260628': 'Doubao2.1pro',
       'deepseek-v4-pro': 'DeepSeek-V4-Pro'

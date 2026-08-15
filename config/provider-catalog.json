@@ -1,5 +1,5 @@
 {
-  "version": 27,
+  "version": 28,
   "providers": [
     {
       "id": "image-1",
@@ -487,9 +487,9 @@
       "id": "chat-1",
       "kind": "chat",
       "name": "Messs AI",
-      "endpoint": "https://api.quickrouter.ai/v1beta",
-      "models": ["gemini-3.1-flash-lite", "gemini-3.6-flash"],
-      "protocol": "gemini",
+      "endpoint": "https://api.302.ai/v1/chat/completions",
+      "models": ["gemini-3.7-flash"],
+      "protocol": "openai-chat",
       "requiresActivation": false,
       "keyEnv": "AI302_KEY"
     },

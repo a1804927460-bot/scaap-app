@@ -117,9 +117,9 @@ assert.deepEqual(seedance25Provider.capabilities.resolutions, ['480P', '720P']);
 assert.equal(seedance25Provider.capabilities.maxReferenceImages, 9);
 assert.equal(config.providers.find((provider) => provider.id === 'chat-1').name, 'Messs AI');
 assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-1').models, [
-  'gemini-3.1-flash-lite',
-  'gemini-3.6-flash'
+  'gemini-3.7-flash'
 ]);
+assert.equal(config.providers.find((provider) => provider.id === 'chat-1').protocol, 'openai-chat');
 assert.equal(config.providers.find((provider) => provider.id === 'chat-2').name, 'AI Chat');
 assert.equal(config.providers.find((provider) => provider.id === 'chat-2').protocol, 'openai-chat');
 assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-2').models, [
@@ -317,22 +317,25 @@ assert.equal(gptImageCalls[1].options.headers['Content-Type'], undefined);
 const chatCalls = [];
 globalThis.fetch = async (url, options = {}) => {
   chatCalls.push({ url: String(url), options });
-  return jsonResponse({
-    candidates: [{ content: { role: 'model', parts: [{ text: 'Gateway chat reply' }] } }]
-  });
+  return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'Gateway chat reply' } }] });
 };
 const chatReply = await chat({
   providerId: 'chat-1',
-  model: 'gemini-3.6-flash',
+  model: 'gemini-3.7-flash',
   prompt: 'Hello',
   messages: [{ role: 'user', content: 'Hello' }]
 });
 assert.equal(chatReply, 'Gateway chat reply');
 assert.equal(
   chatCalls[0].url,
-  'https://api.quickrouter.ai/v1beta/models/gemini-3.6-flash:generateContent'
+  'https://api.302.ai/v1/chat/completions'
 );
-assert.equal(JSON.parse(chatCalls[0].options.body).contents[0].parts[0].text, 'Hello');
+assert.equal(chatCalls[0].options.headers.Authorization, 'Bearer ai302-secret');
+assert.deepEqual(JSON.parse(chatCalls[0].options.body), {
+  model: 'gemini-3.7-flash',
+  messages: [{ role: 'user', content: 'Hello' }],
+  stream: false
+});
 
 const advancedChatCalls = [];
 globalThis.fetch = async (url, options = {}) => {
