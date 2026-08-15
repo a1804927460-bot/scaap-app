@@ -56,6 +56,18 @@ function canvasNodeMediaKind(file) {
   return null;
 }
 
+function canvasNodeMediaRatio(file, fallback = 16 / 9) {
+  const width = Number(file && (file.sourceWidth || file.width));
+  const height = Number(file && (file.sourceHeight || file.height));
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return fallback;
+  // Keep previews practical while retaining the source proportions.
+  return Math.max(0.42, Math.min(2.4, width / height));
+}
+
+function canvasNodeMediaStyle(file, fallback) {
+  return ` style="--canvas-node-media-ratio:${canvasNodeMediaRatio(file, fallback).toFixed(4)}"`;
+}
+
 function canvasNodeMediaMarkup(item, file) {
   const kind = canvasNodeMediaKind(file);
   const title = String(file && file.name || t('Untitled media', '未命名媒体', '제목 없는 미디어'));
@@ -70,7 +82,8 @@ function canvasNodeMediaMarkup(item, file) {
     <header class="canvas-media-node-label"><span class="canvas-node-title-icon">${NODE_ICONS[kind]}<b>${escapeHtml(typeLabel)}</b></span>
       <button class="canvas-node-open nodrag" type="button" data-node-file-id="${escapeHtml(file.id)}" title="${escapeHtml(t('Open preview', '放大查看', '미리보기 열기'))}" aria-label="${escapeHtml(t('Open preview', '放大查看', '미리보기 열기'))}">↗</button>
     </header>
-    <div class="canvas-node-preview">${preview}${kind === 'video' ? '<i class="canvas-node-video-mark">▶</i>' : ''}</div>
+    <div class="canvas-node-preview"${canvasNodeMediaStyle(file)}>${preview}${kind === 'video' ? '<i class="canvas-node-video-mark">▶</i>' : ''}</div>
+    <button class="canvas-node-add-media nodrag" type="button" data-node-action="add-generation" title="${escapeHtml(t('Add a generation node', '添加生成节点', '생성 노드 추가'))}" aria-label="${escapeHtml(t('Add a generation node', '添加生成节点', '생성 노드 추가'))}">+</button>
   </article>`;
 }
 
@@ -97,7 +110,7 @@ function canvasGenerateResultsMarkup(data = {}) {
         ? `<video src="${escapeHtml(source)}" muted playsinline preload="metadata"></video>`
         : `<img src="${escapeHtml(source)}" alt="" draggable="false" />`)
       : `<span class="canvas-node-placeholder">${kind === 'video' ? NODE_ICONS.video : NODE_ICONS.image}</span>`;
-    return `<button type="button" class="canvas-generate-result canvas-generate-result-${kind} nodrag" data-node-file-id="${escapeHtml(file.id)}" title="${escapeHtml(file.name || '')}">${preview}${kind === 'video' ? '<i>▶</i>' : ''}</button>`;
+    return `<button type="button" class="canvas-generate-result canvas-generate-result-${kind} nodrag"${canvasNodeMediaStyle(file, 16 / 10)} data-node-file-id="${escapeHtml(file.id)}" title="${escapeHtml(file.name || '')}">${preview}${kind === 'video' ? '<i>▶</i>' : ''}</button>`;
   }).join('');
   return `<div class="canvas-generate-results" data-count="${Math.min(files.length, 4)}">${items}</div>`;
 }
@@ -345,7 +358,9 @@ function canvasGenerationInputs(nodeId) {
   upstream.forEach(([, source]) => {
     const data = source.data || {};
     if (data.nodeRole === 'text' && String(data.text || '').trim()) promptParts.push(String(data.text).trim());
-    if (data.nodeRole === 'media' && data.mediaKind === 'image' && data.fileId) referenceFileIds.push(data.fileId);
+    if (data.nodeRole === 'media' && (data.mediaKind === 'image' || data.mediaKind === 'video') && data.fileId) {
+      referenceFileIds.push(data.fileId);
+    }
   });
   return {
     prompt: promptParts.filter(Boolean).join('\n\n'),
@@ -439,19 +454,11 @@ async function openCanvasGenerationSettings(nodeId) {
   if (!node || !node.data || node.data.nodeRole !== 'generate') return;
   closeCanvasTextEditor();
   const inputs = canvasGenerationInputs(nodeId);
-  const selectedSnapshot = new Map(AppState.boardItems.map((item) => [item.id, Boolean(item.selected)]));
-  const references = new Set(inputs.referenceFileIds);
-  AppState.boardItems.forEach((item) => { item.selected = references.has(item.fileId); });
-  syncBoardSelectionClasses();
-  try {
-    await openAiComposerForSelection(node.data.kind, inputs.prompt, {
-      onSubmit: () => setCanvasNodeRunState(nodeId, 'running', t('Generating...', '生成中...', '생성 중...')),
-      onComplete: (files) => connectCanvasGenerationOutputs(nodeId, Array.isArray(files) ? files : [])
-    });
-  } finally {
-    AppState.boardItems.forEach((item) => { item.selected = selectedSnapshot.get(item.id) || false; });
-    syncBoardSelectionClasses();
-  }
+  await openAiComposerForSelection(node.data.kind, inputs.prompt, {
+    referenceFileIds: inputs.referenceFileIds,
+    onSubmit: () => setCanvasNodeRunState(nodeId, 'running', t('Generating...', '生成中...', '생성 중...')),
+    onComplete: (files) => connectCanvasGenerationOutputs(nodeId, Array.isArray(files) ? files : [])
+  });
 }
 
 function loadCanvasNodeLayout(canvasId) {
@@ -516,6 +523,31 @@ function addCanvasNodeFromConnection(kind, draft) {
   return nodeId;
 }
 
+function addCanvasNodeFromMedia(nodeId, kind) {
+  const node = canvasNodeData()[String(nodeId)];
+  if (!node || !node.data || node.data.nodeRole !== 'media' || !CanvasNodeMode.editor) return null;
+  const position = {
+    x: Math.round(Number(node.pos_x || 0) + 314),
+    y: Math.round(Number(node.pos_y || 0))
+  };
+  const targetId = addCanvasWorkflowNode('generate', kind, position);
+  CanvasNodeMode.editor.addConnection(String(nodeId), String(targetId), 'output_1', 'input_1');
+  saveCanvasNodeLayout();
+  return targetId;
+}
+
+function openCanvasNodeMediaMenu(nodeId, anchor) {
+  if (!anchor || !CanvasNodeMode.editor) return;
+  const rect = anchor.getBoundingClientRect();
+  openCanvasNodeConnectionMenu({
+    output_id: String(nodeId),
+    output_class: 'output_1',
+    allowSourceTarget: true,
+    clientX: rect.left + rect.width / 2,
+    clientY: rect.bottom + 8
+  });
+}
+
 function openCanvasNodeConnectionMenu(draft) {
   closeCanvasNodeConnectionMenu();
   closeCanvasNodeAddMenu();
@@ -523,7 +555,7 @@ function openCanvasNodeConnectionMenu(draft) {
   const mode = document.getElementById('board-node-mode');
   if (!host || !mode || !draft) return;
   const target = document.elementFromPoint(draft.clientX, draft.clientY);
-  if (!target || !host.contains(target) || target.closest('.drawflow-node')) return;
+  if (!target || !host.contains(target) || (target.closest('.drawflow-node') && !draft.allowSourceTarget)) return;
 
   const world = canvasNodeWorldPoint(draft.clientX, draft.clientY);
   const menu = document.createElement('div');
@@ -817,17 +849,11 @@ function canvasNodeConnectionMatches(connection, details) {
 function syncCanvasNodeConnectionFlow() {
   const host = document.getElementById('board-node-editor');
   if (!host) return;
-  const nodeIds = CanvasNodeMode.selectedNodeIds;
-  const selectedConnection = CanvasNodeMode.selectedConnection;
   host.querySelectorAll('.drawflow .connection').forEach((connection) => {
-    const connectedToNode = [...nodeIds].some((nodeId) =>
-      connection.classList.contains(`node_out_node-${nodeId}`) ||
-      connection.classList.contains(`node_in_node-${nodeId}`)
+    const active = [...CanvasNodeMode.runningNodes].some((nodeId) =>
+      connection.classList.contains(`node_out_node-${nodeId}`)
     );
-    connection.classList.toggle(
-      'is-flowing',
-      Boolean(connectedToNode || canvasNodeConnectionMatches(connection, selectedConnection))
-    );
+    connection.classList.toggle('is-flowing', active);
   });
 }
 
@@ -839,19 +865,7 @@ function ensureCanvasNodeFlowPaths(root) {
   if (scope.matches && scope.matches('.connection')) connections.push(scope);
   scope.querySelectorAll('.connection').forEach((connection) => connections.push(connection));
   connections.forEach((connection) => {
-    const paths = Array.from(connection.children).filter((child) => child.classList && child.classList.contains('main-path'));
-    const pulses = Array.from(connection.children).filter((child) => child.classList && child.classList.contains('canvas-node-flow-pulse'));
-    paths.forEach((path, index) => {
-      let pulse = pulses[index];
-      if (!pulse) {
-        pulse = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        pulse.classList.add('canvas-node-flow-pulse');
-        pulse.setAttribute('aria-hidden', 'true');
-        connection.appendChild(pulse);
-      }
-      pulse.setAttribute('d', path.getAttribute('d') || '');
-    });
-    pulses.slice(paths.length).forEach((pulse) => pulse.remove());
+    connection.querySelectorAll('.canvas-node-flow-pulse').forEach((pulse) => pulse.remove());
   });
   syncCanvasNodeConnectionFlow();
 }
@@ -886,7 +900,9 @@ function ensureCanvasNodeEditor() {
   if (typeof Drawflow !== 'function') throw new Error('Drawflow is unavailable');
   const host = document.getElementById('board-node-editor');
   const editor = new Drawflow(host);
-  editor.reroute = true;
+  // Reroute points and per-connection animated SVG paths become expensive on
+  // production-sized flows. A simple curve stays responsive while dragging.
+  editor.reroute = false;
   editor.curvature = 0.42;
   editor.reroute_curvature_start_end = 0.42;
   editor.zoom_min = 0.25;
@@ -975,6 +991,7 @@ function ensureCanvasNodeEditor() {
     event.stopPropagation();
     if (action.dataset.nodeAction === 'settings') void openCanvasGenerationSettings(nodeId);
     else if (action.dataset.nodeAction === 'text') openCanvasTextEditor(nodeId);
+    else if (action.dataset.nodeAction === 'add-generation') openCanvasNodeMediaMenu(nodeId, action);
   });
   host.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -987,6 +1004,7 @@ function ensureCanvasNodeEditor() {
     event.stopPropagation();
     if (action.dataset.nodeAction === 'settings') void openCanvasGenerationSettings(nodeId);
     else if (action.dataset.nodeAction === 'text') openCanvasTextEditor(nodeId);
+    else if (action.dataset.nodeAction === 'add-generation') openCanvasNodeMediaMenu(nodeId, action);
   });
   return editor;
 }

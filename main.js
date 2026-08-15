@@ -684,6 +684,9 @@ function fileToPayload(f) {
       referenceFileIds: Array.isArray(f.aiGeneration.referenceFileIds)
         ? [...f.aiGeneration.referenceFileIds]
         : [],
+      referenceMediaTypes: Array.isArray(f.aiGeneration.referenceMediaTypes)
+        ? [...f.aiGeneration.referenceMediaTypes]
+        : [],
       referenceCount: Number(f.aiGeneration.referenceCount) || 0,
       createdAt: f.aiGeneration.createdAt
     } : null,
@@ -1927,6 +1930,36 @@ function normalizeVideoProviders(value, fallbackEndpoint, fallbackName) {
   });
 }
 
+async function resolveAiVideoReferences(request) {
+  const fileIds = Array.isArray(request && request.referenceFileIds)
+    ? request.referenceFileIds.slice(0, 14)
+    : [];
+  const requestedTypes = Array.isArray(request && request.referenceMediaTypes)
+    ? request.referenceMediaTypes.slice(0, fileIds.length).map((value) => String(value || '').toLowerCase())
+    : [];
+  const urls = [];
+  const mediaTypes = [];
+  const uploadIds = [];
+  for (let index = 0; index < fileIds.length; index += 1) {
+    const file = store.getFile(String(fileIds[index] || ''));
+    if (!file) continue;
+    const ext = String(file.ext || path.extname(file.name)).toLowerCase();
+    const mediaType = requestedTypes[index] === 'video' || preview.isVideoExt(ext) ? 'video' : 'image';
+    if (mediaType === 'video') {
+      const source = await butlerSourceVideo(file.id);
+      const upload = await aiGateway.uploadReferenceVideo(source.videoBuffer, source.toolOptions.sourceMime);
+      uploadIds.push(upload.uploadId);
+      mediaTypes.push('video');
+      continue;
+    }
+    const dataUrl = await fileToSafeAiDataUrl(file.id);
+    if (!dataUrl) continue;
+    urls.push(dataUrl);
+    mediaTypes.push('image');
+  }
+  return { urls, mediaTypes, uploadIds };
+}
+
 function normalizedVideoModes(capabilities = {}) {
   const configured = Array.isArray(capabilities.videoModes)
     ? capabilities.videoModes.filter((entry) => entry && typeof entry === 'object' && entry.id)
@@ -2341,6 +2374,8 @@ async function generateAiMediaBuffer(kind, prompt, options = {}) {
         sourceHeight: options.sourceHeight,
         duration: options.duration,
         videoMode: options.videoMode,
+        referenceMediaTypes: options.referenceMediaTypes,
+        referenceVideoUploadIds: options.referenceVideoUploadIds,
         enhancePrompt: options.enhancePrompt,
         seed: options.seed,
         styleId: options.styleId,
@@ -2943,6 +2978,9 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
       requestedDuration: mediaKind === 'video' ? Math.max(1, Number(request.duration) || 6) : null,
       videoMode: mediaKind === 'video' ? String(request.videoMode || 'text').trim().slice(0, 32) : null,
       referenceFileIds,
+      referenceMediaTypes: mediaKind === 'video' && Array.isArray(request.referenceMediaTypes)
+        ? request.referenceMediaTypes.map((value) => String(value || '').toLowerCase()).slice(0, referenceFileIds.length)
+        : referenceFileIds.map(() => 'image'),
       referenceCount,
       createdAt: new Date().toISOString()
     },
@@ -3250,7 +3288,10 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   const resolution = String(request.resolution || '').trim().toUpperCase();
   const duration = Number(request.duration);
   const aspectRatio = String(request.aspectRatio || '').trim();
-  const referenceCount = Array.isArray(request.urls) ? request.urls.length : 0;
+  const referenceMediaTypes = Array.isArray(request.referenceMediaTypes)
+    ? request.referenceMediaTypes.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  const referenceCount = referenceMediaTypes.length || (Array.isArray(request.urls) ? request.urls.length : 0);
   const requestedVideoMode = String(request.videoMode || '').trim().toLowerCase();
   const fallbackVideoMode = referenceCount > 2
     ? 'omni'
@@ -3262,6 +3303,19 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   const selectedVideoMode = videoModes.find((entry) => entry && entry.id === videoMode) || null;
   if (!selectedVideoMode) {
     throw invalidAiMediaOption('invalid-video-mode', `${String(provider.name || 'The selected video model')} does not support this generation mode.`);
+  }
+  const allowedReferenceMediaTypes = new Set(
+    Array.isArray(selectedVideoMode.mediaTypes) && selectedVideoMode.mediaTypes.length
+      ? selectedVideoMode.mediaTypes.map((value) => String(value || '').trim().toLowerCase())
+      : ['image']
+  );
+  if (referenceMediaTypes.some((mediaType) => !allowedReferenceMediaTypes.has(mediaType))) {
+    throw invalidAiMediaOption('invalid-reference-media', `${String(provider.name || 'The selected video model')} does not accept reference videos in this mode.`);
+  }
+  const referenceVideoCount = referenceMediaTypes.filter((mediaType) => mediaType === 'video').length;
+  const maximumReferenceVideos = Math.max(0, Number(selectedVideoMode.maxReferenceVideos) || 0);
+  if (referenceVideoCount > maximumReferenceVideos) {
+    throw invalidAiMediaOption('too-many-reference-videos', `${String(provider.name || 'The selected video model')} supports at most ${maximumReferenceVideos} reference videos.`);
   }
   const hasFrameReference = videoMode === 'first-frame' || videoMode === 'first-last-frame';
   const configuredReferenceLimit = Number(capabilities.maxReferenceImages);
@@ -3306,6 +3360,10 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   normalized.duration = duration;
   normalized.aspectRatio = aspectRatio;
   normalized.videoMode = videoMode;
+  normalized.referenceMediaTypes = referenceMediaTypes;
+  normalized.referenceVideoUploadIds = Array.isArray(request.referenceVideoUploadIds)
+    ? request.referenceVideoUploadIds.map(String).filter(Boolean).slice(0, 3)
+    : [];
   return normalized;
 }
 
@@ -4902,8 +4960,18 @@ function registerIpcHandlers() {
   ipcMain.handle('ai:generateMedia', async (_evt, request = {}) => {
     let safeRequest;
     try {
-      const urls = await resolveAiReferenceUrls(request, 'referenceFileIds');
-      safeRequest = sanitizeAiRequest({ ...request, urls }, { limit: 14 });
+      const videoReferences = request.kind === 'video'
+        ? await resolveAiVideoReferences(request)
+        : null;
+      const urls = videoReferences
+        ? videoReferences.urls
+        : await resolveAiReferenceUrls(request, 'referenceFileIds');
+      safeRequest = sanitizeAiRequest({
+        ...request,
+        urls,
+        referenceMediaTypes: videoReferences ? videoReferences.mediaTypes : request.referenceMediaTypes,
+        referenceVideoUploadIds: videoReferences ? videoReferences.uploadIds : []
+      }, { limit: 14 });
     } catch (err) {
       return { ok: false, reason: err.code || 'privacy-blocked', message: err.message };
     }
@@ -4950,7 +5018,9 @@ function registerIpcHandlers() {
         quality: kind === 'image' ? request.quality || 'auto' : null,
         resolution: kind === 'video' ? request.resolution || null : null,
         duration: kind === 'video' ? Number(request.duration) || null : null,
-        referenceCount: Array.isArray(request.urls) ? request.urls.length : 0,
+        referenceCount: Array.isArray(request.referenceMediaTypes) && request.referenceMediaTypes.length
+          ? request.referenceMediaTypes.length
+          : Array.isArray(request.urls) ? request.urls.length : 0,
         quotedCredits: creditQuote.totalCredits,
         unitCredits: creditQuote.unitCredits
       }
@@ -4991,6 +5061,8 @@ function registerIpcHandlers() {
         sourceHeight: request.sourceHeight,
         duration: request.duration,
         videoMode: request.videoMode,
+        referenceMediaTypes: request.referenceMediaTypes,
+        referenceVideoUploadIds: request.referenceVideoUploadIds,
         enhancePrompt: request.enhancePrompt,
         seed: request.seed,
         styleId: request.styleId,

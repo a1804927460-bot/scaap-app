@@ -1634,7 +1634,7 @@ function createBoardItemElement(item) {
     (isVideo ? ' board-item-video' : '') +
     (isModel ? ' board-item-model' : '') +
     (isUniformFrame ? ' is-uniform-frame' : '') +
-    (isImage && typeof isAiComposerReference === 'function' && isAiComposerReference(item.fileId)
+    ((isImage || isVideo) && typeof isAiComposerReference === 'function' && isAiComposerReference(item.fileId)
       ? ' is-ai-reference' : '') +
     (item.selected ? ' is-selected' : '') +
     (item.selected && Board.selectedCount === 1
@@ -1662,7 +1662,7 @@ function createBoardItemElement(item) {
       syncBoardSelectionClasses();
     }
     if (
-      isImage &&
+      (isImage || isVideo) &&
       Date.now() - Board.lastDragEndedAt > 120 &&
       typeof toggleAiComposerBoardReference === 'function'
     ) {
@@ -2468,7 +2468,7 @@ function initBoardCanvas() {
     if (!activeAiComposer() || event.button !== 0) return;
     if (event.target.closest('.board-item')) return;
     if (Date.now() - Board.lastPanEndedAt < 160) return;
-    const item = boardImageItemAtClientPoint(event.clientX, event.clientY);
+    const item = boardReferenceMediaItemAtClientPoint(event.clientX, event.clientY);
     if (!item) return;
     const file = Board.filesById.get(item.fileId);
     event.preventDefault();
@@ -3083,13 +3083,13 @@ function isAiComposerReference(fileId) {
 }
 
 function syncAiComposerReferenceClasses() {
-  document.querySelectorAll('#board-canvas .board-item-image').forEach((element) => {
+  document.querySelectorAll('#board-canvas .board-item-image, #board-canvas .board-item-video').forEach((element) => {
     const item = Board.itemsById.get(element.dataset.boardId);
     element.classList.toggle('is-ai-reference', !!(item && isAiComposerReference(item.fileId)));
   });
 }
 
-function boardImageItemAtClientPoint(clientX, clientY) {
+function boardReferenceMediaItemAtClientPoint(clientX, clientY) {
   const viewport = document.getElementById('board-viewport');
   const target = document.elementFromPoint(clientX, clientY);
   if (!viewport || !target || !viewport.contains(target)) return null;
@@ -3105,14 +3105,14 @@ function boardImageItemAtClientPoint(clientX, clientY) {
     .map((id) => Board.itemsById.get(id))
     .filter((item) => {
       const file = item && Board.filesById.get(item.fileId);
-      return file && isImageExt(file.ext);
+      return file && (isImageExt(file.ext) || isVideoExt(file.ext));
     })
     .sort((a, b) => Number(b.zIndex || 0) - Number(a.zIndex || 0))[0] || null;
 }
 
 async function toggleAiComposerBoardReference(file, fileId) {
   const pop = activeAiComposer();
-  if (!pop || !file || !isImageExt(file.ext) || typeof pop._toggleBoardReference !== 'function') return;
+  if (!pop || !file || (!isImageExt(file.ext) && !isVideoExt(file.ext)) || typeof pop._toggleBoardReference !== 'function') return;
   try {
     await pop._toggleBoardReference(fileId);
     syncAiComposerReferenceClasses();
@@ -3134,7 +3134,7 @@ function closeAiImagePopover() {
       pop.remove();
     }
   }
-  document.querySelectorAll('#board-canvas .board-item-image.is-ai-reference').forEach((element) => {
+  document.querySelectorAll('#board-canvas .board-item-image.is-ai-reference, #board-canvas .board-item-video.is-ai-reference').forEach((element) => {
     element.classList.remove('is-ai-reference');
   });
   setAiImageButtonsActive(false);
@@ -3607,6 +3607,13 @@ function videoModeReferenceLimit(mode, capabilities = {}) {
   return Number.isInteger(fallback) && fallback >= 0 ? fallback : 2;
 }
 
+function videoModeReferenceMediaTypes(mode) {
+  const configured = mode && Array.isArray(mode.mediaTypes)
+    ? mode.mediaTypes.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  return configured.length ? [...new Set(configured)] : ['image'];
+}
+
 function videoReferenceSelectionLimit(capabilities = {}) {
   const configured = Number(capabilities.maxReferenceImages);
   if (Number.isInteger(configured) && configured >= 0) return Math.min(14, configured);
@@ -4003,6 +4010,14 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       if (previewUrl) image.src = previewUrl;
       image.alt = entry.name;
       image.draggable = false;
+      if (entry.kind === 'video') {
+        thumb.classList.add('is-video-reference');
+        const mediaKind = document.createElement('span');
+        mediaKind.className = 'ai-composer-reference-kind';
+        mediaKind.textContent = t('Video', '视频');
+        mediaKind.setAttribute('aria-hidden', 'true');
+        thumb.appendChild(mediaKind);
+      }
       const order = document.createElement('span');
       order.className = 'ai-composer-reference-order';
       const referenceIndex = [...boardReferences.keys()].indexOf(fileId);
@@ -4026,7 +4041,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
         event.stopPropagation();
         removeBoardReference(fileId);
       });
-      thumb.append(image, order, remove);
+      thumb.prepend(image);
+      thumb.append(order, remove);
       thumb.addEventListener('dragstart', (event) => {
         thumb.classList.add('is-dragging');
         if (event.dataTransfer) {
@@ -4088,10 +4104,29 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       removeBoardReference(fileId);
       return;
     }
+    const file = AppState.files.find((entry) => entry.id === fileId);
+    if (!file) return;
+    const referenceKind = isVideoExt(file.ext) ? 'video' : isImageExt(file.ext) ? 'image' : '';
+    if (!referenceKind) return;
+    if (referenceKind === 'video' && kind !== 'video') {
+      showToast(t('Video references are only available for video generation.', '参考视频仅用于视频生成。'), 'AI');
+      return;
+    }
     const capabilities = kind === 'video' ? selectedVideoCapabilities() : selectedImageCapabilities();
     if (kind === 'video') {
       const currentMode = supportedVideoMode(videoMode, capabilities);
-      if (currentMode.id === 'text') setVideoMode('first-frame');
+      if (referenceKind === 'video') {
+        const omniMode = supportedVideoModes(capabilities).find((mode) => (
+          mode.id === 'omni' && videoModeReferenceMediaTypes(mode).includes('video')
+        ));
+        if (!omniMode) {
+          showToast(t('This model does not accept reference videos.', '此模型不支持参考视频。'), 'AI');
+          return;
+        }
+        setVideoMode('omni');
+      } else if (currentMode.id === 'text') {
+        setVideoMode('first-frame');
+      }
     }
     const configuredLimit = kind === 'video'
       ? videoReferenceSelectionLimit(capabilities)
@@ -4110,8 +4145,19 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       );
       return;
     }
-    const file = AppState.files.find((entry) => entry.id === fileId);
-    if (!file || !isImageExt(file.ext)) return;
+    const activeMode = kind === 'video' ? supportedVideoMode(videoMode, capabilities) : null;
+    if (activeMode && !videoModeReferenceMediaTypes(activeMode).includes(referenceKind)) {
+      showToast(t('This mode only accepts reference images.', '此模式只支持参考图。'), 'AI');
+      return;
+    }
+    if (referenceKind === 'video') {
+      const maximumVideos = Math.max(0, Number(activeMode && activeMode.maxReferenceVideos) || 0);
+      const selectedVideos = [...boardReferences.values()].filter((entry) => entry.kind === 'video').length;
+      if (selectedVideos >= maximumVideos) {
+        showToast(t(`Up to ${maximumVideos} reference videos can be used.`, `最多可使用 ${maximumVideos} 个参考视频。`), 'AI');
+        return;
+      }
+    }
 
     // Reserve the Map slot at click time, before the asynchronous file read.
     // Map insertion order is the generation order, so a slower first image
@@ -4119,6 +4165,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const pendingEntry = {
       fileId: file.id,
       name: file.name,
+      kind: referenceKind,
       dataUrl: null,
       thumbUrl: file.thumbUrl || file.url,
       sourceWidth: Number(file.sourceWidth) || null,
@@ -4131,8 +4178,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     syncAiComposerReferenceClasses();
 
     try {
-      const dataUrl = await window.messsAPI.readFileAsDataUrl(file.id);
-      if (!dataUrl) throw new Error(t('Could not read the reference image.', '无法读取参考图。'));
+      const dataUrl = referenceKind === 'image' ? await window.messsAPI.readFileAsDataUrl(file.id) : null;
+      if (referenceKind === 'image' && !dataUrl) throw new Error(t('Could not read the reference image.', '无法读取参考图。'));
       // The user may remove this image while it is loading. Only fill the
       // reserved slot; never append a stale result back to the end.
       if (boardReferences.get(file.id) !== pendingEntry) return;
@@ -4709,6 +4756,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const selectedMode = kind === 'video' ? supportedVideoMode(videoMode, videoCapabilities) : null;
     const minimumReferences = selectedMode ? Math.max(0, Number(selectedMode.minReferences) || 0) : 0;
     const maximumReferences = selectedMode ? videoModeReferenceLimit(selectedMode, videoCapabilities) : 14;
+    const selectedReferenceKinds = [...boardReferences.values()].map((entry) => entry.kind || 'image');
+    const allowedReferenceKinds = selectedMode ? videoModeReferenceMediaTypes(selectedMode) : ['image'];
     if (kind === 'video' && boardReferences.size < minimumReferences) {
       const message = selectedMode.id === 'first-last-frame'
         ? t('Select a first-frame and a last-frame image.', '请选择首帧图和尾帧图。')
@@ -4718,6 +4767,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     }
     if (kind === 'video' && boardReferences.size > maximumReferences) {
       showToast(t(`Up to ${maximumReferences} reference images can be used.`, `最多可使用 ${maximumReferences} 张参考图。`), 'AI');
+      return;
+    }
+    if (kind === 'video' && selectedReferenceKinds.some((entryKind) => !allowedReferenceKinds.includes(entryKind))) {
+      showToast(t('Reference videos require Omni reference mode.', '参考视频需要使用全能参考模式。'), 'AI');
       return;
     }
     const request = {
@@ -4741,8 +4794,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       styleId,
       styleStrength,
       referenceFileIds: [...boardReferences.keys()],
+      referenceMediaTypes: selectedReferenceKinds,
       urls: [
-        ...boardReferences.values().map((entry) => entry.dataUrl)
+        ...boardReferences.values().map((entry) => entry.dataUrl).filter(Boolean)
       ]
     };
     const generationHooks = pop._generationHooks || null;
@@ -5086,6 +5140,7 @@ async function submitBoardQuickGeneration(kind, promptText, options = {}) {
       videoProviderId: kind === 'video' && provider ? provider.id : null,
       modelName: provider ? provider.name : t('Auto-detected API', '自动识别接口'),
       referenceFileIds,
+      referenceMediaTypes: referenceData.referenceMediaTypes || referenceFileIds.map(() => 'image'),
       urls,
       placement: options.placement || null
     });
@@ -5093,6 +5148,16 @@ async function submitBoardQuickGeneration(kind, promptText, options = {}) {
     showToast(err && err.message ? err.message : t('AI generation failed.', 'AI 生成失败。'), 'AI');
     return [];
   }
+}
+
+function selectedBoardReferenceItems(kind = 'image') {
+  if (kind !== 'video') return selectedBoardImageItems();
+  const filesById = new Map(AppState.files.map((file) => [file.id, file]));
+  return AppState.boardItems.filter((item) => {
+    if (!item.selected || !item.fileId) return false;
+    const file = filesById.get(item.fileId);
+    return file && (isImageExt(file.ext) || isVideoExt(file.ext));
+  });
 }
 
 function sourceImageGenerationOptionsForFile(file) {
@@ -5113,13 +5178,17 @@ async function openAiComposerForSelection(kind, promptText = '', options = {}) {
   if (!pop) return;
   pop._generationHooks = options;
 
-  for (const item of selectedBoardImageItems()) {
+  const explicitReferenceFileIds = Array.isArray(options.referenceFileIds)
+    ? options.referenceFileIds
+    : null;
+  const referenceFileIds = explicitReferenceFileIds || selectedBoardReferenceItems(kind).map((item) => item.fileId);
+  for (const fileId of referenceFileIds) {
     if (
       typeof pop._hasBoardReference === 'function' &&
       typeof pop._toggleBoardReference === 'function' &&
-      !pop._hasBoardReference(item.fileId)
+      !pop._hasBoardReference(fileId)
     ) {
-      await pop._toggleBoardReference(item.fileId);
+      await pop._toggleBoardReference(fileId);
     }
   }
   syncAiComposerReferenceClasses();
@@ -5132,15 +5201,18 @@ async function openAiComposerForSelection(kind, promptText = '', options = {}) {
 async function generatedReferenceData(fileIds) {
   const urls = [];
   const validFileIds = [];
+  const referenceMediaTypes = [];
   for (const fileId of Array.isArray(fileIds) ? fileIds : []) {
     const file = AppState.files.find((entry) => entry.id === fileId);
-    if (!file || !isImageExt(file.ext)) continue;
-    const dataUrl = await window.messsAPI.readFileAsDataUrl(file.id);
-    if (!dataUrl) continue;
+    if (!file || (!isImageExt(file.ext) && !isVideoExt(file.ext))) continue;
+    const mediaType = isVideoExt(file.ext) ? 'video' : 'image';
+    const dataUrl = mediaType === 'image' ? await window.messsAPI.readFileAsDataUrl(file.id) : null;
+    if (mediaType === 'image' && !dataUrl) continue;
     validFileIds.push(file.id);
-    urls.push(dataUrl);
+    referenceMediaTypes.push(mediaType);
+    if (dataUrl) urls.push(dataUrl);
   }
-  return { urls, referenceFileIds: validFileIds };
+  return { urls, referenceFileIds: validFileIds, referenceMediaTypes };
 }
 
 async function retryGeneratedMediaFromDetails(file) {
@@ -5212,6 +5284,7 @@ async function retryGeneratedMediaFromDetails(file) {
       videoProviderId: generation.kind === 'video' ? generation.providerId : null,
       modelName: generation.modelName || t('AI model', 'AI 模型'),
       referenceFileIds: references.referenceFileIds,
+      referenceMediaTypes: references.referenceMediaTypes,
       urls: references.urls
     });
   } catch (err) {
@@ -5393,8 +5466,8 @@ async function showAiImagePopover(initialKind = 'image') {
     if (pop.contains(e.target) || eventPath.includes(pop)) return;
     if (e.target.closest('#board-mode-toggle, #board-tool-ai-image, #board-tool-ai-video')) return;
     // Canvas images toggle AI reference state; they must not dismiss the active composer.
-    if (e.target.closest('#board-canvas .board-item-image')) return;
-    if (e.target.closest('#board-viewport') && boardImageItemAtClientPoint(e.clientX, e.clientY)) return;
+    if (e.target.closest('#board-canvas .board-item-image, #board-canvas .board-item-video')) return;
+    if (e.target.closest('#board-viewport') && boardReferenceMediaItemAtClientPoint(e.clientX, e.clientY)) return;
     closeAiImagePopover();
   };
   aiImagePopoverKeyCloser = (e) => {

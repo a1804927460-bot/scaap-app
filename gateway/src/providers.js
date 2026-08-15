@@ -426,6 +426,34 @@ function validatedVideoTaskInput(provider, body) {
     });
   }
   const urls = submittedUrls.slice(0, maxReferenceImages);
+  const referenceMediaTypes = Array.isArray(body.referenceMediaTypes)
+    ? body.referenceMediaTypes.slice(0, urls.length).map((value) => String(value || '').trim().toLowerCase())
+    : urls.map(() => 'image');
+  if (referenceMediaTypes.length !== urls.length) {
+    throw Object.assign(new Error('The reference media selection is incomplete.'), {
+      status: 400,
+      code: 'invalid-reference-media'
+    });
+  }
+  const allowedMediaTypes = new Set(
+    Array.isArray(mode.mediaTypes) && mode.mediaTypes.length
+      ? mode.mediaTypes.map((value) => String(value || '').trim().toLowerCase())
+      : ['image']
+  );
+  if (referenceMediaTypes.some((mediaType) => !allowedMediaTypes.has(mediaType))) {
+    throw Object.assign(new Error(`${provider.name} does not accept reference videos in this mode.`), {
+      status: 400,
+      code: 'invalid-reference-media'
+    });
+  }
+  const referenceVideoCount = referenceMediaTypes.filter((mediaType) => mediaType === 'video').length;
+  const maximumReferenceVideos = Math.max(0, Number(mode.maxReferenceVideos) || 0);
+  if (referenceVideoCount > maximumReferenceVideos) {
+    throw Object.assign(new Error(`${provider.name} accepts at most ${maximumReferenceVideos} reference videos.`), {
+      status: 400,
+      code: 'too-many-reference-videos'
+    });
+  }
   const ratio = String(body.aspectRatio || '');
   const resolution = String(body.resolution || '').toUpperCase();
   const duration = Number(body.duration);
@@ -463,7 +491,7 @@ function validatedVideoTaskInput(provider, body) {
   }
   const configuredRoles = Array.isArray(mode.roles) ? mode.roles.map(String).filter(Boolean) : [];
   const roles = urls.map((_url, index) => configuredRoles[index] || configuredRoles[0] || 'reference_image');
-  return { capabilities, duration, mode: mode.id, ratio, resolution, roles, urls };
+  return { capabilities, duration, mode: mode.id, ratio, referenceMediaTypes, resolution, roles, urls };
 }
 
 async function createMiniMaxVideoTask(provider, body, signal) {
@@ -490,13 +518,15 @@ async function createMiniMaxVideoTask(provider, body, signal) {
 }
 
 async function createSeedanceVideoTask(provider, body, signal) {
-  const { capabilities, duration, ratio, resolution, roles, urls } = validatedVideoTaskInput(provider, body);
+  const { capabilities, duration, ratio, referenceMediaTypes, resolution, roles, urls } = validatedVideoTaskInput(provider, body);
   const content = [{ type: 'text', text: String(body.prompt || '').trim() }];
-  urls.forEach((url, index) => content.push({
-    type: 'image_url',
-    image_url: { url: String(url) },
-    role: roles[index]
-  }));
+  urls.forEach((url, index) => {
+    if (referenceMediaTypes[index] === 'video') {
+      content.push({ type: 'video_url', video_url: { url: String(url) }, role: 'reference_video' });
+      return;
+    }
+    content.push({ type: 'image_url', image_url: { url: String(url) }, role: roles[index] });
+  });
   const requestBody = {
     model: provider.model,
     content,

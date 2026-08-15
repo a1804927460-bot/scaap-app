@@ -108,6 +108,8 @@ assert.deepEqual(seedance20Provider.capabilities.videoModes.map((mode) => mode.i
 ]);
 assert.deepEqual(seedance20Provider.capabilities.videoModes[2].roles, ['first_frame', 'last_frame']);
 assert.deepEqual(seedance20Provider.capabilities.videoModes[3].roles, ['reference_image']);
+assert.deepEqual(seedance20Provider.capabilities.videoModes[3].mediaTypes, ['image', 'video']);
+assert.equal(seedance20Provider.capabilities.videoModes[3].maxReferenceVideos, 3);
 assert.equal(seedance25Provider.name, 'Seedance 2.5');
 assert.equal(seedance25Provider.model, 'doubao-seedance-2-5-260628');
 assert.equal(seedance25Provider.protocol, 'seedance-video-v3');
@@ -507,6 +509,35 @@ assert.deepEqual(JSON.parse(seedanceCalls[0].options.body), {
   resolution: '720p',
   watermark: false
 });
+
+const createdSeedanceVideoReference = await createVideoTask({
+  providerId: 'video-2',
+  prompt: 'match the reference movement',
+  resolution: '720P',
+  duration: 6,
+  aspectRatio: '16:9',
+  videoMode: 'omni',
+  urls: ['https://cdn.example/movement.mp4'],
+  referenceMediaTypes: ['video']
+});
+assert.deepEqual(createdSeedanceVideoReference, { providerId: 'video-2', taskId: 'seedance-20-task' });
+assert.deepEqual(JSON.parse(seedanceCalls[1].options.body).content, [
+  { type: 'text', text: 'match the reference movement' },
+  { type: 'video_url', video_url: { url: 'https://cdn.example/movement.mp4' }, role: 'reference_video' }
+]);
+await assert.rejects(
+  createVideoTask({
+    providerId: 'video-2',
+    prompt: 'incomplete reference metadata',
+    resolution: '720P',
+    duration: 6,
+    aspectRatio: '16:9',
+    videoMode: 'omni',
+    urls: ['https://cdn.example/movement.mp4'],
+    referenceMediaTypes: []
+  }),
+  (error) => error && error.code === 'invalid-reference-media'
+);
 assert.equal(seedanceCalls[0].options.headers.Authorization, 'Bearer ai302-secret');
 assert.deepEqual(await pollVideoTask('video-2', 'seedance-20-task'), {
   status: 'succeeded',

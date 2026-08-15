@@ -100,6 +100,8 @@ for (const provider of [seedance20, seedance25]) {
   ]);
   assert.deepEqual(provider.capabilities.videoModes[2].roles, ['first_frame', 'last_frame']);
   assert.deepEqual(provider.capabilities.videoModes[3].roles, ['reference_image']);
+  assert.deepEqual(provider.capabilities.videoModes[3].mediaTypes, ['image', 'video']);
+  assert.equal(provider.capabilities.videoModes[3].maxReferenceVideos, 3);
 }
 assert.equal(require('../lib/provider-catalog').catalogProvider('video-2').keyEnv, 'AI302_KEY');
 assert.equal(require('../lib/provider-catalog').catalogProvider('video-3').keyEnv, 'AI302_KEY');

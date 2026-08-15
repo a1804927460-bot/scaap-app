@@ -19,6 +19,9 @@ assert.match(source, /new Drawflow\(host\)/, 'Node mode must use the selected op
 
 assert.match(source, /canvasNodeMediaKind\(file\)[\s\S]*?isModelFile\(file\)[\s\S]*?return null/);
 assert.match(source, /isImageExt\(file\.ext\)[\s\S]*?isVideoExt\(file\.ext\)/);
+assert.match(source, /function canvasNodeMediaRatio\(file, fallback = 16 \/ 9\)/, 'Media nodes must use source media proportions.');
+assert.match(source, /canvas-node-preview"\$\{canvasNodeMediaStyle\(file\)\}/, 'Media previews must receive their actual ratio.');
+assert.match(source, /canvas-node-add-media[\s\S]*?data-node-action="add-generation"/, 'Media nodes need an adjacent add control.');
 assert.doesNotMatch(source, /return 'model'/, '3D files must never become workflow nodes.');
 assert.match(source, /nodeRole: 'media'[\s\S]*?boardItemId: item\.id[\s\S]*?fileId: item\.fileId/);
 assert.match(
@@ -45,6 +48,7 @@ assert.match(styles, /\.drawflow-node \.drawflow_content_node svg\s*\{[\s\S]*?po
 
 assert.match(source, /upstreamCanvasNodes\(nodeId\)/);
 assert.match(source, /referenceFileIds:[\s\S]*new Set/);
+assert.match(source, /data\.mediaKind === 'image' \|\| data\.mediaKind === 'video'/, 'Node generation must accept image and video references.');
 assert.match(source, /canvasGenerateNodeMarkup[\s\S]*?data-node-action="settings"[\s\S]*?role="button"/);
 assert.match(styles, /\.canvas-generate-node > \.canvas-node-textarea,[\s\S]*?display:\s*none;/);
 assert.match(source, /openAiComposerForSelection\(node\.data\.kind, inputs\.prompt,[\s\S]*?onComplete/);
@@ -111,14 +115,14 @@ assert.match(
   /\.board-node-editor \{[\s\S]*?--node-port-hit-padding:\s*10px;[\s\S]*?\.drawflow-node \.input::before,[\s\S]*?\.drawflow-node \.output::before \{[\s\S]*?inset:\s*calc\(-1 \* var\(--node-port-hit-padding\)\);[\s\S]*?pointer-events:\s*auto;/,
   'Node ports must keep their visual size while exposing a forgiving transparent connection target.'
 );
-assert.match(styles, /\.connection\.is-flowing \.canvas-node-flow-pulse/);
-assert.match(styles, /@keyframes canvas-node-signal-flow/);
+assert.doesNotMatch(styles, /canvas-node-flow-pulse/, 'Idle node links must not maintain animated SVG pulse layers.');
 assert.match(styles, /\.drawflow-node\.messs-media-node/);
 assert.match(
   styles,
-  /\.canvas-node-preview \{[\s\S]*?aspect-ratio:\s*16 \/ 9;[\s\S]*?border-radius:\s*8px;/,
-  'Image and video node previews must use a consistent 16:9 frame.'
+  /\.canvas-node-preview \{[\s\S]*?aspect-ratio:\s*var\(--canvas-node-media-ratio, 1\.7778\);[\s\S]*?border-radius:\s*8px;/,
+  'Image and video node previews must retain their actual media ratio.'
 );
+assert.match(styles, /\.canvas-node-add-media \{[\s\S]*?position:\s*absolute;/);
 assert.match(styles, /\.messs-media-node\.selected \.canvas-node-preview \{/);
 assert.match(source, /function ensureCanvasNodeFlowPaths\(root\)/);
 assert.match(source, /editor\.on\('nodeSelected',[\s\S]*?applyCanvasNodeSelection\(new Set/);

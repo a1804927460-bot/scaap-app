@@ -13,7 +13,8 @@ import {
   getAi302RelayAsset,
   getThreeDStatus,
   getVideoUpscaleStatus,
-  removeBackground
+  removeBackground,
+  storeAi302RelayAsset
 } from './ai302-tools.js';
 import {
   downloadAi302ImageResult,
@@ -62,6 +63,7 @@ const port = Math.max(1, Number(process.env.PORT) || 3000);
 const maxBodyBytes = 70 * 1024 * 1024;
 const rateBuckets = new Map();
 const imageOperationCache = new Map();
+const referenceVideoRelays = new Map();
 const TOPAZ_IMAGE_TOOL_IDS = new Set([
   'topaz-image-sharpen',
   'topaz-image-sharpen-gen',
@@ -134,6 +136,47 @@ function send(response, status, payload, headers = {}) {
     ...headers
   });
   response.end(body);
+}
+
+function materializeReferenceVideo(uploadId, userId) {
+  const key = `${String(userId || '')}:${String(uploadId || '')}`;
+  const cached = referenceVideoRelays.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.url;
+  const asset = consumeVideoUpload({ uploadId, userId });
+  const relay = storeAi302RelayAsset(asset, { relayTtlMs: 2 * 60 * 60 * 1000 });
+  referenceVideoRelays.set(key, { url: relay.url, expiresAt: Date.now() + 2 * 60 * 60 * 1000 });
+  return relay.url;
+}
+
+function materializeVideoReferences(body, userId) {
+  const mediaTypes = Array.isArray(body.referenceMediaTypes)
+    ? body.referenceMediaTypes.slice(0, 14).map((value) => String(value || '').trim().toLowerCase())
+    : [];
+  const imageUrls = Array.isArray(body.urls) ? [...body.urls] : [];
+  const uploadIds = Array.isArray(body.referenceVideoUploadIds) ? [...body.referenceVideoUploadIds] : [];
+  if (!mediaTypes.length) return body;
+  const invalidReferenceInput = () => Object.assign(
+    new Error('The reference media selection is incomplete or invalid.'),
+    { status: 400, code: 'invalid-reference-media' }
+  );
+  if (mediaTypes.some((mediaType) => !['image', 'video'].includes(mediaType))) {
+    throw invalidReferenceInput();
+  }
+  const imageCount = mediaTypes.filter((mediaType) => mediaType === 'image').length;
+  const videoCount = mediaTypes.length - imageCount;
+  if (imageUrls.length !== imageCount || uploadIds.length !== videoCount) {
+    throw invalidReferenceInput();
+  }
+  const createdRelayKeys = [];
+  const urls = mediaTypes.map((mediaType) => {
+    if (mediaType !== 'video') return imageUrls.shift();
+    const uploadId = String(uploadIds.shift() || '');
+    const key = `${String(userId || '')}:${uploadId}`;
+    const url = materializeReferenceVideo(uploadId, userId);
+    createdRelayKeys.push(key);
+    return url;
+  });
+  return { ...body, urls, referenceMediaTypes: mediaTypes, referenceVideoRelayKeys: createdRelayKeys };
 }
 
 function sendRelayAsset(request, response, asset) {
@@ -244,7 +287,9 @@ function validateBody(body, kind) {
   let videoMode = '';
   let selectedVideoMode = null;
   if (kind === 'video' && Array.isArray(capabilities.videoModes)) {
-    const fallbackReferenceCount = Array.isArray(body.urls) ? body.urls.length : 0;
+    const fallbackReferenceCount = Array.isArray(body.referenceMediaTypes) && body.referenceMediaTypes.length
+      ? body.referenceMediaTypes.length
+      : Array.isArray(body.urls) ? body.urls.length : 0;
     const fallbackMode = fallbackReferenceCount > 2
       ? 'omni'
       : fallbackReferenceCount === 2
@@ -258,13 +303,32 @@ function validateBody(body, kind) {
     minReferenceImages = Math.max(0, Math.min(14, Number(selectedVideoMode.minReferences) || 0));
     maxReferenceImages = Math.max(minReferenceImages, Math.min(14, Number(selectedVideoMode.maxReferences) || 0));
   }
-  if ((Array.isArray(body.urls) ? body.urls.length : 0) < minReferenceImages) {
+  const submittedReferenceCount = Array.isArray(body.referenceMediaTypes) && body.referenceMediaTypes.length
+    ? body.referenceMediaTypes.length
+    : Array.isArray(body.urls) ? body.urls.length : 0;
+  if (submittedReferenceCount < minReferenceImages) {
     throw invalidOption('reference-required', `The selected model requires at least ${minReferenceImages} reference image${minReferenceImages === 1 ? '' : 's'}.`);
   }
-  if (Array.isArray(body.urls) && body.urls.length > maxReferenceImages) {
+  if (submittedReferenceCount > maxReferenceImages) {
     throw invalidOption('too-many-references', `The selected model accepts at most ${maxReferenceImages} reference images.`);
   }
   const urls = Array.isArray(body.urls) ? body.urls.slice(0, maxReferenceImages) : [];
+  const referenceMediaTypes = Array.isArray(body.referenceMediaTypes)
+    ? body.referenceMediaTypes.slice(0, urls.length).map((value) => String(value || '').trim().toLowerCase())
+    : urls.map(() => 'image');
+  const allowedReferenceMediaTypes = new Set(
+    selectedVideoMode && Array.isArray(selectedVideoMode.mediaTypes) && selectedVideoMode.mediaTypes.length
+      ? selectedVideoMode.mediaTypes.map((value) => String(value || '').trim().toLowerCase())
+      : ['image']
+  );
+  if (referenceMediaTypes.some((mediaType) => !allowedReferenceMediaTypes.has(mediaType))) {
+    throw invalidOption('invalid-reference-media', 'The selected video mode does not accept reference videos.');
+  }
+  const referenceVideoCount = referenceMediaTypes.filter((mediaType) => mediaType === 'video').length;
+  const maximumReferenceVideos = Math.max(0, Number(selectedVideoMode && selectedVideoMode.maxReferenceVideos) || 0);
+  if (referenceVideoCount > maximumReferenceVideos) {
+    throw invalidOption('too-many-reference-videos', `The selected model accepts at most ${maximumReferenceVideos} reference videos.`);
+  }
   const allowedReferenceMimeTypes = new Set(
     Array.isArray(capabilities.referenceMimeTypes)
       ? capabilities.referenceMimeTypes.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
@@ -379,6 +443,7 @@ function validateBody(body, kind) {
     model: String(body.model || '').slice(0, 160),
     messages,
     urls,
+    referenceMediaTypes,
     size: kind === 'image' ? requestedSize : '1K',
     quality: kind === 'image' ? requestedQuality : null,
     resolution: kind === 'video' ? requestedResolution : '768P',
@@ -625,6 +690,24 @@ async function handle(request, response) {
   if (request.method === 'GET' && url.pathname === '/v1/models') {
     const requestedProviderId = String(url.searchParams.get('providerId') || 'chat-1').trim().toLowerCase();
     return send(response, 200, await models(requestedProviderId));
+  }
+  if (request.method === 'POST' && url.pathname === '/v1/media/video/reference-uploads') {
+    const body = await readJson(request);
+    return send(response, 201, createVideoUploadSession({
+      userId: user.id,
+      size: body && body.size,
+      mime: body && body.mime
+    }));
+  }
+  const referenceVideoChunkMatch = /^\/v1\/media\/video\/reference-uploads\/([A-Za-z0-9_-]{43})\/(\d{1,4})$/.exec(url.pathname);
+  if (request.method === 'PUT' && referenceVideoChunkMatch) {
+    const chunk = await readBuffer(request, 4 * 1024 * 1024);
+    return send(response, 200, appendVideoUploadChunk({
+      uploadId: referenceVideoChunkMatch[1],
+      index: Number(referenceVideoChunkMatch[2]),
+      chunk,
+      userId: user.id
+    }));
   }
   if (request.method === 'POST' && url.pathname === '/v1/tools/video/uploads') {
     if (!ai302Enabled(AI302_FLAGS.topaz)) return disabledTool(response);
@@ -1013,12 +1096,13 @@ async function handle(request, response) {
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/media/video/tasks/create') {
-    const rawBody = await readJson(request);
+    let rawBody = await readJson(request);
     const operationId = String(rawBody.operationId || '').trim();
     const taskToken = String(rawBody.taskToken || '').trim();
     if (!validUuid(operationId) || !validTaskToken(taskToken)) {
       return send(response, 400, { code: 'invalid-video-operation', message: 'The video task identity is invalid.' });
     }
+    rawBody = materializeVideoReferences(rawBody, user.id);
     const body = validateBody(rawBody, 'video');
     const job = await startVideoJob({ userId: user.id, operationId, taskToken, body });
     if (job.ok !== true) return deniedReservation(response, job);

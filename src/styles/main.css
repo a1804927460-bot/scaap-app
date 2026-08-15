@@ -2787,6 +2787,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   z-index: auto;
 }
 .canvas-media-node {
+  position: relative;
   width: 100%;
   overflow: visible;
   user-select: none;
@@ -2816,7 +2817,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .canvas-node-open:hover { color: var(--text-primary); background: var(--bg-surface-2); }
 .canvas-node-preview {
   width: 100%;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: var(--canvas-node-media-ratio, 1.7778);
   position: relative;
   display: grid;
   place-items: center;
@@ -2831,6 +2832,34 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   height: 100%;
   display: block;
   object-fit: contain;
+}
+.canvas-node-add-media {
+  position: absolute;
+  z-index: 3;
+  right: -37px;
+  top: 50%;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 84%, transparent);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
+  color: var(--text-secondary);
+  box-shadow: 0 5px 14px rgba(0, 0, 0, .22);
+  font-size: 22px;
+  font-weight: 300;
+  line-height: 1;
+  transform: translateY(-10%);
+  cursor: var(--cursor-click);
+}
+.canvas-node-add-media:hover,
+.canvas-node-add-media:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  outline: none;
 }
 .canvas-node-placeholder {
   color: color-mix(in srgb, var(--text-tertiary) 76%, transparent);
@@ -2888,40 +2917,14 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .board-node-editor .drawflow .drawflow-node.messs-media-node .output { top: 16px; }
 .board-node-editor .drawflow .connection .main-path {
   stroke: color-mix(in srgb, var(--text-secondary) 76%, #d7e2eb 24%);
-  stroke-width: 3px;
-  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--text-secondary) 24%, transparent));
+  stroke-width: 2.5px;
+  filter: none;
 }
 .board-node-editor .drawflow .connection .main-path:hover,
 .board-node-editor .drawflow .connection .main-path.selected { stroke: var(--accent); stroke-width: 4px; }
 .board-node-editor .drawflow .connection.is-flowing .main-path {
   stroke: color-mix(in srgb, var(--text-secondary) 54%, #eaf5ff 46%);
-  filter: drop-shadow(0 0 4px color-mix(in srgb, #b9ddf7 34%, transparent));
-}
-.board-node-editor .drawflow .connection .canvas-node-flow-pulse {
-  fill: none;
-  stroke: color-mix(in srgb, #b9e4ff 38%, var(--accent) 62%);
-  stroke-width: 5px;
-  stroke-linecap: round;
-  stroke-dasharray: 22 88;
-  opacity: 0;
-  pointer-events: none;
-  filter:
-    drop-shadow(0 0 3px #d8efff)
-    drop-shadow(0 0 7px color-mix(in srgb, var(--accent) 82%, transparent));
-}
-.board-node-editor .drawflow .connection.is-flowing .canvas-node-flow-pulse {
-  opacity: 1;
-  animation: canvas-node-signal-flow 1.45s linear infinite;
-}
-@keyframes canvas-node-signal-flow {
-  to { stroke-dashoffset: -110; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .board-node-editor .drawflow .connection.is-flowing .canvas-node-flow-pulse {
-    animation: none;
-    stroke-dasharray: none;
-    opacity: .72;
-  }
+  filter: none;
 }
 .board-node-editor .drawflow .drawflow-node.messs-flow-node {
   width: 280px;
@@ -2997,7 +3000,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .canvas-generate-results[data-count="1"] { grid-template-columns: 1fr; }
 .canvas-generate-result {
   min-width: 0;
-  aspect-ratio: 16 / 10;
+  aspect-ratio: var(--canvas-node-media-ratio, 1.6);
   position: relative;
   display: grid;
   place-items: center;
@@ -5475,6 +5478,21 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   display: block;
   object-fit: cover;
 }
+.ai-composer-reference-kind {
+  position: absolute;
+  inset: auto 2px 2px 2px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, .76);
+  color: #fff;
+  font-size: 8px;
+  font-weight: 750;
+  line-height: 1;
+  pointer-events: none;
+}
+.ai-composer-reference-thumb.is-video-reference .ai-composer-reference-order { display: none; }
 .ai-composer-reference-order {
   position: absolute;
   left: 2px;

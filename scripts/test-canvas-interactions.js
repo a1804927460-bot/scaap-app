@@ -50,14 +50,21 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /aiImagePopoverClickCloser = \(e\) => \{[\s\S]*?e\.composedPath[\s\S]*?eventPath\.includes\(pop\)[\s\S]*?if \(e\.target\.closest\('#board-canvas \.board-item-image'\)\) return;[\s\S]*?closeAiImagePopover\(\);/,
-  'Selecting or removing an image reference must keep the AI composer open while other outside clicks still close it.'
+  /aiImagePopoverClickCloser = \(e\) => \{[\s\S]*?e\.composedPath[\s\S]*?eventPath\.includes\(pop\)[\s\S]*?board-item-image, #board-canvas \.board-item-video[\s\S]*?closeAiImagePopover\(\);/,
+  'Selecting or removing image/video references must keep the AI composer open while other outside clicks still close it.'
 );
 assert.match(
   boardSource,
   /function setBoardReferenceOrder[\s\S]*?function commitBoardReferenceOrder[\s\S]*?referenceStrip\.addEventListener\('dragover'[\s\S]*?insertBefore\(dragged,[\s\S]*?referenceStrip\.addEventListener\('drop'[\s\S]*?commitBoardReferenceOrder\(\)/,
   'Composer references must support drag-and-drop reordering and persist that order for generation.'
 );
+assert.match(
+  boardSource,
+  /referenceKind === 'video'[\s\S]*?mode\.id === 'omni'[\s\S]*?videoModeReferenceMediaTypes\(mode\)\.includes\('video'\)[\s\S]*?setVideoMode\('omni'\)/,
+  'Clicking a reference video must switch a capable video model to Omni reference mode.'
+);
+assert.match(boardSource, /referenceMediaTypes:\s*selectedReferenceKinds/);
+assert.match(boardSource, /boardReferenceMediaItemAtClientPoint[\s\S]*?isVideoExt\(file\.ext\)/);
 assert.match(
   boardSource,
   /const pendingEntry = \{[\s\S]*?isLoading:\s*true[\s\S]*?boardReferences\.set\(file\.id, pendingEntry\);[\s\S]*?await window\.messsAPI\.readFileAsDataUrl\(file\.id\)[\s\S]*?boardReferences\.get\(file\.id\) !== pendingEntry[\s\S]*?pendingEntry\.dataUrl = dataUrl/,
@@ -76,7 +83,7 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /function videoReferenceSelectionLimit[\s\S]*?supportedVideoModes[\s\S]*?if \(currentMode\.id === 'text'\) setVideoMode\('first-frame'\)[\s\S]*?videoReferenceSelectionLimit\(capabilities\)/,
+  /function videoReferenceSelectionLimit[\s\S]*?supportedVideoModes[\s\S]*?currentMode\.id === 'text'[\s\S]*?setVideoMode\('first-frame'\)[\s\S]*?videoReferenceSelectionLimit\(capabilities\)/,
   'Clicking a canvas image in video mode must switch out of text-only mode before applying the provider reference limit.'
 );
 assert.match(
@@ -129,10 +136,10 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /function boardImageItemAtClientPoint[\s\S]*?Board\.spatialIndex\.query/,
-  'Overview-mode images must remain selectable as references without dismissing the composer.'
+  /function boardReferenceMediaItemAtClientPoint[\s\S]*?Board\.spatialIndex\.query/,
+  'Overview-mode images and videos must remain selectable as references without dismissing the composer.'
 );
-assert.match(boardSource, /viewport\.addEventListener\('click',[\s\S]*?boardImageItemAtClientPoint[\s\S]*?toggleAiComposerBoardReference/);
+assert.match(boardSource, /viewport\.addEventListener\('click',[\s\S]*?boardReferenceMediaItemAtClientPoint[\s\S]*?toggleAiComposerBoardReference/);
 assert.match(
   boardSource,
   /viewport\.addEventListener\('wheel',[\s\S]*?const horizontalPan = e\.shiftKey[\s\S]*?setBoardPanTarget[\s\S]*?setBoardZoomTarget/,
