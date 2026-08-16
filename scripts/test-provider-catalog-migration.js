@@ -71,6 +71,7 @@ assert.equal(gptImage2.capabilities.sizeRatios['3840x2160'], '16:9');
 assert.equal(gptImage2.capabilities.sizeRatios['2160x3840'], '9:16');
 assert.equal(gptImage2.capabilities.sizeRatios['3780x1620'], '21:9');
 assert.equal(gptImage2.capabilities.arbitrarySizes, true);
+assert.equal(gptImage2.capabilities.arbitraryRatios, true);
 assert.equal(gptImage2.capabilities.maxSizeEdge, 3840);
 assert.equal(gptImage2.capabilities.maxSizePixels, 8_300_000);
 assert.equal(gptImage2.capabilities.promptMaxCharacters, 1000);

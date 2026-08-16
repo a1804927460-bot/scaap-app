@@ -20,6 +20,7 @@ const {
   buildRequestBody,
   buildOpenAiImageBody,
   buildOpenAiImageEditForm,
+  gptImage2Size,
   buildQuickRouterUnifiedVideoBody,
   buildOpenAiChatImageBody,
   buildOpenAiVideoBody,
@@ -298,6 +299,10 @@ async function testGptImage2FlowAndReferenceLimits() {
   assert.strictEqual(provider.endpoint, 'https://api.302.ai/v1/images/generations');
   assert.strictEqual(provider.keyEnv, 'AI302_KEY');
   assert.deepStrictEqual(provider.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
+  assert.strictEqual(gptImage2Size({ size: '4k', aspectRatio: '16:9' }), '3840x2160');
+  assert.strictEqual(gptImage2Size({ size: '4K', aspectRatio: '9:16' }), '2160x3840');
+  assert.strictEqual(gptImage2Size({ size: '2k', aspectRatio: '4:1' }), '3840x960');
+  assert.strictEqual(gptImage2Size({ size: '1k', aspectRatio: '1:4' }), '512x2048');
 
   const config = normalizeConfig({
     apiKey: 'server-only-secret',

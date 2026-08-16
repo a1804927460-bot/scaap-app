@@ -85,7 +85,8 @@ const secretPatterns = [
 const imageSizes = new Set(['1K', '2K', '4K', 'original']);
 const imageRatios = new Set([
   'auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3',
-  '5:4', '4:5', '21:9', '16:10', '10:16', '2:1', '1:2'
+  '5:4', '4:5', '21:9', '16:10', '10:16', '2:1', '1:2', '9:21',
+  '3:1', '1:3', '4:1', '1:4', '7:5', '5:7', '8:5', '5:8'
 ]);
 const defaultVideoRatios = new Set(['21:9', '16:9', '4:3', '1:1', '3:4', '9:16']);
 const defaultVideoResolutions = new Set(['768P', '2K']);
@@ -128,6 +129,29 @@ function imageDimensionsWithinCapabilities(size, capabilities = {}) {
   const maxEdge = Math.max(1, Math.min(3840, Number(capabilities.maxSizeEdge) || 3840));
   const maxPixels = Math.max(1, Math.min(8_300_000, Number(capabilities.maxSizePixels) || 8_300_000));
   return width <= maxEdge && height <= maxEdge && width * height <= maxPixels;
+}
+
+function normalizeImageSize(value) {
+  const text = String(value || '').trim();
+  if (/^(?:1|2|4)k$/i.test(text)) return text.toUpperCase();
+  if (/^(?:default|adaptive|original|auto)$/i.test(text)) {
+    const lower = text.toLowerCase();
+    return lower === 'default' ? 'Default' : lower;
+  }
+  const match = /^(\d{1,4})\s*[x×]\s*(\d{1,4})$/i.exec(text);
+  return match ? `${Number(match[1])}x${Number(match[2])}` : text;
+}
+
+function supportsImageAspectRatio(value, capabilities = {}) {
+  if (imageRatios.has(value)) return true;
+  if (capabilities.arbitraryRatios !== true) return false;
+  const match = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(String(value || '').trim());
+  if (!match) return false;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return false;
+  const ratio = width / height;
+  return ratio >= 1 / 16 && ratio <= 16;
 }
 
 function base64DecodedBytes(value) {
@@ -373,7 +397,7 @@ function validateBody(body, kind) {
     }
   }
   if (encodedBytes > 50 * 1024 * 1024) throw Object.assign(new Error('Reference images exceed the upstream request limit.'), { status: 413, code: 'attachments-too-large' });
-  const requestedSize = String(body.size || '').trim();
+  const requestedSize = normalizeImageSize(body.size);
   const requestedResolution = String(body.resolution || '').trim().toUpperCase();
   const requestedRatio = String(body.aspectRatio || '').trim();
   const requestedQuality = String(body.quality || 'auto').trim().toLowerCase();
@@ -383,7 +407,7 @@ function validateBody(body, kind) {
   const requestedStyleStrength = Math.max(0, Math.min(1, Number(body.styleStrength ?? 1)));
   if (kind === 'image') {
     const allowedSizes = Array.isArray(capabilities.sizes) && capabilities.sizes.length
-      ? new Set(capabilities.sizes.map(String))
+      ? new Set(capabilities.sizes.map(normalizeImageSize))
       : imageSizes;
     const configuredRatios = urls.length && Array.isArray(capabilities.referenceRatios)
       ? capabilities.referenceRatios
@@ -397,7 +421,7 @@ function validateBody(body, kind) {
     if (!allowedSizes.has(requestedSize) && !imageDimensionsWithinCapabilities(requestedSize, capabilities)) {
       throw invalidOption('invalid-size', 'The selected image resolution is not supported.');
     }
-    if (!allowedRatios.has(requestedRatio)) {
+    if (!allowedRatios.has(requestedRatio) && !supportsImageAspectRatio(requestedRatio, capabilities)) {
       throw invalidOption(
         'invalid-aspect-ratio',
         urls.length

@@ -12,6 +12,7 @@ const workspaceSource = fs.readFileSync(path.join(root, 'src', 'js', 'canvas-wor
 const boardStyles = fs.readFileSync(path.join(root, 'src', 'styles', 'main.css'), 'utf8');
 const indexHtml = fs.readFileSync(path.join(root, 'src', 'index.html'), 'utf8');
 const mainSource = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+const gatewayServerSource = fs.readFileSync(path.join(root, 'gateway', 'src', 'server.js'), 'utf8');
 const sidebarSource = fs.readFileSync(path.join(root, 'src', 'js', 'sidebar.js'), 'utf8');
 const previewSource = fs.readFileSync(path.join(root, 'src', 'js', 'preview-canvas.js'), 'utf8');
 const contextMenuSource = fs.readFileSync(path.join(root, 'src', 'js', 'context-menu.js'), 'utf8');
@@ -240,6 +241,16 @@ assert.match(
   mainSource,
   /const sizeRatios = capabilities\.sizeRatios[\s\S]*?mappedRatio !== aspectRatio[\s\S]*?invalid-size-ratio/,
   'Desktop validation must reject contradictory mapped image sizes and ratios.'
+);
+assert.match(
+  mainSource,
+  /function normalizeImageSize[\s\S]*?\(\?:1\|2\|4\)k\$\/i[\s\S]*?return text\.toUpperCase\(\)[\s\S]*?normalized\.size = size/,
+  'Desktop validation must normalize lowercase 1k, 2k, and 4k before provider checks.'
+);
+assert.match(
+  gatewayServerSource,
+  /function normalizeImageSize[\s\S]*?\(\?:1\|2\|4\)k\$\/i[\s\S]*?return text\.toUpperCase\(\)[\s\S]*?size: kind === 'image' \? requestedSize/,
+  'Gateway validation must forward the same canonical image resolution used for validation.'
 );
 assert.match(
   boardSource,

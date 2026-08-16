@@ -80,9 +80,11 @@ for (const requiredSize of [
 assert.deepEqual(gptImage2Provider.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
 assert.deepEqual(gptImage2Provider.capabilities.ratios, [
   'auto', '1:1', '16:9', '9:16', '16:10', '10:16', '2:1', '1:2',
-  '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9'
+  '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9', '9:21', '3:1',
+  '1:3', '4:1', '1:4', '7:5', '5:7', '8:5', '5:8'
 ]);
 assert.equal(gptImage2Provider.capabilities.arbitrarySizes, true);
+assert.equal(gptImage2Provider.capabilities.arbitraryRatios, true);
 assert.equal(gptImage2Provider.capabilities.maxSizeEdge, 3840);
 assert.equal(gptImage2Provider.capabilities.maxSizePixels, 8_300_000);
 for (const size of gptImage2Provider.capabilities.sizes.filter((value) => value !== 'auto')) {

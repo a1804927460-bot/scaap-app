@@ -60,7 +60,8 @@ const AI_IMAGE_QUALITIES = new Set(['low', 'medium', 'high', 'auto']);
 const AI_IMAGE_RATIOS = new Set([
   'auto', '1:1', '16:9', '9:16', '4:3', '3:4',
   '3:2', '2:3', '5:4', '4:5', '21:9',
-  '16:10', '10:16', '2:1', '1:2'
+  '16:10', '10:16', '2:1', '1:2', '9:21', '3:1', '1:3',
+  '4:1', '1:4', '7:5', '5:7', '8:5', '5:8'
 ]);
 const MINIMAX_TEXT_VIDEO_RATIOS = new Set(['21:9', '16:9', '4:3', '1:1', '3:4', '9:16']);
 const MINIMAX_VIDEO_RESOLUTIONS = new Set(['768P', '2K']);
@@ -3277,16 +3278,39 @@ function imageDimensionsWithinCapabilities(size, capabilities = {}) {
   return width <= maxEdge && height <= maxEdge && width * height <= maxPixels;
 }
 
+function normalizeImageSize(value) {
+  const text = String(value || '').trim();
+  if (/^(?:1|2|4)k$/i.test(text)) return text.toUpperCase();
+  if (/^(?:default|adaptive|original|auto)$/i.test(text)) {
+    const lower = text.toLowerCase();
+    return lower === 'default' ? 'Default' : lower;
+  }
+  const match = /^(\d{1,4})\s*[x×]\s*(\d{1,4})$/i.exec(text);
+  return match ? `${Number(match[1])}x${Number(match[2])}` : text;
+}
+
+function supportsImageAspectRatio(value, capabilities = {}) {
+  if (AI_IMAGE_RATIOS.has(value)) return true;
+  if (capabilities.arbitraryRatios !== true) return false;
+  const match = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(String(value || '').trim());
+  if (!match) return false;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return false;
+  const ratio = width / height;
+  return ratio >= 1 / 16 && ratio <= 16;
+}
+
 function normalizeAiMediaGenerationRequest(request, kind) {
   const normalized = { ...request };
   if (kind === 'image') {
-    const size = String(request.size || '').trim();
+    const size = normalizeImageSize(request.size);
     const aspectRatio = String(request.aspectRatio || '').trim();
     const quality = String(request.quality || 'auto').trim().toLowerCase();
     if (!AI_IMAGE_SIZES.has(size) && !/^([1-9]\d{0,3})x([1-9]\d{0,3})$/i.test(size)) {
       throw invalidAiMediaOption('invalid-size', 'The selected image resolution is not supported.');
     }
-    if (!AI_IMAGE_RATIOS.has(aspectRatio)) {
+    if (!supportsImageAspectRatio(aspectRatio, { arbitraryRatios: true })) {
       throw invalidAiMediaOption('invalid-aspect-ratio', 'The selected image aspect ratio is not supported.');
     }
     if (!AI_IMAGE_QUALITIES.has(quality)) {
@@ -3340,7 +3364,7 @@ function normalizeAiMediaGenerationRequest(request, kind) {
         .map((value) => String(value || '').trim())
         .filter(Boolean)
     );
-    if (supportedRatios.size && !supportedRatios.has(aspectRatio)) {
+    if (supportedRatios.size && !supportedRatios.has(aspectRatio) && !supportsImageAspectRatio(aspectRatio, capabilities)) {
       throw invalidAiMediaOption('invalid-aspect-ratio', 'The selected image model does not support this aspect ratio.');
     }
     const sizeRatios = capabilities.sizeRatios;
