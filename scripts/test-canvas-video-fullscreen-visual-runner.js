@@ -5,8 +5,13 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { pathToFileURL } = require('url');
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, protocol } = require('electron');
 const ffmpegPath = require('ffmpeg-static');
+const { createLocalFileResponse } = require('../lib/local-file-response');
+
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'messs-transcode', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }
+]);
 
 app.commandLine.appendSwitch('use-angle', 'swiftshader');
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
@@ -23,7 +28,7 @@ async function run() {
     videoPath
   ], { encoding: 'utf8', windowsHide: true });
   if (generated.status !== 0) throw new Error(generated.stderr || 'Could not create the playback fixture.');
-  const videoSource = pathToFileURL(videoPath).href;
+  const videoSource = 'messs-transcode://fixture-video';
   const styleUrl = pathToFileURL(path.join(root, 'src', 'styles', 'main.css')).href;
   const themeUrl = pathToFileURL(path.join(root, 'src', 'styles', 'theme.css')).href;
   const storeUrl = pathToFileURL(path.join(root, 'src', 'js', 'store-client.js')).href;
@@ -76,6 +81,8 @@ async function run() {
       </script>
     </body></html>`, 'utf8');
 
+  protocol.handle('messs-transcode', (request) => createLocalFileResponse(request, videoPath, 'video/mp4'));
+
   const window = new BrowserWindow({
     width: 1100,
     height: 760,
@@ -90,6 +97,26 @@ async function run() {
   });
   try {
     await window.loadFile(htmlPath);
+    const canvasPlayback = await window.webContents.executeJavaScript(`(async () => {
+      const video = document.querySelector('.mini-video-player video');
+      await video.play();
+      await new Promise((resolve) => setTimeout(resolve, 650));
+      const state = {
+        currentTime: video.currentTime,
+        readyState: video.readyState,
+        paused: video.paused,
+        error: video.error && video.error.code
+      };
+      video.pause();
+      video.currentTime = 0;
+      return state;
+    })()`);
+    if (
+      canvasPlayback.error || canvasPlayback.readyState < 2 ||
+      canvasPlayback.paused || canvasPlayback.currentTime < 0.2
+    ) {
+      throw new Error(`Canvas video did not play through the registered media protocol: ${JSON.stringify(canvasPlayback)}`);
+    }
     const toolbar = await window.webContents.executeJavaScript(`(() => {
       const card = document.querySelector('.board-item-video').getBoundingClientRect();
       const bar = document.querySelector('.board-video-butler-toolbar').getBoundingClientRect();
@@ -223,7 +250,7 @@ async function run() {
     if (!imageBackdropClick.mediaClickKeptOpen || !imageBackdropClick.backdropClickClosed) {
       throw new Error(`Fullscreen image outside-click behavior is invalid: ${JSON.stringify(imageBackdropClick)}`);
     }
-    process.stdout.write(`CANVAS_VIDEO_FULLSCREEN_OK toolbar=${Math.round(toolbar.bar.right - toolbar.bar.left)} compact=${compactToolbar.width.toFixed(1)}x${compactToolbar.height.toFixed(1)} gap=${compactToolbar.gap.toFixed(1)} player=${Math.round(fullscreen.rect.right - fullscreen.rect.left)}x${Math.round(fullscreen.rect.bottom - fullscreen.rect.top)} played=${playback.currentTime.toFixed(2)}\n`);
+    process.stdout.write(`CANVAS_VIDEO_FULLSCREEN_OK canvas=${canvasPlayback.currentTime.toFixed(2)} toolbar=${Math.round(toolbar.bar.right - toolbar.bar.left)} compact=${compactToolbar.width.toFixed(1)}x${compactToolbar.height.toFixed(1)} gap=${compactToolbar.gap.toFixed(1)} player=${Math.round(fullscreen.rect.right - fullscreen.rect.left)}x${Math.round(fullscreen.rect.bottom - fullscreen.rect.top)} played=${playback.currentTime.toFixed(2)}\n`);
   } finally {
     if (!window.isDestroyed()) window.destroy();
     fs.rmSync(tempDir, { recursive: true, force: true });

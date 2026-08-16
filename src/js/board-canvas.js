@@ -4413,7 +4413,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   function videoModeLabel(modeId) {
     const labels = {
       text: t('Text to video', '文生视频'),
-      'first-frame': t('First frame', '首帧'),
+      'first-frame': t('Image to video', '图生视频'),
       'first-last-frame': t('First + last frame', '首尾帧'),
       omni: t('Omni reference', '全能参考')
     };
@@ -4818,6 +4818,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       ]
     };
     const generationHooks = pop._generationHooks || null;
+    if (generationHooks && generationHooks.placeOnBoard === false) request.placeOnBoard = false;
     if (generationHooks && typeof generationHooks.onSubmit === 'function') {
       generationHooks.onSubmit(request);
     }
@@ -4933,7 +4934,8 @@ async function generateAiMediaForBoardV3(request) {
   const taskId = beginAiMediaTask(request);
   const targetCanvasId = activeCanvasId();
   const generationRequest = { ...request, canvasId: targetCanvasId };
-  const placeholders = createAiPlaceholders(generationRequest);
+  const placeOnBoard = request.placeOnBoard !== false;
+  const placeholders = placeOnBoard ? createAiPlaceholders(generationRequest) : [];
 
   try {
     const folderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
@@ -4967,8 +4969,10 @@ async function generateAiMediaForBoardV3(request) {
     AppState.files = [...files, ...AppState.files.filter((file) => !files.some((next) => next.id === file.id))];
     renderFileList(currentFileListScope());
     renderFolderGridIfActive();
-    await replaceAiPlaceholders(placeholders, files, generationRequest, res.boardItems || []);
-    selectFileForPreview(files[0].id);
+    if (placeOnBoard) {
+      await replaceAiPlaceholders(placeholders, files, generationRequest, res.boardItems || []);
+      selectFileForPreview(files[0].id);
+    }
     if (res.unlocked && res.unlocked.length) await refreshAchievements();
 
     const successMessage = res.failedCount
@@ -4976,12 +4980,14 @@ async function generateAiMediaForBoardV3(request) {
         `Generated ${files.length}; ${res.failedCount} failed`,
         `已生成 ${files.length} 个，${res.failedCount} 个失败`
       )
-      : request.kind === 'video'
-        ? t('AI video added to the canvas', 'AI 视频已加入画布')
-        : t(
-          `${files.length} AI image${files.length === 1 ? '' : 's'} added to the canvas`,
-          `${files.length} 张 AI 图片已加入画布`
-    );
+      : !placeOnBoard
+        ? t('Generation completed', '生成完成', '생성이 완료되었습니다')
+        : request.kind === 'video'
+          ? t('AI video added to the canvas', 'AI 视频已加入画布')
+          : t(
+            `${files.length} AI image${files.length === 1 ? '' : 's'} added to the canvas`,
+            `${files.length} 张 AI 图片已加入画布`
+          );
     const settledCharge = res.creditsCharged !== null
       && res.creditsCharged !== undefined
       && Number.isFinite(Number(res.creditsCharged))
@@ -5160,7 +5166,8 @@ async function submitBoardQuickGeneration(kind, promptText, options = {}) {
       referenceFileIds,
       referenceMediaTypes: referenceData.referenceMediaTypes || referenceFileIds.map(() => 'image'),
       urls,
-      placement: options.placement || null
+      placement: options.placement || null,
+      placeOnBoard: options.placeOnBoard !== false
     });
   } catch (err) {
     showToast(err && err.message ? err.message : t('AI generation failed.', 'AI 生成失败。'), 'AI');
@@ -5444,10 +5451,13 @@ async function showAiImagePopover(initialKind = 'image') {
 
   // Center the composer in the drawable canvas, not the whole board panel.
   // The optional Agent sidebar would otherwise shift the capsule to the right.
-  const anchor = document.getElementById('board-viewport');
+  const nodeComposer = typeof CanvasNodeMode !== 'undefined' && CanvasNodeMode.mode === 'node';
+  const anchor = document.getElementById(nodeComposer ? 'board-node-mode' : 'board-viewport');
   const loading = document.createElement('div');
   loading.id = 'ai-image-popover';
-  loading.className = 'ai-image-popover ai-composer ai-composer-loading' + (isBoardFullscreen() ? '' : ' is-panel-popover');
+  loading.className = 'ai-image-popover ai-composer ai-composer-loading' +
+    (isBoardFullscreen() ? '' : ' is-panel-popover') +
+    (nodeComposer ? ' is-node-composer' : '');
   markBoardUiLayer(loading);
   loading.dataset.kind = initialKind;
   loading.innerHTML = `
@@ -5472,9 +5482,10 @@ async function showAiImagePopover(initialKind = 'image') {
   }
   if (!loading.isConnected || document.getElementById('ai-image-popover') !== loading) return;
   const pop = buildAiComposer(config, initialKind);
+  if (nodeComposer) pop.classList.add('is-node-composer');
   loading.replaceWith(pop);
 
-  requestAnimationFrame(() => keepBoardSelectionAboveComposer(pop));
+  if (!nodeComposer) requestAnimationFrame(() => keepBoardSelectionAboveComposer(pop));
 
   const textarea = pop.querySelector('.ai-composer-prompt');
   setTimeout(() => textarea.focus(), 0);
@@ -5482,6 +5493,7 @@ async function showAiImagePopover(initialKind = 'image') {
   aiImagePopoverClickCloser = (e) => {
     const eventPath = typeof e.composedPath === 'function' ? e.composedPath() : [];
     if (pop.contains(e.target) || eventPath.includes(pop)) return;
+    if (nodeComposer && e.target.closest('#board-node-editor .drawflow-node')) return;
     if (e.target.closest('#board-mode-toggle, #board-tool-ai-image, #board-tool-ai-video, #board-fullscreen-toggle, #board-bottom-fullscreen-toggle')) return;
     // Canvas images toggle AI reference state; they must not dismiss the active composer.
     if (e.target.closest('#board-canvas .board-item-image, #board-canvas .board-item-video')) return;

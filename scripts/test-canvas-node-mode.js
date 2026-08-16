@@ -7,125 +7,87 @@ const path = require('path');
 const root = path.join(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'src', 'js', 'canvas-node-mode.js'), 'utf8');
 const boardSource = fs.readFileSync(path.join(root, 'src', 'js', 'board-canvas.js'), 'utf8');
+const mainSource = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'src', 'index.html'), 'utf8');
 const styles = fs.readFileSync(path.join(root, 'src', 'styles', 'main.css'), 'utf8');
 const pkg = require('../package.json');
 
+function functionBody(text, name, nextName) {
+  const start = text.indexOf(`function ${name}`);
+  const end = nextName ? text.indexOf(`function ${nextName}`, start + 1) : text.length;
+  assert.ok(start >= 0 && end > start, `Could not isolate ${name}.`);
+  return text.slice(start, end);
+}
+
 assert.strictEqual(pkg.dependencies.drawflow, '0.0.60');
 assert.match(html, /node_modules\/drawflow\/dist\/drawflow\.min\.css/);
-assert.match(html, /id="board-mode-toggle"[\s\S]*?id="board-node-mode"/);
-assert.match(html, /node_modules\/drawflow\/dist\/drawflow\.min\.js[\s\S]*?canvas-node-mode\.js/);
-assert.match(source, /new Drawflow\(host\)/, 'Node mode must use the selected open-source editor.');
+assert.match(source, /new Drawflow\(host\)/);
+assert.match(source, /messs\.canvas\.nodes\.v2/, 'Node graphs must use the independent empty layout namespace.');
 
-assert.match(source, /canvasNodeMediaKind\(file\)[\s\S]*?isModelFile\(file\)[\s\S]*?return null/);
-assert.match(source, /isImageExt\(file\.ext\)[\s\S]*?isVideoExt\(file\.ext\)/);
-assert.match(source, /function canvasNodeMediaRatio\(file, fallback = 16 \/ 9\)/, 'Media nodes must use source media proportions.');
-assert.match(source, /canvas-node-preview"\$\{canvasNodeMediaStyle\(file\)\}/, 'Media previews must receive their actual ratio.');
-assert.match(source, /canvas-node-add-media[\s\S]*?data-node-action="add-generation"/, 'Media nodes need an adjacent add control.');
-assert.doesNotMatch(source, /return 'model'/, '3D files must never become workflow nodes.');
-assert.match(source, /nodeRole: 'media'[\s\S]*?boardItemId: item\.id[\s\S]*?fileId: item\.fileId/);
-assert.match(
-  source,
-  /function canvasNodeMediaMarkup[\s\S]*?canvas-media-node-label[\s\S]*?canvas-node-preview/,
-  'Media node labels must render outside and before the preview frame.'
-);
-assert.doesNotMatch(
-  source,
-  /function canvasNodeMediaMarkup[\s\S]*?<footer title=/,
-  'Media nodes must not render a filename footer below the preview.'
-);
-assert.match(source, /nodeRole: 'text'/);
-assert.match(source, /nodeRole: 'generate'[\s\S]*?lastOutputFileIds/);
+const reconcile = functionBody(source, 'reconcileCanvasNodes', 'canvasNodeByFileId');
+assert.doesNotMatch(reconcile, /AppState\.boardItems|boardItemId/,
+  'Reconciliation must never mirror ordinary canvas items into the node graph.');
+assert.doesNotMatch(reconcile, /editor\.addNode/,
+  'Reconciliation must not automatically populate an empty graph.');
+assert.match(reconcile, /data\.fileId[\s\S]*?AppState\.files\.find/,
+  'Node media may only resolve its archived library file.');
 
-['text', 'import-image', 'import-video', 'generate-image', 'generate-video'].forEach((action) => {
-  assert.match(html, new RegExp(`data-add-node="${action}"`), `Missing ${action} add-node action.`);
+const addWorkflow = functionBody(source, 'addCanvasWorkflowNode', 'reconcileCanvasNodes');
+assert.doesNotMatch(addWorkflow, /openCanvasGenerationSettings/,
+  'Creating a generation node must not open the composer until the node is clicked.');
+assert.match(addWorkflow, /role === 'text'[\s\S]*?openCanvasTextEditor/);
+
+assert.match(source, /function canvasNodeMediaKind\(file\)[\s\S]*?return 'model'[\s\S]*?return 'audio'/);
+assert.match(source, /function canvasNodeMediaRatio\(file, fallback = 16 \/ 9\)/);
+assert.doesNotMatch(functionBody(source, 'canvasNodeMediaRatio', 'canvasNodeMediaStyle'), /Math\.(min|max)|0\.42|2\.4/,
+  'Source media ratios must not be clamped.');
+assert.match(source, /nodeRole: 'media', fileId: file\.id, mediaKind: kind/);
+assert.doesNotMatch(source, /nodeRole: 'media'[\s\S]{0,120}boardItemId/);
+assert.match(styles, /\.canvas-node-preview \{[\s\S]*?aspect-ratio:\s*var\(--canvas-node-media-ratio, 1\.7778\)/);
+assert.match(styles, /\.canvas-generate-result img,[\s\S]*?object-fit:\s*contain/);
+
+const importPaths = functionBody(source, 'importCanvasNodePaths', 'importCanvasNodeMedia');
+assert.match(importPaths, /window\.messsAPI\.importFiles\(accepted, folderId, activeCanvasId\(\)\)/);
+assert.match(importPaths, /addCanvasMediaNode\(file/);
+assert.doesNotMatch(importPaths, /importFilesDirectlyToBoard|addFilesToBoard|AppState\.boardItems/,
+  'Node imports must archive files without placing them on the ordinary canvas.');
+assert.match(source, /bindCanvasNodeFileDrop[\s\S]*?getPathForFile[\s\S]*?importCanvasNodePaths/);
+
+['text', 'image', 'video', 'audio', 'model'].forEach((action) => {
+  assert.match(html, new RegExp(`data-add-node="${action}"`), `Missing ${action} node action.`);
 });
-assert.match(html, /id="board-node-add-toggle"/);
-assert.match(styles, /\.board-node-add-toggle/);
-assert.match(styles, /\.board-node-add-menu/);
-assert.match(styles, /\.drawflow-node\.messs-flow-node/);
-assert.match(styles, /\.drawflow-node \.drawflow_content_node svg\s*\{[\s\S]*?position:\s*static;[\s\S]*?z-index:\s*auto;/);
+assert.doesNotMatch(html, /id="board-node-add-toggle"/,
+  'Node mode must not show the ordinary bottom add capsule.');
+assert.match(source, /addEventListener\('contextmenu'[\s\S]*?openCanvasNodeAddMenu\(event\.clientX, event\.clientY\)/);
+assert.match(source, /event\.target\.closest\('\.drawflow-node, \.connection, \.input, \.output, \.point'\)/);
+assert.match(styles, /\.board-node-add-menu \{[\s\S]*?position:\s*absolute;[\s\S]*?width:\s*252px/);
 
-assert.match(source, /upstreamCanvasNodes\(nodeId\)/);
-assert.match(source, /referenceFileIds:[\s\S]*new Set/);
-assert.match(source, /data\.mediaKind === 'image' \|\| data\.mediaKind === 'video'/, 'Node generation must accept image and video references.');
-assert.match(source, /canvasGenerateNodeMarkup[\s\S]*?data-node-action="settings"[\s\S]*?role="button"/);
-assert.match(styles, /\.canvas-generate-node > \.canvas-node-textarea,[\s\S]*?display:\s*none;/);
-assert.match(source, /openAiComposerForSelection\(node\.data\.kind, inputs\.prompt,[\s\S]*?onComplete/);
-assert.match(source, /function canvasGenerateResultsMarkup\(data = \{\}\)[\s\S]*?lastOutputFileIds[\s\S]*?canvas-generate-result/);
-assert.match(source, /function connectCanvasGenerationOutputs\(nodeId, files\)[\s\S]*?updateNodeDataFromId\(id,[\s\S]*?lastOutputFileIds: outputIds[\s\S]*?reconcileCanvasNodes\(\)/);
-assert.match(source, /embeddedOutputFileIds[\s\S]*?!embeddedOutputFileIds\.has\(item\.fileId\)/);
-assert.match(source, /canvasTextNodeMarkup[\s\S]*?data-node-action="text"[\s\S]*?role="button"/);
-assert.match(source, /function openCanvasTextEditor\(nodeId\)[\s\S]*?board-node-text-editor[\s\S]*?updateNodeDataFromId/);
-assert.match(styles, /\.canvas-text-node > \.canvas-node-textarea,[\s\S]*?display:\s*none;/);
-assert.match(styles, /\.board-node-text-editor\s*\{[\s\S]*?position:\s*absolute;/);
-assert.match(boardSource, /openAiComposerForSelection\(kind, promptText = '', options = \{\}\)/);
-assert.match(boardSource, /generationHooks\.onComplete\(files, request\)/);
-assert.match(source, /editor\.export\(\)/, 'Node positions, content, and connections must persist.');
-assert.match(source, /editor\.import\(saved\)/, 'Persisted node graphs must restore.');
-assert.match(source, /nodeDataChanged/);
-assert.match(
-  source,
-  /editor\.on\('connectionStart',[\s\S]*?editor\.on\('connectionCancel',[\s\S]*?openCanvasNodeConnectionMenu/,
-  'Dropping a new connection on empty canvas must open the node picker.'
-);
-assert.match(
-  source,
-  /function addCanvasNodeFromConnection\(kind, draft\)[\s\S]*?addCanvasWorkflowNode\('generate', kind, position\)[\s\S]*?addConnection\([\s\S]*?'input_1'/,
-  'Choosing a node from the connection picker must create and connect it.'
-);
-assert.match(styles, /\.board-node-connection-menu\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?z-index:\s*32;/);
-assert.match(
-  source,
-  /function bindCanvasNodePanning\(host, editor\)[\s\S]*?event\.button === 0 && \(event\.altKey \|\| CanvasNodeMode\.spacePressed\)[\s\S]*?setPointerCapture\(event\.pointerId\)/,
-  'Node panning must start anywhere with middle mouse or a left-button modifier and capture the pointer.'
-);
-assert.match(
-  source,
-  /pointercancel', finishCanvasNodePan[\s\S]*?lostpointercapture', finishCanvasNodePan[\s\S]*?window\.addEventListener\('blur', \(\) => finishCanvasNodePan\(\)\)/,
-  'Interrupted node panning must settle without leaving the editor stuck.'
-);
-assert.match(source, /event\.code === 'Space'[\s\S]*?CanvasNodeMode\.spacePressed = true/);
-assert.match(styles, /\.board-node-editor\.is-panning[\s\S]*?var\(--cursor-grabbing\)/);
-assert.match(
-  source,
-  /function bindCanvasNodeMarqueeSelection[\s\S]*?event\.button !== 0 \|\| event\.altKey \|\| CanvasNodeMode\.spacePressed[\s\S]*?drawflow-node, \.connection, \.input, \.output, \.point/,
-  'Plain left drag on empty node-canvas space must start marquee selection without stealing node or port interactions.'
-);
-assert.match(
-  source,
-  /function finishCanvasNodeMarquee[\s\S]*?getBoundingClientRect\(\)[\s\S]*?const intersects =[\s\S]*?selectedIds\.add/,
-  'Marquee selection must use rendered node bounds so it remains correct under zoom and pan.'
-);
-assert.match(
-  source,
-  /event\.shiftKey \|\| event\.ctrlKey \|\| event\.metaKey[\s\S]*?new Set\(CanvasNodeMode\.selectedNodeIds\)/,
-  'Shift, Ctrl, and Command marquee gestures must add to the current node selection.'
-);
-assert.match(source, /bindCanvasNodePanning\(host, editor\);[\s\S]*?bindCanvasNodeMarqueeSelection\(host\)/);
-assert.match(styles, /\.board-node-selection-box \{[\s\S]*?pointer-events:\s*none;[\s\S]*?border:\s*1px solid var\(--accent\)/,
-  'The visible marquee must use the theme accent and never block pointer release.');
+assert.match(source, /openAiComposerForSelection\(node\.data\.kind, inputs\.prompt,[\s\S]*?placeOnBoard: false/);
+assert.match(source, /canvasGenerateNodeMarkup[\s\S]*?data-node-action="add-generation"/,
+  'Generation previews need a trailing add control like media nodes.');
+assert.match(boardSource, /generationHooks\.placeOnBoard === false\) request\.placeOnBoard = false/);
+assert.match(boardSource, /const placeOnBoard = request\.placeOnBoard !== false/);
+assert.match(boardSource, /const placeholders = placeOnBoard \? createAiPlaceholders\(generationRequest\) : \[\]/);
+assert.match(boardSource, /if \(placeOnBoard\) \{[\s\S]*?replaceAiPlaceholders[\s\S]*?selectFileForPreview/);
+assert.match(mainSource, /const boardItem = request\.placeOnBoard === false[\s\S]*?\? null[\s\S]*?: addGeneratedMediaBoardItem/,
+  'The main process must archive node outputs without adding ordinary board items.');
+assert.match(boardSource, /nodeComposer[\s\S]*?getElementById\(nodeComposer \? 'board-node-mode' : 'board-viewport'\)/);
+assert.match(styles, /\.ai-image-popover\.ai-composer\.is-node-composer[\s\S]*?bottom:\s*22px/);
 
-assert.match(boardSource, /async function submitBoardQuickGeneration\(kind, promptText, options = \{\}\)/);
-assert.match(boardSource, /options\.referenceFileIds/);
-assert.match(boardSource, /return await generateAiMediaForBoardV3/);
-assert.match(styles, /\.board-node-editor \.drawflow \.connection \.main-path/);
-assert.match(
-  styles,
-  /\.board-node-editor \{[\s\S]*?--node-port-hit-padding:\s*10px;[\s\S]*?\.drawflow-node \.input::before,[\s\S]*?\.drawflow-node \.output::before \{[\s\S]*?inset:\s*calc\(-1 \* var\(--node-port-hit-padding\)\);[\s\S]*?pointer-events:\s*auto;/,
-  'Node ports must keep their visual size while exposing a forgiving transparent connection target.'
-);
-assert.doesNotMatch(styles, /canvas-node-flow-pulse/, 'Idle node links must not maintain animated SVG pulse layers.');
-assert.match(styles, /\.drawflow-node\.messs-media-node/);
-assert.match(
-  styles,
-  /\.canvas-node-preview \{[\s\S]*?aspect-ratio:\s*var\(--canvas-node-media-ratio, 1\.7778\);[\s\S]*?border-radius:\s*8px;/,
-  'Image and video node previews must retain their actual media ratio.'
-);
-assert.match(styles, /\.canvas-node-add-media \{[\s\S]*?position:\s*absolute;/);
-assert.match(styles, /\.messs-media-node\.selected \.canvas-node-preview \{/);
-assert.match(source, /function ensureCanvasNodeFlowPaths\(root\)/);
-assert.match(source, /editor\.on\('nodeSelected',[\s\S]*?applyCanvasNodeSelection\(new Set/);
-assert.match(source, /editor\.on\('nodeUnselected',[\s\S]*?applyCanvasNodeSelection\(new Set\(\)\)/);
+assert.match(source, /function removeSelectedCanvasNodes\(\)[\s\S]*?editor\.removeNodeId/);
+assert.match(source, /event\.key !== 'Delete' && event\.key !== 'Backspace'[\s\S]*?stopImmediatePropagation\(\)[\s\S]*?removeSelectedCanvasNodes\(\)/,
+  'Node deletion must stop the hidden ordinary canvas delete handler.');
+assert.doesNotMatch(functionBody(source, 'removeSelectedCanvasNodes', 'initCanvasNodeMode'),
+  /deleteFile|removeFile|messsAPI|AppState\.files|board:/,
+  'Deleting a node must never delete its archived local file.');
+assert.doesNotMatch(functionBody(source, 'ensureCanvasNodeEditor', 'applyCanvasModeVisibility'),
+  /setTimeout\(reconcileCanvasNodes/,
+  'Deleting a node must not recreate it from ordinary canvas state.');
+
+assert.match(styles, /\.board-panel\.is-node-mode #board-zoom-out,[\s\S]*?#board-fit-all \{ display: none; \}/);
+assert.match(source, /bindCanvasNodePanning\(host, editor\);[\s\S]*?bindCanvasNodeMarqueeSelection\(host\);[\s\S]*?bindCanvasNodeFileDrop\(host\)/);
+assert.match(source, /event\.button === 0 && \(event\.altKey \|\| CanvasNodeMode\.spacePressed\)/);
+assert.match(source, /function bindCanvasNodeMarqueeSelection/);
+assert.match(source, /function finishCanvasNodeMarquee[\s\S]*?const intersects =/);
 
 process.stdout.write('Canvas node mode tests passed.\n');

@@ -1,7 +1,8 @@
 'use strict';
 
-/* Drawflow-backed image/video workflow view. Media nodes reference the same
-   board item and file IDs; only workflow-only nodes and graph layout live here. */
+/* Drawflow-backed workflow view. The graph stores library file IDs, but never
+   ordinary canvas item IDs, so deleting or arranging either view cannot alter
+   the other one. */
 
 const CanvasNodeMode = {
   mode: 'canvas',
@@ -22,6 +23,7 @@ const CanvasNodeMode = {
   connectionDraft: null,
   connectionPointer: null,
   connectionMenu: null,
+  addMenuPosition: null,
   textEditor: null,
   textEditorNodeId: null,
   marqueePointerId: null,
@@ -32,12 +34,14 @@ const CanvasNodeMode = {
 };
 
 const CANVAS_NODE_MODE_KEY = 'messs.canvas.mode.v1';
-const CANVAS_NODE_LAYOUT_KEY = 'messs.canvas.nodes.v1';
+const CANVAS_NODE_LAYOUT_KEY = 'messs.canvas.nodes.v2';
 
 const NODE_ICONS = {
   text: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6V4h14v2M12 4v16M8 20h8"/></svg>',
   image: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m3 17 5-5 4 4 3-3 6 6"/></svg>',
   video: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="m17 10 4-2v8l-4-2z"/></svg>',
+  audio: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10v4"/></svg>',
+  model: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></svg>',
   generate: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.3 4.1L17 9l-3.7 1.9L12 15l-1.3-4.1L7 9l3.7-1.9L12 3Z"/><path d="m18.5 14 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></svg>'
 };
 
@@ -45,14 +49,12 @@ function canvasNodeLayoutKey(canvasId = activeCanvasId()) {
   return `${CANVAS_NODE_LAYOUT_KEY}.${encodeURIComponent(canvasId)}`;
 }
 
-function canvasNodeFile(item) {
-  return item && item.fileId ? AppState.files.find((file) => file.id === item.fileId) : null;
-}
-
 function canvasNodeMediaKind(file) {
-  if (!file || (typeof isModelFile === 'function' && isModelFile(file))) return null;
+  if (!file) return null;
+  if (typeof isModelFile === 'function' && isModelFile(file)) return 'model';
   if (isImageExt(file.ext)) return 'image';
   if (isVideoExt(file.ext)) return 'video';
+  if (typeof isAudioExt === 'function' && isAudioExt(file.ext)) return 'audio';
   return null;
 }
 
@@ -60,8 +62,7 @@ function canvasNodeMediaRatio(file, fallback = 16 / 9) {
   const width = Number(file && (file.sourceWidth || file.width));
   const height = Number(file && (file.sourceHeight || file.height));
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return fallback;
-  // Keep previews practical while retaining the source proportions.
-  return Math.max(0.42, Math.min(2.4, width / height));
+  return width / height;
 }
 
 function canvasNodeMediaStyle(file, fallback) {
@@ -71,18 +72,25 @@ function canvasNodeMediaStyle(file, fallback) {
 function canvasNodeMediaMarkup(item, file) {
   const kind = canvasNodeMediaKind(file);
   const title = String(file && file.name || t('Untitled media', '未命名媒体', '제목 없는 미디어'));
-  const source = String(file && (file.thumbUrl || (kind === 'image' ? file.url : '')) || '');
+  const source = String(file && (
+    kind === 'model' ? file.modelPreviewUrl || file.previewUrl || file.thumbUrl :
+      file.thumbUrl || (kind === 'image' ? file.url : '')
+  ) || '');
   const preview = source
     ? `<img src="${escapeHtml(source)}" alt="" draggable="false" />`
-    : `<span class="canvas-node-placeholder">${kind === 'video' ? NODE_ICONS.video : NODE_ICONS.image}</span>`;
-  const typeLabel = kind === 'video'
-    ? t('Video', '视频', '비디오')
-    : t('Image', '图片', '이미지');
-  return `<article class="canvas-media-node canvas-media-node-${kind}" data-board-item-id="${escapeHtml(item.id)}" title="${escapeHtml(title)}">
+    : `<span class="canvas-node-placeholder">${NODE_ICONS[kind] || NODE_ICONS.image}</span>`;
+  const typeLabels = {
+    image: t('Image', '图片', '이미지'),
+    video: t('Video', '视频', '비디오'),
+    audio: t('Audio', '音频', '오디오'),
+    model: '3D'
+  };
+  const typeLabel = typeLabels[kind] || t('File', '文件', '파일');
+  return `<article class="canvas-media-node canvas-media-node-${kind}" title="${escapeHtml(title)}">
     <header class="canvas-media-node-label"><span class="canvas-node-title-icon">${NODE_ICONS[kind]}<b>${escapeHtml(typeLabel)}</b></span>
-      <button class="canvas-node-open nodrag" type="button" data-node-file-id="${escapeHtml(file.id)}" title="${escapeHtml(t('Open preview', '放大查看', '미리보기 열기'))}" aria-label="${escapeHtml(t('Open preview', '放大查看', '미리보기 열기'))}">↗</button>
+      <button class="canvas-node-open nodrag" type="button" data-node-file-id="${escapeHtml(file.id)}" title="${escapeHtml(t('Open preview', '放大查看', '미리보기 열기'))}" aria-label="${escapeHtml(t('Open preview', '放大查看', '미리보기 열기'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
     </header>
-    <div class="canvas-node-preview"${canvasNodeMediaStyle(file)}>${preview}${kind === 'video' ? '<i class="canvas-node-video-mark">▶</i>' : ''}</div>
+    <div class="canvas-node-preview"${canvasNodeMediaStyle(file, kind === 'model' || kind === 'audio' ? 1 : 16 / 9)}>${preview}${kind === 'video' ? `<i class="canvas-node-video-mark">${NODE_ICONS.video}</i>` : ''}</div>
     <button class="canvas-node-add-media nodrag" type="button" data-node-action="add-generation" title="${escapeHtml(t('Add a generation node', '添加生成节点', '생성 노드 추가'))}" aria-label="${escapeHtml(t('Add a generation node', '添加生成节点', '생성 노드 추가'))}">+</button>
   </article>`;
 }
@@ -110,7 +118,7 @@ function canvasGenerateResultsMarkup(data = {}) {
         ? `<video src="${escapeHtml(source)}" muted playsinline preload="metadata"></video>`
         : `<img src="${escapeHtml(source)}" alt="" draggable="false" />`)
       : `<span class="canvas-node-placeholder">${kind === 'video' ? NODE_ICONS.video : NODE_ICONS.image}</span>`;
-    return `<button type="button" class="canvas-generate-result canvas-generate-result-${kind} nodrag"${canvasNodeMediaStyle(file, 16 / 10)} data-node-file-id="${escapeHtml(file.id)}" title="${escapeHtml(file.name || '')}">${preview}${kind === 'video' ? '<i>▶</i>' : ''}</button>`;
+    return `<button type="button" class="canvas-generate-result canvas-generate-result-${kind} nodrag"${canvasNodeMediaStyle(file, 16 / 9)} data-node-file-id="${escapeHtml(file.id)}" title="${escapeHtml(file.name || '')}">${preview}${kind === 'video' ? `<i>${NODE_ICONS.video}</i>` : ''}</button>`;
   }).join('');
   return `<div class="canvas-generate-results" data-count="${Math.min(files.length, 4)}">${items}</div>`;
 }
@@ -120,13 +128,12 @@ function canvasGenerateNodeMarkup(kind, data = {}) {
   const label = isVideo
     ? t('Video generation', '视频生成', '비디오 생성')
     : t('Image generation', '图片生成', '이미지 생성');
-  return `<article class="canvas-flow-node canvas-generate-node" data-generate-kind="${kind}" data-node-action="settings" role="button" tabindex="0" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${canvasGenerateResultsMarkup(data)}
+  const results = canvasGenerateResultsMarkup(data);
+  const emptyPreview = `<div class="canvas-generate-empty">${isVideo ? NODE_ICONS.video : NODE_ICONS.image}<span>${escapeHtml(t('Click to configure', '点击配置生成', '설정하려면 클릭'))}</span></div>`;
+  return `<article class="canvas-flow-node canvas-generate-node" data-generate-kind="${kind}" data-node-action="settings" role="button" tabindex="0" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">
     <header><span class="canvas-node-title-icon">${isVideo ? NODE_ICONS.video : NODE_ICONS.generate}<b>${escapeHtml(label)}</b></span><i class="canvas-node-status" data-node-status>${escapeHtml(t('Ready', '就绪', '준비'))}</i></header>
-    <textarea class="canvas-node-textarea nodrag" df-prompt rows="4" placeholder="${escapeHtml(t('Optional prompt; connected text is appended', '可选提示词；会合并已连接文本', '선택 프롬프트; 연결된 텍스트가 추가됩니다'))}">${escapeHtml(data.prompt || '')}</textarea>
-    <div class="canvas-node-actions nodrag">
-      <button type="button" data-node-action="settings">${escapeHtml(t('More settings', '更多设置', '추가 설정'))}</button>
-      <button type="button" class="is-primary" data-node-action="run">${escapeHtml(t('Run', '运行', '실행'))}</button>
-    </div>
+    <div class="canvas-generate-preview">${results || emptyPreview}</div>
+    <button class="canvas-node-add-media nodrag" type="button" data-node-action="add-generation" title="${escapeHtml(t('Add a connected node', '添加后续节点', '연결 노드 추가'))}" aria-label="${escapeHtml(t('Add a connected node', '添加后续节点', '연결 노드 추가'))}">+</button>
   </article>`;
 }
 
@@ -247,13 +254,7 @@ function addCanvasWorkflowNode(role, kind = null, positionOverride = null) {
   const empty = document.getElementById('board-node-empty');
   if (empty) empty.hidden = true;
   saveCanvasNodeLayout();
-  window.setTimeout(() => {
-    if (role === 'text') {
-      openCanvasTextEditor(id);
-    } else {
-      void openCanvasGenerationSettings(id);
-    }
-  }, 0);
+  if (role === 'text') window.setTimeout(() => openCanvasTextEditor(id), 0);
   return id;
 }
 
@@ -261,18 +262,6 @@ function reconcileCanvasNodes() {
   const editor = CanvasNodeMode.editor;
   if (!editor || CanvasNodeMode.canvasId !== activeCanvasId()) return;
   const nodes = canvasNodeData();
-  const embeddedOutputFileIds = new Set();
-  Object.values(nodes).forEach((node) => {
-    const data = node && node.data || {};
-    if (data.nodeRole !== 'generate' || !Array.isArray(data.lastOutputFileIds)) return;
-    data.lastOutputFileIds.forEach((fileId) => embeddedOutputFileIds.add(fileId));
-  });
-  const items = AppState.boardItems.filter((item) => {
-    const file = canvasNodeFile(item);
-    return Boolean(item && item.fileId && !embeddedOutputFileIds.has(item.fileId) && canvasNodeMediaKind(file));
-  });
-  const itemIds = new Set(items.map((item) => item.id));
-  const nodesByItem = new Map();
 
   CanvasNodeMode.loading = true;
   Object.entries(nodes).forEach(([nodeId, node]) => {
@@ -291,32 +280,20 @@ function reconcileCanvasNodes() {
       if (content) content.innerHTML = canvasGenerateNodeMarkup(data.kind, nextData);
       return;
     }
-    const boardItemId = data.boardItemId;
-    if (!boardItemId || !itemIds.has(boardItemId)) {
+    if (role !== 'media' || !data.fileId) {
       editor.removeNodeId(`node-${nodeId}`);
       return;
     }
-    if (role !== 'media') editor.updateNodeDataFromId(nodeId, { ...data, nodeRole: 'media' });
-    nodesByItem.set(boardItemId, nodeId);
-  });
-
-  items.forEach((item, index) => {
-    if (nodesByItem.has(item.id)) return;
-    const file = canvasNodeFile(item);
+    const file = AppState.files.find((entry) => entry.id === data.fileId);
     const kind = canvasNodeMediaKind(file);
-    const position = nextCanvasNodePosition(index);
-    const nodeId = editor.addNode(
-      `media-${kind}`,
-      1,
-      1,
-      position.x,
-      position.y,
-      'messs-media-node',
-      { nodeRole: 'media', boardItemId: item.id, fileId: item.fileId, mediaKind: kind },
-      canvasNodeMediaMarkup(item, file),
-      false
-    );
-    nodesByItem.set(item.id, String(nodeId));
+    if (!file || !kind) {
+      editor.removeNodeId(`node-${nodeId}`);
+      return;
+    }
+    const nextData = { ...data, nodeRole: 'media', mediaKind: kind };
+    if (data.mediaKind !== kind) editor.updateNodeDataFromId(nodeId, nextData);
+    const content = document.querySelector(`#node-${nodeId} .drawflow_content_node`);
+    if (content) content.innerHTML = canvasNodeMediaMarkup(nextData, file);
   });
   CanvasNodeMode.loading = false;
 
@@ -368,18 +345,6 @@ function canvasGenerationInputs(nodeId) {
   };
 }
 
-function canvasNodeBoardPlacement(referenceFileIds) {
-  const ids = new Set(referenceFileIds || []);
-  const references = AppState.boardItems.filter((item) => ids.has(item.fileId));
-  if (references.length) {
-    return {
-      x: Math.round(references.reduce((sum, item) => sum + Number(item.x || 0) + Number(item.width || 0) / 2, 0) / references.length),
-      y: Math.round(references.reduce((sum, item) => sum + Number(item.y || 0) + Number(item.height || 0) / 2, 0) / references.length)
-    };
-  }
-  return { x: 0, y: 0 };
-}
-
 function setCanvasNodeRunState(nodeId, state, message) {
   const element = document.getElementById(`node-${nodeId}`);
   if (!element) return;
@@ -410,22 +375,16 @@ async function runCanvasGenerationNode(nodeId) {
   try {
     const files = await submitBoardQuickGeneration(node.data.kind, inputs.prompt, {
       referenceFileIds: inputs.referenceFileIds,
-      placement: canvasNodeBoardPlacement(inputs.referenceFileIds)
+      placeOnBoard: false
     });
     if (!Array.isArray(files) || !files.length) {
       setCanvasNodeRunState(id, 'error', t('Failed', '失败', '실패'));
       return;
     }
-    reconcileCanvasNodes();
-    const outputIds = [];
-    files.forEach((file) => {
-      const target = canvasNodeByFileId(file.id);
-      if (!target) return;
-      outputIds.push(file.id);
-      CanvasNodeMode.editor.addConnection(id, String(target[0]), 'output_1', 'input_1');
-    });
+    const outputIds = files.map((file) => file && file.id).filter(Boolean);
     const current = canvasNodeData()[id];
     if (current) CanvasNodeMode.editor.updateNodeDataFromId(id, { ...current.data, lastOutputFileIds: outputIds });
+    reconcileCanvasNodes();
     setCanvasNodeRunState(id, 'ready', t('Completed', '已完成', '완료'));
     saveCanvasNodeLayout();
   } catch (error) {
@@ -456,6 +415,7 @@ async function openCanvasGenerationSettings(nodeId) {
   const inputs = canvasGenerationInputs(nodeId);
   await openAiComposerForSelection(node.data.kind, inputs.prompt, {
     referenceFileIds: inputs.referenceFileIds,
+    placeOnBoard: false,
     onSubmit: () => setCanvasNodeRunState(nodeId, 'running', t('Generating...', '生成中...', '생성 중...')),
     onComplete: (files) => connectCanvasGenerationOutputs(nodeId, Array.isArray(files) ? files : [])
   });
@@ -476,17 +436,25 @@ function loadCanvasNodeLayout(canvasId) {
 
 function closeCanvasNodeAddMenu() {
   const menu = document.getElementById('board-node-add-menu');
-  const button = document.getElementById('board-node-add-toggle');
   if (menu) menu.hidden = true;
-  if (button) button.setAttribute('aria-expanded', 'false');
+  CanvasNodeMode.addMenuPosition = null;
 }
 
-function toggleCanvasNodeAddMenu() {
+function openCanvasNodeAddMenu(clientX, clientY) {
   const menu = document.getElementById('board-node-add-menu');
-  const button = document.getElementById('board-node-add-toggle');
-  if (!menu || !button) return;
-  menu.hidden = !menu.hidden;
-  button.setAttribute('aria-expanded', String(!menu.hidden));
+  const mode = document.getElementById('board-node-mode');
+  if (!menu || !mode) return;
+  closeCanvasNodeConnectionMenu();
+  CanvasNodeMode.addMenuPosition = canvasNodeWorldPoint(clientX, clientY);
+  menu.hidden = false;
+  const modeRect = mode.getBoundingClientRect();
+  const menuWidth = menu.offsetWidth || 252;
+  const menuHeight = menu.offsetHeight || 300;
+  const left = Math.max(10, Math.min(modeRect.width - menuWidth - 10, clientX - modeRect.left));
+  const top = Math.max(10, Math.min(modeRect.height - menuHeight - 10, clientY - modeRect.top));
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+  window.requestAnimationFrame(() => menu.querySelector('button')?.focus({ preventScroll: true }));
 }
 
 function closeCanvasNodeConnectionMenu() {
@@ -613,20 +581,86 @@ function pathExtension(filePath) {
   return index >= 0 ? name.slice(index).toLowerCase() : '';
 }
 
-async function importCanvasNodeMedia(kind) {
+function addCanvasMediaNode(file, positionOverride = null) {
+  const editor = ensureCanvasNodeEditor();
+  const kind = canvasNodeMediaKind(file);
+  if (!kind) return null;
+  const position = positionOverride || nextCanvasNodePosition(Object.keys(canvasNodeData()).length);
+  const nodeId = editor.addNode(
+    `media-${kind}`,
+    1,
+    1,
+    Math.round(position.x),
+    Math.round(position.y),
+    'messs-media-node',
+    { nodeRole: 'media', fileId: file.id, mediaKind: kind },
+    canvasNodeMediaMarkup({ fileId: file.id }, file),
+    false
+  );
+  const empty = document.getElementById('board-node-empty');
+  if (empty) empty.hidden = true;
+  saveCanvasNodeLayout();
+  return nodeId;
+}
+
+function canvasNodePathKind(filePath) {
+  return canvasNodeMediaKind({ ext: pathExtension(filePath) });
+}
+
+async function importCanvasNodePaths(paths, requestedKind = null, positionOverride = null) {
+  const accepted = (paths || []).filter((filePath) => {
+    const detectedKind = canvasNodePathKind(filePath);
+    return detectedKind && (!requestedKind || detectedKind === requestedKind);
+  });
+  if (!accepted.length) {
+    showToast(t('Choose a supported image, video, audio, or 3D file.', '请选择支持的图片、视频、音频或 3D 文件。', '지원되는 미디어 파일을 선택하세요.'));
+    return [];
+  }
+  const folderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
+    ? AppState.activeFolderId
+    : null;
+  const result = await window.messsAPI.importFiles(accepted, folderId, activeCanvasId());
+  const imported = result && Array.isArray(result.imported) ? result.imported : [];
+  if (!imported.length) return [];
+  AppState.files = [...imported, ...AppState.files.filter((file) => !imported.some((entry) => entry.id === file.id))];
+  if (typeof renderFileList === 'function' && typeof currentFileListScope === 'function') renderFileList(currentFileListScope());
+  if (typeof renderFolderGridIfActive === 'function') renderFolderGridIfActive();
+  if (result.unlocked && result.unlocked.length && typeof refreshAchievements === 'function') await refreshAchievements();
+  const origin = positionOverride || canvasNodeCenterPosition();
+  imported.forEach((file, index) => addCanvasMediaNode(file, {
+    x: origin.x + index * 34,
+    y: origin.y + index * 34
+  }));
+  return imported;
+}
+
+async function importCanvasNodeMedia(kind, positionOverride = null) {
   const paths = await window.messsAPI.pickFiles();
   if (!paths || !paths.length) return;
-  const accepted = paths.filter((filePath) => kind === 'video'
-    ? isVideoExt(pathExtension(filePath))
-    : isImageExt(pathExtension(filePath)));
-  if (!accepted.length) {
-    showToast(kind === 'video'
-      ? t('Choose a supported video file.', '请选择支持的视频文件。', '지원되는 비디오 파일을 선택하세요.')
-      : t('Choose a supported image file.', '请选择支持的图片文件。', '지원되는 이미지 파일을 선택하세요.'));
-    return;
-  }
-  await importFilesDirectlyToBoard(accepted, { x: 0, y: 0 });
-  reconcileCanvasNodes();
+  await importCanvasNodePaths(paths, kind, positionOverride);
+}
+
+function bindCanvasNodeFileDrop(host) {
+  host.addEventListener('dragover', (event) => {
+    if (!event.dataTransfer || !Array.from(event.dataTransfer.types || []).includes('Files')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    host.classList.add('is-file-drag-over');
+  });
+  host.addEventListener('dragleave', (event) => {
+    if (!host.contains(event.relatedTarget)) host.classList.remove('is-file-drag-over');
+  });
+  host.addEventListener('drop', (event) => {
+    host.classList.remove('is-file-drag-over');
+    const files = Array.from(event.dataTransfer && event.dataTransfer.files || []);
+    if (!files.length) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const paths = files.map((file) => {
+      try { return window.messsAPI.getPathForFile(file); } catch (error) { return ''; }
+    }).filter(Boolean);
+    void importCanvasNodePaths(paths, null, canvasNodeWorldPoint(event.clientX, event.clientY));
+  }, true);
 }
 
 function applyCanvasNodePan() {
@@ -666,7 +700,7 @@ function finishCanvasNodePan(event) {
 }
 
 function isCanvasNodeTextTarget(target) {
-  return Boolean(target && target.closest('input, textarea, select, [contenteditable="true"]'));
+  return Boolean(target && typeof target.closest === 'function' && target.closest('input, textarea, select, [contenteditable="true"]'));
 }
 
 function canvasNodeIdFromElement(element) {
@@ -913,6 +947,7 @@ function ensureCanvasNodeEditor() {
   CanvasNodeMode.editor = editor;
   bindCanvasNodePanning(host, editor);
   bindCanvasNodeMarqueeSelection(host);
+  bindCanvasNodeFileDrop(host);
   observeCanvasNodeConnections(host);
   ['pointerdown', 'pointermove', 'pointerup'].forEach((eventName) => {
     host.addEventListener(eventName, (event) => {
@@ -966,7 +1001,8 @@ function ensureCanvasNodeEditor() {
       ? [...CanvasNodeMode.selectedNodeIds][0]
       : null;
     saveCanvasNodeLayout();
-    window.setTimeout(reconcileCanvasNodes, 0);
+    const empty = document.getElementById('board-node-empty');
+    if (empty) empty.hidden = Object.keys(canvasNodeData()).length > 0;
   });
   host.addEventListener('wheel', (event) => {
     event.preventDefault();
@@ -975,7 +1011,7 @@ function ensureCanvasNodeEditor() {
     else if (event.deltaY > 0) editor.zoom_out();
   }, { capture: true, passive: false });
   host.addEventListener('click', (event) => {
-    const openButton = event.target.closest('[data-node-file-id]');
+    const openButton = event.target.closest('button[data-node-file-id]');
     if (openButton) {
       event.preventDefault();
       event.stopPropagation();
@@ -1074,20 +1110,51 @@ function refreshCanvasNodeModeLanguage() {
   toggle.title = label;
   toggle.setAttribute('aria-label', label);
   const empty = document.getElementById('board-node-empty');
-  if (empty) empty.textContent = t('Add a node or place an image/video on this canvas', '添加节点，或在画布中放入图片/视频', '노드를 추가하거나 캔버스에 이미지/비디오를 배치하세요');
-  const add = document.getElementById('board-node-add-toggle');
-  if (add) add.querySelector('span').textContent = t('Add node', '添加节点', '노드 추가');
+  if (empty) empty.textContent = t('Right-click to add a node, or drop media here', '右键添加节点，或将媒体拖到这里', '우클릭하여 노드를 추가하거나 미디어를 놓으세요');
+  const menu = document.getElementById('board-node-add-menu');
+  const title = menu && menu.querySelector('.board-node-add-title');
+  if (title) title.textContent = t('Add node', '添加节点', '노드 추가');
   const menuLabels = {
-    text: t('Text prompt', '文本提示词', '텍스트 프롬프트'),
-    'import-image': t('Import image', '导入图片', '이미지 가져오기'),
-    'import-video': t('Import video', '导入视频', '비디오 가져오기'),
-    'generate-image': t('Image generation', '图片生成', '이미지 생성'),
-    'generate-video': t('Video generation', '视频生成', '비디오 생성')
+    text: t('Text', '文本', '텍스트'),
+    image: t('Image', '图片', '이미지'),
+    video: t('Video', '视频', '비디오'),
+    audio: t('Audio', '音频', '오디오'),
+    model: '3D'
   };
   document.querySelectorAll('#board-node-add-menu [data-add-node]').forEach((button) => {
-    const labelElement = button.lastElementChild;
+    const labelElement = button.querySelector('.board-node-menu-copy b');
     if (labelElement) labelElement.textContent = menuLabels[button.dataset.addNode] || '';
   });
+  const subtitle = menu && menu.querySelector('[data-add-node="image"] small');
+  if (subtitle) subtitle.textContent = t('Poster, cover, campaign visual', '宣传图、海报、封面', '포스터, 표지, 캠페인 비주얼');
+  document.querySelectorAll('[data-node-menu-icon]').forEach((element) => {
+    element.innerHTML = NODE_ICONS[element.dataset.nodeMenuIcon] || '';
+  });
+}
+
+function removeSelectedCanvasNodes() {
+  const editor = CanvasNodeMode.editor;
+  if (!editor) return false;
+  const nodeIds = [...CanvasNodeMode.selectedNodeIds];
+  if (nodeIds.length) {
+    nodeIds.forEach((nodeId) => editor.removeNodeId(`node-${nodeId}`));
+    applyCanvasNodeSelection(new Set());
+    saveCanvasNodeLayout();
+    return true;
+  }
+  const connection = CanvasNodeMode.selectedConnection;
+  if (connection && typeof editor.removeSingleConnection === 'function') {
+    editor.removeSingleConnection(
+      connection.output_id,
+      connection.input_id,
+      connection.output_class,
+      connection.input_class
+    );
+    clearCanvasNodeConnectionSelection();
+    saveCanvasNodeLayout();
+    return true;
+  }
+  return false;
 }
 
 function initCanvasNodeMode() {
@@ -1096,30 +1163,42 @@ function initCanvasNodeMode() {
   toggle.addEventListener('click', () => {
     switchCanvasMode(CanvasNodeMode.mode === 'node' ? 'canvas' : 'node');
   });
-  const addToggle = document.getElementById('board-node-add-toggle');
-  if (addToggle) addToggle.addEventListener('click', (event) => {
-    event.stopPropagation();
-    toggleCanvasNodeAddMenu();
-  });
+  const nodeEditor = document.getElementById('board-node-editor');
+  nodeEditor?.addEventListener('contextmenu', (event) => {
+    if (event.target.closest('.drawflow-node, .connection, .input, .output, .point')) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    openCanvasNodeAddMenu(event.clientX, event.clientY);
+  }, true);
   document.getElementById('board-node-add-menu')?.addEventListener('click', (event) => {
     const item = event.target.closest('[data-add-node]');
     if (!item) return;
-    closeCanvasNodeAddMenu();
     const action = item.dataset.addNode;
-    if (action === 'text') addCanvasWorkflowNode('text');
-    else if (action === 'generate-image') addCanvasWorkflowNode('generate', 'image');
-    else if (action === 'generate-video') addCanvasWorkflowNode('generate', 'video');
-    else if (action === 'import-image') void importCanvasNodeMedia('image');
-    else if (action === 'import-video') void importCanvasNodeMedia('video');
+    const position = CanvasNodeMode.addMenuPosition || canvasNodeCenterPosition();
+    closeCanvasNodeAddMenu();
+    if (action === 'text') addCanvasWorkflowNode('text', null, position);
+    else if (action === 'image') addCanvasWorkflowNode('generate', 'image', position);
+    else if (action === 'video') addCanvasWorkflowNode('generate', 'video', position);
+    else if (action === 'audio' || action === 'model') void importCanvasNodeMedia(action, position);
   });
   document.addEventListener('pointerdown', (event) => {
-    if (!event.target.closest('.board-node-add')) closeCanvasNodeAddMenu();
+    if (!event.target.closest('#board-node-add-menu')) closeCanvasNodeAddMenu();
     if (!event.target.closest('.board-node-connection-menu')) closeCanvasNodeConnectionMenu();
     if (
       CanvasNodeMode.textEditor &&
       !event.target.closest('.board-node-text-editor') &&
       !event.target.closest('[data-node-action="text"]')
     ) closeCanvasTextEditor();
+  }, true);
+  document.addEventListener('keydown', (event) => {
+    if (
+      CanvasNodeMode.mode !== 'node' ||
+      (event.key !== 'Delete' && event.key !== 'Backspace') ||
+      isCanvasNodeTextTarget(event.target)
+    ) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    removeSelectedCanvasNodes();
   }, true);
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {

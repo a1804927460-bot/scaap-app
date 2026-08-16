@@ -136,6 +136,11 @@ assert.match(
   'Original and transcoded media protocols must share the byte-range responder.'
 );
 assert.match(
+  mainSource,
+  /scheme: 'messs-file',[\s\S]*?standard: true[\s\S]*?scheme: 'messs-transcode',[\s\S]*?standard: true/,
+  'Local media schemes must be standard schemes so Chromium accepts them as video sources.'
+);
+assert.match(
   mediaMetaSource,
   /function appendBoardVideoButlerToolbar[\s\S]*?isVideoExt\(file\.ext\)[\s\S]*?BOARD_BUTLER_VIDEO_EXTENSIONS\.has[\s\S]*?board-video-fullscreen[\s\S]*?BOARD_IMAGE_TOOL_ICONS\.fullscreen[\s\S]*?openFileFullscreenPreview\(file, video\)/,
   'Every selected canvas video must expose the same fullscreen action as an image, even when Butler does not support its container.'

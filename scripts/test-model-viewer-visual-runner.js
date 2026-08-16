@@ -475,7 +475,9 @@ async function run() {
     obj: minimalTriangleObj().toString('base64')
   };
   fs.writeFileSync(htmlPath, `<!doctype html>
-    <html data-theme="dark"><head><meta charset="utf-8"><link rel="stylesheet" href="${themeStyleUrl}"><link rel="stylesheet" href="${styleUrl}"></head>
+    <html data-theme="dark"><head><meta charset="utf-8">
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: messs-file: messs-preview: messs-thumb:; media-src 'self' messs-file: messs-transcode:; font-src 'self'; connect-src 'self' messs-file: blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none';">
+      <link rel="stylesheet" href="${themeStyleUrl}"><link rel="stylesheet" href="${styleUrl}"></head>
     <body><script>
       window.t = (en) => en;
       window.showToast = () => {};

@@ -2,7 +2,7 @@
 <html lang="ko" data-theme="dark" data-view="main" data-language="ko">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: messs-file: messs-preview: messs-thumb:; media-src 'self' messs-file: messs-transcode:; font-src 'self'; connect-src messs-file:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: messs-file: messs-preview: messs-thumb:; media-src 'self' messs-file: messs-transcode:; font-src 'self'; connect-src messs-file: blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none';" />
   <title>Messs. - Resolve your confusion</title>
   <script src="js/startup-theme.js"></script>
   <link rel="stylesheet" href="styles/theme.css" />
@@ -412,17 +412,13 @@
           <div id="board-node-mode" class="board-node-mode" hidden>
             <div id="board-node-editor" class="board-node-editor" aria-label="Node canvas"></div>
             <div id="board-node-empty" class="board-node-empty" hidden>No files on this canvas</div>
-            <div class="board-node-add">
-              <div id="board-node-add-menu" class="board-node-add-menu" role="menu" hidden>
-                <button type="button" role="menuitem" data-add-node="text"><span class="board-node-menu-icon">T</span><span>Text prompt</span></button>
-                <button type="button" role="menuitem" data-add-node="import-image"><span class="board-node-menu-icon">▧</span><span>Import image</span></button>
-                <button type="button" role="menuitem" data-add-node="import-video"><span class="board-node-menu-icon">▶</span><span>Import video</span></button>
-                <button type="button" role="menuitem" data-add-node="generate-image"><span class="board-node-menu-icon">✦</span><span>Image generation</span></button>
-                <button type="button" role="menuitem" data-add-node="generate-video"><span class="board-node-menu-icon">▷</span><span>Video generation</span></button>
-              </div>
-              <button id="board-node-add-toggle" class="board-node-add-toggle" type="button" aria-expanded="false" aria-controls="board-node-add-menu">
-                <b aria-hidden="true">+</b><span>Add node</span>
-              </button>
+            <div id="board-node-add-menu" class="board-node-add-menu" role="menu" aria-label="Add node" hidden>
+              <strong class="board-node-add-title">Add node</strong>
+              <button type="button" role="menuitem" data-add-node="text"><span class="board-node-menu-icon">T</span><span class="board-node-menu-copy"><b>Text</b></span></button>
+              <button type="button" role="menuitem" data-add-node="image"><span class="board-node-menu-icon" data-node-menu-icon="image"></span><span class="board-node-menu-copy"><b>Image</b><small>Poster, cover, campaign visual</small></span></button>
+              <button type="button" role="menuitem" data-add-node="video"><span class="board-node-menu-icon" data-node-menu-icon="video"></span><span class="board-node-menu-copy"><b>Video</b></span></button>
+              <button type="button" role="menuitem" data-add-node="audio"><span class="board-node-menu-icon" data-node-menu-icon="audio"></span><span class="board-node-menu-copy"><b>Audio</b></span></button>
+              <button type="button" role="menuitem" data-add-node="model"><span class="board-node-menu-icon" data-node-menu-icon="model"></span><span class="board-node-menu-copy"><b>3D</b></span></button>
             </div>
           </div>
           <div id="resize-handle-board-agent" class="resize-handle resize-handle-v board-agent-resize-handle" data-target="agent" role="separator" aria-orientation="vertical" aria-label="Resize Canvas Agent"></div>

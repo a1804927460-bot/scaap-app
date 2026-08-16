@@ -88,6 +88,11 @@ assert.match(
 );
 assert.match(
   boardSource,
+  /'first-frame':\s*t\('Image to video', '图生视频'\)/,
+  'The single-image first-frame mode must use the clearer Image to video label.'
+);
+assert.match(
+  boardSource,
   /class="ai-composer-reference-strip"[\s\S]*?class="ai-composer-prompt"[\s\S]*?class="ai-model-picker"[\s\S]*?class="ai-video-mode-picker"/,
   'Selected references must stay in the header while the compact video mode picker sits beside the model.'
 );

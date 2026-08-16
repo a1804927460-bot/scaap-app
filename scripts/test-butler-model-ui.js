@@ -143,7 +143,7 @@ assert.match(styles, /\.board-item-video\.is-selected\.is-single-selection \.boa
 assert.match(styles, /\.generated-media-detail-trigger\.is-inline\s*\{[\s\S]*?position:\s*static;[\s\S]*?flex:\s*0 0 25px;/,
   'The inline video details control must participate in toolbar layout.');
 
-assert.match(html, /connect-src messs-file:;/, 'CSP must permit GLTFLoader to fetch only archived local model files.');
+assert.match(html, /connect-src messs-file: blob:;/, 'CSP must permit archived models and their embedded GLB texture blobs.');
 assert.doesNotMatch(html.match(/Content-Security-Policy[^>]+/)[0], /connect-src[^;]*(?:https?:|\*)/, 'The model-viewer CSP must not open network fetches.');
 const bundleIndex = html.indexOf('vendor/model-viewer.bundle.js');
 const controllerIndex = html.indexOf('js/model-viewer.js');

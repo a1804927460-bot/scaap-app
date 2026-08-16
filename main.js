@@ -124,10 +124,10 @@ try { sharp = require('sharp'); } catch (err) { sharp = null; }
 Menu.setApplicationMenu(null);
 
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'messs-file', privileges: { standard: false, secure: true, supportFetchAPI: true, stream: true } },
-  { scheme: 'messs-preview', privileges: { standard: false, secure: true, supportFetchAPI: true, stream: true } },
-  { scheme: 'messs-thumb', privileges: { standard: false, secure: true, supportFetchAPI: true, stream: true } },
-  { scheme: 'messs-transcode', privileges: { standard: false, secure: true, supportFetchAPI: true, stream: true } }
+  { scheme: 'messs-file', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
+  { scheme: 'messs-preview', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
+  { scheme: 'messs-thumb', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
+  { scheme: 'messs-transcode', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }
 ]);
 
 let mainWindow;
@@ -5087,12 +5087,14 @@ function registerIpcHandlers() {
           request
         );
         files.push(fileToPayload(added.record));
-        const boardItem = addGeneratedMediaBoardItem(
-          added.record,
-          request,
-          Array.isArray(request.placements) ? request.placements[index] : null,
-          index
-        );
+        const boardItem = request.placeOnBoard === false
+          ? null
+          : addGeneratedMediaBoardItem(
+            added.record,
+            request,
+            Array.isArray(request.placements) ? request.placements[index] : null,
+            index
+          );
         if (boardItem) boardItems.push(boardItem);
         added.unlocked.forEach((key) => unlockedKeys.add(key));
       }
