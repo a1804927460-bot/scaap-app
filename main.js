@@ -3315,12 +3315,15 @@ function normalizeAiMediaGenerationRequest(request, kind) {
     if (referenceCount > maxReferenceImages) {
       throw invalidAiMediaOption('too-many-references', `The selected image model supports at most ${maxReferenceImages} reference image${maxReferenceImages === 1 ? '' : 's'}.`);
     }
+    const configuredSizes = referenceCount > 1 && Array.isArray(capabilities.multiReferenceSizes)
+      ? capabilities.multiReferenceSizes
+      : referenceCount > 0 && Array.isArray(capabilities.referenceSizes)
+        ? capabilities.referenceSizes
+      : Array.isArray(capabilities.resolutionPresets) && capabilities.resolutionPresets.length
+        ? capabilities.resolutionPresets
+      : capabilities.sizes || [];
     const supportedSizes = new Set(
-      (referenceCount > 1 && Array.isArray(capabilities.multiReferenceSizes)
-        ? capabilities.multiReferenceSizes
-        : referenceCount > 0 && Array.isArray(capabilities.referenceSizes)
-          ? capabilities.referenceSizes
-        : capabilities.sizes || [])
+      configuredSizes
         .map((value) => String(value || '').trim())
         .filter(Boolean)
     );

@@ -1,5 +1,5 @@
 {
-  "version": 29,
+  "version": 30,
   "providers": [
     {
       "id": "image-1",
@@ -82,7 +82,7 @@
       "id": "image-6",
       "kind": "image",
       "name": "GPT Image 2",
-      "endpoint": "https://api.quickrouter.ai/v1/images/generations",
+      "endpoint": "https://api.302.ai/v1/images/generations",
       "model": "gpt-image-2",
       "protocol": "openai-image",
       "requiresActivation": false,
@@ -142,7 +142,7 @@
         "referenceDataUrlsOnly": true,
         "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
       },
-      "keyEnv": "QUICKROUTER_API_KEY"
+      "keyEnv": "AI302_KEY"
     },
     {
       "id": "image-7",

@@ -50,7 +50,7 @@ for (const id of ['image-2', 'image-5', 'image-7', 'image-9', 'image-11', 'image
   assert.equal(media.imageProviders.find((provider) => provider.id === id).name, '');
 }
 assert.equal(require('../lib/provider-catalog').catalogProvider('image-1').keyEnv, 'QUICKROUTER_API_KEY');
-assert.equal(require('../lib/provider-catalog').catalogProvider('image-6').keyEnv, 'QUICKROUTER_API_KEY');
+assert.equal(require('../lib/provider-catalog').catalogProvider('image-6').keyEnv, 'AI302_KEY');
 for (const id of [
   'image-2', 'image-3', 'image-4', 'image-5', 'image-7', 'image-8',
   'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16'
@@ -60,7 +60,8 @@ for (const id of [
 const gptImage2 = media.imageProviders.find((provider) => provider.id === 'image-6');
 assert.ok(gptImage2);
 assert.equal(gptImage2.model, 'gpt-image-2');
-assert.equal(gptImage2.endpoint, 'https://api.quickrouter.ai/v1/images/generations');
+assert.equal(gptImage2.endpoint, 'https://api.302.ai/v1/images/generations');
+assert.deepEqual(gptImage2.capabilities.resolutionPresets, ['1K', '2K', '4K']);
 assert.equal(gptImage2.capabilities.sizes.length, 30);
 for (const size of ['1920x1080', '3840x2160', '1080x1920', '2160x3840', '3200x2400', '2400x3200', '3780x1620']) {
   assert.equal(gptImage2.capabilities.sizes.includes(size), true);
