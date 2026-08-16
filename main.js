@@ -2572,6 +2572,13 @@ function conciseAiErrorMessage(error, context = {}) {
       '제공자 결과의 실제 해상도를 확인할 수 없습니다. 결과는 거부되었고 포인트는 환불되었습니다. 다시 시도해 주세요.'
     );
   }
+  if (/upstream\s+load\s+is\s+saturated|current\s+group.*saturated|group\s+upstream.*saturated/i.test(raw)) {
+    return localizedMessage(
+      'The AI upstream is busy right now. Please try again shortly.',
+      '当前 AI 上游繁忙，请稍后重试。',
+      'AI upstream is busy right now. Please try again shortly.'
+    );
+  }
   if (/no available channel for model|no channel available|model.*not.*available/i.test(raw)) {
     const model = String(context.model || '').trim();
     return model

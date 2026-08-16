@@ -87,6 +87,7 @@
       "protocol": "openai-image",
       "requiresActivation": false,
       "capabilities": {
+        "resolutionPresets": ["1K", "2K", "4K"],
         "sizes": [
           "1024x1024", "2048x2048", "2880x2880",
           "1536x1024", "3072x2048", "1024x1536", "2048x3072",

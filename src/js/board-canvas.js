@@ -3574,6 +3574,8 @@ function supportedImageSizes(capabilities = {}, referenceCount = 0) {
     ? capabilities.multiReferenceSizes
     : referenceCount > 0 && Array.isArray(capabilities.referenceSizes)
       ? capabilities.referenceSizes
+    : Array.isArray(capabilities.resolutionPresets) && capabilities.resolutionPresets.length
+      ? capabilities.resolutionPresets
     : capabilities.sizes;
   return normalizedCapabilityValues(configured, ['1K', '2K', '4K']);
 }
@@ -4633,8 +4635,11 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     if (kind === 'video' && videoProviders.some((provider) => provider.id === aiConfig.activeVideoProviderId)) {
       modelSelect.value = aiConfig.activeVideoProviderId;
     }
-    modelSelect.disabled = options.length < 2;
-    modelPickerTrigger.disabled = options.length < 2;
+    // Keep the picker usable when only one provider is configured. A single
+    // model still needs to be selectable so users can inspect its options and
+    // switch back to it after a configuration refresh.
+    modelSelect.disabled = options.length === 0;
+    modelPickerTrigger.disabled = options.length === 0;
     modelPickerMenu.hidden = true;
     modelPickerTrigger.setAttribute('aria-expanded', 'false');
     options.forEach((provider) => {
@@ -5010,6 +5015,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   modelPickerMenu.addEventListener('wheel', (event) => {
     event.stopPropagation();
   }, { passive: true });
+  modelPickerMenu.addEventListener('pointerdown', (event) => {
+    event.stopPropagation();
+  });
   videoModeMenu.addEventListener('wheel', (event) => {
     event.stopPropagation();
   }, { passive: true });

@@ -1170,6 +1170,10 @@ function ensureCanvasNodeEditor() {
     if (typeof syncNodeAiComposerPosition === 'function') syncNodeAiComposerPosition();
   });
   editor.on('zoom', () => {
+    const label = document.getElementById('board-zoom-label');
+    if (label && CanvasNodeMode.mode === 'node') {
+      label.textContent = `${Math.round((Number(editor.zoom) || 1) * 100)}%`;
+    }
     if (typeof syncNodeAiComposerPosition === 'function') syncNodeAiComposerPosition();
   });
   editor.on('nodeSelected', (nodeId) => {
@@ -1387,6 +1391,25 @@ function initCanvasNodeMode() {
   if (!toggle) return;
   toggle.addEventListener('click', () => {
     switchCanvasMode(CanvasNodeMode.mode === 'node' ? 'canvas' : 'node');
+  });
+  const runNodeZoomAction = (id, action) => {
+    const button = document.getElementById(id);
+    if (!button) return;
+    button.addEventListener('click', (event) => {
+      if (CanvasNodeMode.mode !== 'node') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const editor = ensureCanvasNodeEditor();
+      action(editor);
+      const label = document.getElementById('board-zoom-label');
+      if (label) label.textContent = `${Math.round((Number(editor.zoom) || 1) * 100)}%`;
+    }, true);
+  };
+  runNodeZoomAction('board-zoom-out', (editor) => editor.zoom_out());
+  runNodeZoomAction('board-zoom-in', (editor) => editor.zoom_in());
+  runNodeZoomAction('board-zoom-label', (editor) => {
+    editor.zoom = 1;
+    editor.zoom_refresh();
   });
   const nodeEditor = document.getElementById('board-node-editor');
   nodeEditor?.addEventListener('contextmenu', (event) => {

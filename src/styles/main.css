@@ -2798,9 +2798,6 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   background: var(--accent);
 }
 .board-panel.is-node-mode #board-agent-toggle,
-.board-panel.is-node-mode #board-zoom-out,
-.board-panel.is-node-mode #board-zoom-label,
-.board-panel.is-node-mode #board-zoom-in,
 .board-panel.is-node-mode #board-fullscreen-toggle,
 .board-panel.is-node-mode #board-fit-all { display: none; }
 .board-node-editor .drawflow {
@@ -2918,7 +2915,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   background: transparent;
   color: color-mix(in srgb, var(--text-secondary) 82%, #d8dadd 18%);
   font-size: 33px;
-  font-weight: 320;
+  font-weight: 500;
   line-height: 1;
   cursor: var(--cursor-click);
 }
@@ -2959,8 +2956,8 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   background: color-mix(in srgb, var(--bg-elevated) 88%, var(--accent) 12%);
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--text-primary) 7%, transparent), 0 7px 18px rgba(0, 0, 0, .28);
 }
-.board-node-editor .drawflow .drawflow-node .input { left: -70px; }
-.board-node-editor .drawflow .drawflow-node .output { right: -70px; }
+.board-node-editor .drawflow .drawflow-node .input { left: -63px; }
+.board-node-editor .drawflow .drawflow-node .output { right: -63px; }
 .board-node-editor .drawflow .drawflow-node.messs-media-node .input,
 .board-node-editor .drawflow .drawflow-node.messs-media-node .output { top: 16px; }
 .board-node-editor .drawflow .connection .main-path {

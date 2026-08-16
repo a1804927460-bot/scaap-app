@@ -368,8 +368,10 @@ function renderAssistantModels() {
       ? config.activeVideoProviderId
       : `${config.activeChatProviderId || 'chat-1'}::${config.chatModel || ''}`;
   if (providers.some((provider) => provider.id === activeId)) select.value = activeId;
-  select.disabled = providers.length < 2;
-  trigger.disabled = providers.length < 2;
+  // A single configured provider is still a valid selection. Disabling the
+  // trigger in that case makes the current model appear broken in the UI.
+  select.disabled = providers.length === 0;
+  trigger.disabled = providers.length === 0;
   trigger.setAttribute('aria-expanded', 'false');
   menu.hidden = true;
   const selected = providers.find((provider) => provider.id === select.value) || providers[0];
@@ -495,6 +497,8 @@ function syncAssistantMediaOptions() {
       ? capabilities.multiReferenceSizes
       : AiAssistant.attachments.length > 0 && Array.isArray(capabilities.referenceSizes)
         ? capabilities.referenceSizes
+      : Array.isArray(capabilities.resolutionPresets) && capabilities.resolutionPresets.length
+        ? capabilities.resolutionPresets
       : Array.isArray(capabilities.sizes) && capabilities.sizes.length
         ? capabilities.sizes
         : ['1K', '2K', '4K']);

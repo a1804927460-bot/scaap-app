@@ -99,7 +99,10 @@ assert.doesNotMatch(functionBody(source, 'ensureCanvasNodeEditor', 'applyCanvasM
   /setTimeout\(reconcileCanvasNodes/,
   'Deleting a node must not recreate it from ordinary canvas state.');
 
-assert.match(styles, /\.board-panel\.is-node-mode #board-zoom-out,[\s\S]*?#board-fit-all \{ display: none; \}/);
+assert.doesNotMatch(styles, /\.board-panel\.is-node-mode #board-zoom-out[\s\S]*?display:\s*none/,
+  'Node mode must keep the shared zoom controls visible.');
+assert.match(source, /runNodeZoomAction\('board-zoom-out'[,\s\S]*?runNodeZoomAction\('board-zoom-in'/,
+  'Node mode zoom controls must operate on the Drawflow editor.');
 assert.match(source, /bindCanvasNodePanning\(host, editor\);[\s\S]*?bindCanvasNodeMarqueeSelection\(host\);[\s\S]*?bindCanvasNodeFileDrop\(host\)/);
 assert.match(source, /event\.button === 0 && \(event\.altKey \|\| CanvasNodeMode\.spacePressed\)/);
 assert.match(source, /function bindCanvasNodeMarqueeSelection/);
