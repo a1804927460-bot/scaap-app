@@ -112,6 +112,11 @@ assert.match(
   /arbitrarySizes[\s\S]*?maxSizeEdge[\s\S]*?maxSizePixels[\s\S]*?imageDimensionsWithinCapabilities\(requestedSize, capabilities\)/,
   'Gateway must allow bounded arbitrary GPT Image 2 dimensions.'
 );
+assert.match(
+  gatewayServerSource,
+  /const configuredSizes = urls\.length > 1[\s\S]*?capabilities\.multiReferenceSizes[\s\S]*?capabilities\.referenceSizes[\s\S]*?capabilities\.resolutionPresets[\s\S]*?new Set\(configuredSizes\.map\(normalizeImageSize\)\)/,
+  'Gateway must accept provider resolution presets such as GPT Image 2 1K, 2K, and 4K.'
+);
 assert.deepEqual(
   config.providers.find((provider) => provider.id === 'video-1').capabilities.resolutions,
   ['768P', '2K']

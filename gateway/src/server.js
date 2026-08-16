@@ -406,8 +406,15 @@ function validateBody(body, kind) {
   const requestedStyleId = String(body.styleId || '').trim();
   const requestedStyleStrength = Math.max(0, Math.min(1, Number(body.styleStrength ?? 1)));
   if (kind === 'image') {
-    const allowedSizes = Array.isArray(capabilities.sizes) && capabilities.sizes.length
-      ? new Set(capabilities.sizes.map(normalizeImageSize))
+    const configuredSizes = urls.length > 1 && Array.isArray(capabilities.multiReferenceSizes)
+      ? capabilities.multiReferenceSizes
+      : urls.length > 0 && Array.isArray(capabilities.referenceSizes)
+        ? capabilities.referenceSizes
+        : Array.isArray(capabilities.resolutionPresets) && capabilities.resolutionPresets.length
+          ? capabilities.resolutionPresets
+          : capabilities.sizes;
+    const allowedSizes = Array.isArray(configuredSizes) && configuredSizes.length
+      ? new Set(configuredSizes.map(normalizeImageSize))
       : imageSizes;
     const configuredRatios = urls.length && Array.isArray(capabilities.referenceRatios)
       ? capabilities.referenceRatios
