@@ -61,6 +61,17 @@ const BOARD_BUTLER_MAX_TRANSIENT_RETRIES = 5;
 const BOARD_BUTLER_MAX_VIDEO_BYTES = 48 * 1024 * 1024;
 const BOARD_BUTLER_VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.webm', '.mkv']);
 
+if (window.messsAPI && typeof window.messsAPI.onVideoProgress === 'function') {
+  window.messsAPI.onVideoProgress((payload) => {
+    const fileId = String(payload && payload.fileId || '').trim();
+    const task = fileId ? getBoardButlerTask(fileId, 'videoUpscale') : null;
+    if (!task || task.status !== 'running') return;
+    if (payload.phase) task.phase = String(payload.phase);
+    if (Number.isFinite(Number(payload.progress))) task.progress = Math.max(0, Math.min(100, Number(payload.progress)));
+    syncBoardButlerTaskUi(fileId);
+  });
+}
+
 const BOARD_IMAGE_TOOL_ICONS = {
   details: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v6"></path><path d="M12 7h.01"></path></svg>',
   fullscreen: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3H5a2 2 0 0 0-2 2v3"></path><path d="M16 3h3a2 2 0 0 1 2 2v3"></path><path d="M8 21H5a2 2 0 0 1-2-2v-3"></path><path d="M16 21h3a2 2 0 0 0 2-2v-3"></path></svg>'

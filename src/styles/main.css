@@ -3684,7 +3684,8 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   border-radius: 7px;
   background: var(--bg-elevated);
 }
-.board-agent-reference img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.board-agent-reference img,
+.board-agent-reference video { width: 100%; height: 100%; display: block; object-fit: cover; }
 .board-agent-reference span {
   position: absolute;
   top: 2px;

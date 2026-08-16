@@ -111,7 +111,7 @@ assert.match(main, /async function butlerSourceVideo[\s\S]*realpath\(store\.libr
 assert.match(main, /MAX_BUTLER_VIDEO_BYTES = 48 \* 1024 \* 1024[\s\S]*butler-video-too-large/, 'Video relay input must be bounded before base64 encoding.');
 assert.match(main, /Math\.min\(boundWidth \/ sourceWidth, boundHeight \/ sourceHeight\)/, 'Video output sizing must preserve the source aspect ratio.');
 assert.match(main, /ipcMain\.handle\('butler:upscaleVideo'[\s\S]*ipcMain\.handle\('butler:getVideoToolStatus'[\s\S]*ipcMain\.handle\('butler:downloadVideoToolResult'/, 'Desktop video tasks must support create, poll, and archive.');
-assert.match(main, /videoBuffer:\s*buffer[\s\S]*upscaleVideo\(source\.videoBuffer, source\.toolOptions\)/, 'Desktop video enhancement must use bounded chunk upload instead of a base64 JSON envelope.');
+assert.match(main, /videoBuffer:\s*buffer[\s\S]*upscaleVideo\(source\.videoBuffer,\s*\{[\s\S]*\.\.\.source\.toolOptions[\s\S]*onProgress:/, 'Desktop video enhancement must use bounded chunk upload and report upload progress.');
 assert.match(main, /const butlerVideoTasks = new Map\(\)[\s\S]*const butlerVideoDownloads = new Map\(\)/, 'Video tasks and downloads must be independently concurrent and deduplicated.');
 assert.match(main, /addButlerVideoOutputFile[\s\S]*butlerOperation:[\s\S]*kind: 'video-upscale'/, 'Enhanced videos must be archived with Butler provenance.');
 assert.match(main, /creditsCharged !== undefined \? currentTask\.creditsCharged : currentTask\.credits/, 'Enhanced videos must archive the settled charge when available.');

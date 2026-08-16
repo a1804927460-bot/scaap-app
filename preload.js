@@ -249,6 +249,11 @@ contextBridge.exposeInMainWorld('messsAPI', {
     get3dStatus: (taskToken, providerId) => ipcRenderer.invoke('butler:get3dStatus', taskToken, providerId),
     download3d: (taskToken, providerId) => ipcRenderer.invoke('butler:download3d', taskToken, providerId),
     upscaleVideo: (fileId, options) => ipcRenderer.invoke('butler:upscaleVideo', fileId, options),
+    onVideoProgress: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on('butler:videoProgress', listener);
+      return () => ipcRenderer.removeListener('butler:videoProgress', listener);
+    },
     getVideoToolStatus: (taskToken, modelId) => ipcRenderer.invoke('butler:getVideoToolStatus', taskToken, modelId),
     downloadVideoToolResult: (taskToken, modelId) => ipcRenderer.invoke('butler:downloadVideoToolResult', taskToken, modelId)
   }),

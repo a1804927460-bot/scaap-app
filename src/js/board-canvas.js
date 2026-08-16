@@ -1673,6 +1673,7 @@ function createBoardItemElement(item) {
     ) {
       toggleAiComposerBoardReference(f, item.fileId);
     }
+    if (typeof syncCanvasAgentReferencesToSelection === 'function') syncCanvasAgentReferencesToSelection();
     if (typeof renderCanvasAgentContext === 'function') renderCanvasAgentContext();
   });
 
@@ -1913,6 +1914,7 @@ function syncBoardSelectionClasses() {
     element.classList.toggle('is-selected', selected);
     element.classList.toggle('is-single-selection', selected && hasSingleSelection);
   });
+  if (typeof syncCanvasAgentReferencesToSelection === 'function') syncCanvasAgentReferencesToSelection();
   scheduleMountedImageQuality(0);
 }
 

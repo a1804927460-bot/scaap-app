@@ -4961,7 +4961,7 @@ function registerIpcHandlers() {
     }
   });
 
-  ipcMain.handle('butler:upscaleVideo', async (_evt, fileId, requestedOptions = {}) => {
+  ipcMain.handle('butler:upscaleVideo', async (evt, fileId, requestedOptions = {}) => {
     try {
       if (!aiGateway || !aiGateway.isConfigured()) {
         const error = new Error('Butler is not configured.');
@@ -4969,7 +4969,15 @@ function registerIpcHandlers() {
         throw error;
       }
       const source = await butlerSourceVideo(fileId, requestedOptions);
-      const payload = await aiGateway.upscaleVideo(source.videoBuffer, source.toolOptions);
+      const payload = await aiGateway.upscaleVideo(source.videoBuffer, {
+        ...source.toolOptions,
+        onProgress: (progress) => {
+          if (!evt.sender.isDestroyed()) evt.sender.send('butler:videoProgress', {
+            fileId: source.file.id,
+            ...progress
+          });
+        }
+      });
       const taskToken = normalizeButlerVideoTaskToken(payload && payload.taskToken);
       const status = normalizeButlerVideoStatus(payload || { status: 'queued' });
       rememberButlerVideoTask(taskToken, {

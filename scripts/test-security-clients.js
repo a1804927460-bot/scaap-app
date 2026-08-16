@@ -241,7 +241,7 @@ async function testPaidImageCreationIsNotReplayed() {
 }
 
 async function testChunkedTopazUpload() {
-  const chunkSize = 4 * 1024 * 1024;
+  const chunkSize = 2 * 1024 * 1024;
   const video = Buffer.alloc(chunkSize + 12, 0x19);
   video.writeUInt32BE(24, 0);
   video.write('ftyp', 4, 'ascii');

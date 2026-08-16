@@ -27,7 +27,9 @@ const VIDEO_TASK_TOKEN_AAD = Buffer.from('messs:ai302-video-task:v1', 'utf8');
 const RELAY_ASSET_TTL_MS = 15 * 60 * 1000;
 const VIDEO_RELAY_ASSET_TTL_MS = 2 * 60 * 60 * 1000;
 const VIDEO_UPLOAD_TTL_MS = 30 * 60 * 1000;
-export const VIDEO_UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
+// Smaller chunks finish reliably on slower connections while staying below
+// the gateway body limit. Chunk writes are idempotent by upload id + index.
+export const VIDEO_UPLOAD_CHUNK_BYTES = 2 * 1024 * 1024;
 const MAX_RELAY_ASSET_ENTRIES = 64;
 const MAX_RELAY_ASSET_BYTES = 128 * 1024 * 1024;
 const MAX_VIDEO_UPLOAD_SESSIONS = 16;

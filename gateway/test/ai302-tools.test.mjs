@@ -761,7 +761,7 @@ test('Topaz result download validates the provider URL and returns only video by
 });
 
 test('Topaz chunk uploads are owner-bound, retry-safe, and consumed only when complete', () => {
-  const first = Buffer.alloc(4 * 1024 * 1024, 0x11);
+  const first = Buffer.alloc(2 * 1024 * 1024, 0x11);
   mp4Fixture().copy(first, 0);
   const second = Buffer.alloc(12, 0x33);
   const totalBytes = first.length + second.length;

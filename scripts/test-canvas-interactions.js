@@ -353,16 +353,20 @@ assert.match(indexHtml, /id="board-agent-references"[\s\S]*?id="board-agent-add-
   'Canvas Agent must expose references plus image/video model selection.');
 assert.match(boardStyles, /\.board-agent-form textarea \{[\s\S]*?min-height:\s*58px;[\s\S]*?max-height:\s*112px;/,
   'The Canvas Agent prompt must be approximately half its previous height.');
-assert.doesNotMatch(
+assert.match(
   boardSource,
   /el\.addEventListener\('click',[\s\S]*?syncCanvasAgentReferencesToSelection\(\)/,
-  'Clicking a canvas image must not automatically add it to Agent references.'
+  'Clicking a canvas media item must automatically sync it to Agent references.'
 );
 assert.match(
   workspaceSource,
   /getElementById\('board-agent-add-reference'\)[\s\S]*?addEventListener\('click', addSelectedImagesToCanvasAgent\)/,
   'Agent references must only be added through the explicit add-reference control.'
 );
+assert.match(workspaceSource, /selectedCanvasAgentMediaIds[\s\S]*?isVideoExt/,
+  'Canvas Agent references must recognize both images and videos.');
+assert.match(workspaceSource, /board-agent-input[\s\S]*?handleCanvasAgentPaste[\s\S]*?event\.stopPropagation\(\)/,
+  'Agent input must isolate native copy/paste and import pasted media locally.');
 assert.match(
   boardSource,
   /const BOARD_UI_EVENT_SELECTOR[\s\S]*?function isBoardUiEventTarget[\s\S]*?viewport\.addEventListener\('pointerdown',[\s\S]*?isBoardUiEventTarget\(e\.target\)[\s\S]*?viewport\.addEventListener\('mousedown',[\s\S]*?isBoardUiEventTarget\(e\.target\)[\s\S]*?viewport\.addEventListener\('wheel',[\s\S]*?isBoardUiEventTarget\(e\.target\)/,

@@ -598,9 +598,13 @@ function setCanvasAgentOpen(open, options = {}) {
   if (toggle) toggle.setAttribute('aria-expanded', String(allowed));
   if (allowed) {
     renderCanvasAgentContext();
+    syncCanvasAgentReferencesToSelection();
     if (options.focus) {
       requestAnimationFrame(() => document.getElementById('board-agent-input').focus());
     }
+  } else {
+    CanvasWorkspace.agentReferenceFileIds.clear();
+    renderCanvasAgentReferences();
   }
   window.dispatchEvent(new Event('resize'));
   return allowed;
@@ -612,8 +616,14 @@ function canvasAgentPrompt(prompt) {
   const subject = selected.length ? selected : AppState.boardItems.slice(0, 24);
   const files = subject.map((item) => {
     const file = AppState.files.find((entry) => entry.id === item.fileId);
-    return file ? `${file.name} (${file.sourceWidth || '?'}x${file.sourceHeight || '?'})` : item.isNote ? 'Text note' : 'Canvas object';
+    if (!file) return item.isNote ? 'Text note' : 'Canvas object';
+    const mediaType = isVideoExt(file.ext) ? 'video' : isImageExt(file.ext) ? 'image' : 'file';
+    return `${file.name} [${mediaType}] (${file.sourceWidth || '?'}x${file.sourceHeight || '?'})`;
   });
+  const references = [...CanvasWorkspace.agentReferenceFileIds]
+    .map((fileId) => AppState.files.find((entry) => entry.id === fileId))
+    .filter(Boolean)
+    .map((file) => `${file.name} [${isVideoExt(file.ext) ? 'video' : 'image'}]`);
   const locale = isZh()
     ? 'Reply in Simplified Chinese.'
     : (isKo() ? 'Reply in Korean.' : 'Reply in English.');
@@ -622,6 +632,7 @@ function canvasAgentPrompt(prompt) {
     `Canvas: ${active ? active.name : 'Untitled'}`,
     `Selected objects: ${selected.length}`,
     `Visible objects: ${files.join('; ') || 'none'}`,
+    `Attached references: ${references.join('; ') || 'none'}`,
     `User request: ${prompt}`
   ].join('\n');
 }
@@ -690,7 +701,8 @@ function renderCanvasAgentModels() {
 }
 
 function canvasAgentReferenceLimit() {
-  const provider = canvasAgentMediaProviders('image')
+  const kind = CanvasWorkspace.agentMode === 'generate' ? CanvasWorkspace.agentGenerationKind : 'image';
+  const provider = canvasAgentMediaProviders(kind)
     .find((entry) => entry.id === CanvasWorkspace.agentProviderId);
   const configured = Number(provider && provider.capabilities && provider.capabilities.maxReferenceImages);
   return Number.isFinite(configured) && configured >= 0 ? Math.floor(configured) : 14;
@@ -718,6 +730,8 @@ function addCanvasAgentReferenceIds(fileIds) {
 }
 
 function syncCanvasAgentReferencesToSelection() {
+  const panel = document.getElementById('board-agent-panel');
+  if (!panel || panel.classList.contains('is-hidden')) return;
   const selectedIds = selectedCanvasAgentImageIds();
   const selectedSet = new Set(selectedIds);
   [...CanvasWorkspace.agentReferenceFileIds].forEach((fileId) => {
@@ -733,7 +747,7 @@ function renderCanvasAgentReferences() {
   if (!strip) return;
   [...CanvasWorkspace.agentReferenceFileIds].forEach((fileId) => {
     const file = AppState.files.find((entry) => entry.id === fileId);
-    if (!file || !isImageExt(file.ext)) CanvasWorkspace.agentReferenceFileIds.delete(fileId);
+    if (!file || (!isImageExt(file.ext) && !isVideoExt(file.ext))) CanvasWorkspace.agentReferenceFileIds.delete(fileId);
   });
   strip.innerHTML = '';
   CanvasWorkspace.agentReferenceFileIds.forEach((fileId) => {
@@ -743,9 +757,18 @@ function renderCanvasAgentReferences() {
     button.type = 'button';
     button.className = 'board-agent-reference';
     button.title = t(`Remove ${file.name}`, `移除 ${file.name}`);
-    const image = document.createElement('img');
-    image.src = file.thumbUrl || file.url;
+    const isVideo = isVideoExt(file.ext);
+    const image = isVideo ? document.createElement('video') : document.createElement('img');
+    image.src = isVideo
+      ? (file.url || file.previewUrl || file.thumbUrl)
+      : (file.thumbUrl || file.previewUrl || file.url);
     image.alt = file.name;
+    if (image.tagName === 'VIDEO') {
+      image.muted = true;
+      image.playsInline = true;
+      image.preload = 'metadata';
+      image.setAttribute('aria-label', file.name);
+    }
     const remove = document.createElement('span');
     remove.textContent = '×';
     button.append(image, remove);
@@ -767,8 +790,16 @@ function renderCanvasAgentReferences() {
 }
 
 function selectedCanvasAgentImageIds() {
-  if (typeof selectedBoardImageItems !== 'function') return [];
-  return selectedBoardImageItems().map((item) => item.fileId).filter(Boolean);
+  return selectedCanvasAgentMediaIds();
+}
+
+function selectedCanvasAgentMediaIds() {
+  const filesById = new Map(AppState.files.map((file) => [file.id, file]));
+  return AppState.boardItems
+    .filter((item) => item.selected && item.fileId)
+    .map((item) => filesById.get(item.fileId))
+    .filter((file) => file && (isImageExt(file.ext) || isVideoExt(file.ext)))
+    .map((file) => file.id);
 }
 
 function addSelectedImagesToCanvasAgent() {
@@ -784,7 +815,7 @@ function addSelectedImagesToCanvasAgent() {
 
 function addCanvasAgentReference(fileId) {
   const file = AppState.files.find((entry) => entry.id === fileId);
-  if (!file || !isImageExt(file.ext)) return false;
+  if (!file || (!isImageExt(file.ext) && !isVideoExt(file.ext))) return false;
   CanvasWorkspace.agentMode = 'generate';
   CanvasWorkspace.agentGenerationKind = 'image';
   return addCanvasAgentReferenceIds([file.id]);
@@ -889,6 +920,66 @@ async function submitCanvasAgentMessage() {
     document.getElementById('board-agent-submit').disabled = false;
     input.focus();
   }
+}
+
+function readCanvasAgentClipboardFile(file) {
+  return new Promise((resolve) => {
+    if (!file || !/^image\//i.test(file.type || '') || Number(file.size) > 64 * 1024 * 1024) {
+      resolve('');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => resolve('');
+    reader.readAsDataURL(file);
+  });
+}
+
+async function importCanvasAgentPastedMedia(file, event) {
+  if (!file) return false;
+  const isImage = /^image\//i.test(file.type || '');
+  const isVideo = /^video\//i.test(file.type || '');
+  if (!isImage && !isVideo) return false;
+  let importedFile = null;
+  if (isImage) {
+    const dataUrl = await readCanvasAgentClipboardFile(file);
+    if (!dataUrl) return false;
+    const result = await window.messsAPI.importClipboardImage({
+      canvasId: activeCanvasId(),
+      folderId: AppState.activeFolderId,
+      dataUrl,
+      html: '',
+      text: ''
+    });
+    importedFile = result && result.ok ? result.file : null;
+  } else {
+    let filePath = null;
+    try { filePath = window.messsAPI.getPathForFile(file); } catch (error) {}
+    if (!filePath || typeof window.messsAPI.importFiles !== 'function') return false;
+    const result = await window.messsAPI.importFiles([filePath], AppState.activeFolderId, activeCanvasId());
+    importedFile = result && Array.isArray(result.imported) ? result.imported[0] : null;
+  }
+  if (!importedFile) return false;
+  AppState.files = [importedFile, ...AppState.files.filter((entry) => entry.id !== importedFile.id)];
+  if (typeof renderFileList === 'function') renderFileList(currentFileListScope());
+  if (typeof renderFolderGridIfActive === 'function') renderFolderGridIfActive();
+  addCanvasAgentReferenceIds([importedFile.id]);
+  renderCanvasAgentContext();
+  return true;
+}
+
+function handleCanvasAgentPaste(event) {
+  const transfer = event && event.clipboardData;
+  const mediaItem = transfer && [...(transfer.items || [])]
+    .find((item) => item.kind === 'file' && (/^image\//i.test(item.type || '') || /^video\//i.test(item.type || '')));
+  if (!mediaItem || typeof mediaItem.getAsFile !== 'function') return;
+  const file = mediaItem.getAsFile();
+  if (!file) return;
+  event.preventDefault();
+  event.stopPropagation();
+  void importCanvasAgentPastedMedia(file, event).catch((error) => {
+    showToast(error && error.message ? error.message : t('Could not add the pasted media.', '无法添加粘贴的媒体。'), 'AI');
+  });
 }
 
 function refreshCanvasWorkspaceLanguage() {
@@ -1041,11 +1132,17 @@ async function initCanvasWorkspace(initial) {
     submitCanvasAgentMessage();
   });
   document.getElementById('board-agent-input').addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && ['a', 'c', 'v', 'x'].includes(event.key.toLowerCase())) {
+      event.stopPropagation();
+    }
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       document.getElementById('board-agent-form').requestSubmit();
     }
   });
+  document.getElementById('board-agent-input').addEventListener('copy', (event) => event.stopPropagation());
+  document.getElementById('board-agent-input').addEventListener('cut', (event) => event.stopPropagation());
+  document.getElementById('board-agent-input').addEventListener('paste', handleCanvasAgentPaste);
   document.addEventListener('messs:ai-config-updated', (event) => {
     CanvasWorkspace.config = event.detail || CanvasWorkspace.config;
     renderCanvasAgentModels();

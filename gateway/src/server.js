@@ -675,10 +675,14 @@ async function handle(request, response) {
   const isVideoStatus = request.method === 'POST' && url.pathname === '/v1/media/video/tasks/status';
   const isThreeDStatus = request.method === 'POST' && url.pathname === '/v1/tools/3d/status';
   const isVideoToolStatus = request.method === 'POST' && url.pathname === '/v1/tools/video/status';
-  const statusBucket = isVideoStatus ? 'video-status'
+  const isVideoToolUpload = request.method === 'PUT' && /^\/v1\/tools\/video\/uploads\/[A-Za-z0-9_-]{43}\/\d{1,4}$/.test(url.pathname);
+  const statusBucket = isVideoToolUpload ? 'video-tool-upload'
+    : isVideoStatus ? 'video-status'
     : isThreeDStatus ? 'three-d-status'
       : isVideoToolStatus ? 'video-tool-status' : 'default';
-  const statusMaximum = isVideoStatus || isThreeDStatus || isVideoToolStatus ? 180 : null;
+  const statusMaximum = isVideoToolUpload
+    ? 120
+    : isVideoStatus || isThreeDStatus || isVideoToolStatus ? 180 : null;
   if (!rateAllowed(user.id, ip, statusBucket, statusMaximum)) {
     return send(response, 429, { code: 'rate-limited', message: 'Too many requests. Please wait before trying again.' }, { 'Retry-After': statusMaximum ? '10' : '60' });
   }
