@@ -83,7 +83,10 @@ const secretPatterns = [
   /\bservice_role\b/i
 ];
 const imageSizes = new Set(['1K', '2K', '4K', 'original']);
-const imageRatios = new Set(['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9']);
+const imageRatios = new Set([
+  'auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3',
+  '5:4', '4:5', '21:9', '16:10', '10:16', '2:1', '1:2'
+]);
 const defaultVideoRatios = new Set(['21:9', '16:9', '4:3', '1:1', '3:4', '9:16']);
 const defaultVideoResolutions = new Set(['768P', '2K']);
 
@@ -114,6 +117,17 @@ function disabledTool(response) {
 
 function invalidOption(code, message) {
   return Object.assign(new Error(message), { status: 400, code });
+}
+
+function imageDimensionsWithinCapabilities(size, capabilities = {}) {
+  if (capabilities.arbitrarySizes !== true) return false;
+  const match = /^([1-9]\d{0,3})x([1-9]\d{0,3})$/i.exec(String(size || '').trim());
+  if (!match) return false;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  const maxEdge = Math.max(1, Math.min(3840, Number(capabilities.maxSizeEdge) || 3840));
+  const maxPixels = Math.max(1, Math.min(8_300_000, Number(capabilities.maxSizePixels) || 8_300_000));
+  return width <= maxEdge && height <= maxEdge && width * height <= maxPixels;
 }
 
 function base64DecodedBytes(value) {
@@ -380,7 +394,9 @@ function validateBody(body, kind) {
     const allowedQualities = Array.isArray(capabilities.qualities) && capabilities.qualities.length
       ? new Set(capabilities.qualities.map((value) => String(value).toLowerCase()))
       : null;
-    if (!allowedSizes.has(requestedSize)) throw invalidOption('invalid-size', 'The selected image resolution is not supported.');
+    if (!allowedSizes.has(requestedSize) && !imageDimensionsWithinCapabilities(requestedSize, capabilities)) {
+      throw invalidOption('invalid-size', 'The selected image resolution is not supported.');
+    }
     if (!allowedRatios.has(requestedRatio)) {
       throw invalidOption(
         'invalid-aspect-ratio',

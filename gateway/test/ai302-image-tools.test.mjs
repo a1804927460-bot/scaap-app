@@ -454,6 +454,114 @@ test('Topaz generative sharpen and enhance use their distinct documented endpoin
   }
 });
 
+test('all seven Topaz image tools use their documented endpoint and default model', async () => {
+  const source = imageDataUrl(rgbaPng());
+  const cases = [
+    ['topaz-image-sharpen', '/topazlabs/image/v1/sharpen/async', 'Standard'],
+    ['topaz-image-sharpen-gen', '/topazlabs/image/v1/sharpen-gen/async', 'Super Focus V2'],
+    ['topaz-image-enhance', '/topazlabs/image/v1/enhance/async', 'Standard V2'],
+    ['topaz-image-enhance-gen', '/topazlabs/image/v1/enhance-gen/async', 'Redefine'],
+    ['topaz-image-denoise', '/topazlabs/image/v1/denoise/async', 'Normal'],
+    ['topaz-image-restore', '/topazlabs/image/v1/restore-gen/async', 'Dust-Scratch'],
+    ['topaz-image-lighting', '/topazlabs/image/v1/lighting/async', 'Adjust']
+  ];
+  for (let index = 0; index < cases.length; index += 1) {
+    const [modelId, endpoint, model] = cases[index];
+    const processId = `1000000${index}-0000-4000-8000-00000000000${index}`;
+    let requestBody;
+    const created = await submitTopazImageTool({
+      modelId,
+      imageDataUrl: source,
+      userId: `topaz-matrix-owner-${index}`
+    }, {
+      apiKey: 'topaz-matrix-key',
+      taskSecret: 'topaz-matrix-secret',
+      publicBaseUrl: 'https://gateway.example.com',
+      now: 1_800_000_000_000,
+      fetchImpl: async (url, options) => {
+        assert.equal(String(url), `https://api.302.ai${endpoint}`);
+        requestBody = JSON.parse(options.body);
+        return jsonResponse({ process_id: processId, credits: 1 });
+      },
+      reserveCredits: async ({ providerId, providerCost }) => ({
+        ok: providerId === modelId && providerCost === 1,
+        credits: 3,
+        availableCredits: 97
+      })
+    });
+    assert.equal(requestBody.model, model);
+    assert.match(requestBody.image, /^https:\/\/gateway\.example\.com\/v1\/tools\/assets\//);
+    assert.equal(created.providerCost, 1);
+  }
+});
+
+test('Topaz image tools unwrap aliases and keep polling until a download URL exists', async () => {
+  const processId = '33333333-4444-4555-8666-777777777777';
+  const created = await submitTopazImageTool({
+    modelId: 'topaz-image-restore',
+    imageDataUrl: imageDataUrl(rgbaPng()),
+    userId: 'topaz-wrapped-owner'
+  }, {
+    apiKey: 'topaz-wrapped-key',
+    taskSecret: 'topaz-wrapped-secret',
+    publicBaseUrl: 'https://gateway.example.com',
+    now: 1_800_000_000_000,
+    fetchImpl: async () => jsonResponse({ data: { result: { processId, providerCost: 2 } } }),
+    reserveCredits: async ({ providerCost }) => ({ ok: providerCost === 2, credits: 6 })
+  });
+
+  let call = 0;
+  const waiting = await pollTopazImageTool({
+    taskToken: created.taskToken,
+    userId: 'topaz-wrapped-owner'
+  }, {
+    apiKey: 'topaz-wrapped-key',
+    taskSecret: 'topaz-wrapped-secret',
+    now: 1_800_000_002_000,
+    fetchImpl: async () => {
+      call += 1;
+      return call === 1
+        ? jsonResponse({ response: { data: { taskStatus: 'complete', progressPercent: 100, provider_cost: 2 } } })
+        : jsonResponse({ data: { result: {} } });
+    },
+    touchCredits: async () => ({ ok: true }),
+    settleCredits: async () => { throw new Error('A result without a URL must not settle.'); }
+  });
+  assert.deepEqual(waiting, {
+    status: 'processing',
+    progress: 100,
+    retryAfterMs: 5000,
+    urls: [],
+    providerCost: 2
+  });
+
+  call = 0;
+  const completed = await pollTopazImageTool({
+    taskToken: created.taskToken,
+    userId: 'topaz-wrapped-owner'
+  }, {
+    apiKey: 'topaz-wrapped-key',
+    taskSecret: 'topaz-wrapped-secret',
+    now: 1_800_000_004_000,
+    fetchImpl: async () => {
+      call += 1;
+      return call === 1
+        ? jsonResponse({ payload: { state: 'completed', percentage: 100, cost: 2 } })
+        : jsonResponse({ data: { result: { downloadUrl: 'https://file.302.ai/topaz/wrapped.png' } } });
+    },
+    touchCredits: async () => ({ ok: true }),
+    settleCredits: async ({ status }) => ({ ok: status === 'succeeded', creditsCharged: 6 })
+  });
+  assert.deepEqual(completed, {
+    status: 'succeeded',
+    progress: 100,
+    retryAfterMs: 0,
+    urls: ['https://file.302.ai/topaz/wrapped.png'],
+    providerCost: 2,
+    creditsCharged: 6
+  });
+});
+
 test('Topaz image failure settles as released credits', async () => {
   const processId = '66666666-7777-4888-8999-aaaaaaaaaaaa';
   const created = await submitTopazImageTool({

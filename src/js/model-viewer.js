@@ -254,12 +254,36 @@ function updateBoardModelSidebar() {
   }
 }
 
-async function renderBoardModelAfterTextureUpload(renderer, scene, camera) {
+function boardModelTextures(root) {
+  const textures = new Set();
+  if (!root) return textures;
+  root.traverse((object) => {
+    const materials = Array.isArray(object && object.material)
+      ? object.material
+      : [object && object.material];
+    materials.filter(Boolean).forEach((material) => {
+      Object.values(material).forEach((value) => {
+        if (value && value.isTexture) textures.add(value);
+      });
+    });
+  });
+  return textures;
+}
+
+async function renderBoardModelAfterTextureUpload(renderer, scene, camera, root) {
+  boardModelTextures(root).forEach((texture) => renderer.initTexture(texture));
+  if (typeof renderer.compileAsync === 'function') {
+    await renderer.compileAsync(scene, camera);
+  } else {
+    renderer.compile(scene, camera);
+  }
   renderer.render(scene, camera);
   await new Promise((resolve) => requestAnimationFrame(resolve));
   renderer.render(scene, camera);
   await new Promise((resolve) => requestAnimationFrame(resolve));
   renderer.render(scene, camera);
+  const context = renderer.getContext();
+  if (context && typeof context.finish === 'function') context.finish();
 }
 
 function installBoardModelLightDrag(canvas, light, controls, THREE, lighting = {}) {
@@ -628,7 +652,7 @@ async function renderBoardModelPreview(file) {
       if ('environmentIntensity' in scene) scene.environmentIntensity = 0.75;
     }
     frameBoardModel(parsed.root, camera, controls, THREE);
-    await renderBoardModelAfterTextureUpload(renderer, scene, camera);
+    await renderBoardModelAfterTextureUpload(renderer, scene, camera, parsed.root);
     const dataUrl = renderer.domElement.toDataURL('image/png');
     const saved = await window.messsAPI.saveModelPreview(file.id, dataUrl);
     if (!saved || !saved.ok || !saved.url) return '';

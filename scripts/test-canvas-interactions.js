@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 const { buildCfHDrop, parseCfHDrop } = require('../lib/clipboard-files');
 
 const root = path.join(__dirname, '..');
@@ -80,17 +81,41 @@ assert.match(
   /const pendingEntry = \{[\s\S]*?isLoading:\s*true[\s\S]*?boardReferences\.set\(file\.id, pendingEntry\);[\s\S]*?await window\.messsAPI\.readFileAsDataUrl\(file\.id\)[\s\S]*?boardReferences\.get\(file\.id\) !== pendingEntry[\s\S]*?pendingEntry\.dataUrl = dataUrl/,
   'Reference order must be reserved at click time rather than asynchronous file-read completion time.'
 );
-assert.match(boardSource, /activeVideoMode\.id === 'first-frame'[\s\S]*?t\('First', '首'\)[\s\S]*?activeVideoMode\.id === 'first-last-frame'[\s\S]*?t\('Last', '尾'\)/);
+assert.match(boardSource, /activeVideoMode\.id === 'first-last-frame'[\s\S]*?t\('First', '首'\)[\s\S]*?t\('Last', '尾'\)/);
 assert.match(
   boardSource,
-  /function videoModeLabel[\s\S]*?text:[\s\S]*?'first-frame':[\s\S]*?'first-last-frame':[\s\S]*?omni:[\s\S]*?function renderVideoModes[\s\S]*?function setVideoMode/,
-  'Video composer must expose text, first-frame, first-last-frame, and omni modes.'
+  /function videoModeLabel[\s\S]*?'first-last-frame':[\s\S]*?omni:[\s\S]*?function renderVideoModes[\s\S]*?composerVideoModes\(capabilities\)[\s\S]*?function setVideoMode/,
+  'Video composer must expose only first/last frame and omni reference modes.'
 );
 assert.match(
   boardSource,
-  /'first-frame':\s*t\('Image to video', '图生视频'\)/,
-  'The single-image first-frame mode must use the clearer Image to video label.'
+  /function composerVideoRequestMode[\s\S]*?count >= 2 \? 'first-last-frame' : 'first-frame'/,
+  'The frame UI must submit one image as image-to-video and two images as first/last frame.'
 );
+const videoModeFunctions = boardSource.slice(
+  boardSource.indexOf('function supportedVideoModes'),
+  boardSource.indexOf('function videoModeReferenceLimit')
+);
+const videoModeSandbox = {};
+vm.runInNewContext(
+  `${videoModeFunctions}\nthis.videoModeApi = { composerVideoModes, composerVideoRequestMode };`,
+  videoModeSandbox
+);
+const videoCapabilities = {
+  videoModes: [
+    { id: 'text', minReferences: 0, maxReferences: 0 },
+    { id: 'first-frame', minReferences: 1, maxReferences: 1 },
+    { id: 'first-last-frame', minReferences: 2, maxReferences: 2 },
+    { id: 'omni', minReferences: 1, maxReferences: 9, mediaTypes: ['image', 'video'] }
+  ]
+};
+assert.deepStrictEqual(
+  Array.from(videoModeSandbox.videoModeApi.composerVideoModes(videoCapabilities), (entry) => entry.id),
+  ['first-last-frame', 'omni']
+);
+assert.equal(videoModeSandbox.videoModeApi.composerVideoRequestMode('first-last-frame', 1, videoCapabilities).id, 'first-frame');
+assert.equal(videoModeSandbox.videoModeApi.composerVideoRequestMode('first-last-frame', 2, videoCapabilities).id, 'first-last-frame');
+assert.equal(videoModeSandbox.videoModeApi.composerVideoRequestMode('omni', 3, videoCapabilities).id, 'omni');
 assert.match(
   boardSource,
   /class="ai-composer-reference-strip"[\s\S]*?class="ai-composer-prompt"[\s\S]*?class="ai-model-picker"[\s\S]*?class="ai-video-mode-picker"/,
@@ -98,8 +123,8 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /function videoReferenceSelectionLimit[\s\S]*?supportedVideoModes[\s\S]*?currentMode\.id === 'text'[\s\S]*?setVideoMode\('first-frame'\)[\s\S]*?videoReferenceSelectionLimit\(capabilities\)/,
-  'Clicking a canvas image in video mode must switch out of text-only mode before applying the provider reference limit.'
+  /function videoReferenceSelectionLimit[\s\S]*?supportedVideoModes[\s\S]*?videoReferenceSelectionLimit\(capabilities\)[\s\S]*?videoModeReferenceLimit\(activeMode, capabilities\)/,
+  'Video reference selection must honor the active frame or omni mode limit.'
 );
 assert.match(
   boardSource,
@@ -116,6 +141,73 @@ assert.match(
   /videoMode:\s*kind === 'video' \? selectedMode\.id : null/,
   'The selected video mode must be submitted to the desktop and gateway.'
 );
+assert.match(
+  boardSource,
+  /class="ai-camera-control-toggle"[\s\S]*?class="ai-camera-control-panel"[\s\S]*?data-camera-field="\$\{field\}"[\s\S]*?class="ai-camera-motion-grid"/,
+  'Video generation must expose the CameraCtrl optics and motion panel.'
+);
+assert.match(
+  boardSource,
+  /function renderCameraControl\(\)[\s\S]*?cameraControlToggle\.hidden = !isVideo[\s\S]*?cameraControl\.enabled[\s\S]*?function cycleCameraControl/,
+  'Camera control must be visible only in video mode and keep explicit enabled state.'
+);
+assert.match(
+  boardSource,
+  /cameraControlToggle\.addEventListener\('click'[\s\S]*?setCameraControlOpen\(cameraControlPanel\.hidden, true\)[\s\S]*?ai-camera-control-disable[\s\S]*?cameraControl\.enabled = false[\s\S]*?ai-camera-control-save[\s\S]*?setCameraControlOpen\(false\)/,
+  'Opening, saving, and disabling camera control must remain distinct actions.'
+);
+assert.match(
+  boardSource,
+  /cameraControlPanel\.addEventListener\('pointerdown',[\s\S]*?stopPropagation[\s\S]*?cameraControlPanel\.addEventListener\('wheel',[\s\S]*?stopPropagation/,
+  'Camera control interactions must not reach the canvas pan or zoom handlers.'
+);
+assert.match(boardSource, /cameraControl:\s*kind === 'video' \? normalizeAiCameraControl\(cameraControl\) : null/);
+assert.match(
+  boardSource,
+  /retryGeneratedMediaFromDetails[\s\S]*?cameraControl:\s*isVideo \? normalizeAiCameraControl\(generation\.cameraControl\) : null/,
+  'Retrying a generated video must preserve its camera settings.'
+);
+assert.match(boardStyles, /\.ai-camera-optics-grid \{[\s\S]*?grid-template-columns:\s*repeat\(4/);
+assert.match(boardStyles, /\.ai-camera-control-panel[\s\S]*?overscroll-behavior:\s*contain/);
+
+const cameraConstants = mainSource.slice(
+  mainSource.indexOf('const AI_VIDEO_CAMERA_PRESETS'),
+  mainSource.indexOf('const PUBLIC_RELEASE')
+);
+const cameraFunctions = mainSource.slice(
+  mainSource.indexOf('function normalizeVideoCameraControl'),
+  mainSource.indexOf('function imageDimensionsWithinCapabilities')
+);
+const cameraSandbox = {};
+vm.runInNewContext(
+  `${cameraConstants}\n${cameraFunctions}\nthis.cameraApi = { normalizeVideoCameraControl, videoPromptWithCameraControl };`,
+  cameraSandbox
+);
+const originalVideoPrompt = 'A calm portrait in morning light.';
+assert.equal(
+  cameraSandbox.cameraApi.videoPromptWithCameraControl(originalVideoPrompt, { enabled: false, motion: 'pan-left' }),
+  originalVideoPrompt,
+  'Disabled camera control must not alter the provider prompt.'
+);
+const normalizedCamera = cameraSandbox.cameraApi.normalizeVideoCameraControl({
+  enabled: true,
+  camera: 'untrusted-camera',
+  lens: 'untrusted-lens',
+  focalLength: '999mm',
+  aperture: 'f0.1',
+  motion: 'delete-everything'
+});
+assert.equal(normalizedCamera.camera, 'arri-alexa-65');
+assert.equal(normalizedCamera.lens, 'cooke-panchro');
+assert.equal(normalizedCamera.focalLength, '125mm');
+assert.equal(normalizedCamera.aperture, 'f1.4');
+assert.equal(normalizedCamera.motion, 'static');
+const controlledVideoPrompt = cameraSandbox.cameraApi.videoPromptWithCameraControl(originalVideoPrompt, normalizedCamera);
+assert.match(controlledVideoPrompt, /^A calm portrait in morning light\.[\s\S]*Camera specification:/);
+assert.match(controlledVideoPrompt, /ARRI Alexa 65[\s\S]*Cooke Panchro[\s\S]*125mm[\s\S]*f\/1\.4[\s\S]*locked-off static camera/);
+assert.ok(controlledVideoPrompt.length <= 7000, 'The provider prompt must stay inside its fallback limit.');
+assert.match(mainSource, /const providerPrompt = kind === 'video'[\s\S]*?videoPromptWithCameraControl\(prompt, request\.cameraControl\)[\s\S]*?generateAiMediaBuffer\(kind, providerPrompt/);
+assert.match(mainSource, /aiGeneration:\s*\{[\s\S]*?cameraControl:\s*mediaKind === 'video' \? normalizeVideoCameraControl\(request\.cameraControl\) : null/);
 assert.match(boardStyles, /\.ai-composer-reference-order \{[\s\S]*?pointer-events:\s*none/);
 assert.match(
   boardSource,
@@ -173,6 +265,20 @@ assert.match(
   /function stepBoardZoom[\s\S]*?Object\.assign\(Board, target\)[\s\S]*?Board\.zoomTarget = null/,
   'Wheel motion must follow each animation frame at a linear rate without an inertial tail.'
 );
+const overviewFallbackSource = boardSource.slice(
+  boardSource.indexOf('function syncBoardOverviewFallback'),
+  boardSource.indexOf('function observeBoardElementPaintReady')
+);
+assert.match(
+  overviewFallbackSource,
+  /Board\.lastZoomBucket !== 'overview'[\s\S]*?visibleBoardDomReady\(\)[\s\S]*?Board\.overviewCanvas\.hidden = true/,
+  'The overview fallback must hide after the mounted canvas is paint-ready.'
+);
+assert.doesNotMatch(
+  overviewFallbackSource,
+  /Board\.zoomFrame|is-transforming/,
+  'An active or recently settled zoom must not leave a stale overview fallback over mounted items.'
+);
 assert.match(boardSource, /function setBoardPanTarget[\s\S]*?requestAnimationFrame\(stepBoardZoom\)/);
 assert.match(
   boardSource,
@@ -219,13 +325,13 @@ assert.match(
 );
 assert.match(
   boardStyles,
-  /\.board-agent-panel \{[\s\S]*?margin:\s*0;[\s\S]*?border:\s*0;[\s\S]*?border-radius:\s*0;/,
-  'The docked Agent must fill the workspace edge without a duplicate rounded outer shell.'
+  /\.board-agent-panel \{[\s\S]*?margin:\s*0;[\s\S]*?border:\s*0;[\s\S]*?border-radius:\s*18px 0 0 18px;/,
+  'The docked Agent must keep a restrained rounded exposed edge.'
 );
 assert.match(
   boardStyles,
-  /#resize-handle-board-agent \{[\s\S]*?top:\s*0;[\s\S]*?bottom:\s*0;[\s\S]*?#resize-handle-board-agent::before \{[\s\S]*?top:\s*0;[\s\S]*?bottom:\s*0;[\s\S]*?background:\s*#fff;/,
-  'The Agent divider must be white and span the full workspace height.'
+  /#resize-handle-board-agent \{[\s\S]*?top:\s*0;[\s\S]*?bottom:\s*0;[\s\S]*?#resize-handle-board-agent::before \{[\s\S]*?top:\s*0;[\s\S]*?bottom:\s*0;[\s\S]*?background:\s*linear-gradient[\s\S]*?filter:\s*blur\(\.45px\);/,
+  'The Agent divider must be a soft, low-contrast full-height gradient.'
 );
 assert.match(
   boardStyles,
@@ -234,8 +340,8 @@ assert.match(
 );
 assert.match(
   boardStyles,
-  /\.ai-image-popover\.ai-composer,[\s\S]*?height:\s*142px;[\s\S]*?\.ai-composer-reference-strip \{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*36px;/,
-  'The generation composer must stay flat while reference thumbnails share its header row.'
+  /\.ai-image-popover\.ai-composer,[\s\S]*?width:\s*min\(760px, calc\(100% - 40px\)\);[\s\S]*?height:\s*176px;[\s\S]*?\.ai-composer-reference-strip \{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*36px;[\s\S]*?\.ai-composer-prompt \{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*0;/,
+  'The generation composer must use a shorter footprint while reserving its flexible center for a taller prompt.'
 );
 assert.match(
   boardStyles,
@@ -460,7 +566,7 @@ assert.match(
   'Action capsules must track active wheel zoom without a delayed size trail.'
 );
 assert.match(boardStyles, /\.board-item\.is-selected \{[\s\S]*?outline:\s*var\(--board-selection-width/);
-assert.match(boardStyles, /width:\s*min\(940px, calc\(100% - 40px\)\)/, 'The generation composer must keep the wider centered footprint.');
+assert.match(boardStyles, /width:\s*min\(760px, calc\(100% - 40px\)\)/, 'The generation composer must keep the shorter centered footprint.');
 assert.doesNotMatch(sidebarSource, /Return home|\\u8fd4\\u56de\\u9996\\u9875/, 'The brand menu must not offer a return-to-home action.');
 assert.match(
   sidebarSource,
@@ -545,6 +651,16 @@ assert.match(
   boardSource,
   /function keepBoardSelectionAboveComposer[\s\S]*?Board\.panY -=[\s\S]*?applyBoardTransform\(\)/,
   'Opening the generation composer must pan covered selections into the visible canvas without changing zoom.'
+);
+assert.match(
+  boardSource,
+  /sizeGroup\.classList\.toggle\('is-grid', resolutions\.length > 6\)/,
+  'Large provider size catalogs must switch to the compact scrolling grid.'
+);
+assert.match(
+  boardStyles,
+  /\.ai-segmented\.is-grid \{[\s\S]*?max-height:\s*124px;[\s\S]*?grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\);[\s\S]*?overflow-y:\s*auto;/,
+  'The GPT Image 2 size catalog must remain contained inside the generation options panel.'
 );
 assert.match(boardStyles, /\.app-titlebar \{[\s\S]*?background:\s*var\(--bg-frame, var\(--bg-base\)\)/,
   'The light title bar must use the sampled frame gray while dark mode keeps its fallback.');

@@ -61,14 +61,17 @@ const gptImage2 = media.imageProviders.find((provider) => provider.id === 'image
 assert.ok(gptImage2);
 assert.equal(gptImage2.model, 'gpt-image-2');
 assert.equal(gptImage2.endpoint, 'https://api.quickrouter.ai/v1/images/generations');
-assert.deepEqual(gptImage2.capabilities.sizes, ['1024x1024', '1536x1024', '1024x1536', 'auto']);
+assert.equal(gptImage2.capabilities.sizes.length, 30);
+for (const size of ['1920x1080', '3840x2160', '1080x1920', '2160x3840', '3200x2400', '2400x3200', '3780x1620']) {
+  assert.equal(gptImage2.capabilities.sizes.includes(size), true);
+}
 assert.deepEqual(gptImage2.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
-assert.deepEqual(gptImage2.capabilities.sizeRatios, {
-  '1024x1024': '1:1',
-  '1536x1024': '3:2',
-  '1024x1536': '2:3',
-  auto: 'auto'
-});
+assert.equal(gptImage2.capabilities.sizeRatios['3840x2160'], '16:9');
+assert.equal(gptImage2.capabilities.sizeRatios['2160x3840'], '9:16');
+assert.equal(gptImage2.capabilities.sizeRatios['3780x1620'], '21:9');
+assert.equal(gptImage2.capabilities.arbitrarySizes, true);
+assert.equal(gptImage2.capabilities.maxSizeEdge, 3840);
+assert.equal(gptImage2.capabilities.maxSizePixels, 8_300_000);
 assert.equal(gptImage2.capabilities.promptMaxCharacters, 1000);
 assert.equal(gptImage2.capabilities.referencePromptMaxCharacters, 32000);
 for (const id of ['image-8']) {

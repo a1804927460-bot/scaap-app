@@ -34,6 +34,8 @@ async function run() {
   const storeUrl = pathToFileURL(path.join(root, 'src', 'js', 'store-client.js')).href;
   const previewUrl = pathToFileURL(path.join(root, 'src', 'js', 'preview-canvas.js')).href;
   const mediaMetaUrl = pathToFileURL(path.join(root, 'src', 'js', 'board-media-meta.js')).href;
+  const boardEngineUrl = pathToFileURL(path.join(root, 'src', 'js', 'board-engine.js')).href;
+  const boardCanvasUrl = pathToFileURL(path.join(root, 'src', 'js', 'board-canvas.js')).href;
 
   fs.writeFileSync(htmlPath, `<!doctype html>
     <html data-theme="dark"><head><meta charset="utf-8">
@@ -56,6 +58,7 @@ async function run() {
         };
       </script>
       <script src="${storeUrl}"></script><script src="${previewUrl}"></script><script src="${mediaMetaUrl}"></script>
+      <script src="${boardEngineUrl}"></script><script src="${boardCanvasUrl}"></script>
       <script>
         initFullscreenOverlay();
         const card = document.createElement('div');
@@ -65,19 +68,16 @@ async function run() {
         card.style.height = '360px';
         const content = document.createElement('div');
         content.className = 'board-item-content';
-        const player = document.createElement('div');
-        player.className = 'mini-video-player';
-        const video = document.createElement('video');
-        video.src = ${JSON.stringify(videoSource)};
-        video.muted = true;
-        video.dataset.usingTranscode = 'true';
-        player.appendChild(video);
-        content.appendChild(player);
+        const fixtureFile = {
+          id: 'fixture-video', name: 'fixture.mp4', ext: '.mp4', thumbUrl: '',
+          sourceWidth: 1920, sourceHeight: 1080, videoPreviewReady: false
+        };
+        const fixtureItem = { id: 'fixture-item', fileId: fixtureFile.id, x: 0, y: 0, width: 640, height: 360 };
+        AppState.files = [fixtureFile];
         card.appendChild(content);
         document.querySelector('.fixture-stage').appendChild(card);
-        appendBoardVideoButlerToolbar(card, {
-          id: 'fixture-video', name: 'fixture.mp4', ext: '.mp4', sourceWidth: 1920, sourceHeight: 1080
-        }, { id: 'fixture-item', x: 0, y: 0, width: 640, height: 360 });
+        renderBoardItemContent(content, fixtureFile, fixtureItem);
+        appendBoardVideoButlerToolbar(card, fixtureFile, fixtureItem);
       </script>
     </body></html>`, 'utf8');
 
@@ -98,8 +98,11 @@ async function run() {
   try {
     await window.loadFile(htmlPath);
     const canvasPlayback = await window.webContents.executeJavaScript(`(async () => {
-      const video = document.querySelector('.mini-video-player video');
-      await video.play();
+      const content = document.querySelector('.board-item-content');
+      content.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const video = content.querySelector('.mini-video-player video');
+      if (!video) return { missingPlayer: true };
       await new Promise((resolve) => setTimeout(resolve, 650));
       const state = {
         currentTime: video.currentTime,
@@ -112,10 +115,23 @@ async function run() {
       return state;
     })()`);
     if (
-      canvasPlayback.error || canvasPlayback.readyState < 2 ||
+      canvasPlayback.missingPlayer || canvasPlayback.error || canvasPlayback.readyState < 2 ||
       canvasPlayback.paused || canvasPlayback.currentTime < 0.2
     ) {
       throw new Error(`Canvas video did not play through the registered media protocol: ${JSON.stringify(canvasPlayback)}`);
+    }
+    const dragGuard = await window.webContents.executeJavaScript(`(async () => {
+      const content = document.querySelector('.board-item-content');
+      const player = content.querySelector('.mini-video-player');
+      const video = player.querySelector('video');
+      player._boardStopPreview();
+      Board.lastDragEndedAt = Date.now();
+      content.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      return { paused: video.paused, currentTime: video.currentTime };
+    })()`);
+    if (!dragGuard.paused || dragGuard.currentTime > 0.05) {
+      throw new Error(`A click immediately following a drag started video playback: ${JSON.stringify(dragGuard)}`);
     }
     const toolbar = await window.webContents.executeJavaScript(`(() => {
       const card = document.querySelector('.board-item-video').getBoundingClientRect();

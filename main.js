@@ -59,10 +59,65 @@ const AI_IMAGE_SIZES = new Set([
 const AI_IMAGE_QUALITIES = new Set(['low', 'medium', 'high', 'auto']);
 const AI_IMAGE_RATIOS = new Set([
   'auto', '1:1', '16:9', '9:16', '4:3', '3:4',
-  '3:2', '2:3', '5:4', '4:5', '21:9'
+  '3:2', '2:3', '5:4', '4:5', '21:9',
+  '16:10', '10:16', '2:1', '1:2'
 ]);
 const MINIMAX_TEXT_VIDEO_RATIOS = new Set(['21:9', '16:9', '4:3', '1:1', '3:4', '9:16']);
 const MINIMAX_VIDEO_RESOLUTIONS = new Set(['768P', '2K']);
+const AI_VIDEO_CAMERA_PRESETS = Object.freeze({
+  camera: Object.freeze({
+    'arri-alexa-65': 'ARRI Alexa 65 large-format digital cinema camera',
+    'arri-alexa-mini-lf': 'ARRI Alexa Mini LF digital cinema camera',
+    'sony-venice-2': 'Sony VENICE 2 full-frame cinema camera',
+    'red-v-raptor-xl': 'RED V-RAPTOR XL cinema camera',
+    'blackmagic-ursa-12k': 'Blackmagic URSA Mini Pro 12K cinema camera'
+  }),
+  lens: Object.freeze({
+    'cooke-panchro': 'Cooke Panchro/i Classic prime lens, gentle vintage falloff',
+    'arri-signature-prime': 'ARRI Signature Prime lens, clean large-format rendering',
+    'zeiss-supreme-prime': 'ZEISS Supreme Prime lens, controlled contrast and smooth bokeh',
+    'leica-summilux-c': 'Leica Summilux-C cinema lens, natural contrast and dimensional rendering',
+    'angenieux-optimo': 'Angenieux Optimo cinema zoom lens, refined cinematic rendering'
+  }),
+  focalLength: Object.freeze({
+    '24mm': '24mm wide-angle focal length',
+    '35mm': '35mm focal length',
+    '50mm': '50mm normal focal length',
+    '85mm': '85mm portrait focal length',
+    '125mm': '125mm telephoto focal length',
+    '200mm': '200mm long telephoto focal length'
+  }),
+  aperture: Object.freeze({
+    'f1.4': 'f/1.4 aperture, very shallow depth of field',
+    f2: 'f/2 aperture, shallow depth of field',
+    'f2.8': 'f/2.8 aperture, cinematic subject separation',
+    f4: 'f/4 aperture, balanced depth of field',
+    'f5.6': 'f/5.6 aperture, deep controlled focus'
+  }),
+  motion: Object.freeze({
+    static: 'locked-off static camera',
+    'pan-up': 'smooth camera pan up',
+    'pan-down': 'smooth camera pan down',
+    'pan-left': 'smooth camera pan left',
+    'pan-right': 'smooth camera pan right',
+    'tilt-up': 'smooth camera tilt up',
+    'tilt-down': 'smooth camera tilt down',
+    'tilt-left': 'smooth camera tilt left',
+    'tilt-right': 'smooth camera tilt right',
+    'zoom-in': 'controlled optical zoom in',
+    'zoom-out': 'controlled optical zoom out',
+    'roll-clockwise': 'subtle clockwise camera roll',
+    'roll-anticlockwise': 'subtle anticlockwise camera roll'
+  })
+});
+const AI_VIDEO_CAMERA_DEFAULTS = Object.freeze({
+  enabled: false,
+  camera: 'arri-alexa-65',
+  lens: 'cooke-panchro',
+  focalLength: '125mm',
+  aperture: 'f1.4',
+  motion: 'static'
+});
 const PUBLIC_RELEASE = Object.freeze({
   provider: 'github',
   owner: 'a1804927460-bot',
@@ -176,6 +231,8 @@ const MAX_MODEL_PREVIEW_BYTES = 256 * 1024 * 1024;
 const MAX_CLIPBOARD_IMAGE_BYTES = 64 * 1024 * 1024;
 const MAX_CLIPBOARD_PNG_BYTES = 160 * 1024 * 1024;
 const MODEL_FILE_EXTENSIONS = new Set(['.glb', '.fbx', '.obj']);
+const MODEL_PREVIEW_CACHE_VERSION = 'pbr-v3';
+const MODEL_PREVIEW_MARKER_FILENAME = `model-preview.${MODEL_PREVIEW_CACHE_VERSION}`;
 const BUTLER_IMAGE_TOOL_IDS = new Set([
   'qwen-image-edit-plus',
   'qwen-image-layered',
@@ -681,6 +738,9 @@ function fileToPayload(f) {
       duration: f.aiGeneration.duration,
       requestedDuration: f.aiGeneration.requestedDuration || null,
       videoMode: f.aiGeneration.videoMode || null,
+      cameraControl: f.aiGeneration.kind === 'video'
+        ? normalizeVideoCameraControl(f.aiGeneration.cameraControl)
+        : null,
       referenceFileIds: Array.isArray(f.aiGeneration.referenceFileIds)
         ? [...f.aiGeneration.referenceFileIds]
         : [],
@@ -1060,7 +1120,7 @@ async function saveArchivedModelPreview(fileId, dataUrl) {
   }
   const cacheDir = path.join(previewCacheDir, normalizedId);
   const outputPath = path.join(cacheDir, 'model-preview.png');
-  const pbrMarkerPath = path.join(cacheDir, 'model-preview.pbr-v2');
+  const pbrMarkerPath = path.join(cacheDir, MODEL_PREVIEW_MARKER_FILENAME);
   const temporaryPath = path.join(cacheDir, `.model-preview-${crypto.randomUUID()}.tmp.png`);
   await fs.promises.mkdir(cacheDir, { recursive: true });
   try {
@@ -1069,7 +1129,7 @@ async function saveArchivedModelPreview(fileId, dataUrl) {
       .png({ compressionLevel: 9, adaptiveFiltering: true })
       .toFile(temporaryPath);
     await fs.promises.rename(temporaryPath, outputPath);
-    await fs.promises.writeFile(pbrMarkerPath, 'pbr-v2\n', { encoding: 'utf8', mode: 0o600 });
+    await fs.promises.writeFile(pbrMarkerPath, `${MODEL_PREVIEW_CACHE_VERSION}\n`, { encoding: 'utf8', mode: 0o600 });
   } finally {
     await fs.promises.rm(temporaryPath, { force: true }).catch(() => {});
   }
@@ -2906,6 +2966,7 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
   }
 
   let videoPreviewReady = false;
+  let videoPreviewError = null;
   if (mediaKind === 'video') {
     try {
       const validation = await preview.validateVideoFile(storedPath);
@@ -2917,12 +2978,9 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
       await preview.transcodeVideoToWebCompatible(storedPath, previewCacheDir, id);
       videoPreviewReady = true;
     } catch (error) {
-      await Promise.all([
-        fs.promises.rm(storedPath, { force: true }).catch(() => {}),
-        fs.promises.rm(path.join(previewCacheDir, id), { recursive: true, force: true }).catch(() => {})
-      ]);
-      if (!error.code) error.code = 'video-preview-preparation-failed';
-      throw error;
+      await fs.promises.rm(path.join(previewCacheDir, id), { recursive: true, force: true }).catch(() => {});
+      videoPreviewError = String(error && error.code || 'video-preview-preparation-failed').slice(0, 80);
+      console.warn('Generated video was archived, but its initial preview could not be prepared:', videoPreviewError);
     }
   }
   const sourceDimensions = await readSourceMediaMetadata(storedPath, `.${extension}`);
@@ -2951,7 +3009,7 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
     sizeBytes: buffer.length,
     ...sourceDimensions,
     ...(mediaKind === 'video' && sourceDimensions ? { mediaMetadataVersion: 1 } : {}),
-    ...(mediaKind === 'video' ? { videoPreviewReady } : {}),
+    ...(mediaKind === 'video' ? { videoPreviewReady, ...(videoPreviewError ? { videoPreviewError } : {}) } : {}),
     ...classifyArchiveFile(name),
     aiGeneration: {
       kind: mediaKind,
@@ -2977,6 +3035,7 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
         : null,
       requestedDuration: mediaKind === 'video' ? Math.max(1, Number(request.duration) || 6) : null,
       videoMode: mediaKind === 'video' ? String(request.videoMode || 'text').trim().slice(0, 32) : null,
+      cameraControl: mediaKind === 'video' ? normalizeVideoCameraControl(request.cameraControl) : null,
       referenceFileIds,
       referenceMediaTypes: mediaKind === 'video' && Array.isArray(request.referenceMediaTypes)
         ? request.referenceMediaTypes.map((value) => String(value || '').toLowerCase()).slice(0, referenceFileIds.length)
@@ -3166,13 +3225,58 @@ function invalidAiMediaOption(code, message) {
   return error;
 }
 
+function normalizeVideoCameraControl(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const select = (field) => {
+    const requested = String(source[field] || '').trim();
+    return Object.hasOwn(AI_VIDEO_CAMERA_PRESETS[field], requested)
+      ? requested
+      : AI_VIDEO_CAMERA_DEFAULTS[field];
+  };
+  return {
+    enabled: source.enabled === true,
+    camera: select('camera'),
+    lens: select('lens'),
+    focalLength: select('focalLength'),
+    aperture: select('aperture'),
+    motion: select('motion')
+  };
+}
+
+function videoPromptWithCameraControl(prompt, value) {
+  const original = String(prompt || '').trim();
+  const cameraControl = normalizeVideoCameraControl(value);
+  if (!cameraControl.enabled) return original;
+  const suffix = `Camera specification: ${[
+    AI_VIDEO_CAMERA_PRESETS.camera[cameraControl.camera],
+    AI_VIDEO_CAMERA_PRESETS.lens[cameraControl.lens],
+    AI_VIDEO_CAMERA_PRESETS.focalLength[cameraControl.focalLength],
+    AI_VIDEO_CAMERA_PRESETS.aperture[cameraControl.aperture],
+    AI_VIDEO_CAMERA_PRESETS.motion[cameraControl.motion]
+  ].join('; ')}.`;
+  const maximumPromptLength = 7000;
+  const sourceLimit = Math.max(0, maximumPromptLength - suffix.length - 2);
+  return `${original.slice(0, sourceLimit)}\n\n${suffix}`.trim();
+}
+
+function imageDimensionsWithinCapabilities(size, capabilities = {}) {
+  if (capabilities.arbitrarySizes !== true) return false;
+  const match = /^([1-9]\d{0,3})x([1-9]\d{0,3})$/i.exec(String(size || '').trim());
+  if (!match) return false;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  const maxEdge = Math.max(1, Math.min(3840, Number(capabilities.maxSizeEdge) || 3840));
+  const maxPixels = Math.max(1, Math.min(8_300_000, Number(capabilities.maxSizePixels) || 8_300_000));
+  return width <= maxEdge && height <= maxEdge && width * height <= maxPixels;
+}
+
 function normalizeAiMediaGenerationRequest(request, kind) {
   const normalized = { ...request };
   if (kind === 'image') {
     const size = String(request.size || '').trim();
     const aspectRatio = String(request.aspectRatio || '').trim();
     const quality = String(request.quality || 'auto').trim().toLowerCase();
-    if (!AI_IMAGE_SIZES.has(size)) {
+    if (!AI_IMAGE_SIZES.has(size) && !/^([1-9]\d{0,3})x([1-9]\d{0,3})$/i.test(size)) {
       throw invalidAiMediaOption('invalid-size', 'The selected image resolution is not supported.');
     }
     if (!AI_IMAGE_RATIOS.has(aspectRatio)) {
@@ -3213,7 +3317,10 @@ function normalizeAiMediaGenerationRequest(request, kind) {
         .map((value) => String(value || '').trim())
         .filter(Boolean)
     );
-    if (supportedSizes.size && !supportedSizes.has(size)) {
+    if (!supportedSizes.size && !AI_IMAGE_SIZES.has(size)) {
+      throw invalidAiMediaOption('invalid-size', 'The selected image resolution is not supported.');
+    }
+    if (supportedSizes.size && !supportedSizes.has(size) && !imageDimensionsWithinCapabilities(size, capabilities)) {
       throw invalidAiMediaOption('invalid-size', 'The selected image model does not support this resolution with the current references.');
     }
     const supportedRatios = new Set(
@@ -3360,6 +3467,7 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   normalized.duration = duration;
   normalized.aspectRatio = aspectRatio;
   normalized.videoMode = videoMode;
+  normalized.cameraControl = normalizeVideoCameraControl(request.cameraControl);
   normalized.referenceMediaTypes = referenceMediaTypes;
   normalized.referenceVideoUploadIds = Array.isArray(request.referenceVideoUploadIds)
     ? request.referenceVideoUploadIds.map(String).filter(Boolean).slice(0, 3)
@@ -3803,7 +3911,13 @@ function butlerFailure(error, fallbackMessage) {
     'media-too-large': 'The generated result exceeds the safe download size.',
     'rate-limited': 'Too many Butler requests. Please wait and try again.'
   };
-  return { ok: false, reason, message: knownMessages[reason] || fallbackMessage };
+  const httpStatus = Number(error && error.status);
+  return {
+    ok: false,
+    reason,
+    message: knownMessages[reason] || fallbackMessage,
+    ...(Number.isInteger(httpStatus) && httpStatus >= 400 && httpStatus <= 599 ? { httpStatus } : {})
+  };
 }
 
 function registerIpcHandlers() {
@@ -4995,6 +5109,9 @@ function registerIpcHandlers() {
         message: error.message
       };
     }
+    const providerPrompt = kind === 'video'
+      ? videoPromptWithCameraControl(prompt, request.cameraControl)
+      : prompt;
     const count = kind === 'image' ? Math.max(1, Math.min(4, Number(request.count) || 1)) : 1;
     const creditQuote = quoteMediaCredits({
       kind,
@@ -5052,7 +5169,7 @@ function registerIpcHandlers() {
     }
 
     try {
-      const tasks = Array.from({ length: count }, () => generateAiMediaBuffer(kind, prompt, {
+      const tasks = Array.from({ length: count }, () => generateAiMediaBuffer(kind, providerPrompt, {
         size: request.size,
         quality: request.quality,
         resolution: request.resolution,
@@ -5226,6 +5343,9 @@ function registerIpcHandlers() {
 
     try {
       await preview.transcodeVideoToWebCompatible(f.storedPath, previewCacheDir, f.id);
+      f.videoPreviewReady = true;
+      delete f.videoPreviewError;
+      store.scheduleSave();
       return { ok: true, url: `messs-transcode://${f.id}` };
     } catch (err) {
       console.error('Video transcode failed for', f.name, err.message);
@@ -6033,7 +6153,7 @@ app.whenReady().then(() => {
         return new Response('Not found', { status: 404 });
       }
       const modelPreviewPath = path.join(previewCacheDir, file.id, 'model-preview.png');
-      const pbrMarkerPath = path.join(previewCacheDir, file.id, 'model-preview.pbr-v2');
+      const pbrMarkerPath = path.join(previewCacheDir, file.id, MODEL_PREVIEW_MARKER_FILENAME);
       if (!fs.existsSync(modelPreviewPath) || !fs.existsSync(pbrMarkerPath)) {
         return new Response('Not found', { status: 404 });
       }

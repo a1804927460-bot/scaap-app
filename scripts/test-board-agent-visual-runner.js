@@ -89,6 +89,7 @@ async function run() {
     const agent = rect('.board-agent-panel');
     const logo = rect('.board-agent-welcome img');
     const composer = rect('.ai-composer');
+    const composerPrompt = rect('.ai-composer-prompt');
     const viewport = rect('#board-viewport');
     const bottomBar = rect('#board-bottom-bar');
     const agentForm = rect('.board-agent-form');
@@ -96,10 +97,10 @@ async function run() {
     const agentMenu = rect('.board-agent-model-menu');
     const confirmedText = getComputedStyle(document.querySelector('.qa-text:not(.is-text-editing)'));
     const editingText = getComputedStyle(document.querySelector('.qa-text-edit'));
-    return { agent, logo, composer, viewport, bottomBar, agentForm, agentInput, agentMenu, radius:getComputedStyle(document.querySelector('.board-agent-panel')).borderRadius, toggle:getComputedStyle(document.getElementById('board-agent-toggle')).display, confirmedText:{background:confirmedText.backgroundColor,borderWidth:confirmedText.borderTopWidth,shadow:confirmedText.boxShadow}, editingText:{background:editingText.backgroundColor,borderWidth:editingText.borderTopWidth,shadow:editingText.boxShadow} };
+    return { agent, logo, composer, composerPrompt, viewport, bottomBar, agentForm, agentInput, agentMenu, radius:getComputedStyle(document.querySelector('.board-agent-panel')).borderRadius, toggle:getComputedStyle(document.getElementById('board-agent-toggle')).display, confirmedText:{background:confirmedText.backgroundColor,borderWidth:confirmedText.borderTopWidth,shadow:confirmedText.boxShadow}, editingText:{background:editingText.backgroundColor,borderWidth:editingText.borderTopWidth,shadow:editingText.boxShadow} };
   })()`);
   if (full.agent.width < 300 || full.agent.right > 1440 || full.agent.bottom > full.viewport.bottom + 1) throw new Error(`Agent escaped workspace: ${JSON.stringify(full)}`);
-  if (full.radius !== '0px') throw new Error(`Agent outer shell must not repeat the composer radius: ${full.radius}`);
+  if (!/18px\s+0px\s+0px\s+18px/.test(full.radius)) throw new Error(`Agent outer shell does not have the restrained exposed-edge radius: ${full.radius}`);
   if (Math.abs(full.agent.top - full.viewport.top) > 1 || Math.abs(full.agent.bottom - full.viewport.bottom) > 1) {
     throw new Error(`Agent does not fill the workspace height: ${JSON.stringify(full)}`);
   }
@@ -108,8 +109,11 @@ async function run() {
   if (full.agentMenu.left < full.agent.left || full.agentMenu.right > full.agent.right || full.agentMenu.top >= full.agentForm.top || full.agentMenu.bottom > full.agent.bottom) {
     throw new Error(`Agent model menu escaped its panel: ${JSON.stringify(full)}`);
   }
-  if (full.composer.width < 560 || full.composer.width > 940 || full.composer.height < 130 || full.composer.height > 155) {
+  if (full.composer.width < 740 || full.composer.width > 780 || full.composer.height < 168 || full.composer.height > 184) {
     throw new Error(`Composer size is outside the compact range: ${JSON.stringify(full.composer)}`);
+  }
+  if (full.composerPrompt.width < 700 || full.composerPrompt.height < 76) {
+    throw new Error(`Composer prompt did not receive the intended writing space: ${JSON.stringify(full.composerPrompt)}`);
   }
   const composerCenter = (full.composer.left + full.composer.right) / 2;
   const viewportCenter = (full.viewport.left + full.viewport.right) / 2;

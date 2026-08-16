@@ -21,7 +21,11 @@ const CanvasNodeMode = {
   selectedConnection: null,
   connectionObserver: null,
   connectionDraft: null,
+  inputConnectionDraft: null,
   connectionPointer: null,
+  portMagnetFrame: 0,
+  portMagnetPoint: null,
+  magneticPort: null,
   connectionMenu: null,
   addMenuPosition: null,
   textEditor: null,
@@ -91,7 +95,6 @@ function canvasNodeMediaMarkup(item, file) {
       <button class="canvas-node-open nodrag" type="button" data-node-file-id="${escapeHtml(file.id)}" title="${escapeHtml(t('Open preview', '放大查看', '미리보기 열기'))}" aria-label="${escapeHtml(t('Open preview', '放大查看', '미리보기 열기'))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
     </header>
     <div class="canvas-node-preview"${canvasNodeMediaStyle(file, kind === 'model' || kind === 'audio' ? 1 : 16 / 9)}>${preview}${kind === 'video' ? `<i class="canvas-node-video-mark">${NODE_ICONS.video}</i>` : ''}</div>
-    <button class="canvas-node-add-media nodrag" type="button" data-node-action="add-generation" title="${escapeHtml(t('Add a generation node', '添加生成节点', '생성 노드 추가'))}" aria-label="${escapeHtml(t('Add a generation node', '添加生成节点', '생성 노드 추가'))}">+</button>
   </article>`;
 }
 
@@ -133,7 +136,6 @@ function canvasGenerateNodeMarkup(kind, data = {}) {
   return `<article class="canvas-flow-node canvas-generate-node" data-generate-kind="${kind}" data-node-action="settings" role="button" tabindex="0" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">
     <header><span class="canvas-node-title-icon">${isVideo ? NODE_ICONS.video : NODE_ICONS.generate}<b>${escapeHtml(label)}</b></span><i class="canvas-node-status" data-node-status>${escapeHtml(t('Ready', '就绪', '준비'))}</i></header>
     <div class="canvas-generate-preview">${results || emptyPreview}</div>
-    <button class="canvas-node-add-media nodrag" type="button" data-node-action="add-generation" title="${escapeHtml(t('Add a connected node', '添加后续节点', '연결 노드 추가'))}" aria-label="${escapeHtml(t('Add a connected node', '添加后续节点', '연결 노드 추가'))}">+</button>
   </article>`;
 }
 
@@ -415,6 +417,7 @@ async function openCanvasGenerationSettings(nodeId) {
   const inputs = canvasGenerationInputs(nodeId);
   await openAiComposerForSelection(node.data.kind, inputs.prompt, {
     referenceFileIds: inputs.referenceFileIds,
+    nodeAnchorId: String(nodeId),
     placeOnBoard: false,
     onSubmit: () => setCanvasNodeRunState(nodeId, 'running', t('Generating...', '生成中...', '생성 중...')),
     onComplete: (files) => connectCanvasGenerationOutputs(nodeId, Array.isArray(files) ? files : [])
@@ -473,47 +476,34 @@ function canvasNodeWorldPoint(clientX, clientY) {
   };
 }
 
-function addCanvasNodeFromConnection(kind, draft) {
+function addCanvasNodeFromConnection(choice, draft) {
   if (!draft || !CanvasNodeMode.editor) return null;
+  const upstream = Boolean(draft.input_id);
+  const role = choice && choice.role === 'text' ? 'text' : 'generate';
+  const kind = choice && choice.kind === 'video' ? 'video' : 'image';
   const position = {
-    x: Math.round(draft.worldX + 36),
+    x: Math.round(draft.worldX + (upstream ? (role === 'text' ? -316 : -396) : 36)),
     y: Math.round(draft.worldY - 92)
   };
-  const nodeId = addCanvasWorkflowNode('generate', kind, position);
-  CanvasNodeMode.editor.addConnection(
-    String(draft.output_id),
-    String(nodeId),
-    draft.output_class || 'output_1',
-    'input_1'
-  );
+  const nodeId = addCanvasWorkflowNode(role, kind, position);
+  if (upstream) {
+    CanvasNodeMode.editor.addConnection(
+      String(nodeId),
+      String(draft.input_id),
+      'output_1',
+      draft.input_class || 'input_1'
+    );
+  } else {
+    CanvasNodeMode.editor.addConnection(
+      String(draft.output_id),
+      String(nodeId),
+      draft.output_class || 'output_1',
+      'input_1'
+    );
+  }
   closeCanvasNodeConnectionMenu();
   saveCanvasNodeLayout();
   return nodeId;
-}
-
-function addCanvasNodeFromMedia(nodeId, kind) {
-  const node = canvasNodeData()[String(nodeId)];
-  if (!node || !node.data || node.data.nodeRole !== 'media' || !CanvasNodeMode.editor) return null;
-  const position = {
-    x: Math.round(Number(node.pos_x || 0) + 314),
-    y: Math.round(Number(node.pos_y || 0))
-  };
-  const targetId = addCanvasWorkflowNode('generate', kind, position);
-  CanvasNodeMode.editor.addConnection(String(nodeId), String(targetId), 'output_1', 'input_1');
-  saveCanvasNodeLayout();
-  return targetId;
-}
-
-function openCanvasNodeMediaMenu(nodeId, anchor) {
-  if (!anchor || !CanvasNodeMode.editor) return;
-  const rect = anchor.getBoundingClientRect();
-  openCanvasNodeConnectionMenu({
-    output_id: String(nodeId),
-    output_class: 'output_1',
-    allowSourceTarget: true,
-    clientX: rect.left + rect.width / 2,
-    clientY: rect.bottom + 8
-  });
 }
 
 function openCanvasNodeConnectionMenu(draft) {
@@ -530,18 +520,16 @@ function openCanvasNodeConnectionMenu(draft) {
   menu.className = 'board-node-connection-menu';
   menu.setAttribute('role', 'menu');
   menu.setAttribute('aria-label', t('Choose connected node', '选择连接节点', '연결 노드 선택'));
-  const choices = [
-    {
-      kind: 'image',
-      icon: NODE_ICONS.generate,
-      label: t('Image generation', '图片生成', '이미지 생성')
-    },
-    {
-      kind: 'video',
-      icon: NODE_ICONS.video,
-      label: t('Video generation', '视频生成', '비디오 생성')
-    }
-  ];
+  const choices = draft.input_id
+    ? [
+      { role: 'text', kind: null, icon: NODE_ICONS.text, label: t('Text prompt', '文本提示词', '텍스트 프롬프트') },
+      { role: 'generate', kind: 'image', icon: NODE_ICONS.generate, label: t('Image generation', '图片生成', '이미지 생성') },
+      { role: 'generate', kind: 'video', icon: NODE_ICONS.video, label: t('Video generation', '视频生成', '비디오 생성') }
+    ]
+    : [
+      { role: 'generate', kind: 'image', icon: NODE_ICONS.generate, label: t('Image generation', '图片生成', '이미지 생성') },
+      { role: 'generate', kind: 'video', icon: NODE_ICONS.video, label: t('Video generation', '视频生成', '비디오 생성') }
+    ];
   choices.forEach((choice) => {
     const button = document.createElement('button');
     button.type = 'button';
@@ -551,7 +539,7 @@ function openCanvasNodeConnectionMenu(draft) {
     button.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      addCanvasNodeFromConnection(choice.kind, {
+      addCanvasNodeFromConnection(choice, {
         ...draft,
         worldX: world.x,
         worldY: world.y
@@ -891,6 +879,43 @@ function syncCanvasNodeConnectionFlow() {
   });
 }
 
+function canvasNodeConnectionDetails(element) {
+  if (!element || !element.classList) return null;
+  const outputNode = [...element.classList].find((name) => name.startsWith('node_out_node-'));
+  const inputNode = [...element.classList].find((name) => name.startsWith('node_in_node-'));
+  const outputClass = [...element.classList].find((name) => name.startsWith('output_'));
+  const inputClass = [...element.classList].find((name) => name.startsWith('input_'));
+  if (!outputNode || !inputNode || !outputClass || !inputClass) return null;
+  return {
+    output_id: outputNode.slice('node_out_node-'.length),
+    input_id: inputNode.slice('node_in_node-'.length),
+    output_class: outputClass,
+    input_class: inputClass
+  };
+}
+
+function pruneCanvasNodeConnectionArtifacts() {
+  const editor = CanvasNodeMode.editor;
+  const host = document.getElementById('board-node-editor');
+  if (!editor || !host || editor.connection) return;
+  const nodes = canvasNodeData();
+  host.querySelectorAll('.drawflow .connection').forEach((connection) => {
+    const details = canvasNodeConnectionDetails(connection);
+    if (!details) {
+      connection.remove();
+      return;
+    }
+    const source = nodes[details.output_id];
+    const target = nodes[details.input_id];
+    const valid = source && target && source.outputs && source.outputs[details.output_class] &&
+      target.inputs && target.inputs[details.input_class] &&
+      source.outputs[details.output_class].connections.some((entry) => (
+        String(entry.node) === details.input_id && String(entry.output) === details.input_class
+      ));
+    if (!valid) connection.remove();
+  });
+}
+
 function ensureCanvasNodeFlowPaths(root) {
   const host = document.getElementById('board-node-editor');
   if (!host) return;
@@ -901,7 +926,184 @@ function ensureCanvasNodeFlowPaths(root) {
   connections.forEach((connection) => {
     connection.querySelectorAll('.canvas-node-flow-pulse').forEach((pulse) => pulse.remove());
   });
+  pruneCanvasNodeConnectionArtifacts();
   syncCanvasNodeConnectionFlow();
+}
+
+function updateCanvasNodeInputDraft(point) {
+  const draft = CanvasNodeMode.inputConnectionDraft;
+  const mode = document.getElementById('board-node-mode');
+  const path = draft && draft.path;
+  if (!draft || !mode || !path) return;
+  const rect = mode.getBoundingClientRect();
+  const x = point.clientX - rect.left;
+  const y = point.clientY - rect.top;
+  const mid = (draft.startX + x) / 2;
+  path.setAttribute('d', `M ${draft.startX} ${draft.startY} C ${mid} ${draft.startY} ${mid} ${y} ${x} ${y}`);
+}
+
+function cancelCanvasNodeInputConnection() {
+  const draft = CanvasNodeMode.inputConnectionDraft;
+  if (!draft) return;
+  CanvasNodeMode.inputConnectionDraft = null;
+  draft.path?.parentElement?.remove();
+  const host = document.getElementById('board-node-editor');
+  if (host && host.hasPointerCapture && host.hasPointerCapture(draft.pointerId)) {
+    host.releasePointerCapture(draft.pointerId);
+  }
+}
+
+function clearCanvasNodePortMagnet() {
+  if (CanvasNodeMode.portMagnetFrame) {
+    cancelAnimationFrame(CanvasNodeMode.portMagnetFrame);
+    CanvasNodeMode.portMagnetFrame = 0;
+  }
+  const port = CanvasNodeMode.magneticPort;
+  if (port) {
+    port.classList.remove('is-magnetic');
+    port.style.removeProperty('--node-port-magnet-x');
+    port.style.removeProperty('--node-port-magnet-y');
+  }
+  CanvasNodeMode.magneticPort = null;
+  CanvasNodeMode.portMagnetPoint = null;
+}
+
+function applyCanvasNodePortMagnet() {
+  CanvasNodeMode.portMagnetFrame = 0;
+  const host = document.getElementById('board-node-editor');
+  const point = CanvasNodeMode.portMagnetPoint;
+  if (!host || !point || CanvasNodeMode.mode !== 'node') {
+    clearCanvasNodePortMagnet();
+    return;
+  }
+  let nearest = null;
+  let nearestDistance = 54;
+  host.querySelectorAll('.drawflow-node .input, .drawflow-node .output').forEach((port) => {
+    const rect = port.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const distance = Math.hypot(point.clientX - centerX, point.clientY - centerY);
+    if (distance >= nearestDistance) return;
+    nearestDistance = distance;
+    nearest = { port, centerX, centerY };
+  });
+  if (CanvasNodeMode.magneticPort && CanvasNodeMode.magneticPort !== nearest?.port) {
+    CanvasNodeMode.magneticPort.classList.remove('is-magnetic');
+    CanvasNodeMode.magneticPort.style.removeProperty('--node-port-magnet-x');
+    CanvasNodeMode.magneticPort.style.removeProperty('--node-port-magnet-y');
+  }
+  CanvasNodeMode.magneticPort = nearest?.port || null;
+  if (!nearest) return;
+  const pullX = Math.max(-6, Math.min(6, (point.clientX - nearest.centerX) * 0.22));
+  const pullY = Math.max(-6, Math.min(6, (point.clientY - nearest.centerY) * 0.22));
+  nearest.port.style.setProperty('--node-port-magnet-x', `${pullX.toFixed(2)}px`);
+  nearest.port.style.setProperty('--node-port-magnet-y', `${pullY.toFixed(2)}px`);
+  nearest.port.classList.add('is-magnetic');
+}
+
+function bindCanvasNodePortMagnetism(host) {
+  host.addEventListener('pointermove', (event) => {
+    if (event.pointerType === 'touch') return;
+    CanvasNodeMode.portMagnetPoint = { clientX: event.clientX, clientY: event.clientY };
+    if (!CanvasNodeMode.portMagnetFrame) {
+      CanvasNodeMode.portMagnetFrame = requestAnimationFrame(applyCanvasNodePortMagnet);
+    }
+  }, true);
+  host.addEventListener('pointerdown', (event) => {
+    if (event.target.closest && event.target.closest('.drawflow-node .input, .drawflow-node .output')) {
+      clearCanvasNodePortMagnet();
+    }
+  }, true);
+  host.addEventListener('pointerleave', clearCanvasNodePortMagnet, true);
+}
+
+function finishCanvasNodeInputConnection(event) {
+  const draft = CanvasNodeMode.inputConnectionDraft;
+  if (!draft || (event && event.pointerId !== undefined && event.pointerId !== draft.pointerId)) return;
+  if (event && (event.type === 'pointercancel' || event.type === 'lostpointercapture')) {
+    cancelCanvasNodeInputConnection();
+    return;
+  }
+  const host = document.getElementById('board-node-editor');
+  const mode = document.getElementById('board-node-mode');
+  const point = event && event.clientX !== undefined
+    ? { clientX: event.clientX, clientY: event.clientY }
+    : draft;
+  const distance = Math.hypot(point.clientX - draft.originClientX, point.clientY - draft.originClientY);
+  const target = document.elementFromPoint(point.clientX, point.clientY);
+  const output = target && target.closest ? target.closest('.drawflow-node .output') : null;
+  draft.path?.parentElement?.remove();
+  CanvasNodeMode.inputConnectionDraft = null;
+  if (host && host.hasPointerCapture && host.hasPointerCapture(draft.pointerId)) host.releasePointerCapture(draft.pointerId);
+  if (distance < 8) return;
+  if (output && mode && host.contains(output)) {
+    const sourceNode = output.parentElement && output.parentElement.parentElement;
+    const sourceId = sourceNode && String(sourceNode.id || '').replace(/^node-/, '');
+    const sourceClass = [...output.classList].find((name) => name.startsWith('output_')) || 'output_1';
+    if (sourceId && sourceId !== String(draft.input_id)) {
+      CanvasNodeMode.editor.addConnection(sourceId, String(draft.input_id), sourceClass, draft.input_class || 'input_1');
+      saveCanvasNodeLayout();
+    }
+    return;
+  }
+  openCanvasNodeConnectionMenu({
+    input_id: String(draft.input_id),
+    input_class: draft.input_class || 'input_1',
+    clientX: point.clientX,
+    clientY: point.clientY,
+    worldX: canvasNodeWorldPoint(point.clientX, point.clientY).x,
+    worldY: canvasNodeWorldPoint(point.clientX, point.clientY).y
+  });
+}
+
+function bindCanvasNodeInputConnections(host) {
+  host.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || CanvasNodeMode.inputConnectionDraft) return;
+    const input = event.target.closest && event.target.closest('.drawflow-node .input');
+    if (!input) return;
+    const nodeElement = input.closest('.drawflow-node');
+    const inputId = nodeElement && String(nodeElement.id || '').replace(/^node-/, '');
+    if (!inputId) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeCanvasNodeAddMenu();
+    closeCanvasNodeConnectionMenu();
+    const mode = document.getElementById('board-node-mode');
+    const rect = mode.getBoundingClientRect();
+    const inputRect = input.getBoundingClientRect();
+    const startX = inputRect.left + inputRect.width / 2 - rect.left;
+    const startY = inputRect.top + inputRect.height / 2 - rect.top;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.classList.add('board-node-link-draft');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    svg.appendChild(path);
+    mode.appendChild(svg);
+    CanvasNodeMode.inputConnectionDraft = {
+      pointerId: event.pointerId,
+      input_id: inputId,
+      input_class: [...input.classList].find((name) => name.startsWith('input_')) || 'input_1',
+      startX,
+      startY,
+      originClientX: event.clientX,
+      originClientY: event.clientY,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      path
+    };
+    updateCanvasNodeInputDraft({ clientX: event.clientX, clientY: event.clientY });
+    if (host.setPointerCapture) host.setPointerCapture(event.pointerId);
+  }, true);
+  host.addEventListener('pointermove', (event) => {
+    if (!CanvasNodeMode.inputConnectionDraft || event.pointerId !== CanvasNodeMode.inputConnectionDraft.pointerId) return;
+    event.preventDefault();
+    CanvasNodeMode.inputConnectionDraft.clientX = event.clientX;
+    CanvasNodeMode.inputConnectionDraft.clientY = event.clientY;
+    updateCanvasNodeInputDraft(event);
+  }, true);
+  host.addEventListener('pointerup', finishCanvasNodeInputConnection, true);
+  host.addEventListener('pointercancel', finishCanvasNodeInputConnection, true);
+  host.addEventListener('lostpointercapture', finishCanvasNodeInputConnection, true);
 }
 
 function observeCanvasNodeConnections(host) {
@@ -948,6 +1150,8 @@ function ensureCanvasNodeEditor() {
   bindCanvasNodePanning(host, editor);
   bindCanvasNodeMarqueeSelection(host);
   bindCanvasNodeFileDrop(host);
+  bindCanvasNodePortMagnetism(host);
+  bindCanvasNodeInputConnections(host);
   observeCanvasNodeConnections(host);
   ['pointerdown', 'pointermove', 'pointerup'].forEach((eventName) => {
     host.addEventListener(eventName, (event) => {
@@ -957,6 +1161,16 @@ function ensureCanvasNodeEditor() {
 
   ['nodeMoved', 'connectionCreated', 'connectionRemoved', 'rerouteMoved', 'nodeDataChanged'].forEach((eventName) => {
     editor.on(eventName, saveCanvasNodeLayout);
+  });
+  editor.on('nodeMoved', () => {
+    pruneCanvasNodeConnectionArtifacts();
+    if (typeof syncNodeAiComposerPosition === 'function') syncNodeAiComposerPosition();
+  });
+  editor.on('translate', () => {
+    if (typeof syncNodeAiComposerPosition === 'function') syncNodeAiComposerPosition();
+  });
+  editor.on('zoom', () => {
+    if (typeof syncNodeAiComposerPosition === 'function') syncNodeAiComposerPosition();
   });
   editor.on('nodeSelected', (nodeId) => {
     applyCanvasNodeSelection(new Set([String(nodeId)]));
@@ -987,15 +1201,24 @@ function ensureCanvasNodeEditor() {
     const point = CanvasNodeMode.connectionPointer;
     if (!draft || !point) return;
     openCanvasNodeConnectionMenu({ ...draft, ...point });
+    window.requestAnimationFrame(pruneCanvasNodeConnectionArtifacts);
   });
   editor.on('connectionCreated', () => {
     CanvasNodeMode.connectionDraft = null;
     closeCanvasNodeConnectionMenu();
     window.requestAnimationFrame(() => ensureCanvasNodeFlowPaths(host));
   });
-  editor.on('connectionRemoved', syncCanvasNodeConnectionFlow);
+  editor.on('connectionRemoved', () => {
+    pruneCanvasNodeConnectionArtifacts();
+    syncCanvasNodeConnectionFlow();
+  });
   editor.on('nodeRemoved', (nodeId) => {
     if (String(nodeId) === String(CanvasNodeMode.textEditorNodeId)) closeCanvasTextEditor({ save: false });
+    if (String(nodeId) === String(CanvasNodeMode.inputConnectionDraft?.input_id || '')) {
+      cancelCanvasNodeInputConnection();
+    }
+    const composer = typeof activeAiComposer === 'function' ? activeAiComposer() : null;
+    if (composer && String(composer.dataset.nodeAnchorId || '') === String(nodeId)) closeAiImagePopover();
     CanvasNodeMode.selectedNodeIds.delete(String(nodeId));
     CanvasNodeMode.selectedNodeId = CanvasNodeMode.selectedNodeIds.size === 1
       ? [...CanvasNodeMode.selectedNodeIds][0]
@@ -1027,7 +1250,6 @@ function ensureCanvasNodeEditor() {
     event.stopPropagation();
     if (action.dataset.nodeAction === 'settings') void openCanvasGenerationSettings(nodeId);
     else if (action.dataset.nodeAction === 'text') openCanvasTextEditor(nodeId);
-    else if (action.dataset.nodeAction === 'add-generation') openCanvasNodeMediaMenu(nodeId, action);
   });
   host.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -1040,7 +1262,6 @@ function ensureCanvasNodeEditor() {
     event.stopPropagation();
     if (action.dataset.nodeAction === 'settings') void openCanvasGenerationSettings(nodeId);
     else if (action.dataset.nodeAction === 'text') openCanvasTextEditor(nodeId);
-    else if (action.dataset.nodeAction === 'add-generation') openCanvasNodeMediaMenu(nodeId, action);
   });
   return editor;
 }
@@ -1056,10 +1277,14 @@ function applyCanvasModeVisibility() {
   if (nodeMode) nodeMode.hidden = !nodeActive;
   if (bottomBar && panel && !panel.classList.contains('is-canvas-library')) bottomBar.hidden = nodeActive;
   if (!nodeActive) {
+    const composer = typeof activeAiComposer === 'function' ? activeAiComposer() : null;
+    if (composer && composer.classList.contains('is-node-composer')) closeAiImagePopover();
     closeCanvasNodeAddMenu();
     closeCanvasNodeConnectionMenu();
     closeCanvasTextEditor();
     CanvasNodeMode.connectionDraft = null;
+    cancelCanvasNodeInputConnection();
+    clearCanvasNodePortMagnet();
     finishCanvasNodePan();
     finishCanvasNodeMarquee();
     applyCanvasNodeSelection(new Set());

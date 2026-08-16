@@ -567,8 +567,67 @@ function normalizeTopazOptions(providerId, value = {}) {
   return common;
 }
 
+const TOPAZ_STATUS_VALUES = new Set([
+  'created', 'in_queue', 'pending', 'queued', 'queueing', 'wait', 'waiting', 'submitted',
+  'processing', 'running', 'in_progress', 'generating', 'completed', 'complete', 'done',
+  'success', 'succeeded', 'failed', 'error', 'cancelled', 'canceled', 'rejected', 'expired'
+]);
+
+function topazObjectCandidates(payload, maximumDepth = 4) {
+  const candidates = [];
+  const queue = [{ value: payload, depth: 0 }];
+  const seen = new Set();
+  while (queue.length) {
+    const { value, depth } = queue.shift();
+    if (!value || typeof value !== 'object' || Array.isArray(value) || seen.has(value)) continue;
+    seen.add(value);
+    candidates.push(value);
+    if (depth >= maximumDepth) continue;
+    for (const key of ['data', 'result', 'response', 'payload', 'output', 'download']) {
+      const nested = value[key];
+      if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+        queue.push({ value: nested, depth: depth + 1 });
+      }
+    }
+  }
+  return candidates;
+}
+
+function topazResponseObject(payload, required = 'status') {
+  const candidates = topazObjectCandidates(payload);
+  let best = null;
+  let bestScore = -1;
+  for (const value of candidates) {
+    let score = 0;
+    if (['process_id', 'processId', 'request_id', 'requestId', 'task_id', 'taskId', 'job_id', 'jobId'].some((key) => Object.hasOwn(value, key))) score += 8;
+    if (['credits', 'cost', 'provider_cost', 'providerCost'].some((key) => Object.hasOwn(value, key))) score += 4;
+    if (['status', 'state', 'task_status', 'taskStatus'].some((key) => TOPAZ_STATUS_VALUES.has(String(value[key] || '').trim().toLowerCase().replace(/[ -]+/g, '_')))) score += 8;
+    if (['progress', 'percentage', 'progress_percent', 'progressPercent'].some((key) => Object.hasOwn(value, key))) score += 2;
+    if (['download_url', 'downloadUrl', 'url'].some((key) => typeof value[key] === 'string' && value[key].trim())) score += required === 'download' ? 10 : 1;
+    if (score > bestScore) {
+      best = value;
+      bestScore = score;
+    }
+  }
+  if (!best || bestScore <= 0) {
+    throw imageToolError('ai302-invalid-response', 'The Topaz service returned an invalid response.', 502);
+  }
+  return best;
+}
+
+function topazField(payload, names, required = 'status') {
+  for (const value of topazObjectCandidates(payload)) {
+    for (const name of names) {
+      if (value[name] !== undefined && value[name] !== null && value[name] !== '') return value[name];
+    }
+  }
+  return undefined;
+}
+
 function topazProcessId(payload) {
-  const processId = String(payload && payload.process_id || '').trim().toLowerCase();
+  const processId = String(topazField(payload, [
+    'process_id', 'processId', 'request_id', 'requestId', 'task_id', 'taskId', 'job_id', 'jobId'
+  ], 'create') || '').trim().toLowerCase();
   if (!validUuid(processId)) {
     throw imageToolError('ai302-invalid-response', 'Topaz did not return a valid process identifier.', 502);
   }
@@ -608,7 +667,7 @@ export async function submitTopazImageTool({ modelId, imageDataUrl, toolOptions,
       body: JSON.stringify(requestBody)
     }, requestDependencies);
     const processId = topazProcessId(payload);
-    const providerCost = Number(payload.credits);
+    const providerCost = Number(topazField(payload, ['credits', 'cost', 'provider_cost', 'providerCost'], 'create'));
     if (!Number.isInteger(providerCost) || providerCost < 0 || providerCost > 1_000_000) {
       throw imageToolError('ai302-invalid-response', 'Topaz did not return a valid credit cost.', 502);
     }
@@ -666,13 +725,18 @@ export async function pollTopazImageTool({ taskToken, userId } = {}, options = {
   const payload = await fetch302Json(`${TOPAZ_STATUS_PATH}/${encodeURIComponent(task.requestId)}`, {
     method: 'GET'
   }, requestDependencies);
-  const status = normalizeTopazStatus(payload.status);
+  const statusPayload = topazResponseObject(payload);
+  let status = normalizeTopazStatus(topazField(statusPayload, [
+    'status', 'state', 'task_status', 'taskStatus'
+  ]));
   let urls = [];
   if (status === 'succeeded') {
     const download = await fetch302Json(`${TOPAZ_DOWNLOAD_PATH}/${encodeURIComponent(task.requestId)}`, {
       method: 'GET'
     }, requestDependencies);
-    urls = [validateAssetUrl(download.download_url).toString()];
+    const downloadUrl = topazField(download, ['download_url', 'downloadUrl', 'url'], 'download');
+    if (downloadUrl) urls = [validateAssetUrl(String(downloadUrl).trim()).toString()];
+    else status = 'processing';
   }
   const settlement = ['succeeded', 'failed'].includes(status) && typeof options.settleCredits === 'function'
     ? await options.settleCredits({
@@ -686,10 +750,16 @@ export async function pollTopazImageTool({ taskToken, userId } = {}, options = {
   }
   return {
     status,
-    progress: Math.max(0, Math.min(100, Math.round(Number(payload.progress) || (status === 'succeeded' ? 100 : 0)))),
+    progress: Math.max(0, Math.min(100, Math.round(Number(topazField(statusPayload, [
+      'progress', 'percentage', 'progress_percent', 'progressPercent'
+    ])) || (status === 'succeeded' ? 100 : 0)))),
     retryAfterMs: ['succeeded', 'failed'].includes(status) ? 0 : 5000,
     urls,
-    providerCost: Number.isFinite(Number(payload.credits)) ? Number(payload.credits) : undefined,
+    providerCost: Number.isFinite(Number(topazField(statusPayload, [
+      'credits', 'cost', 'provider_cost', 'providerCost'
+    ]))) ? Number(topazField(statusPayload, [
+      'credits', 'cost', 'provider_cost', 'providerCost'
+    ])) : undefined,
     ...(settlement && Number.isFinite(Number(settlement.creditsCharged))
       ? { creditsCharged: Number(settlement.creditsCharged) }
       : {}),

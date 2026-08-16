@@ -911,6 +911,70 @@ test('Topaz accepts wrapped 302 responses and derives progress from processing j
   assert.deepEqual(downloaded, output);
 });
 
+test('Topaz video accepts snake_case jobs and waits for a delayed download URL', async () => {
+  const created = await createVideoUpscaleTask({
+    videoDataUrl: videoDataUrl(mp4Fixture()),
+    toolOptions: { output: { resolution: { width: 1920, height: 1080 } } },
+    userId: 'delayed-topaz-user'
+  }, {
+    apiKey: 'server-only-302-key',
+    taskSecret: 'delayed-topaz-secret',
+    publicBaseUrl: 'https://gateway.example.com',
+    now: 1_800_000_000_000,
+    fetchImpl: async () => jsonResponse({ data: { process_id: 'delayed-topaz-request', credits: 5 } }),
+    reserveCredits: async ({ credits, providerCost }) => ({ ok: credits === 15 && providerCost === 5 })
+  });
+
+  const waiting = await getVideoUpscaleStatus({
+    taskToken: created.taskToken,
+    userId: 'delayed-topaz-user'
+  }, {
+    apiKey: 'server-only-302-key',
+    taskSecret: 'delayed-topaz-secret',
+    now: 1_800_000_002_000,
+    touchCredits: async () => ({ ok: true }),
+    settleCredits: async () => { throw new Error('A completed job without a URL must not settle.'); },
+    fetchImpl: async () => jsonResponse({
+      response: {
+        processing_jobs: [{ task_status: 'complete', progress_percent: 100 }]
+      }
+    })
+  });
+  assert.deepEqual(waiting, {
+    status: 'processing',
+    progress: 100,
+    retryAfterMs: 5_000,
+    credits: 15,
+    providerCost: 5
+  });
+
+  const completed = await getVideoUpscaleStatus({
+    taskToken: created.taskToken,
+    userId: 'delayed-topaz-user'
+  }, {
+    apiKey: 'server-only-302-key',
+    taskSecret: 'delayed-topaz-secret',
+    now: 1_800_000_004_000,
+    touchCredits: async () => ({ ok: true }),
+    settleCredits: async ({ status }) => ({ ok: status === 'succeeded', creditsCharged: 15 }),
+    fetchImpl: async () => jsonResponse({
+      payload: {
+        taskStatus: 'complete',
+        progressPercent: 100,
+        download_url: 'https://file.302.ai/video/delayed-result.mov'
+      }
+    })
+  });
+  assert.deepEqual(completed, {
+    status: 'succeeded',
+    progress: 100,
+    retryAfterMs: 0,
+    credits: 15,
+    providerCost: 5,
+    creditsCharged: 15
+  });
+});
+
 test('Topaz video inputs and output options fail closed', () => {
   const input = mp4Fixture();
   assert.deepEqual(parseVideoDataUrl(videoDataUrl(input)).buffer, input);

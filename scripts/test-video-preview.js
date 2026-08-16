@@ -32,8 +32,18 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /function requestPlayback\(\)[\s\S]*?HAVE_CURRENT_DATA[\s\S]*?loadeddata[\s\S]*?canplay[\s\S]*?video\.load\(\)/,
-  'Canvas video hover playback must wait for decodable data and retry instead of swallowing an early play rejection.'
+  /function armReadyPlaybackRetry\(request\)[\s\S]*?loadeddata[\s\S]*?canplay[\s\S]*?function requestPlayback\(request = playRequest\)[\s\S]*?HAVE_CURRENT_DATA[\s\S]*?video\.load\(\)/,
+  'Canvas video playback must wait for decodable data without stacking duplicate ready listeners.'
+);
+assert.match(
+  boardSource,
+  /content\.addEventListener\('click',[\s\S]*?Board\.lastDragEndedAt[\s\S]*?ensurePlayer\(\)[\s\S]*?_boardPlayPreview/,
+  'A non-drag primary click must start canvas video playback immediately.'
+);
+assert.match(
+  boardSource,
+  /let activePlayPromise = null;[\s\S]*?if \(activePlayPromise\) return;[\s\S]*?playbackRetries \+= 1[\s\S]*?playbackRetries > 2[\s\S]*?recoverPlayableSource/,
+  'Interrupted play requests must retry idempotently before falling back to a compatible transcode.'
 );
 assert.match(
   boardSource,
@@ -122,8 +132,15 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /async function addGeneratedMediaFile[\s\S]*?\.part`\)[\s\S]*?handle\.sync\(\)[\s\S]*?rename\(temporaryPath, storedPath\)[\s\S]*?validateVideoFile\(storedPath\)[\s\S]*?transcodeVideoToWebCompatible\(storedPath, previewCacheDir, id\)/,
-  'Generated videos must be atomically archived, decoded and made browser-compatible before success is returned.'
+  /async function addGeneratedMediaFile[\s\S]*?\.part`\)[\s\S]*?handle\.sync\(\)[\s\S]*?rename\(temporaryPath, storedPath\)[\s\S]*?validateVideoFile\(storedPath\)[\s\S]*?transcodeVideoToWebCompatible\(storedPath, previewCacheDir, id\)[\s\S]*?videoPreviewError[\s\S]*?store\.addFile\(record\)/,
+  'Generated videos must be atomically archived and retained even when initial preview preparation fails.'
+);
+const generatedMediaFunction = mainSource.match(/async function addGeneratedMediaFile[\s\S]*?\r?\n}\r?\n\r?\nfunction addGeneratedMediaBoardItem/);
+assert.ok(generatedMediaFunction, 'Generated media archival function must remain inspectable.');
+assert.doesNotMatch(
+  generatedMediaFunction[0],
+  /catch \(error\) \{[\s\S]{0,500}?rm\(storedPath/,
+  'A preview or codec failure must never delete an already downloaded paid video.'
 );
 assert.match(
   mainSource,

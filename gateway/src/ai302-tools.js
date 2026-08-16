@@ -1209,17 +1209,19 @@ export function normalizeVideoUpscaleOptions(value = {}) {
 function normalizeTopazVideoStatus(job) {
   const resultUrl = topazDownloadUrl(job);
   if (resultUrl) return 'succeeded';
-  const raw = String(job && job.status || '').trim().toUpperCase().replace(/[ -]+/g, '_');
+  const raw = String(topazField(job, ['status', 'state', 'taskStatus', 'task_status']) || '')
+    .trim().toUpperCase().replace(/[ -]+/g, '_');
   if (QUEUED_STATES.has(raw) || ['UPLOADING', 'ACCEPTED', 'SUBMITTED'].includes(raw)) return 'queued';
   if (PROCESSING_STATES.has(raw) || ['ENCODING', 'ENHANCING'].includes(raw)) return 'processing';
-  if (SUCCESS_STATES.has(raw) || ['COMPLETE', 'FINISHED', 'READY'].includes(raw)) return 'succeeded';
+  if (SUCCESS_STATES.has(raw) || ['COMPLETE', 'FINISHED', 'READY'].includes(raw)) return 'processing';
   if (FAILURE_STATES.has(raw) || ['ABORTED', 'REJECTED'].includes(raw)) return 'failed';
-  const childStatuses = Array.isArray(job && job.processingJobs)
-    ? job.processingJobs.map((entry) => String(entry && entry.status || '').trim().toUpperCase().replace(/[ -]+/g, '_')).filter(Boolean)
+  const processingJobs = topazProcessingJobs(job);
+  const childStatuses = processingJobs.length
+    ? processingJobs.map((entry) => String(topazField(entry, ['status', 'state', 'taskStatus', 'task_status']) || '').trim().toUpperCase().replace(/[ -]+/g, '_')).filter(Boolean)
     : [];
   if (childStatuses.length) {
     if (childStatuses.some((status) => FAILURE_STATES.has(status) || ['ABORTED', 'REJECTED'].includes(status))) return 'failed';
-    if (childStatuses.every((status) => SUCCESS_STATES.has(status) || ['COMPLETE', 'FINISHED', 'READY'].includes(status))) return 'succeeded';
+    if (childStatuses.every((status) => SUCCESS_STATES.has(status) || ['COMPLETE', 'FINISHED', 'READY'].includes(status))) return 'processing';
     if (childStatuses.some((status) => PROCESSING_STATES.has(status) || ['ENCODING', 'ENHANCING'].includes(status))) return 'processing';
     if (childStatuses.every((status) => QUEUED_STATES.has(status) || ['UPLOADING', 'ACCEPTED', 'SUBMITTED'].includes(status))) return 'queued';
   }
@@ -1229,13 +1231,13 @@ function normalizeTopazVideoStatus(job) {
 function topazPayloadScore(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return -1;
   let score = 0;
-  if (['requestId', 'request_id', 'taskId', 'task_id', 'jobId', 'job_id'].some((key) => Object.hasOwn(value, key))) score += 5;
-  if (['cost', 'providerCost', 'provider_cost'].some((key) => Object.hasOwn(value, key))) score += 4;
-  if (Object.hasOwn(value, 'processingJobs')) score += 4;
+  if (['requestId', 'request_id', 'taskId', 'task_id', 'jobId', 'job_id', 'processId', 'process_id'].some((key) => Object.hasOwn(value, key))) score += 5;
+  if (['cost', 'credits', 'providerCost', 'provider_cost'].some((key) => Object.hasOwn(value, key))) score += 4;
+  if (Object.hasOwn(value, 'processingJobs') || Object.hasOwn(value, 'processing_jobs')) score += 4;
   if (Object.hasOwn(value, 'download')) score += 3;
-  if (Object.hasOwn(value, 'output') || Object.hasOwn(value, 'url')) score += 2;
-  if (Object.hasOwn(value, 'progress')) score += 1;
-  const status = String(value.status || '').trim().toUpperCase().replace(/[ -]+/g, '_');
+  if (Object.hasOwn(value, 'output') || Object.hasOwn(value, 'url') || Object.hasOwn(value, 'download_url') || Object.hasOwn(value, 'downloadUrl')) score += 2;
+  if (['progress', 'percentage', 'progressPercent', 'progress_percent'].some((key) => Object.hasOwn(value, key))) score += 1;
+  const status = String(topazField(value, ['status', 'state', 'taskStatus', 'task_status']) || '').trim().toUpperCase().replace(/[ -]+/g, '_');
   if (
     QUEUED_STATES.has(status) || PROCESSING_STATES.has(status) || SUCCESS_STATES.has(status) || FAILURE_STATES.has(status)
     || ['UPLOADING', 'ACCEPTED', 'SUBMITTED', 'ENCODING', 'ENHANCING', 'COMPLETE', 'FINISHED', 'READY', 'ABORTED', 'REJECTED'].includes(status)
@@ -1243,22 +1245,52 @@ function topazPayloadScore(value) {
   return score;
 }
 
+function topazObjectCandidates(payload, maximumDepth = 4) {
+  const candidates = [];
+  const queue = [{ value: payload, depth: 0 }];
+  const seen = new Set();
+  while (queue.length) {
+    const { value, depth } = queue.shift();
+    if (!value || typeof value !== 'object' || Array.isArray(value) || seen.has(value)) continue;
+    seen.add(value);
+    candidates.push(value);
+    if (depth >= maximumDepth) continue;
+    for (const key of ['data', 'result', 'response', 'payload', 'output', 'download']) {
+      const nested = value[key];
+      if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+        queue.push({ value: nested, depth: depth + 1 });
+      }
+    }
+  }
+  return candidates;
+}
+
+function topazField(payload, names) {
+  for (const value of topazObjectCandidates(payload)) {
+    for (const name of names) {
+      if (value[name] !== undefined && value[name] !== null && value[name] !== '') return value[name];
+    }
+  }
+  return undefined;
+}
+
+function topazProcessingJobs(payload) {
+  for (const value of topazObjectCandidates(payload)) {
+    const jobs = value.processingJobs || value.processing_jobs;
+    if (Array.isArray(jobs)) return jobs.filter((entry) => entry && typeof entry === 'object');
+  }
+  return [];
+}
+
 function topazResponseObject(payload) {
-  let value = payload;
   let best = null;
   let bestScore = -1;
-  for (let depth = 0; depth < 3; depth += 1) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) break;
+  for (const value of topazObjectCandidates(payload)) {
     const score = topazPayloadScore(value);
     if (score > bestScore) {
       best = value;
       bestScore = score;
     }
-    const nested = ['data', 'result', 'response']
-      .map((key) => value[key])
-      .find((entry) => entry && typeof entry === 'object' && !Array.isArray(entry));
-    if (!nested) break;
-    value = nested;
   }
   if (!best || bestScore <= 0) {
     throw toolError('ai302-invalid-response', 'The video enhancement service returned an invalid response.', 502);
@@ -1267,23 +1299,25 @@ function topazResponseObject(payload) {
 }
 
 function topazDownloadUrl(payload) {
-  const job = topazResponseObject(payload);
-  const candidates = [
-    job.download && job.download.url,
-    typeof job.download === 'string' ? job.download : '',
-    job.output && job.output.url,
-    job.result && job.result.url,
-    job.url
-  ];
-  return String(candidates.find((value) => typeof value === 'string' && value.trim()) || '').trim();
+  for (const value of topazObjectCandidates(payload)) {
+    const candidates = [
+      value.download_url,
+      value.downloadUrl,
+      value.url,
+      typeof value.download === 'string' ? value.download : ''
+    ];
+    const found = candidates.find((entry) => typeof entry === 'string' && entry.trim());
+    if (found) return found.trim();
+  }
+  return '';
 }
 
 function topazProgress(job, status) {
-  const direct = Number(job && job.progress);
+  const direct = Number(topazField(job, ['progress', 'percentage', 'progressPercent', 'progress_percent']));
   if (Number.isFinite(direct)) return Math.max(0, Math.min(100, Math.round(direct)));
-  const childProgress = Array.isArray(job && job.processingJobs)
-    ? job.processingJobs.map((entry) => Number(entry && entry.progress)).filter(Number.isFinite)
-    : [];
+  const childProgress = topazProcessingJobs(job)
+    .map((entry) => Number(topazField(entry, ['progress', 'percentage', 'progressPercent', 'progress_percent'])))
+    .filter(Number.isFinite);
   if (childProgress.length) {
     return Math.max(0, Math.min(100, Math.round(childProgress.reduce((total, value) => total + value, 0) / childProgress.length)));
   }
@@ -1843,10 +1877,10 @@ export async function createVideoUpscaleTask({ videoDataUrl, videoAsset, toolOpt
       timeoutMs: LONG_RUNNING_REQUEST_TIMEOUT_MS
     });
     const result = topazResponseObject(payload);
-    const providerJobId = String(
-      result.requestId || result.request_id || result.taskId || result.task_id || result.jobId || result.job_id || ''
-    ).trim();
-    const providerCost = Number(result.cost ?? result.providerCost ?? result.provider_cost);
+    const providerJobId = String(topazField(result, [
+      'requestId', 'request_id', 'taskId', 'task_id', 'jobId', 'job_id', 'processId', 'process_id'
+    ]) || '').trim();
+    const providerCost = Number(topazField(result, ['cost', 'credits', 'providerCost', 'provider_cost']));
     if (!providerJobId || providerJobId.length > 512 || /[\u0000-\u001f\u007f]/.test(providerJobId)
         || !Number.isInteger(providerCost) || providerCost < 0 || providerCost > 1_000_000) {
       throw toolError('ai302-invalid-response', 'The video enhancement service did not return a valid task.', 502);

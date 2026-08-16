@@ -63,8 +63,18 @@ assert.match(source, /event\.target\.closest\('\.drawflow-node, \.connection, \.
 assert.match(styles, /\.board-node-add-menu \{[\s\S]*?position:\s*absolute;[\s\S]*?width:\s*252px/);
 
 assert.match(source, /openAiComposerForSelection\(node\.data\.kind, inputs\.prompt,[\s\S]*?placeOnBoard: false/);
-assert.match(source, /canvasGenerateNodeMarkup[\s\S]*?data-node-action="add-generation"/,
-  'Generation previews need a trailing add control like media nodes.');
+assert.doesNotMatch(source, /class="canvas-node-add-media/,
+  'Node markup must not stack an extra circular add button over Drawflow ports.');
+assert.match(styles, /\.drawflow-node \.input::after,[\s\S]*?\.drawflow-node \.output::after \{[\s\S]*?content:\s*'\+'/,
+  'Both real Drawflow ports must render as plus controls.');
+assert.match(source, /function bindCanvasNodeInputConnections[\s\S]*?\.drawflow-node \.input[\s\S]*?board-node-link-draft[\s\S]*?finishCanvasNodeInputConnection/,
+  'Dragging the left plus must draw a reverse connection draft.');
+assert.match(source, /function bindCanvasNodePortMagnetism[\s\S]*?pointermove[\s\S]*?applyCanvasNodePortMagnet/,
+  'Node ports must expose a proximity magnet without moving the connection anchor.');
+assert.match(styles, /--node-port-magnet-x:[\s\S]*?\.input\.is-magnetic[\s\S]*?\.output\.is-magnetic/,
+  'Magnetic port styling must be shared by both sides of every node.');
+assert.match(source, /draft\.input_id[\s\S]*?Text prompt[\s\S]*?Image generation[\s\S]*?Video generation/,
+  'Dropping a left connection on empty canvas must offer upstream node choices.');
 assert.match(boardSource, /generationHooks\.placeOnBoard === false\) request\.placeOnBoard = false/);
 assert.match(boardSource, /const placeOnBoard = request\.placeOnBoard !== false/);
 assert.match(boardSource, /const placeholders = placeOnBoard \? createAiPlaceholders\(generationRequest\) : \[\]/);
@@ -72,7 +82,12 @@ assert.match(boardSource, /if \(placeOnBoard\) \{[\s\S]*?replaceAiPlaceholders[\
 assert.match(mainSource, /const boardItem = request\.placeOnBoard === false[\s\S]*?\? null[\s\S]*?: addGeneratedMediaBoardItem/,
   'The main process must archive node outputs without adding ordinary board items.');
 assert.match(boardSource, /nodeComposer[\s\S]*?getElementById\(nodeComposer \? 'board-node-mode' : 'board-viewport'\)/);
-assert.match(styles, /\.ai-image-popover\.ai-composer\.is-node-composer[\s\S]*?bottom:\s*22px/);
+assert.match(boardSource, /function anchorAiComposerToNode[\s\S]*?nodeAnchorId[\s\S]*?MutationObserver[\s\S]*?syncNodeAiComposerPosition/);
+assert.match(source, /openCanvasGenerationSettings[\s\S]*?nodeAnchorId:\s*String\(nodeId\)/,
+  'Generation settings must follow the selected generation node.');
+assert.match(styles, /\.ai-image-popover\.ai-composer\.is-node-composer \{[\s\S]*?bottom:\s*auto/);
+assert.match(source, /function pruneCanvasNodeConnectionArtifacts[\s\S]*?canvasNodeConnectionDetails[\s\S]*?connection\.remove\(\)/,
+  'Orphaned SVG connections must be removed instead of leaving horizontal paint artifacts.');
 
 assert.match(source, /function removeSelectedCanvasNodes\(\)[\s\S]*?editor\.removeNodeId/);
 assert.match(source, /event\.key !== 'Delete' && event\.key !== 'Backspace'[\s\S]*?stopImmediatePropagation\(\)[\s\S]*?removeSelectedCanvasNodes\(\)/,

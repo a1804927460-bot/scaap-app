@@ -111,6 +111,73 @@ async function main() {
   await new Promise((resolve) => setTimeout(resolve, 120));
   const nodeShot = await win.webContents.capturePage();
   fs.writeFileSync(path.join(outputDir, 'nodes-live.png'), nodeShot.toPNG());
+
+  const ports = await win.webContents.executeJavaScript(`(()=>{
+    const generation=Object.entries(canvasNodeData()).find(([,node])=>node.data.nodeRole==='generate');
+    const element=document.getElementById('node-'+generation[0]);
+    const input=element.querySelector('.input');
+    const output=element.querySelector('.output');
+    const rect=(target)=>{const value=target.getBoundingClientRect();return {x:value.x+value.width/2,y:value.y+value.height/2};};
+    return {
+      input:rect(input),
+      output:rect(output),
+      inputMark:getComputedStyle(input,'::after').content,
+      outputMark:getComputedStyle(output,'::after').content,
+      inputRadius:getComputedStyle(input).borderRadius,
+      outputRadius:getComputedStyle(output).borderRadius,
+      legacyButtons:element.querySelectorAll('.canvas-node-add-media').length
+    };
+  })()`);
+  if (!ports.inputMark.includes('+') || !ports.outputMark.includes('+') || ports.legacyButtons !== 0 ||
+      ports.inputRadius !== '50%' || ports.outputRadius !== '50%') {
+    throw new Error(`Node ports are not the single plus controls: ${JSON.stringify(ports)}`);
+  }
+
+  win.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(ports.input.x - 42), y: Math.round(ports.input.y), movementX: -42, movementY: 0 });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const magnet = await win.webContents.executeJavaScript(`(()=>{
+    const generation=Object.entries(canvasNodeData()).find(([,node])=>node.data.nodeRole==='generate');
+    const input=document.querySelector('#node-'+generation[0]+' .input');
+    return {
+      active:input.classList.contains('is-magnetic'),
+      pullX:input.style.getPropertyValue('--node-port-magnet-x'),
+      pullY:input.style.getPropertyValue('--node-port-magnet-y')
+    };
+  })()`);
+  if (!magnet.active || !magnet.pullX || !magnet.pullY) {
+    throw new Error(`Node port did not magnetize near the pointer: ${JSON.stringify(magnet)}`);
+  }
+
+  win.webContents.sendInputEvent({ type: 'mouseDown', x: Math.round(ports.input.x), y: Math.round(ports.input.y), button: 'left', clickCount: 1 });
+  win.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(ports.input.x - 150), y: Math.round(ports.input.y - 150), movementX: -150, movementY: -150 });
+  win.webContents.sendInputEvent({ type: 'mouseUp', x: Math.round(ports.input.x - 150), y: Math.round(ports.input.y - 150), button: 'left', clickCount: 1 });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const leftMenu = await win.webContents.executeJavaScript(`({
+    choices:[...document.querySelectorAll('.board-node-connection-menu button')].map((button)=>button.textContent.trim()),
+    drafts:document.querySelectorAll('.board-node-link-draft').length,
+    orphanConnections:[...document.querySelectorAll('.drawflow .connection')].filter((connection)=>connection.classList.length<5).length
+  })`);
+  if (leftMenu.choices.join('|') !== 'Text prompt|Image generation|Video generation' || leftMenu.drafts || leftMenu.orphanConnections) {
+    throw new Error(`Left plus drag did not produce a clean upstream menu: ${JSON.stringify(leftMenu)}`);
+  }
+  await win.webContents.executeJavaScript(`closeCanvasNodeConnectionMenu()`);
+
+  win.webContents.sendInputEvent({ type: 'mouseDown', x: Math.round(ports.output.x), y: Math.round(ports.output.y), button: 'left', clickCount: 1 });
+  win.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(ports.output.x + 150), y: Math.round(ports.output.y - 150), movementX: 150, movementY: -150 });
+  win.webContents.sendInputEvent({ type: 'mouseUp', x: Math.round(ports.output.x + 150), y: Math.round(ports.output.y - 150), button: 'left', clickCount: 1 });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const rightMenu = await win.webContents.executeJavaScript(`({
+    choices:[...document.querySelectorAll('.board-node-connection-menu button')].map((button)=>button.textContent.trim()),
+    drafts:document.querySelectorAll('.board-node-link-draft').length,
+    orphanConnections:[...document.querySelectorAll('.drawflow .connection')].filter((connection)=>connection.classList.length<5).length
+  })`);
+  if (rightMenu.choices.join('|') !== 'Image generation|Video generation' || rightMenu.drafts || rightMenu.orphanConnections) {
+    throw new Error(`Right plus drag did not produce a clean downstream menu: ${JSON.stringify(rightMenu)}`);
+  }
+  const portsShot = await win.webContents.capturePage();
+  fs.writeFileSync(path.join(outputDir, 'plus-connection-menu.png'), portsShot.toPNG());
+  await win.webContents.executeJavaScript(`closeCanvasNodeConnectionMenu()`);
+
   const deletion = await win.webContents.executeJavaScript(`new Promise((resolve)=>{
     const mediaEntry=Object.entries(canvasNodeData()).find(([,node])=>node.data.fileId==='portrait');
     applyCanvasNodeSelection(new Set([mediaEntry[0]]));

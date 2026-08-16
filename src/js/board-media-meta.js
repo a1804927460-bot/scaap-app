@@ -57,6 +57,7 @@ let boardButlerPanelClickCloser = null;
 let boardButlerPanelKeyHandler = null;
 const BoardButlerTasks = new Map();
 const BOARD_BUTLER_MAX_POLLS = 360;
+const BOARD_BUTLER_MAX_TRANSIENT_RETRIES = 5;
 const BOARD_BUTLER_MAX_VIDEO_BYTES = 48 * 1024 * 1024;
 const BOARD_BUTLER_VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.webm', '.mkv']);
 
@@ -398,10 +399,13 @@ function boardButlerError(result, fallback) {
 }
 
 function isTransientBoardButlerStatusFailure(result) {
+  const httpStatus = Number(result && (result.httpStatus ?? result.statusCode));
+  if (Number.isInteger(httpStatus) && httpStatus >= 400 && httpStatus < 500 && httpStatus !== 429) return false;
   const reason = String(result && (result.reason || result.errorCode || result.code) || '').trim().toLowerCase();
   return [
     'ai302-invalid-response', 'ai302-upstream-error', 'ai302-timeout',
-    'ai302-unavailable', 'gateway-request-failed', 'rate-limited'
+    'ai302-unavailable', 'ai302-rate-limited', 'gateway-request-failed',
+    'gateway-timeout', 'invalid-gateway-response', 'rate-limited'
   ].includes(reason);
 }
 
@@ -412,6 +416,29 @@ function boardButlerPollDelay(value) {
 
 function waitForBoardButlerPoll(delay) {
   return new Promise((resolve) => window.setTimeout(resolve, delay));
+}
+
+async function invokeBoardButlerWithTransientRetry(invoke, state, fileId) {
+  let result;
+  for (let failure = 0; failure <= BOARD_BUTLER_MAX_TRANSIENT_RETRIES; failure += 1) {
+    try {
+      result = await invoke();
+    } catch (error) {
+      result = {
+        ok: false,
+        reason: error && error.code || 'gateway-request-failed',
+        message: error && error.message,
+        httpStatus: error && error.status
+      };
+    }
+    if (result && result.ok) return result;
+    if (!isTransientBoardButlerStatusFailure(result) || failure >= BOARD_BUTLER_MAX_TRANSIENT_RETRIES) return result;
+    state.phase = 'reconnecting';
+    syncBoardButlerTaskUi(fileId);
+    const exponentialDelay = Math.min(10_000, 800 * (2 ** failure));
+    await waitForBoardButlerPoll(Math.max(exponentialDelay, boardButlerPollDelay(result && result.retryAfterMs)));
+  }
+  return result;
 }
 
 async function placeBoardButlerResult(file, sourceItem, action) {
@@ -517,7 +544,11 @@ async function resolveBoardButlerImageToolResult(api, hook, initialResult, state
     state.phase = status === 'queued' ? 'queued' : 'processing';
     syncBoardButlerTaskUi(fileId);
     await waitForBoardButlerPoll(retryAfterMs);
-    result = await api.getImageToolStatus(taskToken, hook.toolId);
+    result = await invokeBoardButlerWithTransientRetry(
+      () => api.getImageToolStatus(taskToken, hook.toolId),
+      state,
+      fileId
+    );
     if (!result || !result.ok) {
       throw boardButlerError(result, t(
         'Could not check image processing.',
@@ -543,7 +574,11 @@ async function resolveBoardButlerImageToolResult(api, hook, initialResult, state
   if (typeof api.downloadImageToolResult !== 'function') return [];
   state.phase = 'downloading';
   syncBoardButlerTaskUi(fileId);
-  const downloaded = await api.downloadImageToolResult(taskToken, hook.toolId);
+  const downloaded = await invokeBoardButlerWithTransientRetry(
+    () => api.downloadImageToolResult(taskToken, hook.toolId),
+    state,
+    fileId
+  );
   if (!downloaded || !downloaded.ok) {
     throw boardButlerError(downloaded, t('Could not save the processed image.', '无法保存处理后的图片。', '처리된 이미지를 저장하지 못했습니다.'));
   }
@@ -649,7 +684,11 @@ async function resolveBoardButlerVideoToolResult(api, hook, initialResult, state
     state.phase = status === 'queued' ? 'queued' : 'processing';
     syncBoardButlerTaskUi(fileId);
     await waitForBoardButlerPoll(retryAfterMs);
-    result = await api.getVideoToolStatus(taskToken, hook.toolId);
+    result = await invokeBoardButlerWithTransientRetry(
+      () => api.getVideoToolStatus(taskToken, hook.toolId),
+      state,
+      fileId
+    );
     if (!result || !result.ok) {
       throw boardButlerError(result, t(
         'Could not check video enhancement.',
@@ -673,7 +712,11 @@ async function resolveBoardButlerVideoToolResult(api, hook, initialResult, state
   if (typeof api.downloadVideoToolResult !== 'function') return [];
   state.phase = 'downloading';
   syncBoardButlerTaskUi(fileId);
-  const downloaded = await api.downloadVideoToolResult(taskToken, hook.toolId);
+  const downloaded = await invokeBoardButlerWithTransientRetry(
+    () => api.downloadVideoToolResult(taskToken, hook.toolId),
+    state,
+    fileId
+  );
   if (!downloaded || !downloaded.ok) {
     throw boardButlerError(downloaded, t('Could not save the enhanced video.', '无法保存超清视频。', '고화질 비디오를 저장하지 못했습니다.'));
   }

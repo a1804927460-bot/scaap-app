@@ -69,14 +69,29 @@ const gptImage2Provider = config.providers.find((provider) => provider.id === 'i
 assert.equal(gptImage2Provider.name, 'GPT Image 2');
 assert.equal(gptImage2Provider.model, 'gpt-image-2');
 assert.equal(gptImage2Provider.protocol, 'openai-image');
-assert.deepEqual(gptImage2Provider.capabilities.sizes, ['1024x1024', '1536x1024', '1024x1536', 'auto']);
+assert.equal(gptImage2Provider.capabilities.sizes.length, 30);
+for (const requiredSize of [
+  '1024x1024', '2880x2880', '1920x1080', '3840x2160', '1080x1920', '2160x3840',
+  '3200x2000', '2000x3200', '3840x1920', '1920x3840', '3200x2400', '2400x3200',
+  '3200x2560', '2560x3200', '3780x1620', 'auto'
+]) {
+  assert.equal(gptImage2Provider.capabilities.sizes.includes(requiredSize), true, `${requiredSize} must be exposed for GPT Image 2.`);
+}
 assert.deepEqual(gptImage2Provider.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
-assert.deepEqual(gptImage2Provider.capabilities.sizeRatios, {
-  '1024x1024': '1:1',
-  '1536x1024': '3:2',
-  '1024x1536': '2:3',
-  auto: 'auto'
-});
+assert.deepEqual(gptImage2Provider.capabilities.ratios, [
+  'auto', '1:1', '16:9', '9:16', '16:10', '10:16', '2:1', '1:2',
+  '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9'
+]);
+assert.equal(gptImage2Provider.capabilities.arbitrarySizes, true);
+assert.equal(gptImage2Provider.capabilities.maxSizeEdge, 3840);
+assert.equal(gptImage2Provider.capabilities.maxSizePixels, 8_300_000);
+for (const size of gptImage2Provider.capabilities.sizes.filter((value) => value !== 'auto')) {
+  const [width, height] = size.split('x').map(Number);
+  const [ratioWidth, ratioHeight] = gptImage2Provider.capabilities.sizeRatios[size].split(':').map(Number);
+  assert.ok(width <= 3840 && height <= 3840, `${size} exceeds the GPT Image 2 edge limit.`);
+  assert.ok(width * height <= 8_300_000, `${size} exceeds the GPT Image 2 pixel limit.`);
+  assert.ok(Math.abs((width / height) - (ratioWidth / ratioHeight)) < 1e-9, `${size} has an incorrect ratio mapping.`);
+}
 assert.equal(gptImage2Provider.capabilities.promptMaxCharacters, 1000);
 assert.equal(gptImage2Provider.capabilities.referencePromptMaxCharacters, 32000);
 assert.deepEqual(gptImage2Provider.capabilities.referenceMimeTypes, ['image/png', 'image/jpeg', 'image/webp']);
@@ -89,6 +104,11 @@ assert.match(
   gatewayServerSource,
   /const sizeRatios = capabilities\.sizeRatios[\s\S]*?mappedRatio !== requestedRatio[\s\S]*?invalid-size-ratio/,
   'Gateway must reject contradictory mapped image sizes and ratios.'
+);
+assert.match(
+  gatewayServerSource,
+  /arbitrarySizes[\s\S]*?maxSizeEdge[\s\S]*?maxSizePixels[\s\S]*?imageDimensionsWithinCapabilities\(requestedSize, capabilities\)/,
+  'Gateway must allow bounded arbitrary GPT Image 2 dimensions.'
 );
 assert.deepEqual(
   config.providers.find((provider) => provider.id === 'video-1').capabilities.resolutions,
@@ -273,6 +293,7 @@ await assert.rejects(
 );
 
 const gptImageCalls = [];
+const providerOverridesBeforeWrapped = process.env.AI_PROVIDERS_JSON;
 globalThis.fetch = async (url, options = {}) => {
   gptImageCalls.push({ url: String(url), options });
   return jsonResponse({ data: [{ b64_json: 'iVBORw==' }] });
@@ -313,6 +334,17 @@ assert.equal(gptImageCalls[1].options.body.get('quality'), 'medium');
 assert.equal(gptImageCalls[1].options.body.get('format'), 'png');
 assert.equal(gptImageCalls[1].options.body.get('image').type, 'image/webp');
 assert.equal(gptImageCalls[1].options.headers['Content-Type'], undefined);
+
+await generateMedia('image', {
+  providerId: 'image-6',
+  prompt: 'wide architectural concept',
+  size: '2000x1000',
+  quality: 'low',
+  aspectRatio: '2:1',
+  urls: []
+});
+assert.equal(JSON.parse(gptImageCalls[2].options.body).size, '2000x1000');
+assert.equal(JSON.parse(gptImageCalls[2].options.body).quality, 'low');
 
 const chatCalls = [];
 globalThis.fetch = async (url, options = {}) => {
@@ -574,34 +606,74 @@ assert.deepEqual(await pollVideoTask('video-3', 'seedance-25-task'), { status: '
 
 for (const providerId of ['video-1', 'video-2', 'video-3']) {
   let createAttempts = 0;
-  globalThis.fetch = async (url, options = {}) => {
+  globalThis.fetch = async () => {
     createAttempts += 1;
-    if (createAttempts < 3) {
-      return {
-        ok: false,
-        status: 503,
-        headers: { get: () => null },
-        text: async () => JSON.stringify({ error: { message: 'Temporary channel configuration network error.' } })
-      };
-    }
-    const body = JSON.parse(options.body);
-    return jsonResponse(providerId === 'video-1'
-      ? { task_id: `${providerId}-retried-task` }
-      : { id: `${providerId}-retried-task`, model: body.model });
+    return {
+      ok: false,
+      status: 503,
+      headers: { get: () => null },
+      text: async () => JSON.stringify({ error: { message: 'Temporary channel configuration network error.' } })
+    };
   };
   const operationId = `11111111-2222-4333-8444-${providerId.replace('video-', '').padStart(12, '0')}`;
-  const created = await createVideoTask({
-    providerId,
-    operationId,
-    prompt: 'retry a temporary upstream channel failure',
-    resolution: providerId === 'video-1' ? '768P' : '480P',
-    duration: 4,
-    aspectRatio: providerId === 'video-1' ? '16:9' : 'adaptive',
-    urls: []
-  });
-  assert.equal(created.taskId, `${providerId}-retried-task`);
-  assert.equal(createAttempts, 3);
+  await assert.rejects(
+    createVideoTask({
+      providerId,
+      operationId,
+      prompt: 'do not replay a paid request after an ambiguous provider failure',
+      resolution: providerId === 'video-1' ? '768P' : '480P',
+      duration: 4,
+      aspectRatio: providerId === 'video-1' ? '16:9' : 'adaptive',
+      urls: []
+    }),
+    (error) => error && error.code === 'provider-temporarily-unavailable'
+  );
+  assert.equal(createAttempts, 1, `${providerId} paid creation must be submitted only once`);
 }
+
+globalThis.fetch = async (url, options = {}) => {
+  const value = String(url);
+  if (value.endsWith('/wrapped-create') && options.method === 'POST') {
+    return jsonResponse({ response: { data: { task: { id: 'wrapped-seedance-task' } } } });
+  }
+  if (value.endsWith('/wrapped-seedance-task')) {
+    return jsonResponse({
+      payload: {
+        task: {
+          taskStatus: 'completed',
+          output: { videoUrl: 'https://cdn.example/wrapped-seedance.mp4' }
+        }
+      }
+    });
+  }
+  throw new Error(`Unexpected wrapped Seedance URL: ${value}`);
+};
+process.env.AI_PROVIDERS_JSON = JSON.stringify([{
+  id: 'video-wrapped-seedance',
+  kind: 'video',
+  name: 'Wrapped Seedance',
+  endpoint: 'https://api.302.ai/wrapped-create',
+  resultEndpoint: 'https://api.302.ai/wrapped-create',
+  keyEnv: 'AI302_KEY',
+  model: 'doubao-seedance-2-5-260628',
+  protocol: 'seedance-video-v3',
+  capabilities: seedance25Provider.capabilities
+}]);
+assert.deepEqual(await createVideoTask({
+  providerId: 'video-wrapped-seedance',
+  prompt: 'wrapped response',
+  resolution: '480P',
+  duration: 4,
+  aspectRatio: 'adaptive',
+  urls: []
+}), { providerId: 'video-wrapped-seedance', taskId: 'wrapped-seedance-task' });
+assert.deepEqual(await pollVideoTask('video-wrapped-seedance', 'wrapped-seedance-task'), {
+  status: 'succeeded',
+  resultUrl: 'https://cdn.example/wrapped-seedance.mp4'
+});
+globalThis.fetch = async () => jsonResponse({ data: { state: 'completed', output: {} } });
+assert.deepEqual(await pollVideoTask('video-wrapped-seedance', 'wrapped-seedance-task'), { status: 'running' });
+process.env.AI_PROVIDERS_JSON = providerOverridesBeforeWrapped;
 
 await assert.rejects(
   createVideoTask({

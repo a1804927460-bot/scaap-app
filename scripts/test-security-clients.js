@@ -223,6 +223,23 @@ async function testGatewaySessionRecovery() {
   assert.strictEqual(providerRefreshCalls, 0);
 }
 
+async function testPaidImageCreationIsNotReplayed() {
+  let calls = 0;
+  const client = new AiGatewayClient({
+    baseUrl: 'https://gateway.example.com',
+    getAccessToken: async () => 'user-jwt',
+    fetchImpl: async () => {
+      calls += 1;
+      throw new TypeError('The response was lost after submission.');
+    }
+  });
+  await assert.rejects(
+    () => client.generateMedia('image', { prompt: 'one paid submission' }),
+    (error) => error && error.name === 'TypeError'
+  );
+  assert.strictEqual(calls, 1, 'Paid image creation must not be replayed after an ambiguous network failure.');
+}
+
 async function testChunkedTopazUpload() {
   const chunkSize = 4 * 1024 * 1024;
   const video = Buffer.alloc(chunkSize + 12, 0x19);
@@ -340,6 +357,7 @@ async function testOfflineRefreshKeepsLocalIdentity() {
   await testGatewayClient();
   await testChunkedTopazUpload();
   await testGatewaySessionRecovery();
+  await testPaidImageCreationIsNotReplayed();
   testButlerDesktopBridgeSurface();
   console.log('security client tests passed');
 })().catch((error) => {

@@ -93,6 +93,11 @@ Object.entries({ low: 3, medium: 8, high: 28, auto: 12 }).forEach(([quality, exp
     `GPT Image 2 ${quality} must use its exact quality price.`
   );
 });
+assert.strictEqual(
+  quoteMediaCredits({ kind: 'image', imageProviderId: 'image-6', quality: 'medium', size: '3840x2160' }).totalCredits,
+  quoteMediaCredits({ kind: 'image', imageProviderId: 'image-6', quality: 'medium', size: '1024x1024' }).totalCredits,
+  'GPT Image 2 pricing must depend on quality, not the selected dimensions.'
+);
 
 assert.deepStrictEqual(quoteMediaCredits({
   kind: 'video',

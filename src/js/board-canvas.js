@@ -1016,6 +1016,13 @@ function renderBoardItemContent(content, f, item) {
         if (player && typeof player._boardStopPreview === 'function') player._boardStopPreview();
       });
     });
+    content.addEventListener('click', (event) => {
+      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (Date.now() - Board.lastDragEndedAt <= 120) return;
+      ensurePlayer().then((player) => {
+        if (player && typeof player._boardPlayPreview === 'function') player._boardPlayPreview();
+      });
+    });
     if (f.videoPreviewReady === true) void ensurePlayer();
     return;
   }
@@ -1264,10 +1271,8 @@ function syncBoardOverviewFallback(viewportRect) {
     Board.overviewHideFrame = requestAnimationFrame(() => {
       Board.overviewHideFrame = requestAnimationFrame(() => {
         Board.overviewHideFrame = 0;
-        const canvas = document.getElementById('board-canvas');
         if (
           Board.overviewCanvas && Board.lastZoomBucket !== 'overview' &&
-          !Board.zoomFrame && !(canvas && canvas.classList.contains('is-transforming')) &&
           visibleBoardDomReady()
         ) {
           Board.overviewCanvas.hidden = true;
@@ -2721,6 +2726,9 @@ function buildMiniVideoPlayer(result, f) {
   let playRequest = 0;
   let playbackWatchdog = 0;
   let fallbackPromise = null;
+  let activePlayPromise = null;
+  let readyRetryRequest = 0;
+  let playbackRetries = 0;
   let cleanedUp = false;
 
   function clearPlaybackWatchdog() {
@@ -2732,11 +2740,15 @@ function buildMiniVideoPlayer(result, f) {
     if (!url || cleanedUp || !video.isConnected) return;
     clearPlaybackWatchdog();
     video.pause();
+    playRequest += 1;
+    activePlayPromise = null;
+    readyRetryRequest = 0;
+    playbackRetries = 0;
     wrap.classList.remove('has-frame', 'is-playing', 'is-playback-error');
     video.src = url;
     video.dataset.usingTranscode = transcoded ? 'true' : '';
     video.load();
-    if (wantsPreview) requestPlayback();
+    if (wantsPreview) requestPlayback(playRequest);
   }
 
   function recoverPlayableSource() {
@@ -2779,39 +2791,70 @@ function buildMiniVideoPlayer(result, f) {
     }, 2600);
   }
 
-  function requestPlayback() {
-    const request = ++playRequest;
-    armPlaybackWatchdog(request);
-    const attempt = () => {
-      if (!wantsPreview || request !== playRequest || !video.isConnected) return;
-      stopOtherBoardVideos(video);
-      const promise = video.play();
-      if (promise && typeof promise.catch === 'function') {
-        promise.catch((error) => {
-          if (!wantsPreview || request !== playRequest) return;
-          if (error && error.name === 'NotSupportedError') {
-            void recoverPlayableSource();
-            return;
-          }
-          video.load();
-          armPlaybackWatchdog(request);
-        });
-      }
+  function armReadyPlaybackRetry(request) {
+    if (!wantsPreview || request !== playRequest || readyRetryRequest === request) return;
+    readyRetryRequest = request;
+    const retry = () => {
+      video.removeEventListener('loadeddata', retry);
+      video.removeEventListener('canplay', retry);
+      if (readyRetryRequest === request) readyRetryRequest = 0;
+      if (wantsPreview && request === playRequest) requestPlayback(request);
     };
-    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) attempt();
-    else {
-      video.addEventListener('loadeddata', attempt, { once: true, signal: abortController.signal });
-      video.addEventListener('canplay', attempt, { once: true, signal: abortController.signal });
-      video.load();
+    video.addEventListener('loadeddata', retry, { once: true, signal: abortController.signal });
+    video.addEventListener('canplay', retry, { once: true, signal: abortController.signal });
+  }
+
+  function requestPlayback(request = playRequest) {
+    if (!wantsPreview || request !== playRequest || cleanedUp || !video.isConnected) return;
+    armPlaybackWatchdog(request);
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      armReadyPlaybackRetry(request);
+      if (video.networkState === HTMLMediaElement.NETWORK_EMPTY) video.load();
+      return;
     }
+    if (activePlayPromise) return;
+    stopOtherBoardVideos(video);
+    let playResult;
+    try {
+      playResult = video.play();
+    } catch (error) {
+      playResult = Promise.reject(error);
+    }
+    const settledPlay = Promise.resolve(playResult)
+      .catch((error) => {
+        if (!wantsPreview || request !== playRequest || cleanedUp) return;
+        if (error && error.name === 'NotSupportedError') {
+          void recoverPlayableSource();
+          return;
+        }
+        playbackRetries += 1;
+        if (playbackRetries > 2) {
+          void recoverPlayableSource();
+          return;
+        }
+        armReadyPlaybackRetry(request);
+        if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) video.load();
+        else window.setTimeout(() => requestPlayback(request), 120 * playbackRetries);
+      })
+      .finally(() => {
+        if (activePlayPromise === settledPlay) activePlayPromise = null;
+      });
+    activePlayPromise = settledPlay;
   }
   wrap._boardPlayPreview = () => {
-    wantsPreview = true;
-    requestPlayback();
+    if (!wantsPreview) {
+      wantsPreview = true;
+      playRequest += 1;
+      playbackRetries = 0;
+    }
+    requestPlayback(playRequest);
   };
   wrap._boardStopPreview = () => {
     wantsPreview = false;
     playRequest += 1;
+    activePlayPromise = null;
+    readyRetryRequest = 0;
+    playbackRetries = 0;
     clearPlaybackWatchdog();
     video.pause();
     try { video.currentTime = 0; } catch (error) {}
@@ -2829,7 +2872,6 @@ function buildMiniVideoPlayer(result, f) {
     if (!Number.isFinite(video.duration) || video.duration <= 0) return;
     durationBadge.textContent = formatBoardVideoDuration(video.duration);
     durationBadge.hidden = false;
-    if (wantsPreview) requestPlayback();
   }, { signal: abortController.signal });
 
   video.addEventListener('loadeddata', () => {
@@ -2837,6 +2879,7 @@ function buildMiniVideoPlayer(result, f) {
   }, { signal: abortController.signal });
   video.addEventListener('playing', () => {
     clearPlaybackWatchdog();
+    playbackRetries = 0;
     wrap.classList.add('has-frame', 'is-playing');
     wrap.classList.remove('is-playback-error');
   }, { signal: abortController.signal });
@@ -3095,6 +3138,60 @@ function syncAiComposerFullscreenState() {
   });
 }
 
+let nodeAiComposerPositionFrame = 0;
+
+function applyNodeAiComposerPosition() {
+  nodeAiComposerPositionFrame = 0;
+  const pop = activeAiComposer();
+  const nodeId = pop && pop.dataset.nodeAnchorId;
+  const mode = document.getElementById('board-node-mode');
+  const node = nodeId && document.getElementById(`node-${nodeId}`);
+  if (!pop || !nodeId || !mode || !node || !pop.classList.contains('is-node-composer')) return;
+  const modeRect = mode.getBoundingClientRect();
+  const nodeRect = node.getBoundingClientRect();
+  const width = Math.min(pop.offsetWidth || 820, Math.max(0, modeRect.width - 24));
+  const height = pop.offsetHeight || 176;
+  const halfWidth = width / 2;
+  const gap = 16;
+  const minimumLeft = halfWidth + 12;
+  const maximumLeft = Math.max(minimumLeft, modeRect.width - halfWidth - 12);
+  const nodeCenter = (nodeRect.left + nodeRect.right) / 2 - modeRect.left;
+  const left = Math.max(minimumLeft, Math.min(maximumLeft, nodeCenter));
+  const below = nodeRect.bottom - modeRect.top + gap;
+  const above = nodeRect.top - modeRect.top - height - gap;
+  const top = below + height <= modeRect.height - 12
+    ? below
+    : Math.max(12, above);
+  pop.style.left = `${Math.round(left)}px`;
+  pop.style.top = `${Math.round(top)}px`;
+  pop.style.bottom = 'auto';
+}
+
+function syncNodeAiComposerPosition() {
+  if (nodeAiComposerPositionFrame) return;
+  nodeAiComposerPositionFrame = requestAnimationFrame(applyNodeAiComposerPosition);
+}
+
+function anchorAiComposerToNode(pop, nodeId) {
+  if (!pop || !nodeId) return;
+  if (typeof pop._disposeNodeAnchor === 'function') pop._disposeNodeAnchor();
+  pop.dataset.nodeAnchorId = String(nodeId);
+  const node = document.getElementById(`node-${nodeId}`);
+  const drawflow = document.querySelector('#board-node-editor .drawflow');
+  const observer = new MutationObserver(syncNodeAiComposerPosition);
+  if (node) observer.observe(node, { attributes: true, attributeFilter: ['style'] });
+  if (drawflow) observer.observe(drawflow, { attributes: true, attributeFilter: ['style'] });
+  const onResize = () => syncNodeAiComposerPosition();
+  window.addEventListener('resize', onResize);
+  pop._disposeNodeAnchor = () => {
+    observer.disconnect();
+    window.removeEventListener('resize', onResize);
+    delete pop.dataset.nodeAnchorId;
+    delete pop._disposeNodeAnchor;
+  };
+  syncNodeAiComposerPosition();
+}
+
 function isAiComposerReference(fileId) {
   const pop = activeAiComposer();
   return !!(pop && typeof pop._hasBoardReference === 'function' && pop._hasBoardReference(fileId));
@@ -3145,6 +3242,7 @@ async function toggleAiComposerBoardReference(file, fileId) {
 function closeAiImagePopover() {
   const pop = document.getElementById('ai-image-popover');
   if (pop) {
+    if (typeof pop._disposeNodeAnchor === 'function') pop._disposeNodeAnchor();
     if (pop.classList.contains('ai-composer')) {
       pop.classList.add('is-closing');
       setTimeout(() => pop.remove(), 180);
@@ -3618,6 +3716,48 @@ function supportedVideoMode(value, capabilities = {}) {
   };
 }
 
+function composerVideoModes(capabilities = {}) {
+  const modes = supportedVideoModes(capabilities);
+  const firstFrame = modes.find((entry) => entry.id === 'first-frame') || null;
+  const firstLastFrame = modes.find((entry) => entry.id === 'first-last-frame') || null;
+  const omni = modes.find((entry) => entry.id === 'omni') || null;
+  const visible = [];
+  if (firstFrame || firstLastFrame) {
+    visible.push({
+      ...(firstLastFrame || firstFrame),
+      id: 'first-last-frame',
+      minReferences: firstFrame ? 1 : Math.max(2, Number(firstLastFrame.minReferences) || 2),
+      maxReferences: firstLastFrame ? Math.min(2, Number(firstLastFrame.maxReferences) || 2) : 1,
+      mediaTypes: ['image']
+    });
+  }
+  if (omni) visible.push(omni);
+  return visible;
+}
+
+function composerVideoMode(value, capabilities = {}) {
+  const modes = composerVideoModes(capabilities);
+  const requested = String(value || '').trim().toLowerCase();
+  const normalized = requested === 'omni' ? 'omni' : 'first-last-frame';
+  return modes.find((entry) => entry.id === normalized) || modes[0] || {
+    id: 'first-last-frame', minReferences: 1, maxReferences: 2, mediaTypes: ['image']
+  };
+}
+
+function composerVideoRequestMode(value, referenceCount, capabilities = {}) {
+  const selected = composerVideoMode(value, capabilities);
+  const modes = supportedVideoModes(capabilities);
+  if (selected.id === 'omni') {
+    return modes.find((entry) => entry.id === 'omni') || selected;
+  }
+  const count = Math.max(0, Number(referenceCount) || 0);
+  const requestedId = count >= 2 ? 'first-last-frame' : 'first-frame';
+  return modes.find((entry) => entry.id === requestedId)
+    || modes.find((entry) => entry.id === 'first-last-frame')
+    || modes.find((entry) => entry.id === 'first-frame')
+    || selected;
+}
+
 function videoModeReferenceLimit(mode, capabilities = {}) {
   const configured = Number(mode && mode.maxReferences);
   if (Number.isInteger(configured) && configured >= 0) return configured;
@@ -3658,6 +3798,83 @@ function resolutionDisplayHint(value) {
     'ORIGINAL': 'Original'
   };
   return labels[normalized] || normalized;
+}
+
+// Camera motion names follow the Apache-2.0 CameraCtrl implementation in
+// Kosinkadink/ComfyUI-AnimateDiff-Evolved. The optical presets are expressed
+// as plain prompt metadata so every configured video provider can consume
+// them without bundling a second inference runtime.
+const AI_CAMERA_CONTROL_PRESETS = Object.freeze({
+  camera: [
+    { id: 'arri-alexa-65', label: 'ARRI Alexa 65', prompt: 'ARRI Alexa 65 large-format digital cinema camera' },
+    { id: 'arri-alexa-mini-lf', label: 'ARRI Alexa Mini LF', prompt: 'ARRI Alexa Mini LF digital cinema camera' },
+    { id: 'sony-venice-2', label: 'Sony VENICE 2', prompt: 'Sony VENICE 2 full-frame cinema camera' },
+    { id: 'red-v-raptor-xl', label: 'RED V-RAPTOR XL', prompt: 'RED V-RAPTOR XL cinema camera' },
+    { id: 'blackmagic-ursa-12k', label: 'URSA Mini Pro 12K', prompt: 'Blackmagic URSA Mini Pro 12K cinema camera' }
+  ],
+  lens: [
+    { id: 'cooke-panchro', label: 'Cooke Panchro', prompt: 'Cooke Panchro/i Classic prime lens, gentle vintage falloff' },
+    { id: 'arri-signature-prime', label: 'ARRI Signature Prime', prompt: 'ARRI Signature Prime lens, clean large-format rendering' },
+    { id: 'zeiss-supreme-prime', label: 'ZEISS Supreme Prime', prompt: 'ZEISS Supreme Prime lens, controlled contrast and smooth bokeh' },
+    { id: 'leica-summilux-c', label: 'Leica Summilux-C', prompt: 'Leica Summilux-C cinema lens, natural contrast and dimensional rendering' },
+    { id: 'angenieux-optimo', label: 'Angenieux Optimo', prompt: 'Angenieux Optimo cinema zoom lens, refined cinematic rendering' }
+  ],
+  focalLength: [
+    { id: '24mm', label: '24mm', prompt: '24mm wide-angle focal length' },
+    { id: '35mm', label: '35mm', prompt: '35mm focal length' },
+    { id: '50mm', label: '50mm', prompt: '50mm normal focal length' },
+    { id: '85mm', label: '85mm', prompt: '85mm portrait focal length' },
+    { id: '125mm', label: '125mm', prompt: '125mm telephoto focal length' },
+    { id: '200mm', label: '200mm', prompt: '200mm long telephoto focal length' }
+  ],
+  aperture: [
+    { id: 'f1.4', label: 'f/1.4', prompt: 'f/1.4 aperture, very shallow depth of field' },
+    { id: 'f2', label: 'f/2', prompt: 'f/2 aperture, shallow depth of field' },
+    { id: 'f2.8', label: 'f/2.8', prompt: 'f/2.8 aperture, cinematic subject separation' },
+    { id: 'f4', label: 'f/4', prompt: 'f/4 aperture, balanced depth of field' },
+    { id: 'f5.6', label: 'f/5.6', prompt: 'f/5.6 aperture, deep controlled focus' }
+  ],
+  motion: [
+    { id: 'static', label: 'Static', zh: '固定机位', prompt: 'locked-off static camera' },
+    { id: 'pan-up', label: 'Pan up', zh: '向上平移', prompt: 'smooth camera pan up' },
+    { id: 'pan-down', label: 'Pan down', zh: '向下平移', prompt: 'smooth camera pan down' },
+    { id: 'pan-left', label: 'Pan left', zh: '向左平移', prompt: 'smooth camera pan left' },
+    { id: 'pan-right', label: 'Pan right', zh: '向右平移', prompt: 'smooth camera pan right' },
+    { id: 'tilt-up', label: 'Tilt up', zh: '向上摇摄', prompt: 'smooth camera tilt up' },
+    { id: 'tilt-down', label: 'Tilt down', zh: '向下摇摄', prompt: 'smooth camera tilt down' },
+    { id: 'tilt-left', label: 'Tilt left', zh: '向左摇摄', prompt: 'smooth camera tilt left' },
+    { id: 'tilt-right', label: 'Tilt right', zh: '向右摇摄', prompt: 'smooth camera tilt right' },
+    { id: 'zoom-in', label: 'Zoom in', zh: '镜头推近', prompt: 'controlled optical zoom in' },
+    { id: 'zoom-out', label: 'Zoom out', zh: '镜头拉远', prompt: 'controlled optical zoom out' },
+    { id: 'roll-clockwise', label: 'Roll CW', zh: '顺时针旋转', prompt: 'subtle clockwise camera roll' },
+    { id: 'roll-anticlockwise', label: 'Roll CCW', zh: '逆时针旋转', prompt: 'subtle anticlockwise camera roll' }
+  ]
+});
+
+const AI_CAMERA_CONTROL_DEFAULTS = Object.freeze({
+  enabled: false,
+  camera: 'arri-alexa-65',
+  lens: 'cooke-panchro',
+  focalLength: '125mm',
+  aperture: 'f1.4',
+  motion: 'static'
+});
+
+function aiCameraPreset(field, id) {
+  const values = AI_CAMERA_CONTROL_PRESETS[field] || [];
+  return values.find((entry) => entry.id === id) || values[0] || null;
+}
+
+function normalizeAiCameraControl(value = {}) {
+  const source = value && typeof value === 'object' ? value : {};
+  return {
+    enabled: source.enabled === true,
+    camera: aiCameraPreset('camera', source.camera)?.id || AI_CAMERA_CONTROL_DEFAULTS.camera,
+    lens: aiCameraPreset('lens', source.lens)?.id || AI_CAMERA_CONTROL_DEFAULTS.lens,
+    focalLength: aiCameraPreset('focalLength', source.focalLength)?.id || AI_CAMERA_CONTROL_DEFAULTS.focalLength,
+    aperture: aiCameraPreset('aperture', source.aperture)?.id || AI_CAMERA_CONTROL_DEFAULTS.aperture,
+    motion: aiCameraPreset('motion', source.motion)?.id || AI_CAMERA_CONTROL_DEFAULTS.motion
+  };
 }
 
 function getConfiguredImageProviders(aiConfig) {
@@ -3868,6 +4085,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
             <div class="ai-video-mode-menu" role="listbox" hidden></div>
           </div>
           <button type="button" class="ai-options-toggle" aria-haspopup="true"></button>
+          <button type="button" class="ai-camera-control-toggle" aria-haspopup="dialog" aria-expanded="false" aria-pressed="false" hidden>
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M14.5 5H9.4L8 7H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-1.5-2Z"/><circle cx="12" cy="13" r="3.2"/></svg>
+            <span>${t('Lens', '镜头')}</span>
+          </button>
         </div>
         <div class="ai-composer-submit-wrap">
           <span class="ai-credit-estimate" aria-live="polite" hidden></span>
@@ -3921,6 +4142,46 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
           <input class="ai-duration-range" type="range" min="6" max="15" value="6" step="1">
         </div>
       </div>
+      <section class="ai-camera-control-panel" role="dialog" aria-label="${t('Camera control', '摄影机控制')}" hidden>
+        <header class="ai-camera-control-header">
+          <div>
+            <strong>${t('Camera control', '摄影机控制')}</strong>
+            <span>CameraCtrl</span>
+          </div>
+          <div class="ai-camera-control-actions">
+            <button type="button" class="ai-camera-control-disable">${t('Disable', '关闭')}</button>
+            <button type="button" class="ai-camera-control-save">${t('Save', '保存')}</button>
+          </div>
+        </header>
+        <div class="ai-camera-optics-grid">
+          ${['camera', 'lens', 'focalLength', 'aperture'].map((field) => `
+            <div class="ai-camera-control-column" data-camera-field="${field}">
+              <span class="ai-camera-control-kicker"></span>
+              <div class="ai-camera-control-carousel">
+                <button type="button" class="ai-camera-control-step" data-direction="-1" aria-label="${t('Previous option', '上一个选项')}">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+                </button>
+                <div class="ai-camera-control-stage" aria-live="polite">
+                  <span class="ai-camera-control-peek is-before"></span>
+                  <span class="ai-camera-control-visual"></span>
+                  <span class="ai-camera-control-peek is-after"></span>
+                </div>
+                <button type="button" class="ai-camera-control-step" data-direction="1" aria-label="${t('Next option', '下一个选项')}">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+                </button>
+              </div>
+              <strong class="ai-camera-control-value"></strong>
+            </div>
+          `).join('')}
+        </div>
+        <div class="ai-camera-motion-block">
+          <div class="ai-camera-motion-heading">
+            <strong>${t('Camera movement', '镜头运动')}</strong>
+            <span>${t('Based on the open-source CameraCtrl motion set', '采用开源 CameraCtrl 运镜体系')}</span>
+          </div>
+          <div class="ai-camera-motion-grid" role="listbox"></div>
+        </div>
+      </section>
     </form>
   `;
 
@@ -3938,6 +4199,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   const modelPickerMenu = pop.querySelector('.ai-model-picker-menu');
   const optionsToggle = pop.querySelector('.ai-options-toggle');
   const optionsPanel = pop.querySelector('.ai-options-panel');
+  const cameraControlToggle = pop.querySelector('.ai-camera-control-toggle');
+  const cameraControlPanel = pop.querySelector('.ai-camera-control-panel');
+  const cameraMotionGrid = pop.querySelector('.ai-camera-motion-grid');
   const ratioGrid = pop.querySelector('.ai-ratio-grid');
   const status = pop.querySelector('.ai-generation-status');
   const creditEstimate = pop.querySelector('.ai-credit-estimate');
@@ -3951,7 +4215,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   const providers = getConfiguredImageProviders(aiConfig);
   const videoProviders = getConfiguredVideoProviders(aiConfig);
   let kind = initialKind === 'video' ? 'video' : 'image';
-  let videoMode = 'text';
+  let videoMode = 'first-last-frame';
   let ratio = kind === 'video' ? (aiConfig.videoAspectRatio || '16:9') : (aiConfig.imageAspectRatio || '1:1');
   let size = aiConfig.imageSize || '1K';
   let count = 1;
@@ -3960,6 +4224,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   let enhancePrompt = true;
   let seed = null;
   let styleStrength = 1;
+  let cameraControl = normalizeAiCameraControl();
   let styleLoadRevision = 0;
   const boardReferences = new Map();
   let creditQuoteRevision = 0;
@@ -3967,6 +4232,74 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   function setOptionsOpen(open) {
     optionsPanel.hidden = !open;
     optionsToggle.classList.toggle('is-active', open);
+    if (open) setCameraControlOpen(false);
+  }
+
+  function setCameraControlOpen(open, enable = false) {
+    const shouldOpen = open === true && kind === 'video';
+    if (enable && shouldOpen) cameraControl.enabled = true;
+    cameraControlPanel.hidden = !shouldOpen;
+    cameraControlToggle.setAttribute('aria-expanded', String(shouldOpen));
+    if (shouldOpen) setOptionsOpen(false);
+    renderCameraControl();
+  }
+
+  function renderCameraControl() {
+    const isVideo = kind === 'video';
+    cameraControlToggle.hidden = !isVideo;
+    cameraControlToggle.classList.toggle('is-active', isVideo && cameraControl.enabled);
+    cameraControlToggle.setAttribute('aria-pressed', String(isVideo && cameraControl.enabled));
+    cameraControlToggle.title = cameraControl.enabled
+      ? t('Camera control is enabled', '摄影机控制已开启')
+      : t('Enable camera control', '开启摄影机控制');
+    if (!isVideo) cameraControlPanel.hidden = true;
+    cameraControlPanel.querySelectorAll('.ai-camera-control-column').forEach((column) => {
+      const field = column.dataset.cameraField;
+      const values = AI_CAMERA_CONTROL_PRESETS[field] || [];
+      const current = aiCameraPreset(field, cameraControl[field]);
+      const index = Math.max(0, values.findIndex((entry) => entry.id === current?.id));
+      const before = values[(index - 1 + values.length) % values.length];
+      const after = values[(index + 1) % values.length];
+      const labels = {
+        camera: t('Camera body', '机身'),
+        lens: t('Cinema lens', '电影镜头'),
+        focalLength: t('Focal length', '焦段'),
+        aperture: t('Aperture', '光圈')
+      };
+      column.querySelector('.ai-camera-control-kicker').textContent = labels[field] || field;
+      column.querySelector('.ai-camera-control-peek.is-before').textContent = before?.label || '';
+      column.querySelector('.ai-camera-control-peek.is-after').textContent = after?.label || '';
+      column.querySelector('.ai-camera-control-value').textContent = current?.label || '';
+      const visual = column.querySelector('.ai-camera-control-visual');
+      visual.dataset.field = field;
+      visual.textContent = field === 'focalLength' ? current?.label || '' : '';
+      column.querySelectorAll('.ai-camera-control-step').forEach((button) => {
+        button.title = Number(button.dataset.direction) < 0
+          ? t('Previous option', '上一个选项')
+          : t('Next option', '下一个选项');
+      });
+    });
+    cameraMotionGrid.innerHTML = '';
+    AI_CAMERA_CONTROL_PRESETS.motion.forEach((motion) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.cameraMotion = motion.id;
+      button.className = cameraControl.motion === motion.id ? 'is-active' : '';
+      button.setAttribute('role', 'option');
+      button.setAttribute('aria-selected', String(cameraControl.motion === motion.id));
+      button.innerHTML = `<span>${escapeHtml(t(motion.label, motion.zh))}</span>`;
+      cameraMotionGrid.appendChild(button);
+    });
+  }
+
+  function cycleCameraControl(field, direction) {
+    const values = AI_CAMERA_CONTROL_PRESETS[field] || [];
+    if (!values.length) return;
+    const currentIndex = Math.max(0, values.findIndex((entry) => entry.id === cameraControl[field]));
+    const nextIndex = (currentIndex + direction + values.length) % values.length;
+    cameraControl[field] = values[nextIndex].id;
+    cameraControl.enabled = true;
+    renderCameraControl();
   }
 
   function keepOptionsOpen() {
@@ -4002,7 +4335,6 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
 
   function removeBoardReference(fileId) {
     boardReferences.delete(fileId);
-    if (kind === 'video' && boardReferences.size === 0) videoMode = 'text';
     renderBoardReferences();
     if (kind === 'video' && !boardReferences.size) ratio = aiConfig.videoAspectRatio || '16:9';
     syncGenerationOptions();
@@ -4013,7 +4345,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     referenceStrip.innerHTML = '';
     referenceStrip.hidden = boardReferences.size === 0;
     const activeVideoMode = kind === 'video'
-      ? supportedVideoMode(videoMode, selectedVideoCapabilities())
+      ? composerVideoMode(videoMode, selectedVideoCapabilities())
       : null;
     boardReferences.forEach((entry, fileId) => {
       const thumb = document.createElement('div');
@@ -4039,11 +4371,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       const order = document.createElement('span');
       order.className = 'ai-composer-reference-order';
       const referenceIndex = [...boardReferences.keys()].indexOf(fileId);
-      order.textContent = activeVideoMode && activeVideoMode.id === 'first-frame' && referenceIndex === 0
-        ? t('First', '首')
-        : activeVideoMode && activeVideoMode.id === 'first-last-frame'
-          ? (referenceIndex === 0 ? t('First', '首') : t('Last', '尾'))
-          : String(referenceIndex + 1);
+      order.textContent = activeVideoMode && activeVideoMode.id === 'first-last-frame'
+        ? (referenceIndex === 0 ? t('First', '首') : t('Last', '尾'))
+        : String(referenceIndex + 1);
       order.setAttribute('aria-hidden', 'true');
       const remove = document.createElement('button');
       remove.type = 'button';
@@ -4132,9 +4462,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     }
     const capabilities = kind === 'video' ? selectedVideoCapabilities() : selectedImageCapabilities();
     if (kind === 'video') {
-      const currentMode = supportedVideoMode(videoMode, capabilities);
       if (referenceKind === 'video') {
-        const omniMode = supportedVideoModes(capabilities).find((mode) => (
+        const omniMode = composerVideoModes(capabilities).find((mode) => (
           mode.id === 'omni' && videoModeReferenceMediaTypes(mode).includes('video')
         ));
         if (!omniMode) {
@@ -4142,12 +4471,11 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
           return;
         }
         setVideoMode('omni');
-      } else if (currentMode.id === 'text') {
-        setVideoMode('first-frame');
       }
     }
+    const activeMode = kind === 'video' ? composerVideoMode(videoMode, capabilities) : null;
     const configuredLimit = kind === 'video'
-      ? videoReferenceSelectionLimit(capabilities)
+      ? Math.min(videoReferenceSelectionLimit(capabilities), videoModeReferenceLimit(activeMode, capabilities))
       : Number(capabilities.maxReferenceImages);
     const limit = Number.isFinite(configuredLimit) && configuredLimit >= 0
       ? Math.floor(configuredLimit)
@@ -4163,7 +4491,6 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       );
       return;
     }
-    const activeMode = kind === 'video' ? supportedVideoMode(videoMode, capabilities) : null;
     if (activeMode && !videoModeReferenceMediaTypes(activeMode).includes(referenceKind)) {
       showToast(t('This mode only accepts reference images.', '此模式只支持参考图。'), 'AI');
       return;
@@ -4259,6 +4586,15 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     optionsToggle.setAttribute('aria-label', optionsToggle.title);
     close.title = t('Close generation panel', '关闭生成面板');
     close.setAttribute('aria-label', close.title);
+    cameraControlPanel.setAttribute('aria-label', t('Camera control', '摄影机控制'));
+    cameraControlPanel.querySelector('.ai-camera-control-header strong').textContent = t('Camera control', '摄影机控制');
+    cameraControlPanel.querySelector('.ai-camera-control-disable').textContent = t('Disable', '关闭');
+    cameraControlPanel.querySelector('.ai-camera-control-save').textContent = t('Save', '保存');
+    cameraControlPanel.querySelector('.ai-camera-motion-heading strong').textContent = t('Camera movement', '镜头运动');
+    cameraControlPanel.querySelector('.ai-camera-motion-heading span').textContent = t(
+      'Based on the open-source CameraCtrl motion set',
+      '采用开源 CameraCtrl 运镜体系'
+    );
 
     if (headings[0]) headings[0].textContent = t('Aspect ratio', '画面比例');
     if (headings[1]) headings[1].textContent = t('Resolution', '分辨率');
@@ -4275,6 +4611,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     optionsToggle.textContent = kind === 'video'
       ? t(`${ratio} · ${size} · ${duration}s`, `${ratio} · ${size} · ${duration} 秒`)
       : `${ratio === 'auto' || ratio === 'adaptive' ? autoLabel : ratio} · ${size} · ${t(`x${count}`, `×${count}`)}`;
+    cameraControlToggle.querySelector('span').textContent = t('Lens', '镜头');
+    renderCameraControl();
   }
 
   function renderModels() {
@@ -4412,8 +4750,6 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
 
   function videoModeLabel(modeId) {
     const labels = {
-      text: t('Text to video', '文生视频'),
-      'first-frame': t('Image to video', '图生视频'),
       'first-last-frame': t('First + last frame', '首尾帧'),
       omni: t('Omni reference', '全能参考')
     };
@@ -4422,11 +4758,11 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
 
   function renderVideoModes() {
     const capabilities = selectedVideoCapabilities();
-    const modes = kind === 'video' ? supportedVideoModes(capabilities) : [];
+    const modes = kind === 'video' ? composerVideoModes(capabilities) : [];
     videoModeControl.hidden = kind !== 'video' || modes.length === 0;
     videoModeMenu.innerHTML = '';
     if (!modes.length) return;
-    const selectedMode = supportedVideoMode(videoMode, capabilities);
+    const selectedMode = composerVideoMode(videoMode, capabilities);
     videoMode = selectedMode.id;
     videoModeLabelElement.textContent = videoModeLabel(selectedMode.id);
     modes.forEach((entry) => {
@@ -4451,9 +4787,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   function setVideoMode(nextMode) {
     if (kind !== 'video') return;
     const capabilities = selectedVideoCapabilities();
-    const selectedMode = supportedVideoMode(nextMode, capabilities);
+    const selectedMode = composerVideoMode(nextMode, capabilities);
     videoMode = selectedMode.id;
-    const ratios = videoModeRatios(selectedMode, capabilities);
+    const requestMode = composerVideoRequestMode(videoMode, boardReferences.size, capabilities);
+    const ratios = videoModeRatios(requestMode, capabilities);
     if (!ratios.includes(ratio)) ratio = ratios[0];
     renderVideoModes();
     renderBoardReferences();
@@ -4500,9 +4837,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   function syncGenerationOptions() {
     const capabilities = kind === 'video' ? selectedVideoCapabilities() : selectedImageCapabilities();
     if (kind === 'video') {
-      const selectedMode = supportedVideoMode(videoMode, capabilities);
+      const selectedMode = composerVideoMode(videoMode, capabilities);
       videoMode = selectedMode.id;
-      const ratios = videoModeRatios(selectedMode, capabilities);
+      const requestMode = composerVideoRequestMode(videoMode, boardReferences.size, capabilities);
+      const ratios = videoModeRatios(requestMode, capabilities);
       if (!ratios.includes(ratio)) ratio = ratios[0];
     } else {
       const configuredLimit = Number(capabilities.maxReferenceImages);
@@ -4538,6 +4876,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     });
     const sizeGroup = pop.querySelector('[data-option="size"]');
     sizeGroup.innerHTML = '';
+    sizeGroup.classList.toggle('is-grid', resolutions.length > 6);
     resolutions.forEach((value) => {
       const button = document.createElement('button');
       button.type = 'button';
@@ -4567,7 +4906,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   function renderRatios() {
     const capabilities = kind === 'video' ? selectedVideoCapabilities() : selectedImageCapabilities();
     const ratios = kind === 'video'
-      ? videoModeRatios(supportedVideoMode(videoMode, capabilities), capabilities)
+      ? videoModeRatios(composerVideoRequestMode(videoMode, boardReferences.size, capabilities), capabilities)
       : supportedImageRatios(capabilities, boardReferences.size > 0);
     if (!ratios.includes(ratio)) ratio = ratios[0];
     ratioGrid.innerHTML = '';
@@ -4622,9 +4961,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     kind = nextKind === 'video' ? 'video' : 'image';
     if (kind === 'video') {
       const capabilities = selectedVideoCapabilities();
-      if (videoMode === 'text' && boardReferences.size) {
-        videoMode = 'first-frame';
-      }
+      videoMode = composerVideoMode(videoMode, capabilities).id;
     }
     pop.dataset.kind = kind;
     pop.querySelectorAll('[data-ai-kind]').forEach((button) => {
@@ -4638,6 +4975,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       : '描述主体、构图、镜头、光线、材质和色彩氛围…';
     pop.querySelector('.ai-count-block').hidden = kind === 'video';
     pop.querySelector('.ai-duration-block').hidden = kind !== 'video';
+    if (kind !== 'video') setCameraControlOpen(false);
+    renderCameraControl();
     renderModels();
     syncGenerationOptions();
   }
@@ -4688,9 +5027,40 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       videoModeMenu.hidden = true;
       videoModeTrigger.setAttribute('aria-expanded', 'false');
     }
+    if (!cameraControlPanel.contains(event.target) && !cameraControlToggle.contains(event.target)) {
+      setCameraControlOpen(false);
+    }
   });
   optionsToggle.addEventListener('click', () => {
     setOptionsOpen(optionsPanel.hidden);
+  });
+  cameraControlToggle.addEventListener('click', () => {
+    if (kind !== 'video') return;
+    setCameraControlOpen(cameraControlPanel.hidden, true);
+  });
+  cameraControlPanel.addEventListener('pointerdown', (event) => event.stopPropagation());
+  cameraControlPanel.addEventListener('wheel', (event) => event.stopPropagation(), { passive: true });
+  cameraControlPanel.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const step = event.target.closest('.ai-camera-control-step');
+    if (step) {
+      const column = step.closest('.ai-camera-control-column');
+      cycleCameraControl(column && column.dataset.cameraField, Number(step.dataset.direction) < 0 ? -1 : 1);
+      return;
+    }
+    const motion = event.target.closest('[data-camera-motion]');
+    if (motion) {
+      cameraControl.motion = aiCameraPreset('motion', motion.dataset.cameraMotion)?.id || AI_CAMERA_CONTROL_DEFAULTS.motion;
+      cameraControl.enabled = true;
+      renderCameraControl();
+      return;
+    }
+    if (event.target.closest('.ai-camera-control-disable')) {
+      cameraControl.enabled = false;
+      setCameraControlOpen(false);
+      return;
+    }
+    if (event.target.closest('.ai-camera-control-save')) setCameraControlOpen(false);
   });
   optionsPanel.addEventListener('pointerdown', (event) => {
     event.stopPropagation();
@@ -4745,8 +5115,14 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     styleStrength = Math.max(0, Math.min(1, Number(higgsfieldStrength.value)));
     higgsfieldBlock.querySelector('output').textContent = styleStrength.toFixed(2);
   });
-  prompt.addEventListener('pointerdown', () => setOptionsOpen(false));
-  prompt.addEventListener('focus', () => setOptionsOpen(false));
+  prompt.addEventListener('pointerdown', () => {
+    setOptionsOpen(false);
+    setCameraControlOpen(false);
+  });
+  prompt.addEventListener('focus', () => {
+    setOptionsOpen(false);
+    setCameraControlOpen(false);
+  });
   prompt.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
@@ -4771,14 +5147,16 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const videoCapabilities = kind === 'video' && selectedProvider && selectedProvider.capabilities
       ? selectedProvider.capabilities
       : {};
-    const selectedMode = kind === 'video' ? supportedVideoMode(videoMode, videoCapabilities) : null;
+    const selectedMode = kind === 'video'
+      ? composerVideoRequestMode(videoMode, boardReferences.size, videoCapabilities)
+      : null;
     const minimumReferences = selectedMode ? Math.max(0, Number(selectedMode.minReferences) || 0) : 0;
     const maximumReferences = selectedMode ? videoModeReferenceLimit(selectedMode, videoCapabilities) : 14;
     const selectedReferenceKinds = [...boardReferences.values()].map((entry) => entry.kind || 'image');
     const allowedReferenceKinds = selectedMode ? videoModeReferenceMediaTypes(selectedMode) : ['image'];
     if (kind === 'video' && boardReferences.size < minimumReferences) {
-      const message = selectedMode.id === 'first-last-frame'
-        ? t('Select a first-frame and a last-frame image.', '请选择首帧图和尾帧图。')
+      const message = videoMode === 'first-last-frame'
+        ? t('Select a first-frame image. Add a second image to use it as the last frame.', '请选择首帧图；再添加一张即可作为尾帧。')
         : t('Select at least one reference image for this mode.', '此模式请至少选择一张参考图。');
       showToast(message, 'AI');
       return;
@@ -4813,6 +5191,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       styleStrength,
       referenceFileIds: [...boardReferences.keys()],
       referenceMediaTypes: selectedReferenceKinds,
+      cameraControl: kind === 'video' ? normalizeAiCameraControl(cameraControl) : null,
       urls: [
         ...boardReferences.values().map((entry) => entry.dataUrl).filter(Boolean)
       ]
@@ -4847,11 +5226,13 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     }
     if (kind === 'video') {
       const capabilities = selectedVideoCapabilities();
-      videoMode = supportedVideoMode(preset.videoMode, capabilities).id;
+      videoMode = composerVideoMode(preset.videoMode, capabilities).id;
       size = supportedVideoResolution(preset.resolution || preset.size, capabilities);
-      const allowedRatios = videoModeRatios(supportedVideoMode(videoMode, capabilities), capabilities);
+      const requestMode = composerVideoRequestMode(videoMode, boardReferences.size, capabilities);
+      const allowedRatios = videoModeRatios(requestMode, capabilities);
       ratio = allowedRatios.includes(preset.aspectRatio) ? preset.aspectRatio : allowedRatios[0];
       duration = supportedVideoDuration(preset.duration || duration, capabilities);
+      cameraControl = normalizeAiCameraControl(preset.cameraControl);
     } else {
       const capabilities = selectedImageCapabilities();
       ratio = supportedImageAspectRatio(
@@ -5202,6 +5583,7 @@ async function openAiComposerForSelection(kind, promptText = '', options = {}) {
   }
   if (!pop) return;
   pop._generationHooks = options;
+  if (options.nodeAnchorId) anchorAiComposerToNode(pop, options.nodeAnchorId);
 
   const explicitReferenceFileIds = Array.isArray(options.referenceFileIds)
     ? options.referenceFileIds
@@ -5308,6 +5690,7 @@ async function retryGeneratedMediaFromDetails(file) {
       imageProviderId: generation.kind === 'video' ? null : generation.providerId,
       videoProviderId: generation.kind === 'video' ? generation.providerId : null,
       modelName: generation.modelName || t('AI model', 'AI 模型'),
+      cameraControl: isVideo ? normalizeAiCameraControl(generation.cameraControl) : null,
       referenceFileIds: references.referenceFileIds,
       referenceMediaTypes: references.referenceMediaTypes,
       urls: references.urls

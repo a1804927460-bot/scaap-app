@@ -61,6 +61,16 @@ assert.match(boardMedia, /board-butler-cost-estimate/, 'Video enhancement must s
 assert.match(boardMedia, /function updateBoardButlerVideoState[\s\S]*?'credits'[\s\S]*?'creditsCharged'[\s\S]*?result/, 'The accepted Topaz quote must update the visible task cost.');
 assert.match(boardMedia, /task\.creditsCharged \?\? task\.credits[\s\S]*?const points[\s\S]*?task\.status === 'success'[\s\S]*?\$\{done\}[^\n]*\$\{points\}/, 'The completed Topaz task must show the actual charged points.');
 assert.match(boardMedia, /phase === 'queued'[\s\S]*?phase === 'downloading'[\s\S]*?phase === 'saving'/, 'Video enhancement must expose its queue, download, and canvas-save phases.');
+assert.match(
+  boardMedia,
+  /function invokeBoardButlerWithTransientRetry[\s\S]*?BOARD_BUTLER_MAX_TRANSIENT_RETRIES[\s\S]*?state\.phase = 'reconnecting'[\s\S]*?2 \*\* failure/,
+  'Topaz image/video polling and downloads must survive bounded transient failures with exponential backoff.'
+);
+assert.match(
+  boardMedia,
+  /getImageToolStatus[\s\S]*?invokeBoardButlerWithTransientRetry[\s\S]*?downloadImageToolResult[\s\S]*?invokeBoardButlerWithTransientRetry[\s\S]*?getVideoToolStatus[\s\S]*?invokeBoardButlerWithTransientRetry[\s\S]*?downloadVideoToolResult/,
+  'Every Topaz status and result bridge must share the transient retry policy.'
+);
 assert.match(boardMedia, /BOARD_BUTLER_VIDEO_EXTENSIONS[\s\S]*?\.mp4[\s\S]*?\.mkv[\s\S]*?appendBoardVideoButlerToolbar/, 'The Butler video entry must use the same supported container list as the desktop bridge.');
 assert.match(boardMedia, /butlerOperation\.kind === 'video-upscale'[\s\S]*?operationCredits/, 'Enhanced-video details must preserve the charged points.');
 assert.match(boardMedia, /butler-video-model[\s\S]*filters:\s*\[\{[\s\S]*videoType:[\s\S]*audioTransfer: 'Copy'/, 'Video enhancement must send the selected documented filter/output shape.');
@@ -80,6 +90,7 @@ assert.match(preload, /getVideoToolStatus:[\s\S]*downloadVideoToolResult:/, 'The
 assert.match(main, /'ai302-invalid-response': 'The 302 video service returned an unsupported response/);
 assert.match(main, /'tool-disabled': 'Video enhancement is not enabled on the server/);
 assert.match(main, /'credit-schema-missing': 'The points service is being upgraded/);
+assert.match(main, /function butlerFailure[\s\S]*?httpStatus[\s\S]*?httpStatus \}/, 'Renderer failures must retain HTTP status so terminal 4xx errors are not retried.');
 [
   ['editImage', 'butler:image-edit'],
   ['layerImage', 'butler:image-layer'],
@@ -121,12 +132,12 @@ assert.match(preload, /readModelData:[^\n]+files:readModelData/, 'The isolated p
 assert.match(preload, /saveModelPreview:[^\n]+files:saveModelPreview/, 'The isolated preload must expose only validated model thumbnail writes.');
 assert.match(main, /async function readArchivedModelData[\s\S]*realpath\(store\.libraryDir\)[\s\S]*MAX_MODEL_PREVIEW_BYTES/, 'Model preview reads must stay inside the archive and enforce a size limit.');
 assert.match(main, /async function saveArchivedModelPreview[\s\S]*data:image\\\/png;base64[\s\S]*model-preview\.png/, 'Generated model thumbnails must be validated and stored in the preview cache.');
-assert.match(main, /model-preview\.pbr-v2[\s\S]*writeFile\(pbrMarkerPath, 'pbr-v2/, 'Only texture-ready thumbnails rendered from the model itself may be reused as PBR previews.');
+assert.match(main, /MODEL_PREVIEW_CACHE_VERSION = 'pbr-v3'[\s\S]*MODEL_PREVIEW_MARKER_FILENAME[\s\S]*writeFile\(pbrMarkerPath, `\$\{MODEL_PREVIEW_CACHE_VERSION\}\\n`/, 'Only current texture-ready thumbnails rendered from the model itself may be reused as PBR previews.');
 assert.doesNotMatch(main, /await writeButlerModelPreview\(record\.id, sourceFile/, 'A source reference image must never masquerade as the generated model thumbnail.');
 assert.match(main, /ipcMain\.handle\('files:readModelData'/, 'The main process must own model binary reads.');
 assert.match(modelViewer, /event\.shiftKey[\s\S]*event\.button !== 2[\s\S]*drag\.azimuth/, 'Shift plus right-drag must rotate the model key light through 360 degrees.');
 assert.match(modelViewer, /BOARD_MODEL_COLOR_TEXTURE_SLOTS[\s\S]*function prepareBoardModelMaterials[\s\S]*value\.anisotropy[\s\S]*value\.colorSpace = THREE\.SRGBColorSpace/, 'Textured model materials must be prepared for accurate color and sharp rendering.');
-assert.match(modelViewer, /function renderBoardModelAfterTextureUpload[\s\S]*requestAnimationFrame[\s\S]*await renderBoardModelAfterTextureUpload/, 'Model thumbnails must wait for GPU texture upload before capturing the preview.');
+assert.match(modelViewer, /function renderBoardModelAfterTextureUpload[\s\S]*renderer\.initTexture[\s\S]*renderer\.compileAsync[\s\S]*requestAnimationFrame[\s\S]*context\.finish[\s\S]*await renderBoardModelAfterTextureUpload/, 'Model thumbnails must finish texture upload, shader compilation, and GPU drawing before capture.');
 assert.ok((modelViewer.match(/prepareBoardModelMaterials\(/g) || []).length >= 3, 'Material preparation must run for both model thumbnails and the full viewer.');
 assert.match(modelViewer, /light\.intensity = isDragging \? 3\.4 : 2\.4[\s\S]*hemisphereLight\.intensity = isDragging \? 0\.3 : 0\.7[\s\S]*rimLight\.intensity = isDragging \? 1\.4 : 0\.8[\s\S]*scene\.environmentIntensity = isDragging \? 0\.45 : 0\.75/, 'Light dragging must preserve PBR material color while producing clear key, fill and environment contrast.');
 assert.match(modelViewer, /textureSlots\[slot\][\s\S]*BoardModelViewer\.materialStats = prepareBoardModelMaterials/, 'The viewer must retain and report the GLB PBR texture slots instead of replacing its materials.');

@@ -312,35 +312,6 @@ function providerSignal(signal, timeoutMs = 25_000) {
   return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 }
 
-function retryableProviderRequestError(error) {
-  const status = Number(error && error.status);
-  const name = String(error && error.name || '');
-  return error && error.retryable === true
-    || status === 408
-    || status === 425
-    || status === 429
-    || status >= 500
-    || ['AbortError', 'TimeoutError', 'TypeError'].includes(name);
-}
-
-async function providerRequestWithRetry(provider, request, signal, attempts = 3) {
-  let lastError;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      return await responseJson(await request(), provider.name);
-    } catch (error) {
-      lastError = error;
-      if (!retryableProviderRequestError(error) || attempt + 1 >= attempts || (signal && signal.aborted)) throw error;
-      const suppliedDelay = Number(error && error.retryAfterMs);
-      const delayMs = Number.isFinite(suppliedDelay) && suppliedDelay > 0
-        ? Math.min(10_000, suppliedDelay)
-        : 750 * (attempt + 1);
-      await delayWithSignal(delayMs, signal);
-    }
-  }
-  throw lastError;
-}
-
 function providerTaskHeaders(provider, body) {
   const requestId = String(body && body.operationId || '').trim();
   return {
@@ -364,6 +335,64 @@ function normalizeVideoTaskStatus(value) {
   if (status === 'expired') return 'expired';
   if (['processing', 'running', 'generating', 'in_progress'].includes(status)) return 'running';
   return 'queued';
+}
+
+const VIDEO_TASK_WRAPPER_KEYS = [
+  'data', 'result', 'response', 'payload', 'output', 'task', 'content', 'video'
+];
+
+function nestedVideoTaskValue(value, keys, seen = new Set(), depth = 0) {
+  if (!value || typeof value !== 'object' || seen.has(value) || depth > 7) return undefined;
+  seen.add(value);
+  for (const key of keys) {
+    if (value[key] !== undefined && value[key] !== null && String(value[key]).trim()) return value[key];
+  }
+  for (const key of VIDEO_TASK_WRAPPER_KEYS) {
+    const nested = nestedVideoTaskValue(value[key], keys, seen, depth + 1);
+    if (nested !== undefined) return nested;
+  }
+  return undefined;
+}
+
+function nestedVideoTaskObject(value, keys, seen = new Set(), depth = 0) {
+  if (!value || typeof value !== 'object' || seen.has(value) || depth > 7) return null;
+  seen.add(value);
+  for (const key of keys) {
+    if (value[key] && typeof value[key] === 'object') return value[key];
+  }
+  for (const key of VIDEO_TASK_WRAPPER_KEYS) {
+    const nested = nestedVideoTaskObject(value[key], keys, seen, depth + 1);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function providerVideoTaskId(payload) {
+  return String(nestedVideoTaskValue(payload, ['task_id', 'taskId', 'id']) || '').trim();
+}
+
+function providerVideoTaskStatus(payload) {
+  return normalizeVideoTaskStatus(nestedVideoTaskValue(payload, [
+    'task_status', 'taskStatus', 'status', 'state'
+  ]));
+}
+
+function providerVideoResultUrl(payload) {
+  return String(nestedVideoTaskValue(payload, [
+    'video_url', 'videoUrl', 'result_url', 'resultUrl', 'download_url', 'downloadUrl', 'url'
+  ]) || '').trim();
+}
+
+function providerVideoTaskError(payload, fallbackCode, fallbackMessage) {
+  const errorPayload = nestedVideoTaskObject(payload, ['error', 'failure']) || payload;
+  return {
+    errorCode: safeProviderText(nestedVideoTaskValue(errorPayload, [
+      'error_code', 'errorCode', 'code'
+    ]), fallbackCode),
+    errorMessage: safeProviderText(nestedVideoTaskValue(errorPayload, [
+      'error_message', 'errorMessage', 'failure_reason', 'failureReason', 'message', 'msg'
+    ]), fallbackMessage)
+  };
 }
 
 const VIDEO_MODE_IDS = new Set(['text', 'first-frame', 'first-last-frame', 'omni']);
@@ -503,10 +532,10 @@ async function createMiniMaxVideoTask(provider, body, signal) {
     role: roles[index]
   }));
   const requestBody = JSON.stringify({ model: provider.model || 'MiniMax-H3', content, resolution, duration, ratio, aigc_watermark: false });
-  const created = await providerRequestWithRetry(provider, () => fetch(provider.endpoint, {
+  const created = await responseJson(await fetch(provider.endpoint, {
     method: 'POST', headers: providerTaskHeaders(provider, body), signal: providerSignal(signal), body: requestBody
-  }), signal);
-  const taskId = String(created.task_id || '');
+  }), provider.name);
+  const taskId = providerVideoTaskId(created);
   if (!taskId || taskId.length > 256) {
     throw Object.assign(new Error(`${provider.name} did not return a valid task ID.`), {
       status: 502,
@@ -537,13 +566,13 @@ async function createSeedanceVideoTask(provider, body, signal) {
     watermark: false,
     ...(capabilities.serviceTier ? { service_tier: String(capabilities.serviceTier) } : {})
   };
-  const created = await providerRequestWithRetry(provider, () => fetch(provider.endpoint, {
+  const created = await responseJson(await fetch(provider.endpoint, {
     method: 'POST',
     headers: providerTaskHeaders(provider, body),
     signal: providerSignal(signal),
     body: JSON.stringify(requestBody)
-  }), signal);
-  const taskId = String(created.id || '').trim();
+  }), provider.name);
+  const taskId = providerVideoTaskId(created);
   if (!taskId || taskId.length > 256) {
     throw Object.assign(new Error(`${provider.name} did not return a valid task ID.`), {
       status: 502,
@@ -646,25 +675,18 @@ async function pollMiniMaxVideoTask(provider, taskId, signal) {
     `${provider.resultEndpoint}/${encodeURIComponent(normalizedTaskId)}`,
     { headers: providerHeaders(provider), signal: providerSignal(signal) }
   ), provider.name);
-  const task = result && result.task || {};
-  const status = normalizeVideoTaskStatus(task.status);
+  const status = providerVideoTaskStatus(result);
   if (status === 'succeeded') {
-    const resultUrl = String(task.content && task.content.url || '').trim();
+    const resultUrl = providerVideoResultUrl(result);
     if (!resultUrl) {
-      return {
-        status: 'failed',
-        errorCode: 'provider-result-missing',
-        errorMessage: 'MiniMax completed the task without a downloadable video.'
-      };
+      return { status: 'running' };
     }
     return { status, resultUrl };
   }
   if (TERMINAL_VIDEO_FAILURES.has(status)) {
-    const taskError = task.error && typeof task.error === 'object' ? task.error : {};
     return {
       status,
-      errorCode: safeProviderText(taskError.code, `provider-${status}`),
-      errorMessage: safeProviderText(taskError.message, `${provider.name} video generation ${status}.`)
+      ...providerVideoTaskError(result, `provider-${status}`, `${provider.name} video generation ${status}.`)
     };
   }
   return { status };
@@ -676,25 +698,18 @@ async function pollSeedanceVideoTask(provider, taskId, signal) {
     `${provider.resultEndpoint}/${encodeURIComponent(normalizedTaskId)}`,
     { headers: providerHeaders(provider), signal: providerSignal(signal) }
   ), provider.name);
-  const status = normalizeVideoTaskStatus(result && result.status);
+  const status = providerVideoTaskStatus(result);
   if (status === 'succeeded') {
-    const content = result && result.content && typeof result.content === 'object' ? result.content : {};
-    const resultUrl = String(content.video_url || content.url || '').trim();
+    const resultUrl = providerVideoResultUrl(result);
     if (!resultUrl) {
-      return {
-        status: 'failed',
-        errorCode: 'provider-result-missing',
-        errorMessage: `${provider.name} completed the task without a downloadable video.`
-      };
+      return { status: 'running' };
     }
     return { status, resultUrl };
   }
   if (TERMINAL_VIDEO_FAILURES.has(status)) {
-    const taskError = result && result.error && typeof result.error === 'object' ? result.error : {};
     return {
       status,
-      errorCode: safeProviderText(taskError.code || result && result.code, `provider-${status}`),
-      errorMessage: safeProviderText(taskError.message || result && result.message, `${provider.name} video generation ${status}.`)
+      ...providerVideoTaskError(result, `provider-${status}`, `${provider.name} video generation ${status}.`)
     };
   }
   return { status };
