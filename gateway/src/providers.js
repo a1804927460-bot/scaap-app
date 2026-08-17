@@ -20,7 +20,9 @@ const ASYNC_VIDEO_PROTOCOLS = new Set([
   'minimax-video-v2',
   'seedance-video-v3',
   'jimeng-video-v30',
-  'jimeng-video-v30-pro'
+  'jimeng-video-v30-pro',
+  'kling-v3-image-to-video',
+  'kling-o3-omni'
 ]);
 const TERMINAL_VIDEO_FAILURES = new Set(['failed', 'cancelled', 'expired']);
 
@@ -379,8 +381,34 @@ function providerVideoTaskStatus(payload) {
 
 function providerVideoResultUrl(payload) {
   return String(nestedVideoTaskValue(payload, [
-    'video_url', 'videoUrl', 'result_url', 'resultUrl', 'download_url', 'downloadUrl', 'url'
-  ]) || '').trim();
+    'video_url', 'videoUrl', 'result_url', 'resultUrl', 'download_url', 'downloadUrl'
+  ]) || deepVideoResultUrl(payload) || '').trim();
+}
+
+function deepVideoResultUrl(value, seen = new Set(), depth = 0) {
+  if (!value || depth > 10 || seen.has(value)) return '';
+  if (typeof value === 'string') {
+    const candidate = value.trim();
+    return /^https:\/\/\S+$/i.test(candidate)
+      && /(?:\.mp4(?:\?|$)|\.mov(?:\?|$)|\.webm(?:\?|$)|video|download)/i.test(candidate)
+      ? candidate
+      : '';
+  }
+  if (typeof value !== 'object') return '';
+  seen.add(value);
+  const preferredKeys = [
+    'video_url', 'videoUrl', 'result_url', 'resultUrl', 'download_url', 'downloadUrl',
+    'video', 'uri', 'url'
+  ];
+  for (const key of preferredKeys) {
+    const found = deepVideoResultUrl(value[key], seen, depth + 1);
+    if (found) return found;
+  }
+  for (const child of Object.values(value)) {
+    const found = deepVideoResultUrl(child, seen, depth + 1);
+    if (found) return found;
+  }
+  return '';
 }
 
 function providerVideoTaskError(payload, fallbackCode, fallbackMessage) {
@@ -395,7 +423,9 @@ function providerVideoTaskError(payload, fallbackCode, fallbackMessage) {
   };
 }
 
-const VIDEO_MODE_IDS = new Set(['text', 'first-frame', 'first-last-frame', 'omni']);
+const VIDEO_MODE_IDS = new Set([
+  'text', 'first-frame', 'first-last-frame', 'omni', 'video-reference', 'video-edit'
+]);
 
 function videoModeDefinition(capabilities, value, referenceCount) {
   const modes = Array.isArray(capabilities.videoModes) ? capabilities.videoModes : [];
@@ -483,6 +513,17 @@ function validatedVideoTaskInput(provider, body) {
       code: 'too-many-reference-videos'
     });
   }
+  if (referenceVideoCount > 0) {
+    const maximumImagesWithVideo = Number(mode.maxReferenceImagesWithVideo);
+    const referenceImageCount = referenceMediaTypes.filter((mediaType) => mediaType === 'image').length;
+    if (Number.isInteger(maximumImagesWithVideo) && maximumImagesWithVideo >= 0
+      && referenceImageCount > maximumImagesWithVideo) {
+      throw Object.assign(new Error(`${provider.name} accepts at most ${maximumImagesWithVideo} reference images with a reference video.`), {
+        status: 400,
+        code: 'too-many-references'
+      });
+    }
+  }
   const ratio = String(body.aspectRatio || '');
   const resolution = String(body.resolution || '').toUpperCase();
   const duration = Number(body.duration);
@@ -509,8 +550,11 @@ function validatedVideoTaskInput(provider, body) {
       code: 'invalid-resolution'
     });
   }
-  const validDurations = Array.isArray(capabilities.durations)
-    ? capabilities.durations.map(Number).filter(Number.isInteger)
+  const durationSource = Array.isArray(mode.durations) && mode.durations.length
+    ? mode.durations
+    : capabilities.durations;
+  const validDurations = Array.isArray(durationSource)
+    ? durationSource.map(Number).filter(Number.isInteger)
     : [];
   if (!Number.isInteger(duration) || (validDurations.length ? !validDurations.includes(duration) : duration < 4 || duration > 15)) {
     throw Object.assign(new Error(`${provider.name} does not support this duration.`), {
@@ -520,7 +564,7 @@ function validatedVideoTaskInput(provider, body) {
   }
   const configuredRoles = Array.isArray(mode.roles) ? mode.roles.map(String).filter(Boolean) : [];
   const roles = urls.map((_url, index) => configuredRoles[index] || configuredRoles[0] || 'reference_image');
-  return { capabilities, duration, mode: mode.id, ratio, referenceMediaTypes, resolution, roles, urls };
+  return { capabilities, duration, mode: mode.id, modeDefinition: mode, ratio, referenceMediaTypes, resolution, roles, urls };
 }
 
 async function createMiniMaxVideoTask(provider, body, signal) {
@@ -567,6 +611,165 @@ async function createSeedanceVideoTask(provider, body, signal) {
     ...(capabilities.serviceTier ? { service_tier: String(capabilities.serviceTier) } : {})
   };
   const created = await responseJson(await fetch(provider.endpoint, {
+    method: 'POST',
+    headers: providerTaskHeaders(provider, body),
+    signal: providerSignal(signal),
+    body: JSON.stringify(requestBody)
+  }), provider.name);
+  const taskId = providerVideoTaskId(created);
+  if (!taskId || taskId.length > 256) {
+    throw Object.assign(new Error(`${provider.name} did not return a valid task ID.`), {
+      status: 502,
+      code: 'provider-invalid-response',
+      retryable: false
+    });
+  }
+  return { providerId: provider.id, taskId };
+}
+
+function klingRelayMediaUrl(rawUrl) {
+  const url = String(rawUrl || '').trim();
+  if (/^data:image\//i.test(url)) {
+    const image = stripImageMetadata(parseImageDataUrl(url, { maxBytes: 24 * 1024 * 1024 }));
+    return storeAi302RelayAsset(image, { relayTtlMs: 2 * 60 * 60 * 1000 }).url;
+  }
+  if (/^https:\/\//i.test(url)) return url;
+  throw Object.assign(new Error('Kling requires HTTPS image or video references.'), {
+    status: 400,
+    code: 'invalid-reference-media'
+  });
+}
+
+function klingReferenceUrls(urls) {
+  return urls.map((url) => klingRelayMediaUrl(url));
+}
+
+async function createKlingV3VideoTask(provider, body, signal) {
+  const { duration, referenceMediaTypes, urls } = validatedVideoTaskInput(provider, body);
+  if (urls.length !== 1 || referenceMediaTypes[0] !== 'image') {
+    throw Object.assign(new Error(`${provider.name} requires exactly one reference image.`), {
+      status: 400,
+      code: 'reference-required'
+    });
+  }
+  const requestBody = {
+    cfg_scale: 0.5,
+    duration,
+    image: klingRelayMediaUrl(urls[0]),
+    prompt: String(body.prompt || '').trim(),
+    // V3 documents sound as the audio switch. It is enabled consistently
+    // with the existing video providers; the pricing table uses sound-on.
+    sound: provider.capabilities && provider.capabilities.generateAudio === true
+  };
+  const created = await responseJson(await fetch(provider.endpoint, {
+    method: 'POST',
+    headers: providerTaskHeaders(provider, body),
+    signal: providerSignal(signal),
+    body: JSON.stringify(requestBody)
+  }), provider.name);
+  const taskId = providerVideoTaskId(created);
+  if (!taskId || taskId.length > 256) {
+    throw Object.assign(new Error(`${provider.name} did not return a valid task ID.`), {
+      status: 502,
+      code: 'provider-invalid-response',
+      retryable: false
+    });
+  }
+  return { providerId: provider.id, taskId };
+}
+
+function klingO3Endpoint(provider, operation) {
+  const endpoint = new URL(provider.endpoint);
+  const operationName = String(operation || '').trim().toLowerCase();
+  if (!['image-to-video', 'reference-to-video', 'video-edit'].includes(operationName)) {
+    throw Object.assign(new Error('The Kling O3 operation is invalid.'), { status: 400, code: 'invalid-video-mode' });
+  }
+  endpoint.pathname = endpoint.pathname.replace(
+    /\/(?:image-to-video|reference-to-video|video-edit|text-to-video)$/i,
+    `/${operationName}`
+  );
+  return endpoint.toString();
+}
+
+function klingO3AspectRatio(body) {
+  const requested = String(body.aspectRatio || '').trim();
+  if (['16:9', '9:16', '1:1'].includes(requested)) return requested;
+  const width = Number(body.sourceWidth);
+  const height = Number(body.sourceHeight);
+  if (width > 0 && height > 0) {
+    const ratio = width / height;
+    return ['16:9', '9:16', '1:1'].reduce((nearest, candidate) => {
+      const [candidateWidth, candidateHeight] = candidate.split(':').map(Number);
+      const distance = Math.abs(ratio - candidateWidth / candidateHeight);
+      return distance < nearest.distance ? { candidate, distance } : nearest;
+    }, { candidate: '16:9', distance: Number.POSITIVE_INFINITY }).candidate;
+  }
+  return '16:9';
+}
+
+async function createKlingO3VideoTask(provider, body, signal) {
+  const { capabilities, duration, mode, referenceMediaTypes, urls } = validatedVideoTaskInput(provider, body);
+  const mediaUrls = klingReferenceUrls(urls);
+  const images = mediaUrls.filter((_url, index) => referenceMediaTypes[index] === 'image');
+  const videos = mediaUrls.filter((_url, index) => referenceMediaTypes[index] === 'video');
+  const isEdit = mode === 'video-edit';
+  const isImageToVideo = mode === 'first-frame' && images.length === 1 && videos.length === 0;
+  const operation = isEdit ? 'video-edit' : isImageToVideo ? 'image-to-video' : 'reference-to-video';
+
+  if (mode === 'first-last-frame' && (images.length !== 2 || videos.length)) {
+    throw Object.assign(new Error(`${provider.name} requires two reference images for first/last frame generation.`), {
+      status: 400,
+      code: 'invalid-reference-media'
+    });
+  }
+  if (isEdit && videos.length !== 1) {
+    throw Object.assign(new Error(`${provider.name} requires one reference video for video editing.`), {
+      status: 400,
+      code: 'reference-required'
+    });
+  }
+  if (!isEdit && videos.length > 1) {
+    throw Object.assign(new Error(`${provider.name} accepts at most one reference video.`), {
+      status: 400,
+      code: 'too-many-reference-videos'
+    });
+  }
+  if (videos.length && images.length > 4) {
+    throw Object.assign(new Error(`${provider.name} accepts at most four reference images with a reference video.`), {
+      status: 400,
+      code: 'too-many-references'
+    });
+  }
+
+  let requestBody;
+  if (isImageToVideo) {
+    // The O3 image-to-video endpoint derives the output ratio from the image;
+    // it accepts only the documented image/prompt/duration/sound fields.
+    requestBody = {
+      duration,
+      image: images[0],
+      prompt: String(body.prompt || '').trim(),
+      sound: capabilities.generateAudio !== false
+    };
+  } else if (isEdit) {
+    requestBody = {
+      ...(images.length ? { images } : {}),
+      keep_original_sound: body.keepOriginalSound !== false,
+      prompt: String(body.prompt || '').trim(),
+      video: videos[0]
+    };
+  } else {
+    requestBody = {
+      aspect_ratio: klingO3AspectRatio(body),
+      duration,
+      ...(images.length ? { images } : {}),
+      ...(videos.length ? { video: videos[0], keep_original_sound: body.keepOriginalSound !== false } : {}),
+      prompt: String(body.prompt || '').trim(),
+      sound: capabilities.generateAudio !== false
+    };
+  }
+
+  const created = await responseJson(await fetch(klingO3Endpoint(provider, operation), {
     method: 'POST',
     headers: providerTaskHeaders(provider, body),
     signal: providerSignal(signal),
@@ -655,6 +858,8 @@ export async function createVideoTask(body, signal) {
   if (['jimeng-video-v30', 'jimeng-video-v30-pro'].includes(provider.protocol)) {
     return createJimengVideoTask(provider, body, signal);
   }
+  if (provider.protocol === 'kling-v3-image-to-video') return createKlingV3VideoTask(provider, body, signal);
+  if (provider.protocol === 'kling-o3-omni') return createKlingO3VideoTask(provider, body, signal);
   throw Object.assign(new Error('The selected video provider does not support asynchronous tasks.'), {
     status: 400,
     code: 'async-video-not-supported'
@@ -715,6 +920,42 @@ async function pollSeedanceVideoTask(provider, taskId, signal) {
   return { status };
 }
 
+async function pollKlingV3VideoTask(provider, taskId, signal) {
+  const normalizedTaskId = validVideoTaskId(taskId);
+  const result = await responseJson(await fetch(
+    `${provider.resultEndpoint}/${encodeURIComponent(normalizedTaskId)}/result`,
+    { headers: providerHeaders(provider), signal: providerSignal(signal) }
+  ), provider.name);
+  const status = providerVideoTaskStatus(result);
+  if (status === 'succeeded') {
+    const resultUrl = providerVideoResultUrl(result);
+    return resultUrl ? { status, resultUrl } : { status: 'running' };
+  }
+  if (TERMINAL_VIDEO_FAILURES.has(status)) {
+    return { status, ...providerVideoTaskError(result, `provider-${status}`, `${provider.name} video generation ${status}.`) };
+  }
+  return { status };
+}
+
+async function pollKlingO3VideoTask(provider, taskId, signal) {
+  const normalizedTaskId = validVideoTaskId(taskId);
+  const result = await responseJson(await fetch(
+    `${provider.resultEndpoint}/${encodeURIComponent(normalizedTaskId)}/result`,
+    { headers: providerHeaders(provider), signal: providerSignal(signal) }
+  ), provider.name);
+  const status = providerVideoTaskStatus(result);
+  if (status === 'succeeded') {
+    const resultUrl = providerVideoResultUrl(result);
+    return resultUrl
+      ? { status, resultUrl }
+      : { status: 'running' };
+  }
+  if (TERMINAL_VIDEO_FAILURES.has(status)) {
+    return { status, ...providerVideoTaskError(result, `provider-${status}`, `${provider.name} video generation ${status}.`) };
+  }
+  return { status };
+}
+
 async function pollJimengVideoTask(provider, taskId, signal) {
   const normalizedTaskId = validVideoTaskId(taskId);
   const result = await responseJson(await fetch(provider.resultEndpoint, {
@@ -759,6 +1000,8 @@ export async function pollVideoTask(providerId, taskId, signal) {
   if (['jimeng-video-v30', 'jimeng-video-v30-pro'].includes(provider.protocol)) {
     return pollJimengVideoTask(provider, taskId, signal);
   }
+  if (provider.protocol === 'kling-v3-image-to-video') return pollKlingV3VideoTask(provider, taskId, signal);
+  if (provider.protocol === 'kling-o3-omni') return pollKlingO3VideoTask(provider, taskId, signal);
   throw Object.assign(new Error('The selected video provider does not support task polling.'), {
     status: 400,
     code: 'async-video-not-supported'

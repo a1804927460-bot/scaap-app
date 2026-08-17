@@ -8,6 +8,7 @@ alter table public.chat_conversations alter column direct_user_low drop not null
 alter table public.chat_conversations alter column direct_user_high drop not null;
 alter table public.chat_conversations drop constraint if exists chat_conversations_kind_check;
 alter table public.chat_conversations drop constraint if exists chat_conversations_check;
+alter table public.chat_conversations drop constraint if exists chat_conversations_shape_check;
 alter table public.chat_conversations add constraint chat_conversations_kind_check
   check (kind in ('direct', 'group'));
 alter table public.chat_conversations add constraint chat_conversations_shape_check check (

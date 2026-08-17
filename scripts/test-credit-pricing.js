@@ -20,6 +20,7 @@ assert.strictEqual(POINTS_PER_CNY, 10);
 assert.strictEqual(PROFIT_PER_REQUEST_CNY, 1.4);
 assert.strictEqual(PROFIT_PER_REQUEST_CREDITS, 14);
 assert.strictEqual(retailCreditsFromUpstreamCny(1.5), 29, 'CNY 1.5 upstream cost must retail for CNY 2.9.');
+assert.strictEqual(Math.ceil(1.5 * POINTS_PER_CNY * 1.15), 18, 'Staff price must be upstream cost plus 15%, without the public fixed profit.');
 assert.strictEqual(retailCreditsFromUpstreamCny(0), 14, 'Every paid request must include the CNY 1.4 fixed profit.');
 assert.throws(() => retailCreditsFromUpstreamCny(-0.01), TypeError);
 
@@ -191,6 +192,9 @@ assert.deepStrictEqual(publicPricing.video['video-3'], VIDEO_RATES['video-3']);
 const boardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'board-canvas.js'), 'utf8');
 const assistantSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'ai-assistant.js'), 'utf8');
 const mainSource = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+const runtimeSource = fs.readFileSync(path.join(__dirname, '..', 'config', 'provider-catalog.json'), 'utf8');
+const staffMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608170001_cost_plus_fixed_profit_credits.sql'), 'utf8');
 const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
 const boardStyles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles', 'main.css'), 'utf8');
 assert.match(
@@ -230,9 +234,14 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /const creditQuote = quoteMediaCredits\(\{[\s\S]*?size: request\.size,[\s\S]*?resolution: request\.resolution/,
-  'Main-process settlement must quote the selected image size instead of falling back to the default resolution.'
+  /const creditQuote = await quoteMediaCreditsForAccount\(\{[\s\S]*?size: request\.size,[\s\S]*?resolution: request\.resolution/,
+  'Main-process settlement must use the account-authorized quote for the selected image size.'
 );
+assert.doesNotMatch(mainSource, /Chaser0713|49c8f3fd5b5b39253cf33a3bbcd14a270c8fbada802b1248408bdf7ccac98415/);
+assert.doesNotMatch(preloadSource, /Chaser0713|staff15|pricing_tier/);
+assert.doesNotMatch(runtimeSource, /Chaser0713|staff15|pricing_tier/);
+assert.match(staffMigration, /49c8f3fd5b5b39253cf33a3bbcd14a270c8fbada802b1248408bdf7ccac98415/);
+assert.doesNotMatch(staffMigration, /Chaser0713/);
 assert.match(
   mainSource,
   /const creditsCharged = kind === 'image'[\s\S]*?creditQuote\.unitCredits \* files\.length[\s\S]*?settledCredits: creditsCharged[\s\S]*?estimatedCredits: creditQuote\.totalCredits,[\s\S]*?creditsCharged,[\s\S]*?pricing:/,

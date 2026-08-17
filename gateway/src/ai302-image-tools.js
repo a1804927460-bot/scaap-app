@@ -16,6 +16,7 @@ const ERASE_PATH = '/302/submit/erase';
 const SEED_EDIT_PATH = '/doubao/drawing/seededit_v30';
 const SEED_EDIT_RESULT_PATH = '/doubao/drawing/seededit_v30_result';
 const KLING_EXPAND_PATH = '/klingai/v1/images/editing/expand';
+const CLIPDROP_UNCROP_PATH = '/clipdrop/uncrop/v1';
 const CLEANUP_PATH = '/clipdrop/cleanup/v1';
 const GENERATIVE_UPSCALE_PATH = '/recraft/v1/images/generativeUpscale';
 const TOPAZ_IMAGE_PATHS = Object.freeze({
@@ -1034,6 +1035,28 @@ export async function generativeUpscaleImage({ imageDataUrl } = {}, options = {}
   const form = new FormData();
   form.append('file', new Blob([image.buffer], { type: image.mime }), `image.${image.extension}`);
   return fetch302BinaryImage(GENERATIVE_UPSCALE_PATH, form, options);
+}
+
+export async function uncropImage({ imageDataUrl, toolOptions } = {}, options = {}) {
+  const image = parseSanitizedImage(imageDataUrl);
+  const source = toolOptions && typeof toolOptions === 'object' && !Array.isArray(toolOptions) ? toolOptions : {};
+  const extensions = {
+    extend_left: boundedNumber(source.left, 0, 0, 2000, 'left', { integer: true }),
+    extend_right: boundedNumber(source.right, 0, 0, 2000, 'right', { integer: true }),
+    extend_up: boundedNumber(source.up, 0, 0, 2000, 'up', { integer: true }),
+    extend_down: boundedNumber(source.down, 0, 0, 2000, 'down', { integer: true })
+  };
+  if (!Object.values(extensions).some((value) => value > 0)) {
+    throw imageToolError('invalid-image-tool-options', 'The expanded image must be larger than the source.', 400);
+  }
+  const seed = source.seed === undefined || source.seed === null || source.seed === ''
+    ? undefined
+    : boundedNumber(source.seed, 0, 0, 100_000, 'seed', { integer: true });
+  const form = new FormData();
+  form.append('image_file', new Blob([image.buffer], { type: image.mime }), `image.${image.extension}`);
+  for (const [name, value] of Object.entries(extensions)) form.append(name, String(value));
+  if (seed !== undefined) form.append('seed', String(seed));
+  return fetch302BinaryImage(CLIPDROP_UNCROP_PATH, form, options);
 }
 
 export async function cleanupImageObjects({ imageDataUrl, maskImageDataUrl } = {}, options = {}) {

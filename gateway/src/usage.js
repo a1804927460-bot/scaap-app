@@ -43,7 +43,11 @@ export const VIDEO_CREDITS_PER_SECOND = Object.freeze({
   'video-6': Object.freeze({ '480P': 2, '720P': 3, '1080P': 4 }),
   'video-7': Object.freeze({ '480P': 1.5, '720P': 2.5 }),
   'video-8': Object.freeze({ '720P': 0.5, '1080P': 1 }),
-  'video-9': Object.freeze({ '1080P': 2 })
+  'video-9': Object.freeze({ '1080P': 2 }),
+  'video-10': Object.freeze({ '720P': 18.4 }),
+  'video-11': Object.freeze({ '1080P': 24.6 }),
+  'video-12': Object.freeze({ '720P': 21.9 }),
+  'video-13': Object.freeze({ '1080P': 26.3 })
 });
 
 export const VIDEO_DEFAULT_RESOLUTIONS = Object.freeze({
@@ -55,7 +59,11 @@ export const VIDEO_DEFAULT_RESOLUTIONS = Object.freeze({
   'video-6': '1080P',
   'video-7': '720P',
   'video-8': '720P',
-  'video-9': '1080P'
+  'video-9': '1080P',
+  'video-10': '720P',
+  'video-11': '1080P',
+  'video-12': '720P',
+  'video-13': '1080P'
 });
 
 export const VIDEO_DURATION_LIMITS = Object.freeze({
@@ -67,7 +75,11 @@ export const VIDEO_DURATION_LIMITS = Object.freeze({
   'video-6': Object.freeze({ minimum: 2, maximum: 12 }),
   'video-7': Object.freeze({ minimum: 2, maximum: 12 }),
   'video-8': Object.freeze({ minimum: 5, maximum: 10 }),
-  'video-9': Object.freeze({ minimum: 5, maximum: 10 })
+  'video-9': Object.freeze({ minimum: 5, maximum: 10 }),
+  'video-10': Object.freeze({ minimum: 3, maximum: 15 }),
+  'video-11': Object.freeze({ minimum: 3, maximum: 15 }),
+  'video-12': Object.freeze({ minimum: 3, maximum: 15 }),
+  'video-13': Object.freeze({ minimum: 3, maximum: 15 })
 });
 
 const DURABLE_TIMEOUT_MS = 5_000;
@@ -233,8 +245,15 @@ async function authorizedPricingTier(userId, headers, fetchImpl) {
   });
   const payload = await responsePayload(response);
   if (!response.ok) {
-    if (isMissingCreditRpc(response, payload) && !durableRequired()) return 'standard';
-    const code = isMissingCreditRpc(response, payload) ? 'credit-schema-missing' : 'credit-service-failed';
+    if (isMissingCreditRpc(response, payload)) {
+      // Pricing tiers are an optional extension of the credit schema.  A
+      // gateway deployed ahead of the Supabase migration must continue to
+      // quote at the public/standard rate; standard is the conservative rate
+      // and never grants the private staff discount.  Reservation RPCs still
+      // remain authoritative and fail closed until their migration exists.
+      return 'standard';
+    }
+    const code = 'credit-service-failed';
     throw serviceError(code, 'Could not resolve account pricing.');
   }
   return payload === 'staff15' ? 'staff15' : 'standard';
@@ -305,14 +324,17 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
     p_duration: quote.duration,
     p_expected_credits: quote.credits
   });
-  const reserveRpc = ['image-1', 'image-2', 'image-5', 'image-9'].includes(quote.providerId)
+  const reserveRpc = ['video-10', 'video-11', 'video-12', 'video-13'].includes(quote.providerId)
+    ? 'reserve_kling_video_credits'
+    : (['image-1', 'image-2', 'image-5', 'image-9'].includes(quote.providerId)
     ? 'reserve_nano_banana_credits'
     : (['image-7', 'image-8'].includes(quote.providerId)
       ? 'reserve_higgsfield_credits'
       : (['image-3', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16',
-          'video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9'].includes(quote.providerId)
+          'video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9',
+          'video-10', 'video-11', 'video-12', 'video-13'].includes(quote.providerId)
         ? 'reserve_302_catalog_credits'
-        : 'reserve_ai_credits'));
+        : 'reserve_ai_credits')));
   let { response, payload } = await reserveCredits(headers, requestBody, fetchImpl, reserveRpc);
   if (response.ok && payload && payload.ok === false && payload.reason === 'pricing-mismatch'
       && Number.isInteger(Number(payload.credits)) && Number(payload.credits) >= 0) {

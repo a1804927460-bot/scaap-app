@@ -1255,6 +1255,43 @@ async function openFileFullscreenPreview(file, sourceMedia = null) {
   }
 }
 
+function fitFullscreenVideoPlayer(video, shell, stage, signal) {
+  let frame = 0;
+  const apply = () => {
+    frame = 0;
+    const sourceWidth = Number(video.videoWidth) || 16;
+    const sourceHeight = Number(video.videoHeight) || 9;
+    const stageWidth = Math.max(1, stage.clientWidth);
+    const stageHeight = Math.max(1, stage.clientHeight);
+    const compact = window.innerWidth <= 720;
+    const maxWidth = Math.max(1, Math.min(
+      stageWidth - (compact ? 28 : 48),
+      compact ? window.innerWidth * 0.94 : Math.min(window.innerWidth * 0.82, 1440)
+    ));
+    const maxHeight = Math.max(1, Math.min(
+      stageHeight - (compact ? 108 : 136),
+      compact ? window.innerHeight * 0.68 : Math.min(window.innerHeight * 0.76, 860)
+    ));
+    const scale = Math.min(maxWidth / sourceWidth, maxHeight / sourceHeight);
+    shell.style.width = `${Math.max(1, Math.round(sourceWidth * scale))}px`;
+    shell.style.height = `${Math.max(1, Math.round(sourceHeight * scale))}px`;
+    shell.style.aspectRatio = `${sourceWidth} / ${sourceHeight}`;
+  };
+  const schedule = () => {
+    if (frame) return;
+    frame = window.requestAnimationFrame(apply);
+  };
+  const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : null;
+  observer?.observe(stage);
+  video.addEventListener('loadedmetadata', schedule, { signal });
+  window.addEventListener('resize', schedule, { signal });
+  schedule();
+  return () => {
+    if (frame) window.cancelAnimationFrame(frame);
+    observer?.disconnect();
+  };
+}
+
 function showFullscreenMedia(media, options = {}) {
   const overlay = document.getElementById('fullscreen-overlay');
   const fsStage = document.getElementById('fullscreen-stage');
@@ -1309,7 +1346,11 @@ function showFullscreenMedia(media, options = {}) {
       onPlaybackFailure: (error) => playbackMonitor && playbackMonitor.handlePlayFailure(error)
     });
     playbackMonitor = monitorVideoPlayback(clone, player.signal, () => { void recover(); });
-    FullscreenPreviewCleanup.current = player.cleanup;
+    const releaseVideoLayout = fitFullscreenVideoPlayer(clone, player.shell, fsStage, player.signal);
+    FullscreenPreviewCleanup.current = () => {
+      releaseVideoLayout();
+      player.cleanup();
+    };
     FullscreenPreviewState.sourceVideo = media.isConnected ? media : null;
     FullscreenPreviewState.cloneVideo = clone;
     fsStage.appendChild(player.shell);

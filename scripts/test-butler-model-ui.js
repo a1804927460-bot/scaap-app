@@ -42,7 +42,7 @@ assert.match(boardMedia, /BOARD_BUTLER_ICONS\.imageLayer/, 'Image expansion must
 [
   ['imageEdit', 'openBoardButlerSeedEditPanel'],
   ['imageExpand', 'openBoardButlerExpandPanel'],
-  ['imageUpscale', 'launchBoardButlerImageTool'],
+  ['imageUpscale', 'runBoardButlerImageTool'],
   ['eraseObject', 'openBoardButlerErasePanel']
 ].forEach(([action, entryPoint]) => {
   assert.match(
@@ -52,7 +52,9 @@ assert.match(boardMedia, /BOARD_BUTLER_ICONS\.imageLayer/, 'Image expansion must
   );
 });
 assert.match(boardMedia, /SeedEdit 3\.0/, 'Image edit must identify SeedEdit 3.0.');
-assert.match(boardMedia, /Kling Images Expand/, 'Image expansion must identify the documented Kling endpoint.');
+assert.match(boardMedia, /Clipdrop Uncrop/, 'Image expansion must identify the documented Clipdrop endpoint.');
+assert.match(boardMedia, /butler-expand-width[\s\S]*butler-expand-height/, 'Image expansion must expose exact target dimensions.');
+assert.match(boardMedia, /widthDelta > 4000[\s\S]*heightDelta > 4000/, 'Centered expansion must enforce Clipdrop\'s 2000-pixel limit on each side.');
 assert.match(boardMedia, /Creative upscale[\s\S]*credits: 69/, 'Creative upscale must expose its retail point cost.');
 assert.match(boardMedia, /maskDataUrl[\s\S]*maskWidth[\s\S]*maskHeight/, 'Erase must submit a real PNG mask with dimensions.');
 assert.match(boardMedia, /videoUpscale: Object\.freeze/, 'Video enhancement must have an isolated bridge hook.');
@@ -100,6 +102,7 @@ assert.match(main, /function butlerFailure[\s\S]*?httpStatus[\s\S]*?httpStatus \
 ].forEach(([method, channel]) => {
   assert.match(preload, new RegExp(`${method}:[^\\n]+${channel}`), `${method} must use its isolated Butler IPC channel.`);
 });
+assert.match(main, /butler:image-upscale[\s\S]*generative-upscale[\s\S]*aiGateway\.upscaleImage/, 'Creative upscale must have a dedicated paid desktop invocation path.');
 assert.match(preload, /getImageToolStatus:[^\n]+butler:image-tool-status/, 'Image tools must expose asynchronous status polling.');
 assert.match(preload, /downloadImageToolResult:[^\n]+butler:image-tool-download/, 'Image tools must expose result download and archival.');
 assert.match(boardMedia, /task\.phase === 'queued'[\s\S]*task\.phase === 'downloading'[\s\S]*task\.phase === 'saving'/, 'Image tools must expose their asynchronous phases.');

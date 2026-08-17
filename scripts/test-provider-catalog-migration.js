@@ -90,7 +90,11 @@ assert.deepEqual(
   [
     'MiniMax H3',
     'Seedance 2.0',
-    'Seedance 2.5'
+    'Seedance 2.5',
+    'Kling V3 Standard',
+    'Kling V3 Pro',
+    'Kling O3 Standard',
+    'Kling O3 Pro'
   ]
 );
 const seedance20 = media.videoProviders.find((provider) => provider.id === 'video-2');
@@ -115,6 +119,51 @@ assert.equal(Object.hasOwn(seedance25.capabilities.videoModes[1], 'ratios'), fal
 assert.equal(Object.hasOwn(seedance25.capabilities.videoModes[2], 'ratios'), false);
 assert.equal(require('../lib/provider-catalog').catalogProvider('video-2').keyEnv, 'AI302_KEY');
 assert.equal(require('../lib/provider-catalog').catalogProvider('video-3').keyEnv, 'AI302_KEY');
+assert.match(require('../lib/provider-catalog').catalogProvider('video-10').endpoint, /kling-v3\.0-std\/image-to-video$/);
+assert.match(require('../lib/provider-catalog').catalogProvider('video-11').endpoint, /kling-v3\.0-pro\/image-to-video$/);
+assert.match(require('../lib/provider-catalog').catalogProvider('video-12').endpoint, /kling-video-o3-std\/image-to-video$/);
+assert.match(require('../lib/provider-catalog').catalogProvider('video-13').endpoint, /kling-video-o3-pro\/image-to-video$/);
+assert.deepEqual(
+  require('../lib/provider-catalog').catalogProvider('video-12').capabilities.durations,
+  Array.from({ length: 13 }, (_value, index) => index + 3)
+);
+assert.deepEqual(
+  require('../lib/provider-catalog').catalogProvider('video-13').capabilities.durations,
+  Array.from({ length: 13 }, (_value, index) => index + 3)
+);
+for (const id of ['video-10', 'video-11', 'video-12', 'video-13']) {
+  const provider = require('../lib/provider-catalog').catalogProvider(id);
+  assert.equal(provider.keyEnv, 'AI302_KEY');
+  assert.equal(provider.protocol.startsWith('kling-'), true);
+}
+assert.deepEqual(require('../lib/provider-catalog').catalogProvider('video-10').capabilities.videoModes.map((mode) => mode.id), ['first-frame']);
+assert.deepEqual(require('../lib/provider-catalog').catalogProvider('video-12').capabilities.videoModes.map((mode) => mode.id), [
+  'first-frame', 'first-last-frame', 'omni', 'video-reference', 'video-edit'
+]);
+assert.deepEqual(
+  require('../lib/provider-catalog').catalogProvider('video-12').capabilities.videoModes[0].ratios,
+  ['adaptive']
+);
+assert.deepEqual(
+  require('../lib/provider-catalog').catalogProvider('video-12').capabilities.videoModes.find((mode) => mode.id === 'video-edit').ratios,
+  ['adaptive']
+);
+assert.equal(
+  require('../lib/provider-catalog').catalogProvider('video-12').capabilities.videoModes.find((mode) => mode.id === 'omni').maxReferenceImagesWithVideo,
+  4
+);
+assert.equal(
+  require('../lib/provider-catalog').catalogProvider('video-13').capabilities.videoModes.find((mode) => mode.id === 'video-edit').maxReferences,
+  5
+);
+assert.equal(
+  require('../lib/provider-catalog').catalogProvider('video-13').capabilities.videoModes.find((mode) => mode.id === 'video-edit').maxReferenceImagesWithVideo,
+  4
+);
+assert.equal(
+  require('../lib/provider-catalog').catalogProvider('video-13').capabilities.videoModes.find((mode) => mode.id === 'video-reference').hidden,
+  true
+);
 for (const id of ['video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9']) {
   assert.equal(require('../lib/provider-catalog').catalogProvider(id).keyEnv, 'AI302_KEY');
   assert.equal(media.videoProviders.find((provider) => provider.id === id).name, '');

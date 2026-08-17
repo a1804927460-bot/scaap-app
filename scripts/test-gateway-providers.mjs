@@ -872,4 +872,165 @@ assert.deepEqual(jimengProBody, {
 assert.equal(Object.hasOwn(jimengProBody, 'req_key'), false);
 assert.deepEqual(await pollVideoTask('video-9', 'jimeng-pro-task'), { status: 'running' });
 
+const klingCalls = [];
+globalThis.fetch = async (url, options = {}) => {
+  const value = String(url);
+  klingCalls.push({ url: value, options });
+  if (value.endsWith('/kling-v3.0-std/image-to-video')) {
+    return jsonResponse({ id: 'kling-v3-task', status: 'created' });
+  }
+  if (value.endsWith('/predictions/kling-v3-task/result')) {
+    return jsonResponse({ status: 'succeeded', outputs: [{ url: 'https://cdn.example/kling-v3.mp4' }] });
+  }
+  if (value.endsWith('/kling-video-o3-pro/reference-to-video')) {
+    return jsonResponse({ data: { id: 'kling-o3-task', status: 'created' } });
+  }
+  if (value.endsWith('/kling-video-o3-std/reference-to-video')) {
+    return jsonResponse({ data: { id: 'kling-o3-first-last-task', status: 'created' } });
+  }
+  if (value.endsWith('/kling-video-o3-std/video-edit')) {
+    return jsonResponse({ data: { id: 'kling-o3-edit-task', status: 'created' } });
+  }
+  if (value.endsWith('/kling-video-o3-pro/video-edit')) {
+    return jsonResponse({ data: { id: 'kling-o3-pro-edit-task', status: 'created' } });
+  }
+  if (value.endsWith('/predictions/kling-o3-task/result')) {
+    return jsonResponse({ data: { status: 'succeeded', outputs: [{ url: 'https://cdn.example/kling-o3.mp4' }] } });
+  }
+  if (value.endsWith('/predictions/kling-o3-edit-task/result')) {
+    return jsonResponse({ data: { status: 'succeeded', outputs: [{ url: 'https://cdn.example/kling-o3-edit.mp4' }] } });
+  }
+  if (value.endsWith('/predictions/kling-o3-first-last-task/result')) {
+    return jsonResponse({ data: { status: 'succeeded', outputs: [{ url: 'https://cdn.example/kling-o3-first-last.mp4' }] } });
+  }
+  if (value.endsWith('/predictions/kling-o3-pro-edit-task/result')) {
+    return jsonResponse({ data: { status: 'succeeded', outputs: [{ url: 'https://cdn.example/kling-o3-pro-edit.mp4' }] } });
+  }
+  throw new Error(`Unexpected Kling URL: ${value}`);
+};
+assert.deepEqual(await createVideoTask({
+  providerId: 'video-10',
+  prompt: 'animate the product shot',
+  resolution: '720P',
+  duration: 5,
+  aspectRatio: 'adaptive',
+  videoMode: 'first-frame',
+  urls: ['https://cdn.example/product.png'],
+  referenceMediaTypes: ['image']
+}), { providerId: 'video-10', taskId: 'kling-v3-task' });
+assert.deepEqual(JSON.parse(klingCalls[0].options.body), {
+  cfg_scale: 0.5,
+  duration: 5,
+  image: 'https://cdn.example/product.png',
+  prompt: 'animate the product shot',
+  sound: true
+});
+assert.deepEqual(await pollVideoTask('video-10', 'kling-v3-task'), {
+  status: 'succeeded',
+  resultUrl: 'https://cdn.example/kling-v3.mp4'
+});
+assert.deepEqual(await createVideoTask({
+  providerId: 'video-13',
+  prompt: 'use the video motion as a guide',
+  resolution: '1080P',
+  duration: 5,
+  aspectRatio: '16:9',
+  videoMode: 'video-reference',
+  urls: ['https://cdn.example/source.mp4'],
+  referenceMediaTypes: ['video']
+}), { providerId: 'video-13', taskId: 'kling-o3-task' });
+assert.equal(klingCalls[2].url, 'https://api.302.ai/ws/api/v3/kwaivgi/kling-video-o3-pro/reference-to-video');
+assert.deepEqual(JSON.parse(klingCalls[2].options.body), {
+  aspect_ratio: '16:9',
+  duration: 5,
+  video: 'https://cdn.example/source.mp4',
+  prompt: 'use the video motion as a guide',
+  keep_original_sound: true,
+  sound: true
+});
+assert.deepEqual(await pollVideoTask('video-13', 'kling-o3-task'), {
+  status: 'succeeded',
+  resultUrl: 'https://cdn.example/kling-o3.mp4'
+});
+assert.deepEqual(await createVideoTask({
+  providerId: 'video-12',
+  prompt: 'change the scene to night',
+  resolution: '720P',
+  duration: 10,
+  aspectRatio: 'adaptive',
+  videoMode: 'video-edit',
+  urls: ['https://cdn.example/source.mp4'],
+  referenceMediaTypes: ['video']
+}), { providerId: 'video-12', taskId: 'kling-o3-edit-task' });
+assert.equal(klingCalls[4].url, 'https://api.302.ai/ws/api/v3/kwaivgi/kling-video-o3-std/video-edit');
+assert.deepEqual(JSON.parse(klingCalls[4].options.body), {
+  keep_original_sound: true,
+  prompt: 'change the scene to night',
+  video: 'https://cdn.example/source.mp4'
+});
+assert.deepEqual(await pollVideoTask('video-12', 'kling-o3-edit-task'), {
+  status: 'succeeded',
+  resultUrl: 'https://cdn.example/kling-o3-edit.mp4'
+});
+assert.deepEqual(await createVideoTask({
+  providerId: 'video-12',
+  prompt: 'walk from the first image into the second image',
+  resolution: '720P',
+  duration: 7,
+  aspectRatio: '9:16',
+  videoMode: 'first-last-frame',
+  urls: ['https://cdn.example/first.png', 'https://cdn.example/last.png'],
+  referenceMediaTypes: ['image', 'image']
+}), { providerId: 'video-12', taskId: 'kling-o3-first-last-task' });
+assert.equal(klingCalls.at(-1).url, 'https://api.302.ai/ws/api/v3/kwaivgi/kling-video-o3-std/reference-to-video');
+assert.deepEqual(JSON.parse(klingCalls.at(-1).options.body), {
+  aspect_ratio: '9:16',
+  duration: 7,
+  images: ['https://cdn.example/first.png', 'https://cdn.example/last.png'],
+  prompt: 'walk from the first image into the second image',
+  sound: true
+});
+assert.deepEqual(await pollVideoTask('video-12', 'kling-o3-first-last-task'), {
+  status: 'succeeded',
+  resultUrl: 'https://cdn.example/kling-o3-first-last.mp4'
+});
+const proEditImages = [
+  'https://cdn.example/ref-1.png',
+  'https://cdn.example/ref-2.png',
+  'https://cdn.example/ref-3.png',
+  'https://cdn.example/ref-4.png'
+];
+assert.deepEqual(await createVideoTask({
+  providerId: 'video-13',
+  prompt: 'change the clothing using the reference images',
+  resolution: '1080P',
+  duration: 8,
+  aspectRatio: 'adaptive',
+  videoMode: 'video-edit',
+  urls: ['https://cdn.example/source.mp4', ...proEditImages],
+  referenceMediaTypes: ['video', 'image', 'image', 'image', 'image'],
+  keepOriginalSound: false
+}), { providerId: 'video-13', taskId: 'kling-o3-pro-edit-task' });
+assert.equal(klingCalls.at(-1).url, 'https://api.302.ai/ws/api/v3/kwaivgi/kling-video-o3-pro/video-edit');
+assert.deepEqual(JSON.parse(klingCalls.at(-1).options.body), {
+  images: proEditImages,
+  keep_original_sound: false,
+  prompt: 'change the clothing using the reference images',
+  video: 'https://cdn.example/source.mp4'
+});
+await assert.rejects(() => createVideoTask({
+  providerId: 'video-13',
+  prompt: 'too many references',
+  resolution: '1080P',
+  duration: 8,
+  aspectRatio: 'adaptive',
+  videoMode: 'video-edit',
+  urls: ['https://cdn.example/source.mp4', ...proEditImages, 'https://cdn.example/ref-5.png'],
+  referenceMediaTypes: ['video', 'image', 'image', 'image', 'image', 'image']
+}), (error) => error && error.code === 'too-many-references');
+assert.deepEqual(await pollVideoTask('video-13', 'kling-o3-pro-edit-task'), {
+  status: 'succeeded',
+  resultUrl: 'https://cdn.example/kling-o3-pro-edit.mp4'
+});
+
 process.stdout.write('gateway provider registry tests passed.\n');

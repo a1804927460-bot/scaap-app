@@ -82,7 +82,7 @@ assert.deepEqual(
 );
 assert.deepEqual(
   catalog.providers.filter((provider) => provider.kind === 'video' && provider.hidden !== true).map((provider) => provider.name),
-  ['MiniMax H3', 'Seedance 2.0', 'Seedance 2.5']
+  ['MiniMax H3', 'Seedance 2.0', 'Seedance 2.5', 'Kling V3 Standard', 'Kling V3 Pro', 'Kling O3 Standard', 'Kling O3 Pro']
 );
 assert.deepEqual(
   catalog.providers.filter((provider) => provider.hidden === true).map((provider) => provider.id),

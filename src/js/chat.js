@@ -604,14 +604,41 @@ async function pickChatAttachment(kind) {
   addChatAttachmentDrafts(result.drafts);
 }
 
+function chatClipboardPlainText(data) {
+  if (!data || typeof data.getData !== 'function') return '';
+  try { return String(data.getData('text/plain') || ''); } catch (error) { return ''; }
+}
+
+function restoreChatClipboardText(input, text, selectionStart, selectionEnd) {
+  if (!input || !text) return;
+  const maximum = input.value.length;
+  const start = Number.isInteger(selectionStart) ? Math.min(selectionStart, maximum) : maximum;
+  const end = Number.isInteger(selectionEnd) ? Math.max(start, Math.min(selectionEnd, maximum)) : start;
+  input.setRangeText(text, start, end, 'end');
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
 async function pasteChatClipboardAttachments(event) {
-  const data = event.clipboardData;
-  const hasFiles = data && (data.files.length > 0 || [...data.items].some((item) => item.kind === 'file'));
-  if (!hasFiles) return;
+  const input = event.currentTarget;
+  const fallbackText = chatClipboardPlainText(event.clipboardData);
+  const selectionStart = input && input.selectionStart;
+  const selectionEnd = input && input.selectionEnd;
+
+  // Canvas copies use Windows CF_HDROP. Electron can read that native format,
+  // but Chromium frequently omits it from clipboardData.files and items.
   event.preventDefault();
   const result = await window.messsAPI.readChatClipboardDrafts();
-  if (result.ok) addChatAttachmentDrafts(result.drafts);
-  else if (result.reason !== 'clipboard-empty') chatNotice(result.message || t('Clipboard media could not be added.', '无法添加剪贴板媒体。'));
+  if (result.ok) {
+    addChatAttachmentDrafts(result.drafts);
+    return;
+  }
+  if (fallbackText) {
+    restoreChatClipboardText(input, fallbackText, selectionStart, selectionEnd);
+    return;
+  }
+  if (result.reason !== 'clipboard-empty') {
+    chatNotice(result.message || t('Clipboard media could not be added.', '无法添加剪贴板媒体。'));
+  }
 }
 
 async function openChatConversation(conversationId) {

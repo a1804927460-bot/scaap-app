@@ -669,6 +669,10 @@ function message(clientId, conversationId, createdAt, extra = {}) {
   assert.match(indexSource, /id="chat-attachment-tray"/);
   assert.match(chatUiSource, /pendingAttachments/);
   assert.match(chatUiSource, /readChatClipboardDrafts\(\)/);
+  assert.match(chatUiSource, /pasteChatClipboardAttachments[\s\S]*?event\.preventDefault\(\)[\s\S]*?readChatClipboardDrafts\(\)[\s\S]*?restoreChatClipboardText/,
+    'Chat paste must inspect native CF_HDROP before falling back to text.');
+  assert.doesNotMatch(chatUiSource, /pasteChatClipboardAttachments[\s\S]{0,400}?if \(!hasFiles\) return/,
+    'Canvas media paste must not depend on Chromium clipboard file items.');
   assert.match(chatUiSource, /captureChatScreenshotDraft\(\)/);
   assert.match(chatUiSource, /messs-chat-file:\/\/\$\{message\.clientId\}/);
   assert.doesNotMatch(chatUiSource, /sendChatScreenshot\(/);
@@ -683,7 +687,11 @@ function message(clientId, conversationId, createdAt, extra = {}) {
   assert.match(groupMigration, /'group_ready', true/i);
   const chatCssSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles', 'chat.css'), 'utf8');
   assert.match(chatCssSource, /grid-template-columns:\s*64px\s+clamp\(270px, 23vw, 320px\)\s+minmax\(380px, 1fr\)/);
-  assert.match(chatCssSource, /grid-template-rows:\s*auto\s+minmax\(0, 1fr\)\s+clamp\(230px, 30vh, 310px\)/);
+  assert.match(chatCssSource, /\.chat-shell \{[\s\S]*?grid-template-rows:\s*minmax\(0, 1fr\)/,
+    'The chat shell row must not grow beyond the application viewport.');
+  assert.match(chatCssSource, /\.chat-thread \{[\s\S]*?grid-template-rows:\s*62px\s+minmax\(0, 1fr\)[\s\S]*?overflow:\s*hidden/,
+    'Chat history must scroll without pushing the composer off screen.');
+  assert.match(chatCssSource, /grid-template-rows:\s*62px\s+minmax\(0, 1fr\)\s+clamp\(230px, 30vh, 310px\)/);
   assert.match(chatCssSource, /\.chat-composer-toolbar[\s\S]*?padding:\s*6px 12px/);
   assert.match(chatCssSource, /\.chat-emoji-popover[\s\S]*?max-height:\s*min\(280px/);
   const chatMarkup = indexSource.match(/<div id="section-chat"[\s\S]*?<div id="section-market"/i)[0];

@@ -3,15 +3,18 @@ import test from 'node:test';
 import zlib from 'node:zlib';
 import fs from 'node:fs';
 import {
+  cleanupImageObjects,
   downloadAi302ImageResult,
   eraseImageObjects,
+  generativeUpscaleImage,
   pollTopazImageTool,
   pollQwenImageEdit,
   pollQwenImageLayered,
   submitTopazImageTool,
   submitQwenImageEdit,
   submitQwenImageLayered,
-  superUpscaleImage
+  superUpscaleImage,
+  uncropImage
 } from '../src/ai302-image-tools.js';
 import { getAi302RelayAsset, validatePng } from '../src/ai302-tools.js';
 
@@ -627,6 +630,55 @@ test('Erase sends sanitized multipart image and mask files and returns one safe 
   assert.equal(Buffer.from(await maskFile.arrayBuffer()).includes(Buffer.from('private-metadata')), false);
 });
 
+test('Clipdrop Uncrop sends exact centered pixel extensions and returns the raster result', async () => {
+  const output = rgbaPng();
+  let form;
+  const result = await uncropImage({
+    imageDataUrl: imageDataUrl(rgbaPng({ metadata: true })),
+    toolOptions: { left: 512, right: 513, up: 256, down: 257, seed: 713 }
+  }, {
+    apiKey: 'uncrop-key',
+    fetchImpl: async (url, options) => {
+      assert.equal(String(url), 'https://api.302.ai/clipdrop/uncrop/v1');
+      assert.equal(options.method, 'POST');
+      assert.equal(options.headers.Authorization, 'Bearer uncrop-key');
+      form = options.body;
+      return new Response(output, { status: 200, headers: { 'Content-Type': 'image/png' } });
+    }
+  });
+  assert.deepEqual(result, output);
+  assert.equal(form.get('image_file') instanceof Blob, true);
+  assert.equal(form.get('extend_left'), '512');
+  assert.equal(form.get('extend_right'), '513');
+  assert.equal(form.get('extend_up'), '256');
+  assert.equal(form.get('extend_down'), '257');
+  assert.equal(form.get('seed'), '713');
+  await assert.rejects(
+    uncropImage({ imageDataUrl: imageDataUrl(rgbaPng()), toolOptions: { left: 2001 } }, { apiKey: 'uncrop-key' }),
+    { code: 'invalid-image-tool-options', status: 400 }
+  );
+});
+
+test('quality-first synchronous image tools use the documented 302 multipart endpoints', async () => {
+  const output = rgbaPng();
+  const source = imageDataUrl(rgbaPng());
+  const mask = imageDataUrl(rgbaPng());
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url: String(url), form: options.body });
+    return new Response(output, { status: 200, headers: { 'Content-Type': 'image/png' } });
+  };
+  assert.deepEqual(await generativeUpscaleImage({ imageDataUrl: source }, { apiKey: 'quality-key', fetchImpl }), output);
+  assert.deepEqual(await cleanupImageObjects({ imageDataUrl: source, maskImageDataUrl: mask }, { apiKey: 'quality-key', fetchImpl }), output);
+  assert.deepEqual(calls.map((entry) => entry.url), [
+    'https://api.302.ai/recraft/v1/images/generativeUpscale',
+    'https://api.302.ai/clipdrop/cleanup/v1'
+  ]);
+  assert.equal(calls[0].form.get('file') instanceof Blob, true);
+  assert.equal(calls[1].form.get('image_file') instanceof Blob, true);
+  assert.equal(calls[1].form.get('mask_file') instanceof Blob, true);
+});
+
 test('result downloads follow only allowlisted redirects, omit the 302 key, and validate PNG bytes', async () => {
   const output = rgbaPng();
   const calls = [];
@@ -667,7 +719,7 @@ test('gateway wires every image tool route through durable credits and opaque re
   );
   assert.match(
     server,
-    /url\.pathname === '\/v1\/tools\/image\/expand'[\s\S]*?modelId !== 'kling-image-expand'[\s\S]*?reserveFixedTool\(user\.id, modelId, requestId\)[\s\S]*?submitKlingImageExpand[\s\S]*?accountingRequestId: usage\.requestId/
+    /url\.pathname === '\/v1\/tools\/image\/expand'[\s\S]*?modelId !== 'kling-image-expand'[\s\S]*?reserveFixedTool\(user\.id, modelId, requestId\)[\s\S]*?uncropImage[\s\S]*?settleToolUsage\(user\.id, usage\.requestId, 'succeeded'/
   );
   assert.match(
     server,

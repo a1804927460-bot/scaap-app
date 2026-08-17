@@ -8,6 +8,7 @@ const { spawnSync } = require('child_process');
 const sharp = require('sharp');
 const {
   isThumbnailableExt,
+  thumbnailExtension,
   resolveFfmpegBinary,
   getOrCreateThumbnail
 } = require('../lib/thumbnails');
@@ -22,12 +23,30 @@ async function assertJpeg(filePath) {
   return metadata;
 }
 
+async function assertTransparentPng(filePath) {
+  assert.strictEqual(path.extname(filePath), '.png');
+  const buffer = await fs.promises.readFile(filePath);
+  assert.deepStrictEqual([...buffer.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  const metadata = await sharp(buffer).metadata();
+  assert.strictEqual(metadata.format, 'png');
+  assert.strictEqual(metadata.hasAlpha, true);
+  assert.ok(metadata.width <= 400);
+  assert.ok(metadata.height <= 400);
+  const corner = await sharp(buffer).ensureAlpha().raw().toBuffer();
+  assert.strictEqual(corner[3], 0, 'The transparent corner must stay transparent.');
+  return metadata;
+}
+
 async function main() {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'messs-thumbnails-'));
   const cache = path.join(root, 'cache');
   try {
     assert.strictEqual(isThumbnailableExt('.psd'), true);
     assert.strictEqual(isThumbnailableExt('.unknown'), true);
+    assert.strictEqual(thumbnailExtension('.png'), '.png');
+    assert.strictEqual(thumbnailExtension('.webp'), '.png');
+    assert.strictEqual(thumbnailExtension('.jpg'), '.jpg');
+    assert.strictEqual(thumbnailExtension('.mp4'), '.jpg');
     const packedBinary = path.join(root, 'resources', 'app.asar', 'node_modules', 'ffmpeg-static', 'ffmpeg.exe');
     assert.ok(resolveFfmpegBinary(packedBinary).includes(`${path.sep}app.asar.unpacked${path.sep}`));
 
@@ -35,7 +54,18 @@ async function main() {
     await sharp({
       create: { width: 900, height: 600, channels: 3, background: '#3b82f6' }
     }).png().toFile(imagePath);
-    await assertJpeg(await getOrCreateThumbnail(imagePath, 'image', cache, '.png'));
+    const imageThumb = await getOrCreateThumbnail(imagePath, 'image', cache, '.png');
+    assert.strictEqual(path.extname(imageThumb), '.png');
+
+    const transparentPath = path.join(root, 'transparent.png');
+    await sharp({
+      create: { width: 900, height: 600, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } }
+    }).composite([{ input: Buffer.from('<svg width="900" height="600"><circle cx="450" cy="300" r="220" fill="#f43f5e"/></svg>') }])
+      .png()
+      .toFile(transparentPath);
+    await assertTransparentPng(
+      await getOrCreateThumbnail(transparentPath, 'transparent', cache, '.png')
+    );
 
     // A wide-gamut source must be converted to sRGB for the cached JPEG, not
     // merely relabelled. Compare the embedded profile against Sharp's known
@@ -44,9 +74,11 @@ async function main() {
     await sharp({
       create: { width: 900, height: 600, channels: 3, background: { r: 0, g: 255, b: 0 } }
     }).withIccProfile('p3').png().toFile(p3ImagePath);
-    const p3ThumbMetadata = await assertJpeg(
-      await getOrCreateThumbnail(p3ImagePath, 'image-p3', cache, '.png')
-    );
+    const p3ThumbPath = await getOrCreateThumbnail(p3ImagePath, 'image-p3', cache, '.png');
+    const p3ThumbMetadata = await sharp(p3ThumbPath).metadata();
+    assert.strictEqual(path.extname(p3ThumbPath), '.png');
+    assert.ok(p3ThumbMetadata.width <= 400);
+    assert.ok(p3ThumbMetadata.height <= 400);
     const expectedSrgbBuffer = await sharp({
       create: { width: 2, height: 2, channels: 3, background: '#000000' }
     }).withIccProfile('srgb').jpeg().toBuffer();

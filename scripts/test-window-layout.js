@@ -78,6 +78,8 @@ assert.match(appJs, /initTextSizeSettings\(initial\.textSize\)/);
 assert.match(indexHtml, /id="text-size-range"[^>]*type="range"[^>]*min="0"[^>]*max="4"/);
 assert.match(indexHtml, /id="text-size-label-0"[\s\S]*?id="text-size-label-4"/);
 assert.match(sidebarJs, /const TEXT_SIZE_LEVELS[\s\S]*?MutationObserver[\s\S]*?setTextSize/);
+assert.match(sidebarJs, /TEXT_SIZE_DYNAMIC_SURFACE = '#board-canvas, \.drawflow'[\s\S]*?root\.closest\(TEXT_SIZE_DYNAMIC_SURFACE\)\) return/,
+  'Dynamic canvas mounts must bypass synchronous computed-style text scans.');
 assert.match(main, /ipcMain\.on\('window:readyForInteraction'[\s\S]*?revealMainWindow\(\)/);
 assert.match(preload, /readyForInteraction:\s*\(\)\s*=>\s*ipcRenderer\.send\('window:readyForInteraction'\)/);
 assert.match(appJs, /initSidebar\(initial\)/, 'Profile settings must be hydrated before account rendering.');

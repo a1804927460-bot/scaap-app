@@ -21,7 +21,7 @@ export const TOPAZ_DYNAMIC_PROVIDERS = Object.freeze(new Set([
 export const BUTLER_FIXED_RETAIL_CREDITS = Object.freeze({
   'background-remove': 48,      // 0.50 PTC
   'seededit-v3': 18,            // 0.05 PTC + CNY 1.4
-  'kling-image-expand': 17,     // 0.04 PTC + CNY 1.4
+  'kling-image-expand': 48,     // Clipdrop Uncrop, 0.50 PTC + CNY 1.4
   cleanup: 48,                  // 0.50 PTC
   'generative-upscale': 69,     // 0.80 PTC + CNY 1.4
   // Retain old IDs for in-flight jobs created by an older desktop build.
@@ -37,7 +37,7 @@ export const BUTLER_FIXED_RETAIL_CREDITS = Object.freeze({
 const BUTLER_FIXED_UPSTREAM_CREDITS = Object.freeze({
   'background-remove': 34,
   'seededit-v3': 3.4,
-  'kling-image-expand': 2.72,
+  'kling-image-expand': 34,
   cleanup: 34,
   'generative-upscale': 54.4,
   hunyuan3d: 8,

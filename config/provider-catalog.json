@@ -1,5 +1,5 @@
 {
-  "version": 32,
+  "version": 33,
   "providers": [
     {
       "id": "image-1",
@@ -520,6 +520,104 @@
         "ratios": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
         "frameReferenceRatios": ["adaptive"],
         "maxReferenceImages": 1
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "video-10",
+      "kind": "video",
+      "name": "Kling V3 Standard",
+      "endpoint": "https://api.302.ai/ws/api/v3/kwaivgi/kling-v3.0-std/image-to-video",
+      "resultEndpoint": "https://api.302.ai/ws/api/v3/predictions",
+      "protocol": "kling-v3-image-to-video",
+      "requiresActivation": false,
+      "capabilities": {
+        "resolutions": ["720P"],
+        "durations": [3, 5, 10, 15],
+        "ratios": ["adaptive"],
+        "frameReferenceRatios": ["adaptive"],
+        "maxReferenceImages": 1,
+        "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"],
+        "videoModes": [
+          { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["first_frame"], "mediaTypes": ["image"], "ratios": ["adaptive"], "durations": [3, 5, 10, 15] }
+        ],
+        "generateAudio": true
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "video-11",
+      "kind": "video",
+      "name": "Kling V3 Pro",
+      "endpoint": "https://api.302.ai/ws/api/v3/kwaivgi/kling-v3.0-pro/image-to-video",
+      "resultEndpoint": "https://api.302.ai/ws/api/v3/predictions",
+      "protocol": "kling-v3-image-to-video",
+      "requiresActivation": false,
+      "capabilities": {
+        "resolutions": ["1080P"],
+        "durations": [3, 5, 10, 15],
+        "ratios": ["adaptive"],
+        "frameReferenceRatios": ["adaptive"],
+        "maxReferenceImages": 1,
+        "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"],
+        "videoModes": [
+          { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["first_frame"], "mediaTypes": ["image"], "ratios": ["adaptive"], "durations": [3, 5, 10, 15] }
+        ],
+        "generateAudio": true
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "video-12",
+      "kind": "video",
+      "name": "Kling O3 Standard",
+      "endpoint": "https://api.302.ai/ws/api/v3/kwaivgi/kling-video-o3-std/image-to-video",
+      "resultEndpoint": "https://api.302.ai/ws/api/v3/predictions",
+      "model": "std",
+      "protocol": "kling-o3-omni",
+      "requiresActivation": false,
+      "capabilities": {
+        "resolutions": ["720P"],
+        "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "ratios": ["9:16", "1:1", "16:9"],
+        "frameReferenceRatios": ["adaptive"],
+        "maxReferenceImages": 7,
+        "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"],
+        "videoModes": [
+          { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["reference_image"], "mediaTypes": ["image"], "ratios": ["adaptive"], "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },
+          { "id": "first-last-frame", "minReferences": 2, "maxReferences": 2, "roles": ["first_frame", "last_frame"], "mediaTypes": ["image"], "ratios": ["adaptive", "9:16", "1:1", "16:9"], "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },
+          { "id": "omni", "minReferences": 1, "maxReferences": 7, "roles": ["reference_image"], "mediaTypes": ["image", "video"], "maxReferenceVideos": 1, "maxReferenceImagesWithVideo": 4, "ratios": ["9:16", "1:1", "16:9"], "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },
+          { "id": "video-reference", "hidden": true, "minReferences": 1, "maxReferences": 7, "roles": ["reference_image"], "mediaTypes": ["image", "video"], "maxReferenceVideos": 1, "maxReferenceImagesWithVideo": 4, "ratios": ["9:16", "1:1", "16:9"], "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },
+          { "id": "video-edit", "minReferences": 1, "maxReferences": 1, "roles": ["reference_video"], "mediaTypes": ["video"], "maxReferenceVideos": 1, "ratios": ["adaptive"], "durations": [3, 5, 10, 15] }
+        ],
+        "generateAudio": true
+      },
+      "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "video-13",
+      "kind": "video",
+      "name": "Kling O3 Pro",
+      "endpoint": "https://api.302.ai/ws/api/v3/kwaivgi/kling-video-o3-pro/image-to-video",
+      "resultEndpoint": "https://api.302.ai/ws/api/v3/predictions",
+      "model": "pro",
+      "protocol": "kling-o3-omni",
+      "requiresActivation": false,
+      "capabilities": {
+        "resolutions": ["1080P"],
+        "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "ratios": ["9:16", "1:1", "16:9"],
+        "frameReferenceRatios": ["adaptive"],
+        "maxReferenceImages": 7,
+        "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"],
+        "videoModes": [
+          { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["reference_image"], "mediaTypes": ["image"], "ratios": ["adaptive"], "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },
+          { "id": "first-last-frame", "minReferences": 2, "maxReferences": 2, "roles": ["first_frame", "last_frame"], "mediaTypes": ["image"], "ratios": ["adaptive", "9:16", "1:1", "16:9"], "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },
+          { "id": "omni", "minReferences": 1, "maxReferences": 7, "roles": ["reference_image"], "mediaTypes": ["image", "video"], "maxReferenceVideos": 1, "maxReferenceImagesWithVideo": 4, "ratios": ["9:16", "1:1", "16:9"], "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },
+          { "id": "video-reference", "hidden": true, "minReferences": 1, "maxReferences": 7, "roles": ["reference_image"], "mediaTypes": ["image", "video"], "maxReferenceVideos": 1, "maxReferenceImagesWithVideo": 4, "ratios": ["9:16", "1:1", "16:9"], "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },
+          { "id": "video-edit", "minReferences": 1, "maxReferences": 5, "roles": ["reference_video"], "mediaTypes": ["image", "video"], "maxReferenceVideos": 1, "maxReferenceImagesWithVideo": 4, "ratios": ["adaptive"], "durations": [3, 5, 8, 10] }
+        ],
+        "generateAudio": true
       },
       "keyEnv": "AI302_KEY"
     },

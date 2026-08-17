@@ -744,6 +744,7 @@ const TEXT_SIZE_LEVELS = Object.freeze([
   { id: 'extra-large', scale: 1.26 }
 ]);
 const TEXT_SIZE_TAG = 'data-messs-text-scale';
+const TEXT_SIZE_DYNAMIC_SURFACE = '#board-canvas, .drawflow';
 let textSizeState = { id: 'medium', scale: 1 };
 let textSizeObserver = null;
 
@@ -769,11 +770,13 @@ function textSizeLabel(id) {
 
 function textSizeScalableElement(element) {
   if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
+  if (element.matches(TEXT_SIZE_DYNAMIC_SURFACE) || element.closest(TEXT_SIZE_DYNAMIC_SURFACE)) return false;
   return !['SVG', 'PATH', 'CIRCLE', 'RECT', 'LINE', 'POLYLINE', 'POLYGON', 'G', 'DEFS', 'IMG', 'VIDEO', 'AUDIO', 'CANVAS', 'IFRAME', 'SCRIPT', 'STYLE', 'LINK', 'META', 'BR', 'HR'].includes(element.tagName);
 }
 
 function rememberTextSizeBaselines(root = document.body) {
   if (!root) return;
+  if (root.nodeType === Node.ELEMENT_NODE && root.closest(TEXT_SIZE_DYNAMIC_SURFACE)) return;
   const elements = [];
   if (textSizeScalableElement(root)) elements.push(root);
   if (typeof root.querySelectorAll === 'function') {

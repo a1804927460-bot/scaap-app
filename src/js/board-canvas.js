@@ -4,10 +4,10 @@
 const BoardEngine = window.MesssBoardEngine;
 const BOARD_ZOOM_MIN = 0.03;
 const BOARD_ZOOM_MAX = 32;
-const BOARD_MOUNTS_PER_FRAME = 8;
+const BOARD_MOUNTS_PER_FRAME = 6;
 const BOARD_MEDIA_MOUNTS_PER_FRAME = 2;
-const BOARD_DOM_ITEM_LIMIT = 320;
-const BOARD_DOM_ITEM_EXIT_LIMIT = 240;
+const BOARD_DOM_ITEM_LIMIT = 180;
+const BOARD_DOM_ITEM_EXIT_LIMIT = 135;
 const BOARD_DOM_RETAIN_LIMIT = BOARD_DOM_ITEM_LIMIT;
 const BOARD_OVERVIEW_ITEM_THRESHOLD = 180;
 const BOARD_FULL_IMAGE_LIMIT = 8;
@@ -657,10 +657,10 @@ function applyBoardTransform() {
   Board.transformFrame = requestAnimationFrame(() => {
     Board.transformFrame = 0;
     const canvas = document.getElementById('board-canvas');
-    const lightweight = Board.isWheelZooming;
+    const lightweight = Board.isWheelZooming || Board.isPanning;
     canvas.classList.add('is-transforming');
     canvas.style.transform = boardTransform();
-    // Wheel frames must stay compositor-only. Grid CSS variables, toolbar
+    // Wheel and pan frames must stay compositor-only. Grid CSS variables, toolbar
     // geometry, LOD reconciliation and persistence all force extra style or
     // layout work; settle them once after the input burst ends.
     if (lightweight) {
@@ -1701,7 +1701,10 @@ function drawBoardOverview(visibleIds, viewportRect) {
 
 function isBoardMediaItem(item) {
   const file = item && Board.filesById.get(item.fileId);
-  return !!file && (isVideoExt(file.ext) || isAudioExt(file.ext));
+  return !!file && (
+    isImageExt(file.ext) || isVideoExt(file.ext) ||
+    isAudioExt(file.ext) || isModelFile(file)
+  );
 }
 
 function buildAiPlaceholderElement(item) {
@@ -2575,6 +2578,9 @@ function initBoardCanvas() {
     if (completedPointerId !== null && viewport.hasPointerCapture && viewport.hasPointerCapture(completedPointerId)) {
       viewport.releasePointerCapture(completedPointerId);
     }
+    // Apply the deferred grid, toolbar, persistence and LOD work once after
+    // the compositor-only pan has finished.
+    applyBoardTransform();
     scheduleBoardReconcile();
   }
   viewport.addEventListener('pointerup', finishBoardPan);
@@ -3865,10 +3871,12 @@ function supportedVideoMode(value, capabilities = {}) {
 }
 
 function composerVideoModes(capabilities = {}) {
-  const modes = supportedVideoModes(capabilities);
+  const modes = supportedVideoModes(capabilities).filter((entry) => entry.hidden !== true);
   const firstFrame = modes.find((entry) => entry.id === 'first-frame') || null;
   const firstLastFrame = modes.find((entry) => entry.id === 'first-last-frame') || null;
   const omni = modes.find((entry) => entry.id === 'omni') || null;
+  const videoReference = modes.find((entry) => entry.id === 'video-reference') || null;
+  const videoEdit = modes.find((entry) => entry.id === 'video-edit') || null;
   const visible = [];
   if (firstFrame || firstLastFrame) {
     visible.push({
@@ -3880,6 +3888,8 @@ function composerVideoModes(capabilities = {}) {
     });
   }
   if (omni) visible.push(omni);
+  if (videoReference) visible.push(videoReference);
+  if (videoEdit) visible.push(videoEdit);
   return visible;
 }
 
@@ -3892,7 +3902,9 @@ function supportsVideoFirstLastFrame(capabilities = {}) {
 function composerVideoMode(value, capabilities = {}) {
   const modes = composerVideoModes(capabilities);
   const requested = String(value || '').trim().toLowerCase();
-  const normalized = requested === 'omni' ? 'omni' : 'first-last-frame';
+  const normalized = ['omni', 'video-reference', 'video-edit'].includes(requested)
+    ? requested
+    : 'first-last-frame';
   return modes.find((entry) => entry.id === normalized)
     || modes[0]
     || supportedVideoModes(capabilities).find((entry) => entry.id === 'text')
@@ -3902,8 +3914,8 @@ function composerVideoMode(value, capabilities = {}) {
 function composerVideoRequestMode(value, referenceCount, capabilities = {}) {
   const selected = composerVideoMode(value, capabilities);
   const modes = supportedVideoModes(capabilities);
-  if (selected.id === 'omni') {
-    return modes.find((entry) => entry.id === 'omni') || selected;
+  if (['omni', 'video-reference', 'video-edit'].includes(selected.id)) {
+    return modes.find((entry) => entry.id === selected.id) || selected;
   }
   const count = Math.max(0, Number(referenceCount) || 0);
   const requestedId = count >= 2 ? 'first-last-frame' : 'first-frame';
@@ -3939,6 +3951,23 @@ function videoModeRatios(mode, capabilities = {}) {
   if (mode && Array.isArray(mode.ratios) && mode.ratios.length) return mode.ratios.map(String);
   const frameMode = mode && (mode.id === 'first-frame' || mode.id === 'first-last-frame');
   return supportedVideoRatios(capabilities, frameMode);
+}
+
+function videoModeDurations(mode, capabilities = {}) {
+  if (mode && Array.isArray(mode.durations) && mode.durations.length) {
+    return [...new Set(mode.durations.map(Number).filter((value) => Number.isInteger(value) && value > 0))]
+      .sort((left, right) => left - right);
+  }
+  return supportedVideoDurations(capabilities);
+}
+
+function supportedVideoDurationFor(value, mode, capabilities = {}) {
+  const supported = videoModeDurations(mode, capabilities);
+  const requested = Math.round(Number(value));
+  if (supported.includes(requested)) return requested;
+  return supported.reduce((nearest, candidate) => (
+    Math.abs(candidate - requested) < Math.abs(nearest - requested) ? candidate : nearest
+  ), supported[0] || 6);
 }
 
 function resolutionDisplayHint(value) {
@@ -4839,14 +4868,18 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     }
     if (kind === 'video') {
       if (referenceKind === 'video') {
-        const omniMode = composerVideoModes(capabilities).find((mode) => (
-          mode.id === 'omni' && videoModeReferenceMediaTypes(mode).includes('video')
-        ));
-        if (!omniMode) {
+        const availableModes = composerVideoModes(capabilities);
+        const currentMode = availableModes.find((mode) => mode.id === videoMode);
+        const videoModeForReference = (currentMode && videoModeReferenceMediaTypes(currentMode).includes('video'))
+          ? currentMode
+          : availableModes.find((mode) => mode.id === 'video-reference' && videoModeReferenceMediaTypes(mode).includes('video'))
+            || availableModes.find((mode) => mode.id === 'omni' && videoModeReferenceMediaTypes(mode).includes('video'))
+            || availableModes.find((mode) => mode.id === 'video-edit' && videoModeReferenceMediaTypes(mode).includes('video'));
+        if (!videoModeForReference) {
           showToast(t('This model does not accept reference videos.', '此模型不支持参考视频。'), 'AI');
           return;
         }
-        setVideoMode('omni');
+        setVideoMode(videoModeForReference.id);
       }
     }
     const activeMode = kind === 'video' ? composerVideoMode(videoMode, capabilities) : null;
@@ -4876,6 +4909,20 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       const selectedVideos = [...boardReferences.values()].filter((entry) => entry.kind === 'video').length;
       if (selectedVideos >= maximumVideos) {
         showToast(t(`Up to ${maximumVideos} reference videos can be used.`, `最多可使用 ${maximumVideos} 个参考视频。`), 'AI');
+        return;
+      }
+    }
+    const selectedVideos = [...boardReferences.values()].filter((entry) => entry.kind === 'video').length;
+    const selectedImages = [...boardReferences.values()].filter((entry) => entry.kind === 'image').length;
+    const maximumImagesWithVideo = Number(activeMode && activeMode.maxReferenceImagesWithVideo);
+    if (Number.isInteger(maximumImagesWithVideo) && maximumImagesWithVideo >= 0) {
+      const nextImageCount = selectedImages + (referenceKind === 'image' ? 1 : 0);
+      const nextVideoCount = selectedVideos + (referenceKind === 'video' ? 1 : 0);
+      if (nextVideoCount > 0 && nextImageCount > maximumImagesWithVideo) {
+        showToast(
+          t(`Up to ${maximumImagesWithVideo} reference images can be used with a reference video.`, `有参考视频时最多可使用 ${maximumImagesWithVideo} 张参考图。`),
+          'AI'
+        );
         return;
       }
     }
@@ -5136,7 +5183,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   function videoModeLabel(modeId) {
     const labels = {
       'first-last-frame': t('First + last frame', '首尾帧'),
-      omni: t('Omni reference', '全能参考')
+      omni: t('Omni reference', '全能参考'),
+      'video-reference': t('Video reference', '视频参考'),
+      'video-edit': t('Video edit', '视频编辑')
     };
     return labels[modeId] || modeId;
   }
@@ -5177,6 +5226,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const requestMode = composerVideoRequestMode(videoMode, boardReferences.size, capabilities);
     const ratios = videoModeRatios(requestMode, capabilities);
     if (!ratios.includes(ratio)) ratio = ratios[0];
+    duration = supportedVideoDurationFor(duration, requestMode, capabilities);
     renderVideoModes();
     renderBoardReferences();
     renderRatios();
@@ -5238,7 +5288,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const resolutions = kind === 'video'
       ? supportedVideoResolutions(capabilities)
       : supportedImageSizes(capabilities, boardReferences.size);
-    const durations = kind === 'video' ? supportedVideoDurations(capabilities) : [6, 8, 10, 15];
+    const durations = kind === 'video'
+      ? videoModeDurations(composerVideoRequestMode(videoMode, boardReferences.size, capabilities), capabilities)
+      : [6, 8, 10, 15];
     if (kind === 'image') {
       size = supportedImageSizeForRatio(size, ratio, capabilities, boardReferences.size);
       ratio = imageRatioForSize(size, capabilities)
@@ -5275,7 +5327,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     durationRange.min = String(minimum);
     durationRange.max = String(maximum);
     duration = kind === 'video'
-      ? supportedVideoDuration(duration, capabilities)
+      ? supportedVideoDurationFor(duration, composerVideoRequestMode(videoMode, boardReferences.size, capabilities), capabilities)
       : Math.max(minimum, Math.min(maximum, Math.round(duration)));
     durationRange.value = String(duration);
     pop.querySelector('.ai-resolution-block').hidden = resolutions.length === 0;
@@ -5405,7 +5457,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const selected = [...modelSelect.options].find((option) => option.value === modelSelect.value);
     if (selected) modelPickerLabel.textContent = selected.textContent;
     syncGenerationOptions();
-    if (kind === 'video' && boardReferences.size >= 2 && videoMode !== 'omni'
+    if (kind === 'video' && boardReferences.size >= 2
+      && !['omni', 'video-reference', 'video-edit'].includes(videoMode)
       && !supportsVideoFirstLastFrame(selectedVideoCapabilities())) {
       showToast(firstLastFrameUnsupportedMessage(), 'AI');
     }
@@ -5614,7 +5667,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const videoCapabilities = kind === 'video' && selectedProvider && selectedProvider.capabilities
       ? selectedProvider.capabilities
       : {};
-    if (kind === 'video' && boardReferences.size >= 2 && videoMode !== 'omni'
+    if (kind === 'video' && boardReferences.size >= 2
+      && !['omni', 'video-reference', 'video-edit'].includes(videoMode)
       && !supportsVideoFirstLastFrame(videoCapabilities)) {
       showToast(firstLastFrameUnsupportedMessage(), 'AI');
       return;
@@ -5638,8 +5692,21 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       return;
     }
     if (kind === 'video' && selectedReferenceKinds.some((entryKind) => !allowedReferenceKinds.includes(entryKind))) {
-      showToast(t('Reference videos require Omni reference mode.', '参考视频需要使用全能参考模式。'), 'AI');
+      showToast(t('Reference videos require Omni, video reference, or video edit mode.', '参考视频需要使用视频模式。'), 'AI');
       return;
+    }
+    if (kind === 'video') {
+      const selectedVideoCount = selectedReferenceKinds.filter((entryKind) => entryKind === 'video').length;
+      const selectedImageCount = selectedReferenceKinds.filter((entryKind) => entryKind === 'image').length;
+      const maximumImagesWithVideo = Number(selectedMode && selectedMode.maxReferenceImagesWithVideo);
+      if (selectedVideoCount > 0 && Number.isInteger(maximumImagesWithVideo)
+        && selectedImageCount > maximumImagesWithVideo) {
+        showToast(
+          t(`Up to ${maximumImagesWithVideo} reference images can be used with a reference video.`, `有参考视频时最多可使用 ${maximumImagesWithVideo} 张参考图。`),
+          'AI'
+        );
+        return;
+      }
     }
     const promptStyle = selectedPromptStyle();
     const upstreamPrompt = promptStyle
@@ -5654,7 +5721,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       size,
       resolution: size,
       count,
-      duration: kind === 'video' ? supportedVideoDuration(duration, videoCapabilities) : duration,
+       duration: kind === 'video'
+         ? supportedVideoDurationFor(duration, selectedMode, videoCapabilities)
+         : duration,
       aspectRatio: kind === 'video'
         ? (videoModeRatios(selectedMode, videoCapabilities).includes(ratio)
           ? ratio

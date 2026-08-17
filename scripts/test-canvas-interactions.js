@@ -91,8 +91,8 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /referenceKind === 'video'[\s\S]*?mode\.id === 'omni'[\s\S]*?videoModeReferenceMediaTypes\(mode\)\.includes\('video'\)[\s\S]*?setVideoMode\('omni'\)/,
-  'Clicking a reference video must switch a capable video model to Omni reference mode.'
+  /referenceKind === 'video'[\s\S]*?availableModes = composerVideoModes\(capabilities\)[\s\S]*?videoModeForReference[\s\S]*?mode\.id === 'video-reference'[\s\S]*?setVideoMode\(videoModeForReference\.id\)/,
+  'Clicking a reference video must switch to a capable video-reference mode.'
 );
 assert.match(boardSource, /referenceMediaTypes:\s*selectedReferenceKinds/);
 assert.match(boardSource, /boardReferenceMediaItemAtClientPoint[\s\S]*?isVideoExt\(file\.ext\)/);
@@ -363,8 +363,8 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /const lightweight = Board\.isWheelZooming[\s\S]*?Wheel frames must stay compositor-only[\s\S]*?return;/,
-  'Active wheel frames must only update the compositor transform and zoom label.'
+  /const lightweight = Board\.isWheelZooming \|\| Board\.isPanning[\s\S]*?Wheel and pan frames must stay compositor-only[\s\S]*?return;/,
+  'Active wheel and pan frames must only update the compositor transform and zoom label.'
 );
 assert.match(boardSource, /if \(!Board\.isWheelZooming\) scheduleBoardFullImagePrewarm/);
 assert.match(
@@ -636,7 +636,7 @@ assert.doesNotMatch(
 );
 assert.match(
   boardSource,
-  /const BOARD_DOM_ITEM_LIMIT = 320;[\s\S]*?BoardEngine\.resolveZoomLod[\s\S]*?BoardEngine\.isOverDomBudget[\s\S]*?queryLimited\(regions\.mount, BOARD_DOM_ITEM_LIMIT\)/,
+  /const BOARD_DOM_ITEM_LIMIT = 180;[\s\S]*?BoardEngine\.resolveZoomLod[\s\S]*?BoardEngine\.isOverDomBudget[\s\S]*?queryLimited\(regions\.mount, BOARD_DOM_ITEM_LIMIT\)/,
   'The board must combine a hard DOM budget with zoom and density hysteresis.'
 );
 assert.match(

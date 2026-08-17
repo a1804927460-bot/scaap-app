@@ -31,7 +31,8 @@ import {
   submitTopazImageTool,
   submitQwenImageEdit,
   submitQwenImageLayered,
-  superUpscaleImage
+  superUpscaleImage,
+  uncropImage
 } from './ai302-image-tools.js';
 import {
   catalogVersion,
@@ -54,7 +55,8 @@ import {
   reserveToolUsage,
   settleToolUsage,
   touchToolUsage,
-  settleUsage
+  settleUsage,
+  quoteUsageForUser
 } from './usage.js';
 import {
   attachVideoTask,
@@ -373,6 +375,17 @@ function validateBody(body, kind) {
   if (referenceVideoCount > maximumReferenceVideos) {
     throw invalidOption('too-many-reference-videos', `The selected model accepts at most ${maximumReferenceVideos} reference videos.`);
   }
+  if (referenceVideoCount > 0) {
+    const maximumImagesWithVideo = Number(selectedVideoMode && selectedVideoMode.maxReferenceImagesWithVideo);
+    const referenceImageCount = referenceMediaTypes.filter((mediaType) => mediaType === 'image').length;
+    if (Number.isInteger(maximumImagesWithVideo) && maximumImagesWithVideo >= 0
+      && referenceImageCount > maximumImagesWithVideo) {
+      throw invalidOption(
+        'too-many-references',
+        `The selected model accepts at most ${maximumImagesWithVideo} reference images with a reference video.`
+      );
+    }
+  }
   const allowedReferenceMimeTypes = new Set(
     Array.isArray(capabilities.referenceMimeTypes)
       ? capabilities.referenceMimeTypes.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
@@ -463,8 +476,12 @@ function validateBody(body, kind) {
     if (!allowedResolutions.has(requestedResolution)) {
       throw invalidOption('invalid-resolution', 'The selected video model does not support this resolution.');
     }
-    const allowedDurations = Array.isArray(capabilities.durations) && capabilities.durations.length
-      ? new Set(capabilities.durations.map(Number).filter(Number.isInteger))
+    const durationSource = selectedVideoMode && Array.isArray(selectedVideoMode.durations)
+      && selectedVideoMode.durations.length
+      ? selectedVideoMode.durations
+      : capabilities.durations;
+    const allowedDurations = Array.isArray(durationSource) && durationSource.length
+      ? new Set(durationSource.map(Number).filter(Number.isInteger))
       : null;
     if (!Number.isInteger(requestedDuration)
       || (allowedDurations ? !allowedDurations.has(requestedDuration) : requestedDuration < 4 || requestedDuration > 15)) {
@@ -715,12 +732,15 @@ async function handle(request, response) {
   const isThreeDStatus = request.method === 'POST' && url.pathname === '/v1/tools/3d/status';
   const isVideoToolStatus = request.method === 'POST' && url.pathname === '/v1/tools/video/status';
   const isVideoToolUpload = request.method === 'PUT' && /^\/v1\/tools\/video\/uploads\/[A-Za-z0-9_-]{43}\/\d{1,4}$/.test(url.pathname);
-  const statusBucket = isVideoToolUpload ? 'video-tool-upload'
+  const isReferenceVideoUpload = request.method === 'PUT'
+    && /^\/v1\/media\/video\/reference-uploads\/[A-Za-z0-9_-]{43}\/\d{1,4}$/.test(url.pathname);
+  const isChunkedVideoUpload = isVideoToolUpload || isReferenceVideoUpload;
+  const statusBucket = isChunkedVideoUpload ? 'video-upload'
     : isVideoStatus ? 'video-status'
     : isThreeDStatus ? 'three-d-status'
       : isVideoToolStatus ? 'video-tool-status' : 'default';
-  const statusMaximum = isVideoToolUpload
-    ? 120
+  const statusMaximum = isChunkedVideoUpload
+    ? 240
     : isVideoStatus || isThreeDStatus || isVideoToolStatus ? 180 : null;
   if (!rateAllowed(user.id, ip, statusBucket, statusMaximum)) {
     return send(response, 429, { code: 'rate-limited', message: 'Too many requests. Please wait before trying again.' }, { 'Retry-After': statusMaximum ? '10' : '60' });
@@ -852,25 +872,24 @@ async function handle(request, response) {
     if (modelId !== 'kling-image-expand') {
       throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
     }
-    const task = await runIdempotentImageOperation(user.id, requestId, async () => {
+    const png = await runIdempotentImageOperation(user.id, requestId, async () => {
       const usage = await reserveFixedTool(user.id, modelId, requestId);
       try {
-        const created = await submitKlingImageExpand({
+        const output = await uncropImage({
           imageDataUrl: body && body.imageDataUrl,
-          toolOptions: body && body.options,
-          userId: user.id
-        }, { accountingRequestId: usage.requestId });
-        return {
-          ...created,
-          credits: usage.reservation.credits,
-          availableCredits: usage.reservation.availableCredits ?? usage.reservation.available_credits
-        };
+          toolOptions: body && body.options
+        });
+        await settleToolUsage(user.id, usage.requestId, 'succeeded', Date.now() - usage.startedAt);
+        return output;
       } catch (error) {
         await releaseFailedToolReservation(user.id, usage);
         throw error;
       }
     });
-    return send(response, 202, task);
+    return send(response, 200, png, {
+      'Content-Type': 'image/png',
+      'Content-Disposition': 'attachment; filename="expanded.png"'
+    });
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/tools/image/layer') {
@@ -1263,6 +1282,34 @@ async function handle(request, response) {
       return send(response, 502, { code: 'unsafe-media-url', message: 'The video provider returned an invalid download address.' });
     }
     return send(response, 200, { url: downloadUrl });
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/usage/quote') {
+    const raw = await readJson(request);
+    const kind = String(raw && raw.kind || '').trim().toLowerCase() === 'video' ? 'video' : 'image';
+    const providerId = String(
+      raw && (raw.providerId || (kind === 'video' ? raw.videoProviderId : raw.imageProviderId)) || ''
+    ).trim();
+    const count = kind === 'image'
+      ? Math.max(1, Math.min(4, Math.round(Number(raw && raw.count) || 1)))
+      : 1;
+    const quote = await quoteUsageForUser(user.id, kind, {
+      ...raw,
+      providerId,
+      duration: raw && raw.duration,
+      resolution: raw && raw.resolution,
+      quality: raw && raw.quality
+    });
+    const unitCredits = Math.max(0, Math.ceil(Number(quote.credits) || 0));
+    return send(response, 200, {
+      kind: quote.kind,
+      providerId: quote.providerId,
+      resolution: quote.resolution,
+      duration: quote.duration,
+      unitCredits,
+      totalCredits: unitCredits * count,
+      count
+    });
   }
 
   let kind;

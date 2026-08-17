@@ -84,7 +84,6 @@ const BOARD_BUTLER_ICONS = {
   removeBackground: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z"></path><path d="m15 18 2 2 4-5"></path></svg>',
   imageEdit: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><rect x="3" y="4" width="15" height="15" rx="2"></rect><path d="m4 15 4-4 3 3 2-2 2 2"></path><path d="m14.5 7.5 4-4 2 2-4 4-3 .9z"></path></svg>',
   imageLayer: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z"></path><path d="m5 12-2 1 9 5 9-5-2-1M5 17l-2 1 9 5 9-5-2-1"></path></svg>',
-  imageUpscale: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="M9 3H3v6M15 3h6v6M9 21H3v-6M15 21h6v-6"></path><path d="m3 9 6-6m6 0 6 6M3 15l6 6m6 0 6-6"></path></svg>',
   topazImage: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="M12 3 9.8 9.8 3 12l6.8 2.2L12 21l2.2-6.8L21 12l-6.8-2.2L12 3Z"></path></svg>',
   sharpen: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="M4 16 16 4M8 20 20 8"></path><path d="M5 5h5v5H5zM14 14h5v5h-5z"></path></svg>',
   enhance: '<svg class="board-butler-icon-svg" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"></path><circle cx="12" cy="12" r="7"></circle></svg>',
@@ -188,8 +187,8 @@ function boardButlerStatusText(action, task) {
     return t('Removing...', '处理中...', '처리 중...');
   }
   if (action === 'eraseObject') return t('Erasing...', '消除中...', '지우는 중...');
-  if (action === 'imageUpscale') return t('Upscaling...', '放大中...', '확대 중...');
   if (action === 'imageExpand') return t('Expanding...', '扩图中...', '이미지 확장 중...');
+  if (action === 'imageUpscale') return t('Upscaling...', '创意放大中...', '창의 확대 중...');
   if (action === 'imageEdit') return t('Editing...', '修改中...', '편집 중...');
   if (action === 'topazSharpen') return t('Sharpening...', '锐化中...', '선명화 중...');
   if (action === 'topazSharpenGen') return t('Generative sharpening...', '生成式锐化中...', '생성형 선명화 중...');
@@ -958,7 +957,7 @@ function openBoardButlerBackgroundPanel(anchor, file, item) {
     anchor,
     BOARD_BUTLER_ICONS.removeBackground,
     t('Remove background', '去除背景', '배경 제거'),
-    'PhotoRoom'
+    'Clipdrop'
   );
   const form = document.createElement('form');
   form.className = 'board-butler-config-form';
@@ -1152,7 +1151,7 @@ function openBoardButlerSeedEditPanel(anchor, file, item) {
   form.querySelector('textarea').focus();
 }
 
-function openBoardButlerExpandPanel(anchor, file, item) {
+function openBoardButlerLegacyExpandPanel(anchor, file, item) {
   const { body } = createBoardButlerConfigPanel(
     anchor,
     BOARD_BUTLER_ICONS.imageLayer,
@@ -1170,7 +1169,7 @@ function openBoardButlerExpandPanel(anchor, file, item) {
     ['Left', '左侧', 'left']
   ].forEach(([english, chinese, name]) => {
     directionGrid.appendChild(boardButlerNumberField(
-      BOARD_BUTLER_ICONS.imageUpscale,
+      BOARD_BUTLER_ICONS.imageLayer,
       t(english, chinese, english),
       `butler-expand-${name}`,
       { min: 0, max: 2, step: 0.05, value: 0.2 }
@@ -1219,6 +1218,109 @@ function openBoardButlerExpandPanel(anchor, file, item) {
   updateArea();
 }
 
+function openBoardButlerExpandPanel(anchor, file, item) {
+  const sourceWidth = Math.max(1, Math.round(Number(file && file.sourceWidth) || 1024));
+  const sourceHeight = Math.max(1, Math.round(Number(file && file.sourceHeight) || 1024));
+  const initialWidth = sourceWidth + Math.min(1024, Math.max(256, Math.round(sourceWidth * 0.25)));
+  const initialHeight = sourceHeight + Math.min(1024, Math.max(256, Math.round(sourceHeight * 0.25)));
+  const { body } = createBoardButlerConfigPanel(
+    anchor,
+    BOARD_BUTLER_ICONS.imageLayer,
+    t('Expand image', '图片扩展', '이미지 확장'),
+    'Clipdrop Uncrop'
+  );
+  const form = document.createElement('form');
+  form.className = 'board-butler-config-form';
+  form.appendChild(boardButlerSelectField(
+    BOARD_BUTLER_ICONS.detail,
+    t('Expansion preset', '扩展尺寸', '확장 크기'),
+    'butler-expand-preset',
+    [
+      { value: '512', label: t('+512 px each axis', '宽高各增加 512 px', '각 축 +512 px') },
+      { value: '1024', label: t('+1024 px each axis', '宽高各增加 1024 px', '각 축 +1024 px') },
+      { value: '2048', label: t('+2048 px each axis', '宽高各增加 2048 px', '각 축 +2048 px') },
+      { value: 'custom', label: t('Custom target size', '自定义目标尺寸', '사용자 지정 크기') }
+    ],
+    'custom'
+  ));
+  const dimensions = document.createElement('div');
+  dimensions.className = 'board-butler-direction-grid';
+  dimensions.append(
+    boardButlerNumberField(BOARD_BUTLER_ICONS.imageLayer, t('Target width', '目标宽度', '목표 너비'), 'butler-expand-width', {
+      min: sourceWidth,
+      max: sourceWidth + 4000,
+      step: 1,
+      value: initialWidth
+    }),
+    boardButlerNumberField(BOARD_BUTLER_ICONS.imageLayer, t('Target height', '目标高度', '목표 높이'), 'butler-expand-height', {
+      min: sourceHeight,
+      max: sourceHeight + 4000,
+      step: 1,
+      value: initialHeight
+    })
+  );
+  form.appendChild(dimensions);
+  const advanced = boardButlerAdvancedSection(t('Advanced settings', '高级设置', '고급 설정'));
+  advanced.content.appendChild(boardButlerNumberField(
+    BOARD_BUTLER_ICONS.detail,
+    t('Seed', '随机种子', '시드'),
+    'butler-expand-seed',
+    { min: 0, max: 100000, value: '', placeholder: t('Random', '随机', '무작위') }
+  ));
+  form.appendChild(advanced.details);
+  const estimate = document.createElement('div');
+  estimate.className = 'board-butler-cost-estimate';
+  const preset = form.querySelector('[name="butler-expand-preset"]');
+  const widthInput = form.querySelector('[name="butler-expand-width"]');
+  const heightInput = form.querySelector('[name="butler-expand-height"]');
+  const updateEstimate = () => {
+    const targetWidth = Math.round(Number(widthInput.value) || sourceWidth);
+    const targetHeight = Math.round(Number(heightInput.value) || sourceHeight);
+    const widthDelta = targetWidth - sourceWidth;
+    const heightDelta = targetHeight - sourceHeight;
+    const invalid = widthDelta < 0 || heightDelta < 0 || widthDelta > 4000 || heightDelta > 4000 || (widthDelta === 0 && heightDelta === 0);
+    estimate.textContent = invalid
+      ? t('Choose a larger target size within 2000 px per side.', '目标尺寸必须更大，且每边最多扩展 2000 px。', '각 변은 최대 2000 px까지 확장할 수 있습니다.')
+      : `${sourceWidth} x ${sourceHeight} -> ${targetWidth} x ${targetHeight} · 48 ${t('pts', '积分', '포인트')}`;
+    estimate.classList.toggle('is-error', invalid);
+  };
+  preset.addEventListener('change', () => {
+    if (preset.value === 'custom') return;
+    const delta = Number(preset.value) || 512;
+    widthInput.value = String(Math.min(sourceWidth + 4000, sourceWidth + delta));
+    heightInput.value = String(Math.min(sourceHeight + 4000, sourceHeight + delta));
+    updateEstimate();
+  });
+  [widthInput, heightInput].forEach((input) => input.addEventListener('input', () => {
+    preset.value = 'custom';
+    updateEstimate();
+  }));
+  form.appendChild(estimate);
+  appendBoardButlerFormActions(form, t('Expand', '开始扩展', '확장'));
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    const targetWidth = Math.round(Number(data.get('butler-expand-width')) || sourceWidth);
+    const targetHeight = Math.round(Number(data.get('butler-expand-height')) || sourceHeight);
+    const widthDelta = targetWidth - sourceWidth;
+    const heightDelta = targetHeight - sourceHeight;
+    if (widthDelta < 0 || heightDelta < 0 || widthDelta > 4000 || heightDelta > 4000 || (widthDelta === 0 && heightDelta === 0)) {
+      updateEstimate();
+      return;
+    }
+    const options = {
+      left: Math.floor(widthDelta / 2),
+      right: Math.ceil(widthDelta / 2),
+      up: Math.floor(heightDelta / 2),
+      down: Math.ceil(heightDelta / 2),
+      ...(data.get('butler-expand-seed') !== '' ? { seed: Number(data.get('butler-expand-seed')) } : {})
+    };
+    if (launchBoardButlerImageTool('imageExpand', file, item, options)) closeBoardButlerPanel();
+  });
+  body.appendChild(form);
+  updateEstimate();
+}
+
 function boardButlerSegmentedField(icon, title, name, options, selectedValue) {
   const field = document.createElement('fieldset');
   field.className = 'board-butler-config-field board-butler-segmented-field';
@@ -1240,72 +1342,6 @@ function boardButlerSegmentedField(icon, title, name, options, selectedValue) {
   });
   field.append(legend, control);
   return field;
-}
-
-function openBoardButlerUpscalePanel(anchor, file, item) {
-  const { body } = createBoardButlerConfigPanel(
-    anchor,
-    BOARD_BUTLER_ICONS.imageUpscale,
-    t('Upscale image', '图片放大', '이미지 확대'),
-    'Super-Upscale-V2'
-  );
-  const form = document.createElement('form');
-  form.className = 'board-butler-config-form';
-  form.appendChild(boardButlerSegmentedField(
-    BOARD_BUTLER_ICONS.imageUpscale,
-    t('Scale', '放大倍率', '확대 배율'),
-    'butler-upscale-scale',
-    [{ value: 2, label: '2x' }, { value: 3, label: '3x' }, { value: 4, label: '4x' }],
-    3
-  ));
-  form.appendChild(boardButlerRangeField(
-    BOARD_BUTLER_ICONS.detail,
-    t('Detail', '细节强度', '디테일'),
-    'butler-upscale-detail',
-    { min: 0, max: 10, step: 0.5, value: 2 }
-  ));
-  const advanced = boardButlerAdvancedSection(t('Advanced settings', '高级设置', '고급 설정'));
-  advanced.content.append(
-    boardButlerRangeField(BOARD_BUTLER_ICONS.detail, t('Creativity', '创意强度', '창의성'), 'butler-upscale-creativity', {
-      min: 0, max: 1, step: 0.05, value: 0.2
-    }),
-    boardButlerRangeField(BOARD_BUTLER_ICONS.detail, t('Shape preservation', '结构保持', '형태 보존'), 'butler-upscale-shape', {
-      min: 0, max: 1, step: 0.05, value: 0.1
-    }),
-    boardButlerRangeField(BOARD_BUTLER_ICONS.detail, t('Inference steps', '生成步数', '추론 단계'), 'butler-upscale-steps', {
-      min: 1, max: 50, step: 1, value: 20
-    }),
-    boardButlerRangeField(BOARD_BUTLER_ICONS.detail, t('Guidance', '引导强度', '가이던스'), 'butler-upscale-guidance', {
-      min: 0, max: 20, step: 0.5, value: 7.5
-    }),
-    boardButlerToggleField(t('Override size limits', '覆盖尺寸限制', '크기 제한 무시'), 'butler-upscale-override', false)
-  );
-  const suffix = document.createElement('label');
-  suffix.className = 'board-butler-config-field';
-  suffix.innerHTML = `<span>${BOARD_BUTLER_ICONS.prompt}<strong>${t('Detail prompt', '细节提示词', '디테일 프롬프트')}</strong></span><textarea name="butler-upscale-suffix" rows="2" maxlength="1000">high quality, highly detailed, high resolution, sharp</textarea>`;
-  const negative = document.createElement('label');
-  negative.className = 'board-butler-config-field';
-  negative.innerHTML = `<span>${BOARD_BUTLER_ICONS.prompt}<strong>${t('Negative prompt', '反向提示词', '네거티브 프롬프트')}</strong></span><textarea name="butler-upscale-negative" rows="2" maxlength="2000">blurry, low resolution, low quality, pixelated, compression artifacts</textarea>`;
-  advanced.content.append(suffix, negative);
-  form.appendChild(advanced.details);
-  appendBoardButlerFormActions(form, t('Upscale', '开始放大', '확대'));
-  form.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const data = new FormData(form);
-    const options = {
-      scale: Number(data.get('butler-upscale-scale')) || 3,
-      detail: Number(data.get('butler-upscale-detail')) || 2,
-      creativity: Number(data.get('butler-upscale-creativity')) || 0,
-      shapePreservation: Number(data.get('butler-upscale-shape')) || 0,
-      numInferenceSteps: Number(data.get('butler-upscale-steps')) || 20,
-      guidanceScale: Number(data.get('butler-upscale-guidance')) || 7.5,
-      promptSuffix: String(data.get('butler-upscale-suffix') || '').trim(),
-      negativePrompt: String(data.get('butler-upscale-negative') || '').trim(),
-      overrideSizeLimits: data.get('butler-upscale-override') === 'on'
-    };
-    if (launchBoardButlerImageTool('imageUpscale', file, item, options)) closeBoardButlerPanel();
-  });
-  body.appendChild(form);
 }
 
 function openBoardButlerVideoUpscalePanel(anchor, file, item) {
@@ -2097,15 +2133,16 @@ function openBoardButlerMenu(trigger, file, item) {
     BOARD_BUTLER_ICONS.imageLayer,
     t('Expand image', '图片扩展', '이미지 확장'),
     (button) => openBoardButlerExpandPanel(button, file, item),
-    { popup: 'dialog', credits: 17 }
+    { popup: 'dialog', credits: 48 }
   ));
   menu.appendChild(createBoardButlerMenuButton(
     file,
     'imageUpscale',
-    BOARD_BUTLER_ICONS.imageUpscale,
-    t('Creative upscale', '图片创意放大', '창의적 이미지 확대'),
+    BOARD_BUTLER_ICONS.enhance,
+    t('Creative upscale', '图片创意放大', '창의 이미지 확대'),
     () => {
-      if (launchBoardButlerImageTool('imageUpscale', file, item, {})) closeBoardButlerMenu();
+      closeBoardButlerMenu();
+      void runBoardButlerImageTool('imageUpscale', file, item, {});
     },
     { popup: null, credits: 69 }
   ));

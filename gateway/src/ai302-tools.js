@@ -3,6 +3,8 @@ import net from 'node:net';
 import { quoteTopazRetailCredits } from './tool-pricing.js';
 
 const API_ORIGIN = 'https://api.302.ai';
+// Clipdrop is the higher-priced, quality-first background-removal tool the
+// user selected. Keep the public function name stable for the desktop bridge.
 const BACKGROUND_PATH = '/clipdrop/remove-background/v1';
 const HUNYUAN_PATH = '/tencent/hunyuan3d/pro-job';
 const HYPER3D_PATH = '/302/submit/hyper3d-rodin';

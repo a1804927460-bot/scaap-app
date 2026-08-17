@@ -8,6 +8,7 @@ import {
   getUsageSummary,
   providerRequiresActivation,
   quoteUsage,
+  quoteUsageForUser,
   redeemUsageCode,
   reserveToolUsage,
   reserveUsage,
@@ -21,6 +22,7 @@ import {
   PROFIT_PER_REQUEST_CNY,
   USD_TO_CNY,
   quoteButlerRetailCredits,
+  quoteInternalButlerRetailCredits,
   quoteInternalCreditsFromCny,
   quoteRetailCreditsFromCny,
   quoteTopazRetailCredits
@@ -170,6 +172,21 @@ test('retail formula adds CNY 1.4 once and treats one PTC as one USD', () => {
   assert.equal(quoteTopazRetailCredits(1), 82);
 });
 
+test('missing pricing-tier RPC keeps quotes on the conservative standard rate', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
+    const quote = await quoteUsageForUser(
+      '00000000-0000-4000-8000-000000000003',
+      'image',
+      { providerId: 'image-1', size: '4K' },
+      async () => jsonResponse({
+        code: 'PGRST202',
+        message: 'Could not find the function public.get_ai_pricing_tier(uuid).'
+      }, 404)
+    );
+    assert.equal(quote.credits, 28);
+  });
+});
+
 test('internal pricing is calculated server-side and is never a client tier field', async () => {
   assert.equal(quoteInternalCreditsFromCny(1.5), 18);
   assert.equal(quoteInternalCreditsFromCny(0), 0);
@@ -282,7 +299,7 @@ test('Butler fixed-price tools use the server table and never accept caller pric
   assert.deepEqual(BUTLER_FIXED_RETAIL_CREDITS, {
     'background-remove': 48,
     'seededit-v3': 18,
-    'kling-image-expand': 17,
+    'kling-image-expand': 48,
     cleanup: 48,
     'generative-upscale': 69,
     'qwen-image-edit-plus': 2,
@@ -294,6 +311,13 @@ test('Butler fixed-price tools use the server table and never accept caller pric
     tripo3d: 24
   });
   assert.equal(quoteButlerRetailCredits('HUNYUAN3D'), 22);
+  // The staff tier is cost +15%, with no fixed CNY 1.4 profit.  These values
+  // stay server-side and are never accepted from a renderer request.
+  assert.equal(quoteInternalButlerRetailCredits('background-remove'), 40);
+  assert.equal(quoteInternalButlerRetailCredits('seededit-v3'), 4);
+  assert.equal(quoteInternalButlerRetailCredits('kling-image-expand'), 40);
+  assert.equal(quoteInternalButlerRetailCredits('generative-upscale'), 63);
+  assert.equal(quoteInternalButlerRetailCredits('topaz-video-upscale', 1), 79);
   assert.throws(() => quoteButlerRetailCredits('unknown-tool'), { code: 'provider-not-allowed' });
 
   await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {

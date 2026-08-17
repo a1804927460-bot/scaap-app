@@ -274,6 +274,7 @@ const butlerVideoDownloads = new Map();
 const MAX_BUTLER_IMAGE_BYTES = Math.floor(7.5 * 1024 * 1024);
 const MAX_BUTLER_VIDEO_BYTES = 48 * 1024 * 1024;
 const MAX_BUTLER_VIDEO_OUTPUT_BYTES = 256 * 1024 * 1024;
+const MAX_AI_REFERENCE_VIDEO_SOURCE_BYTES = 256 * 1024 * 1024;
 const MAX_BUTLER_PREVIEW_BYTES = 16 * 1024 * 1024;
 const MAX_MODEL_PREVIEW_BYTES = 256 * 1024 * 1024;
 const MAX_CLIPBOARD_IMAGE_BYTES = 64 * 1024 * 1024;
@@ -284,8 +285,8 @@ const MODEL_PREVIEW_MARKER_FILENAME = `model-preview.${MODEL_PREVIEW_CACHE_VERSI
 const BUTLER_IMAGE_TOOL_IDS = new Set([
   'seededit-v3',
   'kling-image-expand',
-  'generative-upscale',
   'cleanup',
+  'generative-upscale',
   'qwen-image-edit-plus',
   'qwen-image-layered',
   'super-upscale-v2',
@@ -300,9 +301,9 @@ const BUTLER_IMAGE_TOOL_IDS = new Set([
 ]);
 const BUTLER_IMAGE_TOOL_CREDITS = Object.freeze({
   'seededit-v3': 18,
-  'kling-image-expand': 17,
-  'generative-upscale': 69,
+  'kling-image-expand': 48,
   cleanup: 48,
+  'generative-upscale': 69,
   'qwen-image-edit-plus': 2,
   'qwen-image-layered': 1,
   'super-upscale-v2': 2,
@@ -1578,6 +1579,7 @@ function normalizeButlerVideoOptions(metadata, requested = {}) {
 }
 
 async function butlerSourceVideo(fileId, requestedOptions = {}) {
+  const prepareAiReference = requestedOptions && requestedOptions.aiReference === true;
   const normalizedId = String(fileId || '').trim();
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(normalizedId)) {
     const error = new Error('The selected video could not be found.');
@@ -1604,7 +1606,8 @@ async function butlerSourceVideo(fileId, requestedOptions = {}) {
       error.code = 'privacy-blocked';
       throw error;
     }
-    if (sourceStat.size <= 0 || sourceStat.size > MAX_BUTLER_VIDEO_BYTES) {
+    const maximumSourceBytes = prepareAiReference ? MAX_AI_REFERENCE_VIDEO_SOURCE_BYTES : MAX_BUTLER_VIDEO_BYTES;
+    if (sourceStat.size <= 0 || sourceStat.size > maximumSourceBytes) {
       const error = new Error('The selected video exceeds the Butler upload size limit.');
       error.code = 'butler-video-too-large';
       throw error;
@@ -1619,10 +1622,20 @@ async function butlerSourceVideo(fileId, requestedOptions = {}) {
   }
   assertSafeLocalFile(file);
   const extension = String(file.ext || path.extname(file.name)).toLowerCase();
-  const mimeType = BUTLER_VIDEO_MIME_BY_EXTENSION[extension];
+  let mimeType = BUTLER_VIDEO_MIME_BY_EXTENSION[extension];
   if (!mimeType) {
     const error = new Error('Butler video enhancement requires MP4, MOV, WebM, or Matroska video.');
     error.code = 'unsupported-video-type';
+    throw error;
+  }
+  if (prepareAiReference && (mimeType !== 'video/mp4' || archivedStat.size > MAX_BUTLER_VIDEO_BYTES)) {
+    archivedPath = await preview.transcodeVideoForAiReference(archivedPath, previewCacheDir, file.id);
+    archivedStat = await fs.promises.lstat(archivedPath);
+    mimeType = 'video/mp4';
+  }
+  if (prepareAiReference && archivedStat.size > MAX_BUTLER_VIDEO_BYTES) {
+    const error = new Error('The reference video is still too large after compatibility processing.');
+    error.code = 'reference-video-too-large';
     throw error;
   }
   const buffer = await fs.promises.readFile(archivedPath);
@@ -1640,7 +1653,8 @@ async function butlerSourceVideo(fileId, requestedOptions = {}) {
     sourceDuration: Number(probed && probed.sourceDuration) || Number(file.sourceDuration) || 0,
     hasAudio: probed && typeof probed.hasAudio === 'boolean' ? probed.hasAudio : null
   };
-  const toolOptions = normalizeButlerVideoOptions(metadata, requestedOptions);
+  const { aiReference: _aiReference, ...videoOptions } = requestedOptions || {};
+  const toolOptions = normalizeButlerVideoOptions(metadata, videoOptions);
   return {
     file,
     metadata,
@@ -2063,7 +2077,7 @@ async function resolveAiVideoReferences(request) {
     const ext = String(file.ext || path.extname(file.name)).toLowerCase();
     const mediaType = requestedTypes[index] === 'video' || preview.isVideoExt(ext) ? 'video' : 'image';
     if (mediaType === 'video') {
-      const source = await butlerSourceVideo(file.id);
+      const source = await butlerSourceVideo(file.id, { aiReference: true });
       const upload = await aiGateway.uploadReferenceVideo(source.videoBuffer, source.toolOptions.sourceMime);
       uploadIds.push(upload.uploadId);
       mediaTypes.push('video');
@@ -3338,6 +3352,27 @@ function imageDimensionsWithinCapabilities(size, capabilities = {}) {
   return width <= maxEdge && height <= maxEdge && width * height <= maxPixels;
 }
 
+async function quoteMediaCreditsForAccount(request = {}) {
+  const localQuote = quoteMediaCredits(request);
+  if (!hasAuthenticatedGatewaySession() || !aiGateway || !aiGateway.isConfigured()) return localQuote;
+  try {
+    const remoteQuote = await aiGateway.quoteMediaCredits(request);
+    const totalCredits = Math.max(0, Math.ceil(Number(remoteQuote && remoteQuote.totalCredits) || 0));
+    const unitCredits = Math.max(0, Math.ceil(Number(remoteQuote && remoteQuote.unitCredits) || 0));
+    if (!totalCredits || !unitCredits) return localQuote;
+    return {
+      ...localQuote,
+      ...remoteQuote,
+      unitCredits,
+      totalCredits
+    };
+  } catch {
+    // A quote outage must not make the local UI unusable; the server remains
+    // authoritative when the generation request is submitted.
+    return localQuote;
+  }
+}
+
 async function fileToAiChatAttachment(id) {
   const file = store.getFile(String(id || ''));
   if (!file || !file.storedPath) return null;
@@ -3588,6 +3623,17 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   if (referenceVideoCount > maximumReferenceVideos) {
     throw invalidAiMediaOption('too-many-reference-videos', `${String(provider.name || 'The selected video model')} supports at most ${maximumReferenceVideos} reference videos.`);
   }
+  if (referenceVideoCount > 0) {
+    const maximumImagesWithVideo = Number(selectedVideoMode.maxReferenceImagesWithVideo);
+    const referenceImageCount = referenceMediaTypes.filter((mediaType) => mediaType === 'image').length;
+    if (Number.isInteger(maximumImagesWithVideo) && maximumImagesWithVideo >= 0
+      && referenceImageCount > maximumImagesWithVideo) {
+      throw invalidAiMediaOption(
+        'too-many-references',
+        `${String(provider.name || 'The selected video model')} supports at most ${maximumImagesWithVideo} reference images with a reference video.`
+      );
+    }
+  }
   const hasFrameReference = videoMode === 'first-frame' || videoMode === 'first-last-frame';
   const configuredReferenceLimit = Number(capabilities.maxReferenceImages);
   const modeReferenceLimit = Number(selectedVideoMode.maxReferences);
@@ -3709,24 +3755,23 @@ function normalizeButlerImageOptions(modelId, requested = {}) {
     };
   }
   if (modelId === 'kling-image-expand') {
-    const boundedRatio = (value) => Math.max(0, Math.min(2, finiteOr(value, 0.25)));
+    const boundedPixels = (value) => Math.max(0, Math.min(2000, Math.round(finiteOr(value, 0))));
     const options = {
-      up: boundedRatio(source.up),
-      right: boundedRatio(source.right),
-      down: boundedRatio(source.down),
-      left: boundedRatio(source.left),
-      prompt: String(source.prompt || '').trim().slice(0, 1200)
+      up: boundedPixels(source.up),
+      right: boundedPixels(source.right),
+      down: boundedPixels(source.down),
+      left: boundedPixels(source.left)
     };
-    const areaRatio = (1 + options.left + options.right) * (1 + options.up + options.down);
-    if (areaRatio <= 1 || areaRatio > 3) {
-      const error = new Error('The expanded area must be greater than the source and no more than three times its area.');
+    if (![options.up, options.right, options.down, options.left].some((value) => value > 0)) {
+      const error = new Error('The expanded image must be larger than the source.');
       error.code = 'invalid-image-tool-options';
       throw error;
     }
-    if (options.prompt) assertPromptHasNoSecrets(options.prompt);
+    if (source.seed !== '' && source.seed !== undefined && source.seed !== null) {
+      options.seed = Math.max(0, Math.min(100_000, Math.round(finiteOr(source.seed, 0))));
+    }
     return options;
   }
-  if (modelId === 'generative-upscale') return {};
   if (modelId === 'qwen-image-layered') {
     const prompt = String(source.prompt || '').trim();
     if (Array.from(prompt).length > 800) {
@@ -4123,6 +4168,7 @@ async function createChatAttachmentDraft(filePath, options = {}) {
       previewDataUrl = preview.toDataURL();
     }
   }
+  if (modelId === 'generative-upscale') return {};
   if (videoExtensions.has(extension)) mime = extension === '.webm' ? 'video/webm' : 'video/mp4';
   const draft = {
     token,
@@ -4580,7 +4626,7 @@ function registerIpcHandlers() {
     return membershipService.checkFeature(String(feature || '').trim());
   });
 
-  ipcMain.handle('membership:quoteMedia', (_evt, request = {}) => quoteMediaCredits(request));
+  ipcMain.handle('membership:quoteMedia', (_evt, request = {}) => quoteMediaCreditsForAccount(request));
 
   ipcMain.handle('profile:getAvatar', () => readProfileAvatarDataUrl());
 
@@ -5019,21 +5065,41 @@ function registerIpcHandlers() {
       const modelId = 'kling-image-expand';
       const options = normalizeButlerImageOptions(modelId, requestedOptions);
       const source = await butlerSourceImage(fileId);
-      const payload = await aiGateway.expandImage(source.imageDataUrl, options);
-      const taskToken = normalizeButlerTaskToken(payload && payload.taskToken);
-      const status = normalizeButlerImageStatus(payload || { status: 'queued' });
-      rememberButlerImageTask(taskToken, {
-        sourceFileId: source.file.id,
+      const responseBuffer = await aiGateway.expandImage(source.imageDataUrl, options);
+      const pngBuffer = await sanitizeButlerImagePng(responseBuffer);
+      const record = await addButlerOutputFile(pngBuffer, source.file, 'image-expand', {
         modelId,
-        operation: 'image-expand',
-        resultCount: status.resultCount,
-        credits: status.credits !== undefined ? status.credits : BUTLER_IMAGE_TOOL_CREDITS[modelId],
-        status: status.status
+        credits: BUTLER_IMAGE_TOOL_CREDITS[modelId]
       });
-      return { ok: true, taskToken, ...status };
+      if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
+      return { ok: true, file: fileToPayload(record) };
     } catch (error) {
       const failure = butlerFailure(error, 'The image expansion task could not be started.');
       console.error('Butler image expansion failed:', failure.reason);
+      return failure;
+    }
+  });
+
+  ipcMain.handle('butler:image-upscale', async (_evt, fileId) => {
+    try {
+      if (!aiGateway || !aiGateway.isConfigured()) {
+        const error = new Error('Butler is not configured.');
+        error.code = 'gateway-not-configured';
+        throw error;
+      }
+      const modelId = 'generative-upscale';
+      const source = await butlerSourceImage(fileId);
+      const responseBuffer = await aiGateway.upscaleImage(source.imageDataUrl);
+      const pngBuffer = await sanitizeButlerImagePng(responseBuffer);
+      const record = await addButlerOutputFile(pngBuffer, source.file, 'image-upscale', {
+        modelId,
+        credits: BUTLER_IMAGE_TOOL_CREDITS[modelId]
+      });
+      if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
+      return { ok: true, file: fileToPayload(record) };
+    } catch (error) {
+      const failure = butlerFailure(error, 'Creative image upscaling failed.');
+      console.error('Butler creative upscale failed:', failure.reason);
       return failure;
     }
   });
@@ -5098,31 +5164,6 @@ function registerIpcHandlers() {
     } catch (error) {
       const failure = butlerFailure(error, 'The Topaz image task could not be started.');
       console.error('Butler Topaz image task failed:', failure.reason);
-      return failure;
-    }
-  });
-
-  ipcMain.handle('butler:image-upscale', async (_evt, fileId, requestedOptions = {}) => {
-    try {
-      if (!aiGateway || !aiGateway.isConfigured()) {
-        const error = new Error('Butler is not configured.');
-        error.code = 'gateway-not-configured';
-        throw error;
-      }
-      const modelId = 'generative-upscale';
-      const options = normalizeButlerImageOptions(modelId, requestedOptions);
-      const source = await butlerSourceImage(fileId);
-      const responseBuffer = await aiGateway.upscaleImage(source.imageDataUrl, options);
-      const pngBuffer = await sanitizeButlerImagePng(responseBuffer);
-      const record = await addButlerOutputFile(pngBuffer, source.file, 'image-upscale', {
-        modelId,
-        credits: BUTLER_IMAGE_TOOL_CREDITS[modelId]
-      });
-      if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
-      return { ok: true, file: fileToPayload(record) };
-    } catch (error) {
-      const failure = butlerFailure(error, 'The image could not be upscaled.');
-      console.error('Butler image upscale failed:', failure.reason);
       return failure;
     }
   });
@@ -5557,7 +5598,7 @@ function registerIpcHandlers() {
       ? videoPromptWithCameraControl(prompt, request.cameraControl)
       : prompt;
     const count = kind === 'image' ? Math.max(1, Math.min(4, Number(request.count) || 1)) : 1;
-    const creditQuote = quoteMediaCredits({
+    const creditQuote = await quoteMediaCreditsForAccount({
       kind,
       imageProviderId: request.imageProviderId,
       videoProviderId: request.videoProviderId,

@@ -1114,7 +1114,7 @@ test('server enables paid 302 routes with the shared key unless a route is expli
   assert.match(server, /process\.env\.AI302_KEY \|\| process\.env\.AI_302_API_KEY/);
   assertGuardBefore('/v1/tools/background/remove', 'ai302Enabled(AI302_FLAGS.background)', 'removeBackground');
   assertGuardBefore('/v1/tools/image/edit', 'ai302Enabled(AI302_FLAGS.image)', 'submitSeedEditImage');
-  assertGuardBefore('/v1/tools/image/expand', 'ai302Enabled(AI302_FLAGS.image)', 'submitKlingImageExpand');
+  assertGuardBefore('/v1/tools/image/expand', 'ai302Enabled(AI302_FLAGS.image)', 'uncropImage');
   assertGuardBefore('/v1/tools/image/layer', 'ai302Enabled(AI302_FLAGS.image)', 'submitQwenImageLayered');
   assertGuardBefore('/v1/tools/image/status', 'ai302Enabled(imageToolFlag(modelId))', 'imageToolPoller');
   assertGuardBefore('/v1/tools/image/download', 'ai302Enabled(imageToolFlag(modelId))', 'imageToolPoller');
