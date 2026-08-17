@@ -34,11 +34,45 @@ export const IMAGE_RESOLUTION_CREDITS = Object.freeze({
   'image-16': Object.freeze({ '512x512': 16, '1024x1024': 16 })
 });
 
+// 302 charges PTC in USD. Keep the conversion in the gateway so the server
+// quote remains correct even when a desktop bundle is stale.
+export const USD_TO_CNY = 6.8;
+const POINTS_PER_CNY = 10;
+const PROFIT_PER_REQUEST_CREDITS = 1.4 * POINTS_PER_CNY;
+const SEEDANCE_720P_PTC_PER_SECOND = 0.2592;
+const SEEDANCE_480P_PTC_PER_SECOND = SEEDANCE_720P_PTC_PER_SECOND * 0.5;
+const SEEDANCE_PTC_PER_SECOND = Object.freeze({
+  'video-2': Object.freeze({
+    '480P': SEEDANCE_480P_PTC_PER_SECOND * (7.884 / 10),
+    '720P': SEEDANCE_720P_PTC_PER_SECOND * (7.884 / 10)
+  }),
+  'video-3': Object.freeze({
+    '480P': SEEDANCE_480P_PTC_PER_SECOND,
+    '720P': SEEDANCE_720P_PTC_PER_SECOND
+  }),
+  'video-4': Object.freeze({
+    '480P': SEEDANCE_480P_PTC_PER_SECOND * (6.516 / 10),
+    '720P': SEEDANCE_720P_PTC_PER_SECOND * (6.516 / 10)
+  })
+});
+
+const SEEDANCE_VIDEO_RATES = Object.freeze(Object.fromEntries(
+  Object.entries(SEEDANCE_PTC_PER_SECOND).map(([providerId, rates]) => [
+    providerId,
+    Object.freeze(Object.fromEntries(
+      Object.entries(rates).map(([resolution, ptcPerSecond]) => [
+        resolution,
+        ptcPerSecond * USD_TO_CNY * POINTS_PER_CNY
+      ])
+    ))
+  ])
+));
+
 export const VIDEO_CREDITS_PER_SECOND = Object.freeze({
   'video-1': Object.freeze({ '768P': 5, '2K': 8 }),
-  'video-2': Object.freeze({ '480P': 1.5, '720P': 2.5 }),
-  'video-3': Object.freeze({ '480P': 2, '720P': 3 }),
-  'video-4': Object.freeze({ '480P': 1.5, '720P': 2.5 }),
+  'video-2': SEEDANCE_VIDEO_RATES['video-2'],
+  'video-3': SEEDANCE_VIDEO_RATES['video-3'],
+  'video-4': SEEDANCE_VIDEO_RATES['video-4'],
   'video-5': Object.freeze({ '480P': 2, '720P': 3 }),
   'video-6': Object.freeze({ '480P': 2, '720P': 3, '1080P': 4 }),
   'video-7': Object.freeze({ '480P': 1.5, '720P': 2.5 }),
@@ -187,7 +221,7 @@ export function quoteUsage(kind, request = {}) {
     return {
       kind: 'video',
       providerId,
-      credits: Math.max(MINIMUM_VIDEO_CREDITS, Math.ceil(rates[resolution] * duration + 14)),
+      credits: Math.max(MINIMUM_VIDEO_CREDITS, Math.ceil(rates[resolution] * duration + PROFIT_PER_REQUEST_CREDITS)),
       resolution,
       duration,
       requiresActivation: providerRequiresActivation('video', providerId)

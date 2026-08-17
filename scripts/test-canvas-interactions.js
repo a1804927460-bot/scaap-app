@@ -287,7 +287,7 @@ const controlledVideoPrompt = cameraSandbox.cameraApi.videoPromptWithCameraContr
 assert.match(controlledVideoPrompt, /^A calm portrait in morning light\.[\s\S]*Camera specification:/);
 assert.match(controlledVideoPrompt, /ARRI Alexa 65[\s\S]*Cooke Panchro[\s\S]*125mm[\s\S]*f\/1\.4[\s\S]*locked-off static camera/);
 assert.ok(controlledVideoPrompt.length <= 7000, 'The provider prompt must stay inside its fallback limit.');
-assert.match(mainSource, /const providerPrompt = kind === 'video'[\s\S]*?videoPromptWithCameraControl\(prompt, request\.cameraControl\)[\s\S]*?generateAiMediaBuffer\(kind, providerPrompt/);
+assert.match(mainSource, /const providerPrompt = kind === 'video'[\s\S]*?videoPromptWithCameraControl\(prompt, request\.cameraControl\)[\s\S]*?generateAiMediaWithFallback\(\s*kind,\s*providerPrompt/);
 assert.match(mainSource, /aiGeneration:\s*\{[\s\S]*?cameraControl:\s*mediaKind === 'video' \? normalizeVideoCameraControl\(request\.cameraControl\) : null/);
 assert.match(boardStyles, /\.ai-composer-reference-order \{[\s\S]*?pointer-events:\s*none/);
 assert.match(

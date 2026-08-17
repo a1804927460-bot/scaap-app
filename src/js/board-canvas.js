@@ -5857,12 +5857,14 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
     await replaceAiPlaceholders(placeholders, files, request);
     selectFileForPreview(files[0].id);
     if (res.unlocked && res.unlocked.length) await refreshAchievements();
+    const fallbackNotice = res.fallback && res.fallback.notice ? res.fallback.notice : '';
     showToast(
       res.failedCount
         ? `已生成 ${files.length} 个，${res.failedCount} 个失败`
         : (request.kind === 'video' ? 'AI 视频已加入画布' : `${files.length} 张 AI 图片已加入画布`),
       'AI'
     );
+    if (fallbackNotice) showToast(fallbackNotice, 'AI');
     closeAiImagePopover();
   } catch (err) {
     removeAiPlaceholders(placeholders);
@@ -5922,6 +5924,7 @@ async function generateAiMediaForBoardV3(request) {
       selectFileForPreview(files[0].id);
     }
     if (res.unlocked && res.unlocked.length) await refreshAchievements();
+    const fallbackNotice = res.fallback && res.fallback.notice ? res.fallback.notice : '';
 
     const successMessage = res.failedCount
       ? t(
@@ -5947,6 +5950,7 @@ async function generateAiMediaForBoardV3(request) {
         : `${successMessage} · ${t(`Actual charge: ${settledCharge} points`, `实际扣除 ${settledCharge} 积分`)}`,
       'AI'
     );
+    if (fallbackNotice) showToast(fallbackNotice, 'AI');
     return files;
   } catch (err) {
     removeAiPlaceholders(placeholders);

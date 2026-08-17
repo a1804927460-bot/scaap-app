@@ -64,6 +64,11 @@ const { normalizeGatewayCatalog, assertGatewayProvider } = require('./lib/gatewa
 const { assertSafeLocalFile, assertPromptHasNoSecrets, sanitizeAiRequest } = require('./lib/privacy-guard');
 const { activate: activateApp, getActivationStatus } = require('./lib/activation');
 const { quoteMediaCredits, publicCreditPricing } = require('./lib/credit-pricing');
+const {
+  imageFallbackProviderIds,
+  isRetryableMediaError,
+  supportsImageRequest
+} = require('./lib/ai-media-fallback');
 const { launchAdobeMedia } = require('./lib/adobe-launcher');
 const { sendToWeChatFileHelper } = require('./lib/wechat-file-helper');
 const { ChatService } = require('./lib/chat-service');
@@ -2532,7 +2537,7 @@ async function generateAiMediaBuffer(kind, prompt, options = {}) {
       if (selected) {
         config.imageEndpoint = selected.endpoint;
         config.imageModel = selected.model || '';
-        config.apiKey = getSavedAiApiKey(selected.id);
+        config.apiKey = getSavedAiApiKey(selected.id) || getSavedAiApiKey('default') || getEnvironmentAiApiKey();
       }
     }
     if (kind === 'video' && options.videoProviderId) {
@@ -2541,7 +2546,7 @@ async function generateAiMediaBuffer(kind, prompt, options = {}) {
       );
       if (selected) {
         config.videoEndpoint = selected.endpoint;
-        config.apiKey = getSavedAiApiKey(selected.id);
+        config.apiKey = getSavedAiApiKey(selected.id) || getSavedAiApiKey('default') || getEnvironmentAiApiKey();
       }
     } else if (kind === 'video') {
       config.apiKey = getSavedAiApiKey(config.activeVideoProviderId);
@@ -2566,6 +2571,110 @@ async function generateAiMediaBuffer(kind, prompt, options = {}) {
     throw err;
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+function aiMediaGenerationOptions(request, providerId) {
+  return {
+    size: request.size,
+    quality: request.quality,
+    resolution: request.resolution,
+    aspectRatio: request.aspectRatio,
+    sourceWidth: request.sourceWidth,
+    sourceHeight: request.sourceHeight,
+    duration: request.duration,
+    videoMode: request.videoMode,
+    referenceMediaTypes: request.referenceMediaTypes,
+    referenceVideoUploadIds: request.referenceVideoUploadIds,
+    enhancePrompt: request.enhancePrompt,
+    seed: request.seed,
+    styleId: request.styleId,
+    styleStrength: request.styleStrength,
+    urls: request.urls,
+    imageProviderId: request.kind === 'video' ? request.imageProviderId : providerId,
+    videoProviderId: request.kind === 'video' ? providerId : request.videoProviderId
+  };
+}
+
+async function resolveImageFallback(request, primaryQuote) {
+  if (request.kind !== 'image') return null;
+  const primaryProviderId = String(request.imageProviderId || '').trim().toLowerCase();
+  const candidateIds = imageFallbackProviderIds(primaryProviderId);
+  if (!candidateIds.length) return null;
+
+  let providers = [];
+  try {
+    if (runtimeConfig && runtimeConfig.gatewayConfigured && hasAuthenticatedGatewaySession()) {
+      const catalog = await getVerifiedGatewayCatalog();
+      providers = Array.isArray(catalog && catalog.providers)
+        ? catalog.providers.filter((provider) => provider && provider.kind === 'image')
+        : [];
+    }
+  } catch (error) {
+    // A catalog outage should not make the original model unusable.
+  }
+  if (!providers.length) {
+    const localConfig = getAiMediaConfig();
+    providers = Array.isArray(localConfig.imageProviders) ? localConfig.imageProviders : [];
+  }
+  const byId = new Map(providers.map((provider) => [String(provider && provider.id || '').trim().toLowerCase(), provider]));
+  for (const candidateId of candidateIds) {
+    const provider = byId.get(candidateId);
+    if (!provider || !provider.name || !provider.endpoint || !supportsImageRequest(provider, request)) continue;
+    if (!(runtimeConfig && runtimeConfig.gatewayConfigured)) {
+      const key = getSavedAiApiKey(candidateId) || getSavedAiApiKey('default') || getEnvironmentAiApiKey();
+      if (!key) continue;
+    }
+    let quote;
+    try {
+      quote = await quoteMediaCreditsForAccount({
+        kind: 'image',
+        imageProviderId: candidateId,
+        count: request.count,
+        quality: request.quality,
+        size: request.size,
+        resolution: request.resolution
+      });
+    } catch (error) {
+      continue;
+    }
+    // Never upgrade to a model that is cheaper than the selected model.  This
+    // also protects against stale pricing data in a custom provider config.
+    if (!quote || Number(quote.totalCredits) <= Number(primaryQuote && primaryQuote.totalCredits || 0)) continue;
+    return { provider, quote };
+  }
+  return null;
+}
+
+async function generateAiMediaWithFallback(kind, prompt, options, fallbackProvider) {
+  const primaryProviderId = kind === 'video' ? options.videoProviderId : options.imageProviderId;
+  try {
+    return {
+      buffer: await generateAiMediaBuffer(kind, prompt, options),
+      providerId: primaryProviderId,
+      fallbackUsed: false
+    };
+  } catch (primaryError) {
+    if (kind !== 'image' || !fallbackProvider || !isRetryableMediaError(primaryError)) throw primaryError;
+    const fallbackProviderId = String(fallbackProvider.provider && fallbackProvider.provider.id || '').trim().toLowerCase();
+    if (!fallbackProviderId || fallbackProviderId === String(primaryProviderId || '').trim().toLowerCase()) throw primaryError;
+    try {
+      return {
+        buffer: await generateAiMediaBuffer(kind, prompt, {
+          ...options,
+          imageProviderId: fallbackProviderId
+        }),
+        providerId: fallbackProviderId,
+        fallbackUsed: true,
+        fallbackFromProviderId: primaryProviderId,
+        fallbackProviderName: String(fallbackProvider.provider.name || fallbackProviderId).trim()
+      };
+    } catch (fallbackError) {
+      // Keep the second error for the user, but retain the first error for
+      // diagnostics so a fallback failure can be traced to the original outage.
+      fallbackError.primaryError = primaryError;
+      throw fallbackError;
+    }
   }
 }
 
@@ -5792,12 +5901,23 @@ function registerIpcHandlers() {
       resolution: request.resolution,
       duration: request.duration
     });
+    const fallbackProvider = kind === 'image'
+      ? await resolveImageFallback(request, creditQuote)
+      : null;
+    const reservationQuote = fallbackProvider && fallbackProvider.quote
+      && Number(fallbackProvider.quote.totalCredits) > Number(creditQuote.totalCredits)
+      ? fallbackProvider.quote
+      : creditQuote;
     const usage = membershipService.beginUsage(`ai.${kind}`, {
-      estimatedCredits: creditQuote.totalCredits,
+      // Reserve the most expensive eligible path up front.  A successful
+      // primary request settles at its own quote; a fallback settles at the
+      // fallback quote, so neither path can undercharge or double-charge.
+      estimatedCredits: reservationQuote.totalCredits,
       metadata: {
         kind,
         requestedCount: count,
         providerId: kind === 'video' ? request.videoProviderId : request.imageProviderId,
+        fallbackProviderId: fallbackProvider ? fallbackProvider.provider.id : null,
         modelName: request.modelName || null,
         aspectRatio: request.aspectRatio || null,
         size: request.size || null,
@@ -5808,7 +5928,11 @@ function registerIpcHandlers() {
           ? request.referenceMediaTypes.length
           : Array.isArray(request.urls) ? request.urls.length : 0,
         quotedCredits: creditQuote.totalCredits,
-        unitCredits: creditQuote.unitCredits
+        unitCredits: creditQuote.unitCredits,
+        reservationCredits: reservationQuote.totalCredits,
+        fallbackUnitCredits: fallbackProvider && fallbackProvider.quote
+          ? fallbackProvider.quote.unitCredits
+          : null
       }
     });
     if (!usage.ok) {
@@ -5838,46 +5962,49 @@ function registerIpcHandlers() {
     }
 
     try {
-      const tasks = Array.from({ length: count }, () => generateAiMediaBuffer(kind, providerPrompt, {
-        size: request.size,
-        quality: request.quality,
-        resolution: request.resolution,
-        aspectRatio: request.aspectRatio,
-        sourceWidth: request.sourceWidth,
-        sourceHeight: request.sourceHeight,
-        duration: request.duration,
-        videoMode: request.videoMode,
-        referenceMediaTypes: request.referenceMediaTypes,
-        referenceVideoUploadIds: request.referenceVideoUploadIds,
-        enhancePrompt: request.enhancePrompt,
-        seed: request.seed,
-        styleId: request.styleId,
-        styleStrength: request.styleStrength,
-        urls: request.urls,
-        imageProviderId: request.imageProviderId,
-        videoProviderId: request.videoProviderId
-      }));
+      const generationOptions = aiMediaGenerationOptions(request, kind === 'video'
+        ? request.videoProviderId
+        : request.imageProviderId);
+      const tasks = Array.from({ length: count }, () => generateAiMediaWithFallback(
+        kind,
+        providerPrompt,
+        generationOptions,
+        fallbackProvider
+      ));
       const settled = await Promise.allSettled(tasks);
       const files = [];
       const boardItems = [];
       const unlockedKeys = new Set();
+      let primaryCount = 0;
+      let fallbackCount = 0;
+      let fallbackProviderName = '';
       for (let index = 0; index < settled.length; index += 1) {
         const result = settled[index];
         if (result.status !== 'fulfilled') continue;
+        const generated = result.value;
+        const resultRequest = generated.fallbackUsed
+          ? { ...request, imageProviderId: generated.providerId }
+          : request;
         const added = await addGeneratedMediaFile(
-          result.value,
+          generated.buffer,
           prompt,
           request.folderId,
           kind,
           request.canvasId,
-          request
+          resultRequest
         );
+        if (generated.fallbackUsed) {
+          fallbackCount += 1;
+          fallbackProviderName = generated.fallbackProviderName || fallbackProviderName;
+        } else {
+          primaryCount += 1;
+        }
         files.push(fileToPayload(added.record));
         const boardItem = request.placeOnBoard === false
           ? null
           : addGeneratedMediaBoardItem(
             added.record,
-            request,
+            resultRequest,
             Array.isArray(request.placements) ? request.placements[index] : null,
             index
           );
@@ -5885,9 +6012,12 @@ function registerIpcHandlers() {
         added.unlocked.forEach((key) => unlockedKeys.add(key));
       }
       const failures = settled.filter((result) => result.status === 'rejected');
-      if (!files.length) throw failures[0].reason;
+      if (!files.length) throw (failures[0] && failures[0].reason) || new Error('AI generation failed.');
       const creditsCharged = kind === 'image'
-        ? creditQuote.unitCredits * files.length
+        ? creditQuote.unitCredits * primaryCount
+          + (fallbackProvider && fallbackProvider.quote
+            ? fallbackProvider.quote.unitCredits * fallbackCount
+            : 0)
         : creditQuote.totalCredits;
       membershipService.finishUsage(usage.usageId, {
         status: failures.length ? 'partial' : 'succeeded',
@@ -5904,11 +6034,27 @@ function registerIpcHandlers() {
         boardItems,
         failedCount: failures.length,
         unlocked: [...unlockedKeys],
-        estimatedCredits: creditQuote.totalCredits,
+        estimatedCredits: reservationQuote.totalCredits,
         creditsCharged,
+        ...(fallbackCount > 0 ? {
+          fallback: {
+            providerId: fallbackProvider.provider.id,
+            providerName: fallbackProviderName || fallbackProvider.provider.name,
+            count: fallbackCount,
+            notice: localizedMessage(
+              `The selected image model was temporarily unavailable. Switched to ${fallbackProviderName || fallbackProvider.provider.name} and retried once.`,
+              `当前生图模型暂时不可用，已切换到${fallbackProviderName || fallbackProvider.provider.name}并自动重试一次。`,
+              `The selected image model was temporarily unavailable. Switched to ${fallbackProviderName || fallbackProvider.provider.name} and retried once.`
+            )
+          }
+        } : {}),
         pricing: {
-          providerId: creditQuote.providerId,
-          unitCredits: creditQuote.unitCredits,
+          providerId: fallbackCount === files.length && fallbackProvider
+            ? fallbackProvider.quote.providerId
+            : creditQuote.providerId,
+          unitCredits: fallbackCount === files.length && fallbackProvider
+            ? fallbackProvider.quote.unitCredits
+            : creditQuote.unitCredits,
           count: kind === 'image' ? files.length : 1,
           ...(creditQuote.resolution ? { resolution: creditQuote.resolution } : {}),
           ...(creditQuote.quality ? { quality: creditQuote.quality } : {}),

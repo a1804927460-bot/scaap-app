@@ -1197,6 +1197,7 @@ async function submitAssistantMessage() {
       if (response.unlocked && response.unlocked.length) await refreshAchievements();
       pending.remove();
       appendAssistantMedia(files, submittedKind, response.creditsCharged);
+      if (response.fallback && response.fallback.notice) showToast(response.fallback.notice, 'AI');
       const settledCharge = Number.isFinite(Number(response.creditsCharged))
         ? Math.max(0, Math.round(Number(response.creditsCharged)))
         : null;
