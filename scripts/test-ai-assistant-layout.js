@@ -47,6 +47,21 @@ assert.match(
 );
 assert.match(
   assistantSource,
+  /function assistantImageReferenceAutoActive[\s\S]*?function syncAssistantReferenceAutoMode[\s\S]*?referenceAutoState[\s\S]*?ratioSelect\.value = 'auto'[\s\S]*?sizeSelect\.value = 'auto'/,
+  'image references must switch the assistant to automatic ratio and size selection.'
+);
+assert.match(
+  assistantSource,
+  /function syncAssistantMediaOptions[\s\S]*?syncAssistantReferenceAutoMode\(\)[\s\S]*?renderAssistantRatios\(\{ syncReferenceAuto: false \}\)[\s\S]*?assistantImageReferenceAutoActive\(\)/,
+  'reference auto sizing must be applied while media options are rebuilt.'
+);
+assert.match(
+  assistantSource,
+  /const saved = AiAssistant\.referenceAutoState[\s\S]*?ratioSelect\.disabled = saved\.ratioDisabled === true[\s\S]*?sizeSelect\.disabled = saved\.sizeDisabled === true[\s\S]*?saved\.ratio[\s\S]*?saved\.size/,
+  'removing references must restore the previous ratio and size controls.'
+);
+assert.match(
+  assistantSource,
   /const panel = document\.getElementById\('ai-assistant-panel'\)[\s\S]*?panel\.addEventListener\('contextmenu', showAgentTextContextMenu\)[\s\S]*?\['a', 'c', 'v', 'x'\][\s\S]*?event\.stopPropagation\(\)/,
   'AI chat must expose text clipboard actions without leaking shortcuts into the canvas.'
 );

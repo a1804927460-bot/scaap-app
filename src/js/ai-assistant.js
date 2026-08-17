@@ -11,7 +11,8 @@ const AiAssistant = {
   activeSessionId: null,
   languageTimer: 0,
   creditQuoteRevision: 0,
-  compactObserver: null
+  compactObserver: null,
+  referenceAutoState: null
 };
 
 const AI_CHAT_HISTORY_KEY = 'messs.ai-chat-history.v1';
@@ -293,7 +294,7 @@ async function addPastedAssistantImage(file) {
     kind: 'image'
   }];
   renderAssistantAttachments();
-  renderAssistantRatios();
+  syncAssistantMediaOptions();
 }
 
 function assistantFileKind(file) {
@@ -341,7 +342,7 @@ async function prepareAssistantImportedFiles(imported) {
     ...attachments.filter((attachment) => !AiAssistant.attachments.some((entry) => entry.id === attachment.id))
   ];
   renderAssistantAttachments();
-  renderAssistantRatios();
+  syncAssistantMediaOptions();
   return attachments;
 }
 
@@ -580,6 +581,78 @@ function assistantMediaAttachmentCount() {
   return AiAssistant.attachments.filter((attachment) => ['image', 'video'].includes(assistantFileKind(attachment))).length;
 }
 
+function assistantImageReferenceAutoActive() {
+  return AiAssistant.kind === 'image' && assistantMediaAttachmentCount() > 0;
+}
+
+function syncAssistantReferenceAutoMode() {
+  const ratioSelect = document.getElementById('ai-assistant-ratio');
+  const sizeSelect = document.getElementById('ai-assistant-size');
+  if (!ratioSelect || !sizeSelect) return false;
+  if (AiAssistant.kind !== 'image') {
+    AiAssistant.referenceAutoState = null;
+    return false;
+  }
+
+  if (assistantImageReferenceAutoActive()) {
+    if (!AiAssistant.referenceAutoState) {
+      AiAssistant.referenceAutoState = {
+        ratio: ratioSelect.value || 'auto',
+        size: sizeSelect.value || 'auto',
+        ratioDisabled: ratioSelect.disabled,
+        sizeDisabled: sizeSelect.disabled
+      };
+    }
+    const ensureAutoOption = (select) => {
+      if ([...select.options].some((option) => option.value === 'auto')) return;
+      const option = document.createElement('option');
+      option.value = 'auto';
+      option.textContent = t('Auto', '自动');
+      select.insertBefore(option, select.firstChild);
+    };
+    ensureAutoOption(ratioSelect);
+    ensureAutoOption(sizeSelect);
+    ratioSelect.value = 'auto';
+    sizeSelect.value = 'auto';
+    ratioSelect.disabled = true;
+    sizeSelect.disabled = true;
+    const title = t('Auto matches the reference image.', '已根据参考图自动匹配尺寸。');
+    ratioSelect.title = title;
+    sizeSelect.title = title;
+    ratioSelect.setAttribute('aria-label', title);
+    sizeSelect.setAttribute('aria-label', title);
+    return true;
+  }
+
+  const saved = AiAssistant.referenceAutoState;
+  if (!saved) return false;
+  AiAssistant.referenceAutoState = null;
+  ratioSelect.disabled = saved.ratioDisabled === true;
+  sizeSelect.disabled = saved.sizeDisabled === true;
+  ratioSelect.removeAttribute('title');
+  sizeSelect.removeAttribute('title');
+  ratioSelect.removeAttribute('aria-label');
+  sizeSelect.removeAttribute('aria-label');
+  if ([...ratioSelect.options].some((option) => option.value === saved.ratio)) {
+    ratioSelect.value = saved.ratio;
+  }
+  if ([...sizeSelect.options].some((option) => option.value === saved.size)) {
+    sizeSelect.value = saved.size;
+  }
+  return true;
+}
+
+function resetAssistantReferenceAutoMode() {
+  const ratioSelect = document.getElementById('ai-assistant-ratio');
+  const sizeSelect = document.getElementById('ai-assistant-size');
+  AiAssistant.referenceAutoState = null;
+  [ratioSelect, sizeSelect].filter(Boolean).forEach((select) => {
+    select.disabled = false;
+    select.removeAttribute('title');
+    select.removeAttribute('aria-label');
+  });
+}
+
 function assistantAttachmentLimit() {
   if (AiAssistant.kind === 'chat') return 8;
   const capabilities = AiAssistant.kind === 'video'
@@ -593,6 +666,7 @@ function assistantAttachmentLimit() {
 function syncAssistantMediaOptions() {
   const isVideo = AiAssistant.kind === 'video';
   const capabilities = isVideo ? assistantVideoCapabilities() : assistantImageCapabilities();
+  if (assistantImageReferenceAutoActive()) syncAssistantReferenceAutoMode();
   const limit = assistantAttachmentLimit();
   if (AiAssistant.attachments.length > limit) {
     AiAssistant.attachments = AiAssistant.attachments.slice(0, limit);
@@ -647,8 +721,9 @@ function syncAssistantMediaOptions() {
   durationSelect.value = durations.includes(previousDuration)
     ? String(previousDuration)
     : String(durations[0]);
-  renderAssistantRatios();
-  if (!isVideo) syncAssistantImageSizeRatio('size');
+  renderAssistantRatios({ syncReferenceAuto: false });
+  if (!isVideo && !assistantImageReferenceAutoActive()) syncAssistantImageSizeRatio('size');
+  if (!isVideo) syncAssistantReferenceAutoMode();
   refreshAssistantOptionSummary();
   updateAssistantCreditEstimate();
 }
@@ -684,7 +759,7 @@ function renderAssistantAttachments() {
     remove.addEventListener('click', () => {
       AiAssistant.attachments = AiAssistant.attachments.filter((entry) => entry.id !== attachment.id);
       renderAssistantAttachments();
-      renderAssistantRatios();
+      syncAssistantMediaOptions();
     });
     item.append(preview, copy, remove);
     container.appendChild(item);
@@ -766,7 +841,7 @@ async function uploadAssistantFiles() {
   }
 }
 
-function renderAssistantRatios() {
+function renderAssistantRatios(options = {}) {
   const select = document.getElementById('ai-assistant-ratio');
   const capabilities = AiAssistant.kind === 'video' ? assistantVideoCapabilities() : assistantImageCapabilities();
   const ratios = AiAssistant.kind === 'video'
@@ -795,6 +870,7 @@ function renderAssistantRatios() {
   });
   select.value = ratios.includes(selected) ? selected : ratios[0];
   select.disabled = ratios.length < 2;
+  if (options.syncReferenceAuto !== false) syncAssistantReferenceAutoMode();
   refreshAssistantOptionSummary();
 }
 
@@ -835,6 +911,7 @@ function setAssistantKind(kind) {
   if (panel && panel.classList.contains('is-chat-only-compact') && kind !== 'chat') {
     kind = 'chat';
   }
+  if (AiAssistant.kind === 'image' && kind !== 'image') resetAssistantReferenceAutoMode();
   AiAssistant.kind = ['chat', 'image', 'video'].includes(kind) ? kind : 'chat';
   document.querySelectorAll('[data-assistant-kind]').forEach((button) => {
     const active = button.dataset.assistantKind === AiAssistant.kind;
@@ -1011,7 +1088,7 @@ async function submitAssistantMessage() {
   input.value = '';
   AiAssistant.attachments = [];
   renderAssistantAttachments();
-  renderAssistantRatios();
+  syncAssistantMediaOptions();
   ensureAiChatSession(prompt);
   const userRow = appendAssistantText('user', prompt);
   appendAssistantMessageAttachments(userRow, attachments);
