@@ -44,8 +44,14 @@ jobs:
             $libreOfficeVersion = '26.2.3'
             $libreOfficeMsi = Join-Path $env:RUNNER_TEMP "LibreOffice-$libreOfficeVersion.msi"
             $libreOfficeUrl = "https://download.documentfoundation.org/libreoffice/stable/$libreOfficeVersion/win/x86_64/LibreOffice_${libreOfficeVersion}_Win_x86-64.msi"
-            Invoke-WebRequest -Uri $libreOfficeUrl -OutFile $libreOfficeMsi -UseBasicParsing
-            $install = Start-Process msiexec.exe -ArgumentList @('/i', $libreOfficeMsi, '/qn', '/norestart') -Wait -PassThru
+            # Bound both network and installer waits so a hosted runner cannot
+            # consume the entire workflow indefinitely when a mirror stalls.
+            Invoke-WebRequest -Uri $libreOfficeUrl -OutFile $libreOfficeMsi -UseBasicParsing -TimeoutSec 300
+            $install = Start-Process msiexec.exe -ArgumentList @('/i', $libreOfficeMsi, '/qn', '/norestart') -PassThru
+            if (-not $install.WaitForExit(300000)) {
+              Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue
+              throw 'LibreOffice MSI installation timed out after 300 seconds.'
+            }
             if ($install.ExitCode -notin @(0, 3010)) { throw "LibreOffice MSI failed with exit code $($install.ExitCode)." }
           }
           choco install imagemagick.app --no-progress -y --execution-timeout=600
