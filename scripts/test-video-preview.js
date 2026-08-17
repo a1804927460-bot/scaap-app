@@ -163,6 +163,31 @@ assert.match(
   'Every selected canvas video must expose the same fullscreen action as an image, even when Butler does not support its container.'
 );
 assert.match(
+  boardSource,
+  /else if \(isVideo\) \{[\s\S]*?appendGeneratedMediaDetailsControl\(el, f, videoToolbar\);[\s\S]*?appendBoardEditHint\(el, 'video'\);/,
+  'Every canvas video must expose details and the Tab edit capsule, regardless of its source.'
+);
+assert.match(
+  boardSource,
+  /e\.key === 'Tab'[\s\S]*?selectedBoardVideoItems\(\)\.length[\s\S]*?openAiComposerForSelection\(editKind\)/,
+  'Tab must route a selected video into the video composer instead of the image composer.'
+);
+assert.match(
+  mediaMetaSource,
+  /const isVideoDetail = isVideoExt\(file && file\.ext\)[\s\S]*?const mediaDuration = Number\(file\.sourceDuration\)[\s\S]*?isVideoDetail && mediaDuration > 0/,
+  'Imported videos must render video metadata even when no generation record exists.'
+);
+assert.match(
+  boardStyles,
+  /\.board-item-video\.is-selected\.is-single-selection \.board-edit-hint[\s\S]*?opacity:\s*1/,
+  'The selected-video edit capsule must be visible.'
+);
+assert.match(
+  boardStyles,
+  /\.fullscreen-stage \.messs-video-player\.is-fullscreen-player video \{[\s\S]*?width:\s*100%;[\s\S]*?height:\s*100%;[\s\S]*?object-fit:\s*contain;/,
+  'Fullscreen videos must fit their complete frame inside the viewport instead of using oversized intrinsic dimensions.'
+);
+assert.match(
   previewSource,
   /async function openFileFullscreenPreview\(file, sourceMedia = null\)[\s\S]*?isVideoExt\(file\.ext\)[\s\S]*?showFullscreenMedia\(video, \{ videoFileId: file\.id, autoplay: true \}\)/,
   'The file fullscreen helper must open canvas videos, preserve mounted players and start playback immediately.'

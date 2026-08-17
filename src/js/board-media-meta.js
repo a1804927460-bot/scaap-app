@@ -2230,7 +2230,9 @@ function appendGeneratedMediaDetailsControl(element, file, toolbar = null) {
     : 'generated-media-detail-trigger';
   button.dataset.boardInteractive = 'true';
   button.draggable = false;
-  button.title = t('Generation details', '生成详情');
+  button.title = isVideoExt(file && file.ext)
+    ? t('Video details', '视频详情')
+    : t('Generation details', '生成详情');
   button.setAttribute('aria-label', button.title);
   button.innerHTML = `
     <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2">
@@ -2318,7 +2320,11 @@ function showGeneratedMediaDetails(file, anchorElement) {
   const modelLabel = boardGenerationModelLabel(generation) ||
     (butlerOperation.kind === 'video-upscale' ? 'Topaz Video AI' : '');
   const isGenerated = !!(file.aiGeneration || file.sourceFolder === 'AI Generated');
-  const isVideoDetail = generation.kind === 'video' || butlerOperation.kind === 'video-upscale';
+  const isVideoDetail = isVideoExt(file && file.ext) ||
+    generation.kind === 'video' || butlerOperation.kind === 'video-upscale';
+  const mediaDuration = Number(file.sourceDuration) > 0
+    ? Number(file.sourceDuration)
+    : Number(generation.duration) > 0 ? Number(generation.duration) : 0;
   const operationCredits = Number.isFinite(Number(butlerOperation.credits))
     ? Math.max(0, Math.round(Number(butlerOperation.credits)))
     : null;
@@ -2367,8 +2373,10 @@ function showGeneratedMediaDetails(file, anchorElement) {
   dimensionsElement.textContent = dimensions ? ` · ${dimensions}` : '';
   dimensionsElement.hidden = !dimensions;
   const modelElement = overlay.querySelector('.generated-media-detail-model');
-  modelElement.textContent = modelLabel ? `${t('Model', '模型')} · ${modelLabel}` : '';
-  modelElement.hidden = !modelLabel;
+  modelElement.textContent = modelLabel
+    ? `${t('Model', '模型')} · ${modelLabel}`
+    : `${t('File', '文件')} · ${file.name || t('Unknown', '未知')}`;
+  modelElement.hidden = false;
   const editButton = overlay.querySelector('.generated-media-edit');
   editButton.textContent = t('Edit image', '编辑图片');
   editButton.hidden = !isGenerated || !prompt || generation.kind === 'video';
@@ -2407,9 +2415,9 @@ function showGeneratedMediaDetails(file, anchorElement) {
     fileSize.textContent = `${t('File', '大小')} ${formatBoardFileSize(file)}`;
     chips.appendChild(fileSize);
   }
-  if (generation.kind === 'video' && generation.duration) {
+  if (isVideoDetail && mediaDuration > 0) {
     const duration = document.createElement('span');
-    duration.textContent = `${t('Duration', '时长')} ${generation.duration}s`;
+    duration.textContent = `${t('Duration', '时长')} ${Math.round(mediaDuration * 10) / 10}s`;
     chips.appendChild(duration);
   }
   chips.hidden = !chips.childElementCount;

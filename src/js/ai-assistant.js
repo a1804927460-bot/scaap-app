@@ -1189,12 +1189,18 @@ function initAiAssistant() {
     event.preventDefault();
     submitAssistantMessage();
   });
+  document.getElementById('ai-assistant-panel').addEventListener('contextmenu', showAgentTextContextMenu);
   document.getElementById('ai-assistant-input').addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && ['a', 'c', 'v', 'x'].includes(event.key.toLowerCase())) {
+      event.stopPropagation();
+    }
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       form.requestSubmit();
     }
   });
+  document.getElementById('ai-assistant-input').addEventListener('copy', (event) => event.stopPropagation());
+  document.getElementById('ai-assistant-input').addEventListener('cut', (event) => event.stopPropagation());
   document.getElementById('ai-assistant-input').addEventListener('paste', (event) => {
     const files = [...(event.clipboardData && event.clipboardData.files || [])];
     if (!files.length) return;

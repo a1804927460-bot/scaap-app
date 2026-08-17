@@ -31,7 +31,7 @@ async function run() {
             <div class="board-item board-text-note qa-text"><div class="board-text-note-content">Confirmed text</div></div>
             <div class="board-item board-text-note is-text-editing qa-text qa-text-edit"><div class="board-text-note-content">Editing text</div></div>
             <canvas class="qa-doodle"></canvas>
-            <div class="ai-image-popover ai-composer"><form class="ai-composer-form"><div class="ai-composer-mode-row"><div class="ai-composer-mode"><button class="is-active">Image</button><button>Video</button></div><div class="ai-composer-reference-strip" hidden><div class="ai-composer-reference-thumb"><img src="${logoUrl}" alt="Reference"><span class="ai-composer-reference-order">1</span></div></div></div><textarea class="ai-composer-prompt" placeholder="Describe what you want to create"></textarea><div class="ai-composer-footer"><div class="ai-composer-controls"><button class="ai-model-picker-trigger">Seedance 2.0 Fast</button><div class="ai-video-mode-picker"><button class="ai-video-mode-trigger"><span>First frame</span></button></div><button class="ai-options-toggle">Options</button></div><button class="ai-composer-submit">&#8593;</button></div></form></div>
+            <div class="ai-image-popover ai-composer"><form class="ai-composer-form"><div class="ai-composer-mode-row"><div class="ai-composer-mode"><button class="is-active">Image</button><button>Video</button></div><div class="ai-composer-reference-strip" hidden><div class="ai-composer-reference-thumb"><img src="${logoUrl}" alt="Reference"><span class="ai-composer-reference-order">1</span></div></div></div><textarea class="ai-composer-prompt" placeholder="Describe what you want to create"></textarea><div class="ai-composer-footer"><div class="ai-composer-controls"><button class="ai-model-picker-trigger"><span>Seedance 2.5</span></button><div class="ai-video-mode-picker"><button class="ai-video-mode-trigger"><span>First + last frame</span></button></div><button class="ai-options-toggle">16:9 / 720P / 30s</button><button class="ai-camera-control-toggle"><span>Lens</span></button><button class="ai-prompt-style-toggle"><span>Editorial</span></button></div><div class="ai-composer-submit-wrap"><button class="ai-composer-submit"><img class="ai-submit-logo" src="${logoUrl}" alt=""><span class="ai-credit-estimate">120 pts</span><svg viewBox="0 0 24 24" width="17" height="17"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button></div></div><section class="ai-prompt-style-panel" hidden><header class="ai-prompt-style-header"><div><strong>Prompt styles</strong><span>Added only when sent</span></div><button class="ai-prompt-style-new">New style</button></header><div class="ai-prompt-style-grid"><button class="ai-prompt-style-card is-no-style"><span class="ai-prompt-style-card-cover">None</span><strong>No style</strong></button><button class="ai-prompt-style-card is-selected"><span class="ai-prompt-style-card-cover" style="background-image:url('${logoUrl}')"></span><strong>Editorial</strong><span class="ai-prompt-style-card-edit">Edit</span></button><button class="ai-prompt-style-card"><span class="ai-prompt-style-card-cover">C</span><strong>Cinematic</strong></button></div></section></form></div>
           </div>
           <div id="resize-handle-board-agent" class="resize-handle resize-handle-v"></div>
           <aside id="board-agent-panel" class="board-agent-panel">
@@ -90,6 +90,8 @@ async function run() {
     const logo = rect('.board-agent-welcome img');
     const composer = rect('.ai-composer');
     const composerPrompt = rect('.ai-composer-prompt');
+    const composerFooter = rect('.ai-composer-footer');
+    const composerSubmit = rect('.ai-composer-submit');
     const viewport = rect('#board-viewport');
     const bottomBar = rect('#board-bottom-bar');
     const agentForm = rect('.board-agent-form');
@@ -97,7 +99,7 @@ async function run() {
     const agentMenu = rect('.board-agent-model-menu');
     const confirmedText = getComputedStyle(document.querySelector('.qa-text:not(.is-text-editing)'));
     const editingText = getComputedStyle(document.querySelector('.qa-text-edit'));
-    return { agent, logo, composer, composerPrompt, viewport, bottomBar, agentForm, agentInput, agentMenu, radius:getComputedStyle(document.querySelector('.board-agent-panel')).borderRadius, toggle:getComputedStyle(document.getElementById('board-agent-toggle')).display, confirmedText:{background:confirmedText.backgroundColor,borderWidth:confirmedText.borderTopWidth,shadow:confirmedText.boxShadow}, editingText:{background:editingText.backgroundColor,borderWidth:editingText.borderTopWidth,shadow:editingText.boxShadow} };
+    return { agent, logo, composer, composerPrompt, composerFooter, composerSubmit, viewport, bottomBar, agentForm, agentInput, agentMenu, radius:getComputedStyle(document.querySelector('.board-agent-panel')).borderRadius, toggle:getComputedStyle(document.getElementById('board-agent-toggle')).display, confirmedText:{background:confirmedText.backgroundColor,borderWidth:confirmedText.borderTopWidth,shadow:confirmedText.boxShadow}, editingText:{background:editingText.backgroundColor,borderWidth:editingText.borderTopWidth,shadow:editingText.boxShadow} };
   })()`);
   if (full.agent.width < 300 || full.agent.right > 1440 || full.agent.bottom > full.viewport.bottom + 1) throw new Error(`Agent escaped workspace: ${JSON.stringify(full)}`);
   if (!/18px\s+0px\s+0px\s+18px/.test(full.radius)) throw new Error(`Agent outer shell does not have the restrained exposed-edge radius: ${full.radius}`);
@@ -114,6 +116,9 @@ async function run() {
   }
   if (full.composerPrompt.width < 700 || full.composerPrompt.height < 76) {
     throw new Error(`Composer prompt did not receive the intended writing space: ${JSON.stringify(full.composerPrompt)}`);
+  }
+  if (full.composerSubmit.width < 108 || full.composerSubmit.right > full.composer.right - 10 || full.composerSubmit.left < full.composerFooter.left) {
+    throw new Error(`Glass submit control overflowed the composer footer: ${JSON.stringify(full)}`);
   }
   const composerCenter = (full.composer.left + full.composer.right) / 2;
   const viewportCenter = (full.viewport.left + full.viewport.right) / 2;
@@ -145,6 +150,18 @@ async function run() {
   const screenshotDir = path.join(root, 'test-artifacts');
   fs.mkdirSync(screenshotDir, { recursive: true });
   fs.writeFileSync(path.join(screenshotDir, 'board-agent-fullscreen.png'), (await window.webContents.capturePage()).toPNG());
+  const stylePanel = await window.webContents.executeJavaScript(`(() => {
+    const panel = document.querySelector('.ai-prompt-style-panel');
+    panel.hidden = false;
+    const r = panel.getBoundingClientRect();
+    const composer = document.querySelector('.ai-composer').getBoundingClientRect();
+    return { left:r.left, right:r.right, top:r.top, bottom:r.bottom, composerLeft:composer.left, composerRight:composer.right };
+  })()`);
+  if (stylePanel.left < stylePanel.composerLeft || stylePanel.right > stylePanel.composerRight || stylePanel.top < full.viewport.top) {
+    throw new Error(`Prompt style panel escaped the generation composer: ${JSON.stringify(stylePanel)}`);
+  }
+  fs.writeFileSync(path.join(screenshotDir, 'board-prompt-styles.png'), (await window.webContents.capturePage()).toPNG());
+  await window.webContents.executeJavaScript(`document.querySelector('.ai-prompt-style-panel').hidden = true`);
 
   window.setSize(900, 650);
   await wait(180);

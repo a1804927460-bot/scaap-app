@@ -41,5 +41,15 @@ assert.match(
   /function syncAssistantImageSizeRatio[\s\S]*?imageSizeForRatio[\s\S]*?imageRatioForSize[\s\S]*?id === 'ai-assistant-ratio'[\s\S]*?id === 'ai-assistant-size'/,
   'GPT image size and ratio selections must stay synchronized in the assistant.'
 );
+assert.match(
+  assistantSource,
+  /ai-assistant-panel'\)\.addEventListener\('contextmenu', showAgentTextContextMenu\)[\s\S]*?\['a', 'c', 'v', 'x'\][\s\S]*?event\.stopPropagation\(\)/,
+  'AI chat must expose text clipboard actions without leaking shortcuts into the canvas.'
+);
+assert.match(
+  css,
+  /\.ai-assistant-message-body \{[\s\S]*?user-select:\s*text;/,
+  'AI replies must remain selectable for keyboard and context-menu copying.'
+);
 
 console.log('AI assistant layout checks passed');

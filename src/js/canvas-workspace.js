@@ -589,6 +589,12 @@ function appendCanvasAgentMessage(role, text) {
   return row;
 }
 
+function canvasAgentThinkingText(seconds = 0) {
+  return seconds > 0
+    ? t(`Thinking... ${seconds}s`, `\u601d\u8003\u4e2d... ${seconds}\u79d2`)
+    : t('Thinking...', '\u601d\u8003\u4e2d...');
+}
+
 function canvasAgentAttachmentRecord(file) {
   return {
     id: file.id,
@@ -1007,6 +1013,14 @@ async function submitCanvasAgentMessage() {
   CanvasWorkspace.agentBusy = true;
   input.disabled = true;
   document.getElementById('board-agent-submit').disabled = true;
+  const pending = appendCanvasAgentMessage('assistant', canvasAgentThinkingText());
+  pending.classList.add('is-pending');
+  const thinkingStartedAt = Date.now();
+  const thinkingTimer = window.setInterval(() => {
+    if (!pending.isConnected) return;
+    const seconds = Math.max(1, Math.floor((Date.now() - thinkingStartedAt) / 1000));
+    pending.textContent = canvasAgentThinkingText(seconds);
+  }, 1000);
   try {
     const response = await window.messsAPI.chatWithAi({
       prompt: contextualPrompt,
@@ -1019,11 +1033,14 @@ async function submitCanvasAgentMessage() {
       throw new Error((response && response.message) || t('Canvas Agent request failed.', '画布 Agent 请求失败。'));
     }
     CanvasWorkspace.agentMessages.push({ role: 'assistant', content: response.text });
-    const assistantRow = appendCanvasAgentMessage('assistant', response.text);
-    if (typeof appendAssistantOutputFiles === 'function') appendAssistantOutputFiles(assistantRow, response.files);
+    pending.classList.remove('is-pending');
+    pending.textContent = response.text;
+    if (typeof appendAssistantOutputFiles === 'function') appendAssistantOutputFiles(pending, response.files);
   } catch (err) {
+    pending.remove();
     appendCanvasAgentMessage('error', err && err.message ? err.message : t('Canvas Agent request failed.', '画布 Agent 请求失败。'));
   } finally {
+    window.clearInterval(thinkingTimer);
     CanvasWorkspace.agentBusy = false;
     input.disabled = false;
     document.getElementById('board-agent-submit').disabled = false;
@@ -1242,6 +1259,7 @@ async function initCanvasWorkspace(initial) {
     event.preventDefault();
     submitCanvasAgentMessage();
   });
+  document.getElementById('board-agent-panel').addEventListener('contextmenu', showAgentTextContextMenu);
   document.getElementById('board-agent-input').addEventListener('keydown', (event) => {
     if ((event.ctrlKey || event.metaKey) && ['a', 'c', 'v', 'x'].includes(event.key.toLowerCase())) {
       event.stopPropagation();

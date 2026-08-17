@@ -128,7 +128,8 @@ const seedance25Provider = config.providers.find((provider) => provider.id === '
 assert.equal(seedance20Provider.name, 'Seedance 2.0');
 assert.equal(seedance20Provider.model, 'doubao-seedance-2-0-260128');
 assert.equal(seedance20Provider.protocol, 'seedance-video-v3');
-assert.deepEqual(seedance20Provider.capabilities.resolutions, ['480P', '720P', '1080P', '4K']);
+assert.deepEqual(seedance20Provider.capabilities.resolutions, ['480P', '720P']);
+assert.deepEqual(seedance20Provider.capabilities.durations, Array.from({ length: 12 }, (_value, index) => index + 4));
 assert.equal(seedance20Provider.capabilities.maxReferenceImages, 9);
 assert.deepEqual(seedance20Provider.capabilities.videoModes.map((mode) => mode.id), [
   'text', 'first-frame', 'first-last-frame', 'omni'
@@ -141,7 +142,11 @@ assert.equal(seedance25Provider.name, 'Seedance 2.5');
 assert.equal(seedance25Provider.model, 'doubao-seedance-2-5-260628');
 assert.equal(seedance25Provider.protocol, 'seedance-video-v3');
 assert.deepEqual(seedance25Provider.capabilities.resolutions, ['480P', '720P']);
+assert.deepEqual(seedance25Provider.capabilities.durations, Array.from({ length: 27 }, (_value, index) => index + 4));
 assert.equal(seedance25Provider.capabilities.maxReferenceImages, 9);
+assert.equal(seedance25Provider.capabilities.videoModes[3].maxReferenceVideos, 6);
+assert.equal(Object.hasOwn(seedance25Provider.capabilities.videoModes[1], 'ratios'), false);
+assert.equal(Object.hasOwn(seedance25Provider.capabilities.videoModes[2], 'ratios'), false);
 assert.equal(config.providers.find((provider) => provider.id === 'chat-1').name, 'Messs AI');
 assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-1').models, [
   'gemini-3.7-flash'
@@ -590,8 +595,8 @@ const createdSeedance25 = await createVideoTask({
   providerId: 'video-3',
   prompt: 'cinematic city at dawn',
   resolution: '480P',
-  duration: 4,
-  aspectRatio: 'adaptive',
+  duration: 30,
+  aspectRatio: '16:9',
   videoMode: 'text',
   urls: []
 });
@@ -604,8 +609,8 @@ assert.deepEqual(JSON.parse(seedance25CreateCall.options.body), {
   model: 'doubao-seedance-2-5-260628',
   content: [{ type: 'text', text: 'cinematic city at dawn' }],
   generate_audio: true,
-  ratio: 'adaptive',
-  duration: 4,
+  ratio: '16:9',
+  duration: 30,
   resolution: '480p',
   watermark: false
 });

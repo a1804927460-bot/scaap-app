@@ -11,13 +11,15 @@ const BOARD_DOM_ITEM_EXIT_LIMIT = 240;
 const BOARD_DOM_RETAIN_LIMIT = BOARD_DOM_ITEM_LIMIT;
 const BOARD_OVERVIEW_ITEM_THRESHOLD = 180;
 const BOARD_FULL_IMAGE_LIMIT = 8;
-const BOARD_FULL_IMAGE_CACHE_LIMIT = 24;
+const BOARD_FULL_IMAGE_CACHE_LIMIT = 12;
+const BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET = 72_000_000;
 const BOARD_FULL_IMAGE_READY_LIMIT = 400;
 const BOARD_THUMBNAIL_MAX_EDGE = 400;
 const BOARD_FULL_IMAGE_MIN_SCREEN_EDGE = 220;
 const BOARD_SELECTED_FULL_IMAGE_MIN_SCREEN_EDGE = 150;
 const BOARD_FULL_IMAGE_PREWARM_SCREEN_EDGE = 140;
 const BOARD_QUALITY_SETTLE_MS = 90;
+const BOARD_IMAGE_CROSSFADE_MS = 110;
 const BOARD_VIEW_STORAGE_KEY = 'messs.board.viewport.v2';
 const BOARD_OVERVIEW_DPR = 1;
 const BOARD_OVERVIEW_IMAGE_LIMIT = 1600;
@@ -114,9 +116,11 @@ const Board = {
   overviewHideFrame: 0,
   overviewImageFailed: new Set(),
   fullImageCache: new Map(),
+  fullImageCachePixels: 0,
   fullImageReadyFileIds: new Set(),
   fullImagePending: new Map(),
   fullImagePrewarmTimer: 0,
+  fullImagePrewarmZoom: 0,
   failedFullImageSources: new Set(),
   resizeObserver: null,
   clipboardPastePromise: null,
@@ -346,10 +350,30 @@ function cachedBoardFullImage(source) {
 }
 
 function cacheBoardFullImage(source, image) {
+  const previous = Board.fullImageCache.get(source);
+  if (previous) {
+    Board.fullImageCachePixels = Math.max(
+      0,
+      Board.fullImageCachePixels - previous.naturalWidth * previous.naturalHeight
+    );
+  }
   Board.fullImageCache.delete(source);
   Board.fullImageCache.set(source, image);
-  while (Board.fullImageCache.size > BOARD_FULL_IMAGE_CACHE_LIMIT) {
-    Board.fullImageCache.delete(Board.fullImageCache.keys().next().value);
+  Board.fullImageCachePixels += image.naturalWidth * image.naturalHeight;
+  while (
+    Board.fullImageCache.size > 1 &&
+    (Board.fullImageCache.size > BOARD_FULL_IMAGE_CACHE_LIMIT ||
+      Board.fullImageCachePixels > BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET)
+  ) {
+    const oldestSource = Board.fullImageCache.keys().next().value;
+    const oldest = Board.fullImageCache.get(oldestSource);
+    Board.fullImageCache.delete(oldestSource);
+    if (oldest) {
+      Board.fullImageCachePixels = Math.max(
+        0,
+        Board.fullImageCachePixels - oldest.naturalWidth * oldest.naturalHeight
+      );
+    }
   }
 }
 
@@ -431,14 +455,27 @@ function mountedFullImageCandidates(zoom, minimumScreenEdge) {
 function prewarmMountedFullImages(zoom) {
   mountedFullImageCandidates(zoom, BOARD_FULL_IMAGE_PREWARM_SCREEN_EDGE)
     .slice(0, BOARD_FULL_IMAGE_LIMIT)
-    .forEach((entry) => { void preloadBoardFullImage(entry.source); });
+    .forEach((entry) => {
+      void preloadBoardFullImage(entry.source).then((decoded) => {
+        const element = Board.mounted.get(entry.id);
+        const image = element && activeBoardImage(element);
+        if (!decoded || !element || !element.isConnected || !image || image.dataset.quality === 'full') return;
+        // A decoded original is ready to paint. Keeping the 400 px thumbnail
+        // until wheel settle makes a 4K image visibly soft during zoom.
+        transitionBoardImageQuality(element, 'full');
+      });
+    });
 }
 
 function scheduleBoardFullImagePrewarm(zoom) {
+  const requestedZoom = Number.isFinite(zoom) ? zoom : Board.zoom;
+  Board.fullImagePrewarmZoom = Math.max(Board.fullImagePrewarmZoom || 0, requestedZoom);
   if (Board.fullImagePrewarmTimer) return;
   Board.fullImagePrewarmTimer = window.setTimeout(() => {
     Board.fullImagePrewarmTimer = 0;
-    prewarmMountedFullImages(Number.isFinite(zoom) ? zoom : Board.zoom);
+    const targetZoom = Math.max(Board.zoom, Board.fullImagePrewarmZoom || 0);
+    Board.fullImagePrewarmZoom = 0;
+    prewarmMountedFullImages(targetZoom);
   }, 24);
 }
 
@@ -492,7 +529,7 @@ function transitionBoardImageQuality(element, quality) {
       window.setTimeout(() => {
         next.classList.remove('is-quality-crossfading');
         if (active.parentNode === stack) active.remove();
-      }, 280);
+      }, BOARD_IMAGE_CROSSFADE_MS);
     };
     next.addEventListener('load', reveal, { once: true });
     next.addEventListener('error', () => {
@@ -1654,7 +1691,6 @@ function createBoardItemElement(item) {
   }
   el.style.zIndex = item.zIndex || 1;
   el.dataset.boardId = item.id;
-  const hasMediaDetails = !!(f.aiGeneration || f.sourceFolder === 'AI Generated' || f.butlerOperation);
   el.addEventListener('click', (e) => {
     if (isBoardUiEventTarget(e.target)) return;
     if (e.ctrlKey || e.metaKey || e.shiftKey) {
@@ -1686,7 +1722,8 @@ function createBoardItemElement(item) {
     appendBoardEditHint(el);
   } else if (isVideo) {
     const videoToolbar = appendBoardVideoButlerToolbar(el, f, item);
-    if (hasMediaDetails) appendGeneratedMediaDetailsControl(el, f, videoToolbar);
+    appendGeneratedMediaDetailsControl(el, f, videoToolbar);
+    appendBoardEditHint(el, 'video');
   }
 
   const name = document.createElement('div');
@@ -1779,6 +1816,7 @@ function processBoardMountQueue() {
     Board.mountFrame = requestAnimationFrame(processBoardMountQueue);
   }
   syncBoardOverviewFallback();
+  scheduleBoardFullImagePrewarm(Board.zoom);
   scheduleMountedImageQuality();
 }
 
@@ -1918,7 +1956,7 @@ function syncBoardSelectionClasses() {
   scheduleMountedImageQuality(0);
 }
 
-function appendBoardEditHint(element) {
+function appendBoardEditHint(element, kind = 'image') {
   const hint = document.createElement('button');
   hint.type = 'button';
   hint.className = 'board-edit-hint';
@@ -1930,7 +1968,7 @@ function appendBoardEditHint(element) {
   });
   hint.addEventListener('click', () => {
     closeBoardQuickGenerate();
-    void openAiComposerForSelection('image');
+    void openAiComposerForSelection(kind === 'video' ? 'video' : 'image');
   });
   element.appendChild(hint);
   return hint;
@@ -2293,16 +2331,23 @@ function initBoardCanvas() {
     if (isEditable || !isBoardWorkspaceActive()) return;
 
     const shortcutKey = e.key.toLowerCase();
+    const selection = window.getSelection && window.getSelection();
+    if ((e.ctrlKey || e.metaKey) && shortcutKey === 'c' && selection && !selection.isCollapsed && selection.toString()) {
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && shortcutKey === 'z') {
       const handled = e.shiftKey ? redoBoardMove() : undoBoardMove();
       if (handled) e.preventDefault();
     } else if ((e.ctrlKey || e.metaKey) && shortcutKey === 'y') {
       if (redoBoardMove()) e.preventDefault();
     } else if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      if (!selectedBoardImageItems().length) return;
+      const editKind = selectedBoardVideoItems().length
+        ? 'video'
+        : (selectedBoardImageItems().length ? 'image' : '');
+      if (!editKind) return;
       e.preventDefault();
       closeBoardQuickGenerate();
-      void openAiComposerForSelection('image');
+      void openAiComposerForSelection(editKind);
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
       e.preventDefault();
       AppState.boardItems.forEach((item) => { item.selected = true; });
@@ -3944,6 +3989,7 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
   let fallbackFileIndex = 0;
   placeholders.forEach((placeholder, index) => {
     const itemIndex = AppState.allBoardItems.findIndex((item) => item.id === placeholder.id);
+    const livePlaceholder = itemIndex >= 0 ? AppState.allBoardItems[itemIndex] : placeholder;
     const persistedItem = persistedById.get(placeholder.id);
     const file = persistedItem
       ? files.find((entry) => entry.id === persistedItem.fileId)
@@ -3957,21 +4003,24 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
       ? sourceWidth / sourceHeight
       : BoardEngine.parseAspectRatio(
         request.aspectRatio,
-        placeholder.width / Math.max(1, placeholder.height)
+        livePlaceholder.width / Math.max(1, livePlaceholder.height)
       );
-    const item = persistedItem || {
+    const item = {
+      ...(persistedItem || {}),
       // Keep the placeholder id so the main-process upsert replaces the
       // transient record instead of leaving an orphaned pending card that
       // reappears after the next launch.
-      id: placeholder.id,
+      // Geometry always comes from the live placeholder because it may have
+      // been moved or resized while the generation request was in flight.
+      id: livePlaceholder.id,
       fileId: file.id,
-      canvasId: placeholder.canvasId || request.canvasId || activeCanvasId(),
-      x: placeholder.x,
-      y: placeholder.y,
-      width: placeholder.width,
-      height: Math.max(1, Math.round(placeholder.width / ratio)),
+      canvasId: livePlaceholder.canvasId || request.canvasId || activeCanvasId(),
+      x: livePlaceholder.x,
+      y: livePlaceholder.y,
+      width: livePlaceholder.width,
+      height: Math.max(1, Math.round(livePlaceholder.width / ratio)),
       aspectRatio: request.aspectRatio,
-      zIndex: placeholder.zIndex,
+      zIndex: livePlaceholder.zIndex,
       selected: index === 0
     };
     if (sourceWidth > 0 && sourceHeight > 0) {
@@ -4046,6 +4095,60 @@ function removeAiPlaceholders(placeholders) {
   renderBoard();
 }
 
+const AI_PROMPT_STYLES_STORAGE_KEY = 'messs.ai-prompt-styles.v1';
+const AI_PROMPT_STYLE_SELECTED_KEY = 'messs.ai-prompt-style-selected.v1';
+
+function loadAiPromptStyles() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(AI_PROMPT_STYLES_STORAGE_KEY) || '[]');
+    if (!Array.isArray(parsed)) return [];
+    return parsed.slice(0, 24).map((entry) => ({
+      id: String(entry && entry.id || '').slice(0, 80),
+      name: String(entry && entry.name || '').trim().slice(0, 40),
+      prompt: String(entry && entry.prompt || '').trim().slice(0, 4000),
+      coverDataUrl: /^data:image\/(?:jpeg|png|webp);base64,/i.test(String(entry && entry.coverDataUrl || ''))
+        ? String(entry.coverDataUrl)
+        : ''
+    })).filter((entry) => entry.id && entry.name && entry.prompt);
+  } catch (error) {
+    return [];
+  }
+}
+
+function saveAiPromptStyles(styles) {
+  try {
+    localStorage.setItem(AI_PROMPT_STYLES_STORAGE_KEY, JSON.stringify(styles.slice(0, 24)));
+  } catch (error) {
+    showToast(t('The style cover is too large to save locally.', '风格封面过大，无法保存到本机。'), 'AI');
+    return false;
+  }
+  return true;
+}
+
+async function aiPromptStyleCoverDataUrl(file) {
+  if (!file || !String(file.type || '').startsWith('image/')) return '';
+  const sourceUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.decoding = 'async';
+    image.src = sourceUrl;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = 320;
+    canvas.height = 180;
+    const context = canvas.getContext('2d', { alpha: false });
+    const scale = Math.max(canvas.width / image.naturalWidth, canvas.height / image.naturalHeight);
+    const width = image.naturalWidth * scale;
+    const height = image.naturalHeight * scale;
+    context.fillStyle = '#151922';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+    return canvas.toDataURL('image/jpeg', 0.82);
+  } finally {
+    URL.revokeObjectURL(sourceUrl);
+  }
+}
+
 function buildAiComposer(aiConfig, initialKind = 'image') {
   const pop = document.createElement('div');
   pop.id = 'ai-image-popover';
@@ -4093,15 +4196,43 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M14.5 5H9.4L8 7H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-1.5-2Z"/><circle cx="12" cy="13" r="3.2"/></svg>
             <span>${t('Lens', '镜头')}</span>
           </button>
+          <button type="button" class="ai-prompt-style-toggle" aria-haspopup="dialog" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18h1.2a1.8 1.8 0 0 0 0-3.6H12a2 2 0 0 1 0-4h2.8A6.2 6.2 0 0 0 21 7.2 4.2 4.2 0 0 0 16.8 3H12Z"/><circle cx="7.5" cy="10" r="1"/><circle cx="10" cy="6.8" r="1"/><circle cx="15" cy="6.8" r="1"/></svg>
+            <span>${t('Style', '风格')}</span>
+          </button>
         </div>
         <div class="ai-composer-submit-wrap">
-          <span class="ai-credit-estimate" aria-live="polite" hidden></span>
           <span class="ai-generation-status"></span>
           <button type="submit" class="ai-composer-submit" aria-label="开始生成">
+            <img class="ai-submit-logo" src="assets/logo-mark.png" alt="" draggable="false">
+            <span class="ai-credit-estimate" aria-live="polite">--</span>
             <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 19V5"/><path d="M6 11l6-6 6 6"/></svg>
           </button>
         </div>
       </div>
+      <section class="ai-prompt-style-panel" role="dialog" aria-label="${t('Prompt styles', '提示词风格')}" hidden>
+        <header class="ai-prompt-style-header">
+          <div><strong>${t('Prompt styles', '提示词风格')}</strong><span>${t('Added only when sent', '仅在发送时加入')}</span></div>
+          <button type="button" class="ai-prompt-style-new">${t('New style', '新建风格')}</button>
+        </header>
+        <div class="ai-prompt-style-grid"></div>
+        <div class="ai-prompt-style-editor" hidden>
+          <label><span>${t('Style name', '风格名称')}</span><input type="text" class="ai-prompt-style-name" maxlength="40"></label>
+          <label><span>${t('Style prompt', '风格提示词')}</span><textarea class="ai-prompt-style-prompt" rows="4" maxlength="4000"></textarea></label>
+          <div class="ai-prompt-style-editor-footer">
+            <label class="ai-prompt-style-cover-picker">
+              <input type="file" class="ai-prompt-style-cover-input" accept="image/png,image/jpeg,image/webp" hidden>
+              <span class="ai-prompt-style-cover-preview"></span>
+              <span>${t('Custom cover', '自定义封面')}</span>
+            </label>
+            <div class="ai-prompt-style-editor-actions">
+              <button type="button" class="ai-prompt-style-delete" hidden>${t('Delete', '删除')}</button>
+              <button type="button" class="ai-prompt-style-cancel">${t('Cancel', '取消')}</button>
+              <button type="button" class="ai-prompt-style-save">${t('Save', '保存')}</button>
+            </div>
+          </div>
+        </div>
+      </section>
       <div class="ai-options-panel" hidden>
         <div class="ai-options-heading"><strong>画面比例</strong><span class="ai-ratio-value"></span></div>
         <div class="ai-ratio-grid"></div>
@@ -4205,6 +4336,14 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   const optionsPanel = pop.querySelector('.ai-options-panel');
   const cameraControlToggle = pop.querySelector('.ai-camera-control-toggle');
   const cameraControlPanel = pop.querySelector('.ai-camera-control-panel');
+  const promptStyleToggle = pop.querySelector('.ai-prompt-style-toggle');
+  const promptStylePanel = pop.querySelector('.ai-prompt-style-panel');
+  const promptStyleGrid = pop.querySelector('.ai-prompt-style-grid');
+  const promptStyleEditor = pop.querySelector('.ai-prompt-style-editor');
+  const promptStyleName = pop.querySelector('.ai-prompt-style-name');
+  const promptStylePrompt = pop.querySelector('.ai-prompt-style-prompt');
+  const promptStyleCoverInput = pop.querySelector('.ai-prompt-style-cover-input');
+  const promptStyleCoverPreview = pop.querySelector('.ai-prompt-style-cover-preview');
   const cameraMotionGrid = pop.querySelector('.ai-camera-motion-grid');
   const ratioGrid = pop.querySelector('.ai-ratio-grid');
   const status = pop.querySelector('.ai-generation-status');
@@ -4228,6 +4367,11 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   let enhancePrompt = true;
   let seed = null;
   let styleStrength = 1;
+  let promptStyles = loadAiPromptStyles();
+  let selectedPromptStyleId = String(localStorage.getItem(AI_PROMPT_STYLE_SELECTED_KEY) || '');
+  let editingPromptStyleId = '';
+  let editingPromptStyleCover = '';
+  if (!promptStyles.some((entry) => entry.id === selectedPromptStyleId)) selectedPromptStyleId = '';
   let cameraControl = normalizeAiCameraControl();
   let styleLoadRevision = 0;
   const boardReferences = new Map();
@@ -4236,7 +4380,69 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   function setOptionsOpen(open) {
     optionsPanel.hidden = !open;
     optionsToggle.classList.toggle('is-active', open);
-    if (open) setCameraControlOpen(false);
+    if (open) {
+      setCameraControlOpen(false);
+      setPromptStylePanelOpen(false);
+    }
+  }
+
+  function setPromptStylePanelOpen(open) {
+    const shouldOpen = open === true;
+    promptStylePanel.hidden = !shouldOpen;
+    promptStyleToggle.setAttribute('aria-expanded', String(shouldOpen));
+    promptStyleToggle.classList.toggle('is-active', shouldOpen || !!selectedPromptStyleId);
+    if (shouldOpen) {
+      setCameraControlOpen(false);
+      optionsPanel.hidden = true;
+      optionsToggle.classList.remove('is-active');
+      renderPromptStyles();
+    }
+  }
+
+  function selectedPromptStyle() {
+    return promptStyles.find((entry) => entry.id === selectedPromptStyleId) || null;
+  }
+
+  function renderPromptStyles() {
+    promptStyleGrid.innerHTML = '';
+    const noStyle = document.createElement('button');
+    noStyle.type = 'button';
+    noStyle.className = 'ai-prompt-style-card is-no-style' + (!selectedPromptStyleId ? ' is-selected' : '');
+    noStyle.dataset.styleId = '';
+    noStyle.innerHTML = `<span class="ai-prompt-style-card-cover">${t('None', '无')}</span><strong>${t('No style', '不使用风格')}</strong>`;
+    promptStyleGrid.appendChild(noStyle);
+    promptStyles.forEach((entry) => {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'ai-prompt-style-card' + (entry.id === selectedPromptStyleId ? ' is-selected' : '');
+      card.dataset.styleId = entry.id;
+      const cover = document.createElement('span');
+      cover.className = 'ai-prompt-style-card-cover';
+      if (entry.coverDataUrl) cover.style.backgroundImage = `url("${entry.coverDataUrl}")`;
+      else cover.textContent = entry.name.slice(0, 1).toUpperCase();
+      const name = document.createElement('strong');
+      name.textContent = entry.name;
+      const edit = document.createElement('span');
+      edit.className = 'ai-prompt-style-card-edit';
+      edit.dataset.editStyleId = entry.id;
+      edit.textContent = t('Edit', '编辑');
+      card.append(cover, name, edit);
+      promptStyleGrid.appendChild(card);
+    });
+    const selected = selectedPromptStyle();
+    promptStyleToggle.querySelector('span').textContent = selected ? selected.name : t('Style', '风格');
+  }
+
+  function editPromptStyle(style = null) {
+    editingPromptStyleId = style ? style.id : '';
+    editingPromptStyleCover = style ? style.coverDataUrl : '';
+    promptStyleName.value = style ? style.name : '';
+    promptStylePrompt.value = style ? style.prompt : '';
+    promptStyleCoverInput.value = '';
+    promptStyleCoverPreview.style.backgroundImage = editingPromptStyleCover ? `url("${editingPromptStyleCover}")` : '';
+    promptStyleEditor.hidden = false;
+    pop.querySelector('.ai-prompt-style-delete').hidden = !style;
+    promptStyleName.focus();
   }
 
   function setCameraControlOpen(open, enable = false) {
@@ -4244,7 +4450,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     if (enable && shouldOpen) cameraControl.enabled = true;
     cameraControlPanel.hidden = !shouldOpen;
     cameraControlToggle.setAttribute('aria-expanded', String(shouldOpen));
-    if (shouldOpen) setOptionsOpen(false);
+    if (shouldOpen) {
+      setOptionsOpen(false);
+      setPromptStylePanelOpen(false);
+    }
     renderCameraControl();
   }
 
@@ -4616,6 +4825,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       ? t(`${ratio} · ${size} · ${duration}s`, `${ratio} · ${size} · ${duration} 秒`)
       : `${ratio === 'auto' || ratio === 'adaptive' ? autoLabel : ratio} · ${size} · ${t(`x${count}`, `×${count}`)}`;
     cameraControlToggle.querySelector('span').textContent = t('Lens', '镜头');
+    const activePromptStyle = selectedPromptStyle();
+    promptStyleToggle.querySelector('span').textContent = activePromptStyle ? activePromptStyle.name : t('Style', '风格');
+    promptStyleToggle.title = t('Choose or edit a prompt style', '选择或编辑提示词风格');
+    promptStyleToggle.setAttribute('aria-label', promptStyleToggle.title);
     renderCameraControl();
   }
 
@@ -4689,8 +4902,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const total = Math.max(0, Math.ceil(Number(totalCredits) || 0));
     if (!total) {
       delete creditEstimate.dataset.credits;
-      creditEstimate.hidden = true;
-      creditEstimate.textContent = '';
+      creditEstimate.hidden = false;
+      creditEstimate.textContent = '--';
       creditEstimate.removeAttribute('title');
       creditEstimate.removeAttribute('aria-busy');
       return;
@@ -4698,14 +4911,14 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     creditEstimate.dataset.credits = String(total);
     creditEstimate.hidden = false;
     creditEstimate.removeAttribute('aria-busy');
-    creditEstimate.textContent = t(`${total} credits`, `${total} 积分`);
+    creditEstimate.textContent = t(`${total} pts`, `${total} 积分`);
     creditEstimate.title = t(`Estimated usage: ${total} credits`, `预计消耗 ${total} 积分`);
   }
 
   function refreshCreditEstimateLanguage() {
     const total = Number(creditEstimate.dataset.credits);
     if (Number.isFinite(total) && total > 0 && !creditEstimate.hidden) {
-      creditEstimate.textContent = t(`${total} credits`, `${total} 积分`);
+      creditEstimate.textContent = t(`${total} pts`, `${total} 积分`);
       creditEstimate.title = t(`Estimated usage: ${total} credits`, `预计消耗 ${total} 积分`);
     }
   }
@@ -4720,7 +4933,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     }
     creditEstimate.hidden = false;
     creditEstimate.setAttribute('aria-busy', 'true');
-    creditEstimate.textContent = t('Calculating…', '计算中…');
+    creditEstimate.textContent = t('...', '计算中');
     creditEstimate.title = t('Calculating estimated usage', '正在计算预计消耗');
     const request = {
       kind,
@@ -5040,6 +5253,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     if (!cameraControlPanel.contains(event.target) && !cameraControlToggle.contains(event.target)) {
       setCameraControlOpen(false);
     }
+    if (!promptStylePanel.contains(event.target) && !promptStyleToggle.contains(event.target)) {
+      setPromptStylePanelOpen(false);
+    }
   });
   optionsToggle.addEventListener('click', () => {
     setOptionsOpen(optionsPanel.hidden);
@@ -5078,6 +5294,75 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   optionsPanel.addEventListener('click', (event) => {
     event.stopPropagation();
     keepOptionsOpen();
+  });
+  promptStyleToggle.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setPromptStylePanelOpen(promptStylePanel.hidden);
+  });
+  promptStylePanel.addEventListener('pointerdown', (event) => event.stopPropagation());
+  promptStylePanel.addEventListener('wheel', (event) => event.stopPropagation(), { passive: true });
+  promptStylePanel.addEventListener('click', (event) => event.stopPropagation());
+  pop.querySelector('.ai-prompt-style-new').addEventListener('click', () => editPromptStyle());
+  promptStyleGrid.addEventListener('click', (event) => {
+    const edit = event.target.closest('[data-edit-style-id]');
+    if (edit) {
+      editPromptStyle(promptStyles.find((entry) => entry.id === edit.dataset.editStyleId) || null);
+      return;
+    }
+    const card = event.target.closest('[data-style-id]');
+    if (!card) return;
+    selectedPromptStyleId = card.dataset.styleId || '';
+    localStorage.setItem(AI_PROMPT_STYLE_SELECTED_KEY, selectedPromptStyleId);
+    renderPromptStyles();
+  });
+  promptStyleCoverInput.addEventListener('change', async () => {
+    const file = promptStyleCoverInput.files && promptStyleCoverInput.files[0];
+    if (!file) return;
+    try {
+      editingPromptStyleCover = await aiPromptStyleCoverDataUrl(file);
+      promptStyleCoverPreview.style.backgroundImage = editingPromptStyleCover ? `url("${editingPromptStyleCover}")` : '';
+    } catch (error) {
+      showToast(t('Could not read this cover image.', '无法读取这张封面图。'), 'AI');
+    }
+  });
+  pop.querySelector('.ai-prompt-style-cancel').addEventListener('click', () => {
+    promptStyleEditor.hidden = true;
+    editingPromptStyleId = '';
+  });
+  pop.querySelector('.ai-prompt-style-save').addEventListener('click', () => {
+    const name = promptStyleName.value.trim();
+    const stylePrompt = promptStylePrompt.value.trim();
+    if (!name || !stylePrompt) {
+      showToast(t('Enter both a style name and a style prompt.', '请填写风格名称和风格提示词。'), 'AI');
+      return;
+    }
+    const id = editingPromptStyleId || (window.crypto && typeof window.crypto.randomUUID === 'function'
+      ? window.crypto.randomUUID()
+      : `style-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    const nextStyle = { id, name: name.slice(0, 40), prompt: stylePrompt.slice(0, 4000), coverDataUrl: editingPromptStyleCover };
+    const existingIndex = promptStyles.findIndex((entry) => entry.id === id);
+    const nextStyles = [...promptStyles];
+    if (existingIndex >= 0) nextStyles.splice(existingIndex, 1, nextStyle);
+    else nextStyles.push(nextStyle);
+    if (!saveAiPromptStyles(nextStyles)) return;
+    promptStyles = nextStyles;
+    selectedPromptStyleId = id;
+    localStorage.setItem(AI_PROMPT_STYLE_SELECTED_KEY, id);
+    promptStyleEditor.hidden = true;
+    editingPromptStyleId = '';
+    renderPromptStyles();
+  });
+  pop.querySelector('.ai-prompt-style-delete').addEventListener('click', () => {
+    if (!editingPromptStyleId) return;
+    promptStyles = promptStyles.filter((entry) => entry.id !== editingPromptStyleId);
+    if (!saveAiPromptStyles(promptStyles)) return;
+    if (selectedPromptStyleId === editingPromptStyleId) {
+      selectedPromptStyleId = '';
+      localStorage.removeItem(AI_PROMPT_STYLE_SELECTED_KEY);
+    }
+    promptStyleEditor.hidden = true;
+    editingPromptStyleId = '';
+    renderPromptStyles();
   });
   pop.querySelector('[data-option="size"]').addEventListener('click', (event) => {
     const button = event.target.closest('[data-value]');
@@ -5128,10 +5413,12 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   prompt.addEventListener('pointerdown', () => {
     setOptionsOpen(false);
     setCameraControlOpen(false);
+    setPromptStylePanelOpen(false);
   });
   prompt.addEventListener('focus', () => {
     setOptionsOpen(false);
     setCameraControlOpen(false);
+    setPromptStylePanelOpen(false);
   });
   prompt.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
@@ -5179,9 +5466,16 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       showToast(t('Reference videos require Omni reference mode.', '参考视频需要使用全能参考模式。'), 'AI');
       return;
     }
+    const promptStyle = selectedPromptStyle();
+    const upstreamPrompt = promptStyle
+      ? `${text}\n\nStyle direction:\n${promptStyle.prompt}`
+      : text;
     const request = {
       kind,
-      prompt: text,
+      prompt: upstreamPrompt,
+      visiblePrompt: text,
+      promptStyleId: promptStyle ? promptStyle.id : null,
+      promptStyleName: promptStyle ? promptStyle.name : null,
       size,
       resolution: size,
       count,
@@ -5262,6 +5556,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   pop._hasBoardReference = (fileId) => boardReferences.has(fileId);
   pop._toggleBoardReference = toggleBoardReference;
   pop._refreshLanguage = refreshLanguage;
+  renderPromptStyles();
   updateMode(kind);
   refreshLanguage();
   return pop;
@@ -5408,6 +5703,15 @@ function selectedBoardImageItems() {
     if (!item.selected || !item.fileId) return false;
     const file = filesById.get(item.fileId);
     return file && isImageExt(file.ext);
+  });
+}
+
+function selectedBoardVideoItems() {
+  const filesById = new Map(AppState.files.map((file) => [file.id, file]));
+  return AppState.boardItems.filter((item) => {
+    if (!item.selected || !item.fileId) return false;
+    const file = filesById.get(item.fileId);
+    return file && isVideoExt(file.ext);
   });
 }
 

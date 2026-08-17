@@ -37,6 +37,19 @@ assert.strictEqual(
   10
 );
 
+const compactMediaLayout = engine.compactMediaGrid([
+  { id: 'small', x: 0, y: 0, width: 100, height: 200 },
+  { id: 'wide', x: 200, y: 0, width: 400, height: 200 },
+  { id: 'portrait', x: 0, y: 300, width: 200, height: 500 },
+  { id: 'square', x: 300, y: 300, width: 100, height: 100 }
+], { originX: 0, originY: 0, gap: 20, columns: 2 });
+assert.deepStrictEqual(compactMediaLayout.map(({ id, x, y, width, height }) => ({ id, x, y, width, height })), [
+  { id: 'small', x: 0, y: 0, width: 100, height: 200 },
+  { id: 'wide', x: 120, y: 75, width: 100, height: 50 },
+  { id: 'portrait', x: 0, y: 220, width: 100, height: 250 },
+  { id: 'square', x: 120, y: 295, width: 100, height: 100 }
+]);
+
 const shortLastRow = engine.packRows([
   { id: 'c', x: 0, y: 100, width: 80, height: 80 },
   { id: 'b', x: 100, y: 0, width: 80, height: 80 },

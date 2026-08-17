@@ -402,6 +402,28 @@
     return packed;
   }
 
+  function compactMediaGrid(items, options = {}) {
+    if (!Array.isArray(items) || !items.length) return [];
+    const measured = items.map((item) => ({
+      ...item,
+      width: Math.max(1, Number(item.width) || Number(item.w) || 1),
+      height: Math.max(1, Number(item.height) || Number(item.h) || 1)
+    }));
+    const baselineWidth = Math.max(1, Math.min(...measured.map((item) => item.width)));
+    const normalized = measured.map((item) => {
+      const scale = Math.min(1, baselineWidth / item.width);
+      return {
+        ...item,
+        width: Math.max(1, Math.round(item.width * scale)),
+        height: Math.max(1, Math.round(item.height * scale))
+      };
+    });
+    const columns = Number.isFinite(options.columns)
+      ? options.columns
+      : Math.ceil(Math.sqrt(normalized.length * 1.35));
+    return packRows(normalized, { ...options, columns });
+  }
+
   function packUniformGrid(items, options = {}) {
     if (!Array.isArray(items) || !items.length) return [];
     const gap = Number.isFinite(options.gap) ? Math.max(0, options.gap) : 20;
@@ -449,6 +471,7 @@
     estimateRefreshRate,
     gridAroundCenter,
     packRows,
+    compactMediaGrid,
     packUniformGrid
   };
 });

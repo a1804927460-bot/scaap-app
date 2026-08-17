@@ -3583,7 +3583,7 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   normalized.cameraControl = normalizeVideoCameraControl(request.cameraControl);
   normalized.referenceMediaTypes = referenceMediaTypes;
   normalized.referenceVideoUploadIds = Array.isArray(request.referenceVideoUploadIds)
-    ? request.referenceVideoUploadIds.map(String).filter(Boolean).slice(0, 3)
+    ? request.referenceVideoUploadIds.map(String).filter(Boolean).slice(0, 14)
     : [];
   return normalized;
 }

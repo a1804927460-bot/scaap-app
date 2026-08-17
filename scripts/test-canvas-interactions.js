@@ -379,6 +379,16 @@ assert.match(workspaceSource, /selectedCanvasAgentMediaIds[\s\S]*?isVideoExt/,
 assert.match(workspaceSource, /board-agent-input[\s\S]*?handleCanvasAgentPaste[\s\S]*?event\.stopPropagation\(\)/,
   'Agent input must isolate native copy/paste and import pasted media locally.');
 assert.match(
+  workspaceSource,
+  /board-agent-panel'\)\.addEventListener\('contextmenu', showAgentTextContextMenu\)/,
+  'Canvas Agent messages and its input must expose the shared text clipboard menu.'
+);
+assert.match(
+  boardSource,
+  /const selection = window\.getSelection[\s\S]*?shortcutKey === 'c'[\s\S]*?!selection\.isCollapsed[\s\S]*?return;/,
+  'Canvas copy shortcuts must not intercept a real text selection inside Agent.'
+);
+assert.match(
   boardSource,
   /const BOARD_UI_EVENT_SELECTOR[\s\S]*?function isBoardUiEventTarget[\s\S]*?viewport\.addEventListener\('pointerdown',[\s\S]*?isBoardUiEventTarget\(e\.target\)[\s\S]*?viewport\.addEventListener\('mousedown',[\s\S]*?isBoardUiEventTarget\(e\.target\)[\s\S]*?viewport\.addEventListener\('wheel',[\s\S]*?isBoardUiEventTarget\(e\.target\)/,
   'Top-level canvas UI must reject pointer, selection, and wheel events before they reach the board.'
@@ -468,6 +478,21 @@ assert.match(
 );
 assert.match(
   boardSource,
+  /function prewarmMountedFullImages[\s\S]*?preloadBoardFullImage\(entry\.source\)\.then[\s\S]*?transitionBoardImageQuality\(element, 'full'\)/,
+  'A decoded 4K source must replace its enlarged thumbnail immediately, without waiting for wheel settle.'
+);
+assert.match(
+  boardSource,
+  /function processBoardMountQueue[\s\S]*?scheduleBoardFullImagePrewarm\(Board\.zoom\)[\s\S]*?scheduleMountedImageQuality\(\)/,
+  'Visible images must begin loading their originals immediately after mounting, before the user zooms.'
+);
+assert.match(
+  boardSource,
+  /fullImagePrewarmZoom[\s\S]*?Math\.max\(Board\.fullImagePrewarmZoom \|\| 0, requestedZoom\)[\s\S]*?targetZoom/,
+  'Rapid wheel input must retain the furthest requested zoom for full-image prewarming.'
+);
+assert.match(
+  boardSource,
   /fullImageReadyFileIds\.has\(String\(f\.id \|\| ''\)\) \|\| cachedBoardFullImage\(fullSource\)[\s\S]*?img\.loading = 'eager'/,
   'Remounted images must remember decoded full sources instead of flashing back to a thumbnail after cache eviction.'
 );
@@ -475,6 +500,11 @@ assert.match(
   boardSource,
   /function rememberBoardFullImage[\s\S]*?item\.fileId[\s\S]*?BOARD_FULL_IMAGE_READY_LIMIT/,
   'Full-image continuity must use bounded file IDs rather than retaining potentially large data URLs.'
+);
+assert.match(
+  boardSource,
+  /BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET = 72_000_000[\s\S]*?function cacheBoardFullImage[\s\S]*?fullImageCachePixels[\s\S]*?BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET/,
+  'Decoded 4K caching must use a pixel budget so several originals cannot exhaust graphics memory.'
 );
 const transformSource = boardSource.slice(
   boardSource.indexOf('function applyBoardTransform'),
@@ -551,13 +581,23 @@ assert.doesNotMatch(
 );
 assert.match(
   boardStyles,
-  /\.board-canvas \{[^}]*will-change:\s*transform/,
-  'The canvas must keep one stable compositor layer while panning and zooming.'
+  /\.board-canvas \{[^}]*will-change:\s*auto[^}]*backface-visibility:\s*visible[^}]*\}[\s\S]*?\.board-canvas\.is-transforming \{\s*will-change:\s*transform;/,
+  'The canvas must use temporary compositing during interaction and rerasterize at the settled 4K zoom.'
 );
 assert.doesNotMatch(
   boardStyles,
   /\.board-canvas\.is-transforming \.board-image-layer/,
   'Individual image layers must not be promoted and demoted during every interaction.'
+);
+assert.match(
+  boardStyles,
+  /\.board-image-layer \{[\s\S]*?transition:\s*opacity 90ms/,
+  'Thumbnail-to-original replacement must be short enough that the user does not see a soft blend.'
+);
+assert.match(
+  workspaceSource,
+  /function canvasAgentThinkingText[\s\S]*?Thinking\.\.\.[\s\S]*?const pending = appendCanvasAgentMessage\('assistant', canvasAgentThinkingText\(\)\)[\s\S]*?setInterval[\s\S]*?pending\.textContent = response\.text[\s\S]*?clearInterval\(thinkingTimer\)/,
+  'Canvas Agent must show an elapsed thinking state until the response replaces it in place.'
 );
 assert.match(boardSource, /--board-selection-width[\s\S]*?1\.2 \/ Math\.max\(Board\.zoom/);
 assert.match(
@@ -582,6 +622,22 @@ assert.match(
 );
 assert.match(boardStyles, /\.board-item\.is-selected \{[\s\S]*?outline:\s*var\(--board-selection-width/);
 assert.match(boardStyles, /width:\s*min\(760px, calc\(100% - 40px\)\)/, 'The generation composer must keep the shorter centered footprint.');
+assert.match(
+  boardSource,
+  /AI_PROMPT_STYLES_STORAGE_KEY = 'messs\.ai-prompt-styles\.v1'[\s\S]*?canvas\.width = 320;[\s\S]*?canvas\.height = 180;/,
+  'Custom prompt styles must persist locally with bounded cover thumbnails.'
+);
+assert.match(
+  boardSource,
+  /const upstreamPrompt = promptStyle[\s\S]*?Style direction:[\s\S]*?prompt: upstreamPrompt,[\s\S]*?visiblePrompt: text/,
+  'The selected style prompt must be appended only to the upstream request while preserving the visible textarea value.'
+);
+assert.match(
+  boardSource,
+  /class="ai-composer-submit"[\s\S]*?assets\/logo-mark\.png[\s\S]*?class="ai-credit-estimate"/,
+  'The submit control must use the Messs mark and keep the estimated points inside the button.'
+);
+assert.match(boardStyles, /\.ai-composer-submit \{[\s\S]*?min-width:\s*112px;[\s\S]*?border-radius:\s*11px;[\s\S]*?backdrop-filter:\s*blur\(14px\)/);
 assert.doesNotMatch(sidebarSource, /Return home|\\u8fd4\\u56de\\u9996\\u9875/, 'The brand menu must not offer a return-to-home action.');
 assert.match(
   sidebarSource,
@@ -603,7 +659,11 @@ assert.match(
 assert.match(boardStyles, /\.fullscreen-overlay \{[\s\S]*?z-index:\s*400;[\s\S]*?background:\s*rgba\(5, 6, 8, \.88\)/,
   'The fullscreen media viewer must render above the fullscreen board and Butler overlays.');
 assert.match(boardStyles, /\.fullscreen-stage > img \{[\s\S]*?max-width:\s*min\(88vw, 1600px\);[\s\S]*?max-height:\s*82vh;/);
-assert.match(contextMenuSource, /function arrangeItemsGrid[\s\S]*?boardItemBounds\(item\)[\s\S]*?packRows\(layoutItems,[\s\S]*?gap:\s*20/);
+assert.match(
+  contextMenuSource,
+  /function arrangeItemsGrid[\s\S]*?isImageExt\(file\.ext\) \|\| isVideoExt\(file\.ext\)[\s\S]*?boardItemBounds\(item\)[\s\S]*?compactMediaGrid\(measuredItems,[\s\S]*?gap:\s*20[\s\S]*?upsertBoardItems\(mediaItems\)/,
+  'Compact arrangement must resize only selected media to the smallest displayed width, preserve aspect ratio, and persist one packed rectangle.'
+);
 assert.match(
   contextMenuSource,
   /function showBoardItemContextMenu[\s\S]*?Create duplicate[\s\S]*?Download[\s\S]*?Send to After Effects[\s\S]*?Send to Photoshop[\s\S]*?Delete/,
@@ -661,6 +721,11 @@ assert.doesNotMatch(
   boardSource,
   /replaceAiPlaceholders[\s\S]*?requestAnimationFrame\(\(\) => fitBoardItemsToViewport\(updates\)\)/,
   'Replacing a generation placeholder must preserve the current canvas view instead of flashing through auto-fit.'
+);
+assert.match(
+  boardSource,
+  /function replaceAiPlaceholders[\s\S]*?const livePlaceholder = itemIndex >= 0 \? AppState\.allBoardItems\[itemIndex\] : placeholder;[\s\S]*?\.\.\.\(persistedItem \|\| \{\}\)[\s\S]*?x: livePlaceholder\.x,[\s\S]*?y: livePlaceholder\.y,[\s\S]*?width: livePlaceholder\.width,[\s\S]*?zIndex: livePlaceholder\.zIndex/,
+  'Generated media must replace the live placeholder in place, even when it moved while the request was running.'
 );
 assert.match(
   boardSource,

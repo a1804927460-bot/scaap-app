@@ -256,6 +256,99 @@ function buildAndShowSimpleMenu(items, x, y, menuId = 'simple-context-menu') {
   return menu;
 }
 
+function textSelectionInside(element) {
+  const selection = window.getSelection && window.getSelection();
+  if (!element || !selection || selection.isCollapsed || !selection.rangeCount) return '';
+  const range = selection.getRangeAt(0);
+  const start = range.startContainer.nodeType === Node.ELEMENT_NODE
+    ? range.startContainer
+    : range.startContainer.parentElement;
+  const end = range.endContainer.nodeType === Node.ELEMENT_NODE
+    ? range.endContainer
+    : range.endContainer.parentElement;
+  return start && end && element.contains(start) && element.contains(end)
+    ? selection.toString()
+    : '';
+}
+
+async function writePlainTextToClipboard(text) {
+  const value = String(text || '');
+  if (!value) return false;
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch (error) {}
+  const fallback = document.createElement('textarea');
+  fallback.value = value;
+  fallback.style.position = 'fixed';
+  fallback.style.opacity = '0';
+  document.body.appendChild(fallback);
+  fallback.select();
+  const copied = document.execCommand('copy');
+  fallback.remove();
+  return copied;
+}
+
+async function pastePlainTextIntoInput(input) {
+  input.focus();
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text) return;
+    input.setRangeText(text, input.selectionStart, input.selectionEnd, 'end');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  } catch (error) {
+    document.execCommand('paste');
+  }
+}
+
+function showAgentTextContextMenu(event) {
+  const editable = event.target.closest('textarea, input[type="text"], input:not([type])');
+  const message = event.target.closest('.board-agent-message, .ai-assistant-message-body');
+  if (!editable && !message) return false;
+  event.preventDefault();
+  event.stopPropagation();
+
+  if (editable) {
+    const selectedText = editable.value.slice(editable.selectionStart, editable.selectionEnd);
+    const items = [];
+    if (selectedText) {
+      items.push({
+        label: t('Cut', '\u526a\u5207'),
+        action: async () => {
+          if (!await writePlainTextToClipboard(selectedText)) return;
+          editable.setRangeText('', editable.selectionStart, editable.selectionEnd, 'end');
+          editable.dispatchEvent(new Event('input', { bubbles: true }));
+          editable.focus();
+        }
+      });
+      items.push({
+        label: t('Copy', '\u590d\u5236'),
+        action: () => writePlainTextToClipboard(selectedText)
+      });
+    }
+    items.push({
+      label: t('Paste', '\u7c98\u8d34'),
+      action: () => pastePlainTextIntoInput(editable)
+    });
+    items.push({
+      label: t('Select all', '\u5168\u9009'),
+      action: () => {
+        editable.focus();
+        editable.select();
+      }
+    });
+    buildAndShowSimpleMenu(items, event.clientX, event.clientY, 'agent-text-context-menu');
+    return true;
+  }
+
+  const text = textSelectionInside(message) || message.innerText || message.textContent;
+  buildAndShowSimpleMenu([{
+    label: t('Copy', '\u590d\u5236'),
+    action: () => writePlainTextToClipboard(text)
+  }], event.clientX, event.clientY, 'agent-text-context-menu');
+  return true;
+}
+
 async function sendBoardMediaToCreativeApp(fileId, target) {
   const appName = target === 'after-effects' ? 'After Effects' : 'Photoshop';
   try {
@@ -542,38 +635,40 @@ function scaleBoardItemsToWidth(items, targetWidth) {
 }
 
 async function arrangeItemsGrid(items) {
-  if (!items.length) return;
-  const originX = items.reduce((min, it) => Math.min(min, it.x), Infinity);
-  const originY = items.reduce((min, it) => Math.min(min, it.y), Infinity);
-  const layoutItems = items.map((item) => {
+  const mediaItems = items.filter((item) => {
+    const file = AppState.files.find((entry) => entry.id === item.fileId);
+    return file && (isImageExt(file.ext) || isVideoExt(file.ext));
+  });
+  if (!mediaItems.length) return;
+  const originX = mediaItems.reduce((min, item) => Math.min(min, item.x), Infinity);
+  const originY = mediaItems.reduce((min, item) => Math.min(min, item.y), Infinity);
+  const measuredItems = mediaItems.map((item) => {
     const bounds = typeof boardItemBounds === 'function'
       ? boardItemBounds(item)
       : { w: item.width || 220, h: item.height || 180 };
     return { ...item, width: bounds.w, height: bounds.h };
   });
-  const packed = window.MesssBoardEngine.packRows(layoutItems, {
+  const packed = window.MesssBoardEngine.compactMediaGrid(measuredItems, {
     originX,
     originY,
     gap: 20,
-    columns: Math.max(1, Math.round(Math.sqrt(items.length * 1.5)))
+    columns: Math.max(1, Math.ceil(Math.sqrt(mediaItems.length * 1.35)))
   });
-  const itemsById = new Map(items.map((item) => [item.id, item]));
+  const itemsById = new Map(mediaItems.map((item) => [item.id, item]));
   packed.forEach((position) => {
     const item = itemsById.get(position.id);
     if (!item) return;
     item.x = position.x;
     item.y = position.y;
-    if (item.layoutFrame === 'uniform-grid') {
-      item.width = position.width;
-      item.height = position.height;
-      delete item.layoutFrame;
-    }
+    item.width = position.width;
+    item.height = position.height;
+    delete item.layoutFrame;
   });
 
   if (typeof window.messsAPI.upsertBoardItems === 'function') {
-    await window.messsAPI.upsertBoardItems(items);
+    await window.messsAPI.upsertBoardItems(mediaItems);
   } else {
-    await Promise.all(items.map((item) => window.messsAPI.upsertBoardItem(item)));
+    await Promise.all(mediaItems.map((item) => window.messsAPI.upsertBoardItem(item)));
   }
   renderBoard();
 }

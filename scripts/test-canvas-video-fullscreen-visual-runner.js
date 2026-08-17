@@ -23,7 +23,7 @@ async function run() {
   const videoPath = path.join(tempDir, 'prepared-preview.mp4');
   const generated = spawnSync(ffmpegPath, [
     '-hide_banner', '-loglevel', 'error', '-y',
-    '-f', 'lavfi', '-i', 'testsrc2=s=640x360:d=3:r=24',
+    '-f', 'lavfi', '-i', 'testsrc2=s=360x640:d=3:r=24',
     '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
     videoPath
   ], { encoding: 'utf8', windowsHide: true });
@@ -70,7 +70,7 @@ async function run() {
         content.className = 'board-item-content';
         const fixtureFile = {
           id: 'fixture-video', name: 'fixture.mp4', ext: '.mp4', thumbUrl: '',
-          sourceWidth: 1920, sourceHeight: 1080, videoPreviewReady: false
+          sourceWidth: 1080, sourceHeight: 1920, sourceDuration: 3, videoPreviewReady: false
         };
         const fixtureItem = { id: 'fixture-item', fileId: fixtureFile.id, x: 0, y: 0, width: 640, height: 360 };
         AppState.files = [fixtureFile];
@@ -215,12 +215,17 @@ async function run() {
         hasVideo: !!video,
         hasControls: !!controls,
         rect: rect && { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+        videoRect: video && (() => { const value = video.getBoundingClientRect(); return { width: value.width, height: value.height }; })(),
+        objectFit: video && getComputedStyle(video).objectFit,
         viewport: { width: innerWidth, height: innerHeight }
       };
     })()`);
     if (
       !fullscreen.visible || !fullscreen.hasPlayer || !fullscreen.hasVideo || !fullscreen.hasControls ||
       !fullscreen.rect || fullscreen.rect.left < 0 || fullscreen.rect.top < 0 ||
+      fullscreen.objectFit !== 'contain' || !fullscreen.videoRect ||
+      fullscreen.videoRect.width > fullscreen.rect.right - fullscreen.rect.left + 1 ||
+      fullscreen.videoRect.height > fullscreen.rect.bottom - fullscreen.rect.top + 1 ||
       fullscreen.rect.right > fullscreen.viewport.width || fullscreen.rect.bottom > fullscreen.viewport.height
     ) {
       throw new Error(`Canvas video fullscreen viewer is invalid: ${JSON.stringify(fullscreen)}`);
@@ -233,10 +238,15 @@ async function run() {
         currentTime: video.currentTime,
         readyState: video.readyState,
         paused: video.paused,
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
         error: video.error && video.error.code
       };
     })()`);
-    if (!playback || playback.error || playback.readyState < 2 || playback.paused || playback.currentTime < 0.2) {
+    if (
+      !playback || playback.error || playback.readyState < 2 || playback.paused || playback.currentTime < 0.2 ||
+      playback.videoHeight <= playback.videoWidth
+    ) {
       throw new Error(`Prepared video did not begin playing immediately: ${JSON.stringify(playback)}`);
     }
 

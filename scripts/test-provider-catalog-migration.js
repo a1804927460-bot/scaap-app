@@ -97,8 +97,10 @@ const seedance20 = media.videoProviders.find((provider) => provider.id === 'vide
 const seedance25 = media.videoProviders.find((provider) => provider.id === 'video-3');
 assert.equal(seedance20.protocol, 'seedance-video-v3');
 assert.equal(seedance25.protocol, 'seedance-video-v3');
-assert.deepEqual(seedance20.capabilities.resolutions, ['480P', '720P', '1080P', '4K']);
+assert.deepEqual(seedance20.capabilities.resolutions, ['480P', '720P']);
 assert.deepEqual(seedance25.capabilities.resolutions, ['480P', '720P']);
+assert.deepEqual(seedance20.capabilities.durations, Array.from({ length: 12 }, (_value, index) => index + 4));
+assert.deepEqual(seedance25.capabilities.durations, Array.from({ length: 27 }, (_value, index) => index + 4));
 for (const provider of [seedance20, seedance25]) {
   assert.deepEqual(provider.capabilities.videoModes.map((mode) => mode.id), [
     'text', 'first-frame', 'first-last-frame', 'omni'
@@ -106,8 +108,11 @@ for (const provider of [seedance20, seedance25]) {
   assert.deepEqual(provider.capabilities.videoModes[2].roles, ['first_frame', 'last_frame']);
   assert.deepEqual(provider.capabilities.videoModes[3].roles, ['reference_image']);
   assert.deepEqual(provider.capabilities.videoModes[3].mediaTypes, ['image', 'video']);
-  assert.equal(provider.capabilities.videoModes[3].maxReferenceVideos, 3);
 }
+assert.equal(seedance20.capabilities.videoModes[3].maxReferenceVideos, 3);
+assert.equal(seedance25.capabilities.videoModes[3].maxReferenceVideos, 6);
+assert.equal(Object.hasOwn(seedance25.capabilities.videoModes[1], 'ratios'), false);
+assert.equal(Object.hasOwn(seedance25.capabilities.videoModes[2], 'ratios'), false);
 assert.equal(require('../lib/provider-catalog').catalogProvider('video-2').keyEnv, 'AI302_KEY');
 assert.equal(require('../lib/provider-catalog').catalogProvider('video-3').keyEnv, 'AI302_KEY');
 for (const id of ['video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9']) {
