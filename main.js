@@ -33,6 +33,14 @@ const {
   generateMediaBuffer
 } = require('./lib/ai-media-provider');
 const { requestChat, discoverChatModels } = require('./lib/ai-chat-provider');
+const {
+  AI_ARTIFACT_INSTRUCTION,
+  attachmentKind,
+  attachmentMetadata,
+  normalizeAttachmentName,
+  parseAiArtifacts,
+  prepareTextAttachment
+} = require('./lib/ai-attachments');
 const { PROVIDER_CATALOG_VERSION, providerCatalog } = require('./lib/provider-catalog');
 const { loadRuntimeConfig } = require('./lib/runtime-config');
 const { SupabaseAuth, createPkcePair } = require('./lib/supabase-auth');
@@ -218,6 +226,7 @@ let updaterState = {
   message: null
 };
 const transientAiAttachments = new Map();
+const transientAiOutputFiles = new Map();
 const butlerImageTasks = new Map();
 const butlerImageDownloads = new Map();
 const butler3dTasks = new Map();
@@ -3278,6 +3287,76 @@ function imageDimensionsWithinCapabilities(size, capabilities = {}) {
   return width <= maxEdge && height <= maxEdge && width * height <= maxPixels;
 }
 
+async function fileToAiChatAttachment(id) {
+  const file = store.getFile(String(id || ''));
+  if (!file || !file.storedPath) return null;
+  assertSafeLocalFile(file);
+  const kind = attachmentKind(file);
+  if (kind === 'image') {
+    const dataUrl = await fileToSafeAiDataUrl(file.id);
+    return dataUrl ? { ...attachmentMetadata(file, kind), dataUrl } : null;
+  }
+  const ext = String(file.ext || path.extname(file.name)).toLowerCase();
+  if (preview.isOfficeExt(ext) && ext !== '.docx') {
+    const caps = await preview.getCapabilities();
+    if (caps.hasSoffice) {
+      try {
+        const cacheDir = path.join(previewCacheDir, file.id);
+        const pdfPath = await preview.convertOfficeToPdfCached(file.storedPath, cacheDir, previewTmpDir);
+        const extracted = await prepareTextAttachment({
+          ...file,
+          storedPath: pdfPath,
+          mimeType: 'application/pdf'
+        });
+        return { ...extracted, name: file.name, mimeType: file.mimeType, kind: 'document' };
+      } catch (error) {
+        console.warn('AI office attachment extraction failed:', file.name, error && error.message);
+      }
+    }
+  }
+  return prepareTextAttachment(file);
+}
+
+async function resolveAiChatMessageAttachments(message, fallbackRequest = null) {
+  const fileIds = Array.isArray(message && message.attachmentFileIds)
+    ? message.attachmentFileIds
+    : fallbackRequest && Array.isArray(fallbackRequest.attachmentFileIds)
+      ? fallbackRequest.attachmentFileIds
+      : [];
+  const tokens = Array.isArray(message && message.attachmentTokens)
+    ? message.attachmentTokens
+    : fallbackRequest && Array.isArray(fallbackRequest.attachmentTokens)
+      ? fallbackRequest.attachmentTokens
+      : [];
+  const local = await Promise.all(fileIds.slice(0, 8).map(fileToAiChatAttachment));
+  const temporary = tokens.slice(0, 8).map((token) => {
+    const record = transientAiAttachments.get(String(token || ''));
+    if (!record || record.expiresAt <= Date.now()) return null;
+    return {
+      id: `temporary-${token}`,
+      name: record.name || 'Pasted image',
+      mimeType: record.mimeType || 'image/webp',
+      sizeBytes: record.sizeBytes || 0,
+      kind: 'image',
+      dataUrl: record.dataUrl
+    };
+  });
+  return [...local, ...temporary].filter(Boolean).slice(0, 8);
+}
+
+function publicAiAttachment(attachment) {
+  return {
+    id: attachment.id,
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    sizeBytes: attachment.sizeBytes,
+    kind: attachment.kind,
+    readable: attachment.readable === true,
+    truncated: attachment.truncated === true,
+    ...(attachment.dataUrl ? { dataUrl: attachment.dataUrl } : {})
+  };
+}
+
 function normalizeImageSize(value) {
   const text = String(value || '').trim();
   if (/^(?:1|2|4)k$/i.test(text)) return text.toUpperCase();
@@ -4477,7 +4556,13 @@ function registerIpcHandlers() {
     if (!match) throw Object.assign(new Error('The pasted image format is not supported.'), { code: 'invalid-attachment' });
     const dataUrl = await sanitizeImageForAi(Buffer.from(match[1], 'base64'));
     const token = crypto.randomUUID();
-    transientAiAttachments.set(token, { dataUrl, expiresAt: Date.now() + 30 * 60_000 });
+    transientAiAttachments.set(token, {
+      dataUrl,
+      name: String(request.name || 'Pasted image').slice(0, 160),
+      mimeType: String(dataUrl.match(/^data:([^;]+)/i)?.[1] || 'image/webp'),
+      sizeBytes: Math.ceil(dataUrl.length * 0.75),
+      expiresAt: Date.now() + 30 * 60_000
+    });
     return { token, dataUrl, name: String(request.name || 'Pasted image').slice(0, 160) };
   });
 
@@ -5310,12 +5395,29 @@ function registerIpcHandlers() {
   ipcMain.handle('ai:chat', async (_evt, request = {}) => {
     let safeRequest;
     try {
-      const urls = await resolveAiReferenceUrls(request, 'attachmentFileIds');
-      const messages = Array.isArray(request.messages)
-        ? request.messages.map((message) => ({ ...message, images: [] }))
-        : [];
-      const lastUserMessage = [...messages].reverse().find((message) => message.role === 'user');
-      if (lastUserMessage && urls.length) lastUserMessage.images = urls;
+      const sourceMessages = Array.isArray(request.messages) ? request.messages.slice(-40) : [];
+      const lastUserIndex = sourceMessages.map((message) => message && message.role).lastIndexOf('user');
+      const messages = [];
+      for (let index = 0; index < sourceMessages.length; index += 1) {
+        const message = sourceMessages[index] || {};
+        const resolved = message.role === 'user'
+          ? await resolveAiChatMessageAttachments(message, index === lastUserIndex ? request : null)
+          : [];
+        messages.push({
+          role: message.role,
+          content: message.content,
+          images: resolved.filter((attachment) => attachment.kind === 'image').map((attachment) => attachment.dataUrl),
+          attachments: resolved.filter((attachment) => attachment.kind !== 'image').map((attachment) => ({
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes,
+            kind: attachment.kind,
+            readable: attachment.readable,
+            truncated: attachment.truncated,
+            content: attachment.content
+          }))
+        });
+      }
       safeRequest = sanitizeAiRequest({ ...request, messages, urls: [] }, { limit: 4 });
     } catch (err) {
       return { ok: false, reason: err.code || 'privacy-blocked', message: err.message };
@@ -5347,18 +5449,32 @@ function registerIpcHandlers() {
     }
 
     try {
-      const text = await generateAiChatReply(
+      const providerMessages = [
+        { role: 'system', content: AI_ARTIFACT_INSTRUCTION, images: [], attachments: [] },
+        ...request.messages.slice(-19)
+      ];
+      const rawText = await generateAiChatReply(
         prompt,
-        request.messages,
+        providerMessages,
         String(request.chatProviderId || '').trim(),
         String(request.chatModel || '').trim()
       );
+      const parsed = parseAiArtifacts(rawText);
+      const files = parsed.artifacts.map((artifact) => {
+        const token = crypto.randomUUID();
+        transientAiOutputFiles.set(token, {
+          ...artifact,
+          expiresAt: Date.now() + 60 * 60_000
+        });
+        return { token, name: artifact.name, mimeType: artifact.mimeType, sizeBytes: artifact.sizeBytes };
+      });
+      const text = parsed.text || (files.length ? localizedMessage('File ready.', '文件已生成。', '파일이 준비되었습니다.') : '');
       membershipService.finishUsage(usage.usageId, {
         status: 'succeeded',
         resultUnits: 1,
         metadata: { responseCharacters: String(text || '').length }
       });
-      return { ok: true, text };
+      return { ok: true, text, files };
     } catch (err) {
       membershipService.finishUsage(usage.usageId, {
         status: 'failed',
@@ -5372,6 +5488,22 @@ function registerIpcHandlers() {
         message: conciseAiErrorMessage(err, { kind: 'chat', model: request.chatModel })
       };
     }
+  });
+
+  ipcMain.handle('ai:saveGeneratedFile', async (_evt, rawToken) => {
+    const token = String(rawToken || '');
+    const record = transientAiOutputFiles.get(token);
+    if (!record || record.expiresAt <= Date.now()) {
+      return { ok: false, reason: 'expired', message: 'This generated file has expired. Ask AI to create it again.' };
+    }
+    const defaultName = normalizeAttachmentName(record.name, 'assistant.txt');
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save AI file',
+      defaultPath: defaultName
+    });
+    if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+    await fs.promises.writeFile(result.filePath, record.content, 'utf8');
+    return { ok: true, filePath: result.filePath };
   });
 
   ipcMain.handle('files:transcodeVideo', async (_evt, id) => {
@@ -5559,6 +5691,20 @@ function registerIpcHandlers() {
 
   ipcMain.handle('files:readDataUrl', async (_evt, id) => {
     return fileToSafeAiDataUrl(id);
+  });
+
+  ipcMain.handle('files:prepareAiAttachment', async (_evt, id) => {
+    try {
+      const attachment = await fileToAiChatAttachment(id);
+      if (!attachment) return { ok: false, reason: 'not-found' };
+      return { ok: true, attachment: publicAiAttachment(attachment) };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: error && error.code || 'attachment-read-failed',
+        message: error && error.message || 'The attachment could not be read.'
+      };
+    }
   });
 
   ipcMain.handle('shell:openExternal', (_evt, id) => {
@@ -6284,5 +6430,8 @@ setInterval(() => {
   const now = Date.now();
   for (const [token, record] of transientAiAttachments) {
     if (record.expiresAt <= now) transientAiAttachments.delete(token);
+  }
+  for (const [token, record] of transientAiOutputFiles) {
+    if (record.expiresAt <= now) transientAiOutputFiles.delete(token);
   }
 }, 5 * 60_000).unref();

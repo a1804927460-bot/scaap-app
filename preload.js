@@ -34,10 +34,10 @@ const path = require('path');
  */
 function resolvePdfjsDir() {
   const devPath = path.join(__dirname, 'node_modules', 'pdfjs-dist');
-  if (fs.existsSync(devPath)) return devPath;
-
   const unpackedPath = path.join(process.resourcesPath || '', 'app.asar.unpacked', 'node_modules', 'pdfjs-dist');
   if (fs.existsSync(unpackedPath)) return unpackedPath;
+
+  if (fs.existsSync(devPath)) return devPath;
 
   return devPath; // fall back to the dev path; the import will fail loudly if neither exists
 }
@@ -235,6 +235,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   importFiles: (filePaths, folderId, canvasId) => ipcRenderer.invoke('files:import', filePaths, folderId, canvasId),
   generateAiMedia: (request) => ipcRenderer.invoke('ai:generateMedia', request),
   chatWithAi: (request) => ipcRenderer.invoke('ai:chat', request),
+  saveGeneratedAiFile: (token) => ipcRenderer.invoke('ai:saveGeneratedFile', token),
   exportAiChat: (session) => ipcRenderer.invoke('ai:exportChat', session),
   butler: Object.freeze({
     removeBackground: (fileId, options) => ipcRenderer.invoke('butler:removeBackground', fileId, options),
@@ -263,7 +264,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   readModelData: (id) => ipcRenderer.invoke('files:readModelData', id),
   saveModelPreview: (id, dataUrl) => ipcRenderer.invoke('files:saveModelPreview', id, dataUrl),
   readFileAsDataUrl: (id) => ipcRenderer.invoke('files:readDataUrl', id),
-  prepareAiAttachment: (id) => ipcRenderer.invoke('files:readDataUrl', id),
+  prepareAiAttachment: (id) => ipcRenderer.invoke('files:prepareAiAttachment', id),
   transcodeVideo: (id) => ipcRenderer.invoke('files:transcodeVideo', id),
   transcodeAudio: (id) => ipcRenderer.invoke('files:transcodeAudio', id),
   getAudioWaveform: (id, barCount) => ipcRenderer.invoke('files:getAudioWaveform', id, barCount),

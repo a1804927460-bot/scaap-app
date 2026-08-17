@@ -12,6 +12,7 @@ const builder = fs.readFileSync(path.join(root, 'electron-builder.release.yml'),
 const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'release.yml'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'src', 'index.html'), 'utf8');
 const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+const preload = fs.readFileSync(path.join(root, 'preload.js'), 'utf8');
 const updaterUi = fs.readFileSync(path.join(root, 'src', 'js', 'updater.js'), 'utf8');
 const installerInclude = fs.readFileSync(path.join(root, 'build-resources', 'installer.nsh'), 'utf8');
 const catalog = require('../config/provider-catalog.json');
@@ -48,6 +49,11 @@ assert.match(workflow, /choco install imagemagick\.app/);
 assert.match(workflow, /Copy-Item \$libreOffice build-resources\/tools\/libreoffice -Recurse/);
 assert.match(workflow, /Copy-Item \$imageMagick\.FullName build-resources\/tools\/imagemagick -Recurse/);
 assert.match(builder, /extraResources:[\s\S]*?from:\s*build-resources\/tools[\s\S]*?to:\s*tools/);
+assert.match(builder, /asarUnpack:[\s\S]*?node_modules\/pdfjs-dist\/\*\*\/\*/);
+assert.ok(
+  preload.indexOf('fs.existsSync(unpackedPath)') < preload.indexOf('fs.existsSync(devPath)'),
+  'Packaged PDF.js must resolve from app.asar.unpacked before the virtual asar path.'
+);
 assert.match(workflow, /gh release (?:create|upload)/);
 assert.ok(
   workflow.indexOf('Verify updater artifacts') < workflow.indexOf('Publish verified updater artifacts'),

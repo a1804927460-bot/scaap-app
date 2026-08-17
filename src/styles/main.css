@@ -2048,11 +2048,11 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 }
 .ai-assistant-attachment {
   position: relative;
-  width: 112px;
-  height: 42px;
-  flex: 0 0 112px;
+  width: 178px;
+  height: 48px;
+  flex: 0 0 178px;
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) 18px;
+  grid-template-columns: 38px minmax(0, 1fr) 18px;
   align-items: center;
   gap: 5px;
   padding: 3px;
@@ -2061,17 +2061,51 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   background: var(--bg-surface-2);
 }
 .ai-assistant-attachment img {
-  width: 36px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   object-fit: cover;
   border-radius: 5px;
 }
-.ai-assistant-attachment span {
+.ai-assistant-attachment-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.ai-assistant-attachment-copy b,
+.ai-assistant-attachment-copy small,
+.ai-assistant-message-file > span:last-child,
+.ai-assistant-output-file > span:last-child,
+.board-agent-message-file > span:last-child {
   min-width: 0;
   overflow: hidden;
-  color: var(--text-secondary);
-  font-size: 9px;
   white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ai-assistant-attachment-copy b { color: var(--text-primary); font-size: 10.5px; font-weight: 560; }
+.ai-assistant-attachment-copy small { color: var(--text-tertiary); font-size: 8.5px; }
+.ai-assistant-file-icon {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+}
+.ai-assistant-file-icon small {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  max-width: 32px;
+  padding: 1px 2px;
+  overflow: hidden;
+  color: var(--accent);
+  background: var(--bg-surface-2);
+  font-size: 6.5px;
+  font-weight: 700;
+  line-height: 1;
   text-overflow: ellipsis;
 }
 .ai-assistant-attachment button {
@@ -2085,10 +2119,43 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .ai-assistant-attachment button:hover { color: var(--text-primary); background: var(--bg-elevated); }
 .ai-assistant-message-attachments {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 5px;
   max-width: 92%;
 }
+.ai-assistant-message-file,
+.ai-assistant-output-file,
+.board-agent-message-file {
+  min-width: 150px;
+  max-width: 230px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 5px 5px;
+  border: 1px solid var(--border-hairline);
+  border-radius: 7px;
+  color: var(--text-primary);
+  background: var(--bg-surface-2);
+  text-align: left;
+}
+.ai-assistant-message-file .ai-assistant-file-icon,
+.ai-assistant-output-file .ai-assistant-file-icon,
+.board-agent-message-file .ai-assistant-file-icon { width: 34px; height: 34px; flex-basis: 34px; }
+.ai-assistant-message-file > span:last-child,
+.ai-assistant-output-file > span:last-child,
+.board-agent-message-file > span:last-child { display: grid; gap: 2px; }
+.ai-assistant-message-file b,
+.ai-assistant-output-file b,
+.board-agent-message-file b { overflow: hidden; font-size: 10.5px; font-weight: 560; text-overflow: ellipsis; }
+.ai-assistant-message-file small,
+.ai-assistant-output-file small,
+.board-agent-message-file small { color: var(--text-tertiary); font-size: 8.5px; }
+.ai-assistant-output-files { display: grid; gap: 6px; margin-top: 7px; }
+.ai-assistant-output-file { cursor: var(--cursor-click); }
+.ai-assistant-output-file:hover { border-color: color-mix(in srgb, var(--accent) 42%, var(--border-hairline)); background: var(--bg-elevated); }
+.ai-assistant-form.is-image-dragover,
+.board-agent-form.is-file-dragover { border-color: var(--accent); background: var(--accent-soft); }
 .ai-assistant-message-attachments img {
   width: 54px;
   height: 54px;
@@ -3686,7 +3753,8 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 }
 .board-agent-reference img,
 .board-agent-reference video { width: 100%; height: 100%; display: block; object-fit: cover; }
-.board-agent-reference span {
+.board-agent-reference > .ai-assistant-file-icon { width: 100%; height: 100%; border-radius: 6px; }
+.board-agent-reference > span:last-child {
   position: absolute;
   top: 2px;
   right: 2px;
@@ -3699,6 +3767,10 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   background: rgba(15,17,22,.72);
   font-size: 10px;
 }
+.board-agent-reference > .ai-assistant-file-icon small { width: auto; height: auto; background: var(--bg-surface-2); }
+.board-agent-message-files { width: 100%; display: grid; gap: 5px; margin-top: 7px; }
+.board-agent-message-files img { width: 56px; height: 56px; object-fit: cover; border-radius: 7px; border: 1px solid var(--border-hairline); }
+.board-agent-message-file { min-width: 0; max-width: 100%; background: var(--bg-elevated); }
 .board-agent-form-footer select {
   min-width: 0;
   flex: 1;

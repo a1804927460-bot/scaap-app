@@ -112,6 +112,31 @@ assert.strictEqual(
     }]
   });
 
+  await requestChat(async (_url, options) => {
+    const body = JSON.parse(options.body);
+    assert.match(body.messages[0].content, /Attached file: brief\.md/);
+    assert.match(body.messages[0].content, /Project deadline is Friday/);
+    return response({ choices: [{ message: { content: 'Document attachment.' } }] });
+  }, {
+    chatEndpoint: 'https://api.example.com/v1',
+    chatModel: 'gemini-3.7-flash',
+    apiKey: 'secret'
+  }, {
+    prompt: 'Summarize the attachment',
+    messages: [{
+      role: 'user',
+      content: 'Summarize the attachment',
+      attachments: [{
+        name: 'brief.md',
+        mimeType: 'text/markdown',
+        kind: 'text',
+        sizeBytes: 32,
+        readable: true,
+        content: 'Project deadline is Friday.'
+      }]
+    }]
+  });
+
   await requestChat(async (url) => {
     assert.strictEqual(url, 'https://api.quickrouter.ai/v1/chat/completions');
     return response({

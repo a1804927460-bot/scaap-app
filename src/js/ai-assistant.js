@@ -68,7 +68,22 @@ function persistActiveAiChatSession() {
     .slice(-80)
     .map((message) => ({
       role: message.role,
-      content: String(message.content || '').slice(0, 12000)
+      content: String(message.content || '').slice(0, 12000),
+      attachmentFileIds: Array.isArray(message.attachmentFileIds) ? message.attachmentFileIds.slice(0, 8) : [],
+      attachmentTokens: Array.isArray(message.attachmentTokens) ? message.attachmentTokens.slice(0, 8) : [],
+      attachments: Array.isArray(message.attachments) ? message.attachments.slice(0, 8).map((attachment) => ({
+        id: attachment.id,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        kind: attachment.kind
+      })) : [],
+      generatedFiles: Array.isArray(message.generatedFiles) ? message.generatedFiles.slice(0, 6).map((file) => ({
+        token: file.token,
+        name: file.name,
+        mimeType: file.mimeType,
+        sizeBytes: file.sizeBytes
+      })) : []
     }));
   session.updatedAt = new Date().toISOString();
   persistAiChatHistory();
@@ -207,7 +222,11 @@ function loadAiChatSession(sessionId) {
   AiAssistant.messages = session.messages.map((message) => ({ ...message }));
   const messages = document.getElementById('ai-assistant-messages');
   messages.innerHTML = '';
-  AiAssistant.messages.forEach((message) => appendAssistantText(message.role, message.content));
+  AiAssistant.messages.forEach((message) => {
+    const row = appendAssistantText(message.role, message.content);
+    appendAssistantMessageAttachments(row, Array.isArray(message.attachments) ? message.attachments : []);
+    appendAssistantOutputFiles(row, message.generatedFiles);
+  });
   if (AiAssistant.messages.length) showAssistantConversation();
   else {
     document.getElementById('ai-assistant-home').hidden = false;
@@ -267,10 +286,95 @@ async function addPastedAssistantImage(file) {
     id: `paste-${prepared.token}`,
     attachmentToken: prepared.token,
     name: file.name || t('Pasted image', '粘贴的图片'),
-    dataUrl: prepared.dataUrl
+    dataUrl: prepared.dataUrl,
+    mimeType: file.type || 'image/webp',
+    sizeBytes: Number(file.size) || 0,
+    kind: 'image'
   }];
   renderAssistantAttachments();
   renderAssistantRatios();
+}
+
+function assistantFileKind(file) {
+  const mimeType = String(file && file.mimeType || '').toLowerCase();
+  const ext = String(file && file.ext || '').toLowerCase();
+  if (mimeType.startsWith('image/') || isImageExt(ext)) return 'image';
+  if (mimeType.startsWith('video/') || isVideoExt(ext)) return 'video';
+  return String(file && file.kind || 'file');
+}
+
+function formatAssistantFileSize(value) {
+  const bytes = Math.max(0, Number(value) || 0);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+}
+
+function createAssistantFileIcon(attachment) {
+  const icon = document.createElement('span');
+  icon.className = 'ai-assistant-file-icon';
+  const extension = String(attachment && attachment.name || '').split('.').pop().slice(0, 4).toUpperCase();
+  icon.innerHTML = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v5h5"/></svg>';
+  const badge = document.createElement('small');
+  badge.textContent = extension && extension !== String(attachment.name || '').toUpperCase() ? extension : 'FILE';
+  icon.appendChild(badge);
+  return icon;
+}
+
+async function prepareAssistantImportedFiles(imported) {
+  const limit = assistantAttachmentLimit();
+  const remaining = Math.max(0, limit - AiAssistant.attachments.length);
+  const accepted = AiAssistant.kind === 'chat'
+    ? imported
+    : imported.filter((file) => AiAssistant.kind === 'image'
+      ? assistantFileKind(file) === 'image'
+      : ['image', 'video'].includes(assistantFileKind(file)));
+  const prepared = await Promise.all(accepted.slice(0, remaining).map(async (file) => {
+    const result = await window.messsAPI.prepareAiAttachment(file.id);
+    if (!result || !result.ok || !result.attachment) return null;
+    return { ...file, ...result.attachment, id: file.id };
+  }));
+  const attachments = prepared.filter(Boolean);
+  AiAssistant.attachments = [
+    ...AiAssistant.attachments,
+    ...attachments.filter((attachment) => !AiAssistant.attachments.some((entry) => entry.id === attachment.id))
+  ];
+  renderAssistantAttachments();
+  renderAssistantRatios();
+  return attachments;
+}
+
+async function importAssistantFilePaths(paths) {
+  if (!paths.length) return [];
+  const folderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
+    ? AppState.activeFolderId
+    : null;
+  const result = await window.messsAPI.importFiles(paths, folderId, activeCanvasId());
+  const imported = result && Array.isArray(result.imported) ? result.imported : [];
+  AppState.files = [...imported, ...AppState.files.filter((file) =>
+    !imported.some((next) => next.id === file.id)
+  )];
+  renderFileList(currentFileListScope());
+  renderFolderGridIfActive();
+  await prepareAssistantImportedFiles(imported);
+  if (result && result.unlocked && result.unlocked.length) await refreshAchievements();
+  return imported;
+}
+
+async function addExternalAssistantFiles(files) {
+  const paths = [];
+  const inMemoryImages = [];
+  [...files].filter(Boolean).forEach((file) => {
+    let filePath = '';
+    try { filePath = window.messsAPI.getPathForFile(file); } catch (error) {}
+    if (filePath) paths.push(filePath);
+    else if (/^image\//i.test(file.type || '')) inMemoryImages.push(file);
+  });
+  if (paths.length) await importAssistantFilePaths(paths);
+  for (const file of inMemoryImages) {
+    if (AiAssistant.attachments.length >= assistantAttachmentLimit()) break;
+    await addPastedAssistantImage(file);
+  }
 }
 
 function configuredAssistantProviders(kind) {
@@ -468,10 +572,15 @@ function assistantImageCapabilities() {
 }
 
 function assistantHasMediaAttachments() {
-  return AiAssistant.attachments.length > 0;
+  return AiAssistant.attachments.some((attachment) => ['image', 'video'].includes(assistantFileKind(attachment)));
+}
+
+function assistantMediaAttachmentCount() {
+  return AiAssistant.attachments.filter((attachment) => ['image', 'video'].includes(assistantFileKind(attachment))).length;
 }
 
 function assistantAttachmentLimit() {
+  if (AiAssistant.kind === 'chat') return 8;
   const capabilities = AiAssistant.kind === 'video'
     ? assistantVideoCapabilities()
     : assistantImageCapabilities();
@@ -493,9 +602,9 @@ function syncAssistantMediaOptions() {
   const durationSelect = document.getElementById('ai-assistant-duration');
   const resolutions = isVideo
     ? (Array.isArray(capabilities.resolutions) ? capabilities.resolutions : ['768P', '2K'])
-    : (AiAssistant.attachments.length > 1 && Array.isArray(capabilities.multiReferenceSizes)
+    : (assistantMediaAttachmentCount() > 1 && Array.isArray(capabilities.multiReferenceSizes)
       ? capabilities.multiReferenceSizes
-      : AiAssistant.attachments.length > 0 && Array.isArray(capabilities.referenceSizes)
+      : assistantMediaAttachmentCount() > 0 && Array.isArray(capabilities.referenceSizes)
         ? capabilities.referenceSizes
       : Array.isArray(capabilities.resolutionPresets) && capabilities.resolutionPresets.length
         ? capabilities.resolutionPresets
@@ -523,7 +632,7 @@ function syncAssistantMediaOptions() {
       previousSize,
       (AiAssistant.config && AiAssistant.config.imageAspectRatio) || '1:1',
       capabilities,
-      AiAssistant.attachments.length
+      assistantMediaAttachmentCount()
     );
   }
 
@@ -550,22 +659,33 @@ function renderAssistantAttachments() {
   AiAssistant.attachments.forEach((attachment) => {
     const item = document.createElement('div');
     item.className = 'ai-assistant-attachment';
-    const image = document.createElement('img');
-    image.src = attachment.dataUrl;
-    image.alt = attachment.name;
-    const name = document.createElement('span');
+    const kind = assistantFileKind(attachment);
+    let preview;
+    if (kind === 'image' && (attachment.dataUrl || attachment.thumbUrl || attachment.previewUrl || attachment.url)) {
+      preview = document.createElement('img');
+      preview.src = attachment.dataUrl || attachment.thumbUrl || attachment.previewUrl || attachment.url;
+      preview.alt = attachment.name;
+    } else {
+      preview = createAssistantFileIcon(attachment);
+    }
+    const copy = document.createElement('span');
+    copy.className = 'ai-assistant-attachment-copy';
+    const name = document.createElement('b');
     name.textContent = attachment.name;
+    const meta = document.createElement('small');
+    meta.textContent = `${kind === 'image' ? t('Image', '图片') : t('File', '文件')} · ${formatAssistantFileSize(attachment.sizeBytes)}`;
+    copy.append(name, meta);
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.innerHTML = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>';
-    remove.title = t('Remove image', '移除图片');
+    remove.title = t('Remove attachment', '移除附件');
     remove.setAttribute('aria-label', remove.title);
     remove.addEventListener('click', () => {
       AiAssistant.attachments = AiAssistant.attachments.filter((entry) => entry.id !== attachment.id);
       renderAssistantAttachments();
       renderAssistantRatios();
     });
-    item.append(image, name, remove);
+    item.append(preview, copy, remove);
     container.appendChild(item);
   });
 }
@@ -575,56 +695,73 @@ function appendAssistantMessageAttachments(row, attachments) {
   const strip = document.createElement('div');
   strip.className = 'ai-assistant-message-attachments';
   attachments.forEach((attachment) => {
-    const image = document.createElement('img');
-    image.src = attachment.dataUrl;
-    image.alt = attachment.name;
-    image.title = attachment.name;
-    strip.appendChild(image);
+    const kind = assistantFileKind(attachment);
+    if (kind === 'image' && (attachment.dataUrl || attachment.thumbUrl || attachment.previewUrl || attachment.url)) {
+      const image = document.createElement('img');
+      image.src = attachment.dataUrl || attachment.thumbUrl || attachment.previewUrl || attachment.url;
+      image.alt = attachment.name;
+      image.title = attachment.name;
+      strip.appendChild(image);
+      return;
+    }
+    const file = document.createElement('div');
+    file.className = 'ai-assistant-message-file';
+    file.appendChild(createAssistantFileIcon(attachment));
+    const copy = document.createElement('span');
+    const name = document.createElement('b');
+    name.textContent = attachment.name;
+    const meta = document.createElement('small');
+    meta.textContent = formatAssistantFileSize(attachment.sizeBytes);
+    copy.append(name, meta);
+    file.appendChild(copy);
+    strip.appendChild(file);
   });
   row.appendChild(strip);
   const messages = document.getElementById('ai-assistant-messages');
   messages.scrollTop = messages.scrollHeight;
 }
 
-async function uploadAssistantImages() {
+function appendAssistantOutputFiles(row, files) {
+  if (!row || !Array.isArray(files) || !files.length) return;
+  const strip = document.createElement('div');
+  strip.className = 'ai-assistant-output-files';
+  files.forEach((file) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ai-assistant-output-file';
+    button.appendChild(createAssistantFileIcon(file));
+    const copy = document.createElement('span');
+    const name = document.createElement('b');
+    name.textContent = file.name;
+    const meta = document.createElement('small');
+    meta.textContent = `${formatAssistantFileSize(file.sizeBytes)} · ${t('Download', '下载')}`;
+    copy.append(name, meta);
+    button.appendChild(copy);
+    button.addEventListener('click', async () => {
+      const result = await window.messsAPI.saveGeneratedAiFile(file.token);
+      if (result && result.ok) showToast(t('File saved.', '文件已保存。'), 'AI');
+      else if (result && !result.canceled) showToast(result.message || t('The file could not be saved.', '文件保存失败。'), 'AI');
+    });
+    strip.appendChild(button);
+  });
+  row.appendChild(strip);
+}
+
+async function uploadAssistantFiles() {
   const paths = await window.messsAPI.pickFiles();
   if (!paths || !paths.length) return;
-  const imagePaths = paths.filter((filePath) =>
-    /\.(?:avif|bmp|gif|heic|heif|jpe?g|png|tiff?|webp)$/i.test(String(filePath || ''))
-  );
-  if (!imagePaths.length) {
-    showToast(t('Choose an image file.', '请选择图片文件。'), 'AI');
-    return;
-  }
-
-  const folderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
-    ? AppState.activeFolderId
-    : null;
-  const result = await window.messsAPI.importFiles(imagePaths, folderId, activeCanvasId());
-  const imported = result && Array.isArray(result.imported) ? result.imported : [];
+  const before = AiAssistant.attachments.length;
+  const imported = await importAssistantFilePaths(paths);
   if (!imported.length) {
-    showToast(t('The image could not be uploaded.', '图片上传失败。'), 'AI');
+    showToast(t('The file could not be uploaded.', '文件上传失败。'), 'AI');
     return;
   }
-
-  AppState.files = [...imported, ...AppState.files.filter((file) =>
-    !imported.some((next) => next.id === file.id)
-  )];
-  renderFileList(currentFileListScope());
-  renderFolderGridIfActive();
   const limit = assistantAttachmentLimit();
-  const remaining = Math.max(0, limit - AiAssistant.attachments.length);
-  const attachments = (await Promise.all(imported.slice(0, remaining).map(async (file) => ({
-    id: file.id,
-    name: file.name,
-    dataUrl: await window.messsAPI.readFileAsDataUrl(file.id)
-  })))).filter((attachment) => attachment.dataUrl);
-  AiAssistant.attachments = [...AiAssistant.attachments, ...attachments];
-  renderAssistantAttachments();
-  renderAssistantRatios();
-  if (result.unlocked && result.unlocked.length) await refreshAchievements();
-  if (imported.length > attachments.length) {
-    showToast(t(`Up to ${limit} images can be attached at once.`, `一次最多可附加 ${limit} 张图片。`), 'AI');
+  if (AiAssistant.attachments.length - before < imported.length) {
+    const message = AiAssistant.kind === 'chat'
+      ? t(`Up to ${limit} files can be attached at once.`, `一次最多可附加 ${limit} 个文件。`)
+      : t('This generation mode only accepts supported image or video references.', '当前生成模式只接受支持的图片或视频参考。');
+    showToast(message, 'AI');
   }
 }
 
@@ -669,7 +806,7 @@ function syncAssistantImageSizeRatio(source) {
     sizeSelect.value = imageSizeForRatio(
       ratioSelect.value,
       capabilities,
-      AiAssistant.attachments.length
+      assistantMediaAttachmentCount()
     ) || sizeSelect.value;
   } else {
     ratioSelect.value = imageRatioForSize(sizeSelect.value, capabilities) || ratioSelect.value;
@@ -709,9 +846,19 @@ function setAssistantKind(kind) {
 
   const isMedia = AiAssistant.kind !== 'chat';
   const isVideo = AiAssistant.kind === 'video';
+  const attachmentCountBeforeModeFilter = AiAssistant.attachments.length;
+  if (isMedia) {
+    AiAssistant.attachments = AiAssistant.attachments.filter((attachment) =>
+      isVideo
+        ? ['image', 'video'].includes(assistantFileKind(attachment))
+        : assistantFileKind(attachment) === 'image'
+    );
+  }
   const attachmentLimit = assistantAttachmentLimit();
   if (AiAssistant.attachments.length > attachmentLimit) {
     AiAssistant.attachments = AiAssistant.attachments.slice(0, attachmentLimit);
+    renderAssistantAttachments();
+  } else if (AiAssistant.attachments.length !== attachmentCountBeforeModeFilter) {
     renderAssistantAttachments();
   }
   document.getElementById('ai-assistant-options-toggle').hidden = !isMedia;
@@ -821,7 +968,7 @@ async function submitAssistantMessage() {
     input.focus();
     return;
   }
-  if (!prompt) prompt = t('Describe this image.', '请分析这张图片。');
+  if (!prompt) prompt = t('Analyze the attached files.', '请分析这些附件。');
   if (submittedKind !== 'chat') {
     const creditAccess = await window.MesssCredits.ensure({
       kind: submittedKind,
@@ -846,7 +993,16 @@ async function submitAssistantMessage() {
   AiAssistant.messages.push({
     role: 'user',
     content: prompt,
-    images: attachments.map((item) => item.dataUrl)
+    attachmentFileIds: attachments.filter((item) => !item.attachmentToken).map((item) => item.id),
+    attachmentTokens: attachments.map((item) => item.attachmentToken).filter(Boolean),
+    attachments: attachments.map((item) => ({
+      id: item.id,
+      name: item.name,
+      mimeType: item.mimeType,
+      sizeBytes: item.sizeBytes,
+      kind: assistantFileKind(item),
+      dataUrl: item.dataUrl || ''
+    }))
   });
   persistActiveAiChatSession();
 
@@ -891,10 +1047,15 @@ async function submitAssistantMessage() {
       if (!response || !response.ok) {
         throw new Error((response && response.message) || t('AI chat failed.', 'AI 对话失败。'));
       }
-      AiAssistant.messages.push({ role: 'assistant', content: response.text });
+      AiAssistant.messages.push({
+        role: 'assistant',
+        content: response.text,
+        generatedFiles: Array.isArray(response.files) ? response.files : []
+      });
       persistActiveAiChatSession();
       pending.remove();
-      appendAssistantText('assistant', response.text);
+      const assistantRow = appendAssistantText('assistant', response.text);
+      appendAssistantOutputFiles(assistantRow, response.files);
     } else {
       const request = {
         kind: submittedKind,
@@ -980,7 +1141,7 @@ function refreshAssistantLanguage() {
   refreshAssistantCreditEstimateLanguage();
   const upload = document.getElementById('ai-assistant-upload');
   if (upload) {
-    upload.title = t('Add image', '添加图片');
+    upload.title = t('Add files', '添加文件');
     upload.setAttribute('aria-label', upload.title);
   }
   const chatButton = document.querySelector('[data-assistant-kind="chat"]');
@@ -1035,14 +1196,11 @@ function initAiAssistant() {
     }
   });
   document.getElementById('ai-assistant-input').addEventListener('paste', (event) => {
-    const imageItem = [...(event.clipboardData && event.clipboardData.items || [])]
-      .find((item) => item.kind === 'file' && /^image\//i.test(item.type));
-    if (!imageItem) return;
-    const file = imageItem.getAsFile();
-    if (!file) return;
+    const files = [...(event.clipboardData && event.clipboardData.files || [])];
+    if (!files.length) return;
     event.preventDefault();
-    addPastedAssistantImage(file).catch(() => {
-      showToast(t('The pasted image could not be added.', '无法添加粘贴的图片。'), 'AI');
+    addExternalAssistantFiles(files).catch(() => {
+      showToast(t('The pasted file could not be added.', '无法添加粘贴的文件。'), 'AI');
     });
   });
   document.querySelector('.ai-assistant-mode').addEventListener('click', (event) => {
@@ -1050,8 +1208,8 @@ function initAiAssistant() {
     if (button) setAssistantKind(button.dataset.assistantKind);
   });
   document.getElementById('ai-assistant-upload').addEventListener('click', () => {
-    uploadAssistantImages().catch((err) => {
-      showToast(err && err.message ? err.message : t('The image could not be uploaded.', '图片上传失败。'), 'AI');
+    uploadAssistantFiles().catch((err) => {
+      showToast(err && err.message ? err.message : t('The file could not be uploaded.', '文件上传失败。'), 'AI');
     });
   });
   document.getElementById('ai-assistant-model-trigger').addEventListener('click', (event) => {
@@ -1064,13 +1222,13 @@ function initAiAssistant() {
   });
   let assistantDragDepth = 0;
   form.addEventListener('dragenter', (event) => {
-    if (![...(event.dataTransfer && event.dataTransfer.items || [])].some((item) => item.kind === 'file' && /^image\//i.test(item.type))) return;
+    if (![...(event.dataTransfer && event.dataTransfer.items || [])].some((item) => item.kind === 'file')) return;
     event.preventDefault();
     assistantDragDepth += 1;
     form.classList.add('is-image-dragover');
   });
   form.addEventListener('dragover', (event) => {
-    if (![...(event.dataTransfer && event.dataTransfer.items || [])].some((item) => item.kind === 'file' && /^image\//i.test(item.type))) return;
+    if (![...(event.dataTransfer && event.dataTransfer.items || [])].some((item) => item.kind === 'file')) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'copy';
   });
@@ -1081,13 +1239,10 @@ function initAiAssistant() {
   form.addEventListener('drop', async (event) => {
     assistantDragDepth = 0;
     form.classList.remove('is-image-dragover');
-    const images = [...(event.dataTransfer && event.dataTransfer.files || [])]
-      .filter((file) => /^image\//i.test(file.type));
-    if (!images.length) return;
+    const files = [...(event.dataTransfer && event.dataTransfer.files || [])];
+    if (!files.length) return;
     event.preventDefault();
-    for (const file of images.slice(0, Math.max(0, assistantAttachmentLimit() - AiAssistant.attachments.length))) {
-      await addPastedAssistantImage(file);
-    }
+    await addExternalAssistantFiles(files);
   });
   document.getElementById('ai-assistant-options-toggle').addEventListener('click', (event) => {
     const options = document.getElementById('ai-assistant-options');
