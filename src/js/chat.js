@@ -13,6 +13,7 @@ const ChatUiState = {
   view: 'messages',
   moments: [],
   pendingAttachments: [],
+  preserveAttachmentsForConversationChange: false,
   groupMode: 'create',
   ownAvatarDataUrl: '',
   ownAvatarUserId: null,
@@ -604,6 +605,30 @@ async function pickChatAttachment(kind) {
   addChatAttachmentDrafts(result.drafts);
 }
 
+async function queueBoardMediaToChat(fileIds) {
+  const ids = [...new Set((Array.isArray(fileIds) ? fileIds : [])
+    .map((id) => String(id || '').trim())
+    .filter(Boolean))].slice(0, 10);
+  if (!ids.length || !window.messsAPI.createChatBoardAttachmentDrafts) return false;
+  const chatTab = document.querySelector('.section-tab[data-section="chat"]');
+  if (chatTab) chatTab.click();
+  switchChatView('messages');
+  await ensureChatInitialized();
+  const result = await window.messsAPI.createChatBoardAttachmentDrafts(ids);
+  if (!result || !result.ok) {
+    chatNotice(result && result.message || t('Canvas media could not be added.', '无法将画布媒体添加到聊天。'));
+    return false;
+  }
+  // Keep drafts queued until the user chooses a direct or group conversation,
+  // adds text if needed, and explicitly presses Send.
+  addChatAttachmentDrafts(result.drafts);
+  ChatUiState.preserveAttachmentsForConversationChange = true;
+  chatNotice(t('Added to chat. Choose a conversation and press Send.', '已加入聊天，请选择会话后点击发送。'));
+  return true;
+}
+
+window.queueBoardMediaToChat = queueBoardMediaToChat;
+
 function chatClipboardPlainText(data) {
   if (!data || typeof data.getData !== 'function') return '';
   try { return String(data.getData('text/plain') || ''); } catch (error) { return ''; }
@@ -642,8 +667,13 @@ async function pasteChatClipboardAttachments(event) {
 }
 
 async function openChatConversation(conversationId) {
-  if (ChatUiState.activeConversationId && ChatUiState.activeConversationId !== conversationId) await clearChatAttachmentDrafts();
+  if (
+    ChatUiState.activeConversationId &&
+    ChatUiState.activeConversationId !== conversationId &&
+    !ChatUiState.preserveAttachmentsForConversationChange
+  ) await clearChatAttachmentDrafts();
   ChatUiState.activeConversationId = conversationId;
+  ChatUiState.preserveAttachmentsForConversationChange = false;
   ChatUiState.historyCursor = null;
   ChatUiState.renderedMessageIds.clear();
   chatEl('chat-thread-empty').hidden = true;

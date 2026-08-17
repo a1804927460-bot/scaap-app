@@ -11,6 +11,13 @@ const nodeNet = require('net');
 const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 const { autoUpdater } = require('electron-updater');
+let ElectronScreenshots = null;
+try {
+  const screenshotsModule = require('electron-screenshots');
+  ElectronScreenshots = screenshotsModule.default || screenshotsModule;
+} catch (error) {
+  console.warn('The native screenshot tool is unavailable:', error && error.message || error);
+}
 
 const { Store } = require('./lib/store');
 const {
@@ -239,6 +246,9 @@ let membershipService;
 let runtimeConfig;
 let supabaseAuth;
 let chatService;
+let chatScreenshotTool;
+let chatScreenshotInFlight = null;
+const CHAT_SCREENSHOT_START_TIMEOUT_MS = 12_000;
 let aiGateway;
 let gatewayCatalogCache = null;
 let gatewayAccountCache = null;
@@ -304,10 +314,10 @@ const BUTLER_IMAGE_TOOL_CREDITS = Object.freeze({
   'kling-image-expand': 48,
   cleanup: 48,
   'generative-upscale': 69,
-  'qwen-image-edit-plus': 2,
-  'qwen-image-layered': 1,
-  'super-upscale-v2': 2,
-  erase: 1
+  'qwen-image-edit-plus': 16,
+  'qwen-image-layered': 16,
+  'super-upscale-v2': 16,
+  erase: 16
 });
 const BUTLER_VIDEO_TOOL_ID = 'topaz-video-upscale';
 const BUTLER_VIDEO_MIME_BY_EXTENSION = Object.freeze({
@@ -4154,12 +4164,17 @@ async function createChatAttachmentDraft(filePath, options = {}) {
   const stat = await fs.promises.stat(absolute).catch(() => null);
   if (!stat || !stat.isFile()) throw Object.assign(new Error('The selected attachment is unavailable.'), { code: 'file-not-found' });
   const extension = path.extname(absolute).toLowerCase();
-  const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.avif', '.tif', '.tiff', '.bmp']);
-  const videoExtensions = new Set(['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi']);
+  const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.avif', '.tif', '.tiff', '.bmp', '.svg']);
+  const videoExtensions = new Set(['.mp4', '.webm', '.ogv', '.mov', '.m4v', '.mkv', '.avi', '.wmv', '.asf', '.flv', '.f4v', '.mts', '.m2ts', '.ts', '.m2t', '.mpg', '.mpeg', '.mpe', '.3gp', '.3g2', '.vob', '.rm', '.rmvb', '.divx', '.dv', '.mxf', '.y4m', '.prores']);
   const kind = options.forceImage || imageExtensions.has(extension) ? 'image' : 'file';
   const token = crypto.randomUUID();
   let previewDataUrl = null;
-  let mime = kind === 'image' ? `image/${extension === '.jpg' ? 'jpeg' : extension.slice(1)}` : 'application/octet-stream';
+  const imageMime = {
+    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp',
+    '.gif': 'image/gif', '.avif': 'image/avif', '.tif': 'image/tiff', '.tiff': 'image/tiff',
+    '.bmp': 'image/bmp', '.svg': 'image/svg+xml'
+  };
+  let mime = kind === 'image' ? (imageMime[extension] || 'application/octet-stream') : 'application/octet-stream';
   if (kind === 'image') {
     const source = nativeImage.createFromPath(absolute);
     if (!source.isEmpty()) {
@@ -4168,8 +4183,10 @@ async function createChatAttachmentDraft(filePath, options = {}) {
       previewDataUrl = preview.toDataURL();
     }
   }
-  if (modelId === 'generative-upscale') return {};
-  if (videoExtensions.has(extension)) mime = extension === '.webm' ? 'video/webm' : 'video/mp4';
+  if (videoExtensions.has(extension)) {
+    mime = extension === '.webm' ? 'video/webm'
+      : (extension === '.ogv' ? 'video/ogg' : (extension === '.mov' ? 'video/quicktime' : 'video/mp4'));
+  }
   const draft = {
     token,
     path: absolute,
@@ -4210,7 +4227,7 @@ function screenshotOverlayHtml(dataUrl, channel) {
     #shot{position:fixed;inset:0;width:100%;height:100%;object-fit:fill}#shade{position:fixed;inset:0;background:rgba(0,0,0,.34)}
     #box{position:fixed;border:1px solid #fff;box-shadow:0 0 0 99999px rgba(0,0,0,.34);display:none;pointer-events:none}
     #tip{position:fixed;left:50%;top:18px;transform:translateX(-50%);padding:7px 11px;border-radius:6px;background:rgba(20,22,26,.78);color:#fff;font:12px system-ui}
-  </style></head><body><img id="shot"><div id="shade"></div><div id="box"></div><div id="tip">Drag to capture · Esc to cancel</div><script>
+  </style></head><body><img id="shot"><div id="shade"></div><div id="box"></div><div id="tip">Drag to capture / Esc to cancel</div><script>
     const {ipcRenderer}=require('electron');const channel=${encodedChannel};const img=document.getElementById('shot');img.src=${encodedImage};
     const box=document.getElementById('box'),shade=document.getElementById('shade');let start=null;
     function rect(e){const x=Math.min(start.x,e.clientX),y=Math.min(start.y,e.clientY),w=Math.abs(e.clientX-start.x),h=Math.abs(e.clientY-start.y);return{x,y,width:w,height:h}}
@@ -4222,7 +4239,7 @@ function screenshotOverlayHtml(dataUrl, channel) {
   </script></body></html>`;
 }
 
-async function captureChatScreenshotDraft() {
+async function captureChatScreenshotDraftLegacy() {
   const displays = screen.getAllDisplays();
   const maxWidth = Math.max(...displays.map((display) => Math.round(display.size.width * (Number(display.scaleFactor) || 1))));
   const maxHeight = Math.max(...displays.map((display) => Math.round(display.size.height * (Number(display.scaleFactor) || 1))));
@@ -4285,6 +4302,144 @@ async function captureChatScreenshotDraft() {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
     overlays[0].focus();
   });
+}
+
+function chatScreenshotLanguage() {
+  return {
+    magnifier_position_label: localizedMessage('Position', '位置', '위치'),
+    operation_ok_title: localizedMessage('Add to chat', '添加到聊天', '채팅에 추가'),
+    operation_cancel_title: localizedMessage('Cancel', '取消', '취소'),
+    operation_save_title: localizedMessage('Save', '保存', '저장'),
+    operation_redo_title: localizedMessage('Redo', '重做', '다시 실행'),
+    operation_undo_title: localizedMessage('Undo', '撤销', '실행 취소'),
+    operation_mosaic_title: localizedMessage('Mosaic', '马赛克', '모자이크'),
+    operation_text_title: localizedMessage('Text', '文字', '텍스트'),
+    operation_brush_title: localizedMessage('Brush', '画笔', '브러시'),
+    operation_arrow_title: localizedMessage('Arrow', '箭头', '화살표'),
+    operation_ellipse_title: localizedMessage('Ellipse', '椭圆', '타원'),
+    operation_rectangle_title: localizedMessage('Rectangle', '矩形', '사각형')
+  };
+}
+
+function getChatScreenshotTool() {
+  if (!ElectronScreenshots) return null;
+  if (!chatScreenshotTool) {
+    try {
+      chatScreenshotTool = new ElectronScreenshots({
+        singleWindow: true,
+        lang: chatScreenshotLanguage(),
+        logger: () => {}
+      });
+      chatScreenshotTool.on('windowCreated', (window) => {
+        if (!window || window.isDestroyed()) return;
+        window.setAlwaysOnTop(true, 'screen-saver');
+      });
+    } catch (error) {
+      console.warn('The native screenshot tool could not initialize:', error && error.message || error);
+      chatScreenshotTool = null;
+    }
+  }
+  return chatScreenshotTool;
+}
+
+async function createChatScreenshotDraftFromBuffer(value) {
+  const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value || []);
+  if (buffer.length < 32 || buffer.length > 50 * 1024 * 1024) {
+    const error = new Error('The captured image is empty or too large.');
+    error.code = 'capture-invalid-image';
+    throw error;
+  }
+  const pngSignature = buffer.subarray(0, 8).toString('hex');
+  if (pngSignature !== '89504e470d0a1a0a') {
+    const error = new Error('The screenshot tool returned an invalid PNG image.');
+    error.code = 'capture-invalid-image';
+    throw error;
+  }
+  const directory = path.join(app.getPath('temp'), 'messs-chat-captures');
+  await fs.promises.mkdir(directory, { recursive: true });
+  const temporaryPath = path.join(directory, `screenshot-${Date.now()}-${crypto.randomUUID()}.png`);
+  await fs.promises.writeFile(temporaryPath, buffer);
+  try {
+    return await createChatAttachmentDraft(temporaryPath, {
+      temporary: true,
+      forceImage: true,
+      name: 'Screenshot.png'
+    });
+  } catch (error) {
+    await fs.promises.rm(temporaryPath, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+async function captureChatScreenshotWithNativeTool() {
+  const tool = getChatScreenshotTool();
+  if (!tool) return { ok: false, reason: 'capture-backend-unavailable' };
+  // Language refresh is best-effort. Waiting for the screenshot BrowserView
+  // here would leave the chat button disabled forever if that view cannot load.
+  void Promise.resolve().then(() => tool.setLang(chatScreenshotLanguage())).catch(() => {});
+  return new Promise((resolve) => {
+    let settled = false;
+    let startFailureInFlight = false;
+    let startTimeout = null;
+    const cleanup = () => {
+      if (startTimeout) clearTimeout(startTimeout);
+      startTimeout = null;
+      tool.removeListener('ok', onOk);
+      tool.removeListener('cancel', onCancel);
+    };
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+    const onOk = (_event, buffer) => {
+      void createChatScreenshotDraftFromBuffer(buffer)
+        .then((draft) => finish({ ok: true, draft }))
+        .catch((error) => finish({ ok: false, reason: error.code || 'capture-failed', message: error.message }));
+    };
+    const onCancel = () => finish({ ok: false, reason: 'cancelled' });
+    tool.once('ok', onOk);
+    tool.once('cancel', onCancel);
+    const failStart = async (error) => {
+      if (settled || startFailureInFlight) return;
+      startFailureInFlight = true;
+      await tool.endCapture().catch(() => {});
+      finish({ ok: false, reason: 'capture-backend-failed', message: error.message });
+    };
+    startTimeout = setTimeout(() => {
+      const error = new Error('The native screenshot tool did not start in time.');
+      error.code = 'capture-start-timeout';
+      void failStart(error);
+    }, CHAT_SCREENSHOT_START_TIMEOUT_MS);
+    Promise.resolve().then(() => tool.startCapture()).then(() => {
+      if (settled) {
+        void tool.endCapture().catch(() => {});
+        return;
+      }
+      if (startTimeout) clearTimeout(startTimeout);
+      startTimeout = null;
+    }).catch(failStart);
+  });
+}
+
+async function captureChatScreenshotDraft() {
+  if (chatScreenshotInFlight) {
+    return { ok: false, reason: 'capture-busy', message: 'A screenshot is already in progress.' };
+  }
+  const operation = (async () => {
+    const nativeResult = await captureChatScreenshotWithNativeTool();
+    if (nativeResult.ok || nativeResult.reason === 'cancelled') return nativeResult;
+    // Keep the Electron desktopCapturer path as a compatibility fallback for
+    // systems where the optional native monitor module cannot initialize.
+    return captureChatScreenshotDraftLegacy();
+  })();
+  chatScreenshotInFlight = operation;
+  try {
+    return await operation;
+  } finally {
+    if (chatScreenshotInFlight === operation) chatScreenshotInFlight = null;
+  }
 }
 
 function registerIpcHandlers() {
@@ -4855,6 +5010,35 @@ function registerIpcHandlers() {
     } catch (error) {
       return { ok: false, reason: error.code || 'attachment-failed', message: error.message };
     }
+  });
+
+  ipcMain.handle('chat:createBoardAttachmentDrafts', async (_evt, fileIds) => {
+    cleanupExpiredChatDrafts();
+    const ids = [...new Set((Array.isArray(fileIds) ? fileIds : [])
+      .map((id) => String(id || '').trim())
+      .filter((id) => /^[A-Za-z0-9_-]{1,128}$/.test(id)))].slice(0, 10);
+    if (!ids.length) return { ok: false, reason: 'no-media', message: 'Select an image or video on the canvas first.' };
+    const drafts = [];
+    try {
+      for (const id of ids) {
+        const file = store.getFile(id);
+        const extension = String(file && (file.ext || path.extname(file.name)) || '').toLowerCase();
+        const isImage = preview.isImageExt(extension);
+        const isVideo = preview.isVideoExt(extension);
+        if (!file || !file.storedPath || (!isImage && !isVideo)) continue;
+        assertSafeLocalFile(file);
+        if (!fs.existsSync(file.storedPath)) continue;
+        drafts.push(await createChatAttachmentDraft(file.storedPath, {
+          forceImage: isImage,
+          name: file.name
+        }));
+      }
+    } catch (error) {
+      await Promise.all(drafts.map((draft) => discardChatAttachmentDraft(draft.token).catch(() => false)));
+      return { ok: false, reason: error.code || 'attachment-failed', message: error.message };
+    }
+    if (!drafts.length) return { ok: false, reason: 'no-media', message: 'The selected canvas items are not available as images or videos.' };
+    return { ok: true, drafts };
   });
 
   ipcMain.handle('chat:readClipboardDrafts', async () => {
@@ -6839,6 +7023,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  if (chatScreenshotTool) void chatScreenshotTool.endCapture().catch(() => {});
   for (const draft of [...chatAttachmentDrafts.values()]) discardChatAttachmentDraft(draft.token).catch(() => {});
   preview.shutdownProcesses();
   thumbnails.shutdownProcesses();

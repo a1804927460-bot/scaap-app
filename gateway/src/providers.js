@@ -63,6 +63,7 @@ function configuredProviders() {
     const endpoint = safeServerEndpoint(raw.endpoint);
     const keyEnv = String(raw.keyEnv || '').trim();
     if (!PROVIDER_ID.test(id) || !kind || !endpoint || !PROVIDER_KEY_ENV.test(keyEnv)) continue;
+    const builtin = byId.get(id);
     byId.set(id, {
       id, kind,
       name: String(raw.name || id).trim().slice(0, 80),
@@ -71,7 +72,12 @@ function configuredProviders() {
       models: Array.isArray(raw.models) ? raw.models.map(String).map((v) => v.trim()).filter(Boolean).slice(0, 30) : [],
       model: String(raw.model || '').trim().slice(0, 120),
       protocol: String(raw.protocol || '').trim().slice(0, 40),
-      capabilities: raw.capabilities && typeof raw.capabilities === 'object' ? raw.capabilities : null,
+      // Capabilities for catalog models are versioned with the application.
+      // Deployment overrides may replace endpoints or credentials, but must
+      // not revive a stale resolution/mode matrix for a built-in model.
+      capabilities: builtin && builtin.capabilities
+        ? builtin.capabilities
+        : (raw.capabilities && typeof raw.capabilities === 'object' ? raw.capabilities : null),
       hidden: raw.hidden === true,
       keyEnv
     });

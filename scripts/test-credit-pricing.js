@@ -8,6 +8,7 @@ const {
   POINTS_PER_CNY,
   PROFIT_PER_REQUEST_CNY,
   PROFIT_PER_REQUEST_CREDITS,
+  MINIMUM_VIDEO_CREDITS,
   IMAGE_QUALITY_PRICES,
   IMAGE_RESOLUTION_PRICES,
   VIDEO_RATES,
@@ -19,8 +20,8 @@ const {
 assert.strictEqual(POINTS_PER_CNY, 10);
 assert.strictEqual(PROFIT_PER_REQUEST_CNY, 1.4);
 assert.strictEqual(PROFIT_PER_REQUEST_CREDITS, 14);
+assert.strictEqual(MINIMUM_VIDEO_CREDITS, 30);
 assert.strictEqual(retailCreditsFromUpstreamCny(1.5), 29, 'CNY 1.5 upstream cost must retail for CNY 2.9.');
-assert.strictEqual(Math.ceil(1.5 * POINTS_PER_CNY * 1.15), 18, 'Staff price must be upstream cost plus 15%, without the public fixed profit.');
 assert.strictEqual(retailCreditsFromUpstreamCny(0), 14, 'Every paid request must include the CNY 1.4 fixed profit.');
 assert.throws(() => retailCreditsFromUpstreamCny(-0.01), TypeError);
 
@@ -122,6 +123,7 @@ assert.deepStrictEqual(quoteMediaCredits({
   unit: 'second',
   unitCredits: 8,
   fixedCredits: 14,
+  minimumCredits: 30,
   totalCredits: 62
 });
 
@@ -151,7 +153,8 @@ assert.deepStrictEqual(quoteMediaCredits({
   unit: 'second',
   unitCredits: 1.5,
   fixedCredits: 14,
-  totalCredits: 22
+  minimumCredits: 30,
+  totalCredits: 30
 });
 
 assert.strictEqual(quoteMediaCredits({
@@ -159,14 +162,14 @@ assert.strictEqual(quoteMediaCredits({
   videoProviderId: 'video-3',
   resolution: '720P',
   duration: 5
-}).totalCredits, 29);
+}).totalCredits, 30);
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'video',
   videoProviderId: 'video-2',
   resolution: 'unsupported',
   duration: 6
-}).totalCredits, 29, 'Unknown Seedance resolutions must use that provider\'s default 720P rate.');
+}).totalCredits, 30, 'Unknown Seedance resolutions must use that provider\'s default 720P rate.');
 
 assert.strictEqual(
   quoteMediaCredits({ kind: 'video', videoProviderId: 'video-3', resolution: '480P', duration: 30 }).totalCredits,
@@ -177,6 +180,7 @@ assert.strictEqual(
 const publicPricing = publicCreditPricing();
 assert.strictEqual(publicPricing.pointsPerCny, 10);
 assert.strictEqual(publicPricing.profitPerRequestCny, 1.4);
+assert.strictEqual(publicPricing.minimumVideoCredits, 30);
 assert.strictEqual(publicPricing.image['image-5'], 16);
 assert.strictEqual(publicPricing.image['image-9'], 17);
 assert.strictEqual(publicPricing.image['image-6'], 20);
@@ -194,7 +198,8 @@ const assistantSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 
 const mainSource = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
 const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
 const runtimeSource = fs.readFileSync(path.join(__dirname, '..', 'config', 'provider-catalog.json'), 'utf8');
-const staffMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608170001_cost_plus_fixed_profit_credits.sql'), 'utf8');
+const unifiedPricingMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608180001_unified_credit_pricing.sql'), 'utf8');
+const redemptionMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608180002_three_666_credit_codes.sql'), 'utf8');
 const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
 const boardStyles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles', 'main.css'), 'utf8');
 assert.match(
@@ -240,8 +245,12 @@ assert.match(
 assert.doesNotMatch(mainSource, /Chaser0713|49c8f3fd5b5b39253cf33a3bbcd14a270c8fbada802b1248408bdf7ccac98415/);
 assert.doesNotMatch(preloadSource, /Chaser0713|staff15|pricing_tier/);
 assert.doesNotMatch(runtimeSource, /Chaser0713|staff15|pricing_tier/);
-assert.match(staffMigration, /49c8f3fd5b5b39253cf33a3bbcd14a270c8fbada802b1248408bdf7ccac98415/);
-assert.doesNotMatch(staffMigration, /Chaser0713/);
+assert.match(unifiedPricingMigration, /pricing_tier = 'standard'/);
+assert.match(unifiedPricingMigration, /greatest\(30,[\s\S]*?normalized_duration/);
+assert.doesNotMatch(unifiedPricingMigration, /Chaser0713|staff15/);
+assert.strictEqual((redemptionMigration.match(/, 666, false, 1, null, true\)/g) || []).length, 3);
+assert.strictEqual((redemptionMigration.match(/'[0-9a-f]{64}'/g) || []).length, 3);
+assert.doesNotMatch(redemptionMigration, /MESSS-666-/);
 assert.match(
   mainSource,
   /const creditsCharged = kind === 'image'[\s\S]*?creditQuote\.unitCredits \* files\.length[\s\S]*?settledCredits: creditsCharged[\s\S]*?estimatedCredits: creditQuote\.totalCredits,[\s\S]*?creditsCharged,[\s\S]*?pricing:/,

@@ -82,6 +82,8 @@ export const VIDEO_DURATION_LIMITS = Object.freeze({
   'video-13': Object.freeze({ minimum: 3, maximum: 15 })
 });
 
+export const MINIMUM_VIDEO_CREDITS = 30;
+
 const DURABLE_TIMEOUT_MS = 5_000;
 const VALID_RESERVE_REASONS = new Set([
   'reserved',
@@ -185,7 +187,7 @@ export function quoteUsage(kind, request = {}) {
     return {
       kind: 'video',
       providerId,
-      credits: Math.ceil(rates[resolution] * duration + 14),
+      credits: Math.max(MINIMUM_VIDEO_CREDITS, Math.ceil(rates[resolution] * duration + 14)),
       resolution,
       duration,
       requiresActivation: providerRequiresActivation('video', providerId)
@@ -236,46 +238,10 @@ async function reserveCredits(headers, requestBody, fetchImpl, rpcName = 'reserv
   return { response, payload: await responsePayload(response) };
 }
 
-async function authorizedPricingTier(userId, headers, fetchImpl) {
-  const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/get_ai_pricing_tier`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ p_user_id: userId }),
-    signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
-  });
-  const payload = await responsePayload(response);
-  if (!response.ok) {
-    if (isMissingCreditRpc(response, payload)) {
-      // Pricing tiers are an optional extension of the credit schema.  A
-      // gateway deployed ahead of the Supabase migration must continue to
-      // quote at the public/standard rate; standard is the conservative rate
-      // and never grants the private staff discount.  Reservation RPCs still
-      // remain authoritative and fail closed until their migration exists.
-      return 'standard';
-    }
-    const code = 'credit-service-failed';
-    throw serviceError(code, 'Could not resolve account pricing.');
-  }
-  return payload === 'staff15' ? 'staff15' : 'standard';
-}
-
-function internalUsageQuote(kind, request) {
-  const quote = quoteUsage(kind, request);
-  if (quote.kind === 'chat') return quote;
-  return {
-    ...quote,
-    credits: Math.ceil(Math.max(0, quote.credits - 14) * 1.15)
-  };
-}
-
 export async function quoteUsageForUser(userId, kind, request = {}, fetchImpl = fetch) {
-  const headers = serviceHeaders();
-  if (!headers) {
-    if (durableRequired()) throw serviceError('credit-service-not-configured', 'Durable credit enforcement is not configured.');
-    return quoteUsage(kind, request);
-  }
-  const tier = await authorizedPricingTier(userId, headers, fetchImpl);
-  return tier === 'staff15' ? internalUsageQuote(kind, request) : quoteUsage(kind, request);
+  void userId;
+  void fetchImpl;
+  return quoteUsage(kind, request);
 }
 
 async function openLegacyModelAccess(headers, userId, fetchImpl) {
@@ -310,9 +276,8 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
     }
     return { ok: true, reason: 'development-bypass', ...quoteUsage(kind, request), developmentBypass: true };
   }
-  // The database owns the pricing tier.  Start with the public quote; if the
-  // locked account row resolves to another authorized total, the RPC returns
-  // that total and we replay the same idempotent request once.
+  // Every account uses the same quote. Supabase independently recomputes the
+  // total and a mismatch fails closed during rolling deployments.
   const quote = quoteUsage(kind, request);
 
   let requestBody = JSON.stringify({

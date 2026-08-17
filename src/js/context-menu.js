@@ -391,6 +391,14 @@ async function sendFileToWeChatHelper(fileId) {
   }
 }
 
+async function sendBoardMediaToChat(fileIds) {
+  if (typeof window.queueBoardMediaToChat !== 'function') {
+    showToast(t('Chat is still loading. Please try again.', '聊天正在加载，请稍后重试。'));
+    return false;
+  }
+  return window.queueBoardMediaToChat(fileIds);
+}
+
 function duplicateBoardItem(item) {
   copyBoardSelection([item]);
   const copies = pasteBoardClipboard(item.x + 28, item.y + 28);
@@ -429,6 +437,11 @@ function showBoardItemContextMenu(item, x, y) {
       }
     ];
     if (isImage || isVideo) {
+      items.push({
+        label: t('Send to Chat', '发送到聊天'),
+        icon: 'M4 5h16v12H8l-4 3V5z;M8 9h.01;M12 9h.01;M16 9h.01',
+        action: () => sendBoardMediaToChat([item.fileId])
+      });
       items.push({
         label: t('Send to WeChat File Transfer', '发送到微信文件传输助手'),
         icon: 'M4 5h16v12H8l-4 3V5z;M8 9h.01;M12 9h.01;M16 9h.01',
@@ -487,6 +500,7 @@ const MULTI_MENU_ITEMS = [
     { key: 'scale-min', label: ['Scale to Minimum', '缩小至最小', '최소로 축소'] }
   ] },
   { key: 'download', label: ['Export', '导出'] },
+  { key: 'send-chat', label: ['Send to Chat', '发送到聊天'] },
   { key: 'group', label: ['Group', '成组'] },
   { key: 'ungroup', label: ['Ungroup', '取消成组'] },
   { key: 'delete', label: ['Delete', '删除'], danger: true }
@@ -625,6 +639,20 @@ async function runMultiMenuAction(key, x, y) {
       }
       showToast(t(`Exported ${selected.length} file${selected.length === 1 ? '' : 's'}`, `已导出 ${selected.length} 个文件`));
       break;
+    case 'send-chat': {
+      const mediaIds = selected
+        .filter((item) => {
+          const file = AppState.files.find((entry) => entry.id === item.fileId);
+          return file && (isImageExt(file.ext) || isVideoExt(file.ext));
+        })
+        .map((item) => item.fileId);
+      if (!mediaIds.length) {
+        showToast(t('Select at least one image or video.', '请至少选择一张图片或一个视频。'));
+        break;
+      }
+      await sendBoardMediaToChat(mediaIds);
+      break;
+    }
     case 'group': {
       const groupId = 'g_' + Math.random().toString(36).slice(2, 10);
       selected.forEach((item) => { item.groupId = groupId; window.messsAPI.upsertBoardItem(item); });

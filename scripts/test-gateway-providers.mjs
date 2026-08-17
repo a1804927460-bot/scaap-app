@@ -147,6 +147,24 @@ assert.equal(seedance25Provider.capabilities.maxReferenceImages, 9);
 assert.equal(seedance25Provider.capabilities.videoModes[3].maxReferenceVideos, 6);
 assert.equal(Object.hasOwn(seedance25Provider.capabilities.videoModes[1], 'ratios'), false);
 assert.equal(Object.hasOwn(seedance25Provider.capabilities.videoModes[2], 'ratios'), false);
+const providerOverridesBeforeStaleSeedance = process.env.AI_PROVIDERS_JSON;
+process.env.AI_PROVIDERS_JSON = JSON.stringify([{
+  id: 'video-3',
+  kind: 'video',
+  name: 'Seedance 2.5 deployment override',
+  endpoint: 'https://api.302.ai/volcengine/api/v3/contents/generations/tasks',
+  resultEndpoint: 'https://api.302.ai/volcengine/api/v3/contents/generations/tasks',
+  model: 'doubao-seedance-2-5-260628',
+  protocol: 'seedance-video-v3',
+  keyEnv: 'AI302_KEY',
+  capabilities: { resolutions: ['480P'] }
+}]);
+assert.deepEqual(
+  publicProviderConfig().providers.find((provider) => provider.id === 'video-3').capabilities.resolutions,
+  ['480P', '720P'],
+  'Stale deployment overrides must not remove built-in Seedance resolutions.'
+);
+process.env.AI_PROVIDERS_JSON = providerOverridesBeforeStaleSeedance;
 assert.equal(config.providers.find((provider) => provider.id === 'chat-1').name, 'Messs AI');
 assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-1').models, [
   'gemini-3.7-flash'
@@ -594,9 +612,9 @@ assert.deepEqual(await pollVideoTask('video-2', 'seedance-20-task'), {
 const createdSeedance25 = await createVideoTask({
   providerId: 'video-3',
   prompt: 'cinematic city at dawn',
-  resolution: '480P',
-  duration: 30,
-  aspectRatio: '16:9',
+  resolution: '720P',
+  duration: 4,
+  aspectRatio: 'adaptive',
   videoMode: 'text',
   urls: []
 });
@@ -609,9 +627,9 @@ assert.deepEqual(JSON.parse(seedance25CreateCall.options.body), {
   model: 'doubao-seedance-2-5-260628',
   content: [{ type: 'text', text: 'cinematic city at dawn' }],
   generate_audio: true,
-  ratio: '16:9',
-  duration: 30,
-  resolution: '480p',
+  ratio: 'adaptive',
+  duration: 4,
+  resolution: '720p',
   watermark: false
 });
 assert.deepEqual(await pollVideoTask('video-3', 'seedance-25-task'), { status: 'running' });

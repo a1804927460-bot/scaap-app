@@ -358,7 +358,7 @@ assert.match(boardSource, /const BOARD_WHEEL_PAN_GAIN = 0\.64;/);
 assert.match(boardSource, /const BOARD_WHEEL_ZOOM_RATE = 0\.001;/);
 assert.match(
   boardSource,
-  /function finishBoardWheelInteraction[\s\S]*?isWheelZooming = false[\s\S]*?scheduleBoardReconcile\(\)[\s\S]*?scheduleMountedImageQuality\(0\)[\s\S]*?function beginBoardWheelInteraction[\s\S]*?isWheelZooming = true/,
+  /function finishBoardWheelInteraction[\s\S]*?isWheelZooming = false[\s\S]*?applyBoardTransform\(\)[\s\S]*?function beginBoardWheelInteraction[\s\S]*?clearTimeout\(Board\.qualityTimer\)[\s\S]*?isWheelZooming = true/,
   'Wheel input must defer expensive canvas reconciliation until scrolling settles.'
 );
 assert.match(
@@ -577,13 +577,13 @@ const qualitySource = boardSource.slice(
 );
 assert.match(
   qualitySource,
-  /Board\.isPanning \|\| Board\.zoomFrame \|\| Date\.now\(\) < Board\.interactingUntil/,
+  /Board\.isWheelZooming \|\| Board\.isPanning \|\| Board\.zoomFrame \|\| Date\.now\(\) < Board\.interactingUntil/,
   'Image LOD changes must remain frozen for the full pan/zoom interaction.'
 );
 assert.match(
   qualitySource,
-  /image\.dataset\.quality === 'full' && quality === 'thumb'/,
-  'Decoded full-resolution images must not downgrade and flash during later zoom changes.'
+  /image\.dataset\.quality === 'full' && quality === 'thumb' && Board\.visibleIds\.has\(id\)/,
+  'Visible full-resolution images must remain stable while offscreen retained textures can be reclaimed.'
 );
 assert.match(
   boardSource,
@@ -592,8 +592,8 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /function scheduleBoardFullImagePrewarm[\s\S]*?prewarmMountedFullImages[\s\S]*?scheduleBoardFullImagePrewarm\(Board\.zoomTarget\.zoom\)/,
-  'Zoom targets must prewarm full images before the visible quality threshold is crossed.'
+  /function scheduleBoardFullImagePrewarm[\s\S]*?if \(Board\.isWheelZooming \|\| Board\.isPanning\) return[\s\S]*?prewarmMountedFullImages[\s\S]*?scheduleBoardFullImagePrewarm\(Board\.zoomTarget\.zoom\)/,
+  'Full-image prewarming must pause during wheel/pan input and resume for programmatic zoom targets.'
 );
 assert.match(
   boardSource,
@@ -602,8 +602,8 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /function processBoardMountQueue[\s\S]*?scheduleBoardFullImagePrewarm\(Board\.zoom\)[\s\S]*?scheduleMountedImageQuality\(\)/,
-  'Visible images must begin loading their originals immediately after mounting, before the user zooms.'
+  /function processBoardMountQueue[\s\S]*?if \(Board\.mountQueue\.size\)[\s\S]*?else \{[\s\S]*?scheduleBoardFullImagePrewarm\(Board\.zoom\)[\s\S]*?scheduleMountedImageQuality\(\)/,
+  'Visible images must begin loading originals once the multi-frame mount queue has drained.'
 );
 assert.match(
   boardSource,

@@ -505,6 +505,7 @@ function prewarmMountedFullImages(zoom) {
 function scheduleBoardFullImagePrewarm(zoom) {
   const requestedZoom = Number.isFinite(zoom) ? zoom : Board.zoom;
   Board.fullImagePrewarmZoom = Math.max(Board.fullImagePrewarmZoom || 0, requestedZoom);
+  if (Board.isWheelZooming || Board.isPanning) return;
   if (Board.fullImagePrewarmTimer) return;
   Board.fullImagePrewarmTimer = window.setTimeout(() => {
     Board.fullImagePrewarmTimer = 0;
@@ -596,6 +597,7 @@ function loadBoardPreview(fileId) {
 }
 
 function scheduleMountedImageQuality(delay = BOARD_QUALITY_SETTLE_MS) {
+  if (Board.isWheelZooming || Board.isPanning) return;
   clearTimeout(Board.qualityTimer);
   if (Board.qualityIdle && typeof cancelIdleCallback === 'function') {
     cancelIdleCallback(Board.qualityIdle);
@@ -622,11 +624,13 @@ function invalidateBoardPreview(fileId) {
 
 function markBoardInteraction() {
   Board.interactingUntil = Date.now() + BOARD_QUALITY_SETTLE_MS;
-  scheduleMountedImageQuality(BOARD_QUALITY_SETTLE_MS);
+  if (!Board.isWheelZooming && !Board.isPanning) {
+    scheduleMountedImageQuality(BOARD_QUALITY_SETTLE_MS);
+  }
 }
 
 function syncMountedImageQuality() {
-  if (Board.isPanning || Board.zoomFrame || Date.now() < Board.interactingUntil) {
+  if (Board.isWheelZooming || Board.isPanning || Board.zoomFrame || Date.now() < Board.interactingUntil) {
     scheduleMountedImageQuality();
     return;
   }
@@ -643,10 +647,10 @@ function syncMountedImageQuality() {
     const image = activeBoardImage(element);
     if (!image) continue;
     const quality = fullIds.has(id) ? 'full' : 'thumb';
-    // Keep decoded full-resolution layers for the lifetime of the mounted
-    // item. Downgrading on zoom-out and upgrading again on zoom-in makes the
-    // same image visibly pulse between sharp and soft states.
-    if (image.dataset.quality === 'full' && quality === 'thumb') continue;
+    // Keep visible full-resolution layers stable so zooming never flashes a
+    // thumbnail. Retained items outside the viewport are safe to downgrade;
+    // otherwise a long canvas session accumulates many 4K GPU textures.
+    if (image.dataset.quality === 'full' && quality === 'thumb' && Board.visibleIds.has(id)) continue;
     if (image.dataset.quality === quality) continue;
     transitionBoardImageQuality(element, quality);
   }
@@ -687,14 +691,14 @@ function applyBoardTransform() {
     );
     document.getElementById('board-zoom-label').textContent = Math.round(Board.zoom * 100) + '%';
     updateInfiniteGrid();
-    markBoardInteraction();
     clearTimeout(Board.transformSettleTimer);
     Board.transformSettleTimer = window.setTimeout(() => {
       canvas.classList.remove('is-transforming');
-      scheduleMountedImageQuality(0);
     }, BOARD_QUALITY_SETTLE_MS + 30);
     scheduleBoardReconcile();
     scheduleBoardViewportSave();
+    scheduleBoardFullImagePrewarm(Board.zoom);
+    scheduleMountedImageQuality();
   });
 }
 
@@ -702,16 +706,25 @@ function finishBoardWheelInteraction() {
   Board.wheelSettleTimer = 0;
   if (!Board.isWheelZooming) return;
   Board.isWheelZooming = false;
-  // The transform is already at the latest target. This frame only performs
-  // deferred overlay, visibility, quality and persistence work.
+  // The transform is already at the latest target. applyBoardTransform runs
+  // the deferred overlay, visibility, quality and persistence work once.
   applyBoardTransform();
-  scheduleBoardReconcile();
-  scheduleBoardViewportSave();
-  scheduleBoardFullImagePrewarm(Board.zoom);
-  scheduleMountedImageQuality(0);
 }
 
 function beginBoardWheelInteraction() {
+  if (!Board.isWheelZooming) {
+    clearTimeout(Board.qualityTimer);
+    Board.qualityTimer = 0;
+    if (Board.qualityIdle && typeof cancelIdleCallback === 'function') {
+      cancelIdleCallback(Board.qualityIdle);
+      Board.qualityIdle = 0;
+    }
+    if (Board.fullImagePrewarmTimer) {
+      clearTimeout(Board.fullImagePrewarmTimer);
+      Board.fullImagePrewarmTimer = 0;
+    }
+    Board.fullImagePrewarmZoom = 0;
+  }
   Board.isWheelZooming = true;
   clearTimeout(Board.wheelSettleTimer);
   Board.wheelSettleTimer = window.setTimeout(finishBoardWheelInteraction, 120);
@@ -1890,10 +1903,14 @@ function processBoardMountQueue() {
 
   if (Board.mountQueue.size) {
     Board.mountFrame = requestAnimationFrame(processBoardMountQueue);
+  } else {
+    // A mount burst can span several frames. Prewarming and quality selection
+    // once, after the queue drains, avoids repeated image decode/layout work
+    // while the user is still scrolling.
+    scheduleBoardFullImagePrewarm(Board.zoom);
+    scheduleMountedImageQuality();
   }
   syncBoardOverviewFallback();
-  scheduleBoardFullImagePrewarm(Board.zoom);
-  scheduleMountedImageQuality();
 }
 
 function queueBoardMounts(ids, visibleRect) {

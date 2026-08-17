@@ -640,8 +640,25 @@ function message(clientId, conversationId, createdAt, extra = {}) {
   assert.match(serviceSource, /client\.storage\.from\('chat-files'\)/);
   assert.match(mainSource, /ipcMain\.handle\('chat:sendFile'/);
   assert.match(mainSource, /desktopCapturer\.getSources/);
+  assert.match(mainSource, /require\('electron-screenshots'\)/);
+  assert.match(mainSource, /new ElectronScreenshots\([\s\S]*?singleWindow:\s*true/,
+    'The mature screenshot window must be reused to avoid repeated startup lag.');
+  assert.match(mainSource, /captureChatScreenshotWithNativeTool[\s\S]*?createChatScreenshotDraftFromBuffer/);
+  assert.match(mainSource, /CHAT_SCREENSHOT_START_TIMEOUT_MS[\s\S]*?capture-start-timeout[\s\S]*?captureChatScreenshotDraftLegacy/,
+    'A stalled native capture must time out and fall back instead of disabling screenshot forever.');
+  assert.match(mainSource, /captureChatScreenshotDraft[\s\S]*?captureChatScreenshotDraftLegacy/,
+    'Native screenshot failures must retain the Electron compatibility fallback.');
+  assert.match(mainSource, /pngSignature !== '89504e470d0a1a0a'/,
+    'Screenshot drafts must validate PNG bytes before entering chat.');
   assert.match(mainSource, /ipcMain\.handle\('chat:captureScreenshotDraft'/);
   assert.match(mainSource, /createChatAttachmentDraft/);
+  const chatDraftSource = mainSource.slice(
+    mainSource.indexOf('async function createChatAttachmentDraft'),
+    mainSource.indexOf('async function discardChatAttachmentDraft')
+  );
+  assert.doesNotMatch(chatDraftSource, /\bmodelId\b/,
+    'Chat attachment drafts must not reference an undefined AI model variable.');
+  assert.match(mainSource, /ipcMain\.handle\('chat:createBoardAttachmentDrafts'[\s\S]*?store\.getFile\(id\)[\s\S]*?createChatAttachmentDraft/);
   assert.match(mainSource, /ipcMain\.handle\('chat:readClipboardDrafts'/);
   assert.match(mainSource, /ipcMain\.handle\('clipboard:copyBoardMedia'/);
   assert.match(mainSource, /protocol\.handle\('messs-chat-file'/);
@@ -649,7 +666,9 @@ function message(clientId, conversationId, createdAt, extra = {}) {
   assert.match(preloadSource, /sendChatFile:\s*\(conversationId\)\s*=>\s*ipcRenderer\.invoke\('chat:sendFile', conversationId\)/);
   assert.match(preloadSource, /captureChatScreenshotDraft:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('chat:captureScreenshotDraft'\)/);
   assert.match(preloadSource, /sendChatAttachmentDraft:/);
+  assert.match(preloadSource, /createChatBoardAttachmentDrafts:[\s\S]*?chat:createBoardAttachmentDrafts/);
   const chatUiSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'chat.js'), 'utf8');
+  const contextMenuSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'context-menu.js'), 'utf8');
   const emojiStart = chatUiSource.indexOf('const CHAT_EMOJI = ');
   const emojiEnd = chatUiSource.indexOf('];', emojiStart) + 2;
   const emojiList = Function(`return ${chatUiSource.slice(emojiStart, emojiEnd).replace('const CHAT_EMOJI = ', '')}`)();
@@ -668,6 +687,11 @@ function message(clientId, conversationId, createdAt, extra = {}) {
   assert.match(indexSource, /id="chat-group-modal"/);
   assert.match(indexSource, /id="chat-attachment-tray"/);
   assert.match(chatUiSource, /pendingAttachments/);
+  assert.match(chatUiSource, /queueBoardMediaToChat[\s\S]*?createChatBoardAttachmentDrafts[\s\S]*?addChatAttachmentDrafts/);
+  assert.match(chatUiSource, /preserveAttachmentsForConversationChange[\s\S]*?openChatConversation/,
+    'Canvas attachments must survive choosing either a direct or group conversation.');
+  assert.match(contextMenuSource, /Send to Chat[\s\S]*?sendBoardMediaToChat/);
+  assert.match(contextMenuSource, /key: 'send-chat'[\s\S]*?isImageExt\(file\.ext\) \|\| isVideoExt\(file\.ext\)/);
   assert.match(chatUiSource, /readChatClipboardDrafts\(\)/);
   assert.match(chatUiSource, /pasteChatClipboardAttachments[\s\S]*?event\.preventDefault\(\)[\s\S]*?readChatClipboardDrafts\(\)[\s\S]*?restoreChatClipboardText/,
     'Chat paste must inspect native CF_HDROP before falling back to text.');

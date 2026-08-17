@@ -206,6 +206,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   sendChatFile: (conversationId) => ipcRenderer.invoke('chat:sendFile', conversationId),
   pickChatImageDrafts: () => ipcRenderer.invoke('chat:pickImageDraft'),
   pickChatFileDrafts: () => ipcRenderer.invoke('chat:pickFileDraft'),
+  createChatBoardAttachmentDrafts: (fileIds) => ipcRenderer.invoke('chat:createBoardAttachmentDrafts', fileIds),
   readChatClipboardDrafts: () => ipcRenderer.invoke('chat:readClipboardDrafts'),
   captureChatScreenshotDraft: () => ipcRenderer.invoke('chat:captureScreenshotDraft'),
   discardChatAttachmentDraft: (token) => ipcRenderer.invoke('chat:discardAttachmentDraft', token),

@@ -22,8 +22,6 @@ import {
   PROFIT_PER_REQUEST_CNY,
   USD_TO_CNY,
   quoteButlerRetailCredits,
-  quoteInternalButlerRetailCredits,
-  quoteInternalCreditsFromCny,
   quoteRetailCreditsFromCny,
   quoteTopazRetailCredits
 } from '../src/tool-pricing.js';
@@ -83,11 +81,11 @@ test('video quote clamps provider parameters, chat remains free, and no provider
   assert.equal(quoteUsage('video', { providerId: 'video-1', resolution: '768P', duration: 1 }).credits, 34);
   assert.equal(quoteUsage('video', { providerId: 'video-1', resolution: '2K', duration: 99 }).credits, 134);
   assert.deepEqual(quoteUsage('video', { providerId: 'video-2', resolution: '480p', duration: 5 }), {
-    kind: 'video', providerId: 'video-2', credits: 22, resolution: '480P', duration: 5, requiresActivation: false
+    kind: 'video', providerId: 'video-2', credits: 30, resolution: '480P', duration: 5, requiresActivation: false
   });
-  assert.equal(quoteUsage('video', { providerId: 'video-2', resolution: 'unsupported', duration: 6 }).credits, 29);
+  assert.equal(quoteUsage('video', { providerId: 'video-2', resolution: 'unsupported', duration: 6 }).credits, 30);
   assert.deepEqual(quoteUsage('video', { providerId: 'video-3', resolution: '720p', duration: 5 }), {
-    kind: 'video', providerId: 'video-3', credits: 29, resolution: '720P', duration: 5, requiresActivation: false
+    kind: 'video', providerId: 'video-3', credits: 30, resolution: '720P', duration: 5, requiresActivation: false
   });
   assert.equal(quoteUsage('chat', { providerId: 'chat-1' }).credits, 0);
   assert.equal(quoteUsage('chat', { providerId: 'chat-2' }).credits, 0);
@@ -172,24 +170,21 @@ test('retail formula adds CNY 1.4 once and treats one PTC as one USD', () => {
   assert.equal(quoteTopazRetailCredits(1), 82);
 });
 
-test('missing pricing-tier RPC keeps quotes on the conservative standard rate', async () => {
+test('every account receives the same quote without consulting a pricing-tier RPC', async () => {
   await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
+    let fetchCalls = 0;
     const quote = await quoteUsageForUser(
       '00000000-0000-4000-8000-000000000003',
       'image',
       { providerId: 'image-1', size: '4K' },
-      async () => jsonResponse({
-        code: 'PGRST202',
-        message: 'Could not find the function public.get_ai_pricing_tier(uuid).'
-      }, 404)
+      async () => { fetchCalls += 1; return jsonResponse({}, 500); }
     );
     assert.equal(quote.credits, 28);
+    assert.equal(fetchCalls, 0);
   });
 });
 
-test('internal pricing is calculated server-side and is never a client tier field', async () => {
-  assert.equal(quoteInternalCreditsFromCny(1.5), 18);
-  assert.equal(quoteInternalCreditsFromCny(0), 0);
+test('client pricing-tier fields cannot alter the unified server quote', async () => {
   await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
     const calls = [];
     const result = await reserveUsage('00000000-0000-4000-8000-000000000061', 'image',
@@ -197,10 +192,10 @@ test('internal pricing is calculated server-side and is never a client tier fiel
       async (url, options) => {
         calls.push(JSON.parse(options.body));
         return calls.length === 1
-          ? jsonResponse({ ok: false, reason: 'pricing-mismatch', credits: 10 })
-          : jsonResponse({ ok: true, reason: 'reserved', credits: 10, availableCredits: 90 });
+          ? jsonResponse({ ok: false, reason: 'pricing-mismatch', credits: 22 })
+          : jsonResponse({ ok: true, reason: 'reserved', credits: 22, availableCredits: 78 });
       });
-    assert.equal(result.credits, 10);
+    assert.equal(result.credits, 22);
     assert.equal(calls.length, 2);
     assert.equal(Object.hasOwn(calls[0], 'pricingTier'), false);
     assert.equal(Object.hasOwn(result, 'pricingTier'), false);
@@ -302,22 +297,15 @@ test('Butler fixed-price tools use the server table and never accept caller pric
     'kling-image-expand': 48,
     cleanup: 48,
     'generative-upscale': 69,
-    'qwen-image-edit-plus': 2,
-    'qwen-image-layered': 1,
-    'super-upscale-v2': 2,
-    erase: 1,
+    'qwen-image-edit-plus': 16,
+    'qwen-image-layered': 16,
+    'super-upscale-v2': 16,
+    erase: 16,
     hunyuan3d: 22,
     hyper3d: 28,
     tripo3d: 24
   });
   assert.equal(quoteButlerRetailCredits('HUNYUAN3D'), 22);
-  // The staff tier is cost +15%, with no fixed CNY 1.4 profit.  These values
-  // stay server-side and are never accepted from a renderer request.
-  assert.equal(quoteInternalButlerRetailCredits('background-remove'), 40);
-  assert.equal(quoteInternalButlerRetailCredits('seededit-v3'), 4);
-  assert.equal(quoteInternalButlerRetailCredits('kling-image-expand'), 40);
-  assert.equal(quoteInternalButlerRetailCredits('generative-upscale'), 63);
-  assert.equal(quoteInternalButlerRetailCredits('topaz-video-upscale', 1), 79);
   assert.throws(() => quoteButlerRetailCredits('unknown-tool'), { code: 'provider-not-allowed' });
 
   await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
