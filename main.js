@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, Menu, Tray, Notification, clipboard, safeStorage, desktopCapturer, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, Menu, Tray, Notification, clipboard, safeStorage, desktopCapturer, screen, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -13,6 +13,14 @@ const { pathToFileURL } = require('url');
 const { autoUpdater } = require('electron-updater');
 
 const { Store } = require('./lib/store');
+const {
+  normalizeColorProfile,
+  chromiumColorProfile,
+  colorProfileBootstrapPath,
+  readColorProfileBootstrap,
+  writeColorProfileBootstrap,
+  writeColorProfileBootstrapSync
+} = require('./lib/color-management');
 const { createMembershipService } = require('./lib/membership-service');
 const achievements = require('./lib/achievements');
 const preview = require('./lib/preview');
@@ -50,6 +58,7 @@ const { assertSafeLocalFile, assertPromptHasNoSecrets, sanitizeAiRequest } = req
 const { activate: activateApp, getActivationStatus } = require('./lib/activation');
 const { quoteMediaCredits, publicCreditPricing } = require('./lib/credit-pricing');
 const { launchAdobeMedia } = require('./lib/adobe-launcher');
+const { sendToWeChatFileHelper } = require('./lib/wechat-file-helper');
 const { ChatService } = require('./lib/chat-service');
 const { probeVideoMetadata, shutdownProcesses: shutdownMediaMetadataProcesses } = require('./lib/media-metadata');
 const { authenticatedUserId, profileAvatarPath } = require('./lib/profile-avatar');
@@ -141,6 +150,13 @@ function normalizeTheme(theme) {
   return theme === 'light' ? 'light' : 'dark';
 }
 
+const TEXT_SIZE_LEVELS = Object.freeze(['extra-small', 'small', 'medium', 'large', 'extra-large']);
+
+function normalizeTextSize(size) {
+  const normalized = String(size || '').trim().toLowerCase();
+  return TEXT_SIZE_LEVELS.includes(normalized) ? normalized : 'medium';
+}
+
 function currentLanguage() {
   return normalizeLanguage(store && store.data && store.data.settings && store.data.settings.language);
 }
@@ -180,6 +196,25 @@ if (process.env.MESSS_USER_DATA_DIR && path.isAbsolute(process.env.MESSS_USER_DA
   app.setPath('userData', path.resolve(process.env.MESSS_USER_DATA_DIR));
 }
 
+// Chromium's output color profile is a browser-process startup choice. Keep
+// a tiny bootstrap setting beside userData so it can be applied before ready.
+const colorProfileBootstrapFile = colorProfileBootstrapPath(app.getPath('userData'));
+const startupColorProfileBootstrap = readColorProfileBootstrap(colorProfileBootstrapFile);
+const startupColorProfile = startupColorProfileBootstrap.profile;
+const forcedChromiumColorProfile = chromiumColorProfile(startupColorProfile);
+if (forcedChromiumColorProfile) {
+  app.commandLine.appendSwitch('force-color-profile', forcedChromiumColorProfile);
+}
+
+function currentColorManagementState() {
+  const profile = normalizeColorProfile(store && store.data && store.data.settings && store.data.settings.colorProfile);
+  return {
+    profile,
+    activeProfile: startupColorProfile,
+    restartRequired: profile !== startupColorProfile
+  };
+}
+
 let sharp;
 try { sharp = require('sharp'); } catch (err) { sharp = null; }
 
@@ -191,7 +226,8 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'messs-file', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
   { scheme: 'messs-preview', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
   { scheme: 'messs-thumb', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
-  { scheme: 'messs-transcode', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }
+  { scheme: 'messs-transcode', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
+  { scheme: 'messs-chat-file', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }
 ]);
 
 let mainWindow;
@@ -226,6 +262,8 @@ let updaterState = {
   message: null
 };
 const transientAiAttachments = new Map();
+const chatAttachmentDrafts = new Map();
+const CHAT_DRAFT_TTL_MS = 30 * 60 * 1000;
 const transientAiOutputFiles = new Map();
 const butlerImageTasks = new Map();
 const butlerImageDownloads = new Map();
@@ -244,6 +282,10 @@ const MODEL_FILE_EXTENSIONS = new Set(['.glb', '.fbx', '.obj']);
 const MODEL_PREVIEW_CACHE_VERSION = 'pbr-v3';
 const MODEL_PREVIEW_MARKER_FILENAME = `model-preview.${MODEL_PREVIEW_CACHE_VERSION}`;
 const BUTLER_IMAGE_TOOL_IDS = new Set([
+  'seededit-v3',
+  'kling-image-expand',
+  'generative-upscale',
+  'cleanup',
   'qwen-image-edit-plus',
   'qwen-image-layered',
   'super-upscale-v2',
@@ -257,6 +299,10 @@ const BUTLER_IMAGE_TOOL_IDS = new Set([
   'topaz-image-lighting'
 ]);
 const BUTLER_IMAGE_TOOL_CREDITS = Object.freeze({
+  'seededit-v3': 18,
+  'kling-image-expand': 17,
+  'generative-upscale': 69,
+  cleanup: 48,
   'qwen-image-edit-plus': 2,
   'qwen-image-layered': 1,
   'super-upscale-v2': 2,
@@ -603,6 +649,7 @@ function listDesktopFilenames() {
 function createWindow() {
   const initialTheme = normalizeTheme(store && store.data && store.data.settings && store.data.settings.theme);
   const initialLanguage = currentLanguage();
+  const initialTextSize = normalizeTextSize(store && store.data && store.data.settings && store.data.settings.textSize);
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -628,7 +675,7 @@ function createWindow() {
   mainWindow.webContents.once('did-fail-load', revealMainWindow);
   mainWindow.webContents.once('did-finish-load', () => setTimeout(revealMainWindow, 8_000));
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'), {
-    query: { theme: initialTheme, language: initialLanguage }
+    query: { theme: initialTheme, language: initialLanguage, textSize: initialTextSize }
   });
   mainWindow.setMenu(null);
 
@@ -918,7 +965,7 @@ function showIncomingChatNotification(payload) {
     && !mainWindow.isMinimized() && mainWindow.isFocused()) return;
   const conversations = payload.state && payload.state.conversations || [];
   const conversation = conversations.find((item) => item.id === detail.conversationId);
-  const sender = conversation && conversation.other && conversation.other.displayName
+  const sender = conversation && (conversation.type === 'group' ? conversation.name : conversation.other && conversation.other.displayName)
     || localizedMessage('New message', '新消息', '새 메시지');
   const notification = new Notification({
     title: sender,
@@ -2688,6 +2735,7 @@ function makeButlerOutputName(sourceFile, operation, extension) {
   const suffix = ({
     'remove-background': 'Background Removed',
     'image-edit': 'Edited',
+    'image-expand': 'Expanded',
     'image-layer': 'Layer',
     'image-upscale': 'Upscaled',
     'image-erase': 'Erased',
@@ -3004,7 +3052,7 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
   const referenceFileIds = Array.isArray(request.referenceFileIds)
     ? request.referenceFileIds
       .map((value) => String(value || '').trim())
-      .filter((value, index, list) => value && list.indexOf(value) === index)
+      .filter(Boolean)
       .filter((value) => !!store.getFile(value))
       .slice(0, 14)
     : [];
@@ -3087,7 +3135,10 @@ function addGeneratedMediaBoardItem(record, request, placement, index) {
   if (!canvas) return null;
 
   const numberOr = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
-  const width = Math.max(80, Math.min(4096, numberOr(placement.width, 300)));
+  // Provider pixel dimensions describe the file, not its visual size on the
+  // board. Keep generated placements compact even if a malformed placement
+  // accidentally contains a 2K/4K source width.
+  const width = Math.max(80, Math.min(360, numberOr(placement.width, 300)));
   const sourceRatio = record.sourceWidth && record.sourceHeight
     ? record.sourceWidth / record.sourceHeight
     : null;
@@ -3640,7 +3691,7 @@ function normalizeButlerImageTool(value) {
 function normalizeButlerImageOptions(modelId, requested = {}) {
   const source = requested && typeof requested === 'object' && !Array.isArray(requested) ? requested : {};
   const finiteOr = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
-  if (modelId === 'qwen-image-edit-plus') {
+  if (modelId === 'seededit-v3') {
     const prompt = String(source.prompt || '').trim();
     if (!prompt || Array.from(prompt).length > 1200) {
       const error = new Error('Enter an image-edit prompt up to 1200 characters.');
@@ -3648,26 +3699,34 @@ function normalizeButlerImageOptions(modelId, requested = {}) {
       throw error;
     }
     assertPromptHasNoSecrets(prompt);
-    const width = Math.max(256, Math.min(2048, Math.round(Number(source.width) || 1024)));
-    const height = Math.max(256, Math.min(2048, Math.round(Number(source.height) || 768)));
-    if (width * height > 4_194_304) {
-      const error = new Error('The requested image-edit size is too large.');
-      error.code = 'invalid-image-tool-options';
-      throw error;
-    }
     const seed = source.seed === '' || source.seed === undefined
       ? undefined
       : Math.max(0, Math.min(2_147_483_647, Math.round(finiteOr(source.seed, 0))));
     return {
       prompt,
-      width,
-      height,
-      numInferenceSteps: Math.max(1, Math.min(50, Math.round(Number(source.numInferenceSteps) || 30))),
-      guidanceScale: Math.max(0, Math.min(20, finiteOr(source.guidanceScale, 4))),
-      negativePrompt: String(source.negativePrompt ?? 'blurry, ugly').trim().slice(0, 2000),
+      scale: Math.max(1, Math.min(10, finiteOr(source.scale, 5))),
       ...(seed !== undefined ? { seed } : {})
     };
   }
+  if (modelId === 'kling-image-expand') {
+    const boundedRatio = (value) => Math.max(0, Math.min(2, finiteOr(value, 0.25)));
+    const options = {
+      up: boundedRatio(source.up),
+      right: boundedRatio(source.right),
+      down: boundedRatio(source.down),
+      left: boundedRatio(source.left),
+      prompt: String(source.prompt || '').trim().slice(0, 1200)
+    };
+    const areaRatio = (1 + options.left + options.right) * (1 + options.up + options.down);
+    if (areaRatio <= 1 || areaRatio > 3) {
+      const error = new Error('The expanded area must be greater than the source and no more than three times its area.');
+      error.code = 'invalid-image-tool-options';
+      throw error;
+    }
+    if (options.prompt) assertPromptHasNoSecrets(options.prompt);
+    return options;
+  }
+  if (modelId === 'generative-upscale') return {};
   if (modelId === 'qwen-image-layered') {
     const prompt = String(source.prompt || '').trim();
     if (Array.from(prompt).length > 800) {
@@ -4033,6 +4092,155 @@ function butlerFailure(error, fallbackMessage) {
   };
 }
 
+function chatDraftPublic(draft) {
+  return {
+    token: draft.token,
+    kind: draft.kind,
+    mediaType: draft.mediaType || draft.kind,
+    name: draft.name,
+    mime: draft.mime || 'application/octet-stream',
+    size: draft.size || 0,
+    previewDataUrl: draft.previewDataUrl || null
+  };
+}
+
+async function createChatAttachmentDraft(filePath, options = {}) {
+  const absolute = path.resolve(String(filePath || ''));
+  const stat = await fs.promises.stat(absolute).catch(() => null);
+  if (!stat || !stat.isFile()) throw Object.assign(new Error('The selected attachment is unavailable.'), { code: 'file-not-found' });
+  const extension = path.extname(absolute).toLowerCase();
+  const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.avif', '.tif', '.tiff', '.bmp']);
+  const videoExtensions = new Set(['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi']);
+  const kind = options.forceImage || imageExtensions.has(extension) ? 'image' : 'file';
+  const token = crypto.randomUUID();
+  let previewDataUrl = null;
+  let mime = kind === 'image' ? `image/${extension === '.jpg' ? 'jpeg' : extension.slice(1)}` : 'application/octet-stream';
+  if (kind === 'image') {
+    const source = nativeImage.createFromPath(absolute);
+    if (!source.isEmpty()) {
+      const size = source.getSize();
+      const preview = Math.max(size.width, size.height) > 640 ? source.resize({ width: Math.min(640, size.width), quality: 'good' }) : source;
+      previewDataUrl = preview.toDataURL();
+    }
+  }
+  if (videoExtensions.has(extension)) mime = extension === '.webm' ? 'video/webm' : 'video/mp4';
+  const draft = {
+    token,
+    path: absolute,
+    kind,
+    mediaType: videoExtensions.has(extension) ? 'video' : kind,
+    name: String(options.name || path.basename(absolute)).slice(0, 255),
+    mime,
+    size: stat.size,
+    previewDataUrl,
+    temporary: options.temporary === true,
+    expiresAt: Date.now() + CHAT_DRAFT_TTL_MS
+  };
+  chatAttachmentDrafts.set(token, draft);
+  return chatDraftPublic(draft);
+}
+
+async function discardChatAttachmentDraft(token) {
+  const draft = chatAttachmentDrafts.get(String(token || ''));
+  if (!draft) return false;
+  chatAttachmentDrafts.delete(draft.token);
+  if (draft.temporary) await fs.promises.rm(draft.path, { force: true }).catch(() => {});
+  return true;
+}
+
+function cleanupExpiredChatDrafts() {
+  const now = Date.now();
+  for (const draft of chatAttachmentDrafts.values()) {
+    if (draft.expiresAt > now) continue;
+    discardChatAttachmentDraft(draft.token).catch(() => {});
+  }
+}
+
+function screenshotOverlayHtml(dataUrl, channel) {
+  const encodedImage = JSON.stringify(dataUrl);
+  const encodedChannel = JSON.stringify(channel);
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+    *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;cursor:crosshair;user-select:none;background:#000}
+    #shot{position:fixed;inset:0;width:100%;height:100%;object-fit:fill}#shade{position:fixed;inset:0;background:rgba(0,0,0,.34)}
+    #box{position:fixed;border:1px solid #fff;box-shadow:0 0 0 99999px rgba(0,0,0,.34);display:none;pointer-events:none}
+    #tip{position:fixed;left:50%;top:18px;transform:translateX(-50%);padding:7px 11px;border-radius:6px;background:rgba(20,22,26,.78);color:#fff;font:12px system-ui}
+  </style></head><body><img id="shot"><div id="shade"></div><div id="box"></div><div id="tip">Drag to capture · Esc to cancel</div><script>
+    const {ipcRenderer}=require('electron');const channel=${encodedChannel};const img=document.getElementById('shot');img.src=${encodedImage};
+    const box=document.getElementById('box'),shade=document.getElementById('shade');let start=null;
+    function rect(e){const x=Math.min(start.x,e.clientX),y=Math.min(start.y,e.clientY),w=Math.abs(e.clientX-start.x),h=Math.abs(e.clientY-start.y);return{x,y,width:w,height:h}}
+    addEventListener('pointerdown',e=>{start={x:e.clientX,y:e.clientY};box.style.display='block';shade.style.display='none';box.setPointerCapture?.(e.pointerId)});
+    addEventListener('pointermove',e=>{if(!start)return;const r=rect(e);Object.assign(box.style,{left:r.x+'px',top:r.y+'px',width:r.width+'px',height:r.height+'px'})});
+    addEventListener('pointerup',e=>{if(!start)return;const r=rect(e);start=null;if(r.width<4||r.height<4){box.style.display='none';shade.style.display='block';return}ipcRenderer.send(channel,{type:'select',rect:r,viewport:{width:innerWidth,height:innerHeight}})});
+    addEventListener('keydown',e=>{if(e.key==='Escape')ipcRenderer.send(channel,{type:'cancel'})});
+    addEventListener('contextmenu',e=>{e.preventDefault();ipcRenderer.send(channel,{type:'cancel'})});
+  </script></body></html>`;
+}
+
+async function captureChatScreenshotDraft() {
+  const displays = screen.getAllDisplays();
+  const maxWidth = Math.max(...displays.map((display) => Math.round(display.size.width * (Number(display.scaleFactor) || 1))));
+  const maxHeight = Math.max(...displays.map((display) => Math.round(display.size.height * (Number(display.scaleFactor) || 1))));
+  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: maxWidth, height: maxHeight } });
+  const captures = displays.map((display) => {
+    const source = sources.find((entry) => String(entry.display_id) === String(display.id));
+    return source && !source.thumbnail.isEmpty() ? { display, image: source.thumbnail } : null;
+  }).filter(Boolean);
+  if (!captures.length) return { ok: false, reason: 'capture-failed', message: 'Unable to capture the screen.' };
+  const channel = `chat:screenshot-selection:${crypto.randomUUID()}`;
+  const overlays = [];
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = async (payload) => {
+      if (settled) return;
+      settled = true;
+      ipcMain.removeAllListeners(channel);
+      overlays.forEach((window) => { if (!window.isDestroyed()) window.destroy(); });
+      if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
+      if (!payload || payload.type !== 'select') return resolve({ ok: false, reason: 'cancelled' });
+      try {
+        const capture = captures[payload.index];
+        const imageSize = capture.image.getSize();
+        const viewport = payload.viewport || capture.display.size;
+        const rect = payload.rect || {};
+        const crop = {
+          x: Math.max(0, Math.round(Number(rect.x) * imageSize.width / Math.max(1, Number(viewport.width)))),
+          y: Math.max(0, Math.round(Number(rect.y) * imageSize.height / Math.max(1, Number(viewport.height)))),
+          width: Math.max(1, Math.round(Number(rect.width) * imageSize.width / Math.max(1, Number(viewport.width)))),
+          height: Math.max(1, Math.round(Number(rect.height) * imageSize.height / Math.max(1, Number(viewport.height))))
+        };
+        crop.width = Math.min(crop.width, imageSize.width - crop.x);
+        crop.height = Math.min(crop.height, imageSize.height - crop.y);
+        const directory = path.join(app.getPath('temp'), 'messs-chat-captures');
+        await fs.promises.mkdir(directory, { recursive: true });
+        const temporaryPath = path.join(directory, `screenshot-${Date.now()}-${crypto.randomUUID()}.png`);
+        await fs.promises.writeFile(temporaryPath, capture.image.crop(crop).toPNG());
+        resolve({ ok: true, draft: await createChatAttachmentDraft(temporaryPath, { temporary: true, forceImage: true, name: 'Screenshot.png' }) });
+      } catch (error) {
+        resolve({ ok: false, reason: error.code || 'capture-failed', message: error.message });
+      }
+    };
+    ipcMain.on(channel, (event, payload) => {
+      const index = overlays.findIndex((window) => !window.isDestroyed() && window.webContents === event.sender);
+      finish({ ...(payload || {}), index });
+    });
+    captures.forEach((capture) => {
+      const overlay = new BrowserWindow({
+        x: capture.display.bounds.x, y: capture.display.bounds.y,
+        width: capture.display.bounds.width, height: capture.display.bounds.height,
+        frame: false, transparent: false, resizable: false, movable: false,
+        alwaysOnTop: true, skipTaskbar: true, fullscreenable: false,
+        webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false }
+      });
+      overlay.setAlwaysOnTop(true, 'screen-saver');
+      overlay.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(screenshotOverlayHtml(capture.image.toDataURL(), channel))}`);
+      overlay.on('closed', () => { if (!settled && overlays.every((window) => window.isDestroyed())) finish({ type: 'cancel' }); });
+      overlays.push(overlay);
+    });
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
+    overlays[0].focus();
+  });
+}
+
 function registerIpcHandlers() {
   ipcMain.on('window:readyForInteraction', (event) => {
     if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return;
@@ -4061,6 +4269,8 @@ function registerIpcHandlers() {
     return {
       theme: store.data.settings.theme,
       language: currentLanguage(),
+      textSize: normalizeTextSize(store.data.settings.textSize),
+      colorManagement: currentColorManagementState(),
       autoUpdateEnabled: store.data.settings.autoUpdateEnabled !== false,
       activation: activationStatusForRenderer(),
       viewMode: store.data.settings.viewMode,
@@ -4083,6 +4293,32 @@ function registerIpcHandlers() {
     setWindowBackgroundColor(store.data.settings.theme);
     store.scheduleSave();
     return store.data.settings.theme;
+  });
+
+  ipcMain.handle('settings:setTextSize', (_evt, size) => {
+    const normalized = normalizeTextSize(size);
+    store.data.settings.textSize = normalized;
+    store.scheduleSave();
+    return normalized;
+  });
+
+  ipcMain.handle('settings:setColorProfile', async (_evt, profile) => {
+    const normalized = normalizeColorProfile(profile);
+    await writeColorProfileBootstrap(colorProfileBootstrapFile, normalized);
+    store.data.settings.colorProfile = normalized;
+    store.scheduleSave();
+    return currentColorManagementState();
+  });
+
+  ipcMain.handle('settings:restartForColorProfile', () => {
+    const selectedProfile = normalizeColorProfile(store.data.settings.colorProfile);
+    writeColorProfileBootstrapSync(colorProfileBootstrapFile, selectedProfile);
+    store.flushSync();
+    if (chatService) chatService.flushLocal();
+    isQuitting = true;
+    app.relaunch();
+    setTimeout(() => app.exit(0), 50);
+    return { ok: true };
   });
 
   ipcMain.handle('activation:getStatus', async () => {
@@ -4264,6 +4500,12 @@ function registerIpcHandlers() {
 
   ipcMain.handle('chat:startConversation', (_evt, friendId) => chatService.startConversation(friendId));
 
+  ipcMain.handle('chat:createGroup', (_evt, name, memberIds) => chatService.createGroup(name, memberIds));
+
+  ipcMain.handle('chat:addGroupMembers', (_evt, conversationId, memberIds) => {
+    return chatService.addGroupMembers(conversationId, memberIds);
+  });
+
   ipcMain.handle('chat:getHistory', (_evt, conversationId, options = {}) => {
     return chatService.getHistory(conversationId, options);
   });
@@ -4308,29 +4550,7 @@ function registerIpcHandlers() {
     catch (error) { return { ok: false, reason: error.code || 'file-send-failed', message: error.message }; }
   });
 
-  ipcMain.handle('chat:sendScreenshot', async (_evt, conversationId) => {
-    let temporaryPath = null;
-    try {
-      const primary = screen.getPrimaryDisplay();
-      const scale = Number(primary.scaleFactor) || 1;
-      const size = {
-        width: Math.max(1, Math.round(primary.size.width * scale)),
-        height: Math.max(1, Math.round(primary.size.height * scale))
-      };
-      const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: size });
-      const source = sources.find((item) => String(item.display_id) === String(primary.id)) || sources[0];
-      if (!source || source.thumbnail.isEmpty()) return { ok: false, reason: 'capture-failed', message: 'Unable to capture the screen.' };
-      const directory = path.join(app.getPath('temp'), 'messs-chat-captures');
-      temporaryPath = path.join(directory, `screenshot-${Date.now()}-${crypto.randomUUID()}.png`);
-      await fs.promises.mkdir(directory, { recursive: true });
-      await fs.promises.writeFile(temporaryPath, source.thumbnail.toPNG());
-      return await chatService.sendImage(conversationId, temporaryPath);
-    } catch (error) {
-      return { ok: false, reason: error.code || 'capture-failed', message: error.message };
-    } finally {
-      if (temporaryPath) await fs.promises.rm(temporaryPath, { force: true }).catch(() => {});
-    }
-  });
+  ipcMain.handle('chat:captureScreenshotDraft', () => captureChatScreenshotDraft());
 
   ipcMain.handle('chat:openFile', async (_evt, clientId) => {
     const result = await chatService.getFileLocalPath(clientId);
@@ -4566,6 +4786,71 @@ function registerIpcHandlers() {
     return { token, dataUrl, name: String(request.name || 'Pasted image').slice(0, 160) };
   });
 
+  ipcMain.handle('chat:pickImageDraft', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Attach images', properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif', 'tif', 'tiff', 'bmp'] }]
+    });
+    if (result.canceled) return { ok: false, reason: 'cancelled' };
+    try {
+      const drafts = await Promise.all(result.filePaths.slice(0, 10).map((filePath) => createChatAttachmentDraft(filePath, { forceImage: true })));
+      return { ok: true, drafts };
+    } catch (error) {
+      return { ok: false, reason: error.code || 'attachment-failed', message: error.message };
+    }
+  });
+
+  ipcMain.handle('chat:pickFileDraft', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, { title: 'Attach files', properties: ['openFile', 'multiSelections'] });
+    if (result.canceled) return { ok: false, reason: 'cancelled' };
+    try {
+      const drafts = await Promise.all(result.filePaths.slice(0, 10).map((filePath) => createChatAttachmentDraft(filePath)));
+      return { ok: true, drafts };
+    } catch (error) {
+      return { ok: false, reason: error.code || 'attachment-failed', message: error.message };
+    }
+  });
+
+  ipcMain.handle('chat:readClipboardDrafts', async () => {
+    cleanupExpiredChatDrafts();
+    try {
+      const nativePaths = process.platform === 'win32' ? parseCfHDrop(clipboard.readBuffer('CF_HDROP')) : [];
+      const validPaths = nativePaths.filter((filePath) => fs.existsSync(filePath)).slice(0, 10);
+      if (validPaths.length) {
+        return { ok: true, drafts: await Promise.all(validPaths.map((filePath) => createChatAttachmentDraft(filePath))) };
+      }
+      const image = clipboard.readImage();
+      if (image && !image.isEmpty()) {
+        const directory = path.join(app.getPath('temp'), 'messs-chat-clipboard');
+        await fs.promises.mkdir(directory, { recursive: true });
+        const temporaryPath = path.join(directory, `clipboard-${Date.now()}-${crypto.randomUUID()}.png`);
+        await fs.promises.writeFile(temporaryPath, image.toPNG());
+        const draft = await createChatAttachmentDraft(temporaryPath, { temporary: true, forceImage: true, name: 'Clipboard image.png' });
+        return { ok: true, drafts: [draft] };
+      }
+      return { ok: false, reason: 'clipboard-empty' };
+    } catch (error) {
+      return { ok: false, reason: error.code || 'clipboard-failed', message: error.message };
+    }
+  });
+
+  ipcMain.handle('chat:discardAttachmentDraft', (_evt, token) => discardChatAttachmentDraft(token));
+
+  ipcMain.handle('chat:sendAttachmentDraft', async (_evt, conversationId, token) => {
+    cleanupExpiredChatDrafts();
+    const draft = chatAttachmentDrafts.get(String(token || ''));
+    if (!draft) return { ok: false, reason: 'draft-expired', message: 'This attachment is no longer available. Add it again.' };
+    try {
+      const result = draft.kind === 'image'
+        ? await chatService.sendImage(conversationId, draft.path)
+        : await chatService.sendFile(conversationId, draft.path);
+      if (result && result.ok) await discardChatAttachmentDraft(draft.token);
+      return result;
+    } catch (error) {
+      return { ok: false, reason: error.code || 'attachment-send-failed', message: error.message };
+    }
+  });
+
   ipcMain.handle('clipboard:importImage', async (_evt, request = {}) => {
     const nativeFilePaths = process.platform === 'win32'
       ? parseCfHDrop(clipboard.readBuffer('CF_HDROP'))
@@ -4702,7 +4987,7 @@ function registerIpcHandlers() {
         error.code = 'gateway-not-configured';
         throw error;
       }
-      const modelId = 'qwen-image-edit-plus';
+      const modelId = 'seededit-v3';
       const options = normalizeButlerImageOptions(modelId, requestedOptions);
       const source = await butlerSourceImage(fileId);
       const payload = await aiGateway.editImage(source.imageDataUrl, options);
@@ -4720,6 +5005,35 @@ function registerIpcHandlers() {
     } catch (error) {
       const failure = butlerFailure(error, 'The image edit task could not be started.');
       console.error('Butler image edit failed:', failure.reason);
+      return failure;
+    }
+  });
+
+  ipcMain.handle('butler:image-expand', async (_evt, fileId, requestedOptions = {}) => {
+    try {
+      if (!aiGateway || !aiGateway.isConfigured()) {
+        const error = new Error('Butler is not configured.');
+        error.code = 'gateway-not-configured';
+        throw error;
+      }
+      const modelId = 'kling-image-expand';
+      const options = normalizeButlerImageOptions(modelId, requestedOptions);
+      const source = await butlerSourceImage(fileId);
+      const payload = await aiGateway.expandImage(source.imageDataUrl, options);
+      const taskToken = normalizeButlerTaskToken(payload && payload.taskToken);
+      const status = normalizeButlerImageStatus(payload || { status: 'queued' });
+      rememberButlerImageTask(taskToken, {
+        sourceFileId: source.file.id,
+        modelId,
+        operation: 'image-expand',
+        resultCount: status.resultCount,
+        credits: status.credits !== undefined ? status.credits : BUTLER_IMAGE_TOOL_CREDITS[modelId],
+        status: status.status
+      });
+      return { ok: true, taskToken, ...status };
+    } catch (error) {
+      const failure = butlerFailure(error, 'The image expansion task could not be started.');
+      console.error('Butler image expansion failed:', failure.reason);
       return failure;
     }
   });
@@ -4795,7 +5109,7 @@ function registerIpcHandlers() {
         error.code = 'gateway-not-configured';
         throw error;
       }
-      const modelId = 'super-upscale-v2';
+      const modelId = 'generative-upscale';
       const options = normalizeButlerImageOptions(modelId, requestedOptions);
       const source = await butlerSourceImage(fileId);
       const responseBuffer = await aiGateway.upscaleImage(source.imageDataUrl, options);
@@ -4820,7 +5134,7 @@ function registerIpcHandlers() {
         error.code = 'gateway-not-configured';
         throw error;
       }
-      const modelId = 'erase';
+      const modelId = 'cleanup';
       const options = normalizeButlerImageOptions(modelId, requestedOptions);
       const [source, mask] = await Promise.all([
         butlerSourceImage(fileId),
@@ -4914,7 +5228,10 @@ function registerIpcHandlers() {
           folderId: null,
           canvasId: store.data.canvases[0] && store.data.canvases[0].id
         };
-        const operation = currentTask.operation || (modelId === 'qwen-image-layered' ? 'image-layer' : 'image-edit');
+        const operation = currentTask.operation
+          || (modelId === 'kling-image-expand'
+            ? 'image-expand'
+            : modelId === 'qwen-image-layered' ? 'image-layer' : 'image-edit');
         const records = [];
         for (const buffer of buffers) {
           const pngBuffer = await sanitizeButlerImagePng(buffer);
@@ -5992,6 +6309,43 @@ function registerIpcHandlers() {
     return true;
   });
 
+  ipcMain.handle('shell:sendToWeChatFileHelper', async (_evt, id) => {
+    const file = store.getFile(String(id || ''));
+    if (!file || !fs.existsSync(file.storedPath)) {
+      return {
+        ok: false,
+        reason: 'file-not-found',
+        message: localizedMessage('The file could not be found.', '找不到要发送的文件。', '보낼 파일을 찾을 수 없습니다.')
+      };
+    }
+    const result = await sendToWeChatFileHelper(file.storedPath, {
+      openExternal: (url) => shell.openExternal(url),
+      writeClipboardFiles: (paths) => clipboard.writeBuffer('CF_HDROP', buildCfHDrop(paths))
+    });
+    const messages = {
+      sent: localizedMessage('Sent to WeChat File Transfer.', '已发送到微信文件传输助手。', 'WeChat 파일 전송 도우미로 보냈습니다.'),
+      'login-required': localizedMessage('Please sign in to WeChat, then try again.', '请先登录微信，然后重试。', 'WeChat에 로그인한 후 다시 시도하세요.'),
+      'wechat-not-installed': localizedMessage('WeChat is not installed or its link could not be opened.', '未安装微信，或无法打开微信链接。', 'WeChat이 설치되지 않았거나 링크를 열 수 없습니다.'),
+      'file-helper-not-found': localizedMessage('Could not confirm WeChat File Transfer. Open it in WeChat and try again.', '未能确认微信文件传输助手，请在微信中打开后重试。', 'WeChat 파일 전송 도우미를 확인할 수 없습니다. WeChat에서 연 후 다시 시도하세요.'),
+      'unsupported-platform': localizedMessage('This feature is currently available on Windows only.', '此功能目前仅支持 Windows。', '이 기능은 현재 Windows에서만 사용할 수 있습니다.'),
+      'send-failed': localizedMessage('WeChat did not confirm the send action. Please try again.', '微信未能确认发送操作，请重试。', 'WeChat에서 보내기 작업을 확인하지 못했습니다. 다시 시도하세요.'),
+      'integration-unavailable': localizedMessage('WeChat integration is unavailable.', '微信集成暂不可用。', 'WeChat 연동을 사용할 수 없습니다.')
+    };
+    return { ...result, message: messages[result.reason] || messages['send-failed'] };
+  });
+
+  ipcMain.handle('clipboard:copyBoardMedia', (_evt, fileIds) => {
+    const paths = [...new Set((Array.isArray(fileIds) ? fileIds : [])
+      .map((id) => store.getFile(String(id || '')))
+      .filter(Boolean)
+      .map((file) => file.storedPath)
+      .filter((filePath) => fs.existsSync(filePath)))];
+    if (!paths.length) return false;
+    if (process.platform === 'win32') clipboard.writeBuffer('CF_HDROP', buildCfHDrop(paths));
+    else clipboard.writeText(paths.join('\n'));
+    return true;
+  });
+
   ipcMain.handle('clipboard:copyPath', (_evt, id) => {
     const f = store.getFile(id);
     if (!f) return false;
@@ -6227,6 +6581,20 @@ function registerIpcHandlers() {
 app.whenReady().then(() => {
   writeStartupDiagnostic('ready');
   store = createStoreWithFallback();
+  const savedColorProfile = normalizeColorProfile(store.data.settings.colorProfile);
+  if (startupColorProfileBootstrap.valid) {
+    // The bootstrap file is the profile Chromium actually started with. Keep
+    // the full store mirror aligned if a previous save was interrupted.
+    store.data.settings.colorProfile = startupColorProfile;
+  } else {
+    store.data.settings.colorProfile = savedColorProfile;
+    if (savedColorProfile !== 'auto') {
+      // Heal a missing/corrupt bootstrap file. This launch remains in Auto;
+      // the settings UI will correctly offer a restart to apply the choice.
+      writeColorProfileBootstrapSync(colorProfileBootstrapFile, savedColorProfile);
+    }
+  }
+  if (store.data.settings.colorProfile !== savedColorProfile) store.scheduleSave();
   writeStartupDiagnostic('store-ready');
   membershipService = createMembershipService(store);
   runtimeConfig = loadRuntimeConfig(__dirname, { packaged: app.isPackaged });
@@ -6301,6 +6669,17 @@ app.whenReady().then(() => {
         localMediaMimeType(f.storedPath, f.mimeType || classifyArchiveFile(f.name).mimeType)
       );
     } catch (err) {
+      return new Response('Read error', { status: 500 });
+    }
+  });
+
+  protocol.handle('messs-chat-file', async (request) => {
+    const clientId = request.url.replace('messs-chat-file://', '').replace(/\/$/, '');
+    try {
+      const result = await chatService.getFileLocalPath(clientId);
+      if (!result || !result.ok) return new Response('Not found', { status: 404 });
+      return localFileProtocolResponse(request, result.path, localMediaMimeType(result.path));
+    } catch (error) {
       return new Response('Read error', { status: 500 });
     }
   });
@@ -6419,6 +6798,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  for (const draft of [...chatAttachmentDrafts.values()]) discardChatAttachmentDraft(draft.token).catch(() => {});
   preview.shutdownProcesses();
   thumbnails.shutdownProcesses();
   shutdownMediaMetadataProcesses();
@@ -6434,4 +6814,5 @@ setInterval(() => {
   for (const [token, record] of transientAiOutputFiles) {
     if (record.expiresAt <= now) transientAiOutputFiles.delete(token);
   }
+  cleanupExpiredChatDrafts();
 }, 5 * 60_000).unref();

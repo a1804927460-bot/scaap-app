@@ -591,6 +591,37 @@ function addCanvasMediaNode(file, positionOverride = null) {
   return nodeId;
 }
 
+function copySelectedCanvasNodeMedia() {
+  const nodes = canvasNodeData();
+  const fileIds = [...CanvasNodeMode.selectedNodeIds]
+    .map((nodeId) => nodes[String(nodeId)])
+    .filter((node) => node && node.data && node.data.nodeRole === 'media')
+    .filter((node) => node.data.mediaKind === 'image' || node.data.mediaKind === 'video')
+    .map((node) => node.data.fileId)
+    .filter(Boolean);
+  if (!fileIds.length || typeof setBoardClipboardMedia !== 'function') return false;
+  BoardClipboard.items = [];
+  setBoardClipboardMedia(fileIds, 'node');
+  if (window.messsAPI.copyBoardMediaToClipboard) {
+    window.messsAPI.copyBoardMediaToClipboard(BoardClipboard.mediaFileIds).catch(() => {});
+  }
+  return BoardClipboard.mediaFileIds.length > 0;
+}
+
+function pasteCanvasNodeClipboardMedia() {
+  if (typeof boardClipboardMediaFiles !== 'function') return [];
+  const files = boardClipboardMediaFiles();
+  if (!files.length) return [];
+  const origin = canvasNodeCenterPosition();
+  const columns = Math.max(1, Math.ceil(Math.sqrt(files.length)));
+  const nodeIds = files.map((file, index) => addCanvasMediaNode(file, {
+    x: origin.x + (index % columns) * 300,
+    y: origin.y + Math.floor(index / columns) * 280
+  })).filter((nodeId) => nodeId !== null && nodeId !== undefined);
+  applyCanvasNodeSelection(new Set(nodeIds.map(String)));
+  return nodeIds;
+}
+
 function canvasNodePathKind(filePath) {
   return canvasNodeMediaKind({ ext: pathExtension(filePath) });
 }
@@ -1437,6 +1468,28 @@ function initCanvasNodeMode() {
       !event.target.closest('.board-node-text-editor') &&
       !event.target.closest('[data-node-action="text"]')
     ) closeCanvasTextEditor();
+  }, true);
+  document.addEventListener('keydown', (event) => {
+    if (
+      CanvasNodeMode.mode !== 'node' ||
+      !(event.ctrlKey || event.metaKey) ||
+      isCanvasNodeTextTarget(event.target)
+    ) return;
+    const key = event.key.toLowerCase();
+    if (key === 'c') {
+      if (!copySelectedCanvasNodeMedia()) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    } else if (
+      key === 'v' &&
+      typeof BoardClipboard !== 'undefined' &&
+      BoardClipboard.preferInternal &&
+      BoardClipboard.mediaFileIds.length
+    ) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      pasteCanvasNodeClipboardMedia();
+    }
   }, true);
   document.addEventListener('keydown', (event) => {
     if (

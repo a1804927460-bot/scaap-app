@@ -3,7 +3,7 @@ import net from 'node:net';
 import { quoteTopazRetailCredits } from './tool-pricing.js';
 
 const API_ORIGIN = 'https://api.302.ai';
-const BACKGROUND_PATH = '/photoroom/v1/segment?response_format=original';
+const BACKGROUND_PATH = '/clipdrop/remove-background/v1';
 const HUNYUAN_PATH = '/tencent/hunyuan3d/pro-job';
 const HYPER3D_PATH = '/302/submit/hyper3d-rodin';
 const TRIPO3D_UPLOAD_PATH = '/tripo3d/v2/openapi/upload';
@@ -1625,16 +1625,8 @@ export function validateGlb(buffer) {
 }
 
 export function normalizeBackgroundRemovalOptions(value = {}) {
-  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  const size = String(source.size || 'full').trim().toLowerCase();
-  if (!['preview', 'medium', 'hd', 'full'].includes(size)) {
-    throw toolError('invalid-background-options', 'The background-removal output size is invalid.', 400);
-  }
-  return {
-    size,
-    crop: source.crop === true,
-    despill: source.despill !== false
-  };
+  void value;
+  return {};
 }
 
 export async function removeBackground({ imageDataUrl, toolOptions } = {}, options = {}) {
@@ -1643,11 +1635,7 @@ export async function removeBackground({ imageDataUrl, toolOptions } = {}, optio
   const image = stripImageMetadata(parseImageDataUrl(imageDataUrl, { maxBytes: MAX_BACKGROUND_INPUT_BYTES }));
   const form = new FormData();
   form.append('image_file', new Blob([image.buffer], { type: image.mime }), `input.${image.extension}`);
-  form.append('format', 'png');
-  form.append('channels', 'rgba');
-  form.append('size', normalizedOptions.size);
-  form.append('crop', normalizedOptions.crop ? 'true' : 'false');
-  form.append('despill', normalizedOptions.despill ? 'true' : 'false');
+  void normalizedOptions;
   const fetchImpl = options.fetchImpl || fetch;
   let response;
   try {

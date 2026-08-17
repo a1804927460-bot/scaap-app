@@ -106,10 +106,10 @@ const BOARD_BUTLER_ICONS = {
 };
 
 const BOARD_BUTLER_IMAGE_TOOL_HOOKS = Object.freeze({
-  imageEdit: Object.freeze({ method: 'editImage', toolId: 'qwen-image-edit-plus' }),
-  imageLayer: Object.freeze({ method: 'layerImage', toolId: 'qwen-image-layered' }),
-  imageUpscale: Object.freeze({ method: 'upscaleImage', toolId: 'super-upscale-v2' }),
-  eraseObject: Object.freeze({ method: 'eraseObject', toolId: 'erase' }),
+  imageEdit: Object.freeze({ method: 'editImage', toolId: 'seededit-v3' }),
+  imageExpand: Object.freeze({ method: 'expandImage', toolId: 'kling-image-expand' }),
+  imageUpscale: Object.freeze({ method: 'upscaleImage', toolId: 'generative-upscale' }),
+  eraseObject: Object.freeze({ method: 'eraseObject', toolId: 'cleanup' }),
   topazSharpen: Object.freeze({ method: 'topazImage', toolId: 'topaz-image-sharpen' }),
   topazSharpenGen: Object.freeze({ method: 'topazImage', toolId: 'topaz-image-sharpen-gen' }),
   topazEnhance: Object.freeze({ method: 'topazImage', toolId: 'topaz-image-enhance' }),
@@ -126,7 +126,7 @@ const BOARD_BUTLER_VIDEO_TOOL_HOOKS = Object.freeze({
 const BOARD_BUTLER_TASK_ACTIONS = Object.freeze([
   'removeBackground',
   'imageEdit',
-  'imageLayer',
+  'imageExpand',
   'imageUpscale',
   'eraseObject',
   'topazSharpen',
@@ -189,7 +189,7 @@ function boardButlerStatusText(action, task) {
   }
   if (action === 'eraseObject') return t('Erasing...', '消除中...', '지우는 중...');
   if (action === 'imageUpscale') return t('Upscaling...', '放大中...', '확대 중...');
-  if (action === 'imageLayer') return t('Layering...', '分层中...', '레이어 분리 중...');
+  if (action === 'imageExpand') return t('Expanding...', '扩图中...', '이미지 확장 중...');
   if (action === 'imageEdit') return t('Editing...', '修改中...', '편집 중...');
   if (action === 'topazSharpen') return t('Sharpening...', '锐化中...', '선명화 중...');
   if (action === 'topazSharpenGen') return t('Generative sharpening...', '生成式锐化中...', '생성형 선명화 중...');
@@ -272,13 +272,16 @@ function closeBoardButlerPanel() {
 
 function closeBoardButlerMenu() {
   if (boardButlerMenu) {
-    const trigger = boardButlerMenu._trigger;
+    const menu = boardButlerMenu;
+    const trigger = menu._trigger;
+    boardButlerMenu = null;
     if (trigger) {
       trigger.classList.remove('is-open');
       trigger.setAttribute('aria-expanded', 'false');
     }
-    boardButlerMenu.remove();
-    boardButlerMenu = null;
+    menu.classList.remove('is-visible');
+    menu.style.pointerEvents = 'none';
+    window.setTimeout(() => menu.remove(), 150);
   }
   if (boardButlerMenuClickCloser) {
     document.removeEventListener('pointerdown', boardButlerMenuClickCloser, true);
@@ -313,6 +316,14 @@ function positionBoardButlerMenu(menu, trigger) {
   menu.classList.toggle('opens-upward', top + height + 104 > window.innerHeight - margin);
 }
 
+function setBoardButlerPanelPosition(panel, left, top) {
+  const roundedLeft = Math.round(left);
+  const roundedTop = Math.round(top);
+  panel.style.left = `${roundedLeft}px`;
+  panel.style.top = `${roundedTop}px`;
+  panel.style.setProperty('--board-butler-panel-top', `${roundedTop}px`);
+}
+
 function positionBoardButlerPanel(panel, anchor) {
   if (!panel || !anchor || !anchor.isConnected) return;
   const rect = anchor.getBoundingClientRect();
@@ -326,8 +337,7 @@ function positionBoardButlerPanel(panel, anchor) {
   if (top + height > window.innerHeight - margin) top = rect.top - height - gap;
   if (top < margin) top = Math.max(margin, (window.innerHeight - height) / 2);
   left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
-  panel.style.left = `${Math.round(left)}px`;
-  panel.style.top = `${Math.round(top)}px`;
+  setBoardButlerPanelPosition(panel, left, top);
 }
 
 function clampBoardButlerPanelToViewport(panel) {
@@ -338,8 +348,7 @@ function clampBoardButlerPanelToViewport(panel) {
   const maxTop = Math.max(margin, window.innerHeight - rect.height - margin);
   const left = Math.max(margin, Math.min(Number.parseFloat(panel.style.left) || rect.left, maxLeft));
   const top = Math.max(margin, Math.min(Number.parseFloat(panel.style.top) || rect.top, maxTop));
-  panel.style.left = `${Math.round(left)}px`;
-  panel.style.top = `${Math.round(top)}px`;
+  setBoardButlerPanelPosition(panel, left, top);
 }
 
 function makeBoardButlerPanelDraggable(panel) {
@@ -357,8 +366,9 @@ function makeBoardButlerPanelDraggable(panel) {
     if (!drag || event.pointerId !== drag.pointerId) return;
     const maxLeft = Math.max(12, window.innerWidth - panel.offsetWidth - 12);
     const maxTop = Math.max(12, window.innerHeight - panel.offsetHeight - 12);
-    panel.style.left = `${Math.round(Math.max(12, Math.min(drag.left + event.clientX - drag.clientX, maxLeft)))}px`;
-    panel.style.top = `${Math.round(Math.max(12, Math.min(drag.top + event.clientY - drag.clientY, maxTop)))}px`;
+    const left = Math.max(12, Math.min(drag.left + event.clientX - drag.clientX, maxLeft));
+    const top = Math.max(12, Math.min(drag.top + event.clientY - drag.clientY, maxTop));
+    setBoardButlerPanelPosition(panel, left, top);
   };
   const start = (event) => {
     if (event.button !== 0 || event.target.closest('button, input, textarea, select, a')) return;
@@ -814,7 +824,13 @@ function createBoardButlerConfigPanel(anchor, icon, title, modelName) {
   positionBoardButlerPanel(panel, anchor);
   panel._cleanup = makeBoardButlerPanelDraggable(panel);
   closeBoardButlerMenu();
-  requestAnimationFrame(() => panel.classList.add('is-visible'));
+  requestAnimationFrame(() => {
+    // Tool-specific forms are appended immediately after this helper returns.
+    // Re-measure once that content exists so compact windows never overflow.
+    positionBoardButlerPanel(panel, anchor);
+    clampBoardButlerPanelToViewport(panel);
+    panel.classList.add('is-visible');
+  });
   window.setTimeout(() => {
     if (boardButlerPanel !== panel || !panel.isConnected) return;
     boardButlerPanelClickCloser = (event) => {
@@ -1088,6 +1104,121 @@ function openBoardButlerLayerPanel(anchor, file, item) {
   body.appendChild(form);
 }
 
+function openBoardButlerSeedEditPanel(anchor, file, item) {
+  const { body } = createBoardButlerConfigPanel(
+    anchor,
+    BOARD_BUTLER_ICONS.imageEdit,
+    t('Edit image', '图片编辑', '이미지 편집'),
+    'SeedEdit 3.0'
+  );
+  const form = document.createElement('form');
+  form.className = 'board-butler-config-form';
+  form.innerHTML = `
+    <label class="board-butler-config-field">
+      <span>${BOARD_BUTLER_ICONS.prompt}<strong>${t('Edit instruction', '编辑指令', '편집 지시')}</strong></span>
+      <textarea name="butler-seededit-prompt" rows="4" maxlength="1200" required placeholder="${t(
+        'Describe exactly what should change',
+        '准确描述需要修改的内容',
+        '변경할 내용을 정확히 설명하세요'
+      )}"></textarea>
+    </label>
+  `;
+  form.append(
+    boardButlerRangeField(BOARD_BUTLER_ICONS.detail, t('Instruction strength', '指令强度', '지시 강도'), 'butler-seededit-scale', {
+      min: 1, max: 10, step: 0.5, value: 5
+    }),
+    boardButlerNumberField(BOARD_BUTLER_ICONS.detail, t('Seed', '随机种子', '시드'), 'butler-seededit-seed', {
+      min: 0, max: 2147483647, value: '', placeholder: t('Random', '随机', '무작위')
+    })
+  );
+  const cost = document.createElement('div');
+  cost.className = 'board-butler-cost-estimate';
+  cost.textContent = t('18 pts · SeedEdit 3.0', '18 积分 · SeedEdit 3.0', '18포인트 · SeedEdit 3.0');
+  form.appendChild(cost);
+  appendBoardButlerFormActions(form, t('Edit', '开始编辑', '편집'));
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    const prompt = String(data.get('butler-seededit-prompt') || '').trim();
+    if (!prompt) return;
+    const options = {
+      prompt,
+      scale: Number(data.get('butler-seededit-scale')) || 5,
+      ...(data.get('butler-seededit-seed') !== '' ? { seed: Number(data.get('butler-seededit-seed')) } : {})
+    };
+    if (launchBoardButlerImageTool('imageEdit', file, item, options)) closeBoardButlerPanel();
+  });
+  body.appendChild(form);
+  form.querySelector('textarea').focus();
+}
+
+function openBoardButlerExpandPanel(anchor, file, item) {
+  const { body } = createBoardButlerConfigPanel(
+    anchor,
+    BOARD_BUTLER_ICONS.imageLayer,
+    t('Expand image', '图片扩展', '이미지 확장'),
+    'Kling Images Expand'
+  );
+  const form = document.createElement('form');
+  form.className = 'board-butler-config-form';
+  const directionGrid = document.createElement('div');
+  directionGrid.className = 'board-butler-direction-grid';
+  [
+    ['Up', '上方', 'up'],
+    ['Right', '右侧', 'right'],
+    ['Down', '下方', 'down'],
+    ['Left', '左侧', 'left']
+  ].forEach(([english, chinese, name]) => {
+    directionGrid.appendChild(boardButlerNumberField(
+      BOARD_BUTLER_ICONS.imageUpscale,
+      t(english, chinese, english),
+      `butler-expand-${name}`,
+      { min: 0, max: 2, step: 0.05, value: 0.2 }
+    ));
+  });
+  form.appendChild(directionGrid);
+  const prompt = document.createElement('label');
+  prompt.className = 'board-butler-config-field';
+  prompt.innerHTML = `<span>${BOARD_BUTLER_ICONS.prompt}<strong>${t('Prompt', '扩展提示词', '프롬프트')}</strong><em>${t('Optional', '可选', '선택')}</em></span><textarea name="butler-expand-prompt" rows="3" maxlength="1200" placeholder="${t('Describe the scene outside the image', '描述画面外需要延展的内容', '이미지 밖으로 확장할 장면을 설명하세요')}"></textarea>`;
+  form.appendChild(prompt);
+  const area = document.createElement('div');
+  area.className = 'board-butler-cost-estimate';
+  const updateArea = () => {
+    const data = new FormData(form);
+    const horizontal = 1 + Number(data.get('butler-expand-left') || 0) + Number(data.get('butler-expand-right') || 0);
+    const vertical = 1 + Number(data.get('butler-expand-up') || 0) + Number(data.get('butler-expand-down') || 0);
+    const multiplier = horizontal * vertical;
+    area.textContent = t(
+      `${multiplier.toFixed(2)}x area · 17 pts`,
+      `画布面积 ${multiplier.toFixed(2)} 倍 · 17 积分`,
+      `면적 ${multiplier.toFixed(2)}배 · 17포인트`
+    );
+    area.classList.toggle('is-error', multiplier <= 1 || multiplier > 3);
+  };
+  form.addEventListener('input', updateArea);
+  form.appendChild(area);
+  appendBoardButlerFormActions(form, t('Expand', '开始扩展', '확장'));
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    const options = {
+      up: Number(data.get('butler-expand-up') || 0),
+      right: Number(data.get('butler-expand-right') || 0),
+      down: Number(data.get('butler-expand-down') || 0),
+      left: Number(data.get('butler-expand-left') || 0),
+      prompt: String(data.get('butler-expand-prompt') || '').trim()
+    };
+    const multiplier = (1 + options.left + options.right) * (1 + options.up + options.down);
+    if (multiplier <= 1 || multiplier > 3) {
+      showToast(t('Expanded area must be between 1x and 3x.', '扩展后面积必须大于原图且不超过 3 倍。', '확장 면적은 원본보다 크고 3배 이하여야 합니다.'));
+      return;
+    }
+    if (launchBoardButlerImageTool('imageExpand', file, item, options)) closeBoardButlerPanel();
+  });
+  body.appendChild(form);
+  updateArea();
+}
+
 function boardButlerSegmentedField(icon, title, name, options, selectedValue) {
   const field = document.createElement('fieldset');
   field.className = 'board-butler-config-field board-butler-segmented-field';
@@ -1278,7 +1409,7 @@ function openBoardButlerVideoUpscalePanel(anchor, file, item) {
     const duration = Math.max(1, Number(file.sourceDuration) || 5);
     const pixelFactor = resolution === dimensions[0] ? 0.25 : (resolution === dimensions[1] ? 0.45 : 1);
     const providerEstimate = Math.max(1, Math.ceil(duration * 0.75 * pixelFactor * frameRate / 24));
-    const credits = providerEstimate * 3;
+    const credits = Math.ceil((providerEstimate * 6.8 + 1.4) * 10);
     cost.textContent = t(
       `About ${credits} pts · final charge follows the provider quote`,
       `约 ${credits} 积分 · 最终按服务商实际费用结算`,
@@ -1562,9 +1693,9 @@ async function runBoardButlerRemoveBackground(file, item, options = {}) {
 function openBoardButlerThreeDPanel(anchor, file, item, providerId) {
   const provider = ['hunyuan3d', 'hyper3d', 'tripo3d'].includes(providerId) ? providerId : 'hunyuan3d';
   const providerMeta = {
-    hunyuan3d: { icon: BOARD_BUTLER_ICONS.hunyuan3d, name: 'Hunyuan 3D', credits: 8 },
-    hyper3d: { icon: BOARD_BUTLER_ICONS.hyper3d, name: 'Hyper3D Rodin', credits: 14 },
-    tripo3d: { icon: BOARD_BUTLER_ICONS.tripo3d, name: 'Tripo3D', credits: 10 }
+    hunyuan3d: { icon: BOARD_BUTLER_ICONS.hunyuan3d, name: 'Hunyuan 3D', credits: 22 },
+    hyper3d: { icon: BOARD_BUTLER_ICONS.hyper3d, name: 'Hyper3D Rodin', credits: 28 },
+    tripo3d: { icon: BOARD_BUTLER_ICONS.tripo3d, name: 'Tripo3D', credits: 24 }
   }[provider];
   const { body } = createBoardButlerConfigPanel(
     anchor,
@@ -1853,6 +1984,7 @@ function createBoardButlerMenuButton(file, action, icon, label, onClick, options
   button.innerHTML = `
     <span class="board-butler-menu-icon" aria-hidden="true">${icon}</span>
     <span class="board-butler-menu-label">${label}</span>
+    ${Number.isFinite(Number(options.credits)) ? `<small class="board-butler-menu-cost">${Math.max(0, Math.ceil(Number(options.credits)))} ${t('pts', '积分', '포인트')}</small>` : ''}
     <small class="board-butler-menu-status" hidden></small>
     ${options.hasSubmenu ? BOARD_BUTLER_ICONS.caret : ''}
   `;
@@ -1945,32 +2077,37 @@ function openBoardButlerMenu(trigger, file, item) {
     'removeBackground',
     BOARD_BUTLER_ICONS.removeBackground,
     t('Remove background', '去除背景', '배경 제거'),
-    (button) => openBoardButlerBackgroundPanel(button, file, item),
-    { popup: 'dialog' }
+    () => {
+      closeBoardButlerMenu();
+      void runBoardButlerRemoveBackground(file, item, {});
+    },
+    { popup: null, credits: 48 }
   ));
   menu.appendChild(createBoardButlerMenuButton(
     file,
     'imageEdit',
     BOARD_BUTLER_ICONS.imageEdit,
     t('Edit image', '图片修改', '이미지 편집'),
-    (button) => openBoardButlerImageEditPanel(button, file, item),
-    { popup: 'dialog' }
+    (button) => openBoardButlerSeedEditPanel(button, file, item),
+    { popup: 'dialog', credits: 18 }
   ));
   menu.appendChild(createBoardButlerMenuButton(
     file,
-    'imageLayer',
+    'imageExpand',
     BOARD_BUTLER_ICONS.imageLayer,
-    t('Separate layers', '图片分层', '이미지 레이어 분리'),
-    (button) => openBoardButlerLayerPanel(button, file, item),
-    { popup: 'dialog' }
+    t('Expand image', '图片扩展', '이미지 확장'),
+    (button) => openBoardButlerExpandPanel(button, file, item),
+    { popup: 'dialog', credits: 17 }
   ));
   menu.appendChild(createBoardButlerMenuButton(
     file,
     'imageUpscale',
     BOARD_BUTLER_ICONS.imageUpscale,
-    t('Upscale image', '图片放大', '이미지 확대'),
-    (button) => openBoardButlerUpscalePanel(button, file, item),
-    { popup: 'dialog' }
+    t('Creative upscale', '图片创意放大', '창의적 이미지 확대'),
+    () => {
+      if (launchBoardButlerImageTool('imageUpscale', file, item, {})) closeBoardButlerMenu();
+    },
+    { popup: null, credits: 69 }
   ));
   menu.appendChild(createBoardButlerMenuButton(
     file,
@@ -1978,7 +2115,7 @@ function openBoardButlerMenu(trigger, file, item) {
     BOARD_BUTLER_ICONS.eraseObject,
     t('Erase objects', '物体消除', '개체 지우기'),
     () => openBoardButlerErasePanel(file, item),
-    { popup: 'dialog' }
+    { popup: 'dialog', credits: 48 }
   ));
 
   const topazGroup = document.createElement('div');

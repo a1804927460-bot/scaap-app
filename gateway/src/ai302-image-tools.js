@@ -13,6 +13,11 @@ const QWEN_EDIT_PATH = '/302/submit/qwen-image-edit-plus';
 const QWEN_LAYERED_PATH = '/302/submit/qwen-image-layered';
 const SUPER_UPSCALE_PATH = '/302/submit/super-upscale-v2';
 const ERASE_PATH = '/302/submit/erase';
+const SEED_EDIT_PATH = '/doubao/drawing/seededit_v30';
+const SEED_EDIT_RESULT_PATH = '/doubao/drawing/seededit_v30_result';
+const KLING_EXPAND_PATH = '/klingai/v1/images/editing/expand';
+const CLEANUP_PATH = '/clipdrop/cleanup/v1';
+const GENERATIVE_UPSCALE_PATH = '/recraft/v1/images/generativeUpscale';
 const TOPAZ_IMAGE_PATHS = Object.freeze({
   'topaz-image-sharpen': '/topazlabs/image/v1/sharpen/async',
   'topaz-image-sharpen-gen': '/topazlabs/image/v1/sharpen-gen/async',
@@ -37,6 +42,8 @@ const MAX_RESULT_IMAGES = 8;
 const TASK_TOKEN_TTL_MS = 72 * 60 * 60 * 1000;
 const TASK_TOKEN_AAD = Buffer.from('messs:ai302-image-task:v1', 'utf8');
 const ASYNC_PROVIDERS = new Set([
+  'seededit-v3',
+  'kling-image-expand',
   'qwen-image-edit-plus',
   'qwen-image-layered',
   ...Object.keys(TOPAZ_IMAGE_PATHS)
@@ -346,6 +353,98 @@ function responseRequestId(payload) {
   return validateRequestId(value.request_id ?? value.requestId ?? value.task_id ?? value.taskId);
 }
 
+function nestedResultUrls(value, depth = 0, urls = []) {
+  if (depth > 6 || urls.length >= MAX_RESULT_IMAGES || value === null || value === undefined) return urls;
+  if (Array.isArray(value)) {
+    value.forEach((entry) => nestedResultUrls(entry, depth + 1, urls));
+    return urls;
+  }
+  if (typeof value !== 'object') return urls;
+  for (const [key, entry] of Object.entries(value)) {
+    const normalizedKey = String(key).toLowerCase();
+    if (
+      typeof entry === 'string'
+      && ['url', 'image_url', 'imageurl'].includes(normalizedKey)
+      && /^https:\/\//i.test(entry.trim())
+    ) {
+      urls.push(validateAssetUrl(entry.trim()).toString());
+      continue;
+    }
+    if (['data', 'result', 'response', 'output', 'task_result', 'images', 'image_urls', 'image'].includes(normalizedKey)) {
+      nestedResultUrls(entry, depth + 1, urls);
+    }
+  }
+  return [...new Set(urls)].slice(0, MAX_RESULT_IMAGES);
+}
+
+function nestedStatus(value, depth = 0) {
+  if (depth > 6 || !value || typeof value !== 'object') return '';
+  for (const key of ['status', 'task_status', 'taskStatus', 'state']) {
+    if (typeof value[key] === 'string' && value[key].trim()) return value[key].trim();
+  }
+  for (const key of ['data', 'result', 'response', 'output']) {
+    const found = nestedStatus(value[key], depth + 1);
+    if (found) return found;
+  }
+  return '';
+}
+
+function normalizedDocumentedStatus(payload) {
+  if (nestedResultUrls(payload).length) return 'succeeded';
+  const raw = nestedStatus(payload).toUpperCase().replace(/[ -]+/g, '_');
+  if (QUEUED_STATES.has(raw)) return 'queued';
+  if (PROCESSING_STATES.has(raw)) return 'processing';
+  if (FAILURE_STATES.has(raw)) return 'failed';
+  if (SUCCESS_STATES.has(raw)) {
+    throw imageToolError('ai302-invalid-response', 'The image tool completed without an image result.', 502);
+  }
+  throw imageToolError('ai302-invalid-response', 'The image tool returned an unsupported task status.', 502);
+}
+
+async function settledDocumentedTask(providerId, task, payload, userId, options) {
+  const status = normalizedDocumentedStatus(payload);
+  const settlement = ['succeeded', 'failed'].includes(status) && typeof options.settleCredits === 'function'
+    ? await options.settleCredits({
+      requestId: task.accountingRequestId,
+      status,
+      durationMs: Math.max(0, (Math.floor(Number(options.now ?? Date.now()) / 1000) - task.issuedAt) * 1000)
+    })
+    : null;
+  if (settlement && settlement.ok !== true) {
+    throw imageToolError('credit-settlement-failed', 'The image-tool accounting could not be settled.', 503);
+  }
+  return {
+    status,
+    retryAfterMs: ['succeeded', 'failed'].includes(status) ? 0 : 5000,
+    urls: status === 'succeeded' ? nestedResultUrls(payload) : [],
+    ...(settlement && Number.isFinite(Number(settlement.creditsCharged))
+      ? { creditsCharged: Number(settlement.creditsCharged) }
+      : {}),
+    ...(settlement && Number.isFinite(Number(settlement.creditsReleased))
+      ? { creditsReleased: Number(settlement.creditsReleased) }
+      : {}),
+    providerId
+  };
+}
+
+async function readDocumentedTask(providerId, taskToken, userId, options = {}) {
+  const requestDependencies = dependencies(options, { status: true });
+  const task = readTaskToken(
+    taskToken,
+    userId,
+    taskTokenKey(requestDependencies.apiKey, options.taskSecret),
+    options.now
+  );
+  if (task.providerId !== providerId) throw invalidTaskToken();
+  if (typeof options.touchCredits === 'function') {
+    const touched = await options.touchCredits({ requestId: task.accountingRequestId, userId: String(userId || '') });
+    if (!touched || touched.ok !== true) {
+      throw imageToolError('credit-service-failed', 'The image-tool accounting could not be refreshed.', 503);
+    }
+  }
+  return { requestDependencies, task };
+}
+
 function createRelays(imageDataUrls, options) {
   const images = imageDataUrls.map(parseSanitizedImage);
   const total = images.reduce((sum, image) => sum + image.buffer.length, 0);
@@ -523,6 +622,93 @@ export function pollQwenImageEdit(input, options = {}) {
 
 export function pollQwenImageLayered(input, options = {}) {
   return pollAsyncImageTask('qwen-image-layered', QWEN_LAYERED_PATH, input, options);
+}
+
+export async function submitSeedEditImage({ imageDataUrl, prompt, toolOptions, userId } = {}, options = {}) {
+  if (!String(userId || '').trim()) throw imageToolError('invalid-user', 'An authenticated user is required.', 401);
+  const requestDependencies = dependencies(options);
+  const accountingRequestId = validUuid(options.accountingRequestId)
+    ? String(options.accountingRequestId).trim().toLowerCase()
+    : crypto.randomUUID();
+  const image = parseSanitizedImage(imageDataUrl);
+  const form = new FormData();
+  form.append('image_urls', new Blob([image.buffer], { type: image.mime }), `image.${image.extension}`);
+  form.append('prompt', normalizeText(prompt, 'prompt', { required: true, maximum: 1200 }));
+  const source = toolOptions && typeof toolOptions === 'object' && !Array.isArray(toolOptions) ? toolOptions : {};
+  if (source.seed !== undefined && source.seed !== null && source.seed !== '') {
+    form.append('seed', String(boundedNumber(source.seed, 0, 0, 2_147_483_647, 'seed', { integer: true })));
+  }
+  form.append('scale', String(boundedNumber(source.scale, 5, 1, 10, 'scale')));
+  const payload = await fetch302Json(SEED_EDIT_PATH, { method: 'POST', body: form }, requestDependencies);
+  const requestId = responseRequestId(payload);
+  return {
+    taskToken: createTaskToken(
+      'seededit-v3', requestId, accountingRequestId, userId,
+      taskTokenKey(requestDependencies.apiKey, options.taskSecret), options.now
+    ),
+    status: 'queued',
+    retryAfterMs: 5000,
+    urls: []
+  };
+}
+
+export async function pollSeedEditImage({ taskToken, userId } = {}, options = {}) {
+  const { requestDependencies, task } = await readDocumentedTask('seededit-v3', taskToken, userId, options);
+  const payload = await fetch302Json(`${SEED_EDIT_RESULT_PATH}?response_format=url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id: task.requestId, req_json: JSON.stringify({ return_url: true }) })
+  }, requestDependencies);
+  return settledDocumentedTask('seededit-v3', task, payload, userId, options);
+}
+
+function normalizeExpansionOptions(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const result = {
+    up_expansion_ratio: boundedNumber(source.up, 0.25, 0, 2, 'up'),
+    right_expansion_ratio: boundedNumber(source.right, 0.25, 0, 2, 'right'),
+    down_expansion_ratio: boundedNumber(source.down, 0.25, 0, 2, 'down'),
+    left_expansion_ratio: boundedNumber(source.left, 0.25, 0, 2, 'left')
+  };
+  const areaRatio = (1 + result.left_expansion_ratio + result.right_expansion_ratio)
+    * (1 + result.up_expansion_ratio + result.down_expansion_ratio);
+  if (areaRatio > 3 || areaRatio <= 1) {
+    throw imageToolError('invalid-image-tool-options', 'The expanded area must be greater than the source and no more than three times its area.', 400);
+  }
+  const prompt = normalizeText(source.prompt, 'prompt', { maximum: 1200 });
+  return { ...result, ...(prompt ? { prompt } : {}), n: 1 };
+}
+
+export async function submitKlingImageExpand({ imageDataUrl, toolOptions, userId } = {}, options = {}) {
+  if (!String(userId || '').trim()) throw imageToolError('invalid-user', 'An authenticated user is required.', 401);
+  const requestDependencies = dependencies(options);
+  const accountingRequestId = validUuid(options.accountingRequestId)
+    ? String(options.accountingRequestId).trim().toLowerCase()
+    : crypto.randomUUID();
+  const image = parseSanitizedImage(imageDataUrl);
+  const payload = await fetch302Json(KLING_EXPAND_PATH, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image: image.buffer.toString('base64'), ...normalizeExpansionOptions(toolOptions) })
+  }, requestDependencies);
+  const requestId = responseRequestId(payload);
+  return {
+    taskToken: createTaskToken(
+      'kling-image-expand', requestId, accountingRequestId, userId,
+      taskTokenKey(requestDependencies.apiKey, options.taskSecret), options.now
+    ),
+    status: 'queued',
+    retryAfterMs: 5000,
+    urls: []
+  };
+}
+
+export async function pollKlingImageExpand({ taskToken, userId } = {}, options = {}) {
+  const { requestDependencies, task } = await readDocumentedTask('kling-image-expand', taskToken, userId, options);
+  const payload = await fetch302Json(`${KLING_EXPAND_PATH}/${encodeURIComponent(task.requestId)}`, {
+    method: 'GET'
+  }, requestDependencies);
+  return settledDocumentedTask('kling-image-expand', task, payload, userId, options);
 }
 
 function normalizeTopazOptions(providerId, value = {}) {
@@ -795,6 +981,71 @@ function normalizeUpscaleOptions(value = {}) {
     num_inference_steps: boundedNumber(options.numInferenceSteps, 20, 1, 50, 'numInferenceSteps', { integer: true }),
     override_size_limits: options.overrideSizeLimits === true
   };
+}
+
+function validateRasterImage(bytes) {
+  const isPng = bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  const isJpeg = bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  const isWebp = bytes.length >= 12
+    && bytes.subarray(0, 4).toString('ascii') === 'RIFF'
+    && bytes.subarray(8, 12).toString('ascii') === 'WEBP';
+  if (!isPng && !isJpeg && !isWebp) {
+    throw imageToolError('invalid-image-result', 'The image tool returned an invalid image file.', 502);
+  }
+  return bytes;
+}
+
+async function fetch302BinaryImage(path, form, options = {}) {
+  const requestDependencies = dependencies(options, { longRunning: true });
+  let response;
+  try {
+    response = await requestDependencies.fetchImpl(`${API_ORIGIN}${path}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${requestDependencies.apiKey}`,
+        Accept: 'image/png,image/jpeg,image/webp,application/json'
+      },
+      body: form,
+      redirect: 'error',
+      signal: composedSignal(requestDependencies.timeoutMs, requestDependencies.signal)
+    });
+  } catch (error) {
+    throw providerTransportFailure(error);
+  }
+  if (!response.ok) {
+    if (response.body) await response.body.cancel().catch(() => {});
+    throw upstreamFailure(response);
+  }
+  const contentType = String(response.headers && response.headers.get('content-type') || '').toLowerCase();
+  const bytes = await limitedBuffer(response, MAX_OUTPUT_IMAGE_BYTES);
+  if (contentType.includes('application/json')) {
+    let payload;
+    try { payload = JSON.parse(bytes.toString('utf8')); }
+    catch (error) { throw imageToolError('ai302-invalid-response', 'The image tool returned an invalid response.', 502); }
+    const [resultUrl] = nestedResultUrls(payload);
+    if (!resultUrl) throw imageToolError('ai302-invalid-response', 'The image tool did not return an image.', 502);
+    return downloadAi302ImageResult(resultUrl, options);
+  }
+  return validateRasterImage(bytes);
+}
+
+export async function generativeUpscaleImage({ imageDataUrl } = {}, options = {}) {
+  const image = parseSanitizedImage(imageDataUrl);
+  const form = new FormData();
+  form.append('file', new Blob([image.buffer], { type: image.mime }), `image.${image.extension}`);
+  return fetch302BinaryImage(GENERATIVE_UPSCALE_PATH, form, options);
+}
+
+export async function cleanupImageObjects({ imageDataUrl, maskImageDataUrl } = {}, options = {}) {
+  const image = parseSanitizedImage(imageDataUrl);
+  const mask = parseSanitizedImage(maskImageDataUrl);
+  if (mask.mime !== 'image/png') {
+    throw imageToolError('invalid-mask-image', 'The object-removal mask must be a PNG image.', 400);
+  }
+  const form = new FormData();
+  form.append('image_file', new Blob([image.buffer], { type: image.mime }), `image.${image.extension}`);
+  form.append('mask_file', new Blob([mask.buffer], { type: mask.mime }), 'mask.png');
+  return fetch302BinaryImage(CLEANUP_PATH, form, options);
 }
 
 export async function superUpscaleImage({ imageDataUrl, toolOptions } = {}, options = {}) {

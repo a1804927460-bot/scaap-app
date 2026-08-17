@@ -663,7 +663,11 @@ test('gateway wires every image tool route through durable credits and opaque re
   const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
   assert.match(
     server,
-    /url\.pathname === '\/v1\/tools\/image\/edit'[\s\S]*?runIdempotentImageOperation\(user\.id, requestId[\s\S]*?reserveFixedTool\(user\.id, modelId, requestId\)[\s\S]*?submitQwenImageEdit[\s\S]*?accountingRequestId: usage\.requestId/
+    /url\.pathname === '\/v1\/tools\/image\/edit'[\s\S]*?modelId !== 'seededit-v3'[\s\S]*?reserveFixedTool\(user\.id, modelId, requestId\)[\s\S]*?submitSeedEditImage[\s\S]*?accountingRequestId: usage\.requestId/
+  );
+  assert.match(
+    server,
+    /url\.pathname === '\/v1\/tools\/image\/expand'[\s\S]*?modelId !== 'kling-image-expand'[\s\S]*?reserveFixedTool\(user\.id, modelId, requestId\)[\s\S]*?submitKlingImageExpand[\s\S]*?accountingRequestId: usage\.requestId/
   );
   assert.match(
     server,
@@ -679,11 +683,11 @@ test('gateway wires every image tool route through durable credits and opaque re
   );
   assert.match(
     server,
-    /url\.pathname === '\/v1\/tools\/image\/upscale'[\s\S]*?reserveFixedTool[\s\S]*?superUpscaleImage[\s\S]*?settleToolUsage\(user\.id, usage\.requestId, 'succeeded'/
+    /url\.pathname === '\/v1\/tools\/image\/upscale'[\s\S]*?modelId !== 'generative-upscale'[\s\S]*?reserveFixedTool[\s\S]*?generativeUpscaleImage[\s\S]*?settleToolUsage\(user\.id, usage\.requestId, 'succeeded'/
   );
   assert.match(
     server,
-    /url\.pathname === '\/v1\/tools\/image\/erase'[\s\S]*?reserveFixedTool[\s\S]*?eraseImageObjects[\s\S]*?settleToolUsage\(user\.id, usage\.requestId, 'succeeded'/
+    /url\.pathname === '\/v1\/tools\/image\/erase'[\s\S]*?modelId !== 'cleanup'[\s\S]*?reserveFixedTool[\s\S]*?cleanupImageObjects[\s\S]*?settleToolUsage\(user\.id, usage\.requestId, 'succeeded'/
   );
   assert.doesNotMatch(
     server,

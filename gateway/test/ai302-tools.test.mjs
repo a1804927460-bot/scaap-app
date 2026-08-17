@@ -134,16 +134,14 @@ test('background removal uses fixed upstream options and accepts a direct transp
     fetchImpl: fetchMock
   });
   assert.deepEqual(result, output);
-  assert.equal(calls[0].url, 'https://api.302.ai/photoroom/v1/segment?response_format=original');
+  assert.equal(calls[0].url, 'https://api.302.ai/clipdrop/remove-background/v1');
   assert.equal(calls[0].options.headers.Authorization, 'Bearer test-302-key');
-  assert.equal(calls[0].options.body.get('format'), 'png');
-  assert.equal(calls[0].options.body.get('channels'), 'rgba');
-  assert.equal(calls[0].options.body.get('size'), 'full');
+  assert.equal(calls[0].options.body.get('image_file') instanceof Blob, true);
   assert.equal(calls.length, 1);
   assert.equal(JSON.stringify(result).includes('test-302-key'), false);
 });
 
-test('302 authorization failures are explicit and background options follow the documented form', async () => {
+test('302 authorization failures are explicit and unsupported background options are not forwarded', async () => {
   let submittedForm;
   await assert.rejects(
     () => removeBackground({
@@ -158,9 +156,10 @@ test('302 authorization failures are explicit and background options follow the 
     }),
     { code: 'ai302-unauthorized', status: 503 }
   );
-  assert.equal(submittedForm.get('size'), 'hd');
-  assert.equal(submittedForm.get('crop'), 'true');
-  assert.equal(submittedForm.get('despill'), 'false');
+  assert.equal(submittedForm.get('image_file') instanceof Blob, true);
+  assert.equal(submittedForm.get('size'), null);
+  assert.equal(submittedForm.get('crop'), null);
+  assert.equal(submittedForm.get('despill'), null);
 });
 
 test('background removal distinguishes a provider timeout from a transport outage', async () => {
@@ -612,10 +611,10 @@ test('Topaz video creation uses the documented relay contract and server-only re
     }
   });
 
-  assert.equal(TOPAZ_RETAIL_CREDIT_MULTIPLIER, 3);
-  assert.equal(quoteTopazRetailCredits(21), 63);
+  assert.equal(TOPAZ_RETAIL_CREDIT_MULTIPLIER, 68);
+  assert.equal(quoteTopazRetailCredits(21), 1442);
   assert.equal(created.providerCost, 21);
-  assert.equal(created.credits, 63);
+  assert.equal(created.credits, 1442);
   assert.equal(created.availableCredits, 937);
   assert.equal(created.taskToken.includes('private-topaz-request-id'), false);
   assert.equal(created.taskToken.includes(reservation.requestId), false);
@@ -624,7 +623,7 @@ test('Topaz video creation uses the documented relay contract and server-only re
     userId: 'video-user-one',
     requestId: reservation.requestId,
     providerId: 'topaz-video-upscale',
-    credits: 63,
+    credits: 1442,
     providerCost: 21,
     resolution: '3840x2160',
     duration: 13
@@ -663,7 +662,7 @@ test('Topaz video creation uses the documented relay contract and server-only re
     },
     settleCredits: async (value) => {
       settled = value;
-      return { ok: true, status: 'succeeded', creditsCharged: 63 };
+      return { ok: true, status: 'succeeded', creditsCharged: 1442 };
     },
     fetchImpl: async (url, options) => {
       assert.equal(String(url), 'https://api.302.ai/topazlabs/video/private-topaz-request-id/status');
@@ -682,9 +681,9 @@ test('Topaz video creation uses the documented relay contract and server-only re
     status: 'succeeded',
     progress: 100,
     retryAfterMs: 0,
-    credits: 63,
+    credits: 1442,
     providerCost: 21,
-    creditsCharged: 63
+    creditsCharged: 1442
   });
 
   await assert.rejects(
@@ -712,7 +711,7 @@ test('Topaz result download validates the provider URL and returns only video by
     now: 1_800_000_000_000,
     fetchImpl: async () => jsonResponse({ cost: 4, requestId: 'download-topaz-request' }),
     reserveCredits: async ({ credits, providerCost }) => ({
-      ok: credits === 12 && providerCost === 4,
+      ok: credits === 286 && providerCost === 4,
       reason: 'reserved'
     })
   });
@@ -725,7 +724,7 @@ test('Topaz result download validates the provider URL and returns only video by
     taskSecret: 'video-download-secret',
     now: 1_800_000_002_000,
     touchCredits: async () => ({ ok: true }),
-    settleCredits: async () => ({ ok: true, status: 'succeeded', creditsCharged: 12 }),
+    settleCredits: async () => ({ ok: true, status: 'succeeded', creditsCharged: 286 }),
     fetchImpl: async (url, options) => {
       call += 1;
       if (call === 1) {
@@ -829,13 +828,13 @@ test('Topaz creation unwraps generic 302 status envelopes and accepts task field
       data: { task_id: 'wrapped-topaz-task', provider_cost: 9 }
     }),
     reserveCredits: async ({ credits, providerCost }) => ({
-      ok: credits === 27 && providerCost === 9,
+      ok: credits === 626 && providerCost === 9,
       availableCredits: 73
     })
   });
   assert.equal(created.status, 'queued');
   assert.equal(created.providerCost, 9);
-  assert.equal(created.credits, 27);
+  assert.equal(created.credits, 626);
   assert.equal(created.availableCredits, 73);
 });
 
@@ -855,7 +854,7 @@ test('Topaz accepts wrapped 302 responses and derives progress from processing j
       data: { cost: '7', request_id: 'wrapped-topaz-request' }
     }),
     reserveCredits: async ({ credits, providerCost }) => ({
-      ok: credits === 21 && providerCost === 7,
+      ok: credits === 490 && providerCost === 7,
       reason: 'reserved'
     })
   });
@@ -879,7 +878,7 @@ test('Topaz accepts wrapped 302 responses and derives progress from processing j
     status: 'processing',
     progress: 46,
     retryAfterMs: 5_000,
-    credits: 21,
+    credits: 490,
     providerCost: 7
   });
 
@@ -892,7 +891,7 @@ test('Topaz accepts wrapped 302 responses and derives progress from processing j
     taskSecret: 'wrapped-topaz-secret',
     now: 1_800_000_004_000,
     touchCredits: async () => ({ ok: true }),
-    settleCredits: async () => ({ ok: true, status: 'succeeded', creditsCharged: 21 }),
+    settleCredits: async () => ({ ok: true, status: 'succeeded', creditsCharged: 490 }),
     fetchImpl: async (url, options) => {
       call += 1;
       if (call === 1) {
@@ -922,7 +921,7 @@ test('Topaz video accepts snake_case jobs and waits for a delayed download URL',
     publicBaseUrl: 'https://gateway.example.com',
     now: 1_800_000_000_000,
     fetchImpl: async () => jsonResponse({ data: { process_id: 'delayed-topaz-request', credits: 5 } }),
-    reserveCredits: async ({ credits, providerCost }) => ({ ok: credits === 15 && providerCost === 5 })
+    reserveCredits: async ({ credits, providerCost }) => ({ ok: credits === 354 && providerCost === 5 })
   });
 
   const waiting = await getVideoUpscaleStatus({
@@ -944,7 +943,7 @@ test('Topaz video accepts snake_case jobs and waits for a delayed download URL',
     status: 'processing',
     progress: 100,
     retryAfterMs: 5_000,
-    credits: 15,
+    credits: 354,
     providerCost: 5
   });
 
@@ -956,7 +955,7 @@ test('Topaz video accepts snake_case jobs and waits for a delayed download URL',
     taskSecret: 'delayed-topaz-secret',
     now: 1_800_000_004_000,
     touchCredits: async () => ({ ok: true }),
-    settleCredits: async ({ status }) => ({ ok: status === 'succeeded', creditsCharged: 15 }),
+    settleCredits: async ({ status }) => ({ ok: status === 'succeeded', creditsCharged: 354 }),
     fetchImpl: async () => jsonResponse({
       payload: {
         taskStatus: 'complete',
@@ -969,9 +968,9 @@ test('Topaz video accepts snake_case jobs and waits for a delayed download URL',
     status: 'succeeded',
     progress: 100,
     retryAfterMs: 0,
-    credits: 15,
+    credits: 354,
     providerCost: 5,
-    creditsCharged: 15
+    creditsCharged: 354
   });
 });
 
@@ -1084,6 +1083,7 @@ test('server enables paid 302 routes with the shared key unless a route is expli
   };
   assert.match(server, /\/v1\/tools\/background\/remove/);
   assert.match(server, /\/v1\/tools\/image\/edit/);
+  assert.match(server, /\/v1\/tools\/image\/expand/);
   assert.match(server, /\/v1\/tools\/image\/layer/);
   assert.match(server, /\/v1\/tools\/image\/status/);
   assert.match(server, /\/v1\/tools\/image\/download/);
@@ -1113,12 +1113,13 @@ test('server enables paid 302 routes with the shared key unless a route is expli
   assert.match(server, /if \(configured === 'true'\) return true;/);
   assert.match(server, /process\.env\.AI302_KEY \|\| process\.env\.AI_302_API_KEY/);
   assertGuardBefore('/v1/tools/background/remove', 'ai302Enabled(AI302_FLAGS.background)', 'removeBackground');
-  assertGuardBefore('/v1/tools/image/edit', 'ai302Enabled(AI302_FLAGS.image)', 'submitQwenImageEdit');
+  assertGuardBefore('/v1/tools/image/edit', 'ai302Enabled(AI302_FLAGS.image)', 'submitSeedEditImage');
+  assertGuardBefore('/v1/tools/image/expand', 'ai302Enabled(AI302_FLAGS.image)', 'submitKlingImageExpand');
   assertGuardBefore('/v1/tools/image/layer', 'ai302Enabled(AI302_FLAGS.image)', 'submitQwenImageLayered');
   assertGuardBefore('/v1/tools/image/status', 'ai302Enabled(imageToolFlag(modelId))', 'imageToolPoller');
   assertGuardBefore('/v1/tools/image/download', 'ai302Enabled(imageToolFlag(modelId))', 'imageToolPoller');
-  assertGuardBefore('/v1/tools/image/upscale', 'ai302Enabled(AI302_FLAGS.image)', 'superUpscaleImage');
-  assertGuardBefore('/v1/tools/image/erase', 'ai302Enabled(AI302_FLAGS.image)', 'eraseImageObjects');
+  assertGuardBefore('/v1/tools/image/upscale', 'ai302Enabled(AI302_FLAGS.image)', 'generativeUpscaleImage');
+  assertGuardBefore('/v1/tools/image/erase', 'ai302Enabled(AI302_FLAGS.image)', 'cleanupImageObjects');
   assertGuardBefore('/v1/tools/3d/create', 'ai302Enabled(flag)', 'createThreeDTask');
   assert.match(
     server,

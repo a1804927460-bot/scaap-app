@@ -20,6 +20,10 @@ quickActions.forEach((action) => {
 });
 assert.strictEqual((html.match(/data-ai-quick-action=/g) || []).length, 4,
   'the AI home should expose exactly four quick actions');
+assert.match(html, /data-assistant-kind="chat"[^>]*>Agent<\/button>/,
+  'the chat mode should be labelled Agent');
+assert.match(html, /id="ai-assistant-upload"[\s\S]*?M14 2H6[\s\S]*?M12 11v6/,
+  'the attachment action should use a recognizable file-add icon');
 
 ['image', 'video'].forEach((kind) => {
   const pattern = new RegExp(`data-assistant-kind="${kind}"[\\s\\S]*?<svg[\\s\\S]*?<\\/svg>[\\s\\S]*?<\\/button>`);
@@ -43,13 +47,23 @@ assert.match(
 );
 assert.match(
   assistantSource,
-  /ai-assistant-panel'\)\.addEventListener\('contextmenu', showAgentTextContextMenu\)[\s\S]*?\['a', 'c', 'v', 'x'\][\s\S]*?event\.stopPropagation\(\)/,
+  /const panel = document\.getElementById\('ai-assistant-panel'\)[\s\S]*?panel\.addEventListener\('contextmenu', showAgentTextContextMenu\)[\s\S]*?\['a', 'c', 'v', 'x'\][\s\S]*?event\.stopPropagation\(\)/,
   'AI chat must expose text clipboard actions without leaking shortcuts into the canvas.'
 );
 assert.match(
   css,
   /\.ai-assistant-message-body \{[\s\S]*?user-select:\s*text;/,
   'AI replies must remain selectable for keyboard and context-menu copying.'
+);
+assert.match(
+  assistantSource,
+  /function syncAssistantCompactMode\(panel\)[\s\S]*?width < 380[\s\S]*?width <= 360[\s\S]*?is-chat-only-compact[\s\S]*?setAssistantKind\('chat'\)[\s\S]*?new ResizeObserver/,
+  'narrow AI panels must switch to Agent-only mode and keep observing resizes.'
+);
+assert.match(
+  css,
+  /\.ai-assistant-panel\.is-chat-only-compact \[data-assistant-kind="image"\][\s\S]*?\.ai-assistant-tools[\s\S]*?display: none !important/,
+  'Agent-only mode must remove media and model controls that no longer fit.'
 );
 
 console.log('AI assistant layout checks passed');

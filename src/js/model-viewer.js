@@ -47,35 +47,56 @@ function disposeBoardModelObject(root) {
   geometries.forEach((geometry) => geometry.dispose());
 }
 
+function disposeBoardModelViewerSnapshot(snapshot) {
+  snapshot.originalMaterials.forEach((material, mesh) => {
+    if (mesh) mesh.material = material;
+  });
+  if (snapshot.mixer && snapshot.root) {
+    snapshot.mixer.stopAllAction();
+    snapshot.mixer.uncacheRoot(snapshot.root);
+  }
+  disposeBoardModelObject(snapshot.root);
+  snapshot.overrideMaterials.forEach((material) => material.dispose());
+  snapshot.overrideMaterials.clear();
+  snapshot.originalMaterials.clear();
+  disposeBoardModelObject(snapshot.environmentScene);
+  if (snapshot.environmentTarget) snapshot.environmentTarget.dispose();
+  if (snapshot.pmremGenerator) snapshot.pmremGenerator.dispose();
+  if (snapshot.renderer) {
+    snapshot.renderer.setAnimationLoop(null);
+    snapshot.renderer.renderLists.dispose();
+    snapshot.renderer.dispose();
+    snapshot.renderer.forceContextLoss();
+    if (snapshot.renderer.domElement) snapshot.renderer.domElement.remove();
+  }
+  if (snapshot.overlay) snapshot.overlay.remove();
+}
+
 function closeBoardModelViewer() {
   BoardModelViewer.loadGeneration += 1;
+  const snapshot = {
+    overlay: BoardModelViewer.overlay,
+    renderer: BoardModelViewer.renderer,
+    root: BoardModelViewer.root,
+    mixer: BoardModelViewer.mixer,
+    environmentTarget: BoardModelViewer.environmentTarget,
+    environmentScene: BoardModelViewer.environmentScene,
+    pmremGenerator: BoardModelViewer.pmremGenerator,
+    originalMaterials: BoardModelViewer.originalMaterials,
+    overrideMaterials: BoardModelViewer.overrideMaterials
+  };
   if (BoardModelViewer.animationFrame) cancelAnimationFrame(BoardModelViewer.animationFrame);
   BoardModelViewer.animationFrame = 0;
   if (BoardModelViewer.resizeObserver) BoardModelViewer.resizeObserver.disconnect();
   BoardModelViewer.resizeObserver = null;
   if (BoardModelViewer.controls) BoardModelViewer.controls.dispose();
   if (BoardModelViewer.lightDragCleanup) BoardModelViewer.lightDragCleanup();
-  if (BoardModelViewer.mixer && BoardModelViewer.root) {
-    BoardModelViewer.mixer.stopAllAction();
-    BoardModelViewer.mixer.uncacheRoot(BoardModelViewer.root);
-  }
-  restoreBoardModelMaterials();
-  disposeBoardModelObject(BoardModelViewer.root);
-  BoardModelViewer.overrideMaterials.forEach((material) => material.dispose());
-  BoardModelViewer.overrideMaterials.clear();
-  BoardModelViewer.originalMaterials.clear();
-  disposeBoardModelObject(BoardModelViewer.environmentScene);
-  if (BoardModelViewer.environmentTarget) BoardModelViewer.environmentTarget.dispose();
-  if (BoardModelViewer.pmremGenerator) BoardModelViewer.pmremGenerator.dispose();
-  if (BoardModelViewer.renderer) {
-    BoardModelViewer.renderer.setAnimationLoop(null);
-    BoardModelViewer.renderer.renderLists.dispose();
-    BoardModelViewer.renderer.dispose();
-    BoardModelViewer.renderer.forceContextLoss();
-    if (BoardModelViewer.renderer.domElement) BoardModelViewer.renderer.domElement.remove();
-  }
   if (BoardModelViewer.keyHandler) document.removeEventListener('keydown', BoardModelViewer.keyHandler);
-  if (BoardModelViewer.overlay) BoardModelViewer.overlay.remove();
+  if (snapshot.overlay) {
+    snapshot.overlay.classList.remove('is-visible');
+    snapshot.overlay.classList.add('is-closing');
+    snapshot.overlay.style.pointerEvents = 'none';
+  }
   BoardModelViewer.overlay = null;
   BoardModelViewer.renderer = null;
   BoardModelViewer.scene = null;
@@ -92,9 +113,14 @@ function closeBoardModelViewer() {
   BoardModelViewer.rimLight = null;
   BoardModelViewer.materialStats = null;
   BoardModelViewer.modelStats = null;
+  BoardModelViewer.originalMaterials = new Map();
+  BoardModelViewer.overrideMaterials = new Set();
   BoardModelViewer.displayMode = 'pbr';
   BoardModelViewer.lightDragCleanup = null;
   BoardModelViewer.keyHandler = null;
+  if (snapshot.overlay || snapshot.renderer || snapshot.root) {
+    window.setTimeout(() => disposeBoardModelViewerSnapshot(snapshot), 150);
+  }
 }
 
 function createBoardWebglRenderer(THREE, options = {}) {

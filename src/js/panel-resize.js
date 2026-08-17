@@ -1,11 +1,13 @@
 'use strict';
 
 const PANEL_LAYOUT_STORAGE_KEY = 'messs.panel-layout.v2';
+const PANEL_LAYOUT_VERSION = 3;
+const LEGACY_AGENT_DEFAULTS = new Set([320, 352, 384]);
 const PANEL_LIMITS = {
   sidebar: { min: 176, cssVar: '--sidebar-w', defaultPx: 272, direction: 1 },
   stats: { min: 220, cssVar: '--stats-w', defaultPx: 320, direction: -1 },
   preview: { min: 150, cssVar: '--preview-h', defaultPx: 340, direction: 1 },
-  agent: { min: 220, cssVar: '--agent-w', defaultPx: 320, direction: -1 }
+  agent: { min: 220, cssVar: '--agent-w', defaultPx: 360, direction: -1 }
 };
 
 const MAIN_HORIZONTAL_CHROME_PX = 36;
@@ -58,7 +60,7 @@ function readStoredPanelLayout() {
 }
 
 function persistPanelLayout(mainApp) {
-  const value = {};
+  const value = { version: PANEL_LAYOUT_VERSION };
   Object.keys(PANEL_LIMITS).forEach((target) => {
     value[target] = Math.round(readPanelSize(mainApp, target));
   });
@@ -71,7 +73,13 @@ function persistPanelLayout(mainApp) {
 
 function restorePanelLayout(mainApp) {
   const saved = readStoredPanelLayout();
+  const savedVersion = Number(saved.version) || 2;
   Object.keys(PANEL_LIMITS).forEach((target) => {
+    if (
+      target === 'agent' &&
+      savedVersion < PANEL_LAYOUT_VERSION &&
+      LEGACY_AGENT_DEFAULTS.has(Number(saved.agent))
+    ) return;
     if (Number.isFinite(Number(saved[target]))) {
       writePanelSize(mainApp, target, Number(saved[target]));
     }

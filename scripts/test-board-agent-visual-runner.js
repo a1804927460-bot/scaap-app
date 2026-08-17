@@ -21,9 +21,9 @@ async function run() {
   fs.writeFileSync(htmlPath, `<!doctype html>
     <html data-theme="light"><head><meta charset="utf-8">
       <link rel="stylesheet" href="${themeUrl}"><link rel="stylesheet" href="${stylesUrl}">
-      <style>body{background:var(--bg-base)}#board-panel{position:fixed;inset:38px 0 0}.fixture-canvas{position:absolute;inset:0;background-image:radial-gradient(circle,var(--border-hairline) 1px,transparent 1px);background-size:28px 28px}.ai-composer{animation:none!important}.qa-text{position:absolute;left:120px;top:95px;z-index:2}.qa-text-edit{top:155px}.qa-doodle{position:absolute;left:110px;top:245px;width:360px;height:160px;z-index:2}</style>
+      <style>body{background:var(--bg-base)}body.main-app{display:block;padding:0;opacity:1;transform:none}#board-panel{position:fixed;inset:38px 0 0}.fixture-canvas{position:absolute;inset:0;background-image:radial-gradient(circle,var(--border-hairline) 1px,transparent 1px);background-size:28px 28px}.ai-composer{animation:none!important}.qa-text{position:absolute;left:120px;top:95px;z-index:2}.qa-text-edit{top:155px}.qa-doodle{position:absolute;left:110px;top:245px;width:360px;height:160px;z-index:2}</style>
       <script src="${freehandUrl}"></script>
-    </head><body>
+    </head><body class="main-app">
       <section id="board-panel" class="board-panel is-fullscreen">
         <header class="panel-header"><span class="panel-title">Project</span><div class="panel-tools"><button id="board-agent-toggle" class="pill-btn pill-btn-ghost">Messs Agent</button><span class="zoom-label">100%</span></div></header>
         <div class="board-workspace-body">
@@ -153,15 +153,40 @@ async function run() {
   const stylePanel = await window.webContents.executeJavaScript(`(() => {
     const panel = document.querySelector('.ai-prompt-style-panel');
     panel.hidden = false;
+    panel.style.animation = 'none';
+    const editor = document.createElement('div');
+    editor.className = 'ai-prompt-style-editor';
+    editor.style.animation = 'none';
+    editor.innerHTML = '<label><span>Style name</span><input type="text" value="Editorial"></label><label><span>Style prompt</span><textarea>Clean studio light</textarea></label><div class="ai-prompt-style-editor-footer"><div class="ai-prompt-style-cover-controls"><label class="ai-prompt-style-cover-picker"><span class="ai-prompt-style-cover-preview"></span><span>Custom cover</span></label><button type="button" class="ai-prompt-style-cover-upload"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 16V4"></path><path d="m7 9 5-5 5 5"></path><path d="M5 20h14"></path></svg><span>Upload cover</span></button></div><div class="ai-prompt-style-editor-actions"><button>Cancel</button><button class="ai-prompt-style-save">Save</button></div></div>';
+    panel.appendChild(editor);
     const r = panel.getBoundingClientRect();
     const composer = document.querySelector('.ai-composer').getBoundingClientRect();
-    return { left:r.left, right:r.right, top:r.top, bottom:r.bottom, composerLeft:composer.left, composerRight:composer.right };
+    const upload = editor.querySelector('.ai-prompt-style-cover-upload');
+    upload.scrollIntoView({ block: 'nearest' });
+    const uploadRect = upload.getBoundingClientRect();
+    const uploadStyle = getComputedStyle(upload);
+    return { left:r.left, right:r.right, top:r.top, bottom:r.bottom, composerLeft:composer.left, composerRight:composer.right, upload:{left:uploadRect.left,right:uploadRect.right,width:uploadRect.width,height:uploadRect.height,background:uploadStyle.backgroundImage,color:uploadStyle.color} };
   })()`);
   if (stylePanel.left < stylePanel.composerLeft || stylePanel.right > stylePanel.composerRight || stylePanel.top < full.viewport.top) {
     throw new Error(`Prompt style panel escaped the generation composer: ${JSON.stringify(stylePanel)}`);
   }
+  if (stylePanel.upload.left < stylePanel.left || stylePanel.upload.right > stylePanel.right || stylePanel.upload.width < 90 || stylePanel.upload.height < 30 || !stylePanel.upload.background.includes('linear-gradient')) {
+    throw new Error(`Prompt style cover upload button lost its blue glass layout: ${JSON.stringify(stylePanel)}`);
+  }
   fs.writeFileSync(path.join(screenshotDir, 'board-prompt-styles.png'), (await window.webContents.capturePage()).toPNG());
   await window.webContents.executeJavaScript(`document.querySelector('.ai-prompt-style-panel').hidden = true`);
+
+  window.setSize(2048, 1152);
+  await wait(700);
+  const largeAgent = await window.webContents.executeJavaScript(`(() => {
+    const agent = document.querySelector('.board-agent-panel').getBoundingClientRect();
+    const viewport = document.getElementById('board-viewport').getBoundingClientRect();
+    return { width:agent.width, left:agent.left, right:agent.right, viewportRight:viewport.right };
+  })()`);
+  if (largeAgent.width < 498 || largeAgent.width > 502 || largeAgent.right > 2048 || largeAgent.left < largeAgent.viewportRight - 1) {
+    throw new Error(`Large-screen Agent default does not match the reference layout: ${JSON.stringify(largeAgent)}`);
+  }
+  fs.writeFileSync(path.join(screenshotDir, 'board-agent-large-screen.png'), (await window.webContents.capturePage()).toPNG());
 
   window.setSize(900, 650);
   await wait(180);

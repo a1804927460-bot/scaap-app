@@ -10,6 +10,12 @@
   --brand-yellow: #F2C94C;
   --brand-yellow-bright: #FFD45A;
 
+  /* Shared action surface used by Send and other primary commands. */
+  --action-gradient: linear-gradient(135deg, rgba(29, 132, 244, .92), rgba(73, 173, 255, .74));
+  --action-border: rgba(143, 207, 255, .64);
+  --action-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 5px 16px rgba(24, 117, 218, .24);
+  --action-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, .36), 0 7px 20px rgba(24, 117, 218, .3);
+
   --radius-sm: 8px;
   --radius-md: 14px;
   --radius-lg: 24px;
@@ -17,6 +23,10 @@
 
   --ease-spring: cubic-bezier(0.34, 1.26, 0.36, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-popup-spring: cubic-bezier(.18, .89, .24, 1.18);
+  --motion-popup-duration: 380ms;
+  --motion-menu-duration: 300ms;
+  --motion-exit-duration: 150ms;
   --dur-fast: 180ms;
   --dur-base: 320ms;
   --dur-slow: 560ms;
@@ -28,6 +38,14 @@
   --font-ui-sm: 13.5px;
   --font-ui-md: 15px;
   --font-ui-lg: 16px;
+  --text-size-scale: 1;
+}
+
+/* Accessibility text scaling. The renderer records each element's original
+   computed size, so hierarchy is preserved while media and canvas pixels stay
+   at their native dimensions. */
+[data-messs-text-scale] {
+  font-size: calc(var(--messs-base-font-size, 1em) * var(--text-size-scale, 1)) !important;
 }
 
 /* -------- Dark theme (default) -------- */

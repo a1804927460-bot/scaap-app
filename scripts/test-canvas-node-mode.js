@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 
 const root = path.join(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'src', 'js', 'canvas-node-mode.js'), 'utf8');
@@ -73,6 +74,71 @@ assert.match(source, /function bindCanvasNodePortMagnetism[\s\S]*?pointermove[\s
   'Node ports must expose a proximity magnet without moving the connection anchor.');
 assert.match(styles, /--node-port-magnet-x:[\s\S]*?\.input\.is-magnetic[\s\S]*?\.output\.is-magnetic/,
   'Magnetic port styling must be shared by both sides of every node.');
+assert.match(styles, /\.drawflow-node \.input \{ left: -63px; \}[\s\S]*?\.drawflow-node \.output \{ right: -7px; \}/,
+  'Input and output plus controls must sit at matching visual distances from the node.');
+assert.match(styles, /\.input::before,[\s\S]*?\.output::before \{[\s\S]*?width:\s*34px;[\s\S]*?background:\s*var\(--board-workspace-bg\)/,
+  'Opaque compact port faces must mask connection endpoints instead of overlapping the plus.');
+assert.match(styles, /\.board-node-link-draft \{[\s\S]*?z-index:\s*1;/,
+  'Draft connections must stay underneath node ports.');
+assert.match(source, /function copySelectedCanvasNodeMedia[\s\S]*?nodeRole === 'media'[\s\S]*?setBoardClipboardMedia\(fileIds, 'node'\)/,
+  'Selected node media must copy into the shared canvas clipboard.');
+assert.match(source, /function pasteCanvasNodeClipboardMedia[\s\S]*?boardClipboardMediaFiles\(\)[\s\S]*?addCanvasMediaNode[\s\S]*?applyCanvasNodeSelection/,
+  'Canvas media copied in either mode must paste as selected media nodes.');
+assert.match(boardSource, /function setBoardClipboardMedia[\s\S]*?mediaFileIds[\s\S]*?isImageExt[\s\S]*?isVideoExt/,
+  'The shared clipboard must accept only image and video file references.');
+assert.match(boardSource, /duplicateExisting:\s*true,[\s\S]*?selectAdded:\s*true/,
+  'Node media pasted back to the ordinary canvas must create selected independent items.');
+
+const sharedClipboardSandbox = {
+  AppState: {
+    files: [
+      { id: 'image-a', ext: '.png' },
+      { id: 'video-b', ext: '.mp4' },
+      { id: 'document-c', ext: '.pdf' }
+    ]
+  },
+  BoardClipboard: { items: [], mediaFileIds: [], sourceMode: '', preferInternal: false },
+  CanvasNodeMode: { selectedNodeIds: new Set(['20', '10']) },
+  window: { messsAPI: { copyBoardMediaToClipboard: async (ids) => ids } },
+  isImageExt: (ext) => ext === '.png',
+  isVideoExt: (ext) => ext === '.mp4',
+  canvasNodeData: () => ({
+    10: { data: { nodeRole: 'media', mediaKind: 'image', fileId: 'image-a' } },
+    20: { data: { nodeRole: 'media', mediaKind: 'video', fileId: 'video-b' } },
+    30: { data: { nodeRole: 'text', text: 'ignore' } }
+  }),
+  canvasNodeCenterPosition: () => ({ x: 100, y: 200 }),
+  added: [],
+  selected: [],
+  Set,
+  Map
+};
+sharedClipboardSandbox.globalThis = sharedClipboardSandbox;
+vm.createContext(sharedClipboardSandbox);
+const boardClipboardFunctions = boardSource.slice(
+  boardSource.indexOf('function boardClipboardMediaFiles'),
+  boardSource.indexOf('async function pasteBoardClipboardMedia')
+);
+const nodeClipboardFunctions = source.slice(
+  source.indexOf('function copySelectedCanvasNodeMedia'),
+  source.indexOf('function canvasNodePathKind')
+);
+vm.runInContext(`function addCanvasMediaNode(file, position) { added.push({ fileId: file.id, position }); return added.length; }\nfunction applyCanvasNodeSelection(ids) { selected = [...ids]; }\n${boardClipboardFunctions}\n${nodeClipboardFunctions}`, sharedClipboardSandbox);
+assert.equal(vm.runInContext('copySelectedCanvasNodeMedia()', sharedClipboardSandbox), true);
+assert.deepStrictEqual(
+  Array.from(sharedClipboardSandbox.BoardClipboard.mediaFileIds),
+  ['video-b', 'image-a'],
+  'Node copying must preserve selected image/video order.'
+);
+assert.deepStrictEqual(
+  Array.from(vm.runInContext('pasteCanvasNodeClipboardMedia()', sharedClipboardSandbox)),
+  [1, 2],
+  'Ordinary-to-node paste must create one media node per shared file.'
+);
+assert.deepStrictEqual(
+  sharedClipboardSandbox.added.map((entry) => entry.fileId),
+  ['video-b', 'image-a']
+);
 assert.match(source, /draft\.input_id[\s\S]*?Text prompt[\s\S]*?Image generation[\s\S]*?Video generation/,
   'Dropping a left connection on empty canvas must offer upstream node choices.');
 assert.match(boardSource, /generationHooks\.placeOnBoard === false\) request\.placeOnBoard = false/);

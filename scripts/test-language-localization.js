@@ -73,7 +73,7 @@ try {
 }
 
 assert.match(mainSource, /language:\s*currentLanguage\(\)/, 'Initial renderer state must use the normalized saved language.');
-assert.match(mainSource, /query:\s*\{\s*theme:\s*initialTheme,\s*language:\s*initialLanguage\s*\}/, 'The saved language must reach the renderer before its first paint.');
+assert.match(mainSource, /query:\s*\{\s*theme:\s*initialTheme,\s*language:\s*initialLanguage,\s*textSize:\s*initialTextSize\s*\}/, 'The saved language and text size must reach the renderer before its first paint.');
 const initialStateHandler = mainSource.slice(
   mainSource.indexOf("ipcMain.handle('app:getInitialState'"),
   mainSource.indexOf("ipcMain.handle('settings:setTheme'")

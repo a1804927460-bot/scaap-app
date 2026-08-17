@@ -1258,7 +1258,12 @@ async function openFileFullscreenPreview(file, sourceMedia = null) {
 function showFullscreenMedia(media, options = {}) {
   const overlay = document.getElementById('fullscreen-overlay');
   const fsStage = document.getElementById('fullscreen-stage');
-  if (!overlay.hidden) closeFullscreenPreview();
+  if (overlay._closeTimer) {
+    window.clearTimeout(overlay._closeTimer);
+    overlay._closeTimer = 0;
+  }
+  if (!overlay.hidden) finalizeFullscreenPreviewClose();
+  overlay.classList.remove('is-closing');
   fsStage.innerHTML = '';
   const clone = media.cloneNode(true);
   clone.removeAttribute('style');
@@ -1320,7 +1325,7 @@ function showFullscreenMedia(media, options = {}) {
   overlay.hidden = false;
 }
 
-function closeFullscreenPreview() {
+function finalizeFullscreenPreviewClose() {
   const overlay = document.getElementById('fullscreen-overlay');
   const sourceVideo = FullscreenPreviewState.sourceVideo;
   const cloneVideo = FullscreenPreviewState.cloneVideo;
@@ -1337,6 +1342,15 @@ function closeFullscreenPreview() {
   FullscreenPreviewState.cloneVideo = null;
   document.getElementById('fullscreen-stage').innerHTML = '';
   overlay.hidden = true;
+  overlay.classList.remove('is-closing');
+  overlay._closeTimer = 0;
+}
+
+function closeFullscreenPreview() {
+  const overlay = document.getElementById('fullscreen-overlay');
+  if (!overlay || overlay.hidden || overlay.classList.contains('is-closing')) return;
+  overlay.classList.add('is-closing');
+  overlay._closeTimer = window.setTimeout(finalizeFullscreenPreviewClose, 150);
 }
 
 function initFullscreenOverlay() {

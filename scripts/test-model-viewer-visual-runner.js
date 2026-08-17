@@ -675,6 +675,7 @@ async function run() {
   }
 
   await window.webContents.executeJavaScript('closeBoardModelViewer()');
+  await wait(180);
   const released = await window.webContents.executeJavaScript(`({
     overlay: !!document.querySelector('.board-model-viewer-overlay'),
     renderer: window.MesssBoardModelViewer.renderer,

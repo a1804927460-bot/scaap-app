@@ -166,6 +166,19 @@ function renderCanvasLibraryProjects() {
     button.classList.toggle('is-active', CanvasWorkspace.libraryProjectId === project.id);
     const count = AppState.canvases.filter((canvas) => canvas.projectId === project.id).length;
     button.textContent = `${project.name} (${count})`;
+    button.title = t('Right-click to manage this project', '右键管理此项目');
+    button.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      buildAndShowSimpleMenu([
+        {
+          label: t('Delete project', '删除项目'),
+          icon: 'M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13',
+          danger: true,
+          action: () => promptDeleteCanvasProject(project.id)
+        }
+      ], event.clientX, event.clientY, 'canvas-project-context-menu');
+    });
     list.appendChild(button);
   });
 }
@@ -493,6 +506,60 @@ async function promptNewProject() {
   };
   AppState.canvasProjects.push(project);
   await createCanvasForProject(project.id, t('Untitled', '未命名'));
+}
+
+async function promptDeleteCanvasProject(projectId) {
+  const project = AppState.canvasProjects.find((entry) => entry.id === projectId);
+  if (!project) return;
+  if (AppState.canvasProjects.length <= 1) {
+    showToast(t('Keep at least one project.', '至少需要保留一个项目。'), 'Canvas');
+    return;
+  }
+
+  const fallback = AppState.canvasProjects.find((entry) => entry.id !== projectId && entry.name === 'General')
+    || AppState.canvasProjects.find((entry) => entry.id !== projectId);
+  if (!fallback) return;
+  const canvasCount = AppState.canvases.filter((canvas) => canvas.projectId === projectId).length;
+  const confirmed = await showCanvasConfirmDialog({
+    title: t('Delete project', '删除项目'),
+    message: canvasCount
+      ? t(
+        `Delete "${project.name}"? Its ${canvasCount} canvas${canvasCount === 1 ? '' : 'es'} will move to "${fallback.name}". Source files will be kept.`,
+        `确定删除“${project.name}”吗？其中 ${canvasCount} 个画布会移到“${fallback.name}”，源文件将会保留。`
+      )
+      : t(
+        `Delete "${project.name}"? Source files will be kept.`,
+        `确定删除“${project.name}”吗？源文件将会保留。`
+      ),
+    confirmLabel: t('Delete', '删除')
+  });
+  if (!confirmed) return;
+
+  const previousProjects = AppState.canvasProjects;
+  const affectedCanvases = AppState.canvases
+    .filter((canvas) => canvas.projectId === projectId)
+    .map((canvas) => ({ canvas, projectId: canvas.projectId, updatedAt: canvas.updatedAt }));
+  AppState.canvasProjects = AppState.canvasProjects.filter((entry) => entry.id !== projectId);
+  affectedCanvases.forEach(({ canvas }) => {
+    canvas.projectId = fallback.id;
+    canvas.updatedAt = new Date().toISOString();
+  });
+  const previousLibraryProjectId = CanvasWorkspace.libraryProjectId;
+  if (previousLibraryProjectId === projectId) CanvasWorkspace.libraryProjectId = null;
+  try {
+    await canvasWorkspaceSave();
+    renderCanvasWorkspaceControls();
+    showToast(t('Project deleted. Canvases and source files were kept.', '项目已删除，画布和源文件仍然保留。'), 'Canvas');
+  } catch (err) {
+    AppState.canvasProjects = previousProjects;
+    affectedCanvases.forEach(({ canvas, projectId: originalProjectId, updatedAt }) => {
+      canvas.projectId = originalProjectId;
+      canvas.updatedAt = updatedAt;
+    });
+    CanvasWorkspace.libraryProjectId = previousLibraryProjectId;
+    renderCanvasWorkspaceControls();
+    showToast(err && err.message ? err.message : t('Project deletion failed.', '项目删除失败。'), 'Canvas');
+  }
 }
 
 async function promptRenameCanvas(canvasId = activeCanvasId()) {

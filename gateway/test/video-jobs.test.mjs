@@ -61,7 +61,7 @@ test('start is idempotency-bound to operation, owner token, and canonical reques
         reason: calls.length === 1 ? 'reserved' : 'already-started',
         requestId: operationId,
         status: 'starting',
-        credits: 112
+        credits: 70
       });
     };
 
@@ -70,15 +70,38 @@ test('start is idempotency-bound to operation, owner token, and canonical reques
 
     assert.equal(created.created, true);
     assert.equal(repeated.created, false);
-    assert.equal(created.credits, 112);
+    assert.equal(created.credits, 70);
     assert.match(calls[0].url, /\/rpc\/start_ai_video_job$/);
     assert.equal(calls[0].body.p_request_id, operationId);
     assert.equal(calls[0].body.p_user_id, userId);
     assert.equal(calls[0].body.p_token_hash, hashVideoTaskToken(taskToken));
     assert.equal(calls[0].body.p_request_hash, calls[1].body.p_request_hash);
-    assert.equal(calls[0].body.p_expected_credits, 112);
+    assert.equal(calls[0].body.p_expected_credits, 70);
     assert.equal(JSON.stringify(calls[0].body).includes(taskToken), false);
     assert.equal(JSON.stringify(calls[0].body).includes('private prompt text'), false);
+  });
+});
+
+test('start replays a server-authorized price without exposing an account tier', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test' }, async () => {
+    const calls = [];
+    const created = await startVideoJob({
+      userId: '00000000-0000-4000-8000-000000000111',
+      operationId: '00000000-0000-4000-8000-000000000112',
+      taskToken: 'internal-price-task-token-1234567890',
+      body: { prompt: 'test', providerId: 'video-1', resolution: '2K', duration: 7 },
+      fetchImpl: async (_url, options) => {
+        calls.push(JSON.parse(options.body));
+        return calls.length === 1
+          ? jsonResponse({ ok: false, reason: 'pricing-mismatch', credits: 65 })
+          : jsonResponse({ ok: true, reason: 'reserved', credits: 65, status: 'starting' });
+      }
+    });
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].p_expected_credits, 70);
+    assert.equal(calls[1].p_expected_credits, 65);
+    assert.equal(created.credits, 65);
+    assert.equal(JSON.stringify(created).includes('pricingTier'), false);
   });
 });
 

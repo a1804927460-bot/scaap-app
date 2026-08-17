@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ko" data-theme="dark" data-view="main" data-language="ko">
+<html lang="ko" data-theme="dark" data-view="main" data-language="ko" data-text-size="medium">
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: messs-file: messs-preview: messs-thumb:; media-src 'self' messs-file: messs-transcode:; font-src 'self'; connect-src messs-file: blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none';" />
@@ -284,9 +284,9 @@
               <div class="ai-assistant-footer-start">
                 <div class="ai-assistant-mode" role="tablist" aria-label="AI mode">
                   <button id="ai-assistant-upload" class="icon-btn-sm ai-assistant-upload-top" type="button" title="Add files" aria-label="Add files">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M12 11v6M9 14h6"/></svg>
                   </button>
-                  <button type="button" data-assistant-kind="chat" class="is-active" role="tab" aria-selected="true">Chat</button>
+                  <button type="button" data-assistant-kind="chat" class="is-active" role="tab" aria-selected="true">Agent</button>
                   <button type="button" class="ai-assistant-kind-icon" data-assistant-kind="image" role="tab" aria-selected="false" title="Image" aria-label="Image">
                     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M3 17l5-5 4 4 3-3 6 6"/></svg>
                   </button>
@@ -586,7 +586,7 @@
               <div><strong>Preferences</strong></div>
             </div>
             <div class="preferences-settings-list">
-              <div class="preference-settings-row">
+              <div class="preference-settings-row appearance-settings-row">
                 <div class="preference-settings-copy"><strong>Appearance</strong><small>Choose the app theme</small></div>
                 <div class="theme-switch preference-choice-switch" role="group" aria-label="Theme">
                   <button class="theme-opt" data-theme-choice="light">
@@ -599,12 +599,45 @@
                   </button>
                 </div>
               </div>
-              <div class="preference-settings-row">
+              <div class="preference-settings-row language-settings-row">
                 <div class="preference-settings-copy"><strong>Language</strong><small>Interface language</small></div>
                 <div class="language-switch preference-choice-switch" role="group" aria-label="Language">
                   <button class="language-opt" data-language-choice="en">English</button>
                   <button class="language-opt" data-language-choice="zh">中文</button>
                   <button class="language-opt is-active" data-language-choice="ko">한국어</button>
+                </div>
+              </div>
+              <div class="preference-settings-row text-size-settings-row">
+                <div class="preference-settings-copy">
+                  <strong id="text-size-title">Text size</strong>
+                  <small id="text-size-description">Adjust interface text size</small>
+                </div>
+                <div class="text-size-control">
+                  <div class="text-size-control-head">
+                    <output id="text-size-value" for="text-size-range">Medium</output>
+                  </div>
+                  <input id="text-size-range" type="range" min="0" max="4" step="1" value="2" list="text-size-ticks" aria-labelledby="text-size-title" aria-describedby="text-size-description">
+                  <datalist id="text-size-ticks">
+                    <option value="0"></option><option value="1"></option><option value="2"></option><option value="3"></option><option value="4"></option>
+                  </datalist>
+                  <div class="text-size-scale-labels" aria-hidden="true"><span id="text-size-label-0">XS</span><span id="text-size-label-1">S</span><span id="text-size-label-2">M</span><span id="text-size-label-3">L</span><span id="text-size-label-4">XL</span></div>
+                </div>
+              </div>
+              <div class="preference-settings-row color-management-row">
+                <div class="preference-settings-copy">
+                  <strong id="color-management-title">Color management</strong>
+                  <small id="color-management-status">System ICC profile</small>
+                </div>
+                <div class="color-management-control">
+                  <div class="color-profile-switch preference-choice-switch" role="radiogroup" aria-label="Color management">
+                    <button class="color-profile-opt is-active" type="button" data-color-profile="auto" role="radio" aria-checked="true">Auto</button>
+                    <button class="color-profile-opt" type="button" data-color-profile="srgb" role="radio" aria-checked="false">sRGB</button>
+                    <button class="color-profile-opt" type="button" data-color-profile="display-p3" role="radio" aria-checked="false">Display P3</button>
+                  </div>
+                  <button id="color-profile-restart" class="color-profile-restart" type="button" hidden>
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/></svg>
+                    <span>Restart now</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -891,19 +924,16 @@
   <div id="section-chat" class="app-section chat-section">
     <div id="chat-shell" class="chat-shell" aria-label="Messs Chat">
       <nav class="chat-nav-rail" aria-label="Chat navigation">
-        <span id="chat-rail-avatar" class="chat-rail-avatar">M</span>
+        <button id="chat-rail-avatar" class="chat-rail-avatar" type="button" title="Right-click to change profile image" aria-label="Profile image; right-click to change">M</button>
         <div class="chat-nav-actions">
           <button class="chat-nav-button is-active" type="button" data-chat-view="messages" aria-label="Messages" title="Messages">
             <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M20 15a4 4 0 0 1-4 4H8l-4 3V7a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4z"/><path d="M8 9h8M8 13h5"/></svg>
-            <span>Messages</span>
           </button>
           <button class="chat-nav-button" type="button" data-chat-view="contacts" aria-label="Contacts" title="Contacts">
             <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 8h5M18.5 5.5v5"/></svg>
-            <span>Contacts</span>
           </button>
           <button class="chat-nav-button" type="button" data-chat-view="moments" aria-label="Moments" title="Moments">
             <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M12 3c2.5 0 3.8 2.4 2.5 4.4M20 8c1.2 2.2-.2 4.6-2.7 4.5M17 19c-2.1 1.4-4.6.1-4.6-2.4M7 19c-2.3-1.1-2.4-3.9-.2-5.1M4 8c.4-2.5 3-3.4 4.7-1.5"/></svg>
-            <span>Moments</span>
           </button>
         </div>
         <span id="chat-rail-status" class="chat-rail-status" title="Connection status"></span>
@@ -916,20 +946,11 @@
         </form>
         <div id="chat-search-result" class="chat-search-result" hidden></div>
 
-        <header class="chat-account-head">
-          <span id="chat-own-avatar" class="chat-avatar">M</span>
-          <span class="chat-account-copy">
-            <strong id="chat-own-name">Messs Chat</strong>
-            <small><span id="chat-connection-dot" class="chat-status-dot"></span><span id="chat-connection-text">Connecting</span></small>
-          </span>
-          <button id="chat-sync-btn" class="chat-icon-button" type="button" title="Sync" aria-label="Sync chat">
-            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M6.1 9a7 7 0 0 1 11.4-2.4L20 9M4 15l2.5 2.4A7 7 0 0 0 17.9 15"/></svg>
-          </button>
-        </header>
-
         <section id="chat-messages-view" class="chat-side-view is-active" data-chat-side-view="messages">
           <section class="chat-conversations-panel">
-          <div class="chat-list-heading"><span>Messages</span></div>
+          <div class="chat-list-heading"><span>Messages</span><button id="chat-new-group-btn" class="chat-heading-action" type="button" title="New group" aria-label="New group">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="9" r="2.5"/><path d="M2.5 20a5.5 5.5 0 0 1 11 0M14 19a4 4 0 0 1 7.5-2M19 3v5M16.5 5.5h5"/></svg>
+          </button></div>
           <div id="chat-conversation-list" class="chat-conversation-list"></div>
           <div id="chat-conversation-empty" class="chat-conversation-empty">
             <span class="chat-empty-icon">
@@ -983,12 +1004,16 @@
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m15 18-6-6 6-6"/></svg>
             </button>
             <span id="chat-thread-avatar" class="chat-avatar">M</span>
-            <span><strong id="chat-thread-name"></strong><small id="chat-thread-id"></small></span>
+            <span class="chat-thread-copy"><strong id="chat-thread-name"></strong><small id="chat-thread-id"></small></span>
+            <button id="chat-add-group-members-btn" class="chat-icon-button" type="button" title="Add members" aria-label="Add members" hidden>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M18 7v6M15 10h6"/></svg>
+            </button>
           </header>
           <div id="chat-message-list" class="chat-message-list">
             <button id="chat-load-older" class="chat-load-older" type="button" hidden>View older messages</button>
           </div>
           <form id="chat-composer" class="chat-composer">
+            <div id="chat-attachment-tray" class="chat-attachment-tray" hidden></div>
             <textarea id="chat-message-input" maxlength="8000" placeholder="Type a message…" aria-label="Message"></textarea>
             <div class="chat-composer-toolbar">
               <button id="chat-emoji-btn" class="chat-tool-button" type="button" title="Emoji" aria-label="Emoji">
@@ -1005,10 +1030,24 @@
               </button>
             </div>
             <div id="chat-emoji-popover" class="chat-emoji-popover" hidden aria-label="Emoji picker"></div>
-            <button id="chat-send-btn" class="chat-send-button" type="submit">Send</button>
+            <button id="chat-send-btn" class="chat-send-button" type="submit" title="Send" aria-label="Send">
+              <img class="chat-send-logo" src="assets/logo-mark.png" alt="" draggable="false">
+              <span class="chat-send-divider" aria-hidden="true"></span>
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 19V5"/><path d="M6 11l6-6 6 6"/></svg>
+            </button>
           </form>
         </section>
       </main>
+
+      <div id="chat-group-modal" class="chat-modal-backdrop" hidden>
+        <form id="chat-group-form" class="chat-group-modal" aria-labelledby="chat-group-title">
+          <header><strong id="chat-group-title">New group</strong><button id="chat-group-close" class="chat-icon-button" type="button" aria-label="Close">x</button></header>
+          <label id="chat-group-name-field" class="chat-group-name-field"><span>Group name</span><input id="chat-group-name" maxlength="80" autocomplete="off" /></label>
+          <div class="chat-group-members-head"><span>Select friends</span><small id="chat-group-selected-count">0 selected</small></div>
+          <div id="chat-group-friend-list" class="chat-group-friend-list"></div>
+          <footer><button id="chat-group-cancel" type="button">Cancel</button><button id="chat-group-submit" type="submit">Create</button></footer>
+        </form>
+      </div>
 
       <div id="chat-auth-empty" class="chat-auth-empty" hidden>
         <span class="chat-empty-icon chat-empty-icon-lg">

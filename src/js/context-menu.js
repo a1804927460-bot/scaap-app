@@ -6,6 +6,7 @@ const FILE_CONTEXT_ITEMS = [
   { key: 'open-default', label: ['Open Default App', '用默认应用打开'], icon: 'M14 3h7v7M21 3L13 11M5 5h6v2H7v10h10v-4h2v6H5z' },
   { key: 'open-manager', label: ['Open in File Manager', '在文件管理器中打开'], icon: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z' },
   { key: 'reveal', label: ['Show in Folder', '在文件夹中显示'], icon: 'M21 10c0 6-9 12-9 12s-9-6-9-12a9 9 0 1 1 18 0z;M12 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', divider: true },
+  { key: 'send-wechat', label: ['Send to WeChat File Transfer', '发送到微信文件传输助手'], icon: 'M4 5h16v12H8l-4 3V5z;M8 9h.01;M12 9h.01;M16 9h.01', divider: true },
   { key: 'copy-selection', label: ['Copy', '复制'], icon: 'M9 9h11v11H9zM5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1' },
   { key: 'cut-selection', label: ['Cut', '剪切'], icon: 'M4 4l16 16M20 4L4 20' },
   { key: 'paste-selection', label: ['Paste', '粘贴'], icon: 'M9 3h6a2 2 0 0 1 2 2v1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h1V5a2 2 0 0 1 2-2z' },
@@ -137,6 +138,9 @@ async function handleContextMenuAction(action) {
       break;
     case 'reveal':
       await window.messsAPI.revealFile(id);
+      break;
+    case 'send-wechat':
+      await sendFileToWeChatHelper(id);
       break;
     case 'copy-selection':
       setFileClipboard([id], 'copy');
@@ -372,6 +376,21 @@ async function sendBoardMediaToCreativeApp(fileId, target) {
   }
 }
 
+async function sendFileToWeChatHelper(fileId) {
+  showToast(t('Opening WeChat File Transfer...', '正在打开微信文件传输助手...'));
+  try {
+    const result = await window.messsAPI.sendToWeChatFileHelper(fileId);
+    showToast((result && result.message) || t(
+      'Could not send this file to WeChat.',
+      '无法将文件发送到微信。'
+    ));
+    return !!(result && result.ok);
+  } catch (error) {
+    showToast(t('Could not send this file to WeChat.', '无法将文件发送到微信。'));
+    return false;
+  }
+}
+
 function duplicateBoardItem(item) {
   copyBoardSelection([item]);
   const copies = pasteBoardClipboard(item.x + 28, item.y + 28);
@@ -410,6 +429,11 @@ function showBoardItemContextMenu(item, x, y) {
       }
     ];
     if (isImage || isVideo) {
+      items.push({
+        label: t('Send to WeChat File Transfer', '发送到微信文件传输助手'),
+        icon: 'M4 5h16v12H8l-4 3V5z;M8 9h.01;M12 9h.01;M16 9h.01',
+        action: () => sendFileToWeChatHelper(item.fileId)
+      });
       items.push({
         label: t('Send to After Effects', '\u53d1\u9001\u5230 After Effects'),
         icon: 'M22 2 11 13;M22 2l-7 20-4-9-9-4z',

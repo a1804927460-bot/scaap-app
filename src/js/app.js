@@ -44,6 +44,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   AppState.language = normalizeAppLanguage(initial.language);
   applyLanguageChoice(AppState.language, { rerender: false });
   initTheme(initial.theme);
+  initTextSizeSettings(initial.textSize);
   initUpdater();
   void initActivation(initial.activation);
   initStartScreen(() => bootstrapMainApp(initial), { enterImmediately: true });

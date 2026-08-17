@@ -15,7 +15,8 @@ const {
   normalizeBootstrap,
   publicFailure,
   CHAT_SCHEMA_VERSION,
-  CHAT_RECALL_SCHEMA_VERSION
+  CHAT_RECALL_SCHEMA_VERSION,
+  CHAT_GROUP_SCHEMA_VERSION
 } = require('../lib/chat-service');
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
@@ -85,6 +86,19 @@ function message(clientId, conversationId, createdAt, extra = {}) {
     }
   );
   assert.strictEqual(normalizeBootstrap({ friends: [{ id: FRIEND_ID, relationship_status: 'friend' }] }).friends[0].relationshipStatus, 'friend');
+  const groupBootstrap = normalizeBootstrap({ conversations: [{
+    id: CONVERSATION_A,
+    type: 'group',
+    name: 'Design team',
+    owner_id: USER_ID,
+    member_count: 2,
+    members: [{ id: USER_ID, display_name: 'Alice' }, { id: FRIEND_ID, display_name: 'Bob' }]
+  }] });
+  assert.strictEqual(groupBootstrap.conversations[0].type, 'group');
+  assert.strictEqual(groupBootstrap.conversations[0].name, 'Design team');
+  assert.strictEqual(groupBootstrap.conversations[0].memberCount, 2);
+  assert.strictEqual(groupBootstrap.conversations[0].other, null);
+  assert.strictEqual(CHAT_GROUP_SCHEMA_VERSION, 5);
   assert.deepStrictEqual(publicFailure(Object.assign(new Error('Could not find the function public.chat_bootstrap in the schema cache'), { code: 'PGRST202' })), {
     ok: false,
     reason: 'setup-required',
@@ -619,11 +633,27 @@ function message(clientId, conversationId, createdAt, extra = {}) {
   assert.match(fileMigration, /'chat-files', 'chat-files', false, 104857600/i);
   assert.match(fileMigration, /'schema_version', 4/i);
   assert.match(serviceSource, /async sendFile\(conversationId, sourcePath\)/);
+  assert.match(serviceSource, /fileMime:\s*chatFileMime\(fileName\)/);
+  assert.match(serviceSource, /async createGroup\(name, memberIds\)/);
+  assert.match(serviceSource, /client\.rpc\('create_chat_group'/);
+  assert.match(serviceSource, /async addGroupMembers\(conversationId, memberIds\)/);
   assert.match(serviceSource, /client\.storage\.from\('chat-files'\)/);
   assert.match(mainSource, /ipcMain\.handle\('chat:sendFile'/);
   assert.match(mainSource, /desktopCapturer\.getSources/);
+  assert.match(mainSource, /ipcMain\.handle\('chat:captureScreenshotDraft'/);
+  assert.match(mainSource, /createChatAttachmentDraft/);
+  assert.match(mainSource, /ipcMain\.handle\('chat:readClipboardDrafts'/);
+  assert.match(mainSource, /ipcMain\.handle\('clipboard:copyBoardMedia'/);
+  assert.match(mainSource, /protocol\.handle\('messs-chat-file'/);
+  assert.doesNotMatch(mainSource, /chat:sendScreenshot/);
   assert.match(preloadSource, /sendChatFile:\s*\(conversationId\)\s*=>\s*ipcRenderer\.invoke\('chat:sendFile', conversationId\)/);
+  assert.match(preloadSource, /captureChatScreenshotDraft:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('chat:captureScreenshotDraft'\)/);
+  assert.match(preloadSource, /sendChatAttachmentDraft:/);
   const chatUiSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'chat.js'), 'utf8');
+  const emojiStart = chatUiSource.indexOf('const CHAT_EMOJI = ');
+  const emojiEnd = chatUiSource.indexOf('];', emojiStart) + 2;
+  const emojiList = Function(`return ${chatUiSource.slice(emojiStart, emojiEnd).replace('const CHAT_EMOJI = ', '')}`)();
+  assert.ok(Array.isArray(emojiList) && emojiList.length >= 100, 'chat emoji picker should include a broad emoji set');
   assert.doesNotMatch(chatUiSource, /messsId/);
   assert.match(chatUiSource, /bubble\.textContent = t\('Message recalled', '消息已撤回'\)/);
   assert.match(chatUiSource, /window\.messsAPI\.recallChatMessage\(message\.clientId\)/);
@@ -634,13 +664,41 @@ function message(clientId, conversationId, createdAt, extra = {}) {
   assert.match(indexSource, /id="chat-emoji-btn"/);
   assert.match(indexSource, /id="chat-file-btn"/);
   assert.match(indexSource, /id="chat-screenshot-btn"/);
+  assert.match(indexSource, /id="chat-new-group-btn"/);
+  assert.match(indexSource, /id="chat-group-modal"/);
+  assert.match(indexSource, /id="chat-attachment-tray"/);
+  assert.match(chatUiSource, /pendingAttachments/);
+  assert.match(chatUiSource, /readChatClipboardDrafts\(\)/);
+  assert.match(chatUiSource, /captureChatScreenshotDraft\(\)/);
+  assert.match(chatUiSource, /messs-chat-file:\/\/\$\{message\.clientId\}/);
+  assert.doesNotMatch(chatUiSource, /sendChatScreenshot\(/);
+  const groupMigration = fs.readFileSync(
+    path.join(__dirname, '..', 'supabase', 'migrations', '202608170002_chat_groups.sql'),
+    'utf8'
+  );
+  assert.match(groupMigration, /create or replace function public\.create_chat_group\(p_name text, p_member_ids uuid\[\]\)/i);
+  assert.match(groupMigration, /only friends can be invited/i);
+  assert.match(groupMigration, /owner_id = auth\.uid\(\)/i);
+  assert.match(groupMigration, /'schema_version', 5/i);
+  assert.match(groupMigration, /'group_ready', true/i);
   const chatCssSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles', 'chat.css'), 'utf8');
-  assert.match(chatCssSource, /grid-template-columns:\s*76px\s+clamp\(270px, 23vw, 320px\)\s+minmax\(380px, 1fr\)/);
+  assert.match(chatCssSource, /grid-template-columns:\s*64px\s+clamp\(270px, 23vw, 320px\)\s+minmax\(380px, 1fr\)/);
   assert.match(chatCssSource, /grid-template-rows:\s*auto\s+minmax\(0, 1fr\)\s+clamp\(230px, 30vh, 310px\)/);
   assert.match(chatCssSource, /\.chat-composer-toolbar[\s\S]*?padding:\s*6px 12px/);
+  assert.match(chatCssSource, /\.chat-emoji-popover[\s\S]*?max-height:\s*min\(280px/);
   const chatMarkup = indexSource.match(/<div id="section-chat"[\s\S]*?<div id="section-market"/i)[0];
   assert.doesNotMatch(chatMarkup, /Messs ID|chat-own-id|chat-contacts-toggle|chat-contacts-close/i);
+  assert.doesNotMatch(chatMarkup, /chat-account-head|chat-own-avatar|chat-sync-btn/i);
+  const chatNavMarkup = chatMarkup.match(/<nav class="chat-nav-rail"[\s\S]*?<\/nav>/i)[0];
+  assert.doesNotMatch(chatNavMarkup, /<span>Messages<\/span>|<span>Contacts<\/span>|<span>Moments<\/span>/i);
+  assert.match(chatMarkup, /id="chat-send-btn"[\s\S]*?chat-send-logo[\s\S]*?chat-send-divider[\s\S]*?<path d="M12 19V5"/i);
   assert.match(chatMarkup, /chat-people-panel[\s\S]*chat-user-search-form[\s\S]*chat-conversations-panel[\s\S]*<\/aside>\s*<main class="chat-thread-panel"/i);
+  assert.match(chatUiSource, /function refreshChatOwnAvatar[\s\S]*?window\.messsAPI\.getProfileAvatar\(\)/);
+  assert.match(chatUiSource, /function chooseChatOwnAvatar[\s\S]*?window\.messsAPI\.chooseProfileAvatar\(\)[\s\S]*?messs:profile-avatar-updated/);
+  assert.match(chatUiSource, /showChatAvatarContextMenu[\s\S]*?Change profile image[\s\S]*?chat-avatar-context-menu/);
+  assert.match(chatUiSource, /function renderChatAvatarElement[\s\S]*?document\.createElement\('img'\)[\s\S]*?classList\.add\('has-image'\)/);
+  assert.match(chatCssSource, /\[data-theme="light"\] \.chat-section \{[\s\S]*?--chat-nav-surface:\s*#e3e4e8;[\s\S]*?--chat-list-surface:\s*#e9eaed;/);
+  assert.match(chatCssSource, /\.chat-send-button \{[\s\S]*?width:\s*78px;[\s\S]*?background:\s*var\(--chat-button-gradient\)/);
 
   process.stdout.write('Chat persistence and validation tests passed.\n');
 })().catch((error) => {

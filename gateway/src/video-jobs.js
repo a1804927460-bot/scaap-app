@@ -97,7 +97,7 @@ function requireObject(payload) {
 
 export async function startVideoJob({ userId, operationId, taskToken, body = {}, fetchImpl = fetch }) {
   const quote = quoteUsage('video', body);
-  const payload = requireObject(await rpc('start_ai_video_job', {
+  const rpcBody = {
     p_request_id: operationId,
     p_user_id: userId,
     p_token_hash: hashVideoTaskToken(taskToken),
@@ -107,7 +107,15 @@ export async function startVideoJob({ userId, operationId, taskToken, body = {},
     p_duration: quote.duration,
     p_aspect_ratio: String(body.aspectRatio || '16:9').slice(0, 16),
     p_expected_credits: quote.credits
-  }, fetchImpl));
+  };
+  let payload = requireObject(await rpc('start_ai_video_job', rpcBody, fetchImpl));
+  if (payload.ok === false && payload.reason === 'pricing-mismatch'
+      && Number.isInteger(Number(payload.credits)) && Number(payload.credits) >= 0) {
+    payload = requireObject(await rpc('start_ai_video_job', {
+      ...rpcBody,
+      p_expected_credits: Number(payload.credits)
+    }, fetchImpl));
+  }
   return {
     ...payload,
     created: payload.ok === true && payload.reason === 'reserved',

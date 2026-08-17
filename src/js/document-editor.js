@@ -27,8 +27,14 @@ async function openDocumentEditor(fileId) {
   const f = AppState.files.find((x) => x.id === fileId);
   if (!f) return;
 
-  document.getElementById('editor-overlay').hidden = false;
-  document.getElementById('editor-overlay').dataset.fileId = f.id;
+  const overlay = document.getElementById('editor-overlay');
+  if (overlay._closeTimer) {
+    window.clearTimeout(overlay._closeTimer);
+    overlay._closeTimer = 0;
+  }
+  overlay.classList.remove('is-closing');
+  overlay.hidden = false;
+  overlay.dataset.fileId = f.id;
   document.getElementById('editor-filename').textContent = f.name;
 
   const textarea = document.getElementById('editor-textarea');
@@ -99,11 +105,22 @@ function hasUnsavedEditorWork() {
   return !document.getElementById('editor-overlay').hidden;
 }
 
+function closeDocumentEditor() {
+  const overlay = document.getElementById('editor-overlay');
+  if (!overlay || overlay.hidden || overlay.classList.contains('is-closing')) return;
+  overlay.classList.add('is-closing');
+  overlay._closeTimer = window.setTimeout(() => {
+    overlay.hidden = true;
+    overlay.classList.remove('is-closing');
+    overlay._closeTimer = 0;
+    delete overlay.dataset.fileId;
+  }, 150);
+}
+
 function initDocumentEditor() {
   document.getElementById('editor-close').addEventListener('click', async () => {
     await saveEditorContent();
-    document.getElementById('editor-overlay').hidden = true;
-    delete document.getElementById('editor-overlay').dataset.fileId;
+    closeDocumentEditor();
   });
 
   document.getElementById('editor-bold').addEventListener('click', () => document.execCommand('bold'));

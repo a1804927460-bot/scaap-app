@@ -13,6 +13,8 @@ let accountAvatarLoadGeneration = 0;
 let accountProfileDisplayName = '';
 let accountProfileSignature = '';
 let accountProfileFallbackName = 'Messs user';
+let colorManagementState = { profile: 'auto', activeProfile: 'auto', restartRequired: false };
+let displayP3MediaQuery = null;
 
 function appendFileThumbnail(container, file, alt = '') {
   const image = document.createElement('img');
@@ -277,6 +279,7 @@ function initSidebar(initial = {}) {
     ], event.clientX, event.clientY, 'brand-context-menu');
   });
 
+  initColorManagementSettings(initial.colorManagement);
   initLanguageSettings();
   initSidebarDropZone();
   initLibraryPathSettings();
@@ -588,12 +591,23 @@ function refreshStaticLanguage() {
   setText('#ai-provider-manager-title', 'More Settings', '更多设置');
   setTitleAndLabel('#ai-provider-manager-close', 'Close', '关闭');
   setText('.preferences-settings-section .ai-provider-section-heading strong', 'Preferences', '偏好设置');
-  setText('.preference-settings-row:nth-child(1) .preference-settings-copy strong', 'Appearance', '外观');
-  setText('.preference-settings-row:nth-child(1) .preference-settings-copy small', 'Choose the app theme', '选择软件主题');
-  setText('.preference-settings-row:nth-child(2) .preference-settings-copy strong', 'Language', '语言');
-  setText('.preference-settings-row:nth-child(2) .preference-settings-copy small', 'Interface language', '界面语言');
+  setText('.appearance-settings-row .preference-settings-copy strong', 'Appearance', '外观');
+  setText('.appearance-settings-row .preference-settings-copy small', 'Choose the app theme', '选择软件主题');
+  setText('.language-settings-row .preference-settings-copy strong', 'Language', '语言');
+  setText('.language-settings-row .preference-settings-copy small', 'Interface language', '界面语言');
+  setText('#text-size-title', 'Text size', '文字大小');
+  setText('#text-size-description', 'Adjust interface text size', '调整界面文字大小');
+  setText('#text-size-label-0', 'Extra small', '极小');
+  setText('#text-size-label-1', 'Small', '小');
+  setText('#text-size-label-2', 'Medium', '中');
+  setText('#text-size-label-3', 'Large', '大');
+  setText('#text-size-label-4', 'Extra large', '极大');
+  setAttr('#text-size-range', 'aria-label', 'Text size', '文字大小');
+  renderTextSizeSettings();
+  setText('#color-management-title', 'Color management', '色彩管理');
   setAttr('.preferences-settings-section .theme-switch', 'aria-label', 'Appearance', '外观');
   setAttr('.preferences-settings-section .language-switch', 'aria-label', 'Language', '语言');
+  setAttr('.color-profile-switch', 'aria-label', 'Color management', '色彩管理');
   setText('.storage-settings-section .ai-provider-section-heading strong', 'Storage', '存储');
   setText('#library-path-add-btn', 'Add Mirror Location', '添加镜像位置');
   setText('.ai-provider-chat-grid label:nth-child(1) span', 'Profile Name', '配置名称');
@@ -642,6 +656,7 @@ function refreshStaticLanguage() {
   setText('#section-market .section-placeholder-name', 'Market', '市场');
   setText('#section-workshop .section-placeholder-name', 'Workshop', '创意工坊');
   document.querySelectorAll('.section-placeholder-inner p').forEach((p) => { p.textContent = t('Coming soon.', '即将推出。'); });
+  renderColorManagementSettings();
 }
 
 function refreshLanguageDependentViews() {
@@ -719,6 +734,212 @@ function initLanguageSettings() {
       }
     });
   });
+}
+
+const TEXT_SIZE_LEVELS = Object.freeze([
+  { id: 'extra-small', scale: 0.84 },
+  { id: 'small', scale: 0.92 },
+  { id: 'medium', scale: 1 },
+  { id: 'large', scale: 1.12 },
+  { id: 'extra-large', scale: 1.26 }
+]);
+const TEXT_SIZE_TAG = 'data-messs-text-scale';
+let textSizeState = { id: 'medium', scale: 1 };
+let textSizeObserver = null;
+
+function normalizeTextSize(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return TEXT_SIZE_LEVELS.some((level) => level.id === normalized) ? normalized : 'medium';
+}
+
+function textSizeLevel(value) {
+  return TEXT_SIZE_LEVELS.find((level) => level.id === normalizeTextSize(value)) || TEXT_SIZE_LEVELS[2];
+}
+
+function textSizeLabel(id) {
+  const labels = {
+    'extra-small': t('Extra small', '极小'),
+    small: t('Small', '小'),
+    medium: t('Medium', '中'),
+    large: t('Large', '大'),
+    'extra-large': t('Extra large', '极大')
+  };
+  return labels[id] || labels.medium;
+}
+
+function textSizeScalableElement(element) {
+  if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
+  return !['SVG', 'PATH', 'CIRCLE', 'RECT', 'LINE', 'POLYLINE', 'POLYGON', 'G', 'DEFS', 'IMG', 'VIDEO', 'AUDIO', 'CANVAS', 'IFRAME', 'SCRIPT', 'STYLE', 'LINK', 'META', 'BR', 'HR'].includes(element.tagName);
+}
+
+function rememberTextSizeBaselines(root = document.body) {
+  if (!root) return;
+  const elements = [];
+  if (textSizeScalableElement(root)) elements.push(root);
+  if (typeof root.querySelectorAll === 'function') {
+    root.querySelectorAll('*').forEach((element) => {
+      if (textSizeScalableElement(element)) elements.push(element);
+    });
+  }
+  const scale = Math.max(0.01, Number(textSizeState.scale) || 1);
+  elements.forEach((element) => {
+    if (element.hasAttribute(TEXT_SIZE_TAG)) return;
+    const computed = parseFloat(getComputedStyle(element).fontSize);
+    if (Number.isFinite(computed) && computed > 0) {
+      element.style.setProperty('--messs-base-font-size', `${computed / scale}px`);
+    }
+    element.setAttribute(TEXT_SIZE_TAG, '');
+  });
+}
+
+function renderTextSizeSettings() {
+  const level = textSizeLevel(textSizeState.id);
+  const range = document.getElementById('text-size-range');
+  const output = document.getElementById('text-size-value');
+  if (range) {
+    const index = TEXT_SIZE_LEVELS.findIndex((item) => item.id === level.id);
+    range.value = String(Math.max(0, index));
+    range.setAttribute('aria-valuetext', textSizeLabel(level.id));
+  }
+  if (output) output.textContent = textSizeLabel(level.id);
+}
+
+function applyTextSize(value) {
+  const level = textSizeLevel(value);
+  rememberTextSizeBaselines();
+  textSizeState = { id: level.id, scale: level.scale };
+  document.documentElement.dataset.textSize = level.id;
+  document.documentElement.style.setProperty('--text-size-scale', String(level.scale));
+  renderTextSizeSettings();
+}
+
+function initTextSizeSettings(initialValue = 'medium') {
+  // Capture normal computed sizes before applying the selected scale. A
+  // mutation observer covers panels and dialogs created after startup.
+  textSizeState = { id: 'medium', scale: 1 };
+  document.documentElement.style.setProperty('--text-size-scale', '1');
+  rememberTextSizeBaselines();
+  applyTextSize(initialValue);
+  if (!textSizeObserver && document.body) {
+    textSizeObserver = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => mutation.addedNodes.forEach((node) => {
+        if (node.nodeType === Node.ELEMENT_NODE) rememberTextSizeBaselines(node);
+      }));
+    });
+    textSizeObserver.observe(document.body, { childList: true, subtree: true });
+  }
+  const range = document.getElementById('text-size-range');
+  if (!range || range.dataset.bound === 'true') return;
+  range.dataset.bound = 'true';
+  range.addEventListener('input', () => {
+    const index = Math.max(0, Math.min(TEXT_SIZE_LEVELS.length - 1, Number(range.value) || 2));
+    applyTextSize(TEXT_SIZE_LEVELS[index].id);
+  });
+  range.addEventListener('change', async () => {
+    try {
+      await window.messsAPI.setTextSize(textSizeState.id);
+    } catch (error) {
+      console.warn('Could not save text size:', error && error.message || error);
+    }
+  });
+}
+
+function normalizeRendererColorProfile(profile) {
+  return ['auto', 'srgb', 'display-p3'].includes(profile) ? profile : 'auto';
+}
+
+function colorProfileStatusText(profile) {
+  if (profile === 'srgb') return t('sRGB output profile', 'sRGB 输出色域');
+  if (profile === 'display-p3') return t('Display P3 output profile', 'Display P3 输出色域');
+  return t('System ICC profile', '跟随系统 ICC 配置');
+}
+
+function renderColorManagementSettings() {
+  const profile = normalizeRendererColorProfile(colorManagementState.profile);
+  const activeProfile = normalizeRendererColorProfile(colorManagementState.activeProfile);
+  const restartRequired = profile !== activeProfile;
+  const p3Supported = !!(displayP3MediaQuery && displayP3MediaQuery.matches);
+
+  colorManagementState = { profile, activeProfile, restartRequired };
+  document.documentElement.dataset.colorProfile = activeProfile;
+  document.documentElement.dataset.selectedColorProfile = profile;
+
+  document.querySelectorAll('.color-profile-opt').forEach((button) => {
+    const choice = button.dataset.colorProfile;
+    const active = choice === profile;
+    const unavailable = choice === 'display-p3' && !p3Supported && !active;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-checked', String(active));
+    button.disabled = unavailable;
+    if (unavailable) {
+      const reason = t('This display does not report Display P3 support', '当前显示器未报告 Display P3 支持');
+      button.title = reason;
+      button.setAttribute('aria-label', reason);
+    } else {
+      button.removeAttribute('title');
+      button.setAttribute('aria-label', choice === 'auto' ? t('Auto', '自动') : (choice === 'srgb' ? 'sRGB' : 'Display P3'));
+    }
+  });
+
+  const status = document.getElementById('color-management-status');
+  if (status) {
+    const base = colorProfileStatusText(profile);
+    status.textContent = restartRequired
+      ? `${base} · ${t('Restart required', '需要重启')}`
+      : base;
+  }
+
+  const restartButton = document.getElementById('color-profile-restart');
+  if (restartButton) {
+    restartButton.hidden = !restartRequired;
+    const label = restartButton.querySelector('span');
+    if (label) label.textContent = t('Restart now', '立即重启');
+  }
+}
+
+function initColorManagementSettings(initialState = {}) {
+  colorManagementState = {
+    profile: normalizeRendererColorProfile(initialState.profile),
+    activeProfile: normalizeRendererColorProfile(initialState.activeProfile),
+    restartRequired: !!initialState.restartRequired
+  };
+  displayP3MediaQuery = window.matchMedia('(color-gamut: p3)');
+  if (typeof displayP3MediaQuery.addEventListener === 'function') {
+    displayP3MediaQuery.addEventListener('change', renderColorManagementSettings);
+  }
+
+  document.querySelectorAll('.color-profile-opt').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const profile = normalizeRendererColorProfile(button.dataset.colorProfile);
+      if (profile === colorManagementState.profile || button.disabled) return;
+      const controls = [...document.querySelectorAll('.color-profile-opt')];
+      controls.forEach((control) => { control.disabled = true; });
+      try {
+        colorManagementState = await window.messsAPI.setColorProfile(profile);
+      } catch (error) {
+        showToast(t('Could not save color management setting', '无法保存色彩管理设置'));
+      }
+      renderColorManagementSettings();
+    });
+  });
+
+  const restartButton = document.getElementById('color-profile-restart');
+  if (restartButton) {
+    restartButton.addEventListener('click', async () => {
+      restartButton.disabled = true;
+      const label = restartButton.querySelector('span');
+      if (label) label.textContent = t('Restarting...', '正在重启...');
+      try {
+        await window.messsAPI.restartForColorProfile();
+      } catch (error) {
+        restartButton.disabled = false;
+        renderColorManagementSettings();
+        showToast(t('Could not restart the app', '无法重启软件'));
+      }
+    });
+  }
+
+  renderColorManagementSettings();
 }
 
 function initImportProgress() {
@@ -1200,6 +1421,9 @@ async function chooseAccountAvatar() {
     const dataUrl = result.dataUrl || await window.messsAPI.getProfileAvatar();
     if (avatarLoadGeneration !== accountAvatarLoadGeneration || activeAccountAvatarUserId !== accountUserId) return;
     renderAccountAvatars(fallbackInitial, dataUrl);
+    document.dispatchEvent(new CustomEvent('messs:profile-avatar-updated', {
+      detail: { userId: accountUserId, dataUrl: dataUrl || '' }
+    }));
     showToast(t('Profile image updated.', '头像已更新。'), 'Messs');
   } catch (error) {
     showToast(error && error.message ? error.message : t('Could not update the profile image.', '无法更新头像。'), 'Messs');
@@ -1577,17 +1801,38 @@ function updateAiProviderCount() {
   }
 }
 
-function closeAiProviderManager() {
-  document.getElementById('ai-provider-overlay').hidden = true;
+function openAiProviderManager(view = 'general') {
+  const overlay = document.getElementById('ai-provider-overlay');
+  if (!overlay) return;
+  if (overlay._closeTimer) {
+    window.clearTimeout(overlay._closeTimer);
+    overlay._closeTimer = 0;
+  }
+  overlay.classList.remove('is-closing');
+  overlay.hidden = false;
+  if (typeof setSettingsView === 'function') setSettingsView(view);
 }
+
+function closeAiProviderManager() {
+  const overlay = document.getElementById('ai-provider-overlay');
+  if (!overlay || overlay.hidden || overlay.classList.contains('is-closing')) return;
+  overlay.classList.add('is-closing');
+  overlay._closeTimer = window.setTimeout(() => {
+    overlay.hidden = true;
+    overlay.classList.remove('is-closing');
+    overlay._closeTimer = 0;
+  }, 150);
+}
+
+window.openAiProviderManager = openAiProviderManager;
+window.closeAiProviderManager = closeAiProviderManager;
 
 async function initAiMediaSettings() {
   await refreshAiMediaSettings();
 
   document.getElementById('ai-provider-manager-open').addEventListener('click', () => {
     document.getElementById('settings-popover').hidden = true;
-    if (typeof setSettingsView === 'function') setSettingsView('general');
-    document.getElementById('ai-provider-overlay').hidden = false;
+    openAiProviderManager('general');
   });
   document.getElementById('ai-provider-manager-close').addEventListener('click', closeAiProviderManager);
   document.getElementById('ai-provider-overlay').addEventListener('click', (event) => {
@@ -1603,6 +1848,13 @@ async function initAiMediaSettings() {
     showToast(t('Plans will be available before the public release.', '套餐将在正式发布前开放。'), 'Messs');
   });
   document.getElementById('account-popover-avatar').addEventListener('click', chooseAccountAvatar);
+  document.addEventListener('messs:profile-avatar-updated', (event) => {
+    const button = document.getElementById('account-popover-avatar');
+    const accountUserId = button && button.dataset.accountUserId || '';
+    const userId = event.detail && String(event.detail.userId || '').trim();
+    if (!button || !accountUserId || (userId && userId !== accountUserId)) return;
+    renderAccountAvatars(button.dataset.fallbackInitial || 'M', event.detail && event.detail.dataUrl || '');
+  });
   document.getElementById('ai-image-provider-slots').addEventListener('input', updateAiProviderCount);
   document.getElementById('ai-video-provider-slots').addEventListener('input', updateAiProviderCount);
   document.getElementById('ai-chat-provider-slots').addEventListener('input', () => {

@@ -112,13 +112,17 @@ async function run() {
   await wait(180);
 
   async function narrowAssistantMetrics(width) {
-    await window.webContents.executeJavaScript(`document.querySelector('.main-app').style.gridTemplateColumns = '0 minmax(0, 1fr) ${width}px'`);
+    await window.webContents.executeJavaScript(`(() => {
+      document.querySelector('.main-app').style.gridTemplateColumns = '0 minmax(0, 1fr) ${width}px';
+      syncAssistantCompactMode(document.getElementById('ai-assistant-panel'));
+    })()`);
     await wait(120);
     return window.webContents.executeJavaScript(`(() => {
+      syncAssistantCompactMode(document.getElementById('ai-assistant-panel'));
       const form = document.querySelector('.ai-assistant-form').getBoundingClientRect();
       const footer = document.querySelector('.ai-assistant-form-footer').getBoundingClientRect();
       const controls = [...document.querySelectorAll('.ai-assistant-mode button, #ai-assistant-model-trigger, #ai-assistant-options-toggle, #ai-assistant-credit-estimate, #ai-assistant-submit')]
-        .filter((element) => !element.hidden && getComputedStyle(element).display !== 'none')
+        .filter((element) => !element.hidden && element.offsetParent !== null && getComputedStyle(element).display !== 'none')
         .map((element) => {
           const rect = element.getBoundingClientRect();
           return { id: element.id || element.dataset.assistantKind, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
@@ -134,6 +138,8 @@ async function run() {
         }
       }
       return {
+        layout: document.getElementById('ai-assistant-panel').dataset.assistantLayout,
+        kind: AiAssistant.kind,
         form: { left: form.left, right: form.right },
         footer: { left: footer.left, right: footer.right, height: footer.height },
         controls,
@@ -145,10 +151,13 @@ async function run() {
 
   const narrow = await narrowAssistantMetrics(260);
   const minimum = await narrowAssistantMetrics(220);
-  if (narrow.overlaps.length || narrow.escaped.length || narrow.footer.height < 60) {
+  const compactControls = ['ai-assistant-upload', 'chat', 'ai-assistant-submit'];
+  if (narrow.layout !== 'agent-only' || narrow.kind !== 'chat' || narrow.overlaps.length || narrow.escaped.length
+    || narrow.controls.map((control) => control.id).join('|') !== compactControls.join('|')) {
     throw new Error(`Narrow assistant controls overlap: ${JSON.stringify(narrow)}`);
   }
-  if (minimum.overlaps.length || minimum.escaped.length || minimum.footer.height < narrow.footer.height) {
+  if (minimum.layout !== 'agent-only' || minimum.kind !== 'chat' || minimum.overlaps.length || minimum.escaped.length
+    || minimum.controls.map((control) => control.id).join('|') !== compactControls.join('|')) {
     throw new Error(`Minimum-width assistant controls overlap: ${JSON.stringify(minimum)}`);
   }
   fs.writeFileSync(path.join(screenshotDir, 'ai-assistant-narrow.png'), (await window.webContents.capturePage()).toPNG());

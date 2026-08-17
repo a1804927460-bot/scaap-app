@@ -117,19 +117,28 @@ async function main() {
     const element=document.getElementById('node-'+generation[0]);
     const input=element.querySelector('.input');
     const output=element.querySelector('.output');
+    const nodeRect=element.getBoundingClientRect();
     const rect=(target)=>{const value=target.getBoundingClientRect();return {x:value.x+value.width/2,y:value.y+value.height/2};};
+    const inputCenter=rect(input);
+    const outputCenter=rect(output);
     return {
-      input:rect(input),
-      output:rect(output),
+      input:inputCenter,
+      output:outputCenter,
+      inputGap:nodeRect.left-inputCenter.x,
+      outputGap:outputCenter.x-nodeRect.right,
       inputMark:getComputedStyle(input,'::after').content,
       outputMark:getComputedStyle(output,'::after').content,
+      faceWidth:getComputedStyle(output,'::before').width,
+      faceBackground:getComputedStyle(output,'::before').backgroundColor,
       inputRadius:getComputedStyle(input).borderRadius,
       outputRadius:getComputedStyle(output).borderRadius,
       legacyButtons:element.querySelectorAll('.canvas-node-add-media').length
     };
   })()`);
   if (!ports.inputMark.includes('+') || !ports.outputMark.includes('+') || ports.legacyButtons !== 0 ||
-      ports.inputRadius !== '50%' || ports.outputRadius !== '50%') {
+      ports.inputRadius !== '50%' || ports.outputRadius !== '50%' ||
+      Math.abs(ports.inputGap - ports.outputGap) > 1 || ports.outputGap > 38 ||
+      ports.faceWidth !== '34px' || /rgba\([^)]*,\s*0\)/.test(ports.faceBackground)) {
     throw new Error(`Node ports are not the single plus controls: ${JSON.stringify(ports)}`);
   }
 

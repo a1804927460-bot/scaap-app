@@ -11,3 +11,8 @@ document.documentElement.dataset.language = normalizedStartupLanguage;
 document.documentElement.lang = normalizedStartupLanguage === 'zh'
   ? 'zh-CN'
   : (normalizedStartupLanguage === 'ko' ? 'ko' : 'en');
+
+const startupTextSize = new URLSearchParams(window.location.search).get('textSize');
+document.documentElement.dataset.textSize = ['extra-small', 'small', 'medium', 'large', 'extra-large'].includes(startupTextSize)
+  ? startupTextSize
+  : 'medium';

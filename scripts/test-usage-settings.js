@@ -68,7 +68,8 @@ assert.ok(source.indexOf('UsageSettings.cache.set(range') > source.indexOf('if (
 assert.match(source, /사용량[\s\S]*用量/, 'Usage UI needs Korean and Chinese copy.');
 assert.doesNotMatch(source, /providerCost|provider_cost/, 'Renderer source must not know supplier-cost fields.');
 assert.match(sidebar, /initUsageSettings/);
-assert.match(sidebar, /setSettingsView\('general'\)/);
+assert.match(sidebar, /openAiProviderManager\('general'\)/);
+assert.match(source, /window\.openAiProviderManager\('usage'\)/);
 assert.match(preload, /getUsageSummary:\s*\(range\)\s*=>\s*ipcRenderer\.invoke\('membership:getUsageSummary', range\)/);
 assert.match(main, /membership:getUsageSummary[\s\S]*authenticated:\s*false[\s\S]*aiGateway\.getUsageSummary\(range\)/);
 

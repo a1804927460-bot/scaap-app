@@ -484,8 +484,13 @@ function openUsageSettings() {
   const accountPopover = document.getElementById('account-popover');
   if (settingsPopover) settingsPopover.hidden = true;
   if (accountPopover) accountPopover.hidden = true;
-  overlay.hidden = false;
-  setSettingsView('usage');
+  if (typeof window.openAiProviderManager === 'function') {
+    window.openAiProviderManager('usage');
+  } else {
+    overlay.classList.remove('is-closing');
+    overlay.hidden = false;
+    setSettingsView('usage');
+  }
 }
 
 function refreshUsageLanguage(renderData = true) {

@@ -10,7 +10,8 @@ const AiAssistant = {
   sessions: [],
   activeSessionId: null,
   languageTimer: 0,
-  creditQuoteRevision: 0
+  creditQuoteRevision: 0,
+  compactObserver: null
 };
 
 const AI_CHAT_HISTORY_KEY = 'messs.ai-chat-history.v1';
@@ -830,6 +831,10 @@ function refreshAssistantOptionSummary() {
 }
 
 function setAssistantKind(kind) {
+  const panel = document.getElementById('ai-assistant-panel');
+  if (panel && panel.classList.contains('is-chat-only-compact') && kind !== 'chat') {
+    kind = 'chat';
+  }
   AiAssistant.kind = ['chat', 'image', 'video'].includes(kind) ? kind : 'chat';
   document.querySelectorAll('[data-assistant-kind]').forEach((button) => {
     const active = button.dataset.assistantKind === AiAssistant.kind;
@@ -869,6 +874,26 @@ function setAssistantKind(kind) {
   }
   renderAssistantModels();
   syncAssistantMediaOptions();
+}
+
+function syncAssistantCompactMode(panel) {
+  if (!panel) return;
+  const width = panel.getBoundingClientRect().width;
+  const wasCompact = panel.classList.contains('is-chat-only-compact');
+  const compact = wasCompact ? width < 380 : width <= 360;
+  panel.classList.toggle('is-chat-only-compact', compact);
+  panel.dataset.assistantLayout = compact ? 'agent-only' : 'full';
+  if (!compact) return;
+
+  const modelMenu = document.getElementById('ai-assistant-model-menu');
+  const modelTrigger = document.getElementById('ai-assistant-model-trigger');
+  const options = document.getElementById('ai-assistant-options');
+  const optionsToggle = document.getElementById('ai-assistant-options-toggle');
+  if (modelMenu) modelMenu.hidden = true;
+  if (modelTrigger) modelTrigger.setAttribute('aria-expanded', 'false');
+  if (options) options.hidden = true;
+  if (optionsToggle) optionsToggle.classList.remove('is-active');
+  if (AiAssistant.kind !== 'chat') setAssistantKind('chat');
 }
 
 function showAssistantConversation() {
@@ -1145,7 +1170,7 @@ function refreshAssistantLanguage() {
     upload.setAttribute('aria-label', upload.title);
   }
   const chatButton = document.querySelector('[data-assistant-kind="chat"]');
-  if (chatButton) chatButton.textContent = t('Chat', '对话');
+  if (chatButton) chatButton.textContent = 'Agent';
   [
     ['image', t('Image', '图片')],
     ['video', t('Video', '视频')]
@@ -1185,11 +1210,12 @@ function refreshAssistantLanguage() {
 
 function initAiAssistant() {
   const form = document.getElementById('ai-assistant-form');
+  const panel = document.getElementById('ai-assistant-panel');
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     submitAssistantMessage();
   });
-  document.getElementById('ai-assistant-panel').addEventListener('contextmenu', showAgentTextContextMenu);
+  panel.addEventListener('contextmenu', showAgentTextContextMenu);
   document.getElementById('ai-assistant-input').addEventListener('keydown', (event) => {
     if ((event.ctrlKey || event.metaKey) && ['a', 'c', 'v', 'x'].includes(event.key.toLowerCase())) {
       event.stopPropagation();
@@ -1288,6 +1314,12 @@ function initAiAssistant() {
   loadAiChatHistory();
   renderAiChatHistory();
   setAssistantKind('chat');
+  syncAssistantCompactMode(panel);
+  if (typeof ResizeObserver === 'function') {
+    if (AiAssistant.compactObserver) AiAssistant.compactObserver.disconnect();
+    AiAssistant.compactObserver = new ResizeObserver(() => syncAssistantCompactMode(panel));
+    AiAssistant.compactObserver.observe(panel);
+  }
   startAiDynamicPrompt();
   refreshAssistantConfig();
 }

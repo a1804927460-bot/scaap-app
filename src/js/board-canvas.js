@@ -85,6 +85,8 @@ const Board = {
   zoomFrame: 0,
   zoomTarget: null,
   zoomLastTime: 0,
+  wheelSettleTimer: 0,
+  isWheelZooming: false,
   reconcileFrame: 0,
   mountFrame: 0,
   qualityTimer: 0,
@@ -213,7 +215,40 @@ function redoBoardMove() {
 // the OS clipboard. Copies the item's data (file reference, position, size,
 // or note text) so pasting creates a new independent board item, offset
 // slightly so repeated pastes don't stack exactly on top of each other.
-const BoardClipboard = { items: [], preferInternal: false };
+const BoardClipboard = {
+  items: [],
+  mediaFileIds: [],
+  sourceMode: '',
+  preferInternal: false
+};
+
+function boardClipboardMediaFiles() {
+  const filesById = new Map(AppState.files.map((file) => [file.id, file]));
+  return (BoardClipboard.mediaFileIds || [])
+    .map((fileId) => filesById.get(fileId))
+    .filter((file) => file && (isImageExt(file.ext) || isVideoExt(file.ext)));
+}
+
+function setBoardClipboardMedia(fileIds, sourceMode) {
+  const filesById = new Map(AppState.files.map((file) => [file.id, file]));
+  BoardClipboard.mediaFileIds = [...new Set((fileIds || []).filter(Boolean))]
+    .filter((fileId) => {
+      const file = filesById.get(fileId);
+      return file && (isImageExt(file.ext) || isVideoExt(file.ext));
+    });
+  BoardClipboard.sourceMode = sourceMode || '';
+  BoardClipboard.preferInternal = BoardClipboard.items.length > 0 || BoardClipboard.mediaFileIds.length > 0;
+}
+
+async function pasteBoardClipboardMedia() {
+  const fileIds = boardClipboardMediaFiles().map((file) => file.id);
+  if (!fileIds.length) return [];
+  const center = boardViewportCenterCoords();
+  return addFilesToBoard(fileIds, center.x, center.y, {
+    duplicateExisting: true,
+    selectAdded: true
+  });
+}
 
 function pasteBoardClipboard(atX, atY) {
   const offset = 28;
@@ -622,8 +657,21 @@ function applyBoardTransform() {
   Board.transformFrame = requestAnimationFrame(() => {
     Board.transformFrame = 0;
     const canvas = document.getElementById('board-canvas');
+    const lightweight = Board.isWheelZooming;
     canvas.classList.add('is-transforming');
     canvas.style.transform = boardTransform();
+    // Wheel frames must stay compositor-only. Grid CSS variables, toolbar
+    // geometry, LOD reconciliation and persistence all force extra style or
+    // layout work; settle them once after the input burst ends.
+    if (lightweight) {
+      const zoomLabel = document.getElementById('board-zoom-label');
+      if (zoomLabel) zoomLabel.textContent = Math.round(Board.zoom * 100) + '%';
+      clearTimeout(Board.transformSettleTimer);
+      Board.transformSettleTimer = window.setTimeout(() => {
+        canvas.classList.remove('is-transforming');
+      }, BOARD_QUALITY_SETTLE_MS + 30);
+      return;
+    }
     canvas.style.setProperty('--board-label-scale', String(Math.min(7, Math.max(1, 1 / Board.zoom))));
     canvas.style.setProperty(
       '--board-toolbar-scale',
@@ -650,6 +698,25 @@ function applyBoardTransform() {
   });
 }
 
+function finishBoardWheelInteraction() {
+  Board.wheelSettleTimer = 0;
+  if (!Board.isWheelZooming) return;
+  Board.isWheelZooming = false;
+  // The transform is already at the latest target. This frame only performs
+  // deferred overlay, visibility, quality and persistence work.
+  applyBoardTransform();
+  scheduleBoardReconcile();
+  scheduleBoardViewportSave();
+  scheduleBoardFullImagePrewarm(Board.zoom);
+  scheduleMountedImageQuality(0);
+}
+
+function beginBoardWheelInteraction() {
+  Board.isWheelZooming = true;
+  clearTimeout(Board.wheelSettleTimer);
+  Board.wheelSettleTimer = window.setTimeout(finishBoardWheelInteraction, 120);
+}
+
 function setBoardZoomTarget(screenPoint, factor) {
   const target = Board.zoomTarget || {
     panX: Board.panX,
@@ -662,7 +729,7 @@ function setBoardZoomTarget(screenPoint, factor) {
     factor,
     { min: BOARD_ZOOM_MIN, max: BOARD_ZOOM_MAX }
   );
-  scheduleBoardFullImagePrewarm(Board.zoomTarget.zoom);
+  if (!Board.isWheelZooming) scheduleBoardFullImagePrewarm(Board.zoomTarget.zoom);
   if (!Board.zoomFrame) {
     Board.zoomLastTime = 0;
     Board.zoomFrame = requestAnimationFrame(stepBoardZoom);
@@ -672,6 +739,9 @@ function setBoardZoomTarget(screenPoint, factor) {
 function resetBoardZoomTo100() {
   const viewport = document.getElementById('board-viewport');
   if (!viewport) return;
+  clearTimeout(Board.wheelSettleTimer);
+  Board.wheelSettleTimer = 0;
+  Board.isWheelZooming = false;
   if (Board.zoomFrame) cancelAnimationFrame(Board.zoomFrame);
   Board.zoomFrame = 0;
   Board.zoomTarget = null;
@@ -785,6 +855,7 @@ async function addFilesToBoard(fileIds, x, y, options = {}) {
   if (!ids.length) return;
   const columns = Math.max(1, Math.ceil(Math.sqrt(ids.length)));
   const changed = [];
+  if (options.selectAdded) AppState.boardItems.forEach((item) => { item.selected = false; });
   const existingByFileId = new Map(
     AppState.boardItems
       .filter((item) => item.fileId)
@@ -796,7 +867,7 @@ async function addFilesToBoard(fileIds, x, y, options = {}) {
     const row = Math.floor(index / columns);
     const itemX = Math.round(x - 110 + column * 244);
     const itemY = Math.round(y - 110 + row * 244);
-    const exists = existingByFileId.get(fileId);
+    const exists = options.duplicateExisting ? null : existingByFileId.get(fileId);
     const file = Board.filesById.get(fileId) || AppState.files.find((entry) => entry.id === fileId);
     const sourceWidth = Number(file && file.sourceWidth);
     const sourceHeight = Number(file && file.sourceHeight);
@@ -835,7 +906,8 @@ async function addFilesToBoard(fileIds, x, y, options = {}) {
       y: itemY,
       width: 220,
       zIndex: AppState.boardItems.length + 1,
-      canvasId: activeCanvasId()
+      canvasId: activeCanvasId(),
+      selected: !!options.selectAdded
     };
     if (hasMediaDimensions) {
       item.height = Math.max(1, Math.round(item.width * sourceHeight / sourceWidth));
@@ -855,6 +927,7 @@ async function addFilesToBoard(fileIds, x, y, options = {}) {
   await canvasWorkspaceSave();
   renderBoard();
   if (typeof renderCanvasLibrary === 'function') renderCanvasLibrary();
+  return changed;
 }
 
 function removeBoardItemsForFile(fileId) {
@@ -2320,7 +2393,11 @@ function initBoardCanvas() {
   });
   window.addEventListener('blur', () => {
     BoardClipboard.items = [];
+    BoardClipboard.mediaFileIds = [];
+    BoardClipboard.sourceMode = '';
     BoardClipboard.preferInternal = false;
+    const composer = activeAiComposer();
+    if (aiComposerHasDraft(composer)) composer.dataset.keepOpenAfterBlur = 'true';
   });
 
   document.addEventListener('keydown', (e) => {
@@ -2329,6 +2406,7 @@ function initBoardCanvas() {
     const tag = document.activeElement && document.activeElement.tagName;
     const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || (document.activeElement && document.activeElement.isContentEditable);
     if (isEditable || !isBoardWorkspaceActive()) return;
+    if (typeof CanvasNodeMode !== 'undefined' && CanvasNodeMode.mode === 'node') return;
 
     const shortcutKey = e.key.toLowerCase();
     const selection = window.getSelection && window.getSelection();
@@ -2358,11 +2436,20 @@ function initBoardCanvas() {
       if (!selected.length) return;
       e.preventDefault();
       BoardClipboard.items = selected.map((item) => ({ ...item }));
-      BoardClipboard.preferInternal = true;
+      const mediaFileIds = selected.map((item) => item.fileId).filter(Boolean);
+      setBoardClipboardMedia(mediaFileIds, 'canvas');
+      if (mediaFileIds.length && window.messsAPI.copyBoardMediaToClipboard) {
+        window.messsAPI.copyBoardMediaToClipboard(mediaFileIds).catch(() => {});
+      }
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
       if (BoardClipboard.preferInternal && BoardClipboard.items.length) {
         e.preventDefault();
         pasteBoardClipboard();
+      } else if (BoardClipboard.preferInternal && BoardClipboard.mediaFileIds.length) {
+        e.preventDefault();
+        void pasteBoardClipboardMedia().catch((error) => {
+          showToast(error && error.message ? error.message : t('Could not paste media', '无法粘贴媒体'));
+        });
       } else {
         // Let Chromium dispatch the real paste event first. Its DataTransfer
         // often contains a browser/chat image that Electron's clipboard API
@@ -2405,6 +2492,9 @@ function initBoardCanvas() {
     if (!isPanGesture) return;
     e.preventDefault();
     e.stopImmediatePropagation();
+    clearTimeout(Board.wheelSettleTimer);
+    Board.wheelSettleTimer = 0;
+    Board.isWheelZooming = false;
     if (Board.zoomFrame) cancelAnimationFrame(Board.zoomFrame);
     Board.zoomFrame = 0;
     Board.zoomTarget = null;
@@ -2498,6 +2588,7 @@ function initBoardCanvas() {
   viewport.addEventListener('wheel', (e) => {
     if (isBoardUiEventTarget(e.target)) return;
     e.preventDefault();
+    beginBoardWheelInteraction();
     markBoardInteraction();
     const modeScale = e.deltaMode === 1
       ? 16
@@ -2532,6 +2623,7 @@ function initBoardCanvas() {
 
   document.addEventListener('paste', (event) => {
     if (!isBoardWorkspaceActive() || BoardClipboard.preferInternal) return;
+    if (typeof CanvasNodeMode !== 'undefined' && CanvasNodeMode.mode === 'node') return;
     const target = event.target;
     if (target && (target.matches('input, textarea') || target.isContentEditable)) return;
     clearTimeout(Board.clipboardPasteTimer);
@@ -3169,6 +3261,13 @@ function activeAiComposer() {
   return pop && pop.classList.contains('ai-composer') ? pop : null;
 }
 
+function aiComposerHasDraft(pop) {
+  if (!pop) return false;
+  const prompt = pop.querySelector('.ai-composer-prompt');
+  if (prompt && String(prompt.value || '').trim()) return true;
+  return !!pop.querySelector('.ai-composer-reference-thumb, .ai-prompt-style-toggle.is-active');
+}
+
 function syncAiComposerFullscreenState() {
   const pop = document.getElementById('ai-image-popover');
   if (!pop || !pop.classList.contains('ai-composer')) return;
@@ -3784,13 +3883,20 @@ function composerVideoModes(capabilities = {}) {
   return visible;
 }
 
+function supportsVideoFirstLastFrame(capabilities = {}) {
+  return supportedVideoModes(capabilities).some((entry) => (
+    entry.id === 'first-last-frame' && Number(entry.maxReferences) >= 2
+  ));
+}
+
 function composerVideoMode(value, capabilities = {}) {
   const modes = composerVideoModes(capabilities);
   const requested = String(value || '').trim().toLowerCase();
   const normalized = requested === 'omni' ? 'omni' : 'first-last-frame';
-  return modes.find((entry) => entry.id === normalized) || modes[0] || {
-    id: 'first-last-frame', minReferences: 1, maxReferences: 2, mediaTypes: ['image']
-  };
+  return modes.find((entry) => entry.id === normalized)
+    || modes[0]
+    || supportedVideoModes(capabilities).find((entry) => entry.id === 'text')
+    || { id: 'text', minReferences: 0, maxReferences: 0, mediaTypes: [] };
 }
 
 function composerVideoRequestMode(value, referenceCount, capabilities = {}) {
@@ -4220,11 +4326,17 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
           <label><span>${t('Style name', '风格名称')}</span><input type="text" class="ai-prompt-style-name" maxlength="40"></label>
           <label><span>${t('Style prompt', '风格提示词')}</span><textarea class="ai-prompt-style-prompt" rows="4" maxlength="4000"></textarea></label>
           <div class="ai-prompt-style-editor-footer">
-            <label class="ai-prompt-style-cover-picker">
-              <input type="file" class="ai-prompt-style-cover-input" accept="image/png,image/jpeg,image/webp" hidden>
-              <span class="ai-prompt-style-cover-preview"></span>
-              <span>${t('Custom cover', '自定义封面')}</span>
-            </label>
+            <div class="ai-prompt-style-cover-controls">
+              <label class="ai-prompt-style-cover-picker">
+                <input type="file" class="ai-prompt-style-cover-input" accept="image/png,image/jpeg,image/webp" hidden>
+                <span class="ai-prompt-style-cover-preview"></span>
+                <span>${t('Custom cover', '自定义封面')}</span>
+              </label>
+              <button type="button" class="ai-prompt-style-cover-upload">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 20h14"/></svg>
+                <span>${t('Upload cover', '上传封面')}</span>
+              </button>
+            </div>
             <div class="ai-prompt-style-editor-actions">
               <button type="button" class="ai-prompt-style-delete" hidden>${t('Delete', '删除')}</button>
               <button type="button" class="ai-prompt-style-cancel">${t('Cancel', '取消')}</button>
@@ -4344,6 +4456,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   const promptStylePrompt = pop.querySelector('.ai-prompt-style-prompt');
   const promptStyleCoverInput = pop.querySelector('.ai-prompt-style-cover-input');
   const promptStyleCoverPreview = pop.querySelector('.ai-prompt-style-cover-preview');
+  const promptStyleCoverButton = pop.querySelector('.ai-prompt-style-cover-upload');
+  const promptStyleCoverButtonLabel = promptStyleCoverButton.querySelector('span');
   const cameraMotionGrid = pop.querySelector('.ai-camera-motion-grid');
   const ratioGrid = pop.querySelector('.ai-ratio-grid');
   const status = pop.querySelector('.ai-generation-status');
@@ -4375,6 +4489,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   let cameraControl = normalizeAiCameraControl();
   let styleLoadRevision = 0;
   const boardReferences = new Map();
+  let boardReferenceSequence = 0;
   let creditQuoteRevision = 0;
 
   function setOptionsOpen(open) {
@@ -4401,6 +4516,15 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
 
   function selectedPromptStyle() {
     return promptStyles.find((entry) => entry.id === selectedPromptStyleId) || null;
+  }
+
+  function syncPromptStyleCoverUi() {
+    const hasCover = !!editingPromptStyleCover;
+    promptStyleCoverPreview.style.backgroundImage = hasCover ? `url("${editingPromptStyleCover}")` : '';
+    promptStyleCoverPreview.classList.toggle('has-cover', hasCover);
+    promptStyleCoverButtonLabel.textContent = hasCover
+      ? t('Replace cover', '更换封面')
+      : t('Upload cover', '上传封面');
   }
 
   function renderPromptStyles() {
@@ -4439,7 +4563,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     promptStyleName.value = style ? style.name : '';
     promptStylePrompt.value = style ? style.prompt : '';
     promptStyleCoverInput.value = '';
-    promptStyleCoverPreview.style.backgroundImage = editingPromptStyleCover ? `url("${editingPromptStyleCover}")` : '';
+    syncPromptStyleCoverUi();
     promptStyleEditor.hidden = false;
     pop.querySelector('.ai-prompt-style-delete').hidden = !style;
     promptStyleName.focus();
@@ -4527,27 +4651,27 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     submit.setAttribute('aria-busy', String(referencesLoading));
   }
 
-  function setBoardReferenceOrder(fileIds) {
+  function setBoardReferenceOrder(referenceKeys) {
     const previous = new Map(boardReferences);
     boardReferences.clear();
-    fileIds.forEach((fileId) => {
-      if (previous.has(fileId)) boardReferences.set(fileId, previous.get(fileId));
+    referenceKeys.forEach((referenceKey) => {
+      if (previous.has(referenceKey)) boardReferences.set(referenceKey, previous.get(referenceKey));
     });
-    previous.forEach((entry, fileId) => {
-      if (!boardReferences.has(fileId)) boardReferences.set(fileId, entry);
+    previous.forEach((entry, referenceKey) => {
+      if (!boardReferences.has(referenceKey)) boardReferences.set(referenceKey, entry);
     });
   }
 
   function commitBoardReferenceOrder() {
     setBoardReferenceOrder(
       [...referenceStrip.querySelectorAll('.ai-composer-reference-thumb')]
-        .map((element) => element.dataset.referenceFileId)
+        .map((element) => element.dataset.referenceKey)
         .filter(Boolean)
     );
   }
 
-  function removeBoardReference(fileId) {
-    boardReferences.delete(fileId);
+  function removeBoardReference(referenceKey) {
+    boardReferences.delete(referenceKey);
     renderBoardReferences();
     if (kind === 'video' && !boardReferences.size) ratio = aiConfig.videoAspectRatio || '16:9';
     syncGenerationOptions();
@@ -4560,10 +4684,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const activeVideoMode = kind === 'video'
       ? composerVideoMode(videoMode, selectedVideoCapabilities())
       : null;
-    boardReferences.forEach((entry, fileId) => {
+    boardReferences.forEach((entry, referenceKey) => {
       const thumb = document.createElement('div');
       thumb.className = 'ai-composer-reference-thumb' + (entry.isLoading ? ' is-loading' : '');
-      thumb.dataset.referenceFileId = fileId;
+      thumb.dataset.referenceKey = referenceKey;
       thumb.draggable = true;
       thumb.tabIndex = 0;
       thumb.title = t(`Drag to reorder ${entry.name}`, `拖动调整 ${entry.name} 的顺序`);
@@ -4583,7 +4707,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       }
       const order = document.createElement('span');
       order.className = 'ai-composer-reference-order';
-      const referenceIndex = [...boardReferences.keys()].indexOf(fileId);
+      const referenceIndex = [...boardReferences.keys()].indexOf(referenceKey);
       order.textContent = activeVideoMode && activeVideoMode.id === 'first-last-frame'
         ? (referenceIndex === 0 ? t('First', '首') : t('Last', '尾'))
         : String(referenceIndex + 1);
@@ -4600,7 +4724,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
         // here so the document closer cannot mistake it for an outside click.
         event.preventDefault();
         event.stopPropagation();
-        removeBoardReference(fileId);
+        removeBoardReference(referenceKey);
       });
       thumb.prepend(image);
       thumb.append(order, remove);
@@ -4608,7 +4732,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
         thumb.classList.add('is-dragging');
         if (event.dataTransfer) {
           event.dataTransfer.effectAllowed = 'move';
-          event.dataTransfer.setData('application/x-messs-reference-id', fileId);
+          event.dataTransfer.setData('application/x-messs-reference-id', referenceKey);
         }
         event.stopPropagation();
       });
@@ -4620,7 +4744,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       thumb.addEventListener('keydown', (event) => {
         if (event.target !== thumb || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
         const orderedIds = [...boardReferences.keys()];
-        const fromIndex = orderedIds.indexOf(fileId);
+        const fromIndex = orderedIds.indexOf(referenceKey);
         const toIndex = event.key === 'ArrowLeft' ? fromIndex - 1 : fromIndex + 1;
         if (fromIndex < 0 || toIndex < 0 || toIndex >= orderedIds.length) return;
         event.preventDefault();
@@ -4628,7 +4752,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
         [orderedIds[fromIndex], orderedIds[toIndex]] = [orderedIds[toIndex], orderedIds[fromIndex]];
         setBoardReferenceOrder(orderedIds);
         renderBoardReferences();
-        referenceStrip.querySelector(`[data-reference-file-id="${CSS.escape(fileId)}"]`)?.focus();
+        referenceStrip.querySelector(`[data-reference-key="${CSS.escape(referenceKey)}"]`)?.focus();
       });
       referenceStrip.appendChild(thumb);
     });
@@ -4660,11 +4784,32 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     commitBoardReferenceOrder();
   });
 
+  function boardReferenceKeysForFile(fileId) {
+    return [...boardReferences.entries()]
+      .filter(([, entry]) => entry.fileId === fileId)
+      .map(([referenceKey]) => referenceKey);
+  }
+
+  function nextBoardReferenceKey(fileId) {
+    if (!boardReferences.has(fileId)) return fileId;
+    let referenceKey = '';
+    do {
+      boardReferenceSequence += 1;
+      referenceKey = `${fileId}::frame-${boardReferenceSequence}`;
+    } while (boardReferences.has(referenceKey));
+    return referenceKey;
+  }
+
+  function firstLastFrameUnsupportedMessage() {
+    const provider = selectedVideoProvider();
+    const modelName = provider && provider.name ? provider.name : t('This model', '当前模型');
+    return t(
+      `${modelName} does not support first and last frames. Choose a compatible model or remove the last frame.`,
+      `${modelName} 不支持首尾帧，请更换支持首尾帧的模型或移除尾帧。`
+    );
+  }
+
   async function toggleBoardReference(fileId) {
-    if (boardReferences.has(fileId)) {
-      removeBoardReference(fileId);
-      return;
-    }
     const file = AppState.files.find((entry) => entry.id === fileId);
     if (!file) return;
     const referenceKind = isVideoExt(file.ext) ? 'video' : isImageExt(file.ext) ? 'image' : '';
@@ -4674,6 +4819,24 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       return;
     }
     const capabilities = kind === 'video' ? selectedVideoCapabilities() : selectedImageCapabilities();
+    const matchingReferenceKeys = boardReferenceKeysForFile(fileId);
+    const addingSecondFrame = kind === 'video'
+      && referenceKind === 'image'
+      && videoMode === 'first-last-frame'
+      && boardReferences.size === 1;
+    if (addingSecondFrame && !supportsVideoFirstLastFrame(capabilities)) {
+      showToast(firstLastFrameUnsupportedMessage(), 'AI');
+      return;
+    }
+    const duplicateSameFrame = addingSecondFrame && matchingReferenceKeys.length === 1;
+    if (matchingReferenceKeys.length && !duplicateSameFrame) {
+      matchingReferenceKeys.forEach((referenceKey) => boardReferences.delete(referenceKey));
+      renderBoardReferences();
+      if (kind === 'video' && !boardReferences.size) ratio = aiConfig.videoAspectRatio || '16:9';
+      syncGenerationOptions();
+      syncAiComposerReferenceClasses();
+      return;
+    }
     if (kind === 'video') {
       if (referenceKind === 'video') {
         const omniMode = composerVideoModes(capabilities).find((mode) => (
@@ -4730,7 +4893,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       sourceHeight: Number(file.sourceHeight) || null,
       isLoading: true
     };
-    boardReferences.set(file.id, pendingEntry);
+    const referenceKey = nextBoardReferenceKey(file.id);
+    boardReferences.set(referenceKey, pendingEntry);
     renderBoardReferences();
     syncGenerationOptions();
     syncAiComposerReferenceClasses();
@@ -4740,14 +4904,14 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       if (referenceKind === 'image' && !dataUrl) throw new Error(t('Could not read the reference image.', '无法读取参考图。'));
       // The user may remove this image while it is loading. Only fill the
       // reserved slot; never append a stale result back to the end.
-      if (boardReferences.get(file.id) !== pendingEntry) return;
+      if (boardReferences.get(referenceKey) !== pendingEntry) return;
       pendingEntry.dataUrl = dataUrl;
       pendingEntry.isLoading = false;
       renderBoardReferences();
       updateCreditEstimate();
     } catch (error) {
-      if (boardReferences.get(file.id) === pendingEntry) {
-        boardReferences.delete(file.id);
+      if (boardReferences.get(referenceKey) === pendingEntry) {
+        boardReferences.delete(referenceKey);
         renderBoardReferences();
         syncGenerationOptions();
         syncAiComposerReferenceClasses();
@@ -4829,6 +4993,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     promptStyleToggle.querySelector('span').textContent = activePromptStyle ? activePromptStyle.name : t('Style', '风格');
     promptStyleToggle.title = t('Choose or edit a prompt style', '选择或编辑提示词风格');
     promptStyleToggle.setAttribute('aria-label', promptStyleToggle.title);
+    syncPromptStyleCoverUi();
     renderCameraControl();
   }
 
@@ -5240,6 +5405,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const selected = [...modelSelect.options].find((option) => option.value === modelSelect.value);
     if (selected) modelPickerLabel.textContent = selected.textContent;
     syncGenerationOptions();
+    if (kind === 'video' && boardReferences.size >= 2 && videoMode !== 'omni'
+      && !supportsVideoFirstLastFrame(selectedVideoCapabilities())) {
+      showToast(firstLastFrameUnsupportedMessage(), 'AI');
+    }
   });
   pop.addEventListener('click', (event) => {
     if (!modelPicker.contains(event.target)) {
@@ -5303,6 +5472,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   promptStylePanel.addEventListener('wheel', (event) => event.stopPropagation(), { passive: true });
   promptStylePanel.addEventListener('click', (event) => event.stopPropagation());
   pop.querySelector('.ai-prompt-style-new').addEventListener('click', () => editPromptStyle());
+  promptStyleCoverButton.addEventListener('click', () => promptStyleCoverInput.click());
   promptStyleGrid.addEventListener('click', (event) => {
     const edit = event.target.closest('[data-edit-style-id]');
     if (edit) {
@@ -5320,7 +5490,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     if (!file) return;
     try {
       editingPromptStyleCover = await aiPromptStyleCoverDataUrl(file);
-      promptStyleCoverPreview.style.backgroundImage = editingPromptStyleCover ? `url("${editingPromptStyleCover}")` : '';
+      syncPromptStyleCoverUi();
     } catch (error) {
       showToast(t('Could not read this cover image.', '无法读取这张封面图。'), 'AI');
     }
@@ -5444,6 +5614,11 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const videoCapabilities = kind === 'video' && selectedProvider && selectedProvider.capabilities
       ? selectedProvider.capabilities
       : {};
+    if (kind === 'video' && boardReferences.size >= 2 && videoMode !== 'omni'
+      && !supportsVideoFirstLastFrame(videoCapabilities)) {
+      showToast(firstLastFrameUnsupportedMessage(), 'AI');
+      return;
+    }
     const selectedMode = kind === 'video'
       ? composerVideoRequestMode(videoMode, boardReferences.size, videoCapabilities)
       : null;
@@ -5493,7 +5668,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       seed,
       styleId,
       styleStrength,
-      referenceFileIds: [...boardReferences.keys()],
+      referenceFileIds: [...boardReferences.values()].map((entry) => entry.fileId),
       referenceMediaTypes: selectedReferenceKinds,
       cameraControl: kind === 'video' ? normalizeAiCameraControl(cameraControl) : null,
       urls: [
@@ -5553,7 +5728,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     refreshLanguage();
     updateCreditEstimate();
   };
-  pop._hasBoardReference = (fileId) => boardReferences.has(fileId);
+  pop._hasBoardReference = (fileId) => boardReferenceKeysForFile(fileId).length > 0;
+  pop._referenceCountForFile = (fileId) => boardReferenceKeysForFile(fileId).length;
   pop._toggleBoardReference = toggleBoardReference;
   pop._refreshLanguage = refreshLanguage;
   renderPromptStyles();
@@ -5903,11 +6079,16 @@ async function openAiComposerForSelection(kind, promptText = '', options = {}) {
     ? options.referenceFileIds
     : null;
   const referenceFileIds = explicitReferenceFileIds || selectedBoardReferenceItems(kind).map((item) => item.fileId);
+  const requestedReferenceCounts = new Map();
   for (const fileId of referenceFileIds) {
+    const requestedCount = (requestedReferenceCounts.get(fileId) || 0) + 1;
+    requestedReferenceCounts.set(fileId, requestedCount);
     if (
       typeof pop._hasBoardReference === 'function' &&
       typeof pop._toggleBoardReference === 'function' &&
-      !pop._hasBoardReference(fileId)
+      (typeof pop._referenceCountForFile !== 'function'
+        ? !pop._hasBoardReference(fileId)
+        : pop._referenceCountForFile(fileId) < requestedCount)
     ) {
       await pop._toggleBoardReference(fileId);
     }
@@ -6035,11 +6216,16 @@ async function remixGeneratedMediaFromDetails(file, useGeneratedImage) {
   const referenceIds = useGeneratedImage
     ? [file.id]
     : (originalReferences.length ? originalReferences : [file.id]);
+  const requestedReferenceCounts = new Map();
   for (const fileId of referenceIds) {
+    const requestedCount = (requestedReferenceCounts.get(fileId) || 0) + 1;
+    requestedReferenceCounts.set(fileId, requestedCount);
     if (
       typeof pop._hasBoardReference === 'function' &&
       typeof pop._toggleBoardReference === 'function' &&
-      !pop._hasBoardReference(fileId)
+      (typeof pop._referenceCountForFile !== 'function'
+        ? !pop._hasBoardReference(fileId)
+        : pop._referenceCountForFile(fileId) < requestedCount)
     ) {
       await pop._toggleBoardReference(fileId);
     }
@@ -6195,6 +6381,7 @@ async function showAiImagePopover(initialKind = 'image') {
     // Canvas images toggle AI reference state; they must not dismiss the active composer.
     if (e.target.closest('#board-canvas .board-item-image, #board-canvas .board-item-video')) return;
     if (e.target.closest('#board-viewport') && boardReferenceMediaItemAtClientPoint(e.clientX, e.clientY)) return;
+    if (pop.dataset.keepOpenAfterBlur === 'true') return;
     closeAiImagePopover();
   };
   aiImagePopoverKeyCloser = (e) => {

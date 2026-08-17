@@ -16,6 +16,8 @@ assert.match(mainSource, /profileAvatarPath\(store\.dir, session\)/);
 assert.match(mainSource, /if \(!accountUserId \|\| !avatarPath\) return \{ ok: false, reason: 'auth-required' \}/);
 assert.match(sidebarSource, /accountUserId && typeof window\.messsAPI\.getProfileAvatar/);
 assert.match(sidebarSource, /avatarButton\.disabled = !accountUserId/);
+assert.match(sidebarSource, /messs:profile-avatar-updated[\s\S]*?renderAccountAvatars/);
+assert.match(sidebarSource, /document\.addEventListener\('messs:profile-avatar-updated'[\s\S]*?accountUserId/);
 assert.match(sidebarSource, /async function signOutCloudAccount\(\)[\s\S]*?activeAccountAvatarUserId = null;[\s\S]*?renderAccountAvatars\('M', null\);[\s\S]*?signOutCloud\(\)/);
 assert.match(indexSource, /id="account-popover-avatar"[^>]*disabled/);
 assert.match(indexSource, /class="account-avatar-edit-badge"[\s\S]*?<svg/);

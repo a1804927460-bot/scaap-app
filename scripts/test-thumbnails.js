@@ -37,6 +37,23 @@ async function main() {
     }).png().toFile(imagePath);
     await assertJpeg(await getOrCreateThumbnail(imagePath, 'image', cache, '.png'));
 
+    // A wide-gamut source must be converted to sRGB for the cached JPEG, not
+    // merely relabelled. Compare the embedded profile against Sharp's known
+    // sRGB profile to guard the thumbnail path against P3 color drift.
+    const p3ImagePath = path.join(root, 'image-p3.png');
+    await sharp({
+      create: { width: 900, height: 600, channels: 3, background: { r: 0, g: 255, b: 0 } }
+    }).withIccProfile('p3').png().toFile(p3ImagePath);
+    const p3ThumbMetadata = await assertJpeg(
+      await getOrCreateThumbnail(p3ImagePath, 'image-p3', cache, '.png')
+    );
+    const expectedSrgbBuffer = await sharp({
+      create: { width: 2, height: 2, channels: 3, background: '#000000' }
+    }).withIccProfile('srgb').jpeg().toBuffer();
+    const expectedSrgb = await sharp(expectedSrgbBuffer).metadata();
+    assert.ok(Buffer.isBuffer(p3ThumbMetadata.icc), 'Thumbnails must embed an ICC profile.');
+    assert.deepStrictEqual(p3ThumbMetadata.icc, expectedSrgb.icc, 'P3 thumbnails must be encoded in sRGB.');
+
     const genericPath = path.join(root, 'archive.xyz');
     await fs.promises.writeFile(genericPath, 'generic file preview');
     const genericMetadata = await assertJpeg(

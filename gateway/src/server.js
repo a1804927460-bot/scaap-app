@@ -17,11 +17,17 @@ import {
   storeAi302RelayAsset
 } from './ai302-tools.js';
 import {
+  cleanupImageObjects,
   downloadAi302ImageResult,
   eraseImageObjects,
+  generativeUpscaleImage,
+  pollKlingImageExpand,
+  pollSeedEditImage,
   pollTopazImageTool,
   pollQwenImageEdit,
   pollQwenImageLayered,
+  submitKlingImageExpand,
+  submitSeedEditImage,
   submitTopazImageTool,
   submitQwenImageEdit,
   submitQwenImageLayered,
@@ -73,7 +79,7 @@ const TOPAZ_IMAGE_TOOL_IDS = new Set([
   'topaz-image-restore',
   'topaz-image-lighting'
 ]);
-const TOPAZ_IMAGE_MAX_RETAIL_CREDITS = 18;
+const TOPAZ_IMAGE_MAX_RETAIL_CREDITS = 422;
 const allowedOrigins = new Set(String(process.env.ALLOWED_ORIGINS || '').split(',').map((v) => v.trim()).filter(Boolean));
 const secretPatterns = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,
@@ -588,6 +594,8 @@ async function releaseFailedToolReservation(userId, usage) {
 }
 
 function imageToolPoller(providerId) {
+  if (providerId === 'seededit-v3') return pollSeedEditImage;
+  if (providerId === 'kling-image-expand') return pollKlingImageExpand;
   if (providerId === 'qwen-image-edit-plus') return pollQwenImageEdit;
   if (providerId === 'qwen-image-layered') return pollQwenImageLayered;
   if (TOPAZ_IMAGE_TOOL_IDS.has(providerId)) return pollTopazImageTool;
@@ -812,15 +820,43 @@ async function handle(request, response) {
     if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
     const body = await readJson(request);
     const modelId = String(body && body.modelId || '').trim().toLowerCase();
-    if (modelId !== 'qwen-image-edit-plus') {
+    if (modelId !== 'seededit-v3') {
       throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
     }
     const task = await runIdempotentImageOperation(user.id, requestId, async () => {
       const usage = await reserveFixedTool(user.id, modelId, requestId);
       try {
-        const created = await submitQwenImageEdit({
+        const created = await submitSeedEditImage({
           imageDataUrl: body && body.imageDataUrl,
           prompt: body && body.options && body.options.prompt,
+          toolOptions: body && body.options,
+          userId: user.id
+        }, { accountingRequestId: usage.requestId });
+        return {
+          ...created,
+          credits: usage.reservation.credits,
+          availableCredits: usage.reservation.availableCredits ?? usage.reservation.available_credits
+        };
+      } catch (error) {
+        await releaseFailedToolReservation(user.id, usage);
+        throw error;
+      }
+    });
+    return send(response, 202, task);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/tools/image/expand') {
+    if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
+    const body = await readJson(request);
+    const modelId = String(body && body.modelId || '').trim().toLowerCase();
+    if (modelId !== 'kling-image-expand') {
+      throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
+    }
+    const task = await runIdempotentImageOperation(user.id, requestId, async () => {
+      const usage = await reserveFixedTool(user.id, modelId, requestId);
+      try {
+        const created = await submitKlingImageExpand({
+          imageDataUrl: body && body.imageDataUrl,
           toolOptions: body && body.options,
           userId: user.id
         }, { accountingRequestId: usage.requestId });
@@ -967,14 +1003,13 @@ async function handle(request, response) {
     if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
     const body = await readJson(request);
     const modelId = String(body && body.modelId || '').trim().toLowerCase();
-    if (modelId !== 'super-upscale-v2') {
+    if (modelId !== 'generative-upscale') {
       throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
     }
     const png = await runIdempotentImageOperation(user.id, requestId, async () => {
       const usage = await reserveFixedTool(user.id, modelId, requestId);
       try {
-        const result = await superUpscaleImage({ imageDataUrl: body && body.imageDataUrl, toolOptions: body && body.options });
-        const output = await downloadAi302ImageResult(result.urls[0]);
+        const output = await generativeUpscaleImage({ imageDataUrl: body && body.imageDataUrl });
         await settleToolUsage(user.id, usage.requestId, 'succeeded', Date.now() - usage.startedAt);
         return output;
       } catch (error) {
@@ -984,7 +1019,7 @@ async function handle(request, response) {
     });
     return send(response, 200, png, {
       'Content-Type': 'image/png',
-      'Content-Disposition': 'attachment; filename="super-upscaled.png"'
+      'Content-Disposition': 'attachment; filename="generative-upscaled.png"'
     });
   }
 
@@ -992,14 +1027,13 @@ async function handle(request, response) {
     if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
     const body = await readJson(request);
     const modelId = String(body && body.modelId || '').trim().toLowerCase();
-    if (modelId !== 'erase') {
+    if (modelId !== 'cleanup') {
       throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
     }
     const png = await runIdempotentImageOperation(user.id, requestId, async () => {
       const usage = await reserveFixedTool(user.id, modelId, requestId);
       try {
-        const result = await eraseImageObjects({ imageDataUrl: body && body.imageDataUrl, maskImageDataUrl: body && body.maskDataUrl });
-        const output = await downloadAi302ImageResult(result.urls[0]);
+        const output = await cleanupImageObjects({ imageDataUrl: body && body.imageDataUrl, maskImageDataUrl: body && body.maskDataUrl });
         await settleToolUsage(user.id, usage.requestId, 'succeeded', Date.now() - usage.startedAt);
         return output;
       } catch (error) {

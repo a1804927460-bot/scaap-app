@@ -35,14 +35,14 @@ assert.match(boardMedia, /function bindBoardButlerHoverSubmenu[\s\S]*group\.addE
 assert.match(boardMedia, /bindBoardButlerHoverSubmenu\(topazGroup, topazTrigger\)[\s\S]*bindBoardButlerHoverSubmenu\(modelGroup, modelTrigger\)/, 'Topaz and 3D must share hover-first submenu behavior.');
 assert.doesNotMatch(boardMedia, /dataset\.pinned/, 'Butler secondary menus must not require click-pinning before choosing an option.');
 assert.match(boardMedia, /event\.key === 'Escape'[\s\S]*closeBoardButlerMenu/, 'The Butler toolbar must close with Escape.');
-['imageEdit', 'imageLayer', 'imageUpscale', 'eraseObject'].forEach((action) => {
+['imageEdit', 'imageExpand', 'imageUpscale', 'eraseObject'].forEach((action) => {
   assert.match(boardMedia, new RegExp(`${action}: Object\\.freeze`), `${action} must have an explicit bridge hook.`);
-  assert.match(boardMedia, new RegExp(`BOARD_BUTLER_ICONS\\.${action}`), `${action} must have a semantic icon.`);
 });
+assert.match(boardMedia, /BOARD_BUTLER_ICONS\.imageLayer/, 'Image expansion must have a semantic expansion icon.');
 [
-  ['imageEdit', 'openBoardButlerImageEditPanel'],
-  ['imageLayer', 'openBoardButlerLayerPanel'],
-  ['imageUpscale', 'openBoardButlerUpscalePanel'],
+  ['imageEdit', 'openBoardButlerSeedEditPanel'],
+  ['imageExpand', 'openBoardButlerExpandPanel'],
+  ['imageUpscale', 'launchBoardButlerImageTool'],
   ['eraseObject', 'openBoardButlerErasePanel']
 ].forEach(([action, entryPoint]) => {
   assert.match(
@@ -51,8 +51,9 @@ assert.match(boardMedia, /event\.key === 'Escape'[\s\S]*closeBoardButlerMenu/, '
     `${action} must execute from the selected-image Butler menu.`
   );
 });
-assert.match(boardMedia, /Qwen-Image-Edit-Plus/, 'Image edit must identify the Qwen edit model.');
-assert.match(boardMedia, /numLayers:[\s\S]*Math\.max\(2[\s\S]*Math\.min\(8/, 'Layered images must expose a bounded 2-8 layer control.');
+assert.match(boardMedia, /SeedEdit 3\.0/, 'Image edit must identify SeedEdit 3.0.');
+assert.match(boardMedia, /Kling Images Expand/, 'Image expansion must identify the documented Kling endpoint.');
+assert.match(boardMedia, /Creative upscale[\s\S]*credits: 69/, 'Creative upscale must expose its retail point cost.');
 assert.match(boardMedia, /maskDataUrl[\s\S]*maskWidth[\s\S]*maskHeight/, 'Erase must submit a real PNG mask with dimensions.');
 assert.match(boardMedia, /videoUpscale: Object\.freeze/, 'Video enhancement must have an isolated bridge hook.');
 assert.match(boardMedia, /topaz-video-upscale/, 'Video enhancement must use the Topaz action key.');
@@ -93,7 +94,7 @@ assert.match(main, /'credit-schema-missing': 'The points service is being upgrad
 assert.match(main, /function butlerFailure[\s\S]*?httpStatus[\s\S]*?httpStatus \}/, 'Renderer failures must retain HTTP status so terminal 4xx errors are not retried.');
 [
   ['editImage', 'butler:image-edit'],
-  ['layerImage', 'butler:image-layer'],
+  ['expandImage', 'butler:image-expand'],
   ['upscaleImage', 'butler:image-upscale'],
   ['eraseObject', 'butler:image-erase']
 ].forEach(([method, channel]) => {

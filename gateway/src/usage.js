@@ -1,5 +1,9 @@
 import crypto from 'node:crypto';
-import { BUTLER_FIXED_RETAIL_CREDITS, TOPAZ_DYNAMIC_PROVIDERS, quoteButlerRetailCredits } from './tool-pricing.js';
+import {
+  BUTLER_FIXED_RETAIL_CREDITS,
+  TOPAZ_DYNAMIC_PROVIDERS,
+  quoteButlerRetailCredits
+} from './tool-pricing.js';
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
 
@@ -7,51 +11,39 @@ const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmoh
 // expected quote to Supabase, while reserve_ai_credits independently recomputes
 // it. A version mismatch therefore fails closed instead of undercharging.
 export const IMAGE_CREDITS = Object.freeze({
-  'image-1': 16,
-  'image-2': 12,
-  'image-3': 5,
-  'image-4': 4,
-  'image-5': 4,
-  'image-6': 12,
-  'image-7': 4,
-  'image-8': 4,
-  'image-9': 6,
-  'image-10': 8,
-  'image-11': 5,
-  'image-12': 4,
-  'image-13': 3,
-  'image-14': 4,
-  'image-15': 5,
-  'image-16': 3
+  'image-1': 22, 'image-2': 20, 'image-3': 17, 'image-4': 16,
+  'image-5': 16, 'image-6': 20, 'image-7': 16, 'image-8': 16,
+  'image-9': 17, 'image-10': 18, 'image-11': 17, 'image-12': 16,
+  'image-13': 16, 'image-14': 16, 'image-15': 17, 'image-16': 16
 });
 
 export const IMAGE_QUALITY_CREDITS = Object.freeze({
-  'image-6': Object.freeze({ low: 3, medium: 8, high: 28, auto: 12 })
+  'image-6': Object.freeze({ low: 16, medium: 18, high: 28, auto: 20 })
 });
 
 export const IMAGE_RESOLUTION_CREDITS = Object.freeze({
-  'image-1': Object.freeze({ '1k': 16, '2k': 16, '4k': 28 }),
-  'image-2': Object.freeze({ '1k': 8, '2k': 12, '4k': 16 }),
-  'image-3': Object.freeze({ '2k': 5, '4k': 8 }),
-  'image-7': Object.freeze({ '720p': 4, '1080p': 8 }),
-  'image-8': Object.freeze({ '720p': 4, '1080p': 8 }),
-  'image-10': Object.freeze({ '2k': 8, '4k': 14 }),
-  'image-11': Object.freeze({ '2k': 5, '4k': 8 }),
-  'image-12': Object.freeze({ '1k': 4, '2k': 5, '4k': 8 }),
-  'image-15': Object.freeze({ '1k': 5, '2k': 8 }),
-  'image-16': Object.freeze({ '512x512': 3, '1024x1024': 4 })
+  'image-1': Object.freeze({ '1k': 22, '2k': 22, '4k': 28 }),
+  'image-2': Object.freeze({ '1k': 18, '2k': 20, '4k': 22 }),
+  'image-3': Object.freeze({ '2k': 17, '4k': 18 }),
+  'image-7': Object.freeze({ '720p': 16, '1080p': 18 }),
+  'image-8': Object.freeze({ '720p': 16, '1080p': 18 }),
+  'image-10': Object.freeze({ '2k': 18, '4k': 21 }),
+  'image-11': Object.freeze({ '2k': 17, '4k': 18 }),
+  'image-12': Object.freeze({ '1k': 16, '2k': 17, '4k': 18 }),
+  'image-15': Object.freeze({ '1k': 17, '2k': 18 }),
+  'image-16': Object.freeze({ '512x512': 16, '1024x1024': 16 })
 });
 
 export const VIDEO_CREDITS_PER_SECOND = Object.freeze({
-  'video-1': Object.freeze({ '768P': 10, '2K': 16 }),
-  'video-2': Object.freeze({ '480P': 3, '720P': 5 }),
-  'video-3': Object.freeze({ '480P': 4, '720P': 6 }),
-  'video-4': Object.freeze({ '480P': 3, '720P': 5 }),
-  'video-5': Object.freeze({ '480P': 4, '720P': 6 }),
-  'video-6': Object.freeze({ '480P': 4, '720P': 6, '1080P': 8 }),
-  'video-7': Object.freeze({ '480P': 3, '720P': 5 }),
-  'video-8': Object.freeze({ '720P': 1, '1080P': 2 }),
-  'video-9': Object.freeze({ '1080P': 4 })
+  'video-1': Object.freeze({ '768P': 5, '2K': 8 }),
+  'video-2': Object.freeze({ '480P': 1.5, '720P': 2.5 }),
+  'video-3': Object.freeze({ '480P': 2, '720P': 3 }),
+  'video-4': Object.freeze({ '480P': 1.5, '720P': 2.5 }),
+  'video-5': Object.freeze({ '480P': 2, '720P': 3 }),
+  'video-6': Object.freeze({ '480P': 2, '720P': 3, '1080P': 4 }),
+  'video-7': Object.freeze({ '480P': 1.5, '720P': 2.5 }),
+  'video-8': Object.freeze({ '720P': 0.5, '1080P': 1 }),
+  'video-9': Object.freeze({ '1080P': 2 })
 });
 
 export const VIDEO_DEFAULT_RESOLUTIONS = Object.freeze({
@@ -69,7 +61,7 @@ export const VIDEO_DEFAULT_RESOLUTIONS = Object.freeze({
 export const VIDEO_DURATION_LIMITS = Object.freeze({
   'video-1': Object.freeze({ minimum: 4, maximum: 15 }),
   'video-2': Object.freeze({ minimum: 4, maximum: 15 }),
-  'video-3': Object.freeze({ minimum: 4, maximum: 15 }),
+  'video-3': Object.freeze({ minimum: 4, maximum: 30 }),
   'video-4': Object.freeze({ minimum: 4, maximum: 15 }),
   'video-5': Object.freeze({ minimum: 2, maximum: 12 }),
   'video-6': Object.freeze({ minimum: 2, maximum: 12 }),
@@ -181,7 +173,7 @@ export function quoteUsage(kind, request = {}) {
     return {
       kind: 'video',
       providerId,
-      credits: rates[resolution] * duration,
+      credits: Math.ceil(rates[resolution] * duration + 14),
       resolution,
       duration,
       requiresActivation: providerRequiresActivation('video', providerId)
@@ -232,6 +224,41 @@ async function reserveCredits(headers, requestBody, fetchImpl, rpcName = 'reserv
   return { response, payload: await responsePayload(response) };
 }
 
+async function authorizedPricingTier(userId, headers, fetchImpl) {
+  const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/get_ai_pricing_tier`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ p_user_id: userId }),
+    signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
+  });
+  const payload = await responsePayload(response);
+  if (!response.ok) {
+    if (isMissingCreditRpc(response, payload) && !durableRequired()) return 'standard';
+    const code = isMissingCreditRpc(response, payload) ? 'credit-schema-missing' : 'credit-service-failed';
+    throw serviceError(code, 'Could not resolve account pricing.');
+  }
+  return payload === 'staff15' ? 'staff15' : 'standard';
+}
+
+function internalUsageQuote(kind, request) {
+  const quote = quoteUsage(kind, request);
+  if (quote.kind === 'chat') return quote;
+  return {
+    ...quote,
+    credits: Math.ceil(Math.max(0, quote.credits - 14) * 1.15)
+  };
+}
+
+export async function quoteUsageForUser(userId, kind, request = {}, fetchImpl = fetch) {
+  const headers = serviceHeaders();
+  if (!headers) {
+    if (durableRequired()) throw serviceError('credit-service-not-configured', 'Durable credit enforcement is not configured.');
+    return quoteUsage(kind, request);
+  }
+  const tier = await authorizedPricingTier(userId, headers, fetchImpl);
+  return tier === 'staff15' ? internalUsageQuote(kind, request) : quoteUsage(kind, request);
+}
+
 async function openLegacyModelAccess(headers, userId, fetchImpl) {
   const normalizedUserId = String(userId || '').trim().toLowerCase();
   if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(normalizedUserId)) return false;
@@ -257,16 +284,19 @@ async function openLegacyModelAccess(headers, userId, fetchImpl) {
 }
 
 export async function reserveUsage(userId, kind, requestId, request = {}, fetchImpl = fetch) {
-  const quote = quoteUsage(kind, request);
   const headers = serviceHeaders();
   if (!headers) {
     if (durableRequired()) {
       throw serviceError('credit-service-not-configured', 'Durable credit enforcement is not configured.');
     }
-    return { ok: true, reason: 'development-bypass', ...quote, developmentBypass: true };
+    return { ok: true, reason: 'development-bypass', ...quoteUsage(kind, request), developmentBypass: true };
   }
+  // The database owns the pricing tier.  Start with the public quote; if the
+  // locked account row resolves to another authorized total, the RPC returns
+  // that total and we replay the same idempotent request once.
+  const quote = quoteUsage(kind, request);
 
-  const requestBody = JSON.stringify({
+  let requestBody = JSON.stringify({
     p_user_id: userId,
     p_kind: quote.kind,
     p_provider_id: quote.providerId,
@@ -284,6 +314,15 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
         ? 'reserve_302_catalog_credits'
         : 'reserve_ai_credits'));
   let { response, payload } = await reserveCredits(headers, requestBody, fetchImpl, reserveRpc);
+  if (response.ok && payload && payload.ok === false && payload.reason === 'pricing-mismatch'
+      && Number.isInteger(Number(payload.credits)) && Number(payload.credits) >= 0) {
+    requestBody = JSON.stringify({
+      p_user_id: userId, p_kind: quote.kind, p_provider_id: quote.providerId,
+      p_request_id: requestId, p_resolution: quote.resolution, p_duration: quote.duration,
+      p_expected_credits: Number(payload.credits)
+    });
+    ({ response, payload } = await reserveCredits(headers, requestBody, fetchImpl, reserveRpc));
+  }
   if (!response.ok) {
     if (isMissingCreditRpc(response, payload) && !durableRequired()) {
       return legacyReserve(headers, userId, quote.kind, requestId, fetchImpl);
@@ -428,7 +467,7 @@ export async function reserveToolUsage(userId, requestId, request = {}, fetchImp
       developmentBypass: true
     };
   }
-  const requestOptions = {
+  let requestOptions = {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -461,6 +500,23 @@ export async function reserveToolUsage(userId, requestId, request = {}, fetchImp
     }
   }
   if (!response) throw serviceError('credit-service-failed', 'Could not reserve Butler tool credits.');
+  if (response.ok && payload && payload.ok === false && payload.reason === 'pricing-mismatch'
+      && Number.isInteger(Number(payload.credits)) && Number(payload.credits) >= 0) {
+    requestOptions = {
+      ...requestOptions,
+      body: JSON.stringify({
+        p_user_id: userId, p_request_id: requestId, p_provider_id: providerId,
+        p_credits: Number(payload.credits), p_provider_cost: providerCost,
+        p_resolution: resolution, p_duration: duration
+      })
+    };
+    const rpcName = isTopaz && providerId !== 'topaz-video-upscale'
+      ? 'reserve_topaz_image_credits' : 'reserve_ai_tool_credits';
+    response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/${rpcName}`, {
+      ...requestOptions, signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
+    });
+    payload = await responsePayload(response);
+  }
   if (!response.ok) {
     const code = isMissingCreditRpc(response, payload) ? 'credit-schema-missing' : 'credit-service-failed';
     throw serviceError(code, 'Could not reserve Butler tool credits.');
@@ -475,7 +531,7 @@ export async function reserveToolUsage(userId, requestId, request = {}, fetchImp
     ok: result.ok === true,
     reason,
     providerId,
-    credits,
+    credits: Number.isFinite(Number(result.credits)) ? Number(result.credits) : credits,
     providerCost,
     resolution,
     duration
@@ -548,7 +604,20 @@ export async function getUsageAccount(userId, fetchImpl = fetch) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw serviceError('credit-service-failed', 'The credit service returned an invalid account.');
   }
-  return payload;
+  return publicCreditAccount(payload);
+}
+
+function publicCreditAccount(account = {}) {
+  const balance = nonnegativeNumber(account.balance);
+  const reserved = nonnegativeNumber(account.reserved);
+  return {
+    balance,
+    reserved,
+    availableCredits: nonnegativeNumber(account.availableCredits ?? Math.max(0, balance - reserved)),
+    overseasUnlocked: account.overseasUnlocked === true,
+    membershipTier: String(account.membershipTier || 'free').trim().slice(0, 40) || 'free',
+    updatedAt: String(account.updatedAt || '').slice(0, 40)
+  };
 }
 
 function normalizeUsageRange(value) {
@@ -659,5 +728,12 @@ export async function redeemUsageCode(userId, code, fetchImpl = fetch) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw serviceError('redemption-service-failed', 'The redemption service returned an invalid response.');
   }
-  return payload;
+  return {
+    ok: payload.ok === true,
+    reason: String(payload.reason || '').slice(0, 40),
+    creditsAdded: nonnegativeNumber(payload.creditsAdded),
+    ...(payload.account && typeof payload.account === 'object' && !Array.isArray(payload.account)
+      ? { account: publicCreditAccount(payload.account) }
+      : {})
+  };
 }

@@ -22,6 +22,15 @@ function response(payload, ok = true, status = 200) {
 
 assert.strictEqual(extractChatText({ choices: [{ message: { content: 'hello' } }] }), 'hello');
 assert.strictEqual(extractChatText({ choices: [{ delta: { content: 'streamed' } }] }), 'streamed');
+assert.strictEqual(extractChatText({
+  choices: [{ message: { content: '', reasoning_content: 'Doubao reasoning reply' } }]
+}), 'Doubao reasoning reply');
+assert.strictEqual(extractChatText({
+  choices: [{ message: { content: 'DeepSeek final reply', reasoning_content: 'private reasoning' } }]
+}), 'DeepSeek final reply');
+assert.strictEqual(extractChatText({
+  choices: [{ delta: { reasoning: [{ type: 'text', text: 'Reasoning delta reply' }] } }]
+}), 'Reasoning delta reply');
 assert.strictEqual(extractChatText({ data: { answer: 'fallback' } }), 'fallback');
 assert.strictEqual(extractChatText({
   candidates: [{ content: { parts: [{ text: 'Gemini reply' }] } }]

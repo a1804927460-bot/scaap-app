@@ -17,6 +17,10 @@ const sidebarSource = fs.readFileSync(path.join(root, 'src', 'js', 'sidebar.js')
 const previewSource = fs.readFileSync(path.join(root, 'src', 'js', 'preview-canvas.js'), 'utf8');
 const contextMenuSource = fs.readFileSync(path.join(root, 'src', 'js', 'context-menu.js'), 'utf8');
 const themeSource = fs.readFileSync(path.join(root, 'src', 'styles', 'theme.css'), 'utf8');
+const boardMediaMetaSource = fs.readFileSync(path.join(root, 'src', 'js', 'board-media-meta.js'), 'utf8');
+const modelViewerSource = fs.readFileSync(path.join(root, 'src', 'js', 'model-viewer.js'), 'utf8');
+const usageSettingsSource = fs.readFileSync(path.join(root, 'src', 'js', 'usage-settings.js'), 'utf8');
+const documentEditorSource = fs.readFileSync(path.join(root, 'src', 'js', 'document-editor.js'), 'utf8');
 
 const clipboardPaths = [
   'C:\\Users\\Example\\Pictures\\copied image.png',
@@ -57,6 +61,21 @@ assert.match(
 );
 assert.match(
   boardSource,
+  /function aiComposerHasDraft\([\s\S]*?\.ai-composer-reference-thumb, \.ai-prompt-style-toggle\.is-active/,
+  'The composer must detect unfinished prompt, reference, or style drafts.'
+);
+assert.match(
+  boardSource,
+  /BoardClipboard\.preferInternal = false;[\s\S]*?aiComposerHasDraft\(composer\)[\s\S]*?keepOpenAfterBlur/,
+  'Leaving the app with a draft must mark the composer to survive focus loss.'
+);
+assert.match(
+  boardSource,
+  /if \(pop\.dataset\.keepOpenAfterBlur === 'true'\) return/,
+  'A composer with an unfinished draft must survive leaving the app to copy text elsewhere.'
+);
+assert.match(
+  boardSource,
   /function syncAiComposerFullscreenState\(\)[\s\S]*?selectionStart[\s\S]*?classList\.toggle\('is-panel-popover', !isBoardFullscreen\(\)\)[\s\S]*?prompt\.focus\(\{ preventScroll: true \}\)[\s\S]*?setSelectionRange/,
   'Fullscreen changes must preserve the open composer, prompt focus, and caret selection.'
 );
@@ -79,10 +98,54 @@ assert.match(boardSource, /referenceMediaTypes:\s*selectedReferenceKinds/);
 assert.match(boardSource, /boardReferenceMediaItemAtClientPoint[\s\S]*?isVideoExt\(file\.ext\)/);
 assert.match(
   boardSource,
-  /const pendingEntry = \{[\s\S]*?isLoading:\s*true[\s\S]*?boardReferences\.set\(file\.id, pendingEntry\);[\s\S]*?await window\.messsAPI\.readFileAsDataUrl\(file\.id\)[\s\S]*?boardReferences\.get\(file\.id\) !== pendingEntry[\s\S]*?pendingEntry\.dataUrl = dataUrl/,
+  /const pendingEntry = \{[\s\S]*?fileId:\s*file\.id[\s\S]*?isLoading:\s*true[\s\S]*?const referenceKey = nextBoardReferenceKey\(file\.id\);[\s\S]*?boardReferences\.set\(referenceKey, pendingEntry\);[\s\S]*?await window\.messsAPI\.readFileAsDataUrl\(file\.id\)[\s\S]*?boardReferences\.get\(referenceKey\) !== pendingEntry[\s\S]*?pendingEntry\.dataUrl = dataUrl/,
   'Reference order must be reserved at click time rather than asynchronous file-read completion time.'
 );
 assert.match(boardSource, /activeVideoMode\.id === 'first-last-frame'[\s\S]*?t\('First', '首'\)[\s\S]*?t\('Last', '尾'\)/);
+assert.match(
+  boardSource,
+  /function nextBoardReferenceKey\(fileId\)[\s\S]*?if \(!boardReferences\.has\(fileId\)\) return fileId;[\s\S]*?`\$\{fileId\}::frame-\$\{boardReferenceSequence\}`/,
+  'Repeated use of one image must allocate an independent first/last-frame slot.'
+);
+assert.match(
+  boardSource,
+  /const duplicateSameFrame = addingSecondFrame && matchingReferenceKeys\.length === 1;[\s\S]*?if \(matchingReferenceKeys\.length && !duplicateSameFrame\)/,
+  'Selecting the same image for the last frame must add a slot instead of toggling the first slot off.'
+);
+assert.match(
+  boardSource,
+  /referenceFileIds:\s*\[\.\.\.boardReferences\.values\(\)\]\.map\(\(entry\) => entry\.fileId\)/,
+  'Generation requests must preserve repeated real file IDs from independent reference slots.'
+);
+assert.match(
+  boardSource,
+  /function firstLastFrameUnsupportedMessage[\s\S]*?does not support first and last frames[\s\S]*?不支持首尾帧/,
+  'Models without first/last-frame support must show an explicit compatibility message.'
+);
+const referenceSlotFunctions = boardSource.slice(
+  boardSource.indexOf('function boardReferenceKeysForFile'),
+  boardSource.indexOf('function firstLastFrameUnsupportedMessage')
+);
+const referenceSlotSandbox = {};
+vm.runInNewContext(
+  `const boardReferences = new Map();\nlet boardReferenceSequence = 0;\n${referenceSlotFunctions}\nthis.referenceSlotApi = { boardReferences, boardReferenceKeysForFile, nextBoardReferenceKey };`,
+  referenceSlotSandbox
+);
+const repeatedFileId = 'same-frame-file';
+const firstReferenceKey = referenceSlotSandbox.referenceSlotApi.nextBoardReferenceKey(repeatedFileId);
+referenceSlotSandbox.referenceSlotApi.boardReferences.set(firstReferenceKey, { fileId: repeatedFileId });
+const lastReferenceKey = referenceSlotSandbox.referenceSlotApi.nextBoardReferenceKey(repeatedFileId);
+referenceSlotSandbox.referenceSlotApi.boardReferences.set(lastReferenceKey, { fileId: repeatedFileId });
+assert.notEqual(lastReferenceKey, firstReferenceKey);
+assert.deepStrictEqual(
+  Array.from(referenceSlotSandbox.referenceSlotApi.boardReferenceKeysForFile(repeatedFileId)),
+  [firstReferenceKey, lastReferenceKey]
+);
+assert.deepStrictEqual(
+  Array.from(referenceSlotSandbox.referenceSlotApi.boardReferences.values(), (entry) => entry.fileId),
+  [repeatedFileId, repeatedFileId],
+  'The generated request must retain the same image in both ordered frame slots.'
+);
 assert.match(
   boardSource,
   /function videoModeLabel[\s\S]*?'first-last-frame':[\s\S]*?omni:[\s\S]*?function renderVideoModes[\s\S]*?composerVideoModes\(capabilities\)[\s\S]*?function setVideoMode/,
@@ -99,7 +162,7 @@ const videoModeFunctions = boardSource.slice(
 );
 const videoModeSandbox = {};
 vm.runInNewContext(
-  `${videoModeFunctions}\nthis.videoModeApi = { composerVideoModes, composerVideoRequestMode };`,
+  `${videoModeFunctions}\nthis.videoModeApi = { composerVideoModes, composerVideoRequestMode, supportsVideoFirstLastFrame };`,
   videoModeSandbox
 );
 const videoCapabilities = {
@@ -117,6 +180,23 @@ assert.deepStrictEqual(
 assert.equal(videoModeSandbox.videoModeApi.composerVideoRequestMode('first-last-frame', 1, videoCapabilities).id, 'first-frame');
 assert.equal(videoModeSandbox.videoModeApi.composerVideoRequestMode('first-last-frame', 2, videoCapabilities).id, 'first-last-frame');
 assert.equal(videoModeSandbox.videoModeApi.composerVideoRequestMode('omni', 3, videoCapabilities).id, 'omni');
+assert.equal(videoModeSandbox.videoModeApi.supportsVideoFirstLastFrame(videoCapabilities), true);
+const firstFrameOnlyCapabilities = {
+  videoModes: [
+    { id: 'text', minReferences: 0, maxReferences: 0 },
+    { id: 'first-frame', minReferences: 1, maxReferences: 1 }
+  ]
+};
+assert.equal(videoModeSandbox.videoModeApi.supportsVideoFirstLastFrame(firstFrameOnlyCapabilities), false);
+assert.equal(videoModeSandbox.videoModeApi.composerVideoRequestMode('first-last-frame', 2, firstFrameOnlyCapabilities).id, 'first-frame');
+const textOnlyCapabilities = {
+  videoModes: [{ id: 'text', minReferences: 0, maxReferences: 0 }]
+};
+assert.equal(videoModeSandbox.videoModeApi.supportsVideoFirstLastFrame(textOnlyCapabilities), false);
+assert.deepStrictEqual(
+  Array.from(videoModeSandbox.videoModeApi.composerVideoModes(textOnlyCapabilities), (entry) => entry.id),
+  []
+);
 assert.match(
   boardSource,
   /class="ai-composer-reference-strip"[\s\S]*?class="ai-composer-prompt"[\s\S]*?class="ai-model-picker"[\s\S]*?class="ai-video-mode-picker"/,
@@ -217,8 +297,13 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /remove\.addEventListener\('click',[\s\S]*?event\.stopPropagation\(\);[\s\S]*?removeBoardReference\(fileId\)/,
+  /remove\.addEventListener\('click',[\s\S]*?event\.stopPropagation\(\);[\s\S]*?removeBoardReference\(referenceKey\)/,
   'Removing one reference must not bubble into the composer outside-click closer.'
+);
+assert.match(
+  mainSource,
+  /const referenceFileIds = Array\.isArray\(request\.referenceFileIds\)[\s\S]*?\.map\(\(value\) => String\(value \|\| ''\)\.trim\(\)\)[\s\S]*?\.filter\(Boolean\)[\s\S]*?\.filter\(\(value\) => !!store\.getFile\(value\)\)[\s\S]*?\.slice\(0, 14\)/,
+  'Generated media metadata must retain repeated first/last-frame file IDs for retry and remix.'
 );
 assert.match(boardStyles, /\.ai-composer-reference-thumb\.is-dragging[\s\S]*?cursor:\s*var\(--cursor-grabbing\)/);
 assert.match(
@@ -271,6 +356,17 @@ assert.match(
 assert.match(boardSource, /const BOARD_WHEEL_MAX_DELTA = 96;/);
 assert.match(boardSource, /const BOARD_WHEEL_PAN_GAIN = 0\.64;/);
 assert.match(boardSource, /const BOARD_WHEEL_ZOOM_RATE = 0\.001;/);
+assert.match(
+  boardSource,
+  /function finishBoardWheelInteraction[\s\S]*?isWheelZooming = false[\s\S]*?scheduleBoardReconcile\(\)[\s\S]*?scheduleMountedImageQuality\(0\)[\s\S]*?function beginBoardWheelInteraction[\s\S]*?isWheelZooming = true/,
+  'Wheel input must defer expensive canvas reconciliation until scrolling settles.'
+);
+assert.match(
+  boardSource,
+  /const lightweight = Board\.isWheelZooming[\s\S]*?Wheel frames must stay compositor-only[\s\S]*?return;/,
+  'Active wheel frames must only update the compositor transform and zoom label.'
+);
+assert.match(boardSource, /if \(!Board\.isWheelZooming\) scheduleBoardFullImagePrewarm/);
 assert.match(
   boardSource,
   /function stepBoardZoom[\s\S]*?Object\.assign\(Board, target\)[\s\S]*?Board\.zoomTarget = null/,
@@ -346,7 +442,7 @@ assert.match(
 );
 assert.match(
   boardStyles,
-  /\.board-panel\.is-fullscreen:has\(\.board-agent-panel:not\(\.is-hidden\)\) \.board-bottom-bar \{[\s\S]*?left:\s*calc\(\(100% - var\(--agent-w, 320px\)\) \/ 2\)/,
+  /\.board-panel\.is-fullscreen:has\(\.board-agent-panel:not\(\.is-hidden\)\) \.board-bottom-bar \{[\s\S]*?left:\s*calc\(\(100% - var\(--agent-w, 360px\)\) \/ 2\)/,
   'The fullscreen toolbar must stay centered in the drawable canvas when Agent is open.'
 );
 assert.match(
@@ -435,6 +531,29 @@ assert.match(
   /\.canvas-library-card \{[\s\S]*?backdrop-filter:\s*blur\(/,
   'Canvas library cards must use the restrained glass surface.'
 );
+assert.match(
+  workspaceSource,
+  /button\.addEventListener\('contextmenu',[\s\S]*?event\.preventDefault\(\);[\s\S]*?event\.stopPropagation\(\);[\s\S]*?Delete project[\s\S]*?promptDeleteCanvasProject\(project\.id\)[\s\S]*?canvas-project-context-menu/,
+  'Right-clicking a project must open its delete menu without triggering the project filter.'
+);
+const projectDeleteSource = workspaceSource.slice(
+  workspaceSource.indexOf('async function promptDeleteCanvasProject'),
+  workspaceSource.indexOf('async function promptRenameCanvas')
+);
+assert.match(projectDeleteSource, /AppState\.canvasProjects\.length <= 1/,
+  'Deleting a project must preserve at least one project.');
+assert.match(
+  projectDeleteSource,
+  /entry\.name === 'General'[\s\S]*?affectedCanvases[\s\S]*?canvas\.projectId = fallback\.id[\s\S]*?canvasWorkspaceSave\(\)/,
+  'Deleting a project must move its canvases to a remaining project before saving.'
+);
+assert.match(
+  projectDeleteSource,
+  /previousProjects[\s\S]*?catch \(err\)[\s\S]*?AppState\.canvasProjects = previousProjects[\s\S]*?canvas\.projectId = originalProjectId/,
+  'A failed project deletion save must restore project and canvas ownership in the UI.'
+);
+assert.doesNotMatch(projectDeleteSource, /deleteCanvas\(|deletePermanently\(|removeFile\(/,
+  'Deleting a project must never delete canvases or local media files.');
 assert.match(indexHtml, /js\/vendor\/perfect-freehand\.js[\s\S]*?js\/board-canvas\.js/,
   'The smooth-stroke library must load before canvas interactions.');
 assert.match(boardSource, /window\.PerfectFreehand\.getStroke[\s\S]*?smoothing:\s*0\.72[\s\S]*?streamline:\s*0\.48/,
@@ -629,6 +748,21 @@ assert.match(
 );
 assert.match(
   boardSource,
+  /class="ai-prompt-style-cover-upload"[\s\S]*?Upload cover[\s\S]*?promptStyleCoverButton\.addEventListener\('click', \(\) => promptStyleCoverInput\.click\(\)\)/,
+  'The prompt-style editor must expose a dedicated cover upload button wired to the image picker.'
+);
+assert.match(
+  boardSource,
+  /function syncPromptStyleCoverUi\(\)[\s\S]*?promptStyleCoverPreview\.classList\.toggle\('has-cover', hasCover\)[\s\S]*?Replace cover[\s\S]*?Upload cover/,
+  'The cover control must show upload or replace state while retaining the selected thumbnail.'
+);
+assert.match(
+  boardStyles,
+  /\.ai-prompt-style-cover-upload \{[\s\S]*?border:\s*1px solid var\(--action-border\);[\s\S]*?background:\s*var\(--action-gradient\);[\s\S]*?box-shadow:\s*var\(--action-shadow\);/,
+  'The cover upload button must use the same blue glass action surface as Send and Save.'
+);
+assert.match(
+  boardSource,
   /const upstreamPrompt = promptStyle[\s\S]*?Style direction:[\s\S]*?prompt: upstreamPrompt,[\s\S]*?visiblePrompt: text/,
   'The selected style prompt must be appended only to the upstream request while preserving the visible textarea value.'
 );
@@ -638,6 +772,63 @@ assert.match(
   'The submit control must use the Messs mark and keep the estimated points inside the button.'
 );
 assert.match(boardStyles, /\.ai-composer-submit \{[\s\S]*?min-width:\s*112px;[\s\S]*?border-radius:\s*11px;[\s\S]*?backdrop-filter:\s*blur\(14px\)/);
+assert.match(
+  themeSource,
+  /--action-gradient:\s*linear-gradient\(135deg,[\s\S]*?--action-border:[\s\S]*?--action-shadow:/,
+  'Primary commands must share the Send button action-surface tokens.'
+);
+assert.match(
+  themeSource,
+  /--motion-popup-spring:[\s\S]*?--motion-popup-duration:\s*380ms;[\s\S]*?--motion-menu-duration:\s*300ms;[\s\S]*?--motion-exit-duration:\s*150ms;/,
+  'Popups must share a controlled spring opening and a faster exit duration.'
+);
+assert.match(
+  boardStyles,
+  /@keyframes modal-spring-in[\s\S]*?@keyframes popup-backdrop-out[\s\S]*?Unified popup motion[\s\S]*?ai-camera-control-panel:not\(\[hidden\]\)[\s\S]*?prefers-reduced-motion/,
+  'Dialogs, menus, and camera controls must use the unified motion system and respect reduced motion.'
+);
+assert.match(
+  boardStyles,
+  /\.ai-image-popover \{[\s\S]*?animation:\s*centered-surface-spring-in/,
+  'Centered AI popovers must preserve their translateX positioning throughout spring motion.'
+);
+assert.match(
+  boardMediaMetaSource,
+  /function closeBoardButlerMenu\(\)[\s\S]*?classList\.remove\('is-visible'\)[\s\S]*?setTimeout\(\(\) => menu\.remove\(\), 150\)/,
+  'The Butler menu must animate out before its DOM node is removed.'
+);
+assert.match(
+  boardMediaMetaSource,
+  /function setBoardButlerPanelPosition[\s\S]*?--board-butler-panel-top[\s\S]*?requestAnimationFrame\(\(\) => \{[\s\S]*?positionBoardButlerPanel\(panel, anchor\)[\s\S]*?clampBoardButlerPanelToViewport\(panel\)/,
+  'Butler panels must be remeasured after their forms mount and constrained to the compact viewport.'
+);
+assert.match(
+  boardStyles,
+  /\.board-butler-config-panel \{[\s\S]*?--board-butler-panel-top:\s*12px;[\s\S]*?max-height:\s*min\(720px, calc\(100vh - var\(--board-butler-panel-top\) - 12px\)\)/,
+  'Butler panel height must account for its actual viewport position.'
+);
+assert.match(
+  sidebarSource,
+  /function openAiProviderManager[\s\S]*?_closeTimer[\s\S]*?classList\.remove\('is-closing'\)[\s\S]*?function closeAiProviderManager[\s\S]*?classList\.add\('is-closing'\)[\s\S]*?}, 150\)/,
+  'Settings dialogs must cancel stale close timers and animate before hiding.'
+);
+assert.match(usageSettingsSource, /window\.openAiProviderManager\('usage'\)/);
+assert.match(
+  previewSource,
+  /function closeFullscreenPreview\(\)[\s\S]*?classList\.add\('is-closing'\)[\s\S]*?setTimeout\(finalizeFullscreenPreviewClose, 150\)/,
+  'Fullscreen media must remain mounted for its closing animation.'
+);
+assert.match(
+  modelViewerSource,
+  /function closeBoardModelViewer\(\)[\s\S]*?const snapshot =[\s\S]*?classList\.add\('is-closing'\)[\s\S]*?setTimeout\(\(\) => disposeBoardModelViewerSnapshot\(snapshot\), 150\)/,
+  'The 3D viewer must retain its last rendered frame until its exit motion completes.'
+);
+assert.match(documentEditorSource, /function closeDocumentEditor[\s\S]*?classList\.add\('is-closing'\)[\s\S]*?}, 150\)/);
+assert.match(
+  boardStyles,
+  /\.pill-btn \{[\s\S]*?background:\s*var\(--action-gradient\);[\s\S]*?box-shadow:\s*var\(--action-shadow\);[\s\S]*?backdrop-filter:\s*blur\(14px\) saturate\(145%\)/,
+  'Export, save, login and other pill actions must match the Send button surface.'
+);
 assert.doesNotMatch(sidebarSource, /Return home|\\u8fd4\\u56de\\u9996\\u9875/, 'The brand menu must not offer a return-to-home action.');
 assert.match(
   sidebarSource,
@@ -658,7 +849,12 @@ assert.match(
 );
 assert.match(boardStyles, /\.fullscreen-overlay \{[\s\S]*?z-index:\s*400;[\s\S]*?background:\s*rgba\(5, 6, 8, \.88\)/,
   'The fullscreen media viewer must render above the fullscreen board and Butler overlays.');
-assert.match(boardStyles, /\.fullscreen-stage > img \{[\s\S]*?max-width:\s*min\(88vw, 1600px\);[\s\S]*?max-height:\s*82vh;/);
+assert.match(
+  boardStyles,
+  /\.fullscreen-stage \{[\s\S]*?--fullscreen-media-max-width:\s*min\(82vw, 1440px\);[\s\S]*?--fullscreen-media-max-height:\s*min\(76vh, 860px\)/,
+  'Fullscreen media must use a bounded viewport-relative frame.'
+);
+assert.match(boardStyles, /\.fullscreen-stage > img \{[\s\S]*?max-width:\s*var\(--fullscreen-media-max-width\);[\s\S]*?max-height:\s*var\(--fullscreen-media-max-height\);/);
 assert.match(
   contextMenuSource,
   /function arrangeItemsGrid[\s\S]*?isImageExt\(file\.ext\) \|\| isVideoExt\(file\.ext\)[\s\S]*?boardItemBounds\(item\)[\s\S]*?compactMediaGrid\(measuredItems,[\s\S]*?gap:\s*20[\s\S]*?upsertBoardItems\(mediaItems\)/,
@@ -726,6 +922,11 @@ assert.match(
   boardSource,
   /function replaceAiPlaceholders[\s\S]*?const livePlaceholder = itemIndex >= 0 \? AppState\.allBoardItems\[itemIndex\] : placeholder;[\s\S]*?\.\.\.\(persistedItem \|\| \{\}\)[\s\S]*?x: livePlaceholder\.x,[\s\S]*?y: livePlaceholder\.y,[\s\S]*?width: livePlaceholder\.width,[\s\S]*?zIndex: livePlaceholder\.zIndex/,
   'Generated media must replace the live placeholder in place, even when it moved while the request was running.'
+);
+assert.match(
+  mainSource,
+  /function addGeneratedMediaBoardItem[\s\S]*?Math\.min\(360, numberOr\(placement\.width, 300\)\)/,
+  'Generated 2K/4K source dimensions must never become oversized canvas placement dimensions.'
 );
 assert.match(
   boardSource,

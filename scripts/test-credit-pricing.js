@@ -6,14 +6,22 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const {
   POINTS_PER_CNY,
+  PROFIT_PER_REQUEST_CNY,
+  PROFIT_PER_REQUEST_CREDITS,
   IMAGE_QUALITY_PRICES,
   IMAGE_RESOLUTION_PRICES,
   VIDEO_RATES,
   quoteMediaCredits,
+  retailCreditsFromUpstreamCny,
   publicCreditPricing
 } = require('../lib/credit-pricing');
 
 assert.strictEqual(POINTS_PER_CNY, 10);
+assert.strictEqual(PROFIT_PER_REQUEST_CNY, 1.4);
+assert.strictEqual(PROFIT_PER_REQUEST_CREDITS, 14);
+assert.strictEqual(retailCreditsFromUpstreamCny(1.5), 29, 'CNY 1.5 upstream cost must retail for CNY 2.9.');
+assert.strictEqual(retailCreditsFromUpstreamCny(0), 14, 'Every paid request must include the CNY 1.4 fixed profit.');
+assert.throws(() => retailCreditsFromUpstreamCny(-0.01), TypeError);
 
 assert.deepStrictEqual(quoteMediaCredits({
   kind: 'image',
@@ -26,15 +34,15 @@ assert.deepStrictEqual(quoteMediaCredits({
   count: 2,
   units: 2,
   unit: 'image',
-  unitCredits: 16,
-  totalCredits: 32
+  unitCredits: 22,
+  totalCredits: 44
 });
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'image',
   imageProviderId: 'image-4',
   count: 99
-}).totalCredits, 16, 'Image count must be capped at four.');
+}).totalCredits, 64, 'Image count must be capped at four.');
 
 assert.deepStrictEqual(quoteMediaCredits({
   kind: 'image',
@@ -55,27 +63,27 @@ assert.strictEqual(quoteMediaCredits({
   kind: 'image',
   imageProviderId: 'image-6',
   quality: 'invalid'
-}).totalCredits, 12, 'Unknown GPT Image 2 quality must use the automatic-quality price.');
+}).totalCredits, 20, 'Unknown GPT Image 2 quality must use the automatic-quality price.');
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-7', resolution: '720p', count: 4
-}).totalCredits, 16);
+}).totalCredits, 64);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-8', size: '1080p', count: 4
-}).totalCredits, 32);
+}).totalCredits, 72);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-1', size: '4K'
 }).totalCredits, 28);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-2', size: '1K'
-}).totalCredits, 8);
+}).totalCredits, 18);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-9'
-}).totalCredits, 6);
+}).totalCredits, 17);
 
 const imageResolutionMatrix = {
-  'image-1': { '1K': 16, '2K': 16, '4K': 28 },
-  'image-2': { '1K': 8, '2K': 12, '4K': 16 }
+  'image-1': { '1K': 22, '2K': 22, '4K': 28 },
+  'image-2': { '1K': 18, '2K': 20, '4K': 22 }
 };
 Object.entries(imageResolutionMatrix).forEach(([imageProviderId, resolutions]) => {
   Object.entries(resolutions).forEach(([size, expectedCredits]) => {
@@ -86,7 +94,7 @@ Object.entries(imageResolutionMatrix).forEach(([imageProviderId, resolutions]) =
     );
   });
 });
-Object.entries({ low: 3, medium: 8, high: 28, auto: 12 }).forEach(([quality, expectedCredits]) => {
+Object.entries({ low: 16, medium: 18, high: 28, auto: 20 }).forEach(([quality, expectedCredits]) => {
   assert.strictEqual(
     quoteMediaCredits({ kind: 'image', imageProviderId: 'image-6', quality }).totalCredits,
     expectedCredits,
@@ -111,21 +119,22 @@ assert.deepStrictEqual(quoteMediaCredits({
   duration: 6,
   units: 6,
   unit: 'second',
-  unitCredits: 16,
-  totalCredits: 96
+  unitCredits: 8,
+  fixedCredits: 14,
+  totalCredits: 62
 });
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'video',
   resolution: '768P',
   duration: undefined
-}).totalCredits, 60, 'Invalid duration must use the six-second default.');
+}).totalCredits, 44, 'Invalid duration must use the six-second default.');
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'video',
   resolution: '768P',
   duration: 0
-}).totalCredits, 40, 'Video billing must enforce the four-second minimum.');
+}).totalCredits, 34, 'Video billing must enforce the four-second minimum.');
 
 assert.deepStrictEqual(quoteMediaCredits({
   kind: 'video',
@@ -139,8 +148,9 @@ assert.deepStrictEqual(quoteMediaCredits({
   duration: 5,
   units: 5,
   unit: 'second',
-  unitCredits: 3,
-  totalCredits: 15
+  unitCredits: 1.5,
+  fixedCredits: 14,
+  totalCredits: 22
 });
 
 assert.strictEqual(quoteMediaCredits({
@@ -148,25 +158,33 @@ assert.strictEqual(quoteMediaCredits({
   videoProviderId: 'video-3',
   resolution: '720P',
   duration: 5
-}).totalCredits, 30);
+}).totalCredits, 29);
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'video',
   videoProviderId: 'video-2',
   resolution: 'unsupported',
   duration: 6
-}).totalCredits, 30, 'Unknown Seedance resolutions must use that provider\'s default 720P rate.');
+}).totalCredits, 29, 'Unknown Seedance resolutions must use that provider\'s default 720P rate.');
+
+assert.strictEqual(
+  quoteMediaCredits({ kind: 'video', videoProviderId: 'video-3', resolution: '480P', duration: 30 }).totalCredits,
+  74,
+  'Seedance 2.5 must support 30 seconds and add the fixed profit only once.'
+);
 
 const publicPricing = publicCreditPricing();
-assert.strictEqual(publicPricing.image['image-5'], 4);
-assert.strictEqual(publicPricing.image['image-9'], 6);
-assert.strictEqual(publicPricing.image['image-6'], 12);
+assert.strictEqual(publicPricing.pointsPerCny, 10);
+assert.strictEqual(publicPricing.profitPerRequestCny, 1.4);
+assert.strictEqual(publicPricing.image['image-5'], 16);
+assert.strictEqual(publicPricing.image['image-9'], 17);
+assert.strictEqual(publicPricing.image['image-6'], 20);
 assert.deepStrictEqual(publicPricing.imageQuality['image-6'], IMAGE_QUALITY_PRICES['image-6']);
 assert.deepStrictEqual(publicPricing.imageResolution['image-7'], IMAGE_RESOLUTION_PRICES['image-7']);
 assert.deepStrictEqual(publicPricing.imageResolution['image-8'], IMAGE_RESOLUTION_PRICES['image-8']);
 assert.deepStrictEqual(publicPricing.imageResolution['image-1'], IMAGE_RESOLUTION_PRICES['image-1']);
 assert.deepStrictEqual(publicPricing.imageResolution['image-2'], IMAGE_RESOLUTION_PRICES['image-2']);
-assert.strictEqual(publicPricing.video['video-1']['768P'], 10);
+assert.strictEqual(publicPricing.video['video-1']['768P'], 5);
 assert.deepStrictEqual(publicPricing.video['video-2'], VIDEO_RATES['video-2']);
 assert.deepStrictEqual(publicPricing.video['video-3'], VIDEO_RATES['video-3']);
 
