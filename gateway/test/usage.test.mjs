@@ -550,6 +550,20 @@ test('GPT Image 2 forward migration preserves async reservations and recomputes 
   assert.doesNotMatch(migration, /activation-required/i);
 });
 
+test('Kling async video jobs reserve through the Kling provider allow-list', () => {
+  const migration = fs.readFileSync(
+    new URL('../../supabase/migrations/202608180004_route_kling_async_video_jobs.sql', import.meta.url),
+    'utf8'
+  );
+  assert.match(migration, /create or replace function public\.reserve_kling_video_credits/i);
+  assert.match(migration, /normalized_provider in \('video-10', 'video-11', 'video-12', 'video-13'\)/i);
+  assert.match(migration, /duration_seconds between 3 and 30/i);
+  assert.match(migration, /reservation := public\.reserve_kling_video_credits\(/i);
+  assert.match(migration, /else\s+reservation := public\.reserve_ai_credits\(/i);
+  assert.match(migration, /create or replace function public\.start_ai_video_job/i);
+  assert.match(migration, /grant execute on function public\.start_ai_video_job[\s\S]*?to service_role/i);
+});
+
 test('Nano Banana migration enforces provider and resolution pricing server-side', () => {
   const migration = fs.readFileSync(new URL('../../supabase/migrations/202608090003_nano_banana_credits.sql', import.meta.url), 'utf8');
   assert.match(migration, /create or replace function public\.reserve_nano_banana_credits/i);
