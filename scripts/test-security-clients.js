@@ -263,21 +263,28 @@ async function testGatewayReadRecoveryAndTransportErrors() {
   );
 }
 
-async function testPaidImageCreationIsNotReplayed() {
-  let calls = 0;
+async function testPaidImageCreationRecoversWithOneOperationId() {
+  const calls = [];
   const client = new AiGatewayClient({
     baseUrl: 'https://gateway.example.com',
     getAccessToken: async () => 'user-jwt',
-    fetchImpl: async () => {
-      calls += 1;
-      throw new TypeError('The response was lost after submission.');
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (calls.length === 1) throw new TypeError('The response was lost after submission.');
+      return new Response(Buffer.from([1, 2, 3]), { status: 200 });
     }
   });
-  await assert.rejects(
-    () => client.generateMedia('image', { prompt: 'one paid submission' }),
-    (error) => error && error.name === 'TypeError'
+  assert.deepStrictEqual(
+    await client.generateMedia('image', { prompt: 'recover one paid result' }),
+    Buffer.from([1, 2, 3])
   );
-  assert.strictEqual(calls, 1, 'Paid image creation must not be replayed after an ambiguous network failure.');
+  assert.strictEqual(calls.length, 2);
+  assert.strictEqual(
+    calls[0].options.headers['X-Idempotency-Key'],
+    calls[1].options.headers['X-Idempotency-Key'],
+    'Image recovery must reuse the original operation ID.'
+  );
+  assert.strictEqual(calls[0].options.body, calls[1].options.body);
 }
 
 async function testChunkedTopazUpload() {
@@ -429,7 +436,7 @@ async function testOfflineRefreshKeepsLocalIdentity() {
   await testChunkedTopazUpload();
   await testGatewaySessionRecovery();
   await testGatewayReadRecoveryAndTransportErrors();
-  await testPaidImageCreationIsNotReplayed();
+  await testPaidImageCreationRecoversWithOneOperationId();
   testButlerDesktopBridgeSurface();
   console.log('security client tests passed');
 })().catch((error) => {

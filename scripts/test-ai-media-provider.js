@@ -454,6 +454,8 @@ async function testQuickRouterNativeGeminiImageFlow() {
     calls[0].url,
     'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image:generateContent'
   );
+  assert.strictEqual(calls[0].options.headers.Authorization, 'Bearer secret');
+  assert.strictEqual(calls[0].options.headers['x-goog-api-key'], undefined);
   assert.deepStrictEqual(JSON.parse(calls[0].options.body).generationConfig.imageConfig, {
     aspectRatio: '16:9',
     imageSize: '4K'

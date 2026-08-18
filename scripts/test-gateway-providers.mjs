@@ -284,6 +284,7 @@ assert.equal(
   'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent'
 );
 assert.equal(nanoCalls[0].options.headers.Authorization, 'Bearer quickrouter-secret');
+assert.equal(nanoCalls[0].options.headers['x-goog-api-key'], undefined);
 const nanoBody = JSON.parse(nanoCalls[0].options.body);
 assert.deepEqual(nanoBody, {
   contents: [{
@@ -679,6 +680,42 @@ assert.deepEqual(seedance25FrameBody.content, [
 ]);
 assert.equal(Object.hasOwn(seedance25FrameBody, 'generate_audio'), false);
 assert.equal(Object.hasOwn(seedance25FrameBody, 'resolution'), false);
+
+const seedanceFirstFrameDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+await createVideoTask({
+  providerId: 'video-3',
+  prompt: 'animate this local first frame',
+  resolution: '720P',
+  duration: 6,
+  aspectRatio: 'adaptive',
+  videoMode: 'first-frame',
+  urls: [seedanceFirstFrameDataUrl],
+  referenceMediaTypes: ['image']
+});
+const seedanceRelayedFrameBody = seedanceCalls
+  .map((call) => {
+    try { return JSON.parse(call.options.body); } catch (error) { return null; }
+  })
+  .find((body) => body && body.content && body.content[0] && body.content[0].text === 'animate this local first frame');
+assert.match(
+  seedanceRelayedFrameBody.content[1].image_url.url,
+  /^https:\/\/gateway\.test\/v1\/tools\/assets\/[A-Za-z0-9_-]{43}$/
+);
+assert.equal(Object.hasOwn(seedanceRelayedFrameBody.content[1], 'role'), false);
+
+await assert.rejects(
+  createVideoTask({
+    providerId: 'video-2',
+    prompt: 'reject an unreachable local reference',
+    resolution: '720P',
+    duration: 6,
+    aspectRatio: 'adaptive',
+    videoMode: 'first-frame',
+    urls: ['file:///C:/private/reference.png'],
+    referenceMediaTypes: ['image']
+  }),
+  (error) => error && error.code === 'invalid-reference-media'
+);
 
 globalThis.fetch = async () => {
   throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');

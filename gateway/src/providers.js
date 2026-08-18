@@ -643,19 +643,33 @@ async function createMiniMaxVideoTask(provider, body, signal) {
   return { providerId: provider.id, taskId };
 }
 
+function seedanceRelayMediaUrl(rawUrl, mediaType) {
+  const url = String(rawUrl || '').trim();
+  if (mediaType === 'image' && /^data:image\//i.test(url)) {
+    const image = stripImageMetadata(parseImageDataUrl(url, { maxBytes: 24 * 1024 * 1024 }));
+    return storeAi302RelayAsset(image, { relayTtlMs: 2 * 60 * 60 * 1000 }).url;
+  }
+  if (/^https:\/\//i.test(url)) return url;
+  throw Object.assign(new Error('Seedance requires HTTPS image or video references.'), {
+    status: 400,
+    code: 'invalid-reference-media'
+  });
+}
+
 async function createSeedanceVideoTask(provider, body, signal) {
   const { capabilities, duration, mode, ratio, referenceMediaTypes, resolution, roles, urls } = validatedVideoTaskInput(provider, body);
   const content = [{ type: 'text', text: String(body.prompt || '').trim() }];
   const orderedFrameReferences = capabilities.frameReferenceEncoding === 'ordered-content'
     && (mode === 'first-frame' || mode === 'first-last-frame');
   urls.forEach((url, index) => {
+    const relayUrl = seedanceRelayMediaUrl(url, referenceMediaTypes[index]);
     if (referenceMediaTypes[index] === 'video') {
-      content.push({ type: 'video_url', video_url: { url: String(url) }, role: 'reference_video' });
+      content.push({ type: 'video_url', video_url: { url: relayUrl }, role: 'reference_video' });
       return;
     }
     content.push({
       type: 'image_url',
-      image_url: { url: String(url) },
+      image_url: { url: relayUrl },
       ...(!orderedFrameReferences ? { role: roles[index] } : {})
     });
   });
