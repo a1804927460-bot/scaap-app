@@ -143,6 +143,8 @@ assert.equal(seedance25Provider.model, 'doubao-seedance-2-5-260628');
 assert.equal(seedance25Provider.protocol, 'seedance-video-v3');
 assert.deepEqual(seedance25Provider.capabilities.resolutions, ['480P', '720P']);
 assert.deepEqual(seedance25Provider.capabilities.durations, Array.from({ length: 27 }, (_value, index) => index + 4));
+assert.deepEqual(seedance25Provider.capabilities.textRatios, ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9']);
+assert.equal(Object.hasOwn(seedance25Provider.capabilities, 'generateAudio'), false);
 assert.equal(seedance25Provider.capabilities.maxReferenceImages, 9);
 assert.equal(seedance25Provider.capabilities.videoModes[3].maxReferenceVideos, 6);
 assert.equal(Object.hasOwn(seedance25Provider.capabilities.videoModes[1], 'ratios'), false);
@@ -626,8 +628,7 @@ assert.ok(seedance25CreateCall);
 assert.deepEqual(JSON.parse(seedance25CreateCall.options.body), {
   model: 'doubao-seedance-2-5-260628',
   content: [{ type: 'text', text: 'cinematic city at dawn' }],
-  generate_audio: true,
-  ratio: 'adaptive',
+  ratio: '16:9',
   duration: 4,
   resolution: '720p',
   watermark: false

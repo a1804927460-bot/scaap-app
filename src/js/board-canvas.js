@@ -3966,6 +3966,9 @@ function videoReferenceSelectionLimit(capabilities = {}) {
 
 function videoModeRatios(mode, capabilities = {}) {
   if (mode && Array.isArray(mode.ratios) && mode.ratios.length) return mode.ratios.map(String);
+  if (mode && mode.id === 'text' && Array.isArray(capabilities.textRatios)) {
+    return normalizedCapabilityValues(capabilities.textRatios, DEFAULT_VIDEO_RATIOS);
+  }
   const frameMode = mode && (mode.id === 'first-frame' || mode.id === 'first-last-frame');
   return supportedVideoRatios(capabilities, frameMode);
 }

@@ -105,6 +105,8 @@ assert.deepEqual(seedance20.capabilities.resolutions, ['480P', '720P']);
 assert.deepEqual(seedance25.capabilities.resolutions, ['480P', '720P']);
 assert.deepEqual(seedance20.capabilities.durations, Array.from({ length: 12 }, (_value, index) => index + 4));
 assert.deepEqual(seedance25.capabilities.durations, Array.from({ length: 27 }, (_value, index) => index + 4));
+assert.deepEqual(seedance25.capabilities.textRatios, ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9']);
+assert.equal(Object.hasOwn(seedance25.capabilities, 'generateAudio'), false);
 for (const provider of [seedance20, seedance25]) {
   assert.deepEqual(provider.capabilities.videoModes.map((mode) => mode.id), [
     'text', 'first-frame', 'first-last-frame', 'omni'

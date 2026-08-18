@@ -530,14 +530,27 @@ function validatedVideoTaskInput(provider, body) {
       });
     }
   }
-  const ratio = String(body.aspectRatio || '');
+  let ratio = String(body.aspectRatio || '');
+  // 302 documents Seedance 2.5's adaptive ratio for image/reference
+  // generation only. Normalize stale text-mode clients to the documented
+  // text-to-video default instead of sending a request the upstream router
+  // cannot match to a channel.
+  const textRatios = Array.isArray(capabilities.textRatios)
+    ? capabilities.textRatios.map((value) => String(value))
+    : [];
+  if (mode.id === 'text' && textRatios.length && ratio === 'adaptive' && textRatios.includes('16:9')) {
+    ratio = '16:9';
+  }
   const resolution = String(body.resolution || '').toUpperCase();
   const duration = Number(body.duration);
+  const configuredRatios = mode.id === 'text' && Array.isArray(capabilities.textRatios)
+    ? capabilities.textRatios
+    : capabilities.ratios;
   const validRatios = Array.isArray(mode.ratios) && mode.ratios.length
     ? mode.ratios
     : (mode.id === 'first-frame' || mode.id === 'first-last-frame')
       ? (Array.isArray(capabilities.frameReferenceRatios) ? capabilities.frameReferenceRatios : ['adaptive'])
-      : (Array.isArray(capabilities.ratios) ? capabilities.ratios : []);
+      : (Array.isArray(configuredRatios) ? configuredRatios : []);
   if (!validRatios.includes(ratio)) {
     throw Object.assign(new Error(`${provider.name} does not support this aspect ratio for the selected generation mode.`), {
       status: 400,
@@ -609,7 +622,9 @@ async function createSeedanceVideoTask(provider, body, signal) {
   const requestBody = {
     model: provider.model,
     content,
-    generate_audio: capabilities.generateAudio !== false,
+    ...(capabilities.generateAudio === true || capabilities.generateAudio === false
+      ? { generate_audio: capabilities.generateAudio }
+      : {}),
     ratio,
     duration,
     resolution: resolution.toLowerCase(),

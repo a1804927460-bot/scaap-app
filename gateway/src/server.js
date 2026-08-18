@@ -418,7 +418,7 @@ function validateBody(body, kind) {
   if (encodedBytes > 50 * 1024 * 1024) throw Object.assign(new Error('Reference images exceed the upstream request limit.'), { status: 413, code: 'attachments-too-large' });
   const requestedSize = normalizeImageSize(body.size);
   const requestedResolution = String(body.resolution || '').trim().toUpperCase();
-  const requestedRatio = String(body.aspectRatio || '').trim();
+  let requestedRatio = String(body.aspectRatio || '').trim();
   const requestedQuality = String(body.quality || 'auto').trim().toLowerCase();
   const requestedDuration = Number(body.duration);
   const requestedSeed = Math.round(Number(body.seed));
@@ -487,9 +487,15 @@ function validateBody(body, kind) {
       || (allowedDurations ? !allowedDurations.has(requestedDuration) : requestedDuration < 4 || requestedDuration > 15)) {
       throw invalidOption('invalid-duration', 'The selected video model does not support this duration.');
     }
-    const textRatios = Array.isArray(capabilities.ratios) && capabilities.ratios.length
-      ? new Set(capabilities.ratios.map(String))
+    const configuredTextRatios = Array.isArray(capabilities.textRatios) && capabilities.textRatios.length
+      ? capabilities.textRatios
+      : capabilities.ratios;
+    const textRatios = Array.isArray(configuredTextRatios) && configuredTextRatios.length
+      ? new Set(configuredTextRatios.map(String))
       : defaultVideoRatios;
+    if (videoMode === 'text' && textRatios.has('16:9') && requestedRatio === 'adaptive') {
+      requestedRatio = '16:9';
+    }
     const referenceRatios = Array.isArray(capabilities.frameReferenceRatios) && capabilities.frameReferenceRatios.length
       ? new Set(capabilities.frameReferenceRatios.map(String))
       : textRatios;
