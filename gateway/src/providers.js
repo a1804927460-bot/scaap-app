@@ -657,10 +657,8 @@ function seedanceRelayMediaUrl(rawUrl, mediaType) {
 }
 
 async function createSeedanceVideoTask(provider, body, signal) {
-  const { capabilities, duration, mode, ratio, referenceMediaTypes, resolution, roles, urls } = validatedVideoTaskInput(provider, body);
+  const { capabilities, duration, ratio, referenceMediaTypes, resolution, roles, urls } = validatedVideoTaskInput(provider, body);
   const content = [{ type: 'text', text: String(body.prompt || '').trim() }];
-  const orderedFrameReferences = capabilities.frameReferenceEncoding === 'ordered-content'
-    && (mode === 'first-frame' || mode === 'first-last-frame');
   urls.forEach((url, index) => {
     const relayUrl = seedanceRelayMediaUrl(url, referenceMediaTypes[index]);
     if (referenceMediaTypes[index] === 'video') {
@@ -670,7 +668,7 @@ async function createSeedanceVideoTask(provider, body, signal) {
     content.push({
       type: 'image_url',
       image_url: { url: relayUrl },
-      ...(!orderedFrameReferences ? { role: roles[index] } : {})
+      role: roles[index]
     });
   });
   const requestBody = {

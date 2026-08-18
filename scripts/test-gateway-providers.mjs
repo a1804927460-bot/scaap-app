@@ -675,8 +675,8 @@ const seedance25FrameBody = seedanceCalls
   .find((body) => body && body.content && body.content[0] && body.content[0].text.startsWith('transition smoothly'));
 assert.deepEqual(seedance25FrameBody.content, [
   { type: 'text', text: 'transition smoothly from the first frame to the last frame' },
-  { type: 'image_url', image_url: { url: 'https://cdn.example/first.png' } },
-  { type: 'image_url', image_url: { url: 'https://cdn.example/last.png' } }
+  { type: 'image_url', image_url: { url: 'https://cdn.example/first.png' }, role: 'first_frame' },
+  { type: 'image_url', image_url: { url: 'https://cdn.example/last.png' }, role: 'last_frame' }
 ]);
 assert.equal(Object.hasOwn(seedance25FrameBody, 'generate_audio'), false);
 assert.equal(Object.hasOwn(seedance25FrameBody, 'resolution'), false);
@@ -701,7 +701,7 @@ assert.match(
   seedanceRelayedFrameBody.content[1].image_url.url,
   /^https:\/\/gateway\.test\/v1\/tools\/assets\/[A-Za-z0-9_-]{43}$/
 );
-assert.equal(Object.hasOwn(seedanceRelayedFrameBody.content[1], 'role'), false);
+assert.equal(seedanceRelayedFrameBody.content[1].role, 'first_frame');
 
 await assert.rejects(
   createVideoTask({
