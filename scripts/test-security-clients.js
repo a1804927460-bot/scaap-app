@@ -238,6 +238,20 @@ async function testGatewayReadRecoveryAndTransportErrors() {
   assert.strictEqual(config.catalogVersion, 34);
   assert.strictEqual(configCalls, 2, 'Read-only gateway config calls should recover from a transient 503.');
 
+  let transportCalls = 0;
+  const transportRecoveryClient = new AiGatewayClient({
+    baseUrl: 'https://gateway.example.com',
+    getAccessToken: async () => 'user-jwt',
+    fetchImpl: async () => {
+      transportCalls += 1;
+      if (transportCalls === 1) throw new TypeError('fetch failed');
+      return new Response(JSON.stringify({ catalogVersion: 34, providers: [] }), { status: 200 });
+    }
+  });
+  const recoveredConfig = await transportRecoveryClient.getConfig();
+  assert.strictEqual(recoveredConfig.catalogVersion, 34);
+  assert.strictEqual(transportCalls, 2, 'Read-only gateway config calls should recover from a transient transport failure.');
+
   const transportClient = new AiGatewayClient({
     baseUrl: 'https://gateway.example.com',
     getAccessToken: async () => 'user-jwt',
