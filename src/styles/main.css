@@ -3998,6 +3998,13 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   z-index: 1;
   pointer-events: none;
 }
+.board-viewport.is-board-interaction-overview .board-overview-canvas {
+  z-index: 3;
+  image-rendering: auto;
+}
+.board-viewport.is-board-interaction-overview .board-canvas {
+  visibility: hidden;
+}
 .board-overview-canvas[hidden] { display: none; }
 .board-empty {
   position: absolute;
@@ -5348,7 +5355,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   cursor: var(--cursor-default);
   border: 0;
   border-radius: 2px;
-  background: #d2d2d0;
+  background: var(--bg-surface-2);
   box-shadow: none;
 }
 .ai-pending-visual {
@@ -5364,7 +5371,12 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(110deg, #cececc 18%, #eeeeec 48%, #cececc 78%);
+  background: linear-gradient(
+    110deg,
+    color-mix(in srgb, var(--bg-surface-2) 94%, var(--accent) 6%) 18%,
+    color-mix(in srgb, var(--bg-elevated) 82%, var(--accent-soft) 18%) 48%,
+    color-mix(in srgb, var(--bg-surface-2) 94%, var(--accent) 6%) 78%
+  );
   background-size: 220% 100%;
   animation: ai-placeholder-sweep 1.8s ease-in-out infinite;
 }

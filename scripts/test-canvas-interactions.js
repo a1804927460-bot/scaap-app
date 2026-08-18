@@ -41,6 +41,31 @@ assert.match(
 );
 assert.match(
   boardSource,
+  /const BOARD_WHEEL_SMOOTHING = 0\.28[\s\S]*?function stepBoardZoom\(now\)[\s\S]*?Math\.pow\(1 - BOARD_WHEEL_SMOOTHING/,
+  'Canvas wheel zoom must follow a frame-rate-independent smoothing curve instead of jumping per wheel event.'
+);
+assert.match(
+  boardSource,
+  /function shouldUseBoardInteractionOverview\(\)[\s\S]*?BOARD_INTERACTION_OVERVIEW_THRESHOLD[\s\S]*?function beginBoardInteractionOverview\(\)[\s\S]*?function finishBoardInteractionOverview\(\)/,
+  'Dense canvas interaction must use a lightweight overview layer while real media DOM is temporarily hidden.'
+);
+assert.match(
+  boardStyles,
+  /\.board-viewport\.is-board-interaction-overview \.board-overview-canvas[\s\S]*?\.board-viewport\.is-board-interaction-overview \.board-canvas[\s\S]*?visibility: hidden/,
+  'The overview layer must sit above the media DOM during dense canvas interaction.'
+);
+assert.match(
+  boardSource,
+  /AppState\.boardItems = AppState\.allBoardItems\.filter[\s\S]*?renderBoard\(\);[\s\S]*?upsertBoardItems\(updates\)/,
+  'Generated media must render at the placeholder position before persistence completes.'
+);
+assert.match(
+  boardSource,
+  /function removeAiPlaceholders\(placeholders\)[\s\S]*?live\.isAiPlaceholder[\s\S]*?if \(!ids\.size\) return/,
+  'A persistence failure must not remove a generated result that already replaced its placeholder.'
+);
+assert.match(
+  boardSource,
   /function recordBoardMoveHistory[\s\S]*?before:[\s\S]*?after:[\s\S]*?function undoBoardMove[\s\S]*?applyBoardMoveHistory\(entry, 'before'\)/,
   'Board moves must retain their previous coordinates for Ctrl+Z.'
 );

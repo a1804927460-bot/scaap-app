@@ -30,6 +30,10 @@ const BOARD_OVERVIEW_IMAGE_MAX_EDGE = 192;
 const BOARD_WHEEL_MAX_DELTA = 96;
 const BOARD_WHEEL_PAN_GAIN = 0.64;
 const BOARD_WHEEL_ZOOM_RATE = 0.001;
+const BOARD_WHEEL_SMOOTHING = 0.28;
+const BOARD_WHEEL_SETTLE_EPSILON = 0.12;
+const BOARD_INTERACTION_OVERVIEW_THRESHOLD = 48;
+const BOARD_INTERACTION_OVERVIEW_ITEM_LIMIT = 640;
 const BOARD_MOVE_HISTORY_LIMIT = 100;
 const BOARD_TOOLBAR_COMPACT_START_ZOOM = 1.6;
 const BOARD_TOOLBAR_COMPACT_END_ZOOM = 3.2;
@@ -117,6 +121,7 @@ const Board = {
   overviewRedrawFrame: 0,
   overviewHideFrame: 0,
   overviewImageFailed: new Set(),
+  interactionOverview: false,
   fullImageCache: new Map(),
   fullImageCachePixels: 0,
   fullImageReadyFileIds: new Set(),
@@ -661,7 +666,7 @@ function applyBoardTransform() {
   Board.transformFrame = requestAnimationFrame(() => {
     Board.transformFrame = 0;
     const canvas = document.getElementById('board-canvas');
-    const lightweight = Board.isWheelZooming || Board.isPanning;
+    const lightweight = Board.isWheelZooming || Board.isPanning || Board.zoomFrame || Board.zoomTarget;
     canvas.classList.add('is-transforming');
     canvas.style.transform = boardTransform();
     // Wheel and pan frames must stay compositor-only. Grid CSS variables, toolbar
@@ -670,6 +675,7 @@ function applyBoardTransform() {
     if (lightweight) {
       const zoomLabel = document.getElementById('board-zoom-label');
       if (zoomLabel) zoomLabel.textContent = Math.round(Board.zoom * 100) + '%';
+      if (Board.interactionOverview) drawBoardInteractionOverview();
       clearTimeout(Board.transformSettleTimer);
       Board.transformSettleTimer = window.setTimeout(() => {
         canvas.classList.remove('is-transforming');
@@ -709,6 +715,60 @@ function finishBoardWheelInteraction() {
   // The transform is already at the latest target. applyBoardTransform runs
   // the deferred overlay, visibility, quality and persistence work once.
   applyBoardTransform();
+  if (!Board.zoomFrame && !Board.zoomTarget) finishBoardInteractionOverview();
+}
+
+function shouldUseBoardInteractionOverview() {
+  return AppState.boardItems.length >= BOARD_INTERACTION_OVERVIEW_THRESHOLD;
+}
+
+function drawBoardInteractionOverview() {
+  if (!Board.interactionOverview) return;
+  const viewport = document.getElementById('board-viewport');
+  if (!viewport || !viewport.clientWidth || !viewport.clientHeight) return;
+  const regions = BoardEngine.viewportRects(
+    Board,
+    { w: viewport.clientWidth, h: viewport.clientHeight },
+    { mountMarginRatio: 0, keepMarginRatio: 0 }
+  );
+  const visibleIds = Board.spatialIndex.queryLimited(
+    regions.visible,
+    BOARD_INTERACTION_OVERVIEW_ITEM_LIMIT
+  );
+  AppState.boardItems.forEach((item) => {
+    if (item.selected && Board.spatialIndex.getBounds(item.id) &&
+        BoardEngine.intersects(Board.spatialIndex.getBounds(item.id), regions.visible)) {
+      visibleIds.add(item.id);
+    }
+  });
+  drawBoardOverview(visibleIds, {
+    width: viewport.clientWidth,
+    height: viewport.clientHeight
+  });
+}
+
+function beginBoardInteractionOverview() {
+  if (Board.interactionOverview || !shouldUseBoardInteractionOverview()) return;
+  Board.interactionOverview = true;
+  const viewport = document.getElementById('board-viewport');
+  if (!viewport) return;
+  viewport.classList.add('is-board-interaction-overview');
+  drawBoardInteractionOverview();
+}
+
+function finishBoardInteractionOverview() {
+  if (!Board.interactionOverview) return;
+  if (Board.transformFrame) {
+    requestAnimationFrame(finishBoardInteractionOverview);
+    return;
+  }
+  Board.interactionOverview = false;
+  const viewport = document.getElementById('board-viewport');
+  if (viewport) viewport.classList.remove('is-board-interaction-overview');
+  // Reconcile the real DOM before hiding the fallback, so newly entered
+  // media never exposes an empty frame after a fast scroll.
+  reconcileBoardViewport(true);
+  syncBoardOverviewFallback();
 }
 
 function beginBoardWheelInteraction() {
@@ -726,6 +786,7 @@ function beginBoardWheelInteraction() {
     Board.fullImagePrewarmZoom = 0;
   }
   Board.isWheelZooming = true;
+  beginBoardInteractionOverview();
   clearTimeout(Board.wheelSettleTimer);
   Board.wheelSettleTimer = window.setTimeout(finishBoardWheelInteraction, 120);
 }
@@ -794,10 +855,27 @@ function stepBoardZoom(now) {
   Board.zoomFrame = 0;
   const target = Board.zoomTarget;
   if (!target) return;
-  Object.assign(Board, target);
-  Board.zoomTarget = null;
-  Board.zoomLastTime = 0;
+  const timestamp = Number.isFinite(now) ? now : performance.now();
+  const elapsed = Board.zoomLastTime > 0 ? Math.min(50, Math.max(1, timestamp - Board.zoomLastTime)) : 16.67;
+  Board.zoomLastTime = timestamp;
+  const alpha = 1 - Math.pow(1 - BOARD_WHEEL_SMOOTHING, elapsed / 16.67);
+  Board.panX += (target.panX - Board.panX) * alpha;
+  Board.panY += (target.panY - Board.panY) * alpha;
+  Board.zoom += (target.zoom - Board.zoom) * alpha;
+  const settled = Math.abs(target.panX - Board.panX) <= BOARD_WHEEL_SETTLE_EPSILON &&
+    Math.abs(target.panY - Board.panY) <= BOARD_WHEEL_SETTLE_EPSILON &&
+    Math.abs(target.zoom - Board.zoom) <= 0.0002;
+  if (settled) {
+    Object.assign(Board, target);
+    Board.zoomTarget = null;
+    Board.zoomLastTime = 0;
+  } else {
+    Board.zoomFrame = requestAnimationFrame(stepBoardZoom);
+  }
   applyBoardTransform();
+  if (!Board.zoomFrame && !Board.zoomTarget && !Board.isWheelZooming && !Board.isPanning) {
+    finishBoardInteractionOverview();
+  }
 }
 
 function clientToBoardCoords(clientX, clientY) {
@@ -932,14 +1010,19 @@ async function addFilesToBoard(fileIds, x, y, options = {}) {
   }
 
   if (typeof window.messsAPI.upsertBoardItems === 'function') {
+    // Paint the local result before the disk/cloud round trip. The caller has
+    // already received the generated file, so persistence must not block the
+    // first visible frame on the canvas.
+    renderBoard();
+    if (typeof renderCanvasLibrary === 'function') renderCanvasLibrary();
     await window.messsAPI.upsertBoardItems(changed);
   } else {
+    renderBoard();
+    if (typeof renderCanvasLibrary === 'function') renderCanvasLibrary();
     await Promise.all(changed.map((item) => window.messsAPI.upsertBoardItem(item)));
   }
   canvasWorkspaceTouch(activeCanvasId());
   await canvasWorkspaceSave();
-  renderBoard();
-  if (typeof renderCanvasLibrary === 'function') renderCanvasLibrary();
   return changed;
 }
 
@@ -2520,6 +2603,7 @@ function initBoardCanvas() {
     Board.zoomTarget = null;
     Board.zoomLastTime = 0;
     Board.isPanning = true;
+    beginBoardInteractionOverview();
     panPointerId = e.pointerId;
     markBoardInteraction();
     Board.panStart = { x: e.clientX, y: e.clientY, panX: Board.panX, panY: Board.panY };
@@ -2599,6 +2683,7 @@ function initBoardCanvas() {
     // the compositor-only pan has finished.
     applyBoardTransform();
     scheduleBoardReconcile();
+    finishBoardInteractionOverview();
   }
   viewport.addEventListener('pointerup', finishBoardPan);
   viewport.addEventListener('pointercancel', finishBoardPan);
@@ -4227,6 +4312,11 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
     !placeholderIds.has(item.id) || replacedIds.has(item.id)
   );
   AppState.boardItems = AppState.allBoardItems.filter((item) => (item.canvasId || 'canvas-1') === activeCanvasId());
+  // The generated file and the replacement geometry are already available in
+  // memory. Render them before persistence so the result lands in the exact
+  // placeholder position without waiting for the storage round trip.
+  renderBoard();
+  if (typeof renderCanvasLibrary === 'function') renderCanvasLibrary();
   if (typeof window.messsAPI.upsertBoardItems === 'function') {
     await window.messsAPI.upsertBoardItems(updates);
   } else {
@@ -4234,12 +4324,16 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
   }
   canvasWorkspaceTouch(request.canvasId || activeCanvasId());
   await canvasWorkspaceSave();
-  renderBoard();
-  if (typeof renderCanvasLibrary === 'function') renderCanvasLibrary();
 }
 
 function removeAiPlaceholders(placeholders) {
-  const ids = new Set(placeholders.map((item) => item.id));
+  const ids = new Set(placeholders
+    .filter((placeholder) => {
+      const live = AppState.allBoardItems.find((item) => item.id === placeholder.id);
+      return !live || live.isAiPlaceholder;
+    })
+    .map((item) => item.id));
+  if (!ids.size) return;
   AppState.boardItems = AppState.boardItems.filter((item) => !ids.has(item.id));
   canvasWorkspaceRemoveItems([...ids]);
   ids.forEach((id) => {
