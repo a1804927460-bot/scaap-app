@@ -223,6 +223,32 @@ async function testGatewaySessionRecovery() {
   assert.strictEqual(providerRefreshCalls, 0);
 }
 
+async function testGatewayReadRecoveryAndTransportErrors() {
+  let configCalls = 0;
+  const client = new AiGatewayClient({
+    baseUrl: 'https://gateway.example.com',
+    getAccessToken: async () => 'user-jwt',
+    fetchImpl: async (url) => {
+      configCalls += 1;
+      if (url.endsWith('/v1/config') && configCalls === 1) return new Response(null, { status: 503 });
+      return new Response(JSON.stringify({ catalogVersion: 34, providers: [] }), { status: 200 });
+    }
+  });
+  const config = await client.getConfig();
+  assert.strictEqual(config.catalogVersion, 34);
+  assert.strictEqual(configCalls, 2, 'Read-only gateway config calls should recover from a transient 503.');
+
+  const transportClient = new AiGatewayClient({
+    baseUrl: 'https://gateway.example.com',
+    getAccessToken: async () => 'user-jwt',
+    fetchImpl: async () => { throw new TypeError('fetch failed'); }
+  });
+  await assert.rejects(
+    () => transportClient.getConfig(),
+    (error) => error && error.name === 'TypeError' && error.code === 'gateway-request-failed' && error.status === 503
+  );
+}
+
 async function testPaidImageCreationIsNotReplayed() {
   let calls = 0;
   const client = new AiGatewayClient({
@@ -295,6 +321,36 @@ async function testChunkedTopazUpload() {
   assert.strictEqual(JSON.stringify(submitBody).includes('data:video'), false);
 }
 
+async function testVideoCreateRetriesTransientGatewayFailure() {
+  const calls = [];
+  const video = Buffer.from([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x70, 0x34, 0x32]);
+  let createAttempts = 0;
+  const client = new AiGatewayClient({
+    baseUrl: 'https://gateway.example.com',
+    getAccessToken: async () => 'user-jwt',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (url.endsWith('/v1/media/video/tasks/create')) {
+        createAttempts += 1;
+        if (createAttempts === 1) return new Response(null, { status: 502 });
+        return new Response(JSON.stringify({ status: 'succeeded' }), { status: 202 });
+      }
+      if (url.endsWith('/v1/media/video/tasks/download')) {
+        return new Response(JSON.stringify({ url: 'https://cdn.example/retried-video.mp4' }), { status: 200 });
+      }
+      if (url === 'https://cdn.example/retried-video.mp4') {
+        return new Response(video, { status: 200, headers: { 'Content-Length': String(video.length) } });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    }
+  });
+  assert.deepStrictEqual(await client.generateMedia('video', { prompt: 'retry gateway edge failure' }), video);
+  const createCalls = calls.filter((call) => call.url.endsWith('/v1/media/video/tasks/create'));
+  assert.strictEqual(createCalls.length, 2);
+  assert.strictEqual(createCalls[0].options.headers['X-Idempotency-Key'], createCalls[1].options.headers['X-Idempotency-Key']);
+  assert.strictEqual(createCalls[0].options.body, createCalls[1].options.body);
+}
+
 function testButlerDesktopBridgeSurface() {
   const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
   const mainSource = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
@@ -355,8 +411,10 @@ async function testOfflineRefreshKeepsLocalIdentity() {
   await testSupabaseSessionStorage();
   await testOfflineRefreshKeepsLocalIdentity();
   await testGatewayClient();
+  await testVideoCreateRetriesTransientGatewayFailure();
   await testChunkedTopazUpload();
   await testGatewaySessionRecovery();
+  await testGatewayReadRecoveryAndTransportErrors();
   await testPaidImageCreationIsNotReplayed();
   testButlerDesktopBridgeSurface();
   console.log('security client tests passed');

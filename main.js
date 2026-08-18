@@ -2484,7 +2484,6 @@ async function getVerifiedGatewayCatalog(force = false) {
   const remote = await aiGateway.getConfig();
   const value = normalizeGatewayCatalog(remote, runtimeConfig.aiGatewayUrl);
   gatewayCatalogCache = { value, scope, expiresAt: now + 60_000 };
-  if (!value.compatible) assertGatewayProvider(value, 'image', 'image-1');
   return value;
 }
 
@@ -2743,6 +2742,41 @@ function conciseAiErrorMessage(error, context = {}) {
       'Your sign-in session has expired. Please sign in again.',
       '登录状态已失效，请重新登录。',
       '로그인 세션이 만료되었습니다. 다시 로그인하세요.'
+    );
+  }
+  if (code === 'provider-not-configured') {
+    return localizedMessage(
+      'This AI model is not enabled on the current gateway yet. Refresh the model list or choose another model.',
+      '当前网关还没有启用这个 AI 模型，请刷新模型列表或选择其他模型。',
+      'This AI model is not enabled on the current gateway yet. Refresh the model list or choose another model.'
+    );
+  }
+  if (code === 'gateway-catalog-outdated') {
+    return localizedMessage(
+      'The AI gateway is synchronizing its model list. Please retry in a moment.',
+      'AI 网关正在同步模型列表，请稍后重试。',
+      'The AI gateway is synchronizing its model list. Please retry in a moment.'
+    );
+  }
+  if (['provider-temporarily-unavailable', 'provider-channel-unavailable'].includes(code)) {
+    return localizedMessage(
+      'The selected AI provider is temporarily busy. No points were charged; please retry shortly.',
+      '当前 AI 服务暂时繁忙，本次未扣积分，请稍后重试。',
+      'The selected AI provider is temporarily busy. No points were charged; please retry shortly.'
+    );
+  }
+  if (code === 'gateway-request-failed') {
+    return localizedMessage(
+      'The AI gateway could not reach the provider. Check your network and retry.',
+      'AI 网关暂时无法连接上游服务，请检查网络后重试。',
+      'The AI gateway could not reach the provider. Check your network and retry.'
+    );
+  }
+  if (['credit-service-failed', 'credit-schema-missing', 'credit-service-not-configured'].includes(code)) {
+    return localizedMessage(
+      'The points service is temporarily unavailable. No generation was started; please retry shortly.',
+      '积分服务暂时不可用，本次没有开始生成，请稍后重试。',
+      'The points service is temporarily unavailable. No generation was started; please retry shortly.'
     );
   }
   if (error && error.code === 'image-resolution-mismatch') {

@@ -14,7 +14,8 @@ export const IMAGE_CREDITS = Object.freeze({
   'image-1': 22, 'image-2': 20, 'image-3': 17, 'image-4': 16,
   'image-5': 16, 'image-6': 20, 'image-7': 16, 'image-8': 16,
   'image-9': 17, 'image-10': 18, 'image-11': 17, 'image-12': 16,
-  'image-13': 16, 'image-14': 16, 'image-15': 17, 'image-16': 16
+  'image-13': 16, 'image-14': 16, 'image-15': 17, 'image-16': 16,
+  'image-17': 16, 'image-18': 16
 });
 
 export const IMAGE_QUALITY_CREDITS = Object.freeze({
@@ -31,7 +32,14 @@ export const IMAGE_RESOLUTION_CREDITS = Object.freeze({
   'image-11': Object.freeze({ '2k': 17, '4k': 18 }),
   'image-12': Object.freeze({ '1k': 16, '2k': 17, '4k': 18 }),
   'image-15': Object.freeze({ '1k': 17, '2k': 18 }),
-  'image-16': Object.freeze({ '512x512': 16, '1024x1024': 16 })
+  'image-16': Object.freeze({ '512x512': 16, '1024x1024': 16 }),
+  'image-17': Object.freeze({ '1k': 16, '2k': 24 }),
+  'image-18': Object.freeze({ '1k': 16, '2k': 24 })
+});
+
+const IMAGE_DEFAULT_RESOLUTIONS = Object.freeze({
+  'image-17': '1k',
+  'image-18': '1k'
 });
 
 // 302 charges PTC in USD. Keep the conversion in the gateway so the server
@@ -190,7 +198,7 @@ export function quoteUsage(kind, request = {}) {
     const requestedQuality = String(request.quality || 'auto').trim().toLowerCase();
     const quality = qualityRates && Object.hasOwn(qualityRates, requestedQuality) ? requestedQuality : 'auto';
     const defaultResolution = resolutionRates
-      ? (Object.hasOwn(resolutionRates, '2k') ? '2k' : Object.keys(resolutionRates)[0])
+      ? (IMAGE_DEFAULT_RESOLUTIONS[providerId] || (Object.hasOwn(resolutionRates, '2k') ? '2k' : Object.keys(resolutionRates)[0]))
       : '720p';
     const requestedResolution = String(request.resolution || request.size || defaultResolution).trim().toLowerCase();
     const resolution = resolutionRates && Object.hasOwn(resolutionRates, requestedResolution)
@@ -329,11 +337,13 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
     ? 'reserve_nano_banana_credits'
     : (['image-7', 'image-8'].includes(quote.providerId)
       ? 'reserve_higgsfield_credits'
-      : (['image-3', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16',
+      : (['image-17', 'image-18'].includes(quote.providerId)
+        ? 'reserve_legnext_credits'
+        : (['image-3', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16',
           'video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9',
           'video-10', 'video-11', 'video-12', 'video-13'].includes(quote.providerId)
-        ? 'reserve_302_catalog_credits'
-        : 'reserve_ai_credits')));
+          ? 'reserve_302_catalog_credits'
+          : 'reserve_ai_credits'))));
   let { response, payload } = await reserveCredits(headers, requestBody, fetchImpl, reserveRpc);
   if (response.ok && payload && payload.ok === false && payload.reason === 'pricing-mismatch'
       && Number.isInteger(Number(payload.credits)) && Number(payload.credits) >= 0) {

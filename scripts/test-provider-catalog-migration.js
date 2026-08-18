@@ -37,7 +37,9 @@ assert.deepEqual(
     'Higgsfield Soul',
     'Seedream 5.0 Pro',
     'Kling Image 2',
-    'Jimeng Drawing 3.0'
+    'Jimeng Drawing 3.0',
+    'Midjourney V8.1',
+    'Midjourney V8.2'
   ]
 );
 const nanoBananaPro = media.imageProviders.find((provider) => provider.id === 'image-1');
@@ -56,6 +58,14 @@ for (const id of [
   'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16'
 ]) {
   assert.equal(require('../lib/provider-catalog').catalogProvider(id).keyEnv, 'AI302_KEY');
+}
+for (const id of ['image-17', 'image-18']) {
+  const provider = require('../lib/provider-catalog').catalogProvider(id);
+  assert.equal(provider.keyEnv, 'LEGNEXT_API_KEY');
+  assert.equal(provider.protocol, 'legnext-midjourney');
+  assert.equal(provider.capabilities.maxReferenceImages, 0);
+  assert.deepEqual(provider.capabilities.sizes, ['1K', '2K']);
+  assert.equal(provider.capabilities.ratios.includes('4:1'), true);
 }
 const gptImage2 = media.imageProviders.find((provider) => provider.id === 'image-6');
 assert.ok(gptImage2);
@@ -106,7 +116,7 @@ assert.deepEqual(seedance25.capabilities.resolutions, ['480P', '720P']);
 assert.deepEqual(seedance20.capabilities.durations, Array.from({ length: 12 }, (_value, index) => index + 4));
 assert.deepEqual(seedance25.capabilities.durations, Array.from({ length: 27 }, (_value, index) => index + 4));
 assert.deepEqual(seedance25.capabilities.textRatios, ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9']);
-assert.equal(Object.hasOwn(seedance25.capabilities, 'generateAudio'), false);
+assert.equal(seedance25.capabilities.generateAudio, true);
 for (const provider of [seedance20, seedance25]) {
   assert.deepEqual(provider.capabilities.videoModes.map((mode) => mode.id), [
     'text', 'first-frame', 'first-last-frame', 'omni'
@@ -114,6 +124,7 @@ for (const provider of [seedance20, seedance25]) {
   assert.deepEqual(provider.capabilities.videoModes[2].roles, ['first_frame', 'last_frame']);
   assert.deepEqual(provider.capabilities.videoModes[3].roles, ['reference_image']);
   assert.deepEqual(provider.capabilities.videoModes[3].mediaTypes, ['image', 'video']);
+  assert.equal(provider.capabilities.frameReferenceEncoding, 'ordered-content');
 }
 assert.equal(seedance20.capabilities.videoModes[3].maxReferenceVideos, 3);
 assert.equal(seedance25.capabilities.videoModes[3].maxReferenceVideos, 6);
@@ -198,9 +209,13 @@ assert.equal(outdated.compatible, false);
 assert.equal(outdated.providers[0].name, 'Nano Banana Pro');
 assert.equal(outdated.providers[1].name, 'Messs AI');
 assert.equal(JSON.stringify(outdated).includes('QuickRouter'), false);
+// A deployment can briefly run an older catalog while the desktop bundle
+// already knows newer providers. Existing server-enabled models must remain
+// usable during that window; only models absent from the server are rejected.
+assert.equal(assertGatewayProvider(outdated, 'image', 'image-1').name, 'Nano Banana Pro');
 assert.throws(
-  () => assertGatewayProvider(outdated, 'image', 'image-1'),
-  (error) => error && error.code === 'gateway-catalog-outdated'
+  () => assertGatewayProvider(outdated, 'image', 'image-6'),
+  (error) => error && error.code === 'provider-not-configured'
 );
 
 const current = normalizeGatewayCatalog({

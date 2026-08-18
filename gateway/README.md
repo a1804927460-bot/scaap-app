@@ -32,6 +32,10 @@ QuickRouter is the built-in relay. Store its key as the sealed Railway variable
 are accepted during migration, but the canonical name is recommended.
 MiniMax H3 uses its own sealed Railway variable, `MINIMAX_API_KEY`. It is never
 written to `runtime.json`, GitHub, the desktop settings, or gateway responses.
+Legnext Midjourney V8.1 and V8.2 use the sealed Railway variable
+`LEGNEXT_API_KEY`. The key is sent only in the gateway's `x-api-key` request
+header; task polling is performed server-side against the private job URL and
+the key is never returned to the desktop.
 
 ## Butler tools
 

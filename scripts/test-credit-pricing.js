@@ -84,6 +84,12 @@ assert.strictEqual(quoteMediaCredits({
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-9'
 }).totalCredits, 17);
+assert.strictEqual(quoteMediaCredits({
+  kind: 'image', imageProviderId: 'image-17'
+}).totalCredits, 16);
+assert.strictEqual(quoteMediaCredits({
+  kind: 'image', imageProviderId: 'image-18', size: '2K'
+}).totalCredits, 24);
 
 const imageResolutionMatrix = {
   'image-1': { '1K': 22, '2K': 22, '4K': 28 },
@@ -218,6 +224,7 @@ const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 
 const runtimeSource = fs.readFileSync(path.join(__dirname, '..', 'config', 'provider-catalog.json'), 'utf8');
 const unifiedPricingMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608180001_unified_credit_pricing.sql'), 'utf8');
 const seedancePtcMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608180003_seedance_ptc_credit_pricing.sql'), 'utf8');
+const legnextMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608180005_legnext_midjourney_credits.sql'), 'utf8');
 const redemptionMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608180002_three_666_credit_codes.sql'), 'utf8');
 const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
 const boardStyles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles', 'main.css'), 'utf8');
@@ -261,6 +268,9 @@ assert.match(
   /const creditQuote = await quoteMediaCreditsForAccount\(\{[\s\S]*?size: request\.size,[\s\S]*?resolution: request\.resolution/,
   'Main-process settlement must use the account-authorized quote for the selected image size.'
 );
+assert.match(legnextMigration, /reserve_legnext_credits/);
+assert.match(legnextMigration, /image-17/);
+assert.match(legnextMigration, /image-18/);
 assert.doesNotMatch(mainSource, /Chaser0713|49c8f3fd5b5b39253cf33a3bbcd14a270c8fbada802b1248408bdf7ccac98415/);
 assert.doesNotMatch(preloadSource, /Chaser0713|staff15|pricing_tier/);
 assert.doesNotMatch(runtimeSource, /Chaser0713|staff15|pricing_tier/);

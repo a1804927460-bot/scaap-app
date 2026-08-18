@@ -9,6 +9,7 @@ const { PROVIDER_CATALOG_VERSION } = require('../lib/provider-catalog');
 process.env.Quick_API_KEY = 'quickrouter-secret';
 process.env.AI302_KEY = 'ai302-secret';
 process.env.MINIMAX_API_KEY = 'minimax-secret';
+process.env.LEGNEXT_API_KEY = 'legnext-secret';
 process.env.AI_GATEWAY_PUBLIC_URL = 'https://gateway.test';
 process.env.RELAY_2_API_KEY = 'relay-two-secret';
 process.env.AI_PROVIDERS_JSON = JSON.stringify([
@@ -59,6 +60,13 @@ assert.equal(config.providers.find((provider) => provider.id === 'image-1').prot
 assert.equal(config.providers.find((provider) => provider.id === 'image-3').name, 'Seedream 5.0');
 assert.equal(config.providers.find((provider) => provider.id === 'image-3').model, 'doubao-seedream-5-0-260128');
 assert.equal(config.providers.find((provider) => provider.id === 'image-4').name, 'Midjourney Turbo');
+for (const [id, model] of [['image-17', '8.1'], ['image-18', '8.2']]) {
+  const provider = config.providers.find((entry) => entry.id === id);
+  assert.equal(provider.name, `Midjourney V${model}`);
+  assert.equal(provider.model, model);
+  assert.equal(provider.protocol, 'legnext-midjourney');
+  assert.equal(provider.capabilities.maxReferenceImages, 0);
+}
 for (const id of ['image-2', 'image-5', 'image-7', 'image-9', 'image-11', 'image-12', 'image-13', 'image-14']) {
   assert.equal(ids.includes(id), false);
 }
@@ -144,7 +152,9 @@ assert.equal(seedance25Provider.protocol, 'seedance-video-v3');
 assert.deepEqual(seedance25Provider.capabilities.resolutions, ['480P', '720P']);
 assert.deepEqual(seedance25Provider.capabilities.durations, Array.from({ length: 27 }, (_value, index) => index + 4));
 assert.deepEqual(seedance25Provider.capabilities.textRatios, ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9']);
-assert.equal(Object.hasOwn(seedance25Provider.capabilities, 'generateAudio'), false);
+assert.equal(seedance25Provider.capabilities.generateAudio, true);
+assert.equal(seedance20Provider.capabilities.frameReferenceEncoding, 'ordered-content');
+assert.equal(seedance25Provider.capabilities.frameReferenceEncoding, 'ordered-content');
 assert.equal(seedance25Provider.capabilities.maxReferenceImages, 9);
 assert.equal(seedance25Provider.capabilities.videoModes[3].maxReferenceVideos, 6);
 assert.equal(Object.hasOwn(seedance25Provider.capabilities.videoModes[1], 'ratios'), false);
@@ -183,6 +193,7 @@ assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-2').m
 const publicText = JSON.stringify(config);
 assert.equal(publicText.includes('quickrouter-secret'), false);
 assert.equal(publicText.includes('ai302-secret'), false);
+assert.equal(publicText.includes('legnext-secret'), false);
 assert.equal(publicText.includes('relay-two-secret'), false);
 assert.equal(publicText.includes('minimax-secret'), false);
 assert.equal(publicText.includes('RELAY_2_API_KEY'), false);
@@ -191,6 +202,7 @@ assert.equal(publicText.includes('relay.example.com'), false);
 assert.equal(publicText.includes('quickrouter.ai'), false);
 assert.equal(publicText.includes('minimaxi.com'), false);
 assert.equal(publicText.includes('api.302.ai'), false);
+assert.equal(publicText.includes('legnext.ai'), false);
 
 const configuredAi302Key = process.env.AI302_KEY;
 delete process.env.AI302_KEY;
@@ -208,6 +220,15 @@ for (const id of ['video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-
   assert.equal(withoutAi302.providers.some((provider) => provider.id === id), false);
 }
 process.env.AI302_KEY = configuredAi302Key;
+assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-17'), true);
+assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-18'), true);
+
+const configuredLegnextKey = process.env.LEGNEXT_API_KEY;
+delete process.env.LEGNEXT_API_KEY;
+const withoutLegnext = publicProviderConfig();
+assert.equal(withoutLegnext.providers.some((provider) => provider.id === 'image-17'), false);
+assert.equal(withoutLegnext.providers.some((provider) => provider.id === 'image-18'), false);
+process.env.LEGNEXT_API_KEY = configuredLegnextKey;
 
 const configuredQuickRouterKey = process.env.Quick_API_KEY;
 delete process.env.Quick_API_KEY;
@@ -628,12 +649,35 @@ assert.ok(seedance25CreateCall);
 assert.deepEqual(JSON.parse(seedance25CreateCall.options.body), {
   model: 'doubao-seedance-2-5-260628',
   content: [{ type: 'text', text: 'cinematic city at dawn' }],
+  generate_audio: true,
   ratio: '16:9',
   duration: 4,
   resolution: '720p',
   watermark: false
 });
 assert.deepEqual(await pollVideoTask('video-3', 'seedance-25-task'), { status: 'running' });
+
+await createVideoTask({
+  providerId: 'video-3',
+  prompt: 'transition smoothly from the first frame to the last frame',
+  resolution: '720P',
+  duration: 8,
+  aspectRatio: 'adaptive',
+  videoMode: 'first-last-frame',
+  urls: ['https://cdn.example/first.png', 'https://cdn.example/last.png'],
+  referenceMediaTypes: ['image', 'image']
+});
+const seedance25FrameBody = seedanceCalls
+  .map((call) => {
+    try { return JSON.parse(call.options.body); } catch (error) { return null; }
+  })
+  .find((body) => body && body.content && body.content[0] && body.content[0].text.startsWith('transition smoothly'));
+assert.deepEqual(seedance25FrameBody.content, [
+  { type: 'text', text: 'transition smoothly from the first frame to the last frame' },
+  { type: 'image_url', image_url: { url: 'https://cdn.example/first.png' } },
+  { type: 'image_url', image_url: { url: 'https://cdn.example/last.png' } }
+]);
+assert.equal(seedance25FrameBody.generate_audio, true);
 
 for (const providerId of ['video-1', 'video-2', 'video-3']) {
   let createAttempts = 0;
@@ -643,7 +687,7 @@ for (const providerId of ['video-1', 'video-2', 'video-3']) {
       ok: false,
       status: 503,
       headers: { get: () => null },
-      text: async () => JSON.stringify({ error: { message: 'Temporary channel configuration network error.' } })
+      text: async () => JSON.stringify({ error: { message: 'Temporary provider network error.' } })
     };
   };
   const operationId = `11111111-2222-4333-8444-${providerId.replace('video-', '').padStart(12, '0')}`;
@@ -661,6 +705,35 @@ for (const providerId of ['video-1', 'video-2', 'video-3']) {
   );
   assert.equal(createAttempts, 1, `${providerId} paid creation must be submitted only once`);
 }
+
+let channelConfigurationAttempts = 0;
+globalThis.fetch = async () => {
+  channelConfigurationAttempts += 1;
+  if (channelConfigurationAttempts === 1) {
+    return {
+      ok: false,
+      status: 502,
+      headers: { get: () => null },
+      text: async () => JSON.stringify({
+        error: {
+          message: 'model=seedance-2-5-260628 : Network error when getting channel configuration. AI id: private-task-id'
+        }
+      })
+    };
+  }
+  return jsonResponse({ id: 'seedance-channel-retry-task' });
+};
+assert.deepEqual(await createVideoTask({
+  providerId: 'video-3',
+  operationId: '11111111-2222-4333-8444-999999999999',
+  prompt: 'retry only a pre-dispatch channel lookup failure',
+  resolution: '720P',
+  duration: 5,
+  aspectRatio: '16:9',
+  videoMode: 'text',
+  urls: []
+}), { providerId: 'video-3', taskId: 'seedance-channel-retry-task' });
+assert.equal(channelConfigurationAttempts, 2);
 
 globalThis.fetch = async (url, options = {}) => {
   const value = String(url);
@@ -741,6 +814,20 @@ for (const upstreamStatus of ['failed', 'expired']) {
   assert.equal(result.errorCode, `seedance-${upstreamStatus}`);
   assert.equal(result.errorMessage, `Task ${upstreamStatus}.`);
 }
+
+globalThis.fetch = async () => jsonResponse({
+  id: 'seedance-channel-terminal',
+  status: 'failed',
+  error: {
+    code: 'upstream-internal',
+    message: 'model=seedance-2-5-260628 : Network error when getting channel configuration. AI id: private-task-id'
+  }
+});
+assert.deepEqual(await pollVideoTask('video-3', 'seedance-channel-terminal'), {
+  status: 'failed',
+  errorCode: 'provider-channel-unavailable',
+  errorMessage: 'The video provider channel was temporarily unavailable. No points were charged.'
+});
 
 globalThis.fetch = async () => ({
   ok: false,

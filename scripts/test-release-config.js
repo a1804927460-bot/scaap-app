@@ -77,7 +77,8 @@ assert.deepEqual(
   catalog.providers.filter((provider) => provider.kind === 'image' && provider.hidden !== true).map((provider) => provider.name),
   [
     'Nano Banana Pro', 'Seedream 5.0', 'Midjourney Turbo', 'GPT Image 2',
-    'Higgsfield Soul', 'Seedream 5.0 Pro', 'Kling Image 2', 'Jimeng Drawing 3.0'
+    'Higgsfield Soul', 'Seedream 5.0 Pro', 'Kling Image 2', 'Jimeng Drawing 3.0',
+    'Midjourney V8.1', 'Midjourney V8.2'
   ]
 );
 assert.deepEqual(

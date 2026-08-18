@@ -966,6 +966,50 @@ async function testMidjourneyFlow() {
   assert.strictEqual(calls[2].url, 'https://cdn.test/midjourney.jpg');
 }
 
+async function testLegnextMidjourneyFlow() {
+  const provider = catalogProvider('image-18');
+  const calls = [];
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xdb]);
+  const responses = [
+    jsonResponse({ job_id: 'legnext-job-1', status: 'pending' }),
+    jsonResponse({
+      job_id: 'legnext-job-1',
+      status: 'completed',
+      output: { image_url: 'https://cdn.test/legnext.jpg' }
+    }),
+    { ok: true, status: 200, arrayBuffer: async () => pngHeader(2048, 1536) }
+  ];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    return responses.shift();
+  };
+  const config = normalizeConfig({
+    apiKey: 'legnext-secret',
+    imageEndpoint: provider.endpoint,
+    imageModel: provider.model,
+    pollIntervalMs: 800,
+    timeoutMs: 10000
+  });
+  const buffer = await generateMediaBuffer(fetchImpl, config, 'image', {
+    prompt: 'cinematic observatory --v 7 --ar 1:1 --q 2',
+    size: '2K',
+    aspectRatio: '16:9',
+    urls: []
+  }, null, async () => {});
+
+  assert.deepStrictEqual(buffer, pngHeader(2048, 1536));
+  assert.strictEqual(detectMediaProtocol(config.imageEndpoint), 'legnext-midjourney');
+  assert.strictEqual(calls[0].url, 'https://api.legnext.ai/api/v1/diffusion');
+  assert.deepStrictEqual(JSON.parse(calls[0].options.body), {
+    text: 'cinematic observatory --v 8.2 --ar 16:9 --hd'
+  });
+  assert.strictEqual(calls[0].options.headers['x-api-key'], 'legnext-secret');
+  assert.strictEqual(calls[0].options.headers.Authorization, undefined);
+  assert.strictEqual(calls[1].url, 'https://api.legnext.ai/api/v1/job/legnext-job-1');
+  assert.strictEqual(calls[1].options.headers.Authorization, undefined);
+  assert.strictEqual(calls[2].url, 'https://cdn.test/legnext.jpg');
+}
+
 function testNestedResultExtraction() {
   const urls = extractMediaUrls({
     data: {
@@ -1001,6 +1045,7 @@ async function main() {
   await test302NanoBananaFlows();
   await testHiggsfieldFlows();
   await testMidjourneyFlow();
+  await testLegnextMidjourneyFlow();
   testOpenAiVideoRequest();
   testChatCompatibleImageRequest();
   await testQuickRouterUnifiedVideoFlow();

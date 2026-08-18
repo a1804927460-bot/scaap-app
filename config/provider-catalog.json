@@ -1,5 +1,5 @@
 {
-  "version": 34,
+  "version": 36,
   "providers": [
     {
       "id": "image-1",
@@ -363,6 +363,7 @@
           { "id": "first-last-frame", "minReferences": 2, "maxReferences": 2, "roles": ["first_frame", "last_frame"] },
           { "id": "omni", "minReferences": 1, "maxReferences": 9, "maxReferenceVideos": 3, "roles": ["reference_image"], "mediaTypes": ["image", "video"] }
         ],
+        "frameReferenceEncoding": "ordered-content",
         "generateAudio": true
       },
       "keyEnv": "AI302_KEY"
@@ -388,7 +389,9 @@
           { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["first_frame"] },
           { "id": "first-last-frame", "minReferences": 2, "maxReferences": 2, "roles": ["first_frame", "last_frame"] },
           { "id": "omni", "minReferences": 1, "maxReferences": 9, "maxReferenceVideos": 6, "roles": ["reference_image"], "mediaTypes": ["image", "video"] }
-        ]
+        ],
+        "frameReferenceEncoding": "ordered-content",
+        "generateAudio": true
       },
       "keyEnv": "AI302_KEY"
     },
@@ -414,6 +417,7 @@
           { "id": "first-last-frame", "minReferences": 2, "maxReferences": 2, "roles": ["first_frame", "last_frame"] },
           { "id": "omni", "minReferences": 1, "maxReferences": 9, "maxReferenceVideos": 3, "roles": ["reference_image"], "mediaTypes": ["image", "video"] }
         ],
+        "frameReferenceEncoding": "ordered-content",
         "generateAudio": true
       },
       "keyEnv": "AI302_KEY"
@@ -620,6 +624,44 @@
         "generateAudio": true
       },
       "keyEnv": "AI302_KEY"
+    },
+    {
+      "id": "image-17",
+      "kind": "image",
+      "name": "Midjourney V8.1",
+      "endpoint": "https://api.legnext.ai/api/v1/diffusion",
+      "resultEndpoint": "https://api.legnext.ai/api/v1/job",
+      "model": "8.1",
+      "protocol": "legnext-midjourney",
+      "requiresActivation": false,
+      "capabilities": {
+        "sizes": ["1K", "2K"],
+        "resolutionPresets": ["1K", "2K"],
+        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9", "4:1", "1:4"],
+        "maxReferenceImages": 0,
+        "supportsHd": true,
+        "promptMaxCharacters": 8192
+      },
+      "keyEnv": "LEGNEXT_API_KEY"
+    },
+    {
+      "id": "image-18",
+      "kind": "image",
+      "name": "Midjourney V8.2",
+      "endpoint": "https://api.legnext.ai/api/v1/diffusion",
+      "resultEndpoint": "https://api.legnext.ai/api/v1/job",
+      "model": "8.2",
+      "protocol": "legnext-midjourney",
+      "requiresActivation": false,
+      "capabilities": {
+        "sizes": ["1K", "2K"],
+        "resolutionPresets": ["1K", "2K"],
+        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9", "4:1", "1:4"],
+        "maxReferenceImages": 0,
+        "supportsHd": true,
+        "promptMaxCharacters": 8192
+      },
+      "keyEnv": "LEGNEXT_API_KEY"
     },
     {
       "id": "chat-1",

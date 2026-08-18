@@ -297,14 +297,21 @@ async function responseJson(response, providerName = 'Video provider') {
       || payload && payload.message
       || `${providerName} request failed (HTTP ${response.status}).`
     );
+    const channelUnavailable = providerChannelConfigurationUnavailable(rawMessage);
     const retryAfter = Number(response.headers && response.headers.get && response.headers.get('retry-after'));
-    const retryable = response.status === 429 || response.status >= 500;
-    throw Object.assign(new Error(safeProviderText(rawMessage, `${providerName} request failed.`)), {
+    const retryable = channelUnavailable || response.status === 429 || response.status >= 500;
+    throw Object.assign(new Error(channelUnavailable
+      ? 'The video provider channel is temporarily unavailable.'
+      : safeProviderText(rawMessage, `${providerName} request failed.`)), {
       status: response.status,
-      code: response.status === 429 ? 'provider-rate-limited' : (retryable ? 'provider-temporarily-unavailable' : 'provider-request-failed'),
+      code: channelUnavailable
+        ? 'provider-channel-unavailable'
+        : response.status === 429 ? 'provider-rate-limited' : (retryable ? 'provider-temporarily-unavailable' : 'provider-request-failed'),
       upstreamCode: safeProviderText(upstreamCode, ''),
       retryable,
-      retryAfterMs: Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(120_000, retryAfter * 1000) : 0
+      retryAfterMs: Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(120_000, retryAfter * 1000)
+        : channelUnavailable ? 500 : 0
     });
   }
   return payload;
@@ -313,6 +320,12 @@ async function responseJson(response, providerName = 'Video provider') {
 function safeProviderText(value, fallback) {
   const text = String(value || '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
   return text || fallback;
+}
+
+function providerChannelConfigurationUnavailable(value) {
+  const message = String(value || '');
+  return /channel\s+configuration/i.test(message)
+    && /(?:network|temporar|unavailable|timeout|failed|error)/i.test(message);
 }
 
 function providerSignal(signal, timeoutMs = 25_000) {
@@ -419,13 +432,20 @@ function deepVideoResultUrl(value, seen = new Set(), depth = 0) {
 
 function providerVideoTaskError(payload, fallbackCode, fallbackMessage) {
   const errorPayload = nestedVideoTaskObject(payload, ['error', 'failure']) || payload;
+  const rawMessage = nestedVideoTaskValue(errorPayload, [
+    'error_message', 'errorMessage', 'failure_reason', 'failureReason', 'message', 'msg'
+  ]);
+  if (providerChannelConfigurationUnavailable(rawMessage)) {
+    return {
+      errorCode: 'provider-channel-unavailable',
+      errorMessage: 'The video provider channel was temporarily unavailable. No points were charged.'
+    };
+  }
   return {
     errorCode: safeProviderText(nestedVideoTaskValue(errorPayload, [
       'error_code', 'errorCode', 'code'
     ]), fallbackCode),
-    errorMessage: safeProviderText(nestedVideoTaskValue(errorPayload, [
-      'error_message', 'errorMessage', 'failure_reason', 'failureReason', 'message', 'msg'
-    ]), fallbackMessage)
+    errorMessage: safeProviderText(rawMessage, fallbackMessage)
   };
 }
 
@@ -610,14 +630,20 @@ async function createMiniMaxVideoTask(provider, body, signal) {
 }
 
 async function createSeedanceVideoTask(provider, body, signal) {
-  const { capabilities, duration, ratio, referenceMediaTypes, resolution, roles, urls } = validatedVideoTaskInput(provider, body);
+  const { capabilities, duration, mode, ratio, referenceMediaTypes, resolution, roles, urls } = validatedVideoTaskInput(provider, body);
   const content = [{ type: 'text', text: String(body.prompt || '').trim() }];
+  const orderedFrameReferences = capabilities.frameReferenceEncoding === 'ordered-content'
+    && (mode === 'first-frame' || mode === 'first-last-frame');
   urls.forEach((url, index) => {
     if (referenceMediaTypes[index] === 'video') {
       content.push({ type: 'video_url', video_url: { url: String(url) }, role: 'reference_video' });
       return;
     }
-    content.push({ type: 'image_url', image_url: { url: String(url) }, role: roles[index] });
+    content.push({
+      type: 'image_url',
+      image_url: { url: String(url) },
+      ...(!orderedFrameReferences ? { role: roles[index] } : {})
+    });
   });
   const requestBody = {
     model: provider.model,
@@ -631,12 +657,24 @@ async function createSeedanceVideoTask(provider, body, signal) {
     watermark: false,
     ...(capabilities.serviceTier ? { service_tier: String(capabilities.serviceTier) } : {})
   };
-  const created = await responseJson(await fetch(provider.endpoint, {
-    method: 'POST',
-    headers: providerTaskHeaders(provider, body),
-    signal: providerSignal(signal),
-    body: JSON.stringify(requestBody)
-  }), provider.name);
+  let created;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      created = await responseJson(await fetch(provider.endpoint, {
+        method: 'POST',
+        headers: providerTaskHeaders(provider, body),
+        signal: providerSignal(signal),
+        body: JSON.stringify(requestBody)
+      }), provider.name);
+      break;
+    } catch (error) {
+      if (error && error.code === 'provider-channel-unavailable' && attempt < 2) {
+        await delayWithSignal(250 * (2 ** attempt), signal);
+        continue;
+      }
+      throw error;
+    }
+  }
   const taskId = providerVideoTaskId(created);
   if (!taskId || taskId.length > 256) {
     throw Object.assign(new Error(`${provider.name} did not return a valid task ID.`), {

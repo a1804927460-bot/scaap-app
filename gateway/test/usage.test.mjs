@@ -173,6 +173,28 @@ test('retail formula adds CNY 1.4 once and treats one PTC as one USD', () => {
   assert.equal(quoteTopazRetailCredits(1), 82);
 });
 
+test('Legnext Midjourney uses its dedicated RPC and HD price', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
+    let call;
+    const fetchMock = async (url, options) => {
+      call = { url, options, body: JSON.parse(options.body) };
+      return jsonResponse({ ok: true, reason: 'reserved', credits: 24, balance: 100, reserved: 24, availableCredits: 76 });
+    };
+    const result = await reserveUsage(
+      '00000000-0000-4000-8000-000000000011',
+      'image',
+      '00000000-0000-4000-8000-000000000012',
+      { providerId: 'image-18', size: '2K' },
+      fetchMock
+    );
+    assert.match(call.url, /\/rpc\/reserve_legnext_credits$/);
+    assert.equal(call.body.p_provider_id, 'image-18');
+    assert.equal(call.body.p_resolution, '2k');
+    assert.equal(call.body.p_expected_credits, 24);
+    assert.equal(result.ok, true);
+  });
+});
+
 test('every account receives the same quote without consulting a pricing-tier RPC', async () => {
   await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
     let fetchCalls = 0;
