@@ -152,7 +152,9 @@ assert.equal(seedance25Provider.protocol, 'seedance-video-v3');
 assert.deepEqual(seedance25Provider.capabilities.resolutions, ['480P', '720P']);
 assert.deepEqual(seedance25Provider.capabilities.durations, Array.from({ length: 27 }, (_value, index) => index + 4));
 assert.deepEqual(seedance25Provider.capabilities.textRatios, ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9']);
-assert.equal(seedance25Provider.capabilities.generateAudio, true);
+assert.equal(seedance25Provider.capabilities.supportsResolution, false);
+assert.equal(seedance25Provider.capabilities.createTimeoutMs, 45_000);
+assert.equal(Object.hasOwn(seedance25Provider.capabilities, 'generateAudio'), false);
 assert.equal(seedance20Provider.capabilities.frameReferenceEncoding, 'ordered-content');
 assert.equal(seedance25Provider.capabilities.frameReferenceEncoding, 'ordered-content');
 assert.equal(seedance25Provider.capabilities.maxReferenceImages, 9);
@@ -649,10 +651,8 @@ assert.ok(seedance25CreateCall);
 assert.deepEqual(JSON.parse(seedance25CreateCall.options.body), {
   model: 'doubao-seedance-2-5-260628',
   content: [{ type: 'text', text: 'cinematic city at dawn' }],
-  generate_audio: true,
   ratio: '16:9',
   duration: 4,
-  resolution: '720p',
   watermark: false
 });
 assert.deepEqual(await pollVideoTask('video-3', 'seedance-25-task'), { status: 'running' });
@@ -677,7 +677,28 @@ assert.deepEqual(seedance25FrameBody.content, [
   { type: 'image_url', image_url: { url: 'https://cdn.example/first.png' } },
   { type: 'image_url', image_url: { url: 'https://cdn.example/last.png' } }
 ]);
-assert.equal(seedance25FrameBody.generate_audio, true);
+assert.equal(Object.hasOwn(seedance25FrameBody, 'generate_audio'), false);
+assert.equal(Object.hasOwn(seedance25FrameBody, 'resolution'), false);
+
+globalThis.fetch = async () => {
+  throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+};
+await assert.rejects(
+  createVideoTask({
+    providerId: 'video-3',
+    operationId: '11111111-2222-4333-8444-777777777777',
+    prompt: 'normalize a provider submission timeout',
+    resolution: '720P',
+    duration: 5,
+    aspectRatio: '16:9',
+    videoMode: 'text',
+    urls: []
+  }),
+  (error) => error
+    && error.code === 'provider-timeout'
+    && error.status === 504
+    && error.retryable === false
+);
 
 for (const providerId of ['video-1', 'video-2', 'video-3']) {
   let createAttempts = 0;

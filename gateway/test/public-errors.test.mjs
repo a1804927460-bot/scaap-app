@@ -37,3 +37,13 @@ test('gateway account authorization errors are not mislabeled as provider failur
     message: 'This AI account is suspended.'
   });
 });
+
+test('provider timeouts never leak numeric DOMException codes', () => {
+  const error = new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+  assert.equal(error.code, 23);
+  assert.deepEqual(publicGatewayError(error), {
+    status: 504,
+    code: 'provider-timeout',
+    message: 'The selected AI provider timed out while accepting the task.'
+  });
+});

@@ -333,6 +333,20 @@ function providerSignal(signal, timeoutMs = 25_000) {
   return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 }
 
+function isTimeoutError(error) {
+  return String(error && error.name || '') === 'TimeoutError'
+    || Number(error && error.code) === 23
+    || String(error && error.code || '').toUpperCase() === 'ETIMEDOUT';
+}
+
+function providerTimeoutError(provider) {
+  return Object.assign(new Error(`${provider.name} task submission timed out.`), {
+    status: 504,
+    code: 'provider-timeout',
+    retryable: false
+  });
+}
+
 function providerTaskHeaders(provider, body) {
   const requestId = String(body && body.operationId || '').trim();
   return {
@@ -653,7 +667,7 @@ async function createSeedanceVideoTask(provider, body, signal) {
       : {}),
     ratio,
     duration,
-    resolution: resolution.toLowerCase(),
+    ...(capabilities.supportsResolution === false ? {} : { resolution: resolution.toLowerCase() }),
     watermark: false,
     ...(capabilities.serviceTier ? { service_tier: String(capabilities.serviceTier) } : {})
   };
@@ -663,11 +677,12 @@ async function createSeedanceVideoTask(provider, body, signal) {
       created = await responseJson(await fetch(provider.endpoint, {
         method: 'POST',
         headers: providerTaskHeaders(provider, body),
-        signal: providerSignal(signal),
+        signal: providerSignal(signal, Number(capabilities.createTimeoutMs) || 25_000),
         body: JSON.stringify(requestBody)
       }), provider.name);
       break;
     } catch (error) {
+      if (isTimeoutError(error)) throw providerTimeoutError(provider);
       if (error && error.code === 'provider-channel-unavailable' && attempt < 2) {
         await delayWithSignal(250 * (2 ** attempt), signal);
         continue;

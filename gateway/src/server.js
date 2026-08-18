@@ -1401,6 +1401,7 @@ const server = http.createServer((request, response) => {
       'provider-not-configured': 'The selected AI model is not configured on the server.',
       'provider-secret-missing': 'The selected AI model is missing its server credential.',
       'provider-auth-failed': 'The selected AI provider rejected its server credential.',
+      'provider-timeout': 'The selected AI provider timed out while accepting the task. No points were charged; please retry shortly.',
       'provider-channel-unavailable': 'The video provider channel is temporarily unavailable. No points were charged; please retry shortly.',
       'provider-temporarily-unavailable': 'The selected AI provider is temporarily unavailable. Please retry shortly.',
       'video-job-service-not-configured': 'Background video generation is not configured.',
