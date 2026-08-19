@@ -51,6 +51,7 @@ import {
   publicProviderConfig
 } from './providers.js';
 import {
+  getCanvasUsage,
   getUsageAccount,
   getUsageSummary,
   redeemUsageCode,
@@ -59,6 +60,7 @@ import {
   settleToolUsage,
   touchToolUsage,
   settleUsage,
+  tagUsageCanvas,
   quoteUsageForUser
 } from './usage.js';
 import {
@@ -155,20 +157,37 @@ function normalizeImageSize(value) {
   return match ? `${Number(match[1])}x${Number(match[2])}` : text;
 }
 
+function imageResolutionPresetForPixels(value, supportedSizes) {
+  const match = /^(\d{1,5})x(\d{1,5})$/i.exec(String(value || '').trim());
+  if (!match) return '';
+  const longestEdge = Math.max(Number(match[1]), Number(match[2]));
+  const preferred = longestEdge >= 3072 ? '4K' : longestEdge >= 1536 ? '2K' : '1K';
+  if (supportedSizes.has(preferred)) return preferred;
+  const ranked = [...supportedSizes]
+    .filter((entry) => /^(?:1|2|4)K$/.test(entry))
+    .sort((left, right) => Number(left[0]) - Number(right[0]));
+  if (!ranked.length) return '';
+  return ranked.reduce((nearest, candidate) => (
+    Math.abs(Number(candidate[0]) - Number(preferred[0])) < Math.abs(Number(nearest[0]) - Number(preferred[0]))
+      ? candidate
+      : nearest
+  ));
+}
+
 function supportsImageAspectRatio(value, capabilities = {}) {
-  if (imageRatios.has(value)) return true;
-  if (capabilities.arbitraryRatios !== true) return false;
-  const match = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(String(value || '').trim());
-  if (!match) return false;
+  const normalized = String(value || '').trim();
+  if (normalized === 'auto') return imageRatios.has('auto') || capabilities.arbitraryRatios === true;
+  const match = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(normalized);
+  if (!match) return imageRatios.has(normalized);
   const width = Number(match[1]);
   const height = Number(match[2]);
-  if (capabilities.arbitrarySizes === true && (width % 16 !== 0 || height % 16 !== 0)) return false;
-  if (capabilities.arbitrarySizes === true) {
-    const ratio = width / height;
-    if (ratio < 1 / 3 || ratio > 3) return false;
-  }
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return false;
   const ratio = width / height;
+  const minimum = Number(capabilities.minimumAspectRatio);
+  const maximum = Number(capabilities.maximumAspectRatio);
+  if (Number.isFinite(minimum) && ratio < minimum) return false;
+  if (Number.isFinite(maximum) && ratio > maximum) return false;
+  if (capabilities.arbitraryRatios !== true) return imageRatios.has(normalized);
   return ratio >= 1 / 16 && ratio <= 16;
 }
 
@@ -249,7 +268,17 @@ function materializeVideoReferences(body, userId) {
       : []),
     ...audioUploadIds.map((uploadId) => materializeReferenceAudio(String(uploadId || ''), userId))
   ];
-  return { ...body, urls, referenceMediaTypes: mediaTypes, referenceVideoRelayKeys: createdRelayKeys, referenceAudioUrls };
+  return {
+    ...body,
+    urls,
+    referenceMediaTypes: mediaTypes,
+    referenceVideoRelayKeys: createdRelayKeys,
+    referenceAudioUrls,
+    // The upload IDs have now been consumed into owner-bound relay URLs. Do
+    // not retain them or validation/accounting will count each audio twice.
+    referenceVideoUploadIds: [],
+    referenceAudioUploadIds: []
+  };
 }
 
 function sendRelayAsset(request, response, asset) {
@@ -327,7 +356,10 @@ function validateBody(body, kind) {
   const prompt = String(body.prompt || '').trim();
   const providerId = String(body.providerId || '').trim().toLowerCase().slice(0, 64);
   const capabilities = providerCapabilities(kind, providerId) || {};
-  const isAtlasVideo = kind === 'video' && String(capabilities.atlasKind || '').length > 0;
+  const isAtlasVideo = kind === 'video'
+    && (String(capabilities.atlasKind || '').length > 0 || capabilities.atlasRouted === true);
+  const isSeedance25 = kind === 'video'
+    && (providerId === 'video-3' || /seedance-2[.-]5/i.test(String(capabilities.model || body.model || '')));
   const maxPromptLength = providerPromptLimit(
     kind,
     providerId,
@@ -350,7 +382,7 @@ function validateBody(body, kind) {
     throw Object.assign(new Error('The conversation appears to contain a private credential.'), { status: 400, code: 'privacy-blocked' });
   }
   const configuredReferenceLimit = Number(capabilities.maxReferenceImages);
-  const atlasReferenceCap = isAtlasVideo && String(providerId).includes('25') ? 50 : 30;
+  const atlasReferenceCap = isAtlasVideo && isSeedance25 ? 50 : 30;
   let maxReferenceImages = Number.isInteger(configuredReferenceLimit) && configuredReferenceLimit >= 0
     ? Math.min(isAtlasVideo ? atlasReferenceCap : 14, configuredReferenceLimit)
     : (isAtlasVideo ? atlasReferenceCap : 14);
@@ -368,14 +400,24 @@ function validateBody(body, kind) {
   const submittedAudioReferenceCount = (Array.isArray(body.referenceAudioUrls)
     ? body.referenceAudioUrls.length : 0)
     + (Array.isArray(body.referenceAudioUploadIds) ? body.referenceAudioUploadIds.length : 0);
-  const isAtlasReferenceProvider = isAtlasVideo && String(capabilities.atlasKind || '') === 'reference-to-video';
+  const routedReferenceModes = new Set(['omni', 'video-reference', 'video-edit', 'video-extend']);
+  const isAtlasReferenceProvider = isAtlasVideo && (
+    String(capabilities.atlasKind || '') === 'reference-to-video'
+    || (capabilities.atlasRouted === true && (
+      routedReferenceModes.has(requestedVideoMode)
+      || submittedMediaTypes.includes('video')
+      || submittedAudioReferenceCount > 0
+    ))
+  );
   if (kind === 'video' && Array.isArray(capabilities.videoModes)) {
     const isAtlasReference = isAtlasReferenceProvider;
     const fallbackReferenceCount = submittedUrlCount;
     const fallbackMode = isAtlasReference
-      ? (submittedMediaTypes.length === 1 && submittedMediaTypes[0] === 'video'
-        ? (String(providerId).includes('25') ? 'video-edit' : 'omni')
-        : 'omni')
+      ? (submittedMediaTypes.includes('video') || submittedAudioReferenceCount > 0
+        ? 'omni'
+        : submittedUrlCount > 2 ? 'omni'
+          : submittedUrlCount === 2 ? 'first-last-frame'
+            : submittedUrlCount === 1 ? 'first-frame' : 'omni')
       : fallbackReferenceCount > 2
         ? 'omni'
         : fallbackReferenceCount === 2
@@ -409,6 +451,9 @@ function validateBody(body, kind) {
   if (referenceMediaTypes.some((mediaType) => !allowedReferenceMediaTypes.has(mediaType))) {
     throw invalidOption('invalid-reference-media', 'The selected video mode does not accept reference videos.');
   }
+  if (submittedAudioReferenceCount > 0 && !allowedReferenceMediaTypes.has('audio')) {
+    throw invalidOption('invalid-reference-media', 'The selected video mode does not accept reference audio.');
+  }
   const referenceVideoCount = referenceMediaTypes.filter((mediaType) => mediaType === 'video').length;
   const referenceImageCount = referenceMediaTypes.filter((mediaType) => mediaType === 'image').length;
   const maximumReferenceVideos = Math.max(0, Number(selectedVideoMode && selectedVideoMode.maxReferenceVideos) || 0);
@@ -435,8 +480,8 @@ function validateBody(body, kind) {
     if (maximumTotalReferences && submittedReferenceCount > maximumTotalReferences) {
       throw invalidOption('too-many-references', `The selected model accepts at most ${maximumTotalReferences} reference files.`);
     }
-    if (String(capabilities.atlasKind || '') === 'reference-to-video'
-      && String(providerId).includes('2.0') && submittedAudioReferenceCount > 0 && submittedUrlCount === 0) {
+    if (isAtlasReferenceProvider && !isSeedance25
+      && submittedAudioReferenceCount > 0 && submittedUrlCount === 0) {
       throw invalidOption('reference-required', 'Seedance 2.0 requires at least one image or video when using reference audio.');
     }
   }
@@ -470,10 +515,19 @@ function validateBody(body, kind) {
     }
   }
   if (encodedBytes > 50 * 1024 * 1024) throw Object.assign(new Error('Reference images exceed the upstream request limit.'), { status: 413, code: 'attachments-too-large' });
-  const requestedSize = normalizeImageSize(body.size);
+  let requestedSize = normalizeImageSize(body.size);
   const requestedResolution = String(body.resolution || '').trim().toUpperCase();
   let requestedRatio = String(body.aspectRatio || '').trim();
   const requestedQuality = String(body.quality || 'auto').trim().toLowerCase();
+  const configuredServiceTiers = Array.isArray(capabilities.serviceTiers)
+    ? capabilities.serviceTiers.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  const requestedServiceTier = String(
+    body.serviceTier || capabilities.defaultServiceTier || configuredServiceTiers[0] || ''
+  ).trim().toLowerCase();
+  if (configuredServiceTiers.length && !configuredServiceTiers.includes(requestedServiceTier)) {
+    throw invalidOption('invalid-service-tier', 'The selected model version is not supported.');
+  }
   const requestedDuration = Number(body.duration);
   const requestedOutputFormat = String(body.outputFormat || (kind === 'video' ? 'mp4' : 'jpeg')).trim().toLowerCase();
   const requestedGenerateAudio = body.generateAudio !== false;
@@ -519,6 +573,9 @@ function validateBody(body, kind) {
       ? new Set(capabilities.qualities.map((value) => String(value).toLowerCase()))
       : null;
     if (!allowedSizes.has(requestedSize) && !imageDimensionsWithinCapabilities(requestedSize, capabilities)) {
+      requestedSize = imageResolutionPresetForPixels(requestedSize, allowedSizes) || requestedSize;
+    }
+    if (!allowedSizes.has(requestedSize) && !imageDimensionsWithinCapabilities(requestedSize, capabilities)) {
       throw invalidOption('invalid-size', 'The selected image resolution is not supported.');
     }
     if (!allowedRatios.has(requestedRatio) && !supportsImageAspectRatio(requestedRatio, capabilities)) {
@@ -544,9 +601,14 @@ function validateBody(body, kind) {
     if (isAtlasVideo && !['mp4', 'mov'].includes(requestedOutputFormat)) {
       throw invalidOption('invalid-output-format', 'The selected video model supports MP4 or MOV output.');
     }
-    const configuredResolutions = urls.length && Array.isArray(capabilities.referenceResolutions)
-      ? capabilities.referenceResolutions
-      : capabilities.resolutions;
+    const tierResolutions = capabilities.tierResolutions && requestedServiceTier
+      && Array.isArray(capabilities.tierResolutions[requestedServiceTier])
+      ? capabilities.tierResolutions[requestedServiceTier]
+      : null;
+    const configuredResolutions = tierResolutions
+      || (urls.length && Array.isArray(capabilities.referenceResolutions)
+        ? capabilities.referenceResolutions
+        : capabilities.resolutions);
     const allowedResolutions = Array.isArray(configuredResolutions) && configuredResolutions.length
       ? new Set(configuredResolutions.map((value) => String(value).toUpperCase()))
       : defaultVideoResolutions;
@@ -589,8 +651,8 @@ function validateBody(body, kind) {
           : 'The selected video model does not support this aspect ratio.'
       );
     }
-    if (isAtlasVideo && ['video-edit', 'video-extend'].includes(videoMode) && String(providerId).includes('25') && requestedDuration !== -1) {
-      throw invalidOption('invalid-duration', 'Seedance 2.5 video editing and extension require automatic duration (-1).');
+    if (isAtlasVideo && videoMode === 'video-edit' && isSeedance25 && requestedDuration !== -1) {
+      throw invalidOption('invalid-duration', 'Seedance 2.5 video editing requires automatic duration (-1).');
     }
     if (isAtlasVideo && capabilities.supportsSeed === true && Number.isInteger(requestedSeed)) {
       const seedMinimum = Number.isFinite(Number(capabilities.seedMinimum)) ? Number(capabilities.seedMinimum) : -1;
@@ -605,6 +667,9 @@ function validateBody(body, kind) {
   return {
     prompt,
     providerId,
+    canvasId: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(String(body.canvasId || '').trim())
+      ? String(body.canvasId).trim()
+      : null,
     model: String(body.model || '').slice(0, 160),
     messages,
     urls,
@@ -631,6 +696,7 @@ function validateBody(body, kind) {
       ,referenceAudioUploadIds: requestedAudioUploadIds
       ,bitrateMode: requestedBitrateMode || null
       ,watermark: requestedWatermark
+      ,serviceTier: requestedServiceTier || null
     } : {})
   };
 }
@@ -858,8 +924,17 @@ async function handle(request, response) {
     return send(response, 200, { account: await getUsageAccount(user.id) });
   }
   if (request.method === 'GET' && url.pathname === '/v1/usage/summary') {
-    const range = String(url.searchParams.get('range') || '7d').trim().toLowerCase();
+    const from = String(url.searchParams.get('from') || '').trim();
+    const to = String(url.searchParams.get('to') || '').trim();
+    const timeZoneOffset = Number(url.searchParams.get('tzOffset'));
+    const range = from || to
+      ? { from, to, timeZoneOffset }
+      : String(url.searchParams.get('range') || '7d').trim().toLowerCase();
     return send(response, 200, { summary: await getUsageSummary(user.id, range) });
+  }
+  if (request.method === 'GET' && url.pathname === '/v1/usage/canvas') {
+    const canvasId = String(url.searchParams.get('canvasId') || '').trim();
+    return send(response, 200, { usage: await getCanvasUsage(user.id, canvasId) });
   }
   if (request.method === 'POST' && url.pathname === '/v1/account/redeem') {
     const redemptionBody = await readJson(request);
@@ -1327,6 +1402,7 @@ async function handle(request, response) {
     const body = validateBody(rawBody, 'video');
     const job = await startVideoJob({ userId: user.id, operationId, taskToken, body });
     if (job.ok !== true) return deniedReservation(response, job);
+    if (body.canvasId) await tagUsageCanvas(user.id, operationId, body.canvasId);
     if (!job.created) return send(response, 202, publicVideoJob(job));
 
     const startedAt = Date.now();
@@ -1445,6 +1521,7 @@ async function handle(request, response) {
         error.status = error.code === 'insufficient-credits' ? 402 : 400;
         throw error;
       }
+      if (body.canvasId) await tagUsageCanvas(user.id, requestId, body.canvasId);
       const startedAt = Date.now();
       try {
         const result = await generateMedia(kind, body, AbortSignal.timeout(20 * 60_000));
@@ -1459,6 +1536,7 @@ async function handle(request, response) {
   }
   const reservation = await reserveUsage(user.id, kind, requestId, body);
   if (!reservation.ok) return deniedReservation(response, reservation);
+  if (body.canvasId) await tagUsageCanvas(user.id, requestId, body.canvasId);
   const startedAt = Date.now();
   const controller = new AbortController();
   request.once('aborted', () => controller.abort());

@@ -3774,10 +3774,29 @@ function supportedImageSizes(capabilities = {}, referenceCount = 0) {
   return normalizedCapabilityValues(configured, ['1K', '2K', '4K']);
 }
 
+function imageResolutionPresetForPixels(value, supported = []) {
+  const match = /^(\d{1,5})\s*[x×]\s*(\d{1,5})$/i.exec(String(value || '').trim());
+  if (!match) return '';
+  const longestEdge = Math.max(Number(match[1]), Number(match[2]));
+  const preferred = longestEdge >= 3072 ? '4K' : longestEdge >= 1536 ? '2K' : '1K';
+  if (supported.includes(preferred)) return preferred;
+  const ranked = supported
+    .filter((entry) => /^(?:1|2|4)K$/i.test(entry))
+    .sort((left, right) => Number(left[0]) - Number(right[0]));
+  if (!ranked.length) return '';
+  const preferredRank = Number(preferred[0]);
+  return ranked.reduce((nearest, candidate) => (
+    Math.abs(Number(candidate[0]) - preferredRank) < Math.abs(Number(nearest[0]) - preferredRank)
+      ? candidate
+      : nearest
+  ));
+}
+
 function supportedImageSize(value, capabilities = {}, referenceCount = 0) {
   const supported = supportedImageSizes(capabilities, referenceCount);
   const requested = String(value || '').trim();
-  return supported.includes(requested) ? requested : supported[0];
+  if (supported.includes(requested)) return requested;
+  return imageResolutionPresetForPixels(requested, supported) || supported[0];
 }
 
 function supportedImageRatios(capabilities = {}, hasReferenceImages = false) {
@@ -5250,7 +5269,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   }
 
   function videoModeLabel(modeId) {
-    if (modeId === 'video-extend') return t('Extend video', '寤惰緤瑙嗛');
+    if (modeId === 'video-extend') return t('Extend video', '扩展视频');
     const labels = {
       'first-last-frame': t('First + last frame', '首尾帧'),
       omni: t('Omni reference', '全能参考'),

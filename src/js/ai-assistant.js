@@ -675,6 +675,70 @@ function assistantImageReferenceAutoActive() {
   return AiAssistant.kind === 'image' && assistantMediaAttachmentCount() > 0;
 }
 
+function assistantImageAttachmentDimensions(attachment) {
+  const file = attachment && AppState.files.find((entry) => entry.id === attachment.id);
+  const width = Number(attachment && (attachment.sourceWidth || attachment.width))
+    || Number(file && (file.sourceWidth || file.width));
+  const height = Number(attachment && (attachment.sourceHeight || attachment.height))
+    || Number(file && (file.sourceHeight || file.height));
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
+async function loadAssistantImageAttachmentDimensions(attachment) {
+  const known = assistantImageAttachmentDimensions(attachment);
+  if (known) return known;
+  const source = String(attachment && (
+    attachment.dataUrl || attachment.previewUrl || attachment.thumbUrl || attachment.url
+  ) || '');
+  if (!source) return null;
+  return new Promise((resolve) => {
+    const image = new Image();
+    const finish = (dimensions) => {
+      image.onload = null;
+      image.onerror = null;
+      resolve(dimensions);
+    };
+    image.onload = () => finish(
+      image.naturalWidth > 0 && image.naturalHeight > 0
+        ? { width: image.naturalWidth, height: image.naturalHeight }
+        : null
+    );
+    image.onerror = () => finish(null);
+    image.src = source;
+  });
+}
+
+async function resolveAssistantImageGenerationOptions(options, attachments) {
+  if (AiAssistant.kind !== 'image') return options;
+  const capabilities = assistantImageCapabilities();
+  const referenceImages = attachments.filter((attachment) => assistantFileKind(attachment) === 'image');
+  let aspectRatio = String(options.aspectRatio || '').trim();
+  let size = String(options.size || '').trim();
+
+  if (referenceImages.length && aspectRatio === 'auto') {
+    const dimensions = await loadAssistantImageAttachmentDimensions(referenceImages[0]);
+    const sourceRatio = dimensions ? `${dimensions.width}:${dimensions.height}` : '';
+    const savedRatio = AiAssistant.referenceAutoState && AiAssistant.referenceAutoState.ratio;
+    aspectRatio = supportedImageAspectRatio(
+      sourceRatio || savedRatio || (AiAssistant.config && AiAssistant.config.imageAspectRatio) || '1:1',
+      capabilities,
+      true
+    );
+  }
+
+  if (referenceImages.length && size === 'auto') {
+    const savedSize = AiAssistant.referenceAutoState && AiAssistant.referenceAutoState.size;
+    size = supportedImageSizeForRatio(
+      savedSize || (AiAssistant.config && AiAssistant.config.imageSize) || '1K',
+      aspectRatio,
+      capabilities,
+      referenceImages.length
+    );
+  }
+
+  return { ...options, aspectRatio, size };
+}
+
 function syncAssistantReferenceAutoMode() {
   const ratioSelect = document.getElementById('ai-assistant-ratio');
   const sizeSelect = document.getElementById('ai-assistant-size');
@@ -1149,12 +1213,15 @@ async function submitAssistantMessage() {
   const submittedKind = AiAssistant.kind;
   const submittedProvider = selectedAssistantProvider();
   const attachments = AiAssistant.attachments.map((attachment) => ({ ...attachment }));
-  const submittedMediaOptions = {
+  let submittedMediaOptions = {
     aspectRatio: document.getElementById('ai-assistant-ratio').value,
     size: document.getElementById('ai-assistant-size').value,
     count: Number(document.getElementById('ai-assistant-count').value),
     duration: Number(document.getElementById('ai-assistant-duration').value)
   };
+  if (submittedKind === 'image') {
+    submittedMediaOptions = await resolveAssistantImageGenerationOptions(submittedMediaOptions, attachments);
+  }
   let prompt = input.value.trim();
   if (!prompt && !attachments.length) {
     input.focus();

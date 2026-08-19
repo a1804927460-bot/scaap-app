@@ -245,7 +245,7 @@ test('worker fails closed after one clear error when the asynchronous schema is 
 test('legacy synchronous video compatibility still creates, polls, and downloads MiniMax output', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({ MINIMAX_API_KEY: 'minimax-test-key' }, async () => {
-    const video = Buffer.from('legacy-video-bytes');
+    const video = Buffer.from([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x70, 0x34, 0x32]);
     const calls = [];
     globalThis.fetch = async (url, options = {}) => {
       calls.push({ url: String(url), options });
@@ -282,6 +282,35 @@ test('legacy synchronous video compatibility still creates, polls, and downloads
       assert.equal(calls[0].options.headers.Authorization, 'Bearer minimax-test-key');
       assert.equal(calls[1].options.headers.Authorization, 'Bearer minimax-test-key');
       assert.equal(calls[2].options.headers && calls[2].options.headers.Authorization, undefined);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+});
+
+test('legacy synchronous video compatibility rejects an HTTP 200 error page', async () => {
+  const previousFetch = globalThis.fetch;
+  await withEnvironment({ MINIMAX_API_KEY: 'minimax-test-key' }, async () => {
+    globalThis.fetch = async (url) => {
+      if (String(url) === 'https://api.minimaxi.com/v2/video_generation') {
+        return jsonResponse({ task_id: 'invalid-legacy-task' });
+      }
+      if (String(url) === 'https://api.minimaxi.com/v2/query/video_generation/invalid-legacy-task') {
+        return jsonResponse({ task: { status: 'succeeded', content: { url: 'https://cdn.example.test/error.mp4' } } });
+      }
+      if (String(url) === 'https://cdn.example.test/error.mp4') {
+        return new Response(Buffer.from('<html>upstream error</html>'), { status: 200 });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+    try {
+      await assert.rejects(
+        generateLegacyVideo({
+          providerId: 'video-1', prompt: 'invalid legacy result', resolution: '768P',
+          duration: 5, aspectRatio: '16:9', urls: []
+        }),
+        (error) => error && error.code === 'invalid-media'
+      );
     } finally {
       globalThis.fetch = previousFetch;
     }

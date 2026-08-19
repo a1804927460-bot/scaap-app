@@ -72,7 +72,13 @@ const {
 const { launchAdobeMedia } = require('./lib/adobe-launcher');
 const { sendToWeChatFileHelper } = require('./lib/wechat-file-helper');
 const { ChatService } = require('./lib/chat-service');
-const { probeVideoMetadata, shutdownProcesses: shutdownMediaMetadataProcesses } = require('./lib/media-metadata');
+const { probeMediaDuration, probeVideoMetadata, shutdownProcesses: shutdownMediaMetadataProcesses } = require('./lib/media-metadata');
+const {
+  MAX_SEEDANCE_REFERENCE_AUDIO_BYTES,
+  seedanceReferenceProfile,
+  validateSeedanceReferenceDuration,
+  validateSeedanceReferenceTotals
+} = require('./lib/seedance-reference-validation');
 const { authenticatedUserId, profileAvatarPath } = require('./lib/profile-avatar');
 const { normalizeLanguage, translate: translateLanguage } = require('./lib/i18n');
 const { createLocalFileResponse } = require('./lib/local-file-response');
@@ -290,7 +296,7 @@ const MAX_BUTLER_IMAGE_BYTES = Math.floor(7.5 * 1024 * 1024);
 const MAX_BUTLER_VIDEO_BYTES = 48 * 1024 * 1024;
 const MAX_BUTLER_VIDEO_OUTPUT_BYTES = 256 * 1024 * 1024;
 const MAX_AI_REFERENCE_VIDEO_SOURCE_BYTES = 256 * 1024 * 1024;
-const MAX_AI_REFERENCE_AUDIO_SOURCE_BYTES = 32 * 1024 * 1024;
+const MAX_AI_REFERENCE_AUDIO_SOURCE_BYTES = MAX_SEEDANCE_REFERENCE_AUDIO_BYTES;
 const MAX_BUTLER_PREVIEW_BYTES = 16 * 1024 * 1024;
 const MAX_MODEL_PREVIEW_BYTES = 256 * 1024 * 1024;
 const MAX_CLIPBOARD_IMAGE_BYTES = 64 * 1024 * 1024;
@@ -437,6 +443,7 @@ function ensureCanvasState() {
       console.error('Could not move canvas archive file:', err.message);
     }
   });
+  ensureCanvasUsageLedger();
   store.scheduleSave();
 }
 
@@ -826,6 +833,7 @@ function fileToPayload(f) {
         && Number.isFinite(Number(f.aiGeneration.credits))
         ? Math.max(0, Number(f.aiGeneration.credits))
         : null,
+      accountingRequestId: String(f.aiGeneration.accountingRequestId || '').trim() || null,
       createdAt: f.aiGeneration.createdAt
     } : null,
     folderId: f.folderId || null,
@@ -2092,6 +2100,16 @@ async function resolveAiVideoReferences(request) {
   const mediaTypes = [];
   const uploadIds = [];
   const audioUploadIds = [];
+  const requestedProviderId = String(request && request.videoProviderId || '').trim().toLowerCase();
+  const videoConfig = getAiMediaConfig();
+  const requestedProvider = videoConfig.videoProviders.find((entry) => entry.id === requestedProviderId)
+    || providerCatalog('video').find((entry) => entry.id === requestedProviderId)
+    || null;
+  const referenceProfile = seedanceReferenceProfile(
+    requestedProviderId,
+    requestedProvider && requestedProvider.model
+  );
+  const referenceDurations = { video: [], audio: [] };
   for (let index = 0; index < fileIds.length; index += 1) {
     const file = store.getFile(String(fileIds[index] || ''));
     if (!file) continue;
@@ -2116,12 +2134,20 @@ async function resolveAiVideoReferences(request) {
         error.code = 'invalid-reference-audio';
         throw error;
       }
+      const audioDuration = Number(await probeMediaDuration(sourcePath)) || Number(file.sourceDuration) || 0;
+      validateSeedanceReferenceDuration(referenceProfile, 'audio', audioDuration);
+      referenceDurations.audio.push(audioDuration);
+      validateSeedanceReferenceTotals(referenceProfile, referenceDurations);
       const upload = await aiGateway.uploadReferenceAudio(audioBuffer, mime);
       audioUploadIds.push(upload.uploadId);
       continue;
     }
     if (mediaType === 'video') {
       const source = await butlerSourceVideo(file.id, { aiReference: true });
+      const videoDuration = Number(source.metadata && source.metadata.sourceDuration) || 0;
+      validateSeedanceReferenceDuration(referenceProfile, 'video', videoDuration);
+      referenceDurations.video.push(videoDuration);
+      validateSeedanceReferenceTotals(referenceProfile, referenceDurations);
       const upload = await aiGateway.uploadReferenceVideo(source.videoBuffer, source.toolOptions.sourceMime);
       uploadIds.push(upload.uploadId);
       mediaTypes.push('video');
@@ -2238,33 +2264,154 @@ function sanitizeAiAssistantHistory(value) {
   }).filter(Boolean);
 }
 
-function canvasCreditUsage(canvasId) {
+function canvasUsageKind(file, operation) {
+  if (file && file.aiGeneration) return file.aiGeneration.kind === 'video' ? 'video' : 'image';
+  const operationKind = String(operation && operation.kind || '').toLowerCase();
+  if (operationKind.includes('3d')) return '3d';
+  if (operationKind.includes('video')) return 'video';
+  return 'image';
+}
+
+function estimatedHistoricalCanvasCredits(file, operation, kind) {
+  try {
+    if (file && file.aiGeneration) {
+      const quote = quoteMediaCredits({
+        kind,
+        providerId: operation.providerId,
+        size: operation.size,
+        quality: operation.quality,
+        resolution: operation.resolution,
+        duration: operation.requestedDuration ?? operation.duration,
+        count: 1
+      });
+      return kind === 'image' ? quote.unitCredits : quote.totalCredits;
+    }
+    const modelId = String(operation && operation.modelId || '').trim().toLowerCase();
+    if (Object.hasOwn(BUTLER_IMAGE_TOOL_CREDITS, modelId)) return BUTLER_IMAGE_TOOL_CREDITS[modelId];
+  } catch (error) {}
+  return null;
+}
+
+function canvasUsageEntryFromFile(file) {
+  if (!file || (!file.aiGeneration && !file.butlerOperation)) return null;
+  const operation = file.aiGeneration || file.butlerOperation;
+  const kind = canvasUsageKind(file, operation);
+  const rawCredits = operation && operation.credits;
+  const parsedCredits = Number(rawCredits);
+  const recorded = rawCredits !== null && rawCredits !== undefined && rawCredits !== ''
+    && Number.isFinite(parsedCredits) && parsedCredits >= 0;
+  const estimatedCredits = recorded ? null : estimatedHistoricalCanvasCredits(file, operation, kind);
+  const accountingRequestId = String(operation.accountingRequestId || '').trim();
+  return {
+    id: `file:${String(file.id || '').slice(0, 120)}`,
+    canvasId: String(file.canvasId || '').slice(0, 120),
+    requestId: accountingRequestId || null,
+    sourceFileId: String(file.id || '').slice(0, 120) || null,
+    name: String(file.name || '').slice(0, 240),
+    kind,
+    providerId: String(operation.providerId || operation.modelId || '').slice(0, 100) || null,
+    modelName: String(operation.modelName || operation.modelId || 'AI tool').slice(0, 160),
+    credits: recorded ? Math.max(0, parsedCredits)
+      : Number.isFinite(Number(estimatedCredits)) ? Math.max(0, Number(estimatedCredits)) : null,
+    estimated: !recorded && Number.isFinite(Number(estimatedCredits)),
+    createdAt: String(operation.createdAt || file.importedAt || new Date().toISOString()).slice(0, 40)
+  };
+}
+
+function normalizeCanvasUsageEntry(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const id = String(entry.id || '').trim().slice(0, 160);
+  const canvasId = String(entry.canvasId || '').trim().slice(0, 120);
+  if (!id || !canvasId) return null;
+  const rawCredits = entry.credits;
+  const credits = rawCredits !== null && rawCredits !== undefined && rawCredits !== ''
+    && Number.isFinite(Number(rawCredits)) && Number(rawCredits) >= 0
+    ? Math.max(0, Number(rawCredits))
+    : null;
+  return {
+    id,
+    canvasId,
+    requestId: String(entry.requestId || '').trim().slice(0, 80) || null,
+    sourceFileId: String(entry.sourceFileId || '').trim().slice(0, 120) || null,
+    name: String(entry.name || '').slice(0, 240),
+    kind: ['image', 'video', '3d'].includes(entry.kind) ? entry.kind : 'image',
+    providerId: String(entry.providerId || '').trim().slice(0, 100) || null,
+    modelName: String(entry.modelName || entry.providerId || 'AI tool').slice(0, 160),
+    credits,
+    estimated: credits !== null && entry.estimated === true,
+    createdAt: String(entry.createdAt || new Date().toISOString()).slice(0, 40)
+  };
+}
+
+function ensureCanvasUsageLedger() {
+  const entries = Array.isArray(store.data.canvasUsageLedger) ? store.data.canvasUsageLedger : [];
+  const normalized = entries.map(normalizeCanvasUsageEntry).filter(Boolean);
+  const ids = new Set(normalized.map((entry) => entry.id));
+  for (const file of store.data.files) {
+    const entry = canvasUsageEntryFromFile(file);
+    if (!entry || ids.has(entry.id)) continue;
+    normalized.push(entry);
+    ids.add(entry.id);
+  }
+  store.data.canvasUsageLedger = normalized;
+}
+
+function recordCanvasUsageFile(file) {
+  const entry = canvasUsageEntryFromFile(file);
+  if (!entry) return;
+  if (!Array.isArray(store.data.canvasUsageLedger)) store.data.canvasUsageLedger = [];
+  const index = store.data.canvasUsageLedger.findIndex((item) => item && item.id === entry.id);
+  if (index === -1) store.data.canvasUsageLedger.push(entry);
+  else store.data.canvasUsageLedger[index] = entry;
+}
+
+async function canvasCreditUsage(canvasId) {
   const id = String(canvasId || '').trim();
   const canvas = store.data.canvases.find((entry) => entry.id === id);
   if (!canvas) return { ok: false, reason: 'canvas-not-found' };
-  const details = store.data.files
-    .filter((file) => file && file.canvasId === id && (file.aiGeneration || file.butlerOperation))
-    .map((file) => {
-      const operation = file.aiGeneration || file.butlerOperation;
-      const rawCredits = operation && operation.credits;
-      const credits = Number(rawCredits);
-      const recorded = rawCredits !== null && rawCredits !== undefined && rawCredits !== ''
-        && Number.isFinite(credits) && credits >= 0;
-      return {
-        id: file.id,
-        name: String(file.name || '').slice(0, 240),
-        kind: file.aiGeneration
-          ? (file.aiGeneration.kind === 'video' ? 'video' : 'image')
-          : (String(file.butlerOperation.kind || '').includes('3d') ? '3d'
-            : String(file.butlerOperation.kind || '').includes('video') ? 'video' : 'image'),
-        providerId: String(operation.providerId || operation.modelId || '').slice(0, 100) || null,
-        modelName: String(operation.modelName || operation.modelId || 'AI tool').slice(0, 160),
-        credits: recorded ? Math.max(0, credits) : null,
-        createdAt: String(operation.createdAt || file.importedAt || '').slice(0, 40)
-      };
-    })
-    .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt))
-    .slice(0, 500);
+  ensureCanvasUsageLedger();
+  const localDetails = store.data.canvasUsageLedger
+    .filter((entry) => entry && entry.canvasId === id)
+    .map((entry) => ({ ...entry }));
+  let cloudDetails = [];
+  let cloudAvailable = false;
+  if (runtimeConfig.gatewayConfigured && hasAuthenticatedGatewaySession()
+      && aiGateway && typeof aiGateway.getCanvasUsage === 'function') {
+    try {
+      const cloud = await aiGateway.getCanvasUsage(id);
+      cloudDetails = Array.isArray(cloud && cloud.details) ? cloud.details : [];
+      cloudAvailable = Boolean(cloud);
+    } catch (error) {
+      // Local history remains useful while the gateway or new schema deploys.
+    }
+  }
+  const detailsByKey = new Map();
+  localDetails.forEach((entry) => {
+    const key = entry.requestId ? `request:${entry.requestId}` : `local:${entry.id}`;
+    detailsByKey.set(key, entry);
+  });
+  cloudDetails.forEach((entry) => {
+    const requestId = String(entry && entry.requestId || '').trim().slice(0, 80);
+    if (!requestId) return;
+    const key = `request:${requestId}`;
+    const local = detailsByKey.get(key) || {};
+    const credits = Number(entry.credits);
+    detailsByKey.set(key, {
+      ...local,
+      id: local.id || `cloud:${requestId}`,
+      canvasId: id,
+      requestId,
+      name: local.name || String(entry.name || '').slice(0, 240),
+      kind: ['image', 'video', '3d'].includes(entry.kind) ? entry.kind : (local.kind || 'image'),
+      providerId: String(entry.providerId || local.providerId || '').slice(0, 100) || null,
+      modelName: local.modelName || String(entry.modelName || entry.providerId || 'AI model').slice(0, 160),
+      credits: Number.isFinite(credits) ? Math.max(0, credits) : local.credits ?? null,
+      estimated: false,
+      createdAt: String(entry.createdAt || local.createdAt || '').slice(0, 40)
+    });
+  });
+  const details = [...detailsByKey.values()]
+    .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
   const recorded = details.filter((entry) => entry.credits !== null);
   const breakdown = ['image', 'video', '3d'].reduce((result, kind) => {
     const entries = details.filter((entry) => entry.kind === kind);
@@ -2284,10 +2431,12 @@ function canvasCreditUsage(canvasId) {
       credits: recorded.reduce((sum, entry) => sum + entry.credits, 0),
       generations: details.length,
       recorded: recorded.length,
-      unrecorded: details.length - recorded.length
+      unrecorded: details.length - recorded.length,
+      estimated: details.filter((entry) => entry.estimated === true).length
     },
     breakdown,
-    details
+    details,
+    cloudAvailable
   };
 }
 
@@ -2704,18 +2853,23 @@ async function generateAiMediaBuffer(kind, prompt, options = {}) {
         sourceHeight: options.sourceHeight,
         duration: options.duration,
         videoMode: options.videoMode,
+        serviceTier: options.serviceTier,
         referenceMediaTypes: options.referenceMediaTypes,
         referenceVideoUploadIds: options.referenceVideoUploadIds,
         referenceAudioUrls: options.referenceAudioUrls,
+        referenceAudioUploadIds: options.referenceAudioUploadIds,
         outputFormat: options.outputFormat,
         generateAudio: options.generateAudio,
         returnLastFrame: options.returnLastFrame,
+        bitrateMode: options.bitrateMode,
+        watermark: options.watermark,
         enhancePrompt: options.enhancePrompt,
         seed: options.seed,
         styleId: options.styleId,
         styleStrength: options.styleStrength,
-        urls: options.urls
-      }, controller.signal);
+        urls: options.urls,
+        canvasId: options.canvasId
+      }, controller.signal, options.accountingRequestId);
     }
     const config = getAiMediaConfig();
     if (kind !== 'video' && options.imageProviderId) {
@@ -2772,17 +2926,22 @@ function aiMediaGenerationOptions(request, providerId) {
     sourceHeight: request.sourceHeight,
     duration: request.duration,
     videoMode: request.videoMode,
+    serviceTier: request.serviceTier,
     referenceMediaTypes: request.referenceMediaTypes,
     referenceVideoUploadIds: request.referenceVideoUploadIds,
     referenceAudioUrls: request.referenceAudioUrls,
+    referenceAudioUploadIds: request.referenceAudioUploadIds,
     outputFormat: request.outputFormat,
     generateAudio: request.generateAudio,
     returnLastFrame: request.returnLastFrame,
+    bitrateMode: request.bitrateMode,
+    watermark: request.watermark,
     enhancePrompt: request.enhancePrompt,
     seed: request.seed,
     styleId: request.styleId,
     styleStrength: request.styleStrength,
     urls: request.urls,
+    canvasId: request.canvasId,
     imageProviderId: request.kind === 'video' ? request.imageProviderId : providerId,
     videoProviderId: request.kind === 'video' ? providerId : request.videoProviderId
   };
@@ -2840,10 +2999,12 @@ async function resolveImageFallback(request, primaryQuote) {
 
 async function generateAiMediaWithFallback(kind, prompt, options, fallbackProvider) {
   const primaryProviderId = kind === 'video' ? options.videoProviderId : options.imageProviderId;
+  const primaryRequestId = String(options.accountingRequestId || '').trim() || crypto.randomUUID();
   try {
     return {
-      buffer: await generateAiMediaBuffer(kind, prompt, options),
+      buffer: await generateAiMediaBuffer(kind, prompt, { ...options, accountingRequestId: primaryRequestId }),
       providerId: primaryProviderId,
+      accountingRequestId: primaryRequestId,
       fallbackUsed: false
     };
   } catch (primaryError) {
@@ -2851,12 +3012,15 @@ async function generateAiMediaWithFallback(kind, prompt, options, fallbackProvid
     const fallbackProviderId = String(fallbackProvider.provider && fallbackProvider.provider.id || '').trim().toLowerCase();
     if (!fallbackProviderId || fallbackProviderId === String(primaryProviderId || '').trim().toLowerCase()) throw primaryError;
     try {
+      const fallbackRequestId = crypto.randomUUID();
       return {
         buffer: await generateAiMediaBuffer(kind, prompt, {
           ...options,
-          imageProviderId: fallbackProviderId
+          imageProviderId: fallbackProviderId,
+          accountingRequestId: fallbackRequestId
         }),
         providerId: fallbackProviderId,
+        accountingRequestId: fallbackRequestId,
         fallbackUsed: true,
         fallbackFromProviderId: primaryProviderId,
         fallbackProviderName: String(fallbackProvider.provider.name || fallbackProviderId).trim()
@@ -3244,6 +3408,7 @@ async function addButlerOutputFile(buffer, sourceFile, operation, operationDetai
       canvasId: canvas ? canvas.id : null
     };
     store.addFile(record);
+    recordCanvasUsageFile(record);
     await store.mirrorFileToCustomPathAsync(record);
     store.scheduleSave();
     return record;
@@ -3316,6 +3481,7 @@ async function addButlerVideoOutputFile(buffer, sourceFile, operationDetails = {
       canvasId: canvas ? canvas.id : null
     };
     store.addFile(record);
+    recordCanvasUsageFile(record);
     await store.mirrorFileToCustomPathAsync(record);
     store.scheduleSave();
     return record;
@@ -3471,6 +3637,7 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
         && Number.isFinite(Number(request.credits))
         ? Math.max(0, Number(request.credits))
         : null,
+      accountingRequestId: String(request.accountingRequestId || '').trim().slice(0, 80) || null,
       createdAt: new Date().toISOString()
     },
     folderId: folderId || null,
@@ -3478,6 +3645,7 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
   };
 
   store.addFile(record);
+  recordCanvasUsageFile(record);
   await store.mirrorFileToCustomPathAsync(record);
 
   const unlockedKeys = new Set();
@@ -3806,22 +3974,44 @@ function normalizeImageSize(value) {
   return match ? `${Number(match[1])}x${Number(match[2])}` : text;
 }
 
+function imageResolutionPresetForPixels(value, supportedSizes) {
+  const match = /^(\d{1,5})x(\d{1,5})$/i.exec(String(value || '').trim());
+  if (!match) return '';
+  const longestEdge = Math.max(Number(match[1]), Number(match[2]));
+  const preferred = longestEdge >= 3072 ? '4K' : longestEdge >= 1536 ? '2K' : '1K';
+  if (supportedSizes.has(preferred)) return preferred;
+  const ranked = [...supportedSizes]
+    .filter((entry) => /^(?:1|2|4)K$/.test(entry))
+    .sort((left, right) => Number(left[0]) - Number(right[0]));
+  if (!ranked.length) return '';
+  return ranked.reduce((nearest, candidate) => (
+    Math.abs(Number(candidate[0]) - Number(preferred[0])) < Math.abs(Number(nearest[0]) - Number(preferred[0]))
+      ? candidate
+      : nearest
+  ));
+}
+
 function supportsImageAspectRatio(value, capabilities = {}) {
-  if (AI_IMAGE_RATIOS.has(value)) return true;
-  if (capabilities.arbitraryRatios !== true) return false;
-  const match = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(String(value || '').trim());
-  if (!match) return false;
+  const normalized = String(value || '').trim();
+  if (normalized === 'auto') return AI_IMAGE_RATIOS.has('auto') || capabilities.arbitraryRatios === true;
+  const match = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(normalized);
+  if (!match) return AI_IMAGE_RATIOS.has(normalized);
   const width = Number(match[1]);
   const height = Number(match[2]);
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return false;
   const ratio = width / height;
+  const minimum = Number(capabilities.minimumAspectRatio);
+  const maximum = Number(capabilities.maximumAspectRatio);
+  if (Number.isFinite(minimum) && ratio < minimum) return false;
+  if (Number.isFinite(maximum) && ratio > maximum) return false;
+  if (capabilities.arbitraryRatios !== true) return AI_IMAGE_RATIOS.has(normalized);
   return ratio >= 1 / 16 && ratio <= 16;
 }
 
 function normalizeAiMediaGenerationRequest(request, kind) {
   const normalized = { ...request };
   if (kind === 'image') {
-    const size = normalizeImageSize(request.size);
+    let size = normalizeImageSize(request.size);
     const aspectRatio = String(request.aspectRatio || '').trim();
     const quality = String(request.quality || 'auto').trim().toLowerCase();
     if (!AI_IMAGE_SIZES.has(size) && !/^([1-9]\d{0,3})x([1-9]\d{0,3})$/i.test(size)) {
@@ -3865,9 +4055,14 @@ function normalizeAiMediaGenerationRequest(request, kind) {
       : capabilities.sizes || [];
     const supportedSizes = new Set(
       configuredSizes
-        .map((value) => String(value || '').trim())
+        .map(normalizeImageSize)
         .filter(Boolean)
     );
+    if (supportedSizes.size && !supportedSizes.has(size) && !imageDimensionsWithinCapabilities(size, capabilities)) {
+      const savedSize = normalizeImageSize(imageConfig.imageSize);
+      size = imageResolutionPresetForPixels(size, supportedSizes)
+        || (supportedSizes.has(savedSize) ? savedSize : size);
+    }
     if (!supportedSizes.size && !AI_IMAGE_SIZES.has(size)) {
       throw invalidAiMediaOption('invalid-size', 'The selected image resolution is not supported.');
     }
@@ -3915,8 +4110,23 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   const capabilities = provider.capabilities && typeof provider.capabilities === 'object'
     ? provider.capabilities
     : {};
+  const serviceTiers = Array.isArray(capabilities.serviceTiers)
+    ? capabilities.serviceTiers.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  const requestedServiceTier = String(
+    request.serviceTier || capabilities.defaultServiceTier || serviceTiers[0] || ''
+  ).trim().toLowerCase();
+  if (serviceTiers.length && !serviceTiers.includes(requestedServiceTier)) {
+    throw invalidAiMediaOption('invalid-service-tier', 'The selected model version is not supported.');
+  }
+  const tierResolutions = capabilities.tierResolutions && requestedServiceTier
+    && Array.isArray(capabilities.tierResolutions[requestedServiceTier])
+    ? capabilities.tierResolutions[requestedServiceTier]
+    : null;
   const supportedResolutions = new Set(
-    (Array.isArray(capabilities.resolutions) && capabilities.resolutions.length
+    (Array.isArray(tierResolutions) && tierResolutions.length
+      ? tierResolutions
+      : Array.isArray(capabilities.resolutions) && capabilities.resolutions.length
       ? capabilities.resolutions
       : [...MINIMAX_VIDEO_RESOLUTIONS])
       .map((value) => String(value || '').trim().toUpperCase())
@@ -3947,17 +4157,27 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   const referenceCount = referenceMediaTypes.length + referenceAudioCount
     || (Array.isArray(request.urls) ? request.urls.length : 0);
   const requestedVideoMode = String(request.videoMode || '').trim().toLowerCase();
-  const isAtlasReference = String(capabilities.atlasKind || '') === 'reference-to-video';
-  const fallbackVideoMode = isAtlasReference
-    ? (referenceMediaTypes.length === 1 && referenceMediaTypes[0] === 'video'
-      ? (String(providerId).includes('25') ? 'video-edit' : 'omni')
-      : 'omni')
+  const isAtlasRouted = capabilities.atlasRouted === true;
+  const isSeedance25 = providerId === 'video-3' || String(provider.model || '').includes('2.5');
+  const isAtlasReferenceProvider = String(capabilities.atlasKind || '') === 'reference-to-video';
+  const fallbackVideoMode = (isAtlasReferenceProvider || isAtlasRouted)
+    ? (referenceMediaTypes.includes('video') || referenceAudioCount > 0
+      ? 'omni'
+      : referenceCount > 2 ? 'omni'
+        : referenceCount === 2 ? 'first-last-frame'
+          : referenceCount === 1 ? 'first-frame' : 'omni')
     : referenceCount > 2
       ? 'omni'
       : referenceCount === 2
         ? 'first-last-frame'
         : referenceCount === 1 ? 'first-frame' : 'text';
   const videoMode = requestedVideoMode || fallbackVideoMode;
+  const isAtlasReference = isAtlasReferenceProvider
+    || (isAtlasRouted && (
+      ['omni', 'video-reference', 'video-edit', 'video-extend'].includes(videoMode)
+      || referenceMediaTypes.includes('video')
+      || referenceAudioCount > 0
+    ));
   const videoModes = normalizedVideoModes(capabilities);
   const selectedVideoMode = videoModes.find((entry) => entry && entry.id === videoMode) || null;
   if (!selectedVideoMode) {
@@ -3971,10 +4191,21 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   if (referenceMediaTypes.some((mediaType) => !allowedReferenceMediaTypes.has(mediaType))) {
     throw invalidAiMediaOption('invalid-reference-media', `${String(provider.name || 'The selected video model')} does not accept reference videos in this mode.`);
   }
+  if (referenceAudioCount > 0 && !allowedReferenceMediaTypes.has('audio')) {
+    throw invalidAiMediaOption('invalid-reference-media', `${String(provider.name || 'The selected video model')} does not accept reference audio in this mode.`);
+  }
   const referenceVideoCount = referenceMediaTypes.filter((mediaType) => mediaType === 'video').length;
   const maximumReferenceVideos = Math.max(0, Number(selectedVideoMode.maxReferenceVideos) || 0);
+  const minimumReferenceVideos = Math.max(0, Number(selectedVideoMode.minReferenceVideos) || 0);
+  if (referenceVideoCount < minimumReferenceVideos) {
+    throw invalidAiMediaOption('reference-video-required', `${String(provider.name || 'The selected video model')} requires at least ${minimumReferenceVideos} reference video${minimumReferenceVideos === 1 ? '' : 's'}.`);
+  }
   if (referenceVideoCount > maximumReferenceVideos) {
     throw invalidAiMediaOption('too-many-reference-videos', `${String(provider.name || 'The selected video model')} supports at most ${maximumReferenceVideos} reference videos.`);
+  }
+  const referenceAudioLimit = Number(selectedVideoMode.maxReferenceAudios ?? capabilities.maxReferenceAudios);
+  if (Number.isInteger(referenceAudioLimit) && referenceAudioLimit >= 0 && referenceAudioCount > referenceAudioLimit) {
+    throw invalidAiMediaOption('too-many-reference-audios', `${String(provider.name || 'The selected video model')} supports at most ${referenceAudioLimit} reference audio files.`);
   }
   if (referenceVideoCount > 0) {
     const maximumImagesWithVideo = Number(selectedVideoMode.maxReferenceImagesWithVideo);
@@ -3990,7 +4221,7 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   const hasFrameReference = videoMode === 'first-frame' || videoMode === 'first-last-frame';
   const configuredReferenceLimit = Number(capabilities.maxReferenceImages);
   const modeReferenceLimit = Number(selectedVideoMode.maxReferences);
-  const atlasReferenceLimit = String(provider.model || '').includes('2.5') ? 50 : 12;
+  const atlasReferenceLimit = isSeedance25 ? 50 : 12;
   const referenceLimit = Number.isInteger(modeReferenceLimit) && modeReferenceLimit >= 0
     ? Math.min(isAtlasReference ? atlasReferenceLimit : 30, modeReferenceLimit)
     : Number.isInteger(configuredReferenceLimit) && configuredReferenceLimit >= 0
@@ -4010,7 +4241,7 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   if (!supportedResolutions.has(resolution)) {
     throw invalidAiMediaOption('invalid-resolution', `${providerName} does not support the selected resolution.`);
   }
-  if (isAtlasReference && String(provider.model || '').includes('2.0')
+  if (isAtlasReference && !isSeedance25
     && referenceAudioCount > 0 && referenceMediaTypes.length === 0) {
     throw invalidAiMediaOption('reference-required', `${providerName} requires at least one image or video when using reference audio.`);
   }
@@ -4041,16 +4272,17 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   normalized.duration = duration;
   normalized.aspectRatio = aspectRatio;
   normalized.videoMode = videoMode;
+  normalized.serviceTier = requestedServiceTier || null;
   normalized.cameraControl = normalizeVideoCameraControl(request.cameraControl);
   normalized.referenceMediaTypes = referenceMediaTypes;
   normalized.referenceVideoUploadIds = Array.isArray(request.referenceVideoUploadIds)
     ? request.referenceVideoUploadIds.map(String).filter(Boolean).slice(0, 30)
      : [];
   normalized.referenceAudioUploadIds = Array.isArray(request.referenceAudioUploadIds)
-    ? request.referenceAudioUploadIds.map(String).filter(Boolean).slice(0, String(provider.model || '').includes('2.5') ? 10 : 3)
+    ? request.referenceAudioUploadIds.map(String).filter(Boolean).slice(0, isSeedance25 ? 10 : 3)
     : [];
   normalized.referenceAudioUrls = Array.isArray(request.referenceAudioUrls)
-    ? request.referenceAudioUrls.map(String).filter((value) => /^https:\/\//i.test(value)).slice(0, String(provider.model || '').includes('2.5') ? 10 : 3)
+    ? request.referenceAudioUrls.map(String).filter((value) => /^https:\/\//i.test(value)).slice(0, isSeedance25 ? 10 : 3)
     : [];
   normalized.generateAudio = request.generateAudio !== false;
   normalized.returnLastFrame = request.returnLastFrame === true;
@@ -6213,6 +6445,7 @@ function registerIpcHandlers() {
         providerId: kind === 'video' ? request.videoProviderId : request.imageProviderId,
         fallbackProviderId: fallbackProvider ? fallbackProvider.provider.id : null,
         modelName: request.modelName || null,
+        canvasId: String(request.canvasId || '').trim() || null,
         aspectRatio: request.aspectRatio || null,
         size: request.size || null,
         quality: kind === 'image' ? request.quality || 'auto' : null,
@@ -6262,7 +6495,7 @@ function registerIpcHandlers() {
       const tasks = Array.from({ length: count }, () => generateAiMediaWithFallback(
         kind,
         providerPrompt,
-        generationOptions,
+        { ...generationOptions, accountingRequestId: crypto.randomUUID() },
         fallbackProvider
       ));
       const settled = await Promise.allSettled(tasks);
@@ -6280,9 +6513,14 @@ function registerIpcHandlers() {
           ? {
               ...request,
               imageProviderId: generated.providerId,
+              accountingRequestId: generated.accountingRequestId,
               credits: fallbackProvider && fallbackProvider.quote ? fallbackProvider.quote.unitCredits : creditQuote.unitCredits
             }
-          : { ...request, credits: kind === 'image' ? creditQuote.unitCredits : creditQuote.totalCredits };
+          : {
+              ...request,
+              accountingRequestId: generated.accountingRequestId,
+              credits: kind === 'image' ? creditQuote.unitCredits : creditQuote.totalCredits
+            };
         const added = await addGeneratedMediaFile(
           generated.buffer,
           prompt,

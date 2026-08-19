@@ -2,6 +2,8 @@
 
 const UsageSettings = {
   range: '30',
+  customFrom: '',
+  customTo: '',
   summary: null,
   requestRevision: 0,
   cache: new Map(),
@@ -100,7 +102,41 @@ function usageDate(value) {
 function usagePeriodText(range = UsageSettings.range) {
   if (range === '7') return usageText('Last 7 days', '最近 7 天', '최근 7일');
   if (range === 'all') return usageText('All time', '全部时间', '전체 기간');
+  if (range === 'custom') {
+    return UsageSettings.customFrom && UsageSettings.customTo
+      ? `${UsageSettings.customFrom} - ${UsageSettings.customTo}`
+      : usageText('Custom range', '自定义日期', '사용자 지정 기간');
+  }
   return usageText('Last 30 days', '最近 30 天', '최근 30일');
+}
+
+function localUsageIsoDate(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+}
+
+function validUsageDateRange(from, to) {
+  const pattern = /^\d{4}-\d{2}-\d{2}$/;
+  if (!pattern.test(String(from || '')) || !pattern.test(String(to || '')) || from > to) return false;
+  const fromTime = Date.parse(`${from}T00:00:00Z`);
+  const toTime = Date.parse(`${to}T00:00:00Z`);
+  return Number.isFinite(fromTime) && Number.isFinite(toTime)
+    && new Date(fromTime).toISOString().slice(0, 10) === from
+    && new Date(toTime).toISOString().slice(0, 10) === to
+    && (toTime - fromTime) / 86_400_000 <= 3660;
+}
+
+function usageRangeRequest() {
+  return UsageSettings.range === 'custom'
+    ? { from: UsageSettings.customFrom, to: UsageSettings.customTo }
+    : UsageSettings.range;
+}
+
+function usageRangeCacheKey() {
+  return UsageSettings.range === 'custom'
+    ? `custom:${UsageSettings.customFrom}:${UsageSettings.customTo}`
+    : UsageSettings.range;
 }
 
 function usageLoadErrorMessage(kind = 'generic') {
@@ -196,7 +232,7 @@ function normalizeUsageSummary(payload) {
 }
 
 function fillUsageRange(rows, range) {
-  if (range === 'all') return rows;
+  if (range === 'all' || range === 'custom') return rows;
   const days = range === '7' ? 7 : 30;
   const values = new Map(rows.map((row) => [row.date, row]));
   const latest = rows.length && /^\d{4}-\d{2}-\d{2}$/.test(rows[rows.length - 1].date)
@@ -424,7 +460,9 @@ async function loadUsageSummary(options = {}) {
     return;
   }
   const range = UsageSettings.range;
-  const cached = UsageSettings.cache.get(range);
+  const cacheKey = usageRangeCacheKey();
+  const requestRange = usageRangeRequest();
+  const cached = UsageSettings.cache.get(cacheKey);
   if (!options.force && cached && Date.now() - cached.savedAt < USAGE_CACHE_MS) {
     renderUsageSummary(cached.summary);
     setUsageState(cached.summary.authenticated ? 'ready' : 'auth');
@@ -433,18 +471,18 @@ async function loadUsageSummary(options = {}) {
   const revision = ++UsageSettings.requestRevision;
   setUsageState('loading');
   try {
-    const payload = await window.messsAPI.getUsageSummary(range);
-    if (revision !== UsageSettings.requestRevision || range !== UsageSettings.range) return;
+    const payload = await window.messsAPI.getUsageSummary(requestRange);
+    if (revision !== UsageSettings.requestRevision || cacheKey !== usageRangeCacheKey()) return;
     const summary = normalizeUsageSummary(payload);
     if (!summary.authenticated) {
-      UsageSettings.cache.delete(range);
+      UsageSettings.cache.delete(cacheKey);
       UsageSettings.summary = null;
       const shortcutMeta = document.getElementById('usage-shortcut-meta');
       if (shortcutMeta) shortcutMeta.textContent = usageText('Sign in for usage', '登录后查看用量', '로그인 후 사용량 보기');
       setUsageState('auth');
       return;
     }
-    UsageSettings.cache.set(range, { savedAt: Date.now(), summary });
+    UsageSettings.cache.set(cacheKey, { savedAt: Date.now(), summary });
     renderUsageSummary(summary);
     setUsageState('ready');
   } catch (error) {
@@ -513,6 +551,9 @@ function refreshUsageLanguage(renderData = true) {
   set('[data-usage-range="7"]', '7 Days', '7 天', '7일');
   set('[data-usage-range="30"]', '30 Days', '30 天', '30일');
   set('[data-usage-range="all"]', 'All', '全部', '전체');
+  set('#usage-custom-from-label', 'From', '开始', '시작');
+  set('#usage-custom-to-label', 'To', '结束', '종료');
+  set('#usage-custom-apply', 'View', '查询', '조회');
   set('#usage-loading > span:last-child', 'Loading usage...', '正在加载用量...', '사용량 불러오는 중...');
   set('#usage-auth-state strong', 'Sign in to view usage', '登录后查看用量', '로그인 후 사용량 보기');
   set('#usage-auth-state small', 'Your points and generation history are linked to your account.', '积分和生成记录与账号关联。', '포인트와 생성 기록은 계정에 연결됩니다.');
@@ -558,6 +599,8 @@ function initUsageSettings() {
       const range = ['7', '30', 'all'].includes(button.dataset.usageRange) ? button.dataset.usageRange : '30';
       if (range === UsageSettings.range) return;
       UsageSettings.range = range;
+      const customError = document.getElementById('usage-custom-error');
+      if (customError) customError.hidden = true;
       document.querySelectorAll('[data-usage-range]').forEach((option) => {
         const active = option.dataset.usageRange === range;
         option.classList.toggle('is-active', active);
@@ -567,6 +610,45 @@ function initUsageSettings() {
       loadUsageSummary();
     });
   });
+  const customForm = document.getElementById('usage-custom-range');
+  const customFrom = document.getElementById('usage-custom-from');
+  const customTo = document.getElementById('usage-custom-to');
+  const customError = document.getElementById('usage-custom-error');
+  if (customForm && customFrom && customTo) {
+    const today = localUsageIsoDate();
+    const monthAgo = new Date();
+    monthAgo.setDate(monthAgo.getDate() - 29);
+    customFrom.max = today;
+    customTo.max = today;
+    customFrom.value = UsageSettings.customFrom || localUsageIsoDate(monthAgo);
+    customTo.value = UsageSettings.customTo || today;
+    customForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const from = String(customFrom.value || '');
+      const to = String(customTo.value || '');
+      if (!validUsageDateRange(from, to)) {
+        if (customError) {
+          customError.hidden = false;
+          customError.textContent = usageText(
+            'Choose a valid date range up to 10 years.',
+            '请选择有效的起止日期，最长可查询 10 年。',
+            '최대 10년 이내의 올바른 날짜 범위를 선택하세요.'
+          );
+        }
+        return;
+      }
+      UsageSettings.customFrom = from;
+      UsageSettings.customTo = to;
+      UsageSettings.range = 'custom';
+      if (customError) customError.hidden = true;
+      document.querySelectorAll('[data-usage-range]').forEach((option) => {
+        option.classList.remove('is-active');
+        option.setAttribute('aria-pressed', 'false');
+      });
+      refreshUsageLanguage(false);
+      loadUsageSummary();
+    });
+  }
   document.getElementById('usage-retry-btn').addEventListener('click', () => loadUsageSummary({ force: true }));
   document.getElementById('usage-sign-in-btn').addEventListener('click', () => {
     const google = document.getElementById('account-google-sign-in') || document.getElementById('cloud-account-google');
@@ -591,5 +673,11 @@ if (typeof window !== 'undefined') {
   window.openUsageSettings = openUsageSettings;
 }
 if (typeof module === 'object' && module.exports) {
-  module.exports = { normalizeUsageSummary, fillUsageRange, smoothUsagePath, usageDecimalNumber };
+  module.exports = {
+    normalizeUsageSummary,
+    fillUsageRange,
+    smoothUsagePath,
+    usageDecimalNumber,
+    validUsageDateRange
+  };
 }

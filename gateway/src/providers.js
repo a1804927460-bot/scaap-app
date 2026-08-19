@@ -7,7 +7,13 @@ import {
 } from './ai302-tools.js';
 
 const require = createRequire(import.meta.url);
-const { detectMediaProtocol, generateMediaBuffer } = require('../../lib/ai-media-provider');
+const {
+  detectMediaProtocol,
+  generateMediaBuffer,
+  generatedImageDimensions,
+  gptImage2Size,
+  validateGeneratedMediaBuffer
+} = require('../../lib/ai-media-provider');
 const { requestChat, discoverChatModels } = require('../../lib/ai-chat-provider');
 const { PROVIDER_CATALOG_VERSION, providerCatalog } = require('../../lib/provider-catalog');
 
@@ -26,6 +32,7 @@ const ASYNC_VIDEO_PROTOCOLS = new Set([
   'kling-o3-omni'
 ]);
 const TERMINAL_VIDEO_FAILURES = new Set(['failed', 'cancelled', 'expired']);
+const ROUTED_TASK_PREFIX = 'messs-route:';
 
 function safeServerEndpoint(value) {
   try {
@@ -95,8 +102,34 @@ function providerApiKey(provider) {
   return '';
 }
 
+function providerRouteIds(provider) {
+  const capabilities = provider && provider.capabilities && typeof provider.capabilities === 'object'
+    ? provider.capabilities
+    : {};
+  const routeIds = [provider && provider.id];
+  if (Array.isArray(capabilities.upstreamPriority)) routeIds.push(...capabilities.upstreamPriority);
+  if (capabilities.upstreamRoutes && typeof capabilities.upstreamRoutes === 'object') {
+    Object.values(capabilities.upstreamRoutes).forEach((route) => {
+      if (Array.isArray(route)) routeIds.push(...route);
+    });
+  }
+  if (capabilities.tierProviderIds && typeof capabilities.tierProviderIds === 'object') {
+    routeIds.push(...Object.values(capabilities.tierProviderIds));
+  }
+  return [...new Set(routeIds.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))];
+}
+
+function providerHasUsableRoute(provider, providers = configuredProviders()) {
+  const byId = new Map(providers.map((entry) => [entry.id, entry]));
+  return providerRouteIds(provider).some((id) => {
+    const candidate = byId.get(id);
+    return candidate && Boolean(providerApiKey(candidate));
+  });
+}
+
 export function publicProviderConfig() {
-  const providers = configuredProviders().filter((provider) => !provider.hidden && Boolean(providerApiKey(provider)));
+  const configured = configuredProviders();
+  const providers = configured.filter((provider) => !provider.hidden && providerHasUsableRoute(provider, configured));
   return {
     catalogVersion: PROVIDER_CATALOG_VERSION,
     providers: providers.map(({ keyEnv, endpoint, resultEndpoint, hidden, ...provider }) => provider)
@@ -139,6 +172,103 @@ function providerFor(kind, id) {
   const apiKey = providerApiKey(selected);
   if (!apiKey) throw Object.assign(new Error(`The server secret ${selected.keyEnv} is missing.`), { code: 'provider-secret-missing' });
   return { ...selected, apiKey };
+}
+
+function requestRouteIds(provider, body = {}) {
+  const capabilities = provider && provider.capabilities && typeof provider.capabilities === 'object'
+    ? provider.capabilities
+    : {};
+  if (provider.kind === 'image' && Array.isArray(capabilities.upstreamPriority)) {
+    return capabilities.upstreamPriority;
+  }
+  if (provider.kind === 'video') {
+    const serviceTier = String(body.serviceTier || capabilities.defaultServiceTier || 'standard').trim().toLowerCase();
+    const tierProviderId = capabilities.tierProviderIds && capabilities.tierProviderIds[serviceTier];
+    if (tierProviderId) return [tierProviderId];
+    // Older clients may omit videoMode. Infer the same mode used by the
+    // validators so logical Seedance requests still try Atlas first.
+    let videoMode = String(body.videoMode || '').trim().toLowerCase();
+    if (!videoMode && capabilities.atlasRouted === true) {
+      const mediaTypes = Array.isArray(body.referenceMediaTypes)
+        ? body.referenceMediaTypes.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
+        : [];
+      const audioCount = (Array.isArray(body.referenceAudioUrls) ? body.referenceAudioUrls.length : 0)
+        + (Array.isArray(body.referenceAudioUploadIds) ? body.referenceAudioUploadIds.length : 0);
+      const urlCount = Array.isArray(body.urls) ? body.urls.filter(Boolean).length : mediaTypes.length;
+      if (mediaTypes.includes('video') || audioCount > 0 || urlCount > 2) videoMode = 'omni';
+      else if (urlCount === 2) videoMode = 'first-last-frame';
+      else if (urlCount === 1) videoMode = 'first-frame';
+    }
+    const route = capabilities.upstreamRoutes && capabilities.upstreamRoutes[videoMode];
+    if (Array.isArray(route) && route.length) return route;
+  }
+  return [provider.id];
+}
+
+function routedCandidateForRequest(requested, candidate, body = {}, primaryRouteAvailable = false) {
+  const requestedCapabilities = requested && requested.capabilities && typeof requested.capabilities === 'object'
+    ? requested.capabilities
+    : {};
+  if (requested.kind !== 'video' || requestedCapabilities.atlasRouted !== true
+      || candidate.id !== requested.id || !primaryRouteAvailable) return candidate;
+  const fallback = requestedCapabilities.fallbackCapabilities;
+  if (!fallback || typeof fallback !== 'object') return candidate;
+
+  // Keep the fallback candidate in the list even when a requested option is
+  // outside its matrix. The provider validator then returns a precise
+  // `invalid-resolution`/`invalid-reference-media` error instead of masking
+  // the user's invalid request as "no upstream configured". A valid Atlas
+  // request still cannot be sent to 302 because the merged fallback matrix
+  // rejects it before the upstream call.
+  return {
+    ...candidate,
+    capabilities: { ...candidate.capabilities, ...fallback },
+    _routedFallback: true
+  };
+}
+
+function providersForRequest(kind, id, body = {}) {
+  const requested = configuredProvider(kind, id);
+  if (!requested) {
+    throw Object.assign(new Error(`No ${kind} provider is configured.`), { code: 'provider-not-configured' });
+  }
+  const configured = configuredProviders();
+  const byId = new Map(configured.filter((provider) => provider.kind === kind).map((provider) => [provider.id, provider]));
+  const candidates = [];
+  const routeIds = requestRouteIds(requested, body);
+  const hasAlternateRoute = requested.kind === 'video'
+    && requested.capabilities && requested.capabilities.atlasRouted === true
+    && routeIds.some((routeId) => String(routeId || '').trim().toLowerCase() !== requested.id
+      && byId.has(String(routeId || '').trim().toLowerCase()));
+  for (const routeId of routeIds) {
+    const candidate = byId.get(String(routeId || '').trim().toLowerCase());
+    if (!candidate || !providerApiKey(candidate) || candidates.some((entry) => entry.id === candidate.id)) continue;
+    const routed = routedCandidateForRequest(requested, candidate, body, hasAlternateRoute);
+    if (!routed) continue;
+    candidates.push({ ...routed, apiKey: providerApiKey(candidate) });
+  }
+  if (!candidates.length) {
+    throw Object.assign(new Error('No configured upstream is available for the selected model.'), {
+      code: 'provider-secret-missing'
+    });
+  }
+  return candidates;
+}
+
+function routedProviderTaskId(requestedProviderId, actualProviderId, taskId) {
+  if (requestedProviderId === actualProviderId) return taskId;
+  return `${ROUTED_TASK_PREFIX}${actualProviderId}:${taskId}`;
+}
+
+function parseRoutedProviderTaskId(providerId, taskId) {
+  const value = String(taskId || '');
+  if (!value.startsWith(ROUTED_TASK_PREFIX)) return { providerId, taskId: value };
+  const separator = value.indexOf(':', ROUTED_TASK_PREFIX.length);
+  if (separator < 0) return { providerId, taskId: value };
+  const routedProviderId = value.slice(ROUTED_TASK_PREFIX.length, separator);
+  const routedTaskId = value.slice(separator + 1);
+  if (!PROVIDER_ID.test(routedProviderId) || !routedTaskId) return { providerId, taskId: value };
+  return { providerId: routedProviderId, taskId: routedTaskId };
 }
 
 function deepAtlasOutputUrl(value, seen = new Set(), depth = 0) {
@@ -192,6 +322,46 @@ async function downloadGeneratedImage(url, signal, maxBytes = 64 * 1024 * 1024) 
   return buffer;
 }
 
+function validateAtlasGptImageOutput(buffer, body) {
+  const validated = validateGeneratedMediaBuffer('image', buffer);
+  const expected = gptImage2Size(body);
+  const expectedMatch = /^(\d+)x(\d+)$/i.exec(String(expected || ''));
+  if (!expectedMatch) return validated;
+  const dimensions = generatedImageDimensions(validated);
+  if (!dimensions) {
+    throw Object.assign(new Error('Atlas Cloud returned an image whose dimensions could not be verified.'), {
+      status: 502,
+      code: 'image-resolution-unverified'
+    });
+  }
+  const expectedWidth = Number(expectedMatch[1]);
+  const expectedHeight = Number(expectedMatch[2]);
+  const expectedRatio = expectedWidth / expectedHeight;
+  const actualRatio = dimensions.width / dimensions.height;
+  const ratioDifference = Math.abs(Math.log(actualRatio / expectedRatio));
+  // Providers can round either edge by a small encoder-dependent amount. Keep
+  // a 10% tolerance for that rounding, but validate both edges and the ratio so
+  // a 4K request cannot silently become a lower tier or a differently cropped
+  // image. This also accepts GPT Image 2's valid 2880x2880 square 4K output.
+  if (
+    dimensions.width < Math.floor(expectedWidth * 0.9)
+    || dimensions.height < Math.floor(expectedHeight * 0.9)
+    || ratioDifference > Math.log(1.1)
+  ) {
+    throw Object.assign(new Error(
+      `Atlas Cloud returned ${dimensions.width}x${dimensions.height} for a requested ${expectedWidth}x${expectedHeight} image.`
+    ), {
+      status: 502,
+      code: 'image-resolution-mismatch',
+      requestedWidth: expectedWidth,
+      requestedHeight: expectedHeight,
+      actualWidth: dimensions.width,
+      actualHeight: dimensions.height
+    });
+  }
+  return validated;
+}
+
 async function generateAtlasGptImage(provider, body, signal) {
   const relayTokens = [];
   try {
@@ -207,7 +377,7 @@ async function generateAtlasGptImage(provider, body, signal) {
     const requestBody = {
       model: urls.length ? 'openai/gpt-image-2/edit' : 'openai/gpt-image-2/text-to-image',
       prompt: String(body.prompt || '').trim(),
-      size: String(body.size || '1024x1024').trim(),
+      size: gptImage2Size(body),
       quality: ['low', 'medium', 'high'].includes(String(body.quality || '').toLowerCase())
         ? String(body.quality).toLowerCase() : 'medium',
       output_format: ['jpeg', 'png'].includes(outputFormat) ? outputFormat : 'jpeg',
@@ -249,7 +419,10 @@ async function generateAtlasGptImage(provider, body, signal) {
         if (!outputUrl) throw Object.assign(new Error(`${provider.name} completed without an image output.`), {
           status: 502, code: 'provider-result-missing'
         });
-        return await downloadGeneratedImage(outputUrl, signal);
+        return validateAtlasGptImageOutput(
+          await downloadGeneratedImage(outputUrl, signal),
+          body
+        );
       }
       if (TERMINAL_VIDEO_FAILURES.has(status)) {
         throw Object.assign(new Error(safeProviderText(
@@ -267,8 +440,7 @@ async function generateAtlasGptImage(provider, body, signal) {
   }
 }
 
-export async function generateMedia(kind, body, signal) {
-  const provider = providerFor(kind, String(body.providerId || ''));
+async function generateMediaWithProvider(kind, provider, body, signal) {
   if (kind === 'image' && provider.protocol === 'atlas-gpt-image-2') {
     return generateAtlasGptImage(provider, body, signal);
   }
@@ -311,6 +483,53 @@ export async function generateMedia(kind, body, signal) {
   } finally {
     relayTokens.forEach((token) => deleteAi302RelayAsset(token));
   }
+}
+
+const FALLBACK_CAPABILITY_ERRORS = new Set([
+  'invalid-resolution',
+  'invalid-size',
+  'invalid-quality',
+  'invalid-aspect-ratio',
+  'invalid-size-ratio',
+  'invalid-duration',
+  'invalid-video-mode',
+  'invalid-reference-media',
+  'invalid-reference-format',
+  'invalid-output-format',
+  'too-many-references',
+  'too-many-reference-videos',
+  'too-many-reference-audios',
+  'reference-required',
+  'reference-video-required'
+]);
+
+function preferredFallbackError(firstError, lastError) {
+  if (!firstError) return lastError;
+  if (!lastError) return firstError;
+  // If the primary route failed upstream and a narrower fallback only rejects
+  // the same request's capabilities, report the primary outage. This keeps a
+  // transient Atlas failure from being misreported as a user option error.
+  if (!FALLBACK_CAPABILITY_ERRORS.has(String(lastError.code || '').trim().toLowerCase())
+      || FALLBACK_CAPABILITY_ERRORS.has(String(firstError.code || '').trim().toLowerCase())) {
+    return lastError;
+  }
+  return firstError;
+}
+
+export async function generateMedia(kind, body, signal) {
+  const providers = providersForRequest(kind, String(body.providerId || ''), body);
+  let firstError;
+  let lastError;
+  for (const provider of providers) {
+    try {
+      return await generateMediaWithProvider(kind, provider, body, signal);
+    } catch (error) {
+      if (!firstError) firstError = error;
+      lastError = error;
+      if (signal && signal.aborted) throw error;
+    }
+  }
+  throw preferredFallbackError(firstError, lastError);
 }
 
 const imageStyleCache = new Map();
@@ -394,7 +613,7 @@ export async function generateLegacyVideo(body, signal) {
       if (video.length > 256 * 1024 * 1024) {
         throw Object.assign(new Error('The generated video is too large.'), { status: 413, code: 'media-too-large' });
       }
-      return video;
+      return validateGeneratedMediaBuffer('video', video);
     }
     if (TERMINAL_VIDEO_FAILURES.has(result.status)) {
       throw Object.assign(new Error(result.errorMessage || 'Video generation failed.'), {
@@ -643,8 +862,22 @@ function validatedVideoTaskInput(provider, body) {
     ? provider.capabilities
     : {};
   const submittedUrls = Array.isArray(body.urls) ? body.urls.filter(Boolean) : [];
-  const mode = videoModeDefinition(capabilities, body.videoMode, submittedUrls.length);
+  const mediaTypesForMode = Array.isArray(body.referenceMediaTypes)
+    ? body.referenceMediaTypes.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  const audioCountForMode = (Array.isArray(body.referenceAudioUrls) ? body.referenceAudioUrls.length : 0)
+    + (Array.isArray(body.referenceAudioUploadIds) ? body.referenceAudioUploadIds.length : 0);
+  const inferredMode = String(body.videoMode || '').trim().toLowerCase()
+    || (capabilities.atlasRouted === true && (mediaTypesForMode.includes('video') || audioCountForMode > 0)
+      ? 'omni' : '');
+  const mode = videoModeDefinition(capabilities, inferredMode, submittedUrls.length);
   const referenceLimit = Math.max(0, Math.min(30, Number(capabilities.maxTotalReferences) || Number(mode.maxReferences) || 0));
+  if (referenceLimit && submittedUrls.length + audioCountForMode > referenceLimit) {
+    throw Object.assign(new Error(`${provider.name} accepts at most ${referenceLimit} reference files.`), {
+      status: 400,
+      code: 'too-many-references'
+    });
+  }
   const minReferenceImages = Math.max(0, Math.min(referenceLimit, Number(mode.minReferences) || 0));
   const maxReferenceImages = Math.max(minReferenceImages, Math.min(referenceLimit, Number(mode.maxReferences) || referenceLimit));
   if (submittedUrls.length > maxReferenceImages) {
@@ -680,6 +913,20 @@ function validatedVideoTaskInput(provider, body) {
       code: 'invalid-reference-media'
     });
   }
+  if (audioCountForMode > 0 && !allowedMediaTypes.has('audio')) {
+    throw Object.assign(new Error(`${provider.name} does not accept reference audio in this mode.`), {
+      status: 400,
+      code: 'invalid-reference-media'
+    });
+  }
+  const maximumReferenceAudios = Number(mode.maxReferenceAudios ?? capabilities.maxReferenceAudios);
+  if (Number.isFinite(maximumReferenceAudios) && maximumReferenceAudios >= 0
+      && audioCountForMode > maximumReferenceAudios) {
+    throw Object.assign(new Error(`${provider.name} accepts at most ${maximumReferenceAudios} reference audio files.`), {
+      status: 400,
+      code: 'too-many-reference-audios'
+    });
+  }
   const referenceVideoCount = referenceMediaTypes.filter((mediaType) => mediaType === 'video').length;
   const referenceImageCount = referenceMediaTypes.filter((mediaType) => mediaType === 'image').length;
   const maximumReferenceImages = Math.max(0, Number(mode.maxReferenceImages ?? capabilities.maxReferenceImages) || 0);
@@ -690,6 +937,13 @@ function validatedVideoTaskInput(provider, body) {
     });
   }
   const maximumReferenceVideos = Math.max(0, Number(mode.maxReferenceVideos ?? capabilities.maxReferenceVideos) || 0);
+  const minimumReferenceVideos = Math.max(0, Number(mode.minReferenceVideos) || 0);
+  if (referenceVideoCount < minimumReferenceVideos) {
+    throw Object.assign(new Error(`${provider.name} requires at least ${minimumReferenceVideos} reference video${minimumReferenceVideos === 1 ? '' : 's'}.`), {
+      status: 400,
+      code: 'reference-video-required'
+    });
+  }
   if (referenceVideoCount > maximumReferenceVideos) {
     throw Object.assign(new Error(`${provider.name} accepts at most ${maximumReferenceVideos} reference videos.`), {
       status: 400,
@@ -798,9 +1052,49 @@ function seedanceRelayMediaUrl(rawUrl, mediaType) {
   });
 }
 
+function seedanceReferencePrompt(prompt, mode, mediaTypes = [], audioCount = 0) {
+  const text = String(prompt || '').trim();
+  const normalizedMode = String(mode || '').trim().toLowerCase();
+  // Image-to-video sends first/last frames in dedicated fields. Adding @
+  // tokens there would change the prompt semantics on both upstreams.
+  if (['first-frame', 'first-last-frame'].includes(normalizedMode)) return text;
+
+  const counters = { image: 0, video: 0, audio: 0 };
+  const tokens = [];
+  for (const rawType of Array.isArray(mediaTypes) ? mediaTypes : []) {
+    const type = String(rawType || '').trim().toLowerCase();
+    if (!Object.prototype.hasOwnProperty.call(counters, type)) continue;
+    counters[type] += 1;
+    tokens.push(`@${type[0].toUpperCase()}${type.slice(1)}${counters[type]}`);
+  }
+  for (let index = 0; index < Math.max(0, Number(audioCount) || 0); index += 1) {
+    counters.audio += 1;
+    tokens.push(`@Audio${counters.audio}`);
+  }
+  if (!tokens.length) return text;
+
+  const existing = new Set(
+    [...text.matchAll(/@(Image|Video|Audio)(\d+)/gi)]
+      .map((match) => `@${match[1][0].toUpperCase()}${match[1].slice(1).toLowerCase()}${match[2]}`)
+  );
+  const missing = tokens.filter((token) => !existing.has(token));
+  if (!missing.length) return text;
+
+  let directive;
+  if (normalizedMode === 'video-edit') {
+    directive = `Edit ${tokens.find((token) => token.startsWith('@Video')) || '@Video1'} according to this request.`;
+  } else if (normalizedMode === 'video-extend') {
+    directive = `Extend ${tokens.find((token) => token.startsWith('@Video')) || '@Video1'} according to this request.`;
+  } else {
+    directive = `Create a new video using ${missing.join(', ')} as references.`;
+  }
+  return [directive, text].filter(Boolean).join(' ');
+}
+
 async function createSeedanceVideoTask(provider, body, signal) {
-  const { capabilities, duration, ratio, referenceMediaTypes, resolution, roles, urls } = validatedVideoTaskInput(provider, body);
-  const content = [{ type: 'text', text: String(body.prompt || '').trim() }];
+  const { capabilities, duration, mode, ratio, referenceMediaTypes, resolution, roles, urls } = validatedVideoTaskInput(provider, body);
+  const prompt = seedanceReferencePrompt(body.prompt, mode, referenceMediaTypes, 0);
+  const content = [{ type: 'text', text: prompt }];
   urls.forEach((url, index) => {
     const relayUrl = seedanceRelayMediaUrl(url, referenceMediaTypes[index]);
     if (referenceMediaTypes[index] === 'video') {
@@ -817,11 +1111,20 @@ async function createSeedanceVideoTask(provider, body, signal) {
     model: provider.model,
     content,
     ...(capabilities.generateAudio === true || capabilities.generateAudio === false
-      ? { generate_audio: capabilities.generateAudio }
+      ? { generate_audio: capabilities.generateAudio === true && body.generateAudio !== false }
       : {}),
     ratio,
     duration,
-    ...(capabilities.supportsResolution === false ? {} : { resolution: resolution.toLowerCase() }),
+    // The 302 Seedance contents endpoint derives quality from the selected
+    // model and rejects a `resolution` field. Atlas has its own request
+    // builder and sends the documented resolution field there.
+    ...(
+      capabilities.supportsResolution === true
+        || (capabilities.supportsResolution === undefined
+          && !/(?:seedance|doubao[-_ ]?seedance)[-_ ]?2[-_. ]?5(?:[-_ ]|$)/.test(String(provider.model || '').toLowerCase()))
+        ? { resolution: resolution.toLowerCase() }
+        : {}
+    ),
     watermark: false,
     ...(capabilities.serviceTier ? { service_tier: String(capabilities.serviceTier) } : {})
   };
@@ -884,7 +1187,7 @@ function atlasVideoTaskInput(provider, body) {
     ? body.referenceMediaTypes.slice(0, 50).map((value) => String(value || '').trim().toLowerCase())
     : urls.map(() => 'image');
   const audioUrls = Array.isArray(body.referenceAudioUrls)
-    ? body.referenceAudioUrls.filter(Boolean).slice(0, Number(capabilities.maxReferenceAudios) || 10)
+    ? body.referenceAudioUrls.filter(Boolean).slice(0, 50)
     : [];
   if (mediaTypes.length !== urls.length || mediaTypes.some((type) => !['image', 'video'].includes(type))) {
     throw Object.assign(new Error('Atlas Cloud reference media selection is incomplete.'), {
@@ -893,6 +1196,7 @@ function atlasVideoTaskInput(provider, body) {
   }
   const videoCount = mediaTypes.filter((type) => type === 'video').length;
   let mode = String(body.videoMode || '').trim().toLowerCase();
+  let modeDefinition = {};
   if (isI2v) {
     if (!urls.length || urls.length > 2 || audioUrls.length || mediaTypes.some((type) => type !== 'image')) {
       throw Object.assign(new Error(`${provider.name} requires one first-frame image and an optional last-frame image.`), {
@@ -900,18 +1204,27 @@ function atlasVideoTaskInput(provider, body) {
       });
     }
     mode = urls.length === 2 ? 'first-last-frame' : 'first-frame';
+    modeDefinition = Array.isArray(capabilities.videoModes)
+      ? capabilities.videoModes.find((entry) => entry && entry.id === mode) || {}
+      : {};
   } else {
-    if (!mode) mode = videoCount === 1 && urls.length === 1 ? 'video-edit' : 'omni';
+    if (!mode) mode = 'omni';
     if (!['omni', 'video-reference', 'video-edit', 'video-extend'].includes(mode)) {
       throw Object.assign(new Error(`${provider.name} does not support this reference mode.`), {
         status: 400, code: 'invalid-video-mode'
       });
     }
-    const maxImages = Math.max(0, Number(capabilities.maxReferenceImages) || 30);
-    const maxVideos = Math.max(0, Number(capabilities.maxReferenceVideos) || 10);
-    const maxTotal = Math.max(1, Number(capabilities.maxTotalReferences) || maxImages + maxVideos);
+    modeDefinition = Array.isArray(capabilities.videoModes)
+      ? capabilities.videoModes.find((entry) => entry && entry.id === mode) || {}
+      : {};
+    const maxImages = Math.max(0, Number(modeDefinition.maxReferenceImages ?? capabilities.maxReferenceImages) || 30);
+    const maxVideos = Math.max(0, Number(modeDefinition.maxReferenceVideos ?? capabilities.maxReferenceVideos) || 10);
+    const minVideos = Math.max(0, Number(modeDefinition.minReferenceVideos) || 0);
+    const maxAudios = Math.max(0, Number(modeDefinition.maxReferenceAudios ?? capabilities.maxReferenceAudios) || 0);
+    const maxTotal = Math.max(1, Number(modeDefinition.maxReferences ?? capabilities.maxTotalReferences) || maxImages + maxVideos + maxAudios);
     const imageCount = mediaTypes.filter((type) => type === 'image').length;
-    if (urls.length + audioUrls.length > maxTotal || imageCount > maxImages || videoCount > maxVideos) {
+    if (urls.length + audioUrls.length > maxTotal || imageCount > maxImages
+        || videoCount < minVideos || videoCount > maxVideos || audioUrls.length > maxAudios) {
       throw Object.assign(new Error(`${provider.name} received too many reference files.`), {
         status: 400, code: 'too-many-references'
       });
@@ -921,8 +1234,13 @@ function atlasVideoTaskInput(provider, body) {
         status: 400, code: 'reference-required'
       });
     }
-    if (['video-edit', 'video-extend'].includes(mode) && (videoCount !== 1 || urls.length !== 1 || audioUrls.length)) {
-      throw Object.assign(new Error(`${provider.name} ${mode === 'video-extend' ? 'video extension' : 'video editing'} requires exactly one reference video.`), {
+    if (mode === 'video-edit' && videoCount !== 1) {
+      throw Object.assign(new Error(`${provider.name} video editing requires exactly one reference video.`), {
+        status: 400, code: 'invalid-video-mode'
+      });
+    }
+    if (mode === 'video-extend' && (videoCount !== 1 || urls.length !== 1 || audioUrls.length)) {
+      throw Object.assign(new Error(`${provider.name} video extension requires exactly one reference video.`), {
         status: 400, code: 'invalid-video-mode'
       });
     }
@@ -941,7 +1259,10 @@ function atlasVideoTaskInput(provider, body) {
     });
   }
   const duration = Number(body.duration);
-  const durations = Array.isArray(capabilities.durations) ? capabilities.durations.map(Number) : [];
+  const durationSource = Array.isArray(modeDefinition.durations) && modeDefinition.durations.length
+    ? modeDefinition.durations
+    : capabilities.durations;
+  const durations = Array.isArray(durationSource) ? durationSource.map(Number) : [];
   if (!Number.isInteger(duration) || !durations.includes(duration)) {
     throw Object.assign(new Error(`${provider.name} does not support this duration.`), {
       status: 400, code: 'invalid-duration'
@@ -950,14 +1271,15 @@ function atlasVideoTaskInput(provider, body) {
   let ratio = String(body.aspectRatio || '').trim();
   const validRatios = Array.isArray(capabilities.ratios) ? capabilities.ratios.map(String) : [];
   if (isI2v) ratio = 'adaptive';
-  if (['video-edit', 'video-extend'].includes(mode) && String(provider.model).includes('2.5')) {
+  if (mode === 'video-edit' && String(provider.model).includes('2.5')) {
     ratio = 'adaptive';
     if (duration !== -1) {
-      throw Object.assign(new Error('Seedance 2.5 video editing and extension require duration -1.'), {
+      throw Object.assign(new Error('Seedance 2.5 video editing requires duration -1.'), {
         status: 400, code: 'invalid-duration'
       });
     }
   }
+  if (mode === 'video-extend' && String(provider.model).includes('2.5')) ratio = 'adaptive';
   if (!validRatios.includes(ratio)) {
     throw Object.assign(new Error(`${provider.name} does not support this aspect ratio.`), {
       status: 400, code: 'invalid-aspect-ratio'
@@ -981,7 +1303,9 @@ function atlasVideoTaskInput(provider, body) {
 async function createAtlasSeedanceVideoTask(provider, body, signal) {
   const input = atlasVideoTaskInput(provider, body);
   const { capabilities, isI2v, urls, mediaTypes, audioUrls, mode, resolution, duration, ratio, outputFormat } = input;
-  const prompt = String(body.prompt || '').trim();
+  const prompt = isI2v
+    ? String(body.prompt || '').trim()
+    : seedanceReferencePrompt(body.prompt, mode, mediaTypes, audioUrls.length);
   const common = {
     model: provider.model,
     prompt,
@@ -1013,7 +1337,8 @@ async function createAtlasSeedanceVideoTask(provider, body, signal) {
         reference_audios: audioUrls.map((url) => atlasRelayMediaUrl(url, 'audio')),
         ...(mode === 'video-edit' ? { omni_reference_task_type: 'edit' }
           : mode === 'video-extend' ? { omni_reference_task_type: 'extend' }
-            : mode === 'video-reference' ? { omni_reference_task_type: 'reference' } : {})
+            : String(provider.model).includes('2.5') && ['omni', 'video-reference'].includes(mode)
+              ? { omni_reference_task_type: 'reference' } : {})
       };
   const created = await responseJson(await fetch(provider.endpoint, {
     method: 'POST',
@@ -1254,8 +1579,7 @@ async function createJimengVideoTask(provider, body, signal) {
   return { providerId: provider.id, taskId };
 }
 
-export async function createVideoTask(body, signal) {
-  const provider = providerFor('video', String(body.providerId || ''));
+async function createVideoTaskWithProvider(provider, body, signal) {
   if (provider.protocol === 'minimax-video-v2') return createMiniMaxVideoTask(provider, body, signal);
   if (provider.protocol === 'seedance-video-v3') return createSeedanceVideoTask(provider, body, signal);
   if (provider.protocol === 'atlas-seedance-video') return createAtlasSeedanceVideoTask(provider, body, signal);
@@ -1268,6 +1592,27 @@ export async function createVideoTask(body, signal) {
     status: 400,
     code: 'async-video-not-supported'
   });
+}
+
+export async function createVideoTask(body, signal) {
+  const requestedProviderId = String(body.providerId || '').trim().toLowerCase();
+  const providers = providersForRequest('video', requestedProviderId, body);
+  let firstError;
+  let lastError;
+  for (const provider of providers) {
+    try {
+      const created = await createVideoTaskWithProvider(provider, body, signal);
+      return {
+        ...created,
+        taskId: routedProviderTaskId(requestedProviderId, created.providerId, created.taskId)
+      };
+    } catch (error) {
+      if (!firstError) firstError = error;
+      lastError = error;
+      if (signal && signal.aborted) throw error;
+    }
+  }
+  throw preferredFallbackError(firstError, lastError);
 }
 
 function validVideoTaskId(taskId) {
@@ -1418,15 +1763,16 @@ async function pollJimengVideoTask(provider, taskId, signal) {
 }
 
 export async function pollVideoTask(providerId, taskId, signal) {
-  const provider = providerFor('video', String(providerId || ''));
-  if (provider.protocol === 'minimax-video-v2') return pollMiniMaxVideoTask(provider, taskId, signal);
-  if (provider.protocol === 'seedance-video-v3') return pollSeedanceVideoTask(provider, taskId, signal);
-  if (provider.protocol === 'atlas-seedance-video') return pollAtlasSeedanceVideoTask(provider, taskId, signal);
+  const routed = parseRoutedProviderTaskId(String(providerId || ''), taskId);
+  const provider = providerFor('video', routed.providerId);
+  if (provider.protocol === 'minimax-video-v2') return pollMiniMaxVideoTask(provider, routed.taskId, signal);
+  if (provider.protocol === 'seedance-video-v3') return pollSeedanceVideoTask(provider, routed.taskId, signal);
+  if (provider.protocol === 'atlas-seedance-video') return pollAtlasSeedanceVideoTask(provider, routed.taskId, signal);
   if (['jimeng-video-v30', 'jimeng-video-v30-pro'].includes(provider.protocol)) {
-    return pollJimengVideoTask(provider, taskId, signal);
+    return pollJimengVideoTask(provider, routed.taskId, signal);
   }
-  if (provider.protocol === 'kling-v3-image-to-video') return pollKlingV3VideoTask(provider, taskId, signal);
-  if (provider.protocol === 'kling-o3-omni') return pollKlingO3VideoTask(provider, taskId, signal);
+  if (provider.protocol === 'kling-v3-image-to-video') return pollKlingV3VideoTask(provider, routed.taskId, signal);
+  if (provider.protocol === 'kling-o3-omni') return pollKlingO3VideoTask(provider, routed.taskId, signal);
   throw Object.assign(new Error('The selected video provider does not support task polling.'), {
     status: 400,
     code: 'async-video-not-supported'

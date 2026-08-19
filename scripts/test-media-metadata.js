@@ -1,7 +1,12 @@
 'use strict';
 
 const assert = require('assert');
-const { parseFfmpegVideoMetadata } = require('../lib/media-metadata');
+const { parseFfmpegMediaDuration, parseFfmpegVideoMetadata } = require('../lib/media-metadata');
+const {
+  seedanceReferenceProfile,
+  validateSeedanceReferenceDuration,
+  validateSeedanceReferenceTotals
+} = require('../lib/seedance-reference-validation');
 
 const landscape = parseFfmpegVideoMetadata(`
   Duration: 00:00:06.04, start: 0.000000, bitrate: 6012 kb/s
@@ -46,5 +51,38 @@ const withAudio = parseFfmpegVideoMetadata(`
 assert.strictEqual(withAudio.hasAudio, true);
 
 assert.strictEqual(parseFfmpegVideoMetadata('Input file has no video stream'), null);
+
+assert.strictEqual(parseFfmpegMediaDuration(`
+  Duration: 00:00:12.75, start: 0.025057, bitrate: 320 kb/s
+  Stream #0:0: Audio: mp3, 44100 Hz, stereo, fltp, 320 kb/s
+`), 12.75);
+assert.strictEqual(parseFfmpegMediaDuration('Duration: N/A, bitrate: N/A'), null);
+
+const seedance20 = seedanceReferenceProfile('video-2');
+const seedance25 = seedanceReferenceProfile('video-3');
+assert.strictEqual(seedanceReferenceProfile('video-1'), null);
+assert.doesNotThrow(() => validateSeedanceReferenceDuration(seedance20, 'video', 15));
+assert.throws(
+  () => validateSeedanceReferenceDuration(seedance20, 'video', 15.01),
+  (error) => error && error.code === 'invalid-reference-video-duration'
+);
+assert.doesNotThrow(() => validateSeedanceReferenceDuration(seedance25, 'audio', 30));
+assert.throws(
+  () => validateSeedanceReferenceDuration(seedance25, 'audio', 30.01),
+  (error) => error && error.code === 'invalid-reference-audio-duration'
+);
+assert.throws(
+  () => validateSeedanceReferenceDuration(seedance20, 'audio', 0),
+  (error) => error && error.code === 'reference-audio-duration-unavailable'
+);
+assert.throws(
+  () => validateSeedanceReferenceTotals(seedance20, { video: [8, 7.01], audio: [] }),
+  (error) => error && error.code === 'reference-video-duration-limit'
+);
+assert.throws(
+  () => validateSeedanceReferenceTotals(seedance25, { video: [], audio: [12, 18.01] }),
+  (error) => error && error.code === 'reference-audio-duration-limit'
+);
+assert.doesNotThrow(() => validateSeedanceReferenceTotals(null, { video: [999], audio: [999] }));
 
 process.stdout.write('Media metadata tests passed.\n');

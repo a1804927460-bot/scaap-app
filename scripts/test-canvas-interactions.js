@@ -999,16 +999,59 @@ assert.match(
 );
 assert.match(
   contextMenuSource,
-  /function renderCanvasUsageDetails[\s\S]*?breakdown\.image[\s\S]*?breakdown\.video[\s\S]*?breakdown\['3d'\][\s\S]*?older result/,
-  'Canvas usage details must separate media types and disclose historical records without point data.'
+  /function renderCanvasUsageDetails[\s\S]*?breakdown\.image[\s\S]*?breakdown\.video[\s\S]*?breakdown\['3d'\][\s\S]*?marked as estimates/,
+  'Canvas usage details must separate media types and disclose estimated historical records.'
 );
 assert.match(indexHtml, /id="canvas-usage-overlay"[\s\S]*?id="canvas-usage-summary"[\s\S]*?id="canvas-usage-rows"/,
   'Canvas usage needs an accessible summary and detailed rows dialog.');
 assert.match(
   mainSource,
-  /function canvasCreditUsage\(canvasId\)[\s\S]*?file\.canvasId === id[\s\S]*?rawCredits !== null[\s\S]*?breakdown[\s\S]*?ipcMain\.handle\('canvas:getCreditUsage'/,
-  'The main process must compute usage from current-canvas records and expose a dedicated IPC route.'
+  /function ensureCanvasUsageLedger\(\)[\s\S]*?canvasUsageEntryFromFile[\s\S]*?async function canvasCreditUsage\(canvasId\)[\s\S]*?getCanvasUsage\(id\)[\s\S]*?breakdown[\s\S]*?ipcMain\.handle\('canvas:getCreditUsage'/,
+  'The main process must preserve an append-only local ledger, merge cloud billing, and expose a dedicated IPC route.'
 );
+assert.match(mainSource, /recordCanvasUsageFile\(record\)/,
+  'Generated and Butler outputs must enter the canvas ledger before they can be deleted.');
+assert.match(mainSource, /accountingRequestId:\s*generated\.accountingRequestId/,
+  'Generated output records must retain the gateway billing request id for exact cloud deduplication.');
+const ledgerSource = mainSource.slice(
+  mainSource.indexOf('function canvasUsageKind'),
+  mainSource.indexOf('async function canvasCreditUsage')
+);
+const ledgerSandbox = {
+  store: { data: { files: [], canvasUsageLedger: [] } },
+  quoteMediaCredits: () => ({ unitCredits: 24, totalCredits: 24 }),
+  BUTLER_IMAGE_TOOL_CREDITS: {}
+};
+vm.runInNewContext(
+  `${ledgerSource}\nthis.canvasLedgerApi = { ensureCanvasUsageLedger, recordCanvasUsageFile };`,
+  ledgerSandbox
+);
+const billedFile = {
+  id: 'generated-file-1',
+  name: 'Generated.png',
+  canvasId: 'canvas-history',
+  importedAt: '2026-08-01T00:00:00.000Z',
+  aiGeneration: {
+    kind: 'image',
+    providerId: 'image-6',
+    modelName: 'GPT Image 2',
+    size: '4K',
+    credits: 24,
+    accountingRequestId: '00000000-0000-4000-8000-000000000099',
+    createdAt: '2026-08-01T00:00:00.000Z'
+  }
+};
+ledgerSandbox.canvasLedgerApi.recordCanvasUsageFile(billedFile);
+assert.equal(ledgerSandbox.store.data.canvasUsageLedger.length, 1);
+ledgerSandbox.store.data.files = [billedFile];
+ledgerSandbox.canvasLedgerApi.ensureCanvasUsageLedger();
+assert.equal(ledgerSandbox.store.data.canvasUsageLedger.length, 1, 'Restart backfill must not duplicate a billed output.');
+ledgerSandbox.store.data.files = [];
+ledgerSandbox.store.data.canvasUsageLedger = JSON.parse(JSON.stringify(ledgerSandbox.store.data.canvasUsageLedger));
+ledgerSandbox.canvasLedgerApi.ensureCanvasUsageLedger();
+assert.equal(ledgerSandbox.store.data.canvasUsageLedger.length, 1, 'Deleting media and reloading after an update must preserve canvas usage.');
+assert.equal(ledgerSandbox.store.data.canvasUsageLedger[0].credits, 24);
+assert.equal(ledgerSandbox.store.data.canvasUsageLedger[0].canvasId, 'canvas-history');
 assert.match(
   workspaceSource,
   /async function loadCanvasAgentHistory\(\)[\s\S]*?getCanvasAgentHistory[\s\S]*?mergeCanvasAgentSessions\(durable, local, CanvasWorkspace\.agentSessions\)/,

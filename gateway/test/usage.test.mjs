@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 import {
   filterProviderConfigForAccount,
+  getCanvasUsage,
   getUsageAccount,
   getUsageSummary,
   providerRequiresActivation,
@@ -14,7 +15,8 @@ import {
   reserveUsage,
   settleToolUsage,
   touchToolUsage,
-  settleUsage
+  settleUsage,
+  tagUsageCanvas
 } from '../src/usage.js';
 import {
   APP_CREDITS_PER_CNY,
@@ -383,7 +385,7 @@ test('GPT Image 2 reserves the selected quality price through the existing RPC p
         return jsonResponse({ ok: true, reason: 'reserved', credits: 18, availableCredits: 82 });
       }
     );
-    assert.match(call.url, /\/rpc\/reserve_ai_credits$/);
+    assert.match(call.url, /\/rpc\/reserve_atlas_catalog_credits$/);
     assert.deepEqual(call.body, {
       p_user_id: '00000000-0000-4000-8000-000000000021',
       p_kind: 'image',
@@ -755,6 +757,68 @@ test('usage summary rejects invalid ranges before making a request', async () =>
   });
 });
 
+test('custom calendar usage calls the date-range RPC with a bounded timezone offset', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
+    let call;
+    const summary = await getUsageSummary(
+      '00000000-0000-4000-8000-000000000041',
+      { from: '2026-08-01', to: '2026-08-19', timeZoneOffset: 480 },
+      async (url, options) => {
+        call = { url, body: JSON.parse(options.body) };
+        return jsonResponse({
+          range: 'custom',
+          period: { from: '2026-08-01', to: '2026-08-19', days: 19 },
+          account: { balance: 500, availableCredits: 500 },
+          totals: { credits: 81, generations: 3, requests: 3, averagePerDay: 4.26 },
+          byType: [], daily: [], byModel: []
+        });
+      }
+    );
+    assert.match(call.url, /\/rpc\/get_ai_usage_summary_between$/);
+    assert.deepEqual(call.body, {
+      p_user_id: '00000000-0000-4000-8000-000000000041',
+      p_from: '2026-08-01',
+      p_to: '2026-08-19',
+      p_tz_offset: 480
+    });
+    assert.equal(summary.range, 'custom');
+    assert.equal(summary.totals.credits, 81);
+  });
+});
+
+test('canvas accounting tags a paid request and exposes sanitized all-time details', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
+    const calls = [];
+    const fetchMock = async (url, options) => {
+      calls.push({ url, body: JSON.parse(options.body) });
+      if (url.endsWith('/set_ai_usage_canvas')) return jsonResponse(true);
+      return jsonResponse({
+        canvasId: 'canvas-1',
+        totals: { credits: 28, generations: 1, providerCost: 99 },
+        details: [{
+          requestId: '00000000-0000-4000-8000-000000000099',
+          kind: 'image', providerId: 'image-6', credits: 28,
+          resolution: 'high', duration: null, createdAt: '2026-08-19T10:00:00.000Z',
+          providerCost: 99
+        }]
+      });
+    };
+    const tagged = await tagUsageCanvas(
+      '00000000-0000-4000-8000-000000000041',
+      '00000000-0000-4000-8000-000000000099',
+      'canvas-1',
+      fetchMock
+    );
+    assert.equal(tagged.ok, true);
+    const usage = await getCanvasUsage('00000000-0000-4000-8000-000000000041', 'canvas-1', fetchMock);
+    assert.equal(usage.totals.credits, 28);
+    assert.equal(usage.details[0].requestId, '00000000-0000-4000-8000-000000000099');
+    assert.doesNotMatch(JSON.stringify(usage), /providerCost|provider_cost/i);
+    assert.match(calls[0].url, /\/rpc\/set_ai_usage_canvas$/);
+    assert.match(calls[1].url, /\/rpc\/get_canvas_ai_usage_summary$/);
+  });
+});
+
 test('usage summary migration aggregates successful retail usage and is service-role only', () => {
   const migration = fs.readFileSync(new URL('../../supabase/migrations/202608080006_ai_usage_summary.sql', import.meta.url), 'utf8');
   assert.match(migration, /create or replace function public\.get_ai_usage_summary\s*\(/i);
@@ -768,11 +832,26 @@ test('usage summary migration aggregates successful retail usage and is service-
   assert.doesNotMatch(migration, /provider_cost|providerCost/);
 });
 
+test('canvas usage migration keeps attribution and custom dates server-authoritative', () => {
+  const migration = fs.readFileSync(new URL('../../supabase/migrations/202608190003_canvas_usage_history.sql', import.meta.url), 'utf8');
+  assert.match(migration, /alter table public\.ai_usage add column if not exists canvas_id text/i);
+  assert.match(migration, /create or replace function public\.set_ai_usage_canvas/i);
+  assert.match(migration, /where request_id = p_request_id[\s\S]*and user_id = p_user_id/i);
+  assert.match(migration, /create or replace function public\.get_canvas_ai_usage_summary/i);
+  assert.match(migration, /usage_row\.status = 'succeeded'/i);
+  assert.match(migration, /create or replace function public\.get_ai_usage_summary_between/i);
+  assert.match(migration, /make_interval\(mins => normalized_offset\)/i);
+  assert.doesNotMatch(migration, /provider_cost|providerCost/);
+});
+
 test('usage summary HTTP route remains behind authentication', () => {
   const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
   const authenticationAt = server.indexOf('const user = await authenticate(request)');
   const usageRouteAt = server.indexOf("url.pathname === '/v1/usage/summary'");
+  const canvasUsageRouteAt = server.indexOf("url.pathname === '/v1/usage/canvas'");
   assert.ok(authenticationAt >= 0);
   assert.ok(usageRouteAt > authenticationAt);
-  assert.match(server.slice(usageRouteAt, usageRouteAt + 300), /getUsageSummary\(user\.id, range\)/);
+  assert.ok(canvasUsageRouteAt > authenticationAt);
+  assert.match(server.slice(usageRouteAt, usageRouteAt + 700), /getUsageSummary\(user\.id, range\)/);
+  assert.match(server.slice(canvasUsageRouteAt, canvasUsageRouteAt + 250), /getCanvasUsage\(user\.id, canvasId\)/);
 });

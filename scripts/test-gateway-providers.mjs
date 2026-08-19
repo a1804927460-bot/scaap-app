@@ -77,36 +77,26 @@ const gptImage2Provider = config.providers.find((provider) => provider.id === 'i
 assert.equal(gptImage2Provider.name, 'GPT Image 2');
 assert.equal(gptImage2Provider.model, 'gpt-image-2');
 assert.equal(gptImage2Provider.protocol, 'openai-image');
-assert.equal(gptImage2Provider.capabilities.sizes.length, 30);
-for (const requiredSize of [
-  '1024x1024', '2880x2880', '1920x1080', '3840x2160', '1080x1920', '2160x3840',
-  '3200x2000', '2000x3200', '3840x1920', '1920x3840', '3200x2400', '2400x3200',
-  '3200x2560', '2560x3200', '3780x1620', 'auto'
-]) {
-  assert.equal(gptImage2Provider.capabilities.sizes.includes(requiredSize), true, `${requiredSize} must be exposed for GPT Image 2.`);
-}
+assert.deepEqual(gptImage2Provider.capabilities.sizes, ['1K', '2K', '4K']);
+assert.deepEqual(gptImage2Provider.capabilities.resolutionPresets, ['1K', '2K', '4K']);
 assert.deepEqual(gptImage2Provider.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
 assert.deepEqual(gptImage2Provider.capabilities.ratios, [
   'auto', '1:1', '16:9', '9:16', '16:10', '10:16', '2:1', '1:2',
   '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9', '9:21', '3:1',
-  '1:3', '4:1', '1:4', '7:5', '5:7', '8:5', '5:8'
+  '1:3', '7:5', '5:7', '8:5', '5:8'
 ]);
 assert.equal(gptImage2Provider.capabilities.arbitrarySizes, true);
 assert.equal(gptImage2Provider.capabilities.arbitraryRatios, true);
 assert.equal(gptImage2Provider.capabilities.maxSizeEdge, 3840);
 assert.equal(gptImage2Provider.capabilities.maxSizePixels, 8_300_000);
-for (const size of gptImage2Provider.capabilities.sizes.filter((value) => value !== 'auto')) {
-  const [width, height] = size.split('x').map(Number);
-  const [ratioWidth, ratioHeight] = gptImage2Provider.capabilities.sizeRatios[size].split(':').map(Number);
-  assert.ok(width <= 3840 && height <= 3840, `${size} exceeds the GPT Image 2 edge limit.`);
-  assert.ok(width * height <= 8_300_000, `${size} exceeds the GPT Image 2 pixel limit.`);
-  assert.ok(Math.abs((width / height) - (ratioWidth / ratioHeight)) < 1e-9, `${size} has an incorrect ratio mapping.`);
-}
-assert.equal(gptImage2Provider.capabilities.promptMaxCharacters, 1000);
+assert.equal(gptImage2Provider.capabilities.minimumAspectRatio, 1 / 3);
+assert.equal(gptImage2Provider.capabilities.maximumAspectRatio, 3);
+assert.equal(gptImage2Provider.capabilities.sizeMultiple, 16);
+assert.equal(gptImage2Provider.capabilities.promptMaxCharacters, 32000);
 assert.equal(gptImage2Provider.capabilities.referencePromptMaxCharacters, 32000);
 assert.deepEqual(gptImage2Provider.capabilities.referenceMimeTypes, ['image/png', 'image/jpeg', 'image/webp']);
 assert.equal(gptImage2Provider.capabilities.maxReferenceImageBytes, (25 * 1024 * 1024) - 1);
-assert.equal(providerPromptLimit('image', 'image-6', false), 1000);
+assert.equal(providerPromptLimit('image', 'image-6', false), 32000);
 assert.equal(providerPromptLimit('image', 'image-6', true), 32000);
 assert.equal(providerPromptLimit('image', 'image-1', false), 12000);
 assert.equal(providerPromptLimit('video', 'video-1', false), 7000);
@@ -119,6 +109,11 @@ assert.match(
   gatewayServerSource,
   /arbitrarySizes[\s\S]*?maxSizeEdge[\s\S]*?maxSizePixels[\s\S]*?imageDimensionsWithinCapabilities\(requestedSize, capabilities\)/,
   'Gateway must allow bounded arbitrary GPT Image 2 dimensions.'
+);
+assert.match(
+  gatewayServerSource,
+  /referenceVideoUploadIds:\s*\[\][\s\S]*?referenceAudioUploadIds:\s*\[\]/,
+  'Materialized video and audio upload IDs must be cleared so references are not counted twice.'
 );
 assert.match(
   gatewayServerSource,
@@ -136,32 +131,35 @@ const seedance25Provider = config.providers.find((provider) => provider.id === '
 assert.equal(seedance20Provider.name, 'Seedance 2.0');
 assert.equal(seedance20Provider.model, 'doubao-seedance-2-0-260128');
 assert.equal(seedance20Provider.protocol, 'seedance-video-v3');
-assert.deepEqual(seedance20Provider.capabilities.resolutions, ['480P', '720P']);
+assert.deepEqual(seedance20Provider.capabilities.resolutions, ['480P', '720P', '720P-SR', '1080P', '1080P-SR', '1440P-SR', '4K']);
 assert.deepEqual(seedance20Provider.capabilities.durations, Array.from({ length: 12 }, (_value, index) => index + 4));
 assert.equal(seedance20Provider.capabilities.maxReferenceImages, 9);
 assert.deepEqual(seedance20Provider.capabilities.videoModes.map((mode) => mode.id), [
-  'text', 'first-frame', 'first-last-frame', 'omni'
+  'first-frame', 'first-last-frame', 'omni'
 ]);
-assert.deepEqual(seedance20Provider.capabilities.videoModes[2].roles, ['first_frame', 'last_frame']);
-assert.deepEqual(seedance20Provider.capabilities.videoModes[3].roles, ['reference_image']);
-assert.deepEqual(seedance20Provider.capabilities.videoModes[3].mediaTypes, ['image', 'video']);
-assert.equal(seedance20Provider.capabilities.videoModes[3].maxReferenceVideos, 3);
+assert.deepEqual(seedance20Provider.capabilities.videoModes[1].roles, ['first_frame', 'last_frame']);
+assert.deepEqual(seedance20Provider.capabilities.videoModes[2].roles, ['reference_image']);
+assert.deepEqual(seedance20Provider.capabilities.videoModes[2].mediaTypes, ['image', 'video', 'audio']);
+assert.equal(seedance20Provider.capabilities.videoModes[2].maxReferenceVideos, 3);
 assert.equal(seedance25Provider.name, 'Seedance 2.5');
 assert.equal(seedance25Provider.model, 'doubao-seedance-2-5-260628');
 assert.equal(seedance25Provider.protocol, 'seedance-video-v3');
-assert.deepEqual(seedance25Provider.capabilities.resolutions, ['480P', '720P']);
+assert.deepEqual(seedance25Provider.capabilities.resolutions, ['480P', '720P', '720P-SR', '720P-ESR', '1080P', '1080P-SR', '1080P-ESR', '1080P-ESR & 60FPS', '1440P-SR', '1440P-ESR', '4K-ESR']);
 assert.deepEqual(seedance25Provider.capabilities.durations, Array.from({ length: 27 }, (_value, index) => index + 4));
 assert.deepEqual(seedance25Provider.capabilities.textRatios, ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9']);
-assert.equal(seedance25Provider.capabilities.supportsResolution, false);
+assert.equal(seedance25Provider.capabilities.supportsResolution, undefined);
 assert.equal(seedance25Provider.capabilities.createTimeoutMs, 45_000);
-assert.equal(Object.hasOwn(seedance25Provider.capabilities, 'generateAudio'), false);
+assert.equal(seedance25Provider.capabilities.generateAudio, true);
 assert.equal(seedance20Provider.capabilities.frameReferenceEncoding, 'ordered-content');
 assert.equal(seedance25Provider.capabilities.frameReferenceEncoding, 'ordered-content');
-assert.equal(seedance25Provider.capabilities.maxReferenceImages, 9);
-assert.equal(seedance25Provider.capabilities.videoModes[3].maxReferenceVideos, 6);
-assert.equal(Object.hasOwn(seedance25Provider.capabilities.videoModes[1], 'ratios'), false);
-assert.equal(Object.hasOwn(seedance25Provider.capabilities.videoModes[2], 'ratios'), false);
+assert.equal(seedance25Provider.capabilities.maxReferenceImages, 30);
+assert.equal(seedance25Provider.capabilities.videoModes[2].maxReferenceVideos, 10);
+assert.equal(seedance25Provider.capabilities.videoModes[0].ratios.includes('adaptive'), true);
+assert.equal(seedance25Provider.capabilities.frameReferenceRatios.includes('adaptive'), true);
 const providerOverridesBeforeStaleSeedance = process.env.AI_PROVIDERS_JSON;
+const wrappedCapabilities = { ...seedance25Provider.capabilities };
+delete wrappedCapabilities.atlasRouted;
+delete wrappedCapabilities.upstreamRoutes;
 process.env.AI_PROVIDERS_JSON = JSON.stringify([{
   id: 'video-3',
   kind: 'video',
@@ -175,7 +173,7 @@ process.env.AI_PROVIDERS_JSON = JSON.stringify([{
 }]);
 assert.deepEqual(
   publicProviderConfig().providers.find((provider) => provider.id === 'video-3').capabilities.resolutions,
-  ['480P', '720P'],
+  seedance25Provider.capabilities.resolutions,
   'Stale deployment overrides must not remove built-in Seedance resolutions.'
 );
 process.env.AI_PROVIDERS_JSON = providerOverridesBeforeStaleSeedance;
@@ -399,7 +397,7 @@ await generateMedia('image', {
   aspectRatio: '2:1',
   urls: []
 });
-assert.equal(JSON.parse(gptImageCalls[2].options.body).size, '2000x1000');
+assert.equal(JSON.parse(gptImageCalls[2].options.body).size, '2000x992');
 assert.equal(JSON.parse(gptImageCalls[2].options.body).quality, 'low');
 
 const chatCalls = [];
@@ -590,7 +588,7 @@ assert.deepEqual(createdSeedance20, { providerId: 'video-2', taskId: 'seedance-2
 assert.deepEqual(JSON.parse(seedanceCalls[0].options.body), {
   model: 'doubao-seedance-2-0-260128',
   content: [
-    { type: 'text', text: 'a precise product turntable shot' },
+    { type: 'text', text: 'Create a new video using @Image1, @Image2 as references. a precise product turntable shot' },
     { type: 'image_url', image_url: { url: 'https://cdn.example/front.png' }, role: 'reference_image' },
     { type: 'image_url', image_url: { url: 'https://cdn.example/side.png' }, role: 'reference_image' }
   ],
@@ -613,7 +611,7 @@ const createdSeedanceVideoReference = await createVideoTask({
 });
 assert.deepEqual(createdSeedanceVideoReference, { providerId: 'video-2', taskId: 'seedance-20-task' });
 assert.deepEqual(JSON.parse(seedanceCalls[1].options.body).content, [
-  { type: 'text', text: 'match the reference movement' },
+  { type: 'text', text: 'Create a new video using @Video1 as references. match the reference movement' },
   { type: 'video_url', video_url: { url: 'https://cdn.example/movement.mp4' }, role: 'reference_video' }
 ]);
 await assert.rejects(
@@ -637,12 +635,13 @@ assert.deepEqual(await pollVideoTask('video-2', 'seedance-20-task'), {
 
 const createdSeedance25 = await createVideoTask({
   providerId: 'video-3',
-  prompt: 'cinematic city at dawn',
+  prompt: 'animate this first frame',
   resolution: '720P',
   duration: 4,
   aspectRatio: 'adaptive',
-  videoMode: 'text',
-  urls: []
+  videoMode: 'first-frame',
+  urls: ['https://cdn.example/first.png'],
+  referenceMediaTypes: ['image']
 });
 assert.deepEqual(createdSeedance25, { providerId: 'video-3', taskId: 'seedance-25-task' });
 const seedance25CreateCall = seedanceCalls.find((call) => {
@@ -651,8 +650,12 @@ const seedance25CreateCall = seedanceCalls.find((call) => {
 assert.ok(seedance25CreateCall);
 assert.deepEqual(JSON.parse(seedance25CreateCall.options.body), {
   model: 'doubao-seedance-2-5-260628',
-  content: [{ type: 'text', text: 'cinematic city at dawn' }],
-  ratio: '16:9',
+  content: [
+    { type: 'text', text: 'animate this first frame' },
+    { type: 'image_url', image_url: { url: 'https://cdn.example/first.png' }, role: 'first_frame' }
+  ],
+  generate_audio: true,
+  ratio: 'adaptive',
   duration: 4,
   watermark: false
 });
@@ -678,7 +681,7 @@ assert.deepEqual(seedance25FrameBody.content, [
   { type: 'image_url', image_url: { url: 'https://cdn.example/first.png' }, role: 'first_frame' },
   { type: 'image_url', image_url: { url: 'https://cdn.example/last.png' }, role: 'last_frame' }
 ]);
-assert.equal(Object.hasOwn(seedance25FrameBody, 'generate_audio'), false);
+assert.equal(seedance25FrameBody.generate_audio, true);
 assert.equal(Object.hasOwn(seedance25FrameBody, 'resolution'), false);
 
 const seedanceFirstFrameDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
@@ -727,9 +730,10 @@ await assert.rejects(
     prompt: 'normalize a provider submission timeout',
     resolution: '720P',
     duration: 5,
-    aspectRatio: '16:9',
-    videoMode: 'text',
-    urls: []
+    aspectRatio: 'adaptive',
+    videoMode: 'first-frame',
+    urls: ['https://cdn.example/timeout.png'],
+    referenceMediaTypes: ['image']
   }),
   (error) => error
     && error.code === 'provider-timeout'
@@ -757,7 +761,8 @@ for (const providerId of ['video-1', 'video-2', 'video-3']) {
       resolution: providerId === 'video-1' ? '768P' : '480P',
       duration: 4,
       aspectRatio: providerId === 'video-1' ? '16:9' : 'adaptive',
-      urls: []
+      urls: providerId === 'video-1' ? [] : ['https://cdn.example/retry-reference.png'],
+      ...(providerId === 'video-1' ? {} : { videoMode: 'first-frame', referenceMediaTypes: ['image'] })
     }),
     (error) => error && error.code === 'provider-temporarily-unavailable'
   );
@@ -787,9 +792,10 @@ assert.deepEqual(await createVideoTask({
   prompt: 'retry only a pre-dispatch channel lookup failure',
   resolution: '720P',
   duration: 5,
-  aspectRatio: '16:9',
-  videoMode: 'text',
-  urls: []
+  aspectRatio: 'adaptive',
+  videoMode: 'first-frame',
+  urls: ['https://cdn.example/retry.png'],
+  referenceMediaTypes: ['image']
 }), { providerId: 'video-3', taskId: 'seedance-channel-retry-task' });
 assert.equal(channelConfigurationAttempts, 2);
 
@@ -819,7 +825,7 @@ process.env.AI_PROVIDERS_JSON = JSON.stringify([{
   keyEnv: 'AI302_KEY',
   model: 'doubao-seedance-2-5-260628',
   protocol: 'seedance-video-v3',
-  capabilities: seedance25Provider.capabilities
+  capabilities: wrappedCapabilities
 }]);
 assert.deepEqual(await createVideoTask({
   providerId: 'video-wrapped-seedance',
@@ -827,7 +833,9 @@ assert.deepEqual(await createVideoTask({
   resolution: '480P',
   duration: 4,
   aspectRatio: 'adaptive',
-  urls: []
+  videoMode: 'first-frame',
+  urls: ['https://cdn.example/wrapped-reference.png'],
+  referenceMediaTypes: ['image']
 }), { providerId: 'video-wrapped-seedance', taskId: 'wrapped-seedance-task' });
 assert.deepEqual(await pollVideoTask('video-wrapped-seedance', 'wrapped-seedance-task'), {
   status: 'succeeded',
@@ -843,9 +851,10 @@ await assert.rejects(
     prompt: 'unsupported resolution',
     resolution: '8K',
     duration: 5,
-    aspectRatio: '16:9',
-    videoMode: 'text',
-    urls: []
+    aspectRatio: 'adaptive',
+    videoMode: 'first-frame',
+    urls: ['https://cdn.example/invalid-resolution.png'],
+    referenceMediaTypes: ['image']
   }),
   (error) => error && error.code === 'invalid-resolution'
 );

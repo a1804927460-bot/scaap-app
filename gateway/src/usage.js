@@ -98,8 +98,18 @@ export const VIDEO_CREDITS_PER_SECOND = Object.freeze({
     '1080P-ESR & 60FPS': 18.228, '1440P-SR': 18.224, '1440P-ESR': 18.224, '4K-ESR': 22.780
   }),
   'video-1': Object.freeze({ '768P': 5, '2K': 8 }),
-  'video-2': SEEDANCE_VIDEO_RATES['video-2'],
-  'video-3': SEEDANCE_VIDEO_RATES['video-3'],
+  // Logical Seedance billing uses the higher of the Atlas primary price and
+  // the USD/PTC 302 fallback for every resolution the fallback supports.
+  'video-2': Object.freeze({
+    '480P': 6.94801152, '720P': 13.89602304, '720P-SR': 8.378,
+    '1080P': 11.424, '1080P-SR': 12.947, '1440P-SR': 15.232, '4K': 19.04
+  }),
+  'video-3': Object.freeze({
+    '480P': 8.8128, '720P': 17.6256, '720P-SR': 10.023, '720P-ESR': 10.023,
+    '1080P': 13.668, '1080P-SR': 15.49, '1080P-ESR': 15.49,
+    '1080P-ESR & 60FPS': 18.228, '1440P-SR': 18.224,
+    '1440P-ESR': 18.224, '4K-ESR': 22.78
+  }),
   'video-4': SEEDANCE_VIDEO_RATES['video-4'],
   'video-5': Object.freeze({ '480P': 2, '720P': 3 }),
   'video-6': Object.freeze({ '480P': 2, '720P': 3, '1080P': 4 }),
@@ -365,7 +375,7 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
     p_duration: quote.duration,
     p_expected_credits: quote.credits
   });
-  const reserveRpc = quote.providerId.startsWith('atlas-')
+  const reserveRpc = (quote.providerId.startsWith('atlas-') || ['image-6', 'video-2', 'video-3'].includes(quote.providerId))
     ? 'reserve_atlas_catalog_credits'
     : ['video-10', 'video-11', 'video-12', 'video-13'].includes(quote.providerId)
     ? 'reserve_kling_video_credits'
@@ -695,6 +705,31 @@ function normalizeUsageRange(value) {
   throw Object.assign(new Error('The usage range is invalid.'), { code: 'invalid-usage-range', status: 400 });
 }
 
+function normalizeUsageDateRange(value = {}) {
+  const from = String(value && value.from || '').slice(0, 10);
+  const to = String(value && value.to || '').slice(0, 10);
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+  const fromTime = Date.parse(`${from}T00:00:00Z`);
+  const toTime = Date.parse(`${to}T00:00:00Z`);
+  if (!datePattern.test(from) || !datePattern.test(to) || from > to
+      || !Number.isFinite(fromTime) || !Number.isFinite(toTime)
+      || new Date(fromTime).toISOString().slice(0, 10) !== from
+      || new Date(toTime).toISOString().slice(0, 10) !== to
+      || (toTime - fromTime) / 86_400_000 > 3660) {
+    throw Object.assign(new Error('The custom usage date range is invalid.'), { code: 'invalid-usage-range', status: 400 });
+  }
+  const timeZoneOffset = Math.max(-840, Math.min(840, Math.round(Number(value.timeZoneOffset) || 0)));
+  return { from, to, timeZoneOffset };
+}
+
+function normalizeCanvasId(value) {
+  const canvasId = String(value || '').trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(canvasId)) {
+    throw Object.assign(new Error('The canvas identity is invalid.'), { code: 'invalid-canvas-id', status: 400 });
+  }
+  return canvasId;
+}
+
 function nonnegativeNumber(value, integer = true) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return 0;
@@ -719,7 +754,9 @@ function publicUsageSummary(payload, fallbackRange) {
     requests: nonnegativeNumber(row.requests)
   });
   return {
-    range: normalizeUsageRange(payload.range || fallbackRange),
+    range: payload.range === 'custom' || fallbackRange && typeof fallbackRange === 'object'
+      ? 'custom'
+      : normalizeUsageRange(payload.range || fallbackRange),
     timeZone: 'UTC',
     period: {
       from: validDate(period.from),
@@ -754,16 +791,26 @@ function publicUsageSummary(payload, fallbackRange) {
 }
 
 export async function getUsageSummary(userId, range = '7d', fetchImpl = fetch) {
-  const normalizedRange = normalizeUsageRange(range);
+  const customRange = range && typeof range === 'object' && !Array.isArray(range)
+    ? normalizeUsageDateRange(range)
+    : null;
+  const normalizedRange = customRange || normalizeUsageRange(range);
   const headers = serviceHeaders();
   if (!headers) {
     if (durableRequired()) throw serviceError('credit-service-not-configured', 'Durable usage reporting is not configured.');
     return null;
   }
-  const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/get_ai_usage_summary`, {
+  const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/${customRange ? 'get_ai_usage_summary_between' : 'get_ai_usage_summary'}`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ p_user_id: userId, p_range: normalizedRange }),
+    body: JSON.stringify(customRange
+      ? {
+          p_user_id: userId,
+          p_from: customRange.from,
+          p_to: customRange.to,
+          p_tz_offset: customRange.timeZoneOffset
+        }
+      : { p_user_id: userId, p_range: normalizedRange }),
     signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
   });
   const payload = await responsePayload(response);
@@ -772,6 +819,73 @@ export async function getUsageSummary(userId, range = '7d', fetchImpl = fetch) {
     throw serviceError(code, 'Could not load AI usage.');
   }
   return publicUsageSummary(payload, normalizedRange);
+}
+
+export async function tagUsageCanvas(userId, requestId, canvasId, fetchImpl = fetch) {
+  let normalizedCanvasId;
+  try { normalizedCanvasId = normalizeCanvasId(canvasId); }
+  catch (error) { return { ok: false, reason: error.code || 'invalid-canvas-id' }; }
+  const headers = serviceHeaders();
+  if (!headers) return { ok: !durableRequired(), reason: 'not-configured' };
+  try {
+    const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/set_ai_usage_canvas`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ p_user_id: userId, p_request_id: requestId, p_canvas_id: normalizedCanvasId }),
+      signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
+    });
+    const payload = await responsePayload(response);
+    if (!response.ok) {
+      return { ok: false, reason: isMissingCreditRpc(response, payload) ? 'schema-missing' : 'usage-service-failed' };
+    }
+    return { ok: payload === true || payload && payload.ok === true, reason: 'tagged' };
+  } catch (error) {
+    return { ok: false, reason: 'usage-service-failed' };
+  }
+}
+
+export async function getCanvasUsage(userId, canvasId, fetchImpl = fetch) {
+  const normalizedCanvasId = normalizeCanvasId(canvasId);
+  const headers = serviceHeaders();
+  if (!headers) {
+    if (durableRequired()) throw serviceError('credit-service-not-configured', 'Durable usage reporting is not configured.');
+    return null;
+  }
+  const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/get_canvas_ai_usage_summary`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ p_user_id: userId, p_canvas_id: normalizedCanvasId }),
+    signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
+  });
+  const payload = await responsePayload(response);
+  if (!response.ok) {
+    const code = isMissingCreditRpc(response, payload) ? 'credit-schema-missing' : 'usage-service-failed';
+    throw serviceError(code, 'Could not load canvas usage.');
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw serviceError('usage-service-failed', 'The canvas usage service returned an invalid response.');
+  }
+  return {
+    canvasId: normalizedCanvasId,
+    totals: {
+      credits: nonnegativeNumber(payload.totals && payload.totals.credits),
+      generations: nonnegativeNumber(payload.totals && payload.totals.generations)
+    },
+    // The database has already materialized this authenticated user's canvas
+    // history. Do not truncate it here: the desktop merges these request IDs
+    // with its append-only ledger to calculate a lifetime, de-duplicated total.
+    details: (Array.isArray(payload.details) ? payload.details : []).map((row = {}) => ({
+      requestId: String(row.requestId || '').trim().slice(0, 80),
+      kind: ['image', 'video', '3d'].includes(row.kind) ? row.kind : 'image',
+      providerId: String(row.providerId || '').trim().toLowerCase().slice(0, 64),
+      modelName: String(row.modelName || '').trim().slice(0, 160),
+      name: String(row.name || '').trim().slice(0, 240),
+      credits: nonnegativeNumber(row.credits),
+      resolution: String(row.resolution || '').trim().slice(0, 32) || null,
+      duration: nonnegativeNumber(row.duration),
+      createdAt: String(row.createdAt || '').slice(0, 40)
+    })).filter((row) => row.requestId)
+  };
 }
 
 export async function redeemUsageCode(userId, code, fetchImpl = fetch) {

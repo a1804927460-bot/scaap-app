@@ -459,7 +459,7 @@ function renderCanvasUsageDetails(result) {
   [t('Date', '\u65e5\u671f'), t('Type', '\u7c7b\u578b'), t('Model', '\u6a21\u578b'), t('Output', '\u751f\u6210\u7ed3\u679c'), t('Points', '\u79ef\u5206')]
     .forEach((label, index) => { if (tableHeaders[index]) tableHeaders[index].textContent = label; });
   const metrics = [
-    [t('Recorded points', '\u5df2\u8bb0\u5f55\u79ef\u5206'), formatCanvasUsagePoints(totals.credits)],
+    [t('Total points', '\u7d2f\u8ba1\u79ef\u5206'), formatCanvasUsagePoints(totals.credits)],
     [t('AI results', 'AI \u7ed3\u679c'), String(Math.max(0, Number(totals.generations) || 0))],
     [t('Images', '\u56fe\u7247'), `${formatCanvasUsagePoints(breakdown.image && breakdown.image.credits)} / ${Number(breakdown.image && breakdown.image.generations) || 0}`],
     [t('Videos', '\u89c6\u9891'), `${formatCanvasUsagePoints(breakdown.video && breakdown.video.credits)} / ${Number(breakdown.video && breakdown.video.generations) || 0}`],
@@ -475,13 +475,18 @@ function renderCanvasUsageDetails(result) {
     return metric;
   }));
   const unknown = Math.max(0, Number(totals.unrecorded) || 0);
-  note.hidden = unknown === 0;
-  note.textContent = unknown > 0
-    ? t(
-      `${unknown} older result${unknown === 1 ? '' : 's'} did not store point data and are excluded from the total.`,
-      `${unknown} \u6761\u65e7\u7248\u672c\u7ed3\u679c\u6ca1\u6709\u8bb0\u5f55\u79ef\u5206\uff0c\u672a\u8ba1\u5165\u603b\u6570\u3002`
-    )
-    : '';
+  const estimated = Math.max(0, Number(totals.estimated) || 0);
+  const notes = [];
+  if (estimated > 0) notes.push(t(
+    `${estimated} older result${estimated === 1 ? '' : 's'} were restored from their saved model settings and are marked as estimates. New usage is read from the actual billing record.`,
+    `${estimated} \u6761\u65e7\u7248\u672c\u7ed3\u679c\u5df2\u6309\u4fdd\u5b58\u7684\u6a21\u578b\u53c2\u6570\u56de\u586b\uff0c\u5e76\u6807\u8bb0\u4e3a\u4f30\u7b97\uff1b\u65b0\u8bb0\u5f55\u4f7f\u7528\u5b9e\u9645\u6263\u8d39\u6d41\u6c34\u3002`
+  ));
+  if (unknown > 0) notes.push(t(
+    `${unknown} older result${unknown === 1 ? '' : 's'} do not contain enough billing data and are excluded from the point total.`,
+    `${unknown} \u6761\u65e7\u7248\u672c\u7ed3\u679c\u7f3a\u5c11\u53ef\u9a8c\u8bc1\u7684\u8ba1\u8d39\u53c2\u6570\uff0c\u672a\u8ba1\u5165\u79ef\u5206\u603b\u6570\u3002`
+  ));
+  note.hidden = notes.length === 0;
+  note.textContent = notes.join(' ');
   rows.replaceChildren(...details.map((entry) => {
     const row = document.createElement('tr');
     const labels = {
@@ -494,11 +499,14 @@ function renderCanvasUsageDetails(result) {
       labels[entry.kind] || entry.kind || '-',
       entry.modelName || entry.providerId || '-',
       entry.name || '-',
-      formatCanvasUsagePoints(entry.credits)
+      entry.estimated === true
+        ? `\u2248 ${formatCanvasUsagePoints(entry.credits)}`
+        : formatCanvasUsagePoints(entry.credits)
     ].forEach((value, index) => {
       const cell = document.createElement('td');
       cell.textContent = value;
       if (index === 4 && entry.credits === null) cell.className = 'is-unrecorded';
+      if (index === 4 && entry.estimated === true) cell.className = 'is-estimated';
       row.appendChild(cell);
     });
     return row;

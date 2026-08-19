@@ -761,10 +761,19 @@
               <h3 id="usage-page-title">Usage</h3>
               <p id="usage-period-label">Last 30 days</p>
             </div>
-            <div id="usage-range-switch" class="usage-range-switch" role="group" aria-label="Usage period">
-              <button type="button" data-usage-range="7" aria-pressed="false">7 Days</button>
-              <button type="button" data-usage-range="30" class="is-active" aria-pressed="true">30 Days</button>
-              <button type="button" data-usage-range="all" aria-pressed="false">All</button>
+            <div class="usage-range-controls">
+              <div id="usage-range-switch" class="usage-range-switch" role="group" aria-label="Usage period">
+                <button type="button" data-usage-range="7" aria-pressed="false">7 Days</button>
+                <button type="button" data-usage-range="30" class="is-active" aria-pressed="true">30 Days</button>
+                <button type="button" data-usage-range="all" aria-pressed="false">All</button>
+              </div>
+              <form id="usage-custom-range" class="usage-custom-range">
+                <label><span id="usage-custom-from-label">From</span><input id="usage-custom-from" type="date" required /></label>
+                <span class="usage-custom-separator" aria-hidden="true">-</span>
+                <label><span id="usage-custom-to-label">To</span><input id="usage-custom-to" type="date" required /></label>
+                <button id="usage-custom-apply" type="submit">View</button>
+              </form>
+              <small id="usage-custom-error" class="usage-custom-error" role="status" hidden></small>
             </div>
           </div>
 
