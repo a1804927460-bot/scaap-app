@@ -5072,6 +5072,27 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     button.setAttribute('aria-label', label);
   }
 
+  function adaptiveRatioDisplayLabel(compact = false) {
+    if (kind !== 'video' || ratio !== 'adaptive' || boardReferences.size === 0) {
+      return t('Auto', '\u81ea\u52a8');
+    }
+    const reference = [...boardReferences.values()].find((entry) => (
+      Number(entry && entry.sourceWidth) > 0 && Number(entry && entry.sourceHeight) > 0
+    ));
+    if (!reference) {
+      return compact
+        ? t('Follow source', '\u8ddf\u968f\u7d20\u6750')
+        : t('Follow reference', '\u8ddf\u968f\u53c2\u8003\u7d20\u6750');
+    }
+    const width = Math.max(1, Math.round(Number(reference.sourceWidth)));
+    const height = Math.max(1, Math.round(Number(reference.sourceHeight)));
+    const divisor = greatestCommonDivisor(width, height);
+    const sourceRatio = `${width / divisor}:${height / divisor}`;
+    return compact
+      ? t(`Follow ${sourceRatio}`, `\u8ddf\u968f ${sourceRatio}`)
+      : t(`Follow reference (${sourceRatio})`, `\u8ddf\u968f\u53c2\u8003\u7d20\u6750 (${sourceRatio})`);
+  }
+
   function refreshLanguage() {
     const mode = pop.querySelector('.ai-composer-mode');
     const imageButton = pop.querySelector('[data-ai-kind="image"]');
@@ -5120,16 +5141,18 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     if (headings[1]) headings[1].textContent = t('Resolution', '分辨率');
     if (headings[2]) headings[2].textContent = t('Count', '数量');
     if (headings[3]) headings[3].textContent = t('Duration', '时长');
-    pop.querySelector('.ai-ratio-value').textContent = ratio === 'auto' || ratio === 'adaptive' ? autoLabel : ratio;
+    pop.querySelector('.ai-ratio-value').textContent = ratio === 'adaptive'
+      ? adaptiveRatioDisplayLabel()
+      : ratio === 'auto' ? autoLabel : ratio;
     pop.querySelectorAll('.ai-ratio-grid button[data-value="auto"] small, .ai-ratio-grid button[data-value="adaptive"] small').forEach((label) => {
-      label.textContent = autoLabel;
+      label.textContent = ratio === 'adaptive' ? adaptiveRatioDisplayLabel(true) : autoLabel;
     });
     pop.querySelector('.ai-count-value').textContent = t(`x ${count}`, `× ${count}`);
     pop.querySelector('.ai-resolution-hint').textContent = `≈ ${px}`;
     pop.querySelector('.ai-duration-value').textContent = videoDurationDisplayLabel(duration);
     refreshCreditEstimateLanguage();
     optionsToggle.textContent = kind === 'video'
-      ? `${ratio === 'adaptive' ? autoLabel : ratio} · ${size} · ${videoDurationDisplayLabel(duration, true)}`
+      ? `${ratio === 'adaptive' ? adaptiveRatioDisplayLabel(true) : ratio} · ${size} · ${videoDurationDisplayLabel(duration, true)}`
       : `${ratio === 'auto' || ratio === 'adaptive' ? autoLabel : ratio} · ${size} · ${t(`x${count}`, `×${count}`)}`;
     cameraControlToggle.querySelector('span').textContent = t('Lens', '镜头');
     const activePromptStyle = selectedPromptStyle();
@@ -5458,7 +5481,16 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       const iconWidth = numeric >= 1 ? 25 : Math.round(25 * numeric);
       const iconHeight = numeric >= 1 ? Math.round(25 / numeric) : 25;
       const automatic = value === 'auto' || value === 'adaptive';
-      button.innerHTML = `<span class="ai-ratio-shape${automatic ? ' is-auto' : ''}" style="width:${iconWidth}px;height:${iconHeight}px"></span><small>${automatic ? t('Auto', '自动') : value}</small>`;
+      const automaticLabel = value === 'adaptive' ? adaptiveRatioDisplayLabel(true) : t('Auto', '\u81ea\u52a8');
+      button.innerHTML = `<span class="ai-ratio-shape${automatic ? ' is-auto' : ''}" style="width:${iconWidth}px;height:${iconHeight}px"></span><small>${automatic ? automaticLabel : value}</small>`;
+      if (value === 'adaptive' && ratios.length === 1) {
+        const explanation = t(
+          'This mode follows the reference material aspect ratio.',
+          '\u6b64\u6a21\u5f0f\u7684\u753b\u9762\u6bd4\u4f8b\u8ddf\u968f\u53c2\u8003\u7d20\u6750\u3002'
+        );
+        button.title = explanation;
+        button.setAttribute('aria-label', `${automaticLabel}. ${explanation}`);
+      }
       button.addEventListener('click', () => {
         ratio = value;
         if (kind === 'image') {
@@ -5471,7 +5503,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       });
       ratioGrid.appendChild(button);
     });
-    pop.querySelector('.ai-ratio-value').textContent = ratio === 'auto' || ratio === 'adaptive' ? t('Auto', '自动') : ratio;
+    pop.querySelector('.ai-ratio-value').textContent = ratio === 'adaptive'
+      ? adaptiveRatioDisplayLabel()
+      : ratio === 'auto' ? t('Auto', '\u81ea\u52a8') : ratio;
   }
 
   function syncSegments() {
@@ -5487,7 +5521,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   }
 
   function updateSummary() {
-    const ratioLabel = ratio === 'auto' || ratio === 'adaptive' ? t('Auto', '\u81ea\u52a8') : ratio;
+    const ratioLabel = ratio === 'adaptive'
+      ? adaptiveRatioDisplayLabel(true)
+      : ratio === 'auto' ? t('Auto', '\u81ea\u52a8') : ratio;
     optionsToggle.textContent = kind === 'video'
       ? `${ratioLabel} · ${size} · ${videoDurationDisplayLabel(duration, true)}`
       : `${ratioLabel} · ${size} · ${t(`x${count}`, `×${count}`)}`;

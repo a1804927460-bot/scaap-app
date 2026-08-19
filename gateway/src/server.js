@@ -649,6 +649,12 @@ function validateBody(body, kind) {
       : null;
     const frameMode = videoMode === 'first-frame' || videoMode === 'first-last-frame';
     const allowedRatios = modeRatios || (frameMode ? referenceRatios : textRatios);
+    // Accept requests from older clients that preserved the source image's
+    // explicit ratio. Adaptive-only reference modes follow that source ratio
+    // upstream, so this is a compatibility normalization rather than a crop.
+    if (submittedReferenceCount > 0 && allowedRatios.size === 1 && allowedRatios.has('adaptive')) {
+      requestedRatio = 'adaptive';
+    }
     if (!allowedRatios.has(requestedRatio)) {
       throw invalidOption(
         'invalid-aspect-ratio',

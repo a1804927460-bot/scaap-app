@@ -535,7 +535,14 @@ export async function generateMedia(kind, body, signal) {
     } catch (error) {
       if (!firstError) firstError = error;
       lastError = error;
-      if (signal && signal.aborted || !shouldTryProviderFallback(error)) throw error;
+      if (signal && signal.aborted) throw error;
+      if (!shouldTryProviderFallback(error)) {
+        // A narrower secondary route may reject a capability that the primary
+        // route supports. Keep the primary outage as the actionable error
+        // instead of overwriting it with the fallback's local matrix error.
+        if (error !== firstError && FALLBACK_CAPABILITY_ERRORS.has(String(error.code || '').trim().toLowerCase())) break;
+        throw error;
+      }
     }
   }
   throw preferredFallbackError(firstError, lastError);
@@ -1666,7 +1673,11 @@ export async function createVideoTask(body, signal) {
     } catch (error) {
       if (!firstError) firstError = error;
       lastError = error;
-      if (signal && signal.aborted || !shouldTryProviderFallback(error)) throw error;
+      if (signal && signal.aborted) throw error;
+      if (!shouldTryProviderFallback(error)) {
+        if (error !== firstError && FALLBACK_CAPABILITY_ERRORS.has(String(error.code || '').trim().toLowerCase())) break;
+        throw error;
+      }
     }
   }
   throw preferredFallbackError(firstError, lastError);

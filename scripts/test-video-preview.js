@@ -110,6 +110,16 @@ assert.doesNotMatch(
   'Reference images must not force every video provider to the MiniMax adaptive ratio.'
 );
 assert.match(
+  mainSource,
+  /supportedRatios\.size === 1 && supportedRatios\.has\('adaptive'\)[\s\S]*?aspectRatio = 'adaptive'/,
+  'Desktop validation must accept an explicit source ratio for adaptive-only reference modes.'
+);
+assert.match(
+  boardSource,
+  /function adaptiveRatioDisplayLabel[\s\S]*?Follow reference[\s\S]*?sourceWidth[\s\S]*?sourceHeight/,
+  'Adaptive reference modes must explain that they follow the source material and show its real ratio.'
+);
+assert.match(
   previewSource,
   /function monitorVideoPlayback[\s\S]*?startedAt[\s\S]*?video\.currentTime[\s\S]*?2600[\s\S]*?NotSupportedError[\s\S]*?waiting[\s\S]*?stalled/,
   'The main file preview must recover from silent video stalls as well as codec errors.'

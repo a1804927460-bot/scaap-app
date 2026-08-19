@@ -103,7 +103,9 @@ function pngHeader(width, height) {
       providerId: 'video-3', prompt: 'first and last frame',
       urls: ['https://cdn.example.com/first.png', 'https://cdn.example.com/last.png'],
       referenceMediaTypes: ['image', 'image'], videoMode: 'first-last-frame',
-      resolution: '1080P-ESR', aspectRatio: 'adaptive', duration: 30,
+      // A source image may carry an explicit 16:9 ratio in older generation
+      // metadata. Seedance 2.5 I2V must normalize it to adaptive upstream.
+      resolution: '1080P-ESR', aspectRatio: '16:9', duration: 30,
       generateAudio: false, outputFormat: 'mp4'
     });
     assert.match(firstLast.taskId, /^messs-route:atlas-video-seedance25-i2v:atlas-video-request$/);
@@ -173,6 +175,7 @@ function pngHeader(width, height) {
     assert.equal(frameRequest.body.generate_audio, false);
     assert.equal(frameRequest.body.resolution, '1080p-esr');
     assert.equal(frameRequest.body.duration, 30);
+    assert.equal(frameRequest.body.ratio, 'adaptive');
     const extendRequest = requests.find((entry) => entry.endpoint.endsWith('/generateVideo') && entry.body.omni_reference_task_type === 'extend');
     assert.equal(extendRequest.body.model, 'bytedance/seedance-2.5/reference-to-video');
     assert.equal(extendRequest.body.duration, 10);

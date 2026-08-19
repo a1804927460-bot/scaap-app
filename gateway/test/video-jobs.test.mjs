@@ -401,5 +401,9 @@ test('gateway exposes async task routes while preserving the v0.0.5 synchronous 
   assert.match(server, /capabilities\.resolutions[\s\S]*?invalid-resolution/);
   assert.match(server, /capabilities\.durations[\s\S]*?invalid-duration/);
   assert.match(server, /capabilities\.frameReferenceRatios[\s\S]*?invalid-aspect-ratio/);
+  assert.match(
+    server,
+    /submittedReferenceCount > 0 && allowedRatios\.size === 1 && allowedRatios\.has\('adaptive'\)[\s\S]*?requestedRatio = 'adaptive'/
+  );
   assert.doesNotMatch(server, /MiniMax H3 resolution must be/);
 });

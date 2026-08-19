@@ -168,6 +168,10 @@ assert.deepEqual(
   ['adaptive']
 );
 assert.deepEqual(
+  require('../lib/provider-catalog').catalogProvider('video-12').capabilities.videoModes.find((mode) => mode.id === 'first-last-frame').ratios,
+  ['adaptive', '9:16', '1:1', '16:9']
+);
+assert.deepEqual(
   require('../lib/provider-catalog').catalogProvider('video-12').capabilities.videoModes.find((mode) => mode.id === 'video-edit').ratios,
   ['adaptive']
 );

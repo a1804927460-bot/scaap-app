@@ -4176,7 +4176,7 @@ function normalizeAiMediaGenerationRequest(request, kind) {
       .filter(Boolean)
   );
   const duration = Number(request.duration);
-  const aspectRatio = String(request.aspectRatio || '').trim();
+  let aspectRatio = String(request.aspectRatio || '').trim();
   const referenceMediaTypes = Array.isArray(request.referenceMediaTypes)
     ? request.referenceMediaTypes.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
     : [];
@@ -4287,6 +4287,14 @@ function normalizeAiMediaGenerationRequest(request, kind) {
       .filter(Boolean)
   );
   const supportedRatios = modeRatios.size ? modeRatios : hasFrameReference ? frameRatios : textRatios;
+  // Image-to-video providers such as Seedance 2.5 and Kling derive their
+  // output framing from the submitted reference. Older desktop builds and
+  // alternate canvas entry points may still submit that image's explicit
+  // ratio (for example 16:9). Normalize it to the provider's documented
+  // adaptive value instead of rejecting an otherwise valid reference.
+  if (referenceCount > 0 && supportedRatios.size === 1 && supportedRatios.has('adaptive')) {
+    aspectRatio = 'adaptive';
+  }
   if (!supportedRatios.has(aspectRatio)) {
     throw invalidAiMediaOption(
       'invalid-aspect-ratio',
