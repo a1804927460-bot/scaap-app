@@ -34,6 +34,15 @@ const ASYNC_VIDEO_PROTOCOLS = new Set([
 const TERMINAL_VIDEO_FAILURES = new Set(['failed', 'cancelled', 'expired']);
 const ROUTED_TASK_PREFIX = 'messs-route:';
 
+function shouldTryProviderFallback(error) {
+  if (!error || error.name === 'AbortError') return false;
+  if (error.retryable === true) return true;
+  const code = String(error.code || '').trim().toLowerCase();
+  if (['provider-invalid-response', 'provider-result-missing', 'provider-download-failed'].includes(code)) return true;
+  const status = Number(error.status);
+  return [408, 425, 429].includes(status) || status >= 500;
+}
+
 function safeServerEndpoint(value) {
   try {
     const url = new URL(String(value || ''));
@@ -205,21 +214,19 @@ function requestRouteIds(provider, body = {}) {
   return [provider.id];
 }
 
-function routedCandidateForRequest(requested, candidate, body = {}, primaryRouteAvailable = false) {
+function routedCandidateForRequest(requested, candidate) {
   const requestedCapabilities = requested && requested.capabilities && typeof requested.capabilities === 'object'
     ? requested.capabilities
     : {};
   if (requested.kind !== 'video' || requestedCapabilities.atlasRouted !== true
-      || candidate.id !== requested.id || !primaryRouteAvailable) return candidate;
+      || candidate.id !== requested.id) return candidate;
   const fallback = requestedCapabilities.fallbackCapabilities;
   if (!fallback || typeof fallback !== 'object') return candidate;
 
-  // Keep the fallback candidate in the list even when a requested option is
-  // outside its matrix. The provider validator then returns a precise
-  // `invalid-resolution`/`invalid-reference-media` error instead of masking
-  // the user's invalid request as "no upstream configured". A valid Atlas
-  // request still cannot be sent to 302 because the merged fallback matrix
-  // rejects it before the upstream call.
+  // Keep the fallback candidate in the list and apply its narrower matrix.
+  // The validator can adapt compatible Atlas-only framing options, while
+  // genuinely unsupported resolutions or reference modes still fail before
+  // a paid 302 request is made.
   return {
     ...candidate,
     capabilities: { ...candidate.capabilities, ...fallback },
@@ -236,14 +243,10 @@ function providersForRequest(kind, id, body = {}) {
   const byId = new Map(configured.filter((provider) => provider.kind === kind).map((provider) => [provider.id, provider]));
   const candidates = [];
   const routeIds = requestRouteIds(requested, body);
-  const hasAlternateRoute = requested.kind === 'video'
-    && requested.capabilities && requested.capabilities.atlasRouted === true
-    && routeIds.some((routeId) => String(routeId || '').trim().toLowerCase() !== requested.id
-      && byId.has(String(routeId || '').trim().toLowerCase()));
   for (const routeId of routeIds) {
     const candidate = byId.get(String(routeId || '').trim().toLowerCase());
     if (!candidate || !providerApiKey(candidate) || candidates.some((entry) => entry.id === candidate.id)) continue;
-    const routed = routedCandidateForRequest(requested, candidate, body, hasAlternateRoute);
+    const routed = routedCandidateForRequest(requested, candidate);
     if (!routed) continue;
     candidates.push({ ...routed, apiKey: providerApiKey(candidate) });
   }
@@ -288,6 +291,12 @@ function deepAtlasOutputUrl(value, seen = new Set(), depth = 0) {
   }
   if (typeof value !== 'object' || seen.has(value)) return '';
   seen.add(value);
+  for (const key of ['b64_json', 'base64', 'image_base64', 'output_base64']) {
+    const encoded = typeof value[key] === 'string' ? value[key].trim() : '';
+    if (encoded.length >= 32 && /^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+      return `data:image/png;base64,${encoded}`;
+    }
+  }
   for (const key of ['outputs', 'image_url', 'imageUrl', 'result_url', 'resultUrl', 'download_url', 'downloadUrl', 'url', 'output']) {
     const found = deepAtlasOutputUrl(value[key], seen, depth + 1);
     if (found) return found;
@@ -526,7 +535,7 @@ export async function generateMedia(kind, body, signal) {
     } catch (error) {
       if (!firstError) firstError = error;
       lastError = error;
-      if (signal && signal.aborted) throw error;
+      if (signal && signal.aborted || !shouldTryProviderFallback(error)) throw error;
     }
   }
   throw preferredFallbackError(firstError, lastError);
@@ -981,6 +990,16 @@ function validatedVideoTaskInput(provider, body) {
     : (mode.id === 'first-frame' || mode.id === 'first-last-frame')
       ? (Array.isArray(capabilities.frameReferenceRatios) ? capabilities.frameReferenceRatios : ['adaptive'])
       : (Array.isArray(configuredRatios) ? configuredRatios : []);
+  // Atlas exposes explicit first/last-frame ratios for Seedance 2.0, while
+  // the 302 fallback accepts only adaptive framing. Preserve the user's
+  // request when Atlas is available, but make the fallback route compatible
+  // before it reaches a paid upstream call.
+  if (provider._routedFallback === true
+      && ['first-frame', 'first-last-frame'].includes(mode.id)
+      && ratio !== 'adaptive'
+      && validRatios.includes('adaptive')) {
+    ratio = 'adaptive';
+  }
   if (!validRatios.includes(ratio)) {
     throw Object.assign(new Error(`${provider.name} does not support this aspect ratio for the selected generation mode.`), {
       status: 400,
@@ -1005,7 +1024,15 @@ function validatedVideoTaskInput(provider, body) {
   const validDurations = Array.isArray(durationSource)
     ? durationSource.map(Number).filter(Number.isInteger)
     : [];
-  if (!Number.isInteger(duration) || (validDurations.length ? !validDurations.includes(duration) : duration < 4 || duration > 15)) {
+  const fallbackFixedDurations = Array.isArray(capabilities.durations)
+    ? capabilities.durations.map(Number).filter((value) => Number.isInteger(value) && value > 0)
+    : [];
+  const fallbackAutomaticDuration = provider._routedFallback === true
+    && duration === -1
+    && fallbackFixedDurations.length > 0;
+  if (!Number.isInteger(duration)
+      || (!fallbackAutomaticDuration
+        && (validDurations.length ? !validDurations.includes(duration) : duration < 4 || duration > 15))) {
     throw Object.assign(new Error(`${provider.name} does not support this duration.`), {
       status: 400,
       code: 'invalid-duration'
@@ -1013,7 +1040,18 @@ function validatedVideoTaskInput(provider, body) {
   }
   const configuredRoles = Array.isArray(mode.roles) ? mode.roles.map(String).filter(Boolean) : [];
   const roles = urls.map((_url, index) => configuredRoles[index] || configuredRoles[0] || 'reference_image');
-  return { capabilities, duration, mode: mode.id, modeDefinition: mode, ratio, referenceMediaTypes, resolution, roles, urls };
+  return {
+    capabilities,
+    duration,
+    mode: mode.id,
+    modeDefinition: mode,
+    ratio,
+    referenceMediaTypes,
+    resolution,
+    roles,
+    urls,
+    fallbackAutomaticDuration
+  };
 }
 
 async function createMiniMaxVideoTask(provider, body, signal) {
@@ -1092,7 +1130,22 @@ function seedanceReferencePrompt(prompt, mode, mediaTypes = [], audioCount = 0) 
 }
 
 async function createSeedanceVideoTask(provider, body, signal) {
-  const { capabilities, duration, mode, ratio, referenceMediaTypes, resolution, roles, urls } = validatedVideoTaskInput(provider, body);
+  const {
+    capabilities,
+    duration,
+    mode,
+    ratio,
+    referenceMediaTypes,
+    resolution,
+    roles,
+    urls,
+    fallbackAutomaticDuration
+  } = validatedVideoTaskInput(provider, body);
+  const submittedDuration = fallbackAutomaticDuration
+    ? Math.max(...(Array.isArray(capabilities.durations)
+      ? capabilities.durations.map(Number).filter((value) => Number.isInteger(value) && value > 0)
+      : [15]))
+    : duration;
   const prompt = seedanceReferencePrompt(body.prompt, mode, referenceMediaTypes, 0);
   const content = [{ type: 'text', text: prompt }];
   urls.forEach((url, index) => {
@@ -1114,7 +1167,7 @@ async function createSeedanceVideoTask(provider, body, signal) {
       ? { generate_audio: capabilities.generateAudio === true && body.generateAudio !== false }
       : {}),
     ratio,
-    duration,
+    duration: submittedDuration,
     // The 302 Seedance contents endpoint derives quality from the selected
     // model and rejects a `resolution` field. Atlas has its own request
     // builder and sends the documented resolution field there.
@@ -1270,7 +1323,11 @@ function atlasVideoTaskInput(provider, body) {
   }
   let ratio = String(body.aspectRatio || '').trim();
   const validRatios = Array.isArray(capabilities.ratios) ? capabilities.ratios.map(String) : [];
-  if (isI2v) ratio = 'adaptive';
+  // Seedance 2.0 image-to-video accepts explicit ratios as well as adaptive;
+  // Seedance 2.5 image-to-video is documented as adaptive-only. Keep the
+  // distinction here so the frontend can expose the real matrix and Atlas
+  // receives the selected ratio when the upstream supports it.
+  if (isI2v && String(provider.model || '').includes('2.5')) ratio = 'adaptive';
   if (mode === 'video-edit' && String(provider.model).includes('2.5')) {
     ratio = 'adaptive';
     if (duration !== -1) {
@@ -1609,7 +1666,7 @@ export async function createVideoTask(body, signal) {
     } catch (error) {
       if (!firstError) firstError = error;
       lastError = error;
-      if (signal && signal.aborted) throw error;
+      if (signal && signal.aborted || !shouldTryProviderFallback(error)) throw error;
     }
   }
   throw preferredFallbackError(firstError, lastError);

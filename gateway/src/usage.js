@@ -164,6 +164,11 @@ export const VIDEO_DURATION_LIMITS = Object.freeze({
 
 export const MINIMUM_VIDEO_CREDITS = 30;
 
+export const VIDEO_SERVICE_TIER_PROVIDERS = Object.freeze({
+  'video-10': Object.freeze({ standard: 'video-10', pro: 'video-11' }),
+  'video-12': Object.freeze({ standard: 'video-12', pro: 'video-13' })
+});
+
 const DURABLE_TIMEOUT_MS = 5_000;
 const VALID_RESERVE_REASONS = new Set([
   'reserved',
@@ -197,6 +202,21 @@ function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Math.round(Number(value));
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(minimum, Math.min(maximum, parsed));
+}
+
+export function videoBillingProviderId(providerId, request = {}) {
+  const normalizedProviderId = String(providerId || '').trim().toLowerCase();
+  const tierProviders = VIDEO_SERVICE_TIER_PROVIDERS[normalizedProviderId];
+  if (!tierProviders) return normalizedProviderId;
+
+  const requestedTier = String(request.serviceTier || '').trim().toLowerCase();
+  if (Object.hasOwn(tierProviders, requestedTier)) return tierProviders[requestedTier];
+
+  const requestedResolution = String(request.resolution || '').trim().toUpperCase();
+  const resolutionProvider = Object.values(tierProviders).find((candidateId) => (
+    Object.hasOwn(VIDEO_CREDITS_PER_SECOND[candidateId] || {}, requestedResolution)
+  ));
+  return resolutionProvider || tierProviders.standard;
 }
 
 export function providerRequiresActivation(kind, providerId) {
@@ -254,7 +274,8 @@ export function quoteUsage(kind, request = {}) {
     };
   }
   if (normalizedKind === 'video') {
-    const providerId = String(request.providerId || 'video-1').trim().toLowerCase() || 'video-1';
+    const requestedProviderId = String(request.providerId || 'video-1').trim().toLowerCase() || 'video-1';
+    const providerId = videoBillingProviderId(requestedProviderId, request);
     const rates = VIDEO_CREDITS_PER_SECOND[providerId];
     if (!rates) {
       throw Object.assign(new Error('The selected video provider is not allowed.'), { code: 'provider-not-allowed', status: 400 });
@@ -274,6 +295,7 @@ export function quoteUsage(kind, request = {}) {
       kind: 'video',
       providerId,
       credits: Math.max(MINIMUM_VIDEO_CREDITS, Math.ceil(rates[resolution] * duration + PROFIT_PER_REQUEST_CREDITS)),
+      unitCredits: rates[resolution],
       resolution,
       duration,
       requiresActivation: providerRequiresActivation('video', providerId)

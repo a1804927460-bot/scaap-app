@@ -111,8 +111,10 @@ assert.equal(seedance20.protocol, 'seedance-video-v3');
 assert.equal(seedance25.protocol, 'seedance-video-v3');
 assert.deepEqual(seedance20.capabilities.resolutions, ['480P', '720P', '720P-SR', '1080P', '1080P-SR', '1440P-SR', '4K']);
 assert.deepEqual(seedance25.capabilities.resolutions, ['480P', '720P', '720P-SR', '720P-ESR', '1080P', '1080P-SR', '1080P-ESR', '1080P-ESR & 60FPS', '1440P-SR', '1440P-ESR', '4K-ESR']);
-assert.deepEqual(seedance20.capabilities.durations, Array.from({ length: 12 }, (_value, index) => index + 4));
-assert.deepEqual(seedance25.capabilities.durations, Array.from({ length: 27 }, (_value, index) => index + 4));
+assert.deepEqual(seedance20.capabilities.durations, [-1, ...Array.from({ length: 12 }, (_value, index) => index + 4)]);
+assert.deepEqual(seedance25.capabilities.durations, [-1, ...Array.from({ length: 27 }, (_value, index) => index + 4)]);
+assert.deepEqual(seedance20.capabilities.fallbackCapabilities.durations, Array.from({ length: 12 }, (_value, index) => index + 4));
+assert.deepEqual(seedance25.capabilities.fallbackCapabilities.durations, Array.from({ length: 27 }, (_value, index) => index + 4));
 assert.deepEqual(seedance25.capabilities.textRatios, ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9']);
 assert.equal(seedance25.capabilities.supportsResolution, undefined);
 assert.equal(seedance25.capabilities.createTimeoutMs, 45_000);
@@ -128,6 +130,8 @@ for (const provider of [seedance20, seedance25]) {
   assert.equal(provider.capabilities.frameReferenceEncoding, 'ordered-content');
 }
 assert.equal(seedance20.capabilities.videoModes[2].maxReferenceVideos, 3);
+assert.deepEqual(seedance20.capabilities.videoModes[0].ratios, ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9', 'adaptive']);
+assert.deepEqual(seedance20.capabilities.fallbackCapabilities.videoModes[0].ratios, ['adaptive']);
 assert.equal(seedance25.capabilities.videoModes[2].maxReferenceVideos, 10);
 assert.equal(seedance25.capabilities.videoModes[0].ratios.includes('adaptive'), true);
 const staleSeedance25Capabilities = { videoModes: [{ id: 'first-frame', minReferences: 1, maxReferences: 1 }] };

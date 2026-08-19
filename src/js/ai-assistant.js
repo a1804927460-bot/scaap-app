@@ -660,7 +660,21 @@ function assistantImageCapabilities() {
   const provider = selectedAssistantProvider();
   return provider && provider.capabilities && typeof provider.capabilities === 'object'
     ? provider.capabilities
-    : {};
+      : {};
+}
+
+function assistantVideoModeForAttachments(attachments = AiAssistant.attachments) {
+  const capabilities = assistantVideoCapabilities();
+  const modes = Array.isArray(capabilities.videoModes)
+    ? capabilities.videoModes.filter((entry) => entry && entry.id && entry.hidden !== true)
+    : [];
+  const available = (...ids) => ids.map((id) => modes.find((entry) => entry.id === id)).find(Boolean) || null;
+  const mediaTypes = attachments.map(assistantFileKind).filter((kind) => ['image', 'video'].includes(kind));
+  if (mediaTypes.includes('video')) return available('omni', 'video-reference', 'video-edit', 'video-extend');
+  if (mediaTypes.length > 2) return available('omni', 'video-reference');
+  if (mediaTypes.length === 2) return available('first-last-frame', 'omni');
+  if (mediaTypes.length === 1) return available('first-frame', 'omni');
+  return available('text');
 }
 
 function assistantHasMediaAttachments() {
@@ -840,8 +854,12 @@ function syncAssistantMediaOptions() {
       : Array.isArray(capabilities.sizes) && capabilities.sizes.length
         ? capabilities.sizes
         : ['1K', '2K', '4K']);
-  const durations = isVideo && Array.isArray(capabilities.durations) && capabilities.durations.length
-    ? capabilities.durations
+  const selectedVideoMode = isVideo ? assistantVideoModeForAttachments() : null;
+  const durations = isVideo && selectedVideoMode && Array.isArray(selectedVideoMode.durations)
+    && selectedVideoMode.durations.length
+    ? selectedVideoMode.durations
+    : isVideo && Array.isArray(capabilities.durations) && capabilities.durations.length
+      ? capabilities.durations
     : [6, 8, 10, 15];
   const previousSize = sizeSelect.value;
   const previousDuration = Number(durationSelect.value);
@@ -869,7 +887,7 @@ function syncAssistantMediaOptions() {
   durations.forEach((value) => {
     const option = document.createElement('option');
     option.value = String(value);
-    option.textContent = `${value}s`;
+    option.textContent = Number(value) === -1 ? t('Auto', '\u81ea\u52a8') : `${value}s`;
     durationSelect.appendChild(option);
   });
   durationSelect.value = durations.includes(previousDuration)
@@ -998,8 +1016,12 @@ async function uploadAssistantFiles() {
 function renderAssistantRatios(options = {}) {
   const select = document.getElementById('ai-assistant-ratio');
   const capabilities = AiAssistant.kind === 'video' ? assistantVideoCapabilities() : assistantImageCapabilities();
+  const selectedVideoMode = AiAssistant.kind === 'video' ? assistantVideoModeForAttachments() : null;
   const ratios = AiAssistant.kind === 'video'
-    ? (assistantHasMediaAttachments()
+    ? (selectedVideoMode && Array.isArray(selectedVideoMode.ratios) && selectedVideoMode.ratios.length
+      ? selectedVideoMode.ratios
+      : assistantHasMediaAttachments() && selectedVideoMode
+        && ['first-frame', 'first-last-frame'].includes(selectedVideoMode.id)
       ? (Array.isArray(capabilities.frameReferenceRatios) && capabilities.frameReferenceRatios.length
         ? capabilities.frameReferenceRatios
         : ['adaptive'])
@@ -1050,9 +1072,10 @@ function refreshAssistantOptionSummary() {
   const ratio = document.getElementById('ai-assistant-ratio').value || 'auto';
   if (AiAssistant.kind === 'video') {
     const duration = document.getElementById('ai-assistant-duration').value || '6';
+    const durationLabel = Number(duration) === -1 ? t('Auto', '\u81ea\u52a8') : `${duration}s`;
     const sizeWrap = document.getElementById('ai-assistant-size-wrap');
     const resolution = sizeWrap.hidden ? '' : ` · ${document.getElementById('ai-assistant-size').value}`;
-    toggle.textContent = `${ratio}${resolution} · ${duration}s`;
+    toggle.textContent = `${ratio}${resolution} · ${durationLabel}`;
   } else {
     const size = document.getElementById('ai-assistant-size').value || '1K';
     const count = document.getElementById('ai-assistant-count').value || '1';
@@ -1221,6 +1244,18 @@ async function submitAssistantMessage() {
   };
   if (submittedKind === 'image') {
     submittedMediaOptions = await resolveAssistantImageGenerationOptions(submittedMediaOptions, attachments);
+  } else if (submittedKind === 'video') {
+    const selectedVideoMode = assistantVideoModeForAttachments(attachments);
+    if (!selectedVideoMode) {
+      showToast(t('Add the reference image or video required by this model.', '请先添加此模型所需的参考图片或视频。'), 'AI');
+      return;
+    }
+    const minimumReferences = Math.max(0, Number(selectedVideoMode.minReferences) || 0);
+    if (attachments.length < minimumReferences) {
+      showToast(t(`This mode requires at least ${minimumReferences} reference file(s).`, `此模式至少需要 ${minimumReferences} 个参考文件。`), 'AI');
+      return;
+    }
+    submittedMediaOptions.videoMode = selectedVideoMode.id;
   }
   let prompt = input.value.trim();
   if (!prompt && !attachments.length) {
@@ -1324,6 +1359,7 @@ async function submitAssistantMessage() {
         resolution: submittedKind === 'video'
           ? submittedMediaOptions.size
           : undefined,
+        videoMode: submittedKind === 'video' ? submittedMediaOptions.videoMode : undefined,
         count: submittedMediaOptions.count,
         duration: submittedMediaOptions.duration,
         referenceFileIds: attachments.filter((item) => !item.attachmentToken).map((item) => item.id),

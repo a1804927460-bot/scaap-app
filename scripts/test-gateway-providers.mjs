@@ -132,7 +132,8 @@ assert.equal(seedance20Provider.name, 'Seedance 2.0');
 assert.equal(seedance20Provider.model, 'doubao-seedance-2-0-260128');
 assert.equal(seedance20Provider.protocol, 'seedance-video-v3');
 assert.deepEqual(seedance20Provider.capabilities.resolutions, ['480P', '720P', '720P-SR', '1080P', '1080P-SR', '1440P-SR', '4K']);
-assert.deepEqual(seedance20Provider.capabilities.durations, Array.from({ length: 12 }, (_value, index) => index + 4));
+assert.deepEqual(seedance20Provider.capabilities.durations, [-1, ...Array.from({ length: 12 }, (_value, index) => index + 4)]);
+assert.deepEqual(seedance20Provider.capabilities.fallbackCapabilities.durations, Array.from({ length: 12 }, (_value, index) => index + 4));
 assert.equal(seedance20Provider.capabilities.maxReferenceImages, 9);
 assert.deepEqual(seedance20Provider.capabilities.videoModes.map((mode) => mode.id), [
   'first-frame', 'first-last-frame', 'omni'
@@ -141,11 +142,14 @@ assert.deepEqual(seedance20Provider.capabilities.videoModes[1].roles, ['first_fr
 assert.deepEqual(seedance20Provider.capabilities.videoModes[2].roles, ['reference_image']);
 assert.deepEqual(seedance20Provider.capabilities.videoModes[2].mediaTypes, ['image', 'video', 'audio']);
 assert.equal(seedance20Provider.capabilities.videoModes[2].maxReferenceVideos, 3);
+assert.deepEqual(seedance20Provider.capabilities.videoModes[0].ratios, ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9', 'adaptive']);
+assert.deepEqual(seedance20Provider.capabilities.fallbackCapabilities.videoModes[0].ratios, ['adaptive']);
 assert.equal(seedance25Provider.name, 'Seedance 2.5');
 assert.equal(seedance25Provider.model, 'doubao-seedance-2-5-260628');
 assert.equal(seedance25Provider.protocol, 'seedance-video-v3');
 assert.deepEqual(seedance25Provider.capabilities.resolutions, ['480P', '720P', '720P-SR', '720P-ESR', '1080P', '1080P-SR', '1080P-ESR', '1080P-ESR & 60FPS', '1440P-SR', '1440P-ESR', '4K-ESR']);
-assert.deepEqual(seedance25Provider.capabilities.durations, Array.from({ length: 27 }, (_value, index) => index + 4));
+assert.deepEqual(seedance25Provider.capabilities.durations, [-1, ...Array.from({ length: 27 }, (_value, index) => index + 4)]);
+assert.deepEqual(seedance25Provider.capabilities.fallbackCapabilities.durations, Array.from({ length: 27 }, (_value, index) => index + 4));
 assert.deepEqual(seedance25Provider.capabilities.textRatios, ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9']);
 assert.equal(seedance25Provider.capabilities.supportsResolution, undefined);
 assert.equal(seedance25Provider.capabilities.createTimeoutMs, 45_000);
@@ -348,9 +352,11 @@ await assert.rejects(
 
 const gptImageCalls = [];
 const providerOverridesBeforeWrapped = process.env.AI_PROVIDERS_JSON;
+const gptImagePngs = [pngHeader(1536, 1024), pngHeader(1024, 1536), pngHeader(2000, 992)];
 globalThis.fetch = async (url, options = {}) => {
   gptImageCalls.push({ url: String(url), options });
-  return jsonResponse({ data: [{ b64_json: 'iVBORw==' }] });
+  const png = gptImagePngs[Math.min(gptImageCalls.length - 1, gptImagePngs.length - 1)];
+  return jsonResponse({ data: [{ b64_json: png.toString('base64') }] });
 };
 const gptImage = await generateMedia('image', {
   providerId: 'image-6',
@@ -360,7 +366,7 @@ const gptImage = await generateMedia('image', {
   aspectRatio: '3:2',
   urls: []
 });
-assert.deepEqual(gptImage, Buffer.from('iVBORw==', 'base64'));
+assert.deepEqual(gptImage, gptImagePngs[0]);
 assert.equal(gptImageCalls[0].url, 'https://api.302.ai/v1/images/generations');
 assert.equal(gptImageCalls[0].options.headers.Authorization, 'Bearer ai302-secret');
 assert.deepEqual(JSON.parse(gptImageCalls[0].options.body), {
@@ -549,6 +555,80 @@ await assert.rejects(
   (error) => error && error.code === 'async-video-required'
 );
 
+// A provider-side 4xx is a request/model error, not an outage. The logical
+// Atlas route must not silently submit the same request to 302 in that case.
+const previousAtlasKey = process.env.ATLASCLOUD_API_KEY;
+process.env.ATLASCLOUD_API_KEY = 'atlas-secret';
+let atlasRejectedRequestCount = 0;
+globalThis.fetch = async (url) => {
+  atlasRejectedRequestCount += 1;
+  assert.match(String(url), /api\.atlascloud\.ai\/api\/v1\/model\/generateVideo/);
+  return {
+    ok: false,
+    status: 400,
+    headers: { get: () => null },
+    text: async () => JSON.stringify({ error: { code: 'invalid_parameter', message: 'The selected option is invalid.' } })
+  };
+};
+await assert.rejects(
+  createVideoTask({
+    providerId: 'video-2',
+    prompt: 'do not switch suppliers on a request error',
+    resolution: '720P',
+    duration: 4,
+    aspectRatio: '16:9',
+    videoMode: 'first-frame',
+    urls: ['https://cdn.example/first.png'],
+    referenceMediaTypes: ['image']
+  }),
+  (error) => error && error.code === 'provider-request-failed' && error.status === 400
+);
+assert.equal(atlasRejectedRequestCount, 1);
+if (previousAtlasKey === undefined) delete process.env.ATLASCLOUD_API_KEY;
+else process.env.ATLASCLOUD_API_KEY = previousAtlasKey;
+
+// Atlas may return an OpenAI-compatible b64_json image instead of a URL.
+// Accept it only as image bytes, then run the same dimension validation.
+process.env.ATLASCLOUD_API_KEY = 'atlas-secret';
+function pngCrc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+function validSizedPng(width, height) {
+  const buffer = Buffer.from(relayReference.slice(relayReference.indexOf(',') + 1), 'base64');
+  buffer.writeUInt32BE(width, 16);
+  buffer.writeUInt32BE(height, 20);
+  buffer.writeUInt32BE(pngCrc32(buffer.subarray(12, 29)), 29);
+  return buffer;
+}
+const atlasImagePng = validSizedPng(1024, 1024);
+let atlasImagePolls = 0;
+globalThis.fetch = async (url) => {
+  if (String(url).endsWith('/generateImage')) {
+    return jsonResponse({ id: 'atlas-image-task' });
+  }
+  atlasImagePolls += 1;
+  return jsonResponse({
+    status: 'succeeded',
+    data: [{ b64_json: atlasImagePng.toString('base64') }]
+  });
+};
+assert.deepEqual(await generateMedia('image', {
+  providerId: 'image-6',
+  prompt: 'atlas base64 image result',
+  size: '1024x1024',
+  quality: 'medium',
+  aspectRatio: '1:1',
+  urls: []
+}), atlasImagePng);
+assert.equal(atlasImagePolls, 1);
+if (previousAtlasKey === undefined) delete process.env.ATLASCLOUD_API_KEY;
+else process.env.ATLASCLOUD_API_KEY = previousAtlasKey;
+
 const seedanceCalls = [];
 globalThis.fetch = async (url, options = {}) => {
   const value = String(url);
@@ -719,6 +799,44 @@ await assert.rejects(
   }),
   (error) => error && error.code === 'invalid-reference-media'
 );
+
+const fallbackAutomatic20 = await createVideoTask({
+  providerId: 'video-2',
+  prompt: 'fallback automatic duration',
+  resolution: '720P',
+  duration: -1,
+  aspectRatio: '16:9',
+  videoMode: 'first-frame',
+  urls: ['https://cdn.example/first.png'],
+  referenceMediaTypes: ['image']
+});
+assert.deepEqual(fallbackAutomatic20, { providerId: 'video-2', taskId: 'seedance-20-task' });
+const fallbackAutomaticBody = seedanceCalls
+  .map((call) => {
+    try { return JSON.parse(call.options.body); } catch (error) { return null; }
+  })
+  .find((body) => body && body.content && body.content[0]
+    && body.content[0].text === 'fallback automatic duration');
+assert.equal(fallbackAutomaticBody.duration, 15);
+assert.equal(fallbackAutomaticBody.ratio, 'adaptive');
+
+await createVideoTask({
+  providerId: 'video-3',
+  prompt: 'fallback edit automatic duration',
+  resolution: '720P',
+  duration: -1,
+  aspectRatio: 'adaptive',
+  videoMode: 'video-edit',
+  urls: ['https://cdn.example/source.mp4'],
+  referenceMediaTypes: ['video']
+});
+const fallbackEditBody = seedanceCalls
+  .map((call) => {
+    try { return JSON.parse(call.options.body); } catch (error) { return null; }
+  })
+  .find((body) => body && body.content && body.content[0]
+    && body.content[0].text.includes('fallback edit automatic duration'));
+assert.equal(fallbackEditBody.duration, 30);
 
 globalThis.fetch = async () => {
   throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');

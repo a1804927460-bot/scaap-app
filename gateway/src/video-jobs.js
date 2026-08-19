@@ -3,6 +3,7 @@ import { quoteUsage } from './usage.js';
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
 const RPC_TIMEOUT_MS = 8_000;
+const RPC_MAX_ATTEMPTS = 3;
 const ACTIVE_PROVIDER_STATES = new Set([
   'created', 'creating', 'pending', 'queued', 'queueing', 'preparing',
   'processing', 'running', 'submitted', 'in_progress'
@@ -66,26 +67,36 @@ async function responsePayload(response) {
 }
 
 async function rpc(name, body, fetchImpl = fetch) {
-  let response;
-  try {
-    response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/${name}`, {
-      method: 'POST',
-      headers: serviceHeaders(),
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(RPC_TIMEOUT_MS)
-    });
-  } catch (error) {
-    throw serviceError('video-job-service-failed', 'The asynchronous video service is temporarily unavailable.');
-  }
-  const payload = await responsePayload(response);
-  if (!response.ok) {
+  for (let attempt = 0; attempt < RPC_MAX_ATTEMPTS; attempt += 1) {
+    let response;
+    try {
+      response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/${name}`, {
+        method: 'POST',
+        headers: serviceHeaders(),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(RPC_TIMEOUT_MS)
+      });
+    } catch (error) {
+      if (attempt + 1 >= RPC_MAX_ATTEMPTS) break;
+      await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+      continue;
+    }
+    const payload = await responsePayload(response);
     const missing = response.status === 404 || ['PGRST202', '42883'].includes(String(payload && payload.code || ''));
-    throw serviceError(
-      missing ? 'video-job-schema-missing' : 'video-job-service-failed',
-      missing ? 'The asynchronous video schema is not installed.' : 'The asynchronous video service rejected the request.'
-    );
+    const retryable = !missing && (response.status === 429 || response.status >= 500);
+    if (!response.ok && retryable && attempt + 1 < RPC_MAX_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+      continue;
+    }
+    if (!response.ok) {
+      throw serviceError(
+        missing ? 'video-job-schema-missing' : 'video-job-service-failed',
+        missing ? 'The asynchronous video schema is not installed.' : 'The asynchronous video service rejected the request.'
+      );
+    }
+    return payload;
   }
-  return payload;
+  throw serviceError('video-job-service-failed', 'The asynchronous video service is temporarily unavailable.');
 }
 
 function requireObject(payload) {

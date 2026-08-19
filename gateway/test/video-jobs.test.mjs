@@ -105,6 +105,46 @@ test('start replays a server-authorized price without exposing an account tier',
   });
 });
 
+test('Kling Pro jobs persist the actual tier provider and reserve the Pro price', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test' }, async () => {
+    let call;
+    await startVideoJob({
+      userId: '00000000-0000-4000-8000-000000000115',
+      operationId: '00000000-0000-4000-8000-000000000116',
+      taskToken: 'kling-pro-task-token-1234567890',
+      body: {
+        prompt: 'test', providerId: 'video-10', serviceTier: 'pro',
+        resolution: '1080P', duration: 10, aspectRatio: 'adaptive'
+      },
+      fetchImpl: async (_url, options) => {
+        call = JSON.parse(options.body);
+        return jsonResponse({ ok: true, reason: 'reserved', credits: 260, status: 'starting' });
+      }
+    });
+    assert.equal(call.p_provider_id, 'video-11');
+    assert.equal(call.p_resolution, '1080P');
+    assert.equal(call.p_expected_credits, 260);
+  });
+});
+
+test('async job RPC retries a transient transport failure with the same idempotent payload', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test' }, async () => {
+    let attempts = 0;
+    const result = await getVideoJob(
+      '00000000-0000-4000-8000-000000000113',
+      'retryable-owner-token-123456',
+      async (_url, options) => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('temporary network reset');
+        assert.equal(JSON.parse(options.body).p_user_id, '00000000-0000-4000-8000-000000000113');
+        return jsonResponse({ ok: true, status: 'submitted' });
+      }
+    );
+    assert.equal(result.status, 'submitted');
+    assert.equal(attempts, 2);
+  });
+});
+
 test('owner status and download calls send only the task token hash', async () => {
   await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test' }, async () => {
     const token = 'owner-download-token-123456';

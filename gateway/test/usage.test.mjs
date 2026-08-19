@@ -78,20 +78,43 @@ test('gateway quote matches the desktop image table', () => {
 
 test('video quote clamps provider parameters, chat remains free, and no provider requires activation', () => {
   assert.deepEqual(quoteUsage('video', { providerId: 'video-1', resolution: '2k', duration: 7 }), {
-    kind: 'video', providerId: 'video-1', credits: 70, resolution: '2K', duration: 7, requiresActivation: false
+    kind: 'video', providerId: 'video-1', credits: 70, unitCredits: 8, resolution: '2K', duration: 7, requiresActivation: false
   });
   assert.equal(quoteUsage('video', { providerId: 'video-1', resolution: '768P', duration: 1 }).credits, 34);
   assert.equal(quoteUsage('video', { providerId: 'video-1', resolution: '2K', duration: 99 }).credits, 134);
+  assert.deepEqual(
+    quoteUsage('video', { providerId: 'video-2', resolution: '720P', duration: -1 }),
+    {
+      kind: 'video', providerId: 'video-2', credits: 223, unitCredits: 13.89602304,
+      resolution: '720P', duration: 15, requiresActivation: false
+    }
+  );
+  assert.deepEqual(
+    quoteUsage('video', { providerId: 'video-3', resolution: '720P', duration: -1 }),
+    {
+      kind: 'video', providerId: 'video-3', credits: 543, unitCredits: 17.6256,
+      resolution: '720P', duration: 30, requiresActivation: false
+    }
+  );
   assert.deepEqual(quoteUsage('video', { providerId: 'video-2', resolution: '480p', duration: 5 }), {
-    kind: 'video', providerId: 'video-2', credits: 49, resolution: '480P', duration: 5, requiresActivation: false
+    kind: 'video', providerId: 'video-2', credits: 49, unitCredits: 6.94801152, resolution: '480P', duration: 5, requiresActivation: false
   });
   assert.equal(quoteUsage('video', { providerId: 'video-2', resolution: 'unsupported', duration: 6 }).credits, 98);
   assert.deepEqual(quoteUsage('video', { providerId: 'video-3', resolution: '720p', duration: 5 }), {
-    kind: 'video', providerId: 'video-3', credits: 103, resolution: '720P', duration: 5, requiresActivation: false
+    kind: 'video', providerId: 'video-3', credits: 103, unitCredits: 17.6256, resolution: '720P', duration: 5, requiresActivation: false
   });
   assert.equal(quoteUsage('video', { providerId: 'video-3', resolution: '720p', duration: 10 }).credits, 191);
   assert.equal(quoteUsage('video', { providerId: 'video-2', resolution: '720p', duration: 10 }).credits, 153);
   assert.equal(quoteUsage('video', { providerId: 'video-4', resolution: '720p', duration: 10 }).credits, 129);
+  assert.deepEqual(quoteUsage('video', { providerId: 'video-10', resolution: '1080p', duration: 10 }), {
+    kind: 'video', providerId: 'video-11', credits: 260, unitCredits: 24.6, resolution: '1080P', duration: 10, requiresActivation: false
+  });
+  assert.equal(quoteUsage('video', {
+    providerId: 'video-12', serviceTier: 'pro', resolution: '1080p', duration: 15
+  }).credits, 409);
+  assert.equal(quoteUsage('video', {
+    providerId: 'video-12', serviceTier: 'standard', resolution: '720p', duration: 15
+  }).credits, 343);
   assert.equal(quoteUsage('chat', { providerId: 'chat-1' }).credits, 0);
   assert.equal(quoteUsage('chat', { providerId: 'chat-2' }).credits, 0);
   assert.equal(quoteUsage('chat', { providerId: 'chat-1' }).requiresActivation, false);
@@ -586,6 +609,19 @@ test('Kling async video jobs reserve through the Kling provider allow-list', () 
   assert.match(migration, /else\s+reservation := public\.reserve_ai_credits\(/i);
   assert.match(migration, /create or replace function public\.start_ai_video_job/i);
   assert.match(migration, /grant execute on function public\.start_ai_video_job[\s\S]*?to service_role/i);
+});
+
+test('latest async migration accepts the complete Seedance matrix and prices logical routes with Atlas catalog credits', () => {
+  const migration = fs.readFileSync(
+    new URL('../../supabase/migrations/202608200001_fix_atlas_seedance_async_jobs.sql', import.meta.url),
+    'utf8'
+  );
+  assert.match(migration, /check \(upper\(trim\(resolution\)\) in \([\s\S]*?'720P-SR'[\s\S]*?'1080P-ESR'[\s\S]*?'4K-ESR'/i);
+  assert.match(migration, /duration_seconds between 3 and 30/i);
+  assert.match(migration, /normalized_provider in \([\s\S]*?'video-2'[\s\S]*?'video-3'[\s\S]*?'atlas-video-seedance25-ref'/i);
+  assert.match(migration, /reservation := public\.reserve_atlas_catalog_credits\(/i);
+  assert.match(migration, /reservation := public\.reserve_kling_video_credits\(/i);
+  assert.match(migration, /else\s+reservation := public\.reserve_ai_credits\(/i);
 });
 
 test('Nano Banana migration enforces provider and resolution pricing server-side', () => {

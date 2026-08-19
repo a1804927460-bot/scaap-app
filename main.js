@@ -67,7 +67,7 @@ const { AiGatewayClient, assertValidGlbBuffer } = require('./lib/ai-gateway-clie
 const { normalizeGatewayCatalog, assertGatewayProvider } = require('./lib/gateway-catalog');
 const { assertSafeLocalFile, assertPromptHasNoSecrets, sanitizeAiRequest } = require('./lib/privacy-guard');
 const { activate: activateApp, getActivationStatus } = require('./lib/activation');
-const { quoteMediaCredits, publicCreditPricing } = require('./lib/credit-pricing');
+const { conservativeMediaCreditQuote, quoteMediaCredits, publicCreditPricing } = require('./lib/credit-pricing');
 const {
   imageFallbackProviderIds,
   isRetryableMediaError,
@@ -823,6 +823,7 @@ function fileToPayload(f) {
       duration: f.aiGeneration.duration,
       requestedDuration: f.aiGeneration.requestedDuration || null,
       videoMode: f.aiGeneration.videoMode || null,
+      serviceTier: f.aiGeneration.serviceTier || null,
       cameraControl: f.aiGeneration.kind === 'video'
         ? normalizeVideoCameraControl(f.aiGeneration.cameraControl)
         : null,
@@ -2295,6 +2296,7 @@ function estimatedHistoricalCanvasCredits(file, operation, kind) {
         quality: operation.quality,
         resolution: operation.resolution,
         duration: operation.requestedDuration ?? operation.duration,
+        serviceTier: operation.serviceTier,
         count: 1
       });
       return kind === 'image' ? quote.unitCredits : quote.totalCredits;
@@ -3638,8 +3640,11 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
           ? Number(sourceDimensions.sourceDuration)
           : Math.max(1, Number(request.duration) || 6))
         : null,
-      requestedDuration: mediaKind === 'video' ? Math.max(1, Number(request.duration) || 6) : null,
+      requestedDuration: mediaKind === 'video'
+        ? (Number(request.duration) === -1 ? -1 : Math.max(1, Number(request.duration) || 6))
+        : null,
       videoMode: mediaKind === 'video' ? String(request.videoMode || 'text').trim().slice(0, 32) : null,
+      serviceTier: mediaKind === 'video' ? String(request.serviceTier || '').trim().toLowerCase().slice(0, 24) || null : null,
       cameraControl: mediaKind === 'video' ? normalizeVideoCameraControl(request.cameraControl) : null,
       referenceFileIds,
       referenceMediaTypes: mediaKind === 'video' && Array.isArray(request.referenceMediaTypes)
@@ -3890,15 +3895,11 @@ async function quoteMediaCreditsForAccount(request = {}) {
   if (!hasAuthenticatedGatewaySession() || !aiGateway || !aiGateway.isConfigured()) return localQuote;
   try {
     const remoteQuote = await aiGateway.quoteMediaCredits(request);
-    const totalCredits = Math.max(0, Math.ceil(Number(remoteQuote && remoteQuote.totalCredits) || 0));
-    const unitCredits = Math.max(0, Math.ceil(Number(remoteQuote && remoteQuote.unitCredits) || 0));
-    if (!totalCredits || !unitCredits) return localQuote;
-    return {
-      ...localQuote,
-      ...remoteQuote,
-      unitCredits,
-      totalCredits
-    };
+    // A rolling gateway deployment can briefly expose an older price table.
+    // Never show a quote below the bundled table: the server remains the
+    // authority for reservation, while this upper bound prevents the desktop
+    // estimate from understating a real charge during that window.
+    return conservativeMediaCreditQuote(localQuote, remoteQuote, request);
   } catch {
     // A quote outage must not make the local UI unusable; the server remains
     // authoritative when the generation request is submitted.
@@ -4026,7 +4027,7 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   if (kind === 'image') {
     let size = normalizeImageSize(request.size);
     const aspectRatio = String(request.aspectRatio || '').trim();
-    const quality = String(request.quality || 'auto').trim().toLowerCase();
+    let quality = String(request.quality || 'auto').trim().toLowerCase();
     if (!AI_IMAGE_SIZES.has(size) && !/^([1-9]\d{0,3})x([1-9]\d{0,3})$/i.test(size)) {
       throw invalidAiMediaOption('invalid-size', 'The selected image resolution is not supported.');
     }
@@ -4071,6 +4072,16 @@ function normalizeAiMediaGenerationRequest(request, kind) {
         .map(normalizeImageSize)
         .filter(Boolean)
     );
+    const configuredQualities = Array.isArray(capabilities.qualities)
+      ? capabilities.qualities.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
+      : [];
+    if (configuredQualities.length && !configuredQualities.includes(quality)) {
+      // Some routed Atlas catalog entries expose medium/high/low only while
+      // the shared desktop default is auto. Use the documented medium tier
+      // instead of submitting an option the selected upstream rejects.
+      if (quality === 'auto' && configuredQualities.includes('medium')) quality = 'medium';
+      else throw invalidAiMediaOption('invalid-quality', 'The selected image model does not support this quality.');
+    }
     if (supportedSizes.size && !supportedSizes.has(size) && !imageDimensionsWithinCapabilities(size, capabilities)) {
       const savedSize = normalizeImageSize(imageConfig.imageSize);
       size = imageResolutionPresetForPixels(size, supportedSizes)
@@ -4123,11 +4134,16 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   const capabilities = provider.capabilities && typeof provider.capabilities === 'object'
     ? provider.capabilities
     : {};
+  const resolution = String(request.resolution || '').trim().toUpperCase();
   const serviceTiers = Array.isArray(capabilities.serviceTiers)
     ? capabilities.serviceTiers.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
     : [];
+  const inferredServiceTier = !request.serviceTier && capabilities.tierResolutions
+    ? serviceTiers.find((tier) => Array.isArray(capabilities.tierResolutions[tier])
+      && capabilities.tierResolutions[tier].some((value) => String(value || '').trim().toUpperCase() === resolution))
+    : '';
   const requestedServiceTier = String(
-    request.serviceTier || capabilities.defaultServiceTier || serviceTiers[0] || ''
+    request.serviceTier || inferredServiceTier || capabilities.defaultServiceTier || serviceTiers[0] || ''
   ).trim().toLowerCase();
   if (serviceTiers.length && !serviceTiers.includes(requestedServiceTier)) {
     throw invalidAiMediaOption('invalid-service-tier', 'The selected model version is not supported.');
@@ -4159,7 +4175,6 @@ function normalizeAiMediaGenerationRequest(request, kind) {
       .map((value) => String(value || '').trim())
       .filter(Boolean)
   );
-  const resolution = String(request.resolution || '').trim().toUpperCase();
   const duration = Number(request.duration);
   const aspectRatio = String(request.aspectRatio || '').trim();
   const referenceMediaTypes = Array.isArray(request.referenceMediaTypes)
@@ -4173,17 +4188,17 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   const isAtlasRouted = capabilities.atlasRouted === true;
   const isSeedance25 = providerId === 'video-3' || String(provider.model || '').includes('2.5');
   const isAtlasReferenceProvider = String(capabilities.atlasKind || '') === 'reference-to-video';
-  const fallbackVideoMode = (isAtlasReferenceProvider || isAtlasRouted)
-    ? (referenceMediaTypes.includes('video') || referenceAudioCount > 0
-      ? 'omni'
-      : referenceCount > 2 ? 'omni'
-        : referenceCount === 2 ? 'first-last-frame'
-          : referenceCount === 1 ? 'first-frame' : 'omni')
+  const videoModes = normalizedVideoModes(capabilities);
+  const availableMode = (...ids) => ids.find((id) => videoModes.some((entry) => entry.id === id)) || '';
+  const fallbackVideoMode = referenceMediaTypes.includes('video') || referenceAudioCount > 0
+    ? availableMode('omni', 'video-reference', 'video-edit', 'video-extend')
     : referenceCount > 2
-      ? 'omni'
+      ? availableMode('omni', 'video-reference')
       : referenceCount === 2
-        ? 'first-last-frame'
-        : referenceCount === 1 ? 'first-frame' : 'text';
+        ? availableMode('first-last-frame', 'omni')
+        : referenceCount === 1
+          ? availableMode('first-frame', 'omni')
+          : availableMode('text');
   const videoMode = requestedVideoMode || fallbackVideoMode;
   const isAtlasReference = isAtlasReferenceProvider
     || (isAtlasRouted && (
@@ -4191,7 +4206,6 @@ function normalizeAiMediaGenerationRequest(request, kind) {
       || referenceMediaTypes.includes('video')
       || referenceAudioCount > 0
     ));
-  const videoModes = normalizedVideoModes(capabilities);
   const selectedVideoMode = videoModes.find((entry) => entry && entry.id === videoMode) || null;
   if (!selectedVideoMode) {
     throw invalidAiMediaOption('invalid-video-mode', `${String(provider.name || 'The selected video model')} does not support this generation mode.`);
@@ -6438,7 +6452,8 @@ function registerIpcHandlers() {
       quality: request.quality,
       size: request.size,
       resolution: request.resolution,
-      duration: request.duration
+      duration: request.duration,
+      serviceTier: request.serviceTier
     });
     const fallbackProvider = kind === 'image'
       ? await resolveImageFallback(request, creditQuote)

@@ -150,6 +150,12 @@ function pngHeader(width, height) {
       seed: 123, bitrateMode: 'high', watermark: true, outputFormat: 'mp4'
     });
     await providers.createVideoTask({
+      providerId: 'video-2', prompt: 'explicit image-to-video ratio',
+      urls: ['https://cdn.example.com/source.png'], referenceMediaTypes: ['image'],
+      videoMode: 'first-frame', resolution: '720P', aspectRatio: '9:16', duration: -1,
+      generateAudio: true, outputFormat: 'mp4'
+    });
+    await providers.createVideoTask({
       providerId: 'video-3', prompt: 'audio only reference',
       urls: [], referenceMediaTypes: [], referenceAudioUrls: ['https://cdn.example.com/source.mp3'],
       videoMode: 'omni', resolution: '720P', aspectRatio: 'adaptive', duration: 6,
@@ -181,6 +187,9 @@ function pngHeader(width, height) {
     assert.equal(seedance20ReferenceRequest.body.seed, 123);
     assert.equal(seedance20ReferenceRequest.body.bitrate_mode, 'high');
     assert.equal(seedance20ReferenceRequest.body.watermark, true);
+    const seedance20I2vRequest = requests.find((entry) => entry.body.model === 'bytedance/seedance-2.0/image-to-video' && entry.body.image);
+    assert.equal(seedance20I2vRequest.body.ratio, '9:16');
+    assert.equal(seedance20I2vRequest.body.duration, -1);
     const audioOnlyRequest = requests.find((entry) => entry.body.model === 'bytedance/seedance-2.5/reference-to-video' && entry.body.reference_audios && entry.body.reference_audios.length > 0);
     assert.equal(audioOnlyRequest.body.reference_images.length, 0);
     assert.equal(audioOnlyRequest.body.reference_audios.length, 1);

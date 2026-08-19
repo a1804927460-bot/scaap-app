@@ -3907,6 +3907,14 @@ function supportedVideoDuration(value, capabilities = {}) {
   ), supported[0] || 6);
 }
 
+function videoDurationDisplayLabel(value, compact = false) {
+  const duration = Number(value);
+  if (duration === -1) return t('Auto', '\u81ea\u52a8');
+  return compact
+    ? `${duration}s`
+    : t(`${duration}s`, `${duration} \u79d2`);
+}
+
 function supportedVideoModes(capabilities = {}) {
   const configured = Array.isArray(capabilities.videoModes) ? capabilities.videoModes : [];
   const modes = configured.filter((entry) => entry && typeof entry === 'object' && entry.id);
@@ -5118,10 +5126,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     });
     pop.querySelector('.ai-count-value').textContent = t(`x ${count}`, `× ${count}`);
     pop.querySelector('.ai-resolution-hint').textContent = `≈ ${px}`;
-    pop.querySelector('.ai-duration-value').textContent = t(`${duration}s`, `${duration} 秒`);
+    pop.querySelector('.ai-duration-value').textContent = videoDurationDisplayLabel(duration);
     refreshCreditEstimateLanguage();
     optionsToggle.textContent = kind === 'video'
-      ? t(`${ratio} · ${size} · ${duration}s`, `${ratio} · ${size} · ${duration} 秒`)
+      ? `${ratio === 'adaptive' ? autoLabel : ratio} · ${size} · ${videoDurationDisplayLabel(duration, true)}`
       : `${ratio === 'auto' || ratio === 'adaptive' ? autoLabel : ratio} · ${size} · ${t(`x${count}`, `×${count}`)}`;
     cameraControlToggle.querySelector('span').textContent = t('Lens', '镜头');
     const activePromptStyle = selectedPromptStyle();
@@ -5174,6 +5182,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
         modelPickerMenu.hidden = true;
         modelPickerTrigger.setAttribute('aria-expanded', 'false');
         syncGenerationOptions();
+        // Resolution and duration are provider-specific. Open the options
+        // panel after a model switch so the newly computed values are visible
+        // immediately instead of leaving the user in a stale hidden menu.
+        setOptionsOpen(true);
       });
       modelPickerMenu.appendChild(option);
     });
@@ -5411,14 +5423,14 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       sizeGroup.appendChild(button);
     });
     const durationRange = pop.querySelector('.ai-duration-range');
-    const minimum = durations.length ? Math.min(...durations) : 6;
-    const maximum = durations.length ? Math.max(...durations) : 15;
-    durationRange.min = String(minimum);
-    durationRange.max = String(maximum);
     duration = kind === 'video'
       ? supportedVideoDurationFor(duration, composerVideoRequestMode(videoMode, boardReferences.size, capabilities), capabilities)
-      : Math.max(minimum, Math.min(maximum, Math.round(duration)));
-    durationRange.value = String(duration);
+      : Math.max(6, Math.min(15, Math.round(duration)));
+    const durationIndex = Math.max(0, durations.indexOf(duration));
+    durationRange.min = '0';
+    durationRange.max = String(Math.max(0, durations.length - 1));
+    durationRange.step = '1';
+    durationRange.value = String(durationIndex);
     pop.querySelector('.ai-resolution-block').hidden = resolutions.length === 0;
     renderVideoModes();
     renderRatios();
@@ -5475,12 +5487,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   }
 
   function updateSummary() {
+    const ratioLabel = ratio === 'auto' || ratio === 'adaptive' ? t('Auto', '\u81ea\u52a8') : ratio;
     optionsToggle.textContent = kind === 'video'
-      ? t(
-        `${ratio === 'adaptive' ? 'Auto' : ratio} · ${size} · ${duration}s`,
-        `${ratio === 'adaptive' ? '自动' : ratio} · ${size} · ${duration} 秒`
-      )
-      : `${ratio === 'auto' || ratio === 'adaptive' ? t('Auto', '自动') : ratio} · ${size} · ${t(`x${count}`, `×${count}`)}`;
+      ? `${ratioLabel} · ${size} · ${videoDurationDisplayLabel(duration, true)}`
+      : `${ratioLabel} · ${size} · ${t(`x${count}`, `×${count}`)}`;
   }
 
   function updateMode(nextKind) {
@@ -5546,6 +5556,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const selected = [...modelSelect.options].find((option) => option.value === modelSelect.value);
     if (selected) modelPickerLabel.textContent = selected.textContent;
     syncGenerationOptions();
+    setOptionsOpen(true);
     if (kind === 'video' && boardReferences.size >= 2
       && !['omni', 'video-reference', 'video-edit', 'video-extend'].includes(videoMode)
       && !supportsVideoFirstLastFrame(selectedVideoCapabilities())) {
@@ -5701,11 +5712,18 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     setOptionsOpen(true);
   });
   pop.querySelector('.ai-duration-range').addEventListener('input', (event) => {
-    duration = kind === 'video'
-      ? supportedVideoDuration(event.target.value, selectedVideoCapabilities())
-      : Number(event.target.value);
-    event.target.value = String(duration);
-    pop.querySelector('.ai-duration-value').textContent = `${duration} 秒`;
+    const capabilities = selectedVideoCapabilities();
+    const allowedDurations = videoModeDurations(
+      composerVideoRequestMode(videoMode, boardReferences.size, capabilities),
+      capabilities
+    );
+    const durationIndex = Math.max(0, Math.min(
+      allowedDurations.length - 1,
+      Math.round(Number(event.target.value) || 0)
+    ));
+    duration = allowedDurations[durationIndex] ?? 6;
+    event.target.value = String(durationIndex);
+    pop.querySelector('.ai-duration-value').textContent = videoDurationDisplayLabel(duration);
     updateSummary();
     updateCreditEstimate();
   });
@@ -5951,8 +5969,6 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
 }
 
 async function generateAiMediaForBoardV3(request) {
-  const creditAccess = await window.MesssCredits.ensure(request);
-  if (!creditAccess.ok) return [];
   const taskId = beginAiMediaTask(request);
   const targetCanvasId = activeCanvasId();
   const generationRequest = { ...request, canvasId: targetCanvasId };
@@ -5960,6 +5976,14 @@ async function generateAiMediaForBoardV3(request) {
   const placeholders = placeOnBoard ? createAiPlaceholders(generationRequest) : [];
 
   try {
+    // Give the user an immediate, correctly positioned pending card while the
+    // quote/account request is in flight. The main process still performs the
+    // authoritative reservation, so this does not bypass credit enforcement.
+    const creditAccess = await window.MesssCredits.ensure(generationRequest);
+    if (!creditAccess.ok) {
+      removeAiPlaceholders(placeholders);
+      return [];
+    }
     const folderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
       ? AppState.activeFolderId
       : null;

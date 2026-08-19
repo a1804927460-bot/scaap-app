@@ -410,19 +410,17 @@ function validateBody(body, kind) {
     ))
   );
   if (kind === 'video' && Array.isArray(capabilities.videoModes)) {
-    const isAtlasReference = isAtlasReferenceProvider;
     const fallbackReferenceCount = submittedUrlCount;
-    const fallbackMode = isAtlasReference
-      ? (submittedMediaTypes.includes('video') || submittedAudioReferenceCount > 0
-        ? 'omni'
-        : submittedUrlCount > 2 ? 'omni'
-          : submittedUrlCount === 2 ? 'first-last-frame'
-            : submittedUrlCount === 1 ? 'first-frame' : 'omni')
+    const availableMode = (...ids) => ids.find((id) => capabilities.videoModes.some((entry) => entry && entry.id === id)) || '';
+    const fallbackMode = submittedMediaTypes.includes('video') || submittedAudioReferenceCount > 0
+      ? availableMode('omni', 'video-reference', 'video-edit', 'video-extend')
       : fallbackReferenceCount > 2
-        ? 'omni'
+        ? availableMode('omni', 'video-reference')
         : fallbackReferenceCount === 2
-          ? 'first-last-frame'
-          : fallbackReferenceCount === 1 ? 'first-frame' : 'text';
+          ? availableMode('first-last-frame', 'omni')
+          : fallbackReferenceCount === 1
+            ? availableMode('first-frame', 'omni')
+            : availableMode('text');
     videoMode = requestedVideoMode || fallbackMode;
     selectedVideoMode = capabilities.videoModes.find((entry) => entry && entry.id === videoMode) || null;
     if (!selectedVideoMode) {
@@ -518,12 +516,16 @@ function validateBody(body, kind) {
   let requestedSize = normalizeImageSize(body.size);
   const requestedResolution = String(body.resolution || '').trim().toUpperCase();
   let requestedRatio = String(body.aspectRatio || '').trim();
-  const requestedQuality = String(body.quality || 'auto').trim().toLowerCase();
+  let requestedQuality = String(body.quality || 'auto').trim().toLowerCase();
   const configuredServiceTiers = Array.isArray(capabilities.serviceTiers)
     ? capabilities.serviceTiers.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
     : [];
+  const inferredServiceTier = !body.serviceTier && capabilities.tierResolutions
+    ? configuredServiceTiers.find((tier) => Array.isArray(capabilities.tierResolutions[tier])
+      && capabilities.tierResolutions[tier].some((value) => String(value || '').trim().toUpperCase() === requestedResolution))
+    : '';
   const requestedServiceTier = String(
-    body.serviceTier || capabilities.defaultServiceTier || configuredServiceTiers[0] || ''
+    body.serviceTier || inferredServiceTier || capabilities.defaultServiceTier || configuredServiceTiers[0] || ''
   ).trim().toLowerCase();
   if (configuredServiceTiers.length && !configuredServiceTiers.includes(requestedServiceTier)) {
     throw invalidOption('invalid-service-tier', 'The selected model version is not supported.');
@@ -572,6 +574,13 @@ function validateBody(body, kind) {
     const allowedQualities = Array.isArray(capabilities.qualities) && capabilities.qualities.length
       ? new Set(capabilities.qualities.map((value) => String(value).toLowerCase()))
       : null;
+    if (allowedQualities && !allowedQualities.has(requestedQuality)) {
+      // Direct Atlas catalog entries intentionally expose only the tiers the
+      // upstream documents. Treat the shared auto default as medium when that
+      // is the available automatic-quality equivalent.
+      if (requestedQuality === 'auto' && allowedQualities.has('medium')) requestedQuality = 'medium';
+      else throw invalidOption('invalid-quality', 'The selected image quality is not supported.');
+    }
     if (!allowedSizes.has(requestedSize) && !imageDimensionsWithinCapabilities(requestedSize, capabilities)) {
       requestedSize = imageResolutionPresetForPixels(requestedSize, allowedSizes) || requestedSize;
     }
@@ -592,9 +601,6 @@ function validateBody(body, kind) {
       : '';
     if (mappedRatio && mappedRatio !== requestedRatio) {
       throw invalidOption('invalid-size-ratio', 'The selected image resolution does not match the aspect ratio.');
-    }
-    if (allowedQualities && !allowedQualities.has(requestedQuality)) {
-      throw invalidOption('invalid-quality', 'The selected image quality is not supported.');
     }
   }
   if (kind === 'video') {
@@ -1493,14 +1499,19 @@ async function handle(request, response) {
       resolution: raw && raw.resolution,
       quality: raw && raw.quality
     });
-    const unitCredits = Math.max(0, Math.ceil(Number(quote.credits) || 0));
+    const unitCredits = kind === 'video'
+      ? Math.max(0, Number(quote.unitCredits) || 0)
+      : Math.max(0, Math.ceil(Number(quote.credits) || 0));
+    const totalCredits = kind === 'video'
+      ? Math.max(0, Math.ceil(Number(quote.credits) || 0))
+      : unitCredits * count;
     return send(response, 200, {
       kind: quote.kind,
       providerId: quote.providerId,
       resolution: quote.resolution,
       duration: quote.duration,
       unitCredits,
-      totalCredits: unitCredits * count,
+      totalCredits,
       count
     });
   }
@@ -1524,7 +1535,11 @@ async function handle(request, response) {
       if (body.canvasId) await tagUsageCanvas(user.id, requestId, body.canvasId);
       const startedAt = Date.now();
       try {
-        const result = await generateMedia(kind, body, AbortSignal.timeout(20 * 60_000));
+        const result = await generateMedia(
+          kind,
+          { ...body, operationId: requestId },
+          AbortSignal.timeout(20 * 60_000)
+        );
         await settleUsage(requestId, 'succeeded', Date.now() - startedAt);
         return result;
       } catch (error) {

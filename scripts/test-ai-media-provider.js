@@ -327,9 +327,11 @@ async function testGptImage2FlowAndReferenceLimits() {
   );
 
   const calls = [];
+  const generatedPng = pngHeader(1024, 1024);
+  const editedPng = pngHeader(1024, 1536);
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url, options });
-    return jsonResponse({ data: [{ b64_json: 'iVBORw==' }] });
+    return jsonResponse({ data: [{ b64_json: (calls.length === 1 ? generatedPng : editedPng).toString('base64') }] });
   };
   const generated = await generateMediaBuffer(fetchImpl, config, 'image', {
     prompt: 'clean product photograph',
@@ -345,8 +347,8 @@ async function testGptImage2FlowAndReferenceLimits() {
     aspectRatio: '2:3',
     urls: ['data:image/png;base64,iVBORw==']
   });
-  assert.deepStrictEqual(generated, Buffer.from('iVBORw==', 'base64'));
-  assert.deepStrictEqual(edited, Buffer.from('iVBORw==', 'base64'));
+  assert.deepStrictEqual(generated, generatedPng);
+  assert.deepStrictEqual(edited, editedPng);
   assert.strictEqual(calls[0].url, 'https://api.302.ai/v1/images/generations');
   assert.strictEqual(calls[0].options.headers.Authorization, 'Bearer server-only-secret');
   assert.deepStrictEqual(JSON.parse(calls[0].options.body), {
@@ -367,6 +369,22 @@ async function testGptImage2FlowAndReferenceLimits() {
   assert.strictEqual(calls[1].options.body.get('output_format'), 'png');
   assert.strictEqual(calls[1].options.body.getAll('image').length, 1);
   assert.strictEqual(calls[1].options.body.get('image').type, 'image/png');
+
+  const lowResolutionFetch = async () => jsonResponse({
+    data: [{ b64_json: pngHeader(1376, 768).toString('base64') }]
+  });
+  await assert.rejects(
+    generateMediaBuffer(lowResolutionFetch, config, 'image', {
+      prompt: 'reject a low-resolution GPT Image 2 result',
+      size: '4K',
+      quality: 'high',
+      aspectRatio: '16:9',
+      urls: []
+    }),
+    (error) => error && error.code === 'image-resolution-mismatch'
+      && error.actualWidth === 1376
+      && error.actualHeight === 768
+  );
 
   assert.throws(
     () => buildOpenAiImageEditForm({

@@ -10,6 +10,7 @@ const {
 } = require('../lib/ai-media-fallback');
 
 assert.deepEqual(imageFallbackProviderIds('image-3'), ['image-10', 'image-1']);
+assert.deepEqual(imageFallbackProviderIds('image-6'), []);
 assert.deepEqual(imageFallbackProviderIds('image-1'), []);
 
 assert.equal(isRetryableMediaError(Object.assign(new Error('upstream busy'), {
@@ -25,6 +26,12 @@ assert.equal(isRetryableMediaError(Object.assign(new Error('invalid token'), {
   code: 'provider-auth-failed', status: 401
 })), false);
 assert.equal(isRetryableMediaError(new TypeError('fetch failed')), true);
+assert.equal(isRetryableMediaError(Object.assign(new Error('provider returned a low-resolution image'), {
+  code: 'image-resolution-mismatch', status: 502
+})), true);
+assert.equal(isRetryableMediaError(Object.assign(new Error('provider returned an unverifiable image'), {
+  code: 'image-resolution-unverified', status: 502
+})), true);
 
 const compatible = {
   id: 'image-10',

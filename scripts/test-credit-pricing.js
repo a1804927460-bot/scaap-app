@@ -13,6 +13,7 @@ const {
   IMAGE_QUALITY_PRICES,
   IMAGE_RESOLUTION_PRICES,
   VIDEO_RATES,
+  conservativeMediaCreditQuote,
   quoteMediaCredits,
   retailCreditsFromUpstreamCny,
   publicCreditPricing
@@ -47,6 +48,41 @@ assert.strictEqual(quoteMediaCredits({
   imageProviderId: 'image-4',
   count: 99
 }).totalCredits, 64, 'Image count must be capped at four.');
+
+const localBatchQuote = quoteMediaCredits({
+  kind: 'image', imageProviderId: 'image-2', count: 4, size: '2K'
+});
+assert.deepStrictEqual(
+  conservativeMediaCreditQuote(localBatchQuote, {
+    kind: 'image', providerId: 'image-2', unitCredits: 18, totalCredits: 18, count: 4
+  }, { count: 4 }),
+  {
+    ...localBatchQuote,
+    unitCredits: 20,
+    totalCredits: 80
+  },
+  'A stale gateway quote must never lower the bundled four-image estimate.'
+);
+assert.deepStrictEqual(
+  conservativeMediaCreditQuote(localBatchQuote, {
+    kind: 'image', providerId: 'image-2', unitCredits: 25, totalCredits: 25, count: 4
+  }, { count: 4 }),
+  {
+    ...localBatchQuote,
+    unitCredits: 25,
+    totalCredits: 100
+  },
+  'A malformed remote batch total must be raised to remote unit price times count.'
+);
+const localVideoQuote = quoteMediaCredits({
+  kind: 'video', videoProviderId: 'video-10', resolution: '720P', duration: 10
+});
+assert.ok(
+  conservativeMediaCreditQuote(localVideoQuote, {
+    kind: 'video', providerId: 'video-11', unitCredits: 24.6, totalCredits: 24.6, duration: 10
+  }).totalCredits >= 260,
+  'A malformed remote video total must still include the complete duration and fixed margin.'
+);
 
 assert.deepStrictEqual(quoteMediaCredits({
   kind: 'image',
@@ -172,6 +208,32 @@ assert.strictEqual(quoteMediaCredits({
   duration: 5
 }).totalCredits, 103);
 
+assert.deepStrictEqual(
+  {
+    duration: quoteMediaCredits({
+      kind: 'video', videoProviderId: 'video-2', resolution: '720P', duration: -1
+    }).duration,
+    totalCredits: quoteMediaCredits({
+      kind: 'video', videoProviderId: 'video-2', resolution: '720P', duration: -1
+    }).totalCredits
+  },
+  { duration: 15, totalCredits: 223 },
+  'Seedance 2.0 automatic duration must reserve its full 15-second maximum.'
+);
+
+assert.deepStrictEqual(
+  {
+    duration: quoteMediaCredits({
+      kind: 'video', videoProviderId: 'video-3', resolution: '720P', duration: -1
+    }).duration,
+    totalCredits: quoteMediaCredits({
+      kind: 'video', videoProviderId: 'video-3', resolution: '720P', duration: -1
+    }).totalCredits
+  },
+  { duration: 30, totalCredits: 543 },
+  'Seedance 2.5 automatic duration must reserve its full 30-second maximum.'
+);
+
 assert.strictEqual(quoteMediaCredits({
   kind: 'video',
   videoProviderId: 'video-2',
@@ -201,6 +263,32 @@ assert.strictEqual(
   'Seedance 2.0 Fast must use its documented 6.516 PTC/M-token multiplier.'
 );
 
+assert.deepStrictEqual(
+  quoteMediaCredits({
+    kind: 'video', videoProviderId: 'video-10', resolution: '1080P', duration: 10
+  }),
+  {
+    kind: 'video', providerId: 'video-11', resolution: '1080P', duration: 10,
+    units: 10, unit: 'second', unitCredits: 24.6, fixedCredits: 14,
+    minimumCredits: 30, totalCredits: 260
+  },
+  'Kling V3 1080P must quote and reserve against the Pro route.'
+);
+assert.strictEqual(
+  quoteMediaCredits({
+    kind: 'video', videoProviderId: 'video-12', serviceTier: 'pro', resolution: '1080P', duration: 15
+  }).totalCredits,
+  409,
+  'Kling O3 Pro must never be quoted at the Standard route price.'
+);
+assert.strictEqual(
+  quoteMediaCredits({
+    kind: 'video', videoProviderId: 'video-12', serviceTier: 'standard', resolution: '720P', duration: 15
+  }).totalCredits,
+  343,
+  'Kling O3 Standard must retain its own route price.'
+);
+
 const publicPricing = publicCreditPricing();
 assert.strictEqual(publicPricing.pointsPerCny, 10);
 assert.strictEqual(publicPricing.profitPerRequestCny, 1.4);
@@ -216,6 +304,37 @@ assert.deepStrictEqual(publicPricing.imageResolution['image-2'], IMAGE_RESOLUTIO
 assert.strictEqual(publicPricing.video['video-1']['768P'], 5);
 assert.deepStrictEqual(publicPricing.video['video-2'], VIDEO_RATES['video-2']);
 assert.deepStrictEqual(publicPricing.video['video-3'], VIDEO_RATES['video-3']);
+
+const providerCatalog = require('../config/provider-catalog.json');
+providerCatalog.providers.filter((provider) => provider.hidden !== true && ['image', 'video'].includes(provider.kind))
+  .forEach((provider) => {
+    const capabilities = provider.capabilities || {};
+    if (provider.kind === 'image') {
+      const sizes = capabilities.resolutionPresets || capabilities.sizes || [''];
+      sizes.forEach((size) => {
+        assert.ok(
+          quoteMediaCredits({ kind: 'image', imageProviderId: provider.id, size }).totalCredits > 0,
+          `${provider.id} ${size} must have a positive retail quote.`
+        );
+      });
+      return;
+    }
+    (capabilities.resolutions || []).forEach((resolution) => {
+      const serviceTier = Object.entries(capabilities.tierResolutions || {})
+        .find(([, resolutions]) => Array.isArray(resolutions)
+          && resolutions.some((value) => String(value).toUpperCase() === String(resolution).toUpperCase()))?.[0];
+      const quote = quoteMediaCredits({
+        kind: 'video', videoProviderId: provider.id, resolution,
+        duration: (capabilities.durations || [6])[0], serviceTier
+      });
+      assert.strictEqual(
+        quote.resolution,
+        String(resolution).toUpperCase(),
+        `${provider.id} ${resolution} must have an exact rate instead of silently falling back to another resolution.`
+      );
+      assert.ok(quote.totalCredits >= MINIMUM_VIDEO_CREDITS);
+    });
+  });
 
 const boardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'board-canvas.js'), 'utf8');
 const assistantSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'ai-assistant.js'), 'utf8');
@@ -335,6 +454,16 @@ async function assertGatewayPricingParity() {
       );
     });
   });
+
+  for (const [providerId, proProviderId] of [['video-10', 'video-11'], ['video-12', 'video-13']]) {
+    const resolution = Object.keys(pricing.video[proProviderId])[0];
+    const request = { kind: 'video', videoProviderId: providerId, serviceTier: 'pro', resolution, duration: 10 };
+    const desktop = quoteMediaCredits(request);
+    const gateway = quoteUsage('video', { ...request, providerId });
+    assert.strictEqual(desktop.providerId, proProviderId);
+    assert.strictEqual(gateway.providerId, proProviderId);
+    assert.strictEqual(desktop.totalCredits, gateway.credits);
+  }
 }
 
 assertGatewayPricingParity()
