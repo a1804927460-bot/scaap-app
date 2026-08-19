@@ -4,8 +4,11 @@ import { authenticate } from './auth.js';
 import { publicGatewayError } from './public-errors.js';
 import {
   appendVideoUploadChunk,
+  appendAudioUploadChunk,
   consumeVideoUpload,
+  consumeAudioUpload,
   createVideoUploadSession,
+  createAudioUploadSession,
   createThreeDTask,
   createVideoUpscaleTask,
   downloadThreeDModel,
@@ -72,6 +75,7 @@ const maxBodyBytes = 70 * 1024 * 1024;
 const rateBuckets = new Map();
 const imageOperationCache = new Map();
 const referenceVideoRelays = new Map();
+const referenceAudioRelays = new Map();
 const TOPAZ_IMAGE_TOOL_IDS = new Set([
   'topaz-image-sharpen',
   'topaz-image-sharpen-gen',
@@ -136,7 +140,8 @@ function imageDimensionsWithinCapabilities(size, capabilities = {}) {
   const height = Number(match[2]);
   const maxEdge = Math.max(1, Math.min(3840, Number(capabilities.maxSizeEdge) || 3840));
   const maxPixels = Math.max(1, Math.min(8_300_000, Number(capabilities.maxSizePixels) || 8_300_000));
-  return width <= maxEdge && height <= maxEdge && width * height <= maxPixels;
+  return width % 16 === 0 && height % 16 === 0
+    && width <= maxEdge && height <= maxEdge && width * height <= maxPixels;
 }
 
 function normalizeImageSize(value) {
@@ -157,6 +162,11 @@ function supportsImageAspectRatio(value, capabilities = {}) {
   if (!match) return false;
   const width = Number(match[1]);
   const height = Number(match[2]);
+  if (capabilities.arbitrarySizes === true && (width % 16 !== 0 || height % 16 !== 0)) return false;
+  if (capabilities.arbitrarySizes === true) {
+    const ratio = width / height;
+    if (ratio < 1 / 3 || ratio > 3) return false;
+  }
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return false;
   const ratio = width / height;
   return ratio >= 1 / 16 && ratio <= 16;
@@ -194,13 +204,24 @@ function materializeReferenceVideo(uploadId, userId) {
   return relay.url;
 }
 
+function materializeReferenceAudio(uploadId, userId) {
+  const key = `${String(userId || '')}:${String(uploadId || '')}`;
+  const cached = referenceAudioRelays.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.url;
+  const asset = consumeAudioUpload({ uploadId, userId });
+  const relay = storeAi302RelayAsset(asset, { relayTtlMs: 2 * 60 * 60 * 1000 });
+  referenceAudioRelays.set(key, { url: relay.url, expiresAt: Date.now() + 2 * 60 * 60 * 1000 });
+  return relay.url;
+}
+
 function materializeVideoReferences(body, userId) {
   const mediaTypes = Array.isArray(body.referenceMediaTypes)
-    ? body.referenceMediaTypes.slice(0, 14).map((value) => String(value || '').trim().toLowerCase())
+    ? body.referenceMediaTypes.slice(0, 50).map((value) => String(value || '').trim().toLowerCase())
     : [];
   const imageUrls = Array.isArray(body.urls) ? [...body.urls] : [];
   const uploadIds = Array.isArray(body.referenceVideoUploadIds) ? [...body.referenceVideoUploadIds] : [];
-  if (!mediaTypes.length) return body;
+  const audioUploadIds = Array.isArray(body.referenceAudioUploadIds) ? [...body.referenceAudioUploadIds] : [];
+  if (!mediaTypes.length && !Array.isArray(body.referenceAudioUploadIds)) return body;
   const invalidReferenceInput = () => Object.assign(
     new Error('The reference media selection is incomplete or invalid.'),
     { status: 400, code: 'invalid-reference-media' }
@@ -222,7 +243,13 @@ function materializeVideoReferences(body, userId) {
     createdRelayKeys.push(key);
     return url;
   });
-  return { ...body, urls, referenceMediaTypes: mediaTypes, referenceVideoRelayKeys: createdRelayKeys };
+  const referenceAudioUrls = [
+    ...(Array.isArray(body.referenceAudioUrls)
+      ? body.referenceAudioUrls.filter((value) => /^https:\/\//i.test(String(value || ''))).slice(0, 10)
+      : []),
+    ...audioUploadIds.map((uploadId) => materializeReferenceAudio(String(uploadId || ''), userId))
+  ];
+  return { ...body, urls, referenceMediaTypes: mediaTypes, referenceVideoRelayKeys: createdRelayKeys, referenceAudioUrls };
 }
 
 function sendRelayAsset(request, response, asset) {
@@ -300,6 +327,7 @@ function validateBody(body, kind) {
   const prompt = String(body.prompt || '').trim();
   const providerId = String(body.providerId || '').trim().toLowerCase().slice(0, 64);
   const capabilities = providerCapabilities(kind, providerId) || {};
+  const isAtlasVideo = kind === 'video' && String(capabilities.atlasKind || '').length > 0;
   const maxPromptLength = providerPromptLimit(
     kind,
     providerId,
@@ -322,9 +350,10 @@ function validateBody(body, kind) {
     throw Object.assign(new Error('The conversation appears to contain a private credential.'), { status: 400, code: 'privacy-blocked' });
   }
   const configuredReferenceLimit = Number(capabilities.maxReferenceImages);
+  const atlasReferenceCap = isAtlasVideo && String(providerId).includes('25') ? 50 : 30;
   let maxReferenceImages = Number.isInteger(configuredReferenceLimit) && configuredReferenceLimit >= 0
-    ? Math.min(14, configuredReferenceLimit)
-    : 14;
+    ? Math.min(isAtlasVideo ? atlasReferenceCap : 14, configuredReferenceLimit)
+    : (isAtlasVideo ? atlasReferenceCap : 14);
   const configuredReferenceMinimum = Number(capabilities.minReferenceImages);
   let minReferenceImages = Number.isInteger(configuredReferenceMinimum) && configuredReferenceMinimum > 0
     ? Math.min(maxReferenceImages, configuredReferenceMinimum)
@@ -332,26 +361,36 @@ function validateBody(body, kind) {
   const requestedVideoMode = String(body.videoMode || '').trim().toLowerCase();
   let videoMode = '';
   let selectedVideoMode = null;
+  const submittedUrlCount = Array.isArray(body.urls) ? body.urls.length : 0;
+  const submittedMediaTypes = Array.isArray(body.referenceMediaTypes)
+    ? body.referenceMediaTypes.map((value) => String(value || '').trim().toLowerCase())
+    : [];
+  const submittedAudioReferenceCount = (Array.isArray(body.referenceAudioUrls)
+    ? body.referenceAudioUrls.length : 0)
+    + (Array.isArray(body.referenceAudioUploadIds) ? body.referenceAudioUploadIds.length : 0);
+  const isAtlasReferenceProvider = isAtlasVideo && String(capabilities.atlasKind || '') === 'reference-to-video';
   if (kind === 'video' && Array.isArray(capabilities.videoModes)) {
-    const fallbackReferenceCount = Array.isArray(body.referenceMediaTypes) && body.referenceMediaTypes.length
-      ? body.referenceMediaTypes.length
-      : Array.isArray(body.urls) ? body.urls.length : 0;
-    const fallbackMode = fallbackReferenceCount > 2
-      ? 'omni'
-      : fallbackReferenceCount === 2
-        ? 'first-last-frame'
-        : fallbackReferenceCount === 1 ? 'first-frame' : 'text';
+    const isAtlasReference = isAtlasReferenceProvider;
+    const fallbackReferenceCount = submittedUrlCount;
+    const fallbackMode = isAtlasReference
+      ? (submittedMediaTypes.length === 1 && submittedMediaTypes[0] === 'video'
+        ? (String(providerId).includes('25') ? 'video-edit' : 'omni')
+        : 'omni')
+      : fallbackReferenceCount > 2
+        ? 'omni'
+        : fallbackReferenceCount === 2
+          ? 'first-last-frame'
+          : fallbackReferenceCount === 1 ? 'first-frame' : 'text';
     videoMode = requestedVideoMode || fallbackMode;
     selectedVideoMode = capabilities.videoModes.find((entry) => entry && entry.id === videoMode) || null;
     if (!selectedVideoMode) {
       throw invalidOption('invalid-video-mode', 'The selected video generation mode is not supported.');
     }
-    minReferenceImages = Math.max(0, Math.min(14, Number(selectedVideoMode.minReferences) || 0));
-    maxReferenceImages = Math.max(minReferenceImages, Math.min(14, Number(selectedVideoMode.maxReferences) || 0));
+    minReferenceImages = Math.max(0, Math.min(isAtlasVideo ? atlasReferenceCap : 14, Number(selectedVideoMode.minReferences) || 0));
+    maxReferenceImages = Math.max(minReferenceImages, Math.min(isAtlasVideo ? atlasReferenceCap : 14, Number(selectedVideoMode.maxReferences) || 0));
   }
-  const submittedReferenceCount = Array.isArray(body.referenceMediaTypes) && body.referenceMediaTypes.length
-    ? body.referenceMediaTypes.length
-    : Array.isArray(body.urls) ? body.urls.length : 0;
+  const submittedReferenceCount = submittedUrlCount
+    + (isAtlasReferenceProvider ? submittedAudioReferenceCount : 0);
   if (submittedReferenceCount < minReferenceImages) {
     throw invalidOption('reference-required', `The selected model requires at least ${minReferenceImages} reference image${minReferenceImages === 1 ? '' : 's'}.`);
   }
@@ -371,6 +410,7 @@ function validateBody(body, kind) {
     throw invalidOption('invalid-reference-media', 'The selected video mode does not accept reference videos.');
   }
   const referenceVideoCount = referenceMediaTypes.filter((mediaType) => mediaType === 'video').length;
+  const referenceImageCount = referenceMediaTypes.filter((mediaType) => mediaType === 'image').length;
   const maximumReferenceVideos = Math.max(0, Number(selectedVideoMode && selectedVideoMode.maxReferenceVideos) || 0);
   if (referenceVideoCount > maximumReferenceVideos) {
     throw invalidOption('too-many-reference-videos', `The selected model accepts at most ${maximumReferenceVideos} reference videos.`);
@@ -384,6 +424,20 @@ function validateBody(body, kind) {
         'too-many-references',
         `The selected model accepts at most ${maximumImagesWithVideo} reference images with a reference video.`
       );
+    }
+  }
+  if (isAtlasVideo) {
+    const maximumReferenceImages = Math.max(0, Number(capabilities.maxReferenceImages) || 0);
+    const maximumTotalReferences = Math.max(0, Number(capabilities.maxTotalReferences) || maxReferenceImages);
+    if (maximumReferenceImages && referenceImageCount > maximumReferenceImages) {
+      throw invalidOption('too-many-references', `The selected model accepts at most ${maximumReferenceImages} reference images.`);
+    }
+    if (maximumTotalReferences && submittedReferenceCount > maximumTotalReferences) {
+      throw invalidOption('too-many-references', `The selected model accepts at most ${maximumTotalReferences} reference files.`);
+    }
+    if (String(capabilities.atlasKind || '') === 'reference-to-video'
+      && String(providerId).includes('2.0') && submittedAudioReferenceCount > 0 && submittedUrlCount === 0) {
+      throw invalidOption('reference-required', 'Seedance 2.0 requires at least one image or video when using reference audio.');
     }
   }
   const allowedReferenceMimeTypes = new Set(
@@ -421,6 +475,26 @@ function validateBody(body, kind) {
   let requestedRatio = String(body.aspectRatio || '').trim();
   const requestedQuality = String(body.quality || 'auto').trim().toLowerCase();
   const requestedDuration = Number(body.duration);
+  const requestedOutputFormat = String(body.outputFormat || (kind === 'video' ? 'mp4' : 'jpeg')).trim().toLowerCase();
+  const requestedGenerateAudio = body.generateAudio !== false;
+  const requestedReturnLastFrame = body.returnLastFrame === true;
+  const requestedAudioUrls = Array.isArray(body.referenceAudioUrls)
+    ? body.referenceAudioUrls.slice(0, isAtlasVideo ? 10 : 0).map((value) => String(value || '').trim())
+    : [];
+  if (isAtlasVideo) {
+    const maxAudios = Math.max(0, Number(capabilities.maxReferenceAudios) || 0);
+    if (requestedAudioUrls.length > maxAudios) {
+      throw invalidOption('too-many-reference-audios', 'The selected video model accepts fewer reference audio files.');
+    }
+    if (requestedAudioUrls.some((value) => !/^https:\/\//i.test(value))) {
+      throw invalidOption('invalid-reference-audio', 'Reference audio must be an HTTPS URL.');
+    }
+  }
+  const requestedAudioUploadIds = Array.isArray(body.referenceAudioUploadIds)
+    ? body.referenceAudioUploadIds.map((value) => String(value || '').trim()).filter(Boolean).slice(0, isAtlasVideo ? 10 : 0)
+    : [];
+  const requestedBitrateMode = String(body.bitrateMode || '').trim().toLowerCase();
+  const requestedWatermark = body.watermark === true;
   const requestedSeed = Math.round(Number(body.seed));
   const requestedStyleId = String(body.styleId || '').trim();
   const requestedStyleStrength = Math.max(0, Math.min(1, Number(body.styleStrength ?? 1)));
@@ -467,6 +541,9 @@ function validateBody(body, kind) {
     }
   }
   if (kind === 'video') {
+    if (isAtlasVideo && !['mp4', 'mov'].includes(requestedOutputFormat)) {
+      throw invalidOption('invalid-output-format', 'The selected video model supports MP4 or MOV output.');
+    }
     const configuredResolutions = urls.length && Array.isArray(capabilities.referenceResolutions)
       ? capabilities.referenceResolutions
       : capabilities.resolutions;
@@ -512,6 +589,18 @@ function validateBody(body, kind) {
           : 'The selected video model does not support this aspect ratio.'
       );
     }
+    if (isAtlasVideo && ['video-edit', 'video-extend'].includes(videoMode) && String(providerId).includes('25') && requestedDuration !== -1) {
+      throw invalidOption('invalid-duration', 'Seedance 2.5 video editing and extension require automatic duration (-1).');
+    }
+    if (isAtlasVideo && capabilities.supportsSeed === true && Number.isInteger(requestedSeed)) {
+      const seedMinimum = Number.isFinite(Number(capabilities.seedMinimum)) ? Number(capabilities.seedMinimum) : -1;
+      const seedMaximum = Number.isFinite(Number(capabilities.seedMaximum)) ? Number(capabilities.seedMaximum) : 4_294_967_295;
+      if (requestedSeed < seedMinimum || requestedSeed > seedMaximum) throw invalidOption('invalid-seed', 'The selected video seed is outside the supported range.');
+    }
+    if (isAtlasVideo && requestedBitrateMode) {
+      const modes = new Set(Array.isArray(capabilities.bitrateModes) ? capabilities.bitrateModes.map((value) => String(value).toLowerCase()) : []);
+      if (!modes.has(requestedBitrateMode)) throw invalidOption('invalid-bitrate-mode', 'The selected video bitrate mode is not supported.');
+    }
   }
   return {
     prompt,
@@ -529,9 +618,20 @@ function validateBody(body, kind) {
     sourceWidth: Math.max(0, Math.min(16384, Number(body.sourceWidth) || 0)),
     sourceHeight: Math.max(0, Math.min(16384, Number(body.sourceHeight) || 0)),
     enhancePrompt: body.enhancePrompt !== false,
-    seed: Number.isInteger(requestedSeed) && requestedSeed >= 1 && requestedSeed <= 1_000_000 ? requestedSeed : null,
+    seed: kind === 'video'
+      ? (isAtlasVideo && capabilities.supportsSeed === true && Number.isInteger(requestedSeed) ? requestedSeed : null)
+      : (Number.isInteger(requestedSeed) && requestedSeed >= 1 && requestedSeed <= 1_000_000 ? requestedSeed : null),
     styleId: /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(requestedStyleId) ? requestedStyleId : null,
-    styleStrength: requestedStyleStrength
+    styleStrength: requestedStyleStrength,
+    ...(kind === 'video' ? {
+      outputFormat: requestedOutputFormat,
+      generateAudio: requestedGenerateAudio,
+      returnLastFrame: requestedReturnLastFrame,
+      referenceAudioUrls: requestedAudioUrls
+      ,referenceAudioUploadIds: requestedAudioUploadIds
+      ,bitrateMode: requestedBitrateMode || null
+      ,watermark: requestedWatermark
+    } : {})
   };
 }
 
@@ -740,7 +840,9 @@ async function handle(request, response) {
   const isVideoToolUpload = request.method === 'PUT' && /^\/v1\/tools\/video\/uploads\/[A-Za-z0-9_-]{43}\/\d{1,4}$/.test(url.pathname);
   const isReferenceVideoUpload = request.method === 'PUT'
     && /^\/v1\/media\/video\/reference-uploads\/[A-Za-z0-9_-]{43}\/\d{1,4}$/.test(url.pathname);
-  const isChunkedVideoUpload = isVideoToolUpload || isReferenceVideoUpload;
+  const isReferenceAudioUpload = request.method === 'PUT'
+    && /^\/v1\/media\/audio\/reference-uploads\/[A-Za-z0-9_-]{43}\/\d{1,4}$/.test(url.pathname);
+  const isChunkedVideoUpload = isVideoToolUpload || isReferenceVideoUpload || isReferenceAudioUpload;
   const statusBucket = isChunkedVideoUpload ? 'video-upload'
     : isVideoStatus ? 'video-status'
     : isThreeDStatus ? 'three-d-status'
@@ -783,6 +885,15 @@ async function handle(request, response) {
       size: body && body.size,
       mime: body && body.mime
     }));
+  }
+  if (request.method === 'POST' && url.pathname === '/v1/media/audio/reference-uploads') {
+    const body = await readJson(request);
+    return send(response, 201, createAudioUploadSession({ userId: user.id, size: body && body.size, mime: body && body.mime }));
+  }
+  const referenceAudioChunkMatch = /^\/v1\/media\/audio\/reference-uploads\/([A-Za-z0-9_-]{43})\/(\d{1,4})$/.exec(url.pathname);
+  if (request.method === 'PUT' && referenceAudioChunkMatch) {
+    const chunk = await readBuffer(request, 4 * 1024 * 1024);
+    return send(response, 200, appendAudioUploadChunk({ uploadId: referenceAudioChunkMatch[1], index: Number(referenceAudioChunkMatch[2]), chunk, userId: user.id }));
   }
   const referenceVideoChunkMatch = /^\/v1\/media\/video\/reference-uploads\/([A-Za-z0-9_-]{43})\/(\d{1,4})$/.exec(url.pathname);
   if (request.method === 'PUT' && referenceVideoChunkMatch) {

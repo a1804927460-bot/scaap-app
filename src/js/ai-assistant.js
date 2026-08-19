@@ -9,6 +9,9 @@ const AiAssistant = {
   attachments: [],
   sessions: [],
   activeSessionId: null,
+  historyFavoritesOnly: false,
+  historyDate: '',
+  historyLoaded: false,
   languageTimer: 0,
   creditQuoteRevision: 0,
   compactObserver: null,
@@ -16,29 +19,100 @@ const AiAssistant = {
 };
 
 const AI_CHAT_HISTORY_KEY = 'messs.ai-chat-history.v1';
+const AI_CHAT_HISTORY_LIMIT = 60;
+
+function aiChatHistoryDate(value) {
+  const date = new Date(value || 0);
+  if (!Number.isFinite(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeAiChatSession(session) {
+  if (!session || !session.id) return null;
+  const messages = Array.isArray(session.messages) ? session.messages.slice(-100).map((message) => ({
+    role: message && message.role === 'assistant' ? 'assistant' : 'user',
+    content: String(message && message.content || '').slice(0, 16000),
+    attachmentFileIds: Array.isArray(message && message.attachmentFileIds) ? message.attachmentFileIds.slice(0, 50) : [],
+    attachmentTokens: Array.isArray(message && message.attachmentTokens) ? message.attachmentTokens.slice(0, 20) : [],
+    attachments: Array.isArray(message && message.attachments) ? message.attachments.slice(0, 50).map((attachment) => ({
+      id: attachment.id,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      kind: attachment.kind
+    })) : [],
+    generatedFiles: Array.isArray(message && message.generatedFiles) ? message.generatedFiles.slice(0, 12).map((file) => ({
+      token: file.token,
+      name: file.name,
+      mimeType: file.mimeType,
+      sizeBytes: file.sizeBytes
+    })) : []
+  })).filter((message) => message.content) : [];
+  return {
+    id: String(session.id).slice(0, 120),
+    title: String(session.title || t('New conversation', '\u65b0\u5bf9\u8bdd')).slice(0, 120),
+    createdAt: session.createdAt || new Date().toISOString(),
+    updatedAt: session.updatedAt || session.createdAt || new Date().toISOString(),
+    favorite: session.favorite === true || session.pinned === true,
+    messages
+  };
+}
+
+function normalizedAiChatSessions(value) {
+  return (Array.isArray(value) ? value : [])
+    .map(normalizeAiChatSession)
+    .filter(Boolean)
+    .slice(0, AI_CHAT_HISTORY_LIMIT);
+}
+
+function mergeAiChatSessions(...sources) {
+  const byId = new Map();
+  sources.flatMap((source) => normalizedAiChatSessions(source)).forEach((session) => {
+    const previous = byId.get(session.id);
+    if (!previous || new Date(session.updatedAt) >= new Date(previous.updatedAt)) byId.set(session.id, session);
+  });
+  return [...byId.values()]
+    .sort((a, b) => Number(b.favorite) - Number(a.favorite) || new Date(b.updatedAt) - new Date(a.updatedAt))
+    .slice(0, AI_CHAT_HISTORY_LIMIT);
+}
 
 function persistAiChatHistory() {
+  const sessions = mergeAiChatSessions(AiAssistant.sessions);
+  AiAssistant.sessions = sessions;
   try {
-    const sessions = AiAssistant.sessions
-      .slice()
-      .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || new Date(b.updatedAt) - new Date(a.updatedAt))
-      .slice(0, 30);
     localStorage.setItem(AI_CHAT_HISTORY_KEY, JSON.stringify(sessions));
   } catch (err) {
     // History is a convenience; an oversized clipboard image must not block chat.
   }
+  if (window.messsAPI && typeof window.messsAPI.saveAiAssistantHistory === 'function') {
+    void window.messsAPI.saveAiAssistantHistory(sessions).catch(() => {});
+  }
 }
 
-function loadAiChatHistory() {
+function readLocalAiChatHistory() {
   try {
-    const value = JSON.parse(localStorage.getItem(AI_CHAT_HISTORY_KEY) || '[]');
-    AiAssistant.sessions = Array.isArray(value)
-      ? value.filter((session) => session && session.id && Array.isArray(session.messages))
-        .map((session) => ({ ...session, pinned: !!session.pinned }))
-      : [];
+    return normalizedAiChatSessions(JSON.parse(localStorage.getItem(AI_CHAT_HISTORY_KEY) || '[]'));
   } catch (err) {
-    AiAssistant.sessions = [];
+    return [];
   }
+}
+
+async function loadAiChatHistory() {
+  const local = readLocalAiChatHistory();
+  let durable = [];
+  try {
+    if (window.messsAPI && typeof window.messsAPI.getAiAssistantHistory === 'function') {
+      const result = await window.messsAPI.getAiAssistantHistory();
+      durable = normalizedAiChatSessions(result && result.sessions);
+    }
+  } catch (error) {}
+  AiAssistant.sessions = mergeAiChatSessions(durable, local, AiAssistant.sessions);
+  AiAssistant.historyLoaded = true;
+  persistAiChatHistory();
+  renderAiChatHistory();
 }
 
 function activeAiChatSession() {
@@ -53,7 +127,7 @@ function ensureAiChatSession(title) {
     title: String(title || t('New conversation', '新对话')).slice(0, 64),
     createdAt: now,
     updatedAt: now,
-    pinned: false,
+    favorite: false,
     messages: []
   };
   AiAssistant.sessions.unshift(session);
@@ -92,15 +166,23 @@ function persistActiveAiChatSession() {
   renderAiChatHistory();
 }
 
+function aiChatSessionMatchesFilter(session) {
+  if (AiAssistant.historyFavoritesOnly && !session.favorite) return false;
+  if (AiAssistant.historyDate && aiChatHistoryDate(session.updatedAt) !== AiAssistant.historyDate) return false;
+  return true;
+}
+
 function renderAiChatHistory() {
   const list = document.getElementById('ai-chat-history-list');
   const empty = document.getElementById('ai-chat-history-empty');
   if (!list || !empty) return;
-  list.innerHTML = '';
+  list.replaceChildren();
   const sessions = AiAssistant.sessions
     .slice()
-    .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || new Date(b.updatedAt) - new Date(a.updatedAt));
+    .sort((a, b) => Number(b.favorite) - Number(a.favorite) || new Date(b.updatedAt) - new Date(a.updatedAt))
+    .filter(aiChatSessionMatchesFilter);
   empty.hidden = sessions.length > 0;
+  empty.textContent = t('No conversations found', '\u6ca1\u6709\u627e\u5230\u5bf9\u8bdd');
   sessions.forEach((session) => {
     const entry = document.createElement('div');
     entry.className = 'ai-chat-history-entry';
@@ -109,10 +191,9 @@ function renderAiChatHistory() {
     button.type = 'button';
     button.className = 'ai-chat-history-item';
     button.classList.toggle('is-active', session.id === AiAssistant.activeSessionId);
-    button.innerHTML = session.pinned
-      ? '<svg class="ai-chat-history-pin" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m14 4 6 6-3 1-4 4-1 4-2-2-2-2 4-1 4-4z"/></svg><span></span>'
-      : '<span></span>';
-    button.querySelector('span').textContent = session.title || t('New conversation', '新对话');
+    button.innerHTML = `<span class="ai-chat-history-star" aria-hidden="true">${session.favorite ? '\u2605' : '\u2606'}</span><span class="ai-chat-history-copy"><b></b><small></small></span>`;
+    button.querySelector('b').textContent = session.title || t('New conversation', '\u65b0\u5bf9\u8bdd');
+    button.querySelector('small').textContent = aiChatHistoryDate(session.updatedAt);
     button.addEventListener('click', () => loadAiChatSession(session.id));
     const more = document.createElement('button');
     more.type = 'button';
@@ -120,21 +201,30 @@ function renderAiChatHistory() {
     more.title = t('Conversation actions', '对话操作');
     more.setAttribute('aria-label', more.title);
     more.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>';
-    more.addEventListener('click', (event) => showAiChatSessionMenu(session.id, event.clientX, event.clientY));
+    more.addEventListener('click', (event) => {
+      event.stopPropagation();
+      showAiChatSessionMenu(session.id, event.clientX, event.clientY);
+    });
     entry.addEventListener('contextmenu', (event) => {
       event.preventDefault();
+      event.stopPropagation();
       showAiChatSessionMenu(session.id, event.clientX, event.clientY);
     });
     entry.append(button, more);
     list.appendChild(entry);
   });
+  const favorites = document.getElementById('ai-chat-history-favorites');
+  if (favorites) {
+    favorites.classList.toggle('is-active', AiAssistant.historyFavoritesOnly);
+    favorites.setAttribute('aria-pressed', String(AiAssistant.historyFavoritesOnly));
+  }
 }
 
 function renameAiChatSession(sessionId) {
   const session = AiAssistant.sessions.find((entry) => entry.id === sessionId);
   const row = [...document.querySelectorAll('.ai-chat-history-entry')]
     .find((entry) => entry.dataset.sessionId === sessionId);
-  const title = row && row.querySelector('.ai-chat-history-item span');
+  const title = row && row.querySelector('.ai-chat-history-copy b');
   if (!session || !row || !title) return;
   const input = document.createElement('input');
   input.className = 'ai-chat-history-rename';
@@ -190,10 +280,10 @@ function showAiChatSessionMenu(sessionId, x, y) {
   if (!session || typeof buildAndShowSimpleMenu !== 'function') return;
   buildAndShowSimpleMenu([
     {
-      label: session.pinned ? t('Unpin', '取消置顶') : t('Pin', '置顶'),
-      icon: 'M14 4l6 6-3 1-4 4-1 4-2-2-2-2 4-1 4-4z',
+      label: session.favorite ? t('Remove from Favorites', '取消收藏') : t('Add to Favorites', '加入收藏夹'),
+      icon: 'M12 3l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3z',
       action: () => {
-        session.pinned = !session.pinned;
+        session.favorite = !session.favorite;
         persistAiChatHistory();
         renderAiChatHistory();
       }
@@ -1247,6 +1337,12 @@ function refreshAssistantLanguage() {
     upload.title = t('Add files', '添加文件');
     upload.setAttribute('aria-label', upload.title);
   }
+  const historyHeading = document.querySelector('.ai-chat-history-heading');
+  if (historyHeading) historyHeading.textContent = t('History', '\u5386\u53f2\u8bb0\u5f55');
+  const favorites = document.getElementById('ai-chat-history-favorites');
+  if (favorites) favorites.textContent = t('Favorites', '\u6536\u85cf\u5939');
+  const historyDate = document.getElementById('ai-chat-history-date');
+  if (historyDate) historyDate.setAttribute('aria-label', t('Filter history by date', '\u6309\u65e5\u671f\u7b5b\u9009\u5386\u53f2\u8bb0\u5f55'));
   const chatButton = document.querySelector('[data-assistant-kind="chat"]');
   if (chatButton) chatButton.textContent = 'Agent';
   [
@@ -1380,6 +1476,19 @@ function initAiAssistant() {
     input.focus();
   });
   document.getElementById('ai-chat-new').addEventListener('click', startNewAiChat);
+  document.getElementById('ai-chat-history-favorites').addEventListener('click', () => {
+    AiAssistant.historyFavoritesOnly = !AiAssistant.historyFavoritesOnly;
+    renderAiChatHistory();
+  });
+  document.getElementById('ai-chat-history-date').addEventListener('change', (event) => {
+    AiAssistant.historyDate = event.target.value || '';
+    renderAiChatHistory();
+  });
+  document.getElementById('ai-chat-history-date-clear').addEventListener('click', () => {
+    AiAssistant.historyDate = '';
+    document.getElementById('ai-chat-history-date').value = '';
+    renderAiChatHistory();
+  });
   document.addEventListener('click', (event) => {
     const picker = document.querySelector('.ai-assistant-model-picker');
     if (picker && !picker.contains(event.target)) {
@@ -1389,7 +1498,7 @@ function initAiAssistant() {
   });
   document.addEventListener('messs:ai-config-updated', (event) => refreshAssistantConfig(event.detail));
   document.addEventListener('messs:language-changed', () => refreshAssistantLanguage());
-  loadAiChatHistory();
+  void loadAiChatHistory();
   renderAiChatHistory();
   setAssistantKind('chat');
   syncAssistantCompactMode(panel);

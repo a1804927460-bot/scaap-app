@@ -30,6 +30,7 @@ const media = data.settings.aiMedia;
 assert.deepEqual(
   media.imageProviders.filter((provider) => provider.name).map((provider) => provider.name),
   [
+    'GPT Image 2 (Atlas Cloud)',
     'Nano Banana Pro',
     'Seedream 5.0',
     'Midjourney Turbo',
@@ -98,6 +99,10 @@ assert.equal(media.videoProviderName, 'MiniMax H3');
 assert.deepEqual(
   media.videoProviders.filter((provider) => provider.name).map((provider) => provider.name),
   [
+    'Seedance 2.0 (Atlas Cloud)',
+    'Seedance 2.0 Universal Reference (Atlas Cloud)',
+    'Seedance 2.5 (Atlas Cloud)',
+    'Seedance 2.5 Universal Reference (Atlas Cloud)',
     'MiniMax H3',
     'Seedance 2.0',
     'Seedance 2.5',

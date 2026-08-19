@@ -261,7 +261,12 @@
                 <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>
                 <span>New chat</span>
               </button>
-              <div class="ai-chat-history-heading">Recent</div>
+              <div class="ai-chat-history-heading">History</div>
+              <div class="ai-chat-history-filters">
+                <button id="ai-chat-history-favorites" type="button" aria-pressed="false">Favorites</button>
+                <input id="ai-chat-history-date" type="date" aria-label="Filter history by date" />
+                <button id="ai-chat-history-date-clear" type="button" title="Clear date filter" aria-label="Clear date filter">x</button>
+              </div>
               <div id="ai-chat-history-list" class="ai-chat-history-list"></div>
               <div id="ai-chat-history-empty" class="ai-chat-history-empty">No conversations yet</div>
             </aside>
@@ -426,6 +431,22 @@
             <button id="board-agent-close" class="board-agent-close" type="button" title="Close Messs Agent" aria-label="Close Messs Agent">
               <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg>
             </button>
+            <button id="board-agent-history" class="board-agent-history-toggle" type="button" title="Conversation history" aria-label="Conversation history" aria-expanded="false">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="18" cy="18" r="3"/></svg>
+            </button>
+            <section id="board-agent-history-drawer" class="board-agent-history-drawer" hidden aria-label="Agent conversation history">
+              <header>
+                <strong>Agent history</strong>
+                <button id="board-agent-history-new" type="button" title="New conversation" aria-label="New conversation">+</button>
+              </header>
+              <div class="board-agent-history-filters">
+                <button id="board-agent-history-favorites" type="button" aria-pressed="false">Favorites</button>
+                <input id="board-agent-history-date" type="date" aria-label="Filter history by date" />
+                <button id="board-agent-history-date-clear" type="button" title="Clear date filter" aria-label="Clear date filter">×</button>
+              </div>
+              <div id="board-agent-history-list" class="board-agent-history-list"></div>
+              <div id="board-agent-history-empty" class="board-agent-history-empty" hidden>No conversations found</div>
+            </section>
             <div id="board-agent-messages" class="board-agent-messages" aria-live="polite">
               <div id="board-agent-welcome" class="board-agent-welcome">
                 <img src="assets/logo-mark.png" alt="" draggable="false" />
@@ -1106,6 +1127,36 @@
       <span class="section-placeholder-name">Workshop</span>
       <p>Coming soon.</p>
     </div>
+  </div>
+
+  <div id="canvas-usage-overlay" class="canvas-usage-overlay" hidden>
+    <section class="canvas-usage-dialog" role="dialog" aria-modal="true" aria-labelledby="canvas-usage-title">
+      <header class="canvas-usage-header">
+        <div>
+          <small id="canvas-usage-kicker">Canvas points usage</small>
+          <h2 id="canvas-usage-title">Usage details</h2>
+        </div>
+        <button id="canvas-usage-close" type="button" title="Close" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </header>
+      <div id="canvas-usage-loading" class="canvas-usage-loading">Loading usage...</div>
+      <div id="canvas-usage-content" class="canvas-usage-content" hidden>
+        <div id="canvas-usage-summary" class="canvas-usage-summary"></div>
+        <div id="canvas-usage-note" class="canvas-usage-note" hidden></div>
+        <div class="canvas-usage-table-wrap">
+          <table class="canvas-usage-table">
+            <thead><tr><th>Date</th><th>Type</th><th>Model</th><th>Output</th><th>Points</th></tr></thead>
+            <tbody id="canvas-usage-rows"></tbody>
+          </table>
+          <div id="canvas-usage-empty" class="canvas-usage-empty" hidden>No AI usage recorded on this canvas.</div>
+        </div>
+      </div>
+      <footer class="canvas-usage-footer">
+        <button id="canvas-usage-account" type="button">View account usage</button>
+        <button id="canvas-usage-done" type="button">Done</button>
+      </footer>
+    </section>
   </div>
 
   <script src="../lib/i18n.js"></script>

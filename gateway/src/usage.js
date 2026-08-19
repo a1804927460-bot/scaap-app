@@ -11,6 +11,7 @@ const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmoh
 // expected quote to Supabase, while reserve_ai_credits independently recomputes
 // it. A version mismatch therefore fails closed instead of undercharging.
 export const IMAGE_CREDITS = Object.freeze({
+  'atlas-image-gpt2': 15, 'atlas-image-gpt2-edit': 15,
   'image-1': 22, 'image-2': 20, 'image-3': 17, 'image-4': 16,
   'image-5': 16, 'image-6': 20, 'image-7': 16, 'image-8': 16,
   'image-9': 17, 'image-10': 18, 'image-11': 17, 'image-12': 16,
@@ -19,7 +20,8 @@ export const IMAGE_CREDITS = Object.freeze({
 });
 
 export const IMAGE_QUALITY_CREDITS = Object.freeze({
-  'image-6': Object.freeze({ low: 16, medium: 18, high: 28, auto: 20 })
+  'image-6': Object.freeze({ low: 16, medium: 18, high: 28, auto: 20 }),
+  'atlas-image-gpt2': Object.freeze({ low: 15, medium: 15, high: 20, auto: 15 })
 });
 
 export const IMAGE_RESOLUTION_CREDITS = Object.freeze({
@@ -77,6 +79,24 @@ const SEEDANCE_VIDEO_RATES = Object.freeze(Object.fromEntries(
 ));
 
 export const VIDEO_CREDITS_PER_SECOND = Object.freeze({
+  'atlas-video-seedance20-i2v': Object.freeze({
+    '480P': 3.808, '720P': 7.616, '720P-SR': 8.378, '1080P': 11.424,
+    '1080P-SR': 12.947, '1440P-SR': 15.232, '4K': 19.04
+  }),
+  'atlas-video-seedance20-ref': Object.freeze({
+    '480P': 3.808, '720P': 7.616, '720P-SR': 8.378, '1080P': 11.424,
+    '1080P-SR': 12.947, '1440P-SR': 15.232, '4K': 19.04
+  }),
+  'atlas-video-seedance25-i2v': Object.freeze({
+    '480P': 4.556, '720P': 9.112, '720P-SR': 10.023, '720P-ESR': 10.023,
+    '1080P': 13.668, '1080P-SR': 15.490, '1080P-ESR': 15.490,
+    '1080P-ESR & 60FPS': 18.228, '1440P-SR': 18.224, '1440P-ESR': 18.224, '4K-ESR': 22.780
+  }),
+  'atlas-video-seedance25-ref': Object.freeze({
+    '480P': 4.556, '720P': 9.112, '720P-SR': 10.023, '720P-ESR': 10.023,
+    '1080P': 13.668, '1080P-SR': 15.490, '1080P-ESR': 15.490,
+    '1080P-ESR & 60FPS': 18.228, '1440P-SR': 18.224, '1440P-ESR': 18.224, '4K-ESR': 22.780
+  }),
   'video-1': Object.freeze({ '768P': 5, '2K': 8 }),
   'video-2': SEEDANCE_VIDEO_RATES['video-2'],
   'video-3': SEEDANCE_VIDEO_RATES['video-3'],
@@ -93,6 +113,10 @@ export const VIDEO_CREDITS_PER_SECOND = Object.freeze({
 });
 
 export const VIDEO_DEFAULT_RESOLUTIONS = Object.freeze({
+  'atlas-video-seedance20-i2v': '720P',
+  'atlas-video-seedance20-ref': '720P',
+  'atlas-video-seedance25-i2v': '720P',
+  'atlas-video-seedance25-ref': '720P',
   'video-1': '768P',
   'video-2': '720P',
   'video-3': '720P',
@@ -109,6 +133,10 @@ export const VIDEO_DEFAULT_RESOLUTIONS = Object.freeze({
 });
 
 export const VIDEO_DURATION_LIMITS = Object.freeze({
+  'atlas-video-seedance20-i2v': Object.freeze({ minimum: 4, maximum: 15 }),
+  'atlas-video-seedance20-ref': Object.freeze({ minimum: 4, maximum: 15 }),
+  'atlas-video-seedance25-i2v': Object.freeze({ minimum: 4, maximum: 30 }),
+  'atlas-video-seedance25-ref': Object.freeze({ minimum: 4, maximum: 30 }),
   'video-1': Object.freeze({ minimum: 4, maximum: 15 }),
   'video-2': Object.freeze({ minimum: 4, maximum: 15 }),
   'video-3': Object.freeze({ minimum: 4, maximum: 30 }),
@@ -225,7 +253,13 @@ export function quoteUsage(kind, request = {}) {
     const defaultResolution = VIDEO_DEFAULT_RESOLUTIONS[providerId];
     const resolution = Object.hasOwn(rates, requestedResolution) ? requestedResolution : defaultResolution;
     const durationLimits = VIDEO_DURATION_LIMITS[providerId] || VIDEO_DURATION_LIMITS['video-1'];
-    const duration = boundedInteger(request.duration, 6, durationLimits.minimum, durationLimits.maximum);
+    const requestedDuration = Number(request.duration);
+    // Atlas edit/extend and auto-duration tasks do not reveal their final
+    // length before submission. Reserve against the maximum supported length
+    // so a completed job can never exceed the customer's reservation.
+    const duration = requestedDuration === -1
+      ? durationLimits.maximum
+      : boundedInteger(request.duration, 6, durationLimits.minimum, durationLimits.maximum);
     return {
       kind: 'video',
       providerId,
@@ -331,7 +365,9 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
     p_duration: quote.duration,
     p_expected_credits: quote.credits
   });
-  const reserveRpc = ['video-10', 'video-11', 'video-12', 'video-13'].includes(quote.providerId)
+  const reserveRpc = quote.providerId.startsWith('atlas-')
+    ? 'reserve_atlas_catalog_credits'
+    : ['video-10', 'video-11', 'video-12', 'video-13'].includes(quote.providerId)
     ? 'reserve_kling_video_credits'
     : (['image-1', 'image-2', 'image-5', 'image-9'].includes(quote.providerId)
     ? 'reserve_nano_banana_credits'

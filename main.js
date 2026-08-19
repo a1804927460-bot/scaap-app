@@ -290,6 +290,7 @@ const MAX_BUTLER_IMAGE_BYTES = Math.floor(7.5 * 1024 * 1024);
 const MAX_BUTLER_VIDEO_BYTES = 48 * 1024 * 1024;
 const MAX_BUTLER_VIDEO_OUTPUT_BYTES = 256 * 1024 * 1024;
 const MAX_AI_REFERENCE_VIDEO_SOURCE_BYTES = 256 * 1024 * 1024;
+const MAX_AI_REFERENCE_AUDIO_SOURCE_BYTES = 32 * 1024 * 1024;
 const MAX_BUTLER_PREVIEW_BYTES = 16 * 1024 * 1024;
 const MAX_MODEL_PREVIEW_BYTES = 256 * 1024 * 1024;
 const MAX_CLIPBOARD_IMAGE_BYTES = 64 * 1024 * 1024;
@@ -821,6 +822,10 @@ function fileToPayload(f) {
         ? [...f.aiGeneration.referenceMediaTypes]
         : [],
       referenceCount: Number(f.aiGeneration.referenceCount) || 0,
+      credits: f.aiGeneration.credits !== null && f.aiGeneration.credits !== undefined
+        && Number.isFinite(Number(f.aiGeneration.credits))
+        ? Math.max(0, Number(f.aiGeneration.credits))
+        : null,
       createdAt: f.aiGeneration.createdAt
     } : null,
     folderId: f.folderId || null,
@@ -2078,7 +2083,7 @@ function normalizeVideoProviders(value, fallbackEndpoint, fallbackName) {
 
 async function resolveAiVideoReferences(request) {
   const fileIds = Array.isArray(request && request.referenceFileIds)
-    ? request.referenceFileIds.slice(0, 14)
+    ? request.referenceFileIds.slice(0, 50)
     : [];
   const requestedTypes = Array.isArray(request && request.referenceMediaTypes)
     ? request.referenceMediaTypes.slice(0, fileIds.length).map((value) => String(value || '').toLowerCase())
@@ -2086,11 +2091,35 @@ async function resolveAiVideoReferences(request) {
   const urls = [];
   const mediaTypes = [];
   const uploadIds = [];
+  const audioUploadIds = [];
   for (let index = 0; index < fileIds.length; index += 1) {
     const file = store.getFile(String(fileIds[index] || ''));
     if (!file) continue;
     const ext = String(file.ext || path.extname(file.name)).toLowerCase();
-    const mediaType = requestedTypes[index] === 'video' || preview.isVideoExt(ext) ? 'video' : 'image';
+    const requestedType = requestedTypes[index];
+    const mediaType = requestedType === 'audio' || preview.isAudioExt(ext)
+      ? 'audio'
+      : requestedType === 'video' || preview.isVideoExt(ext) ? 'video' : 'image';
+    if (mediaType === 'audio') {
+      assertSafeLocalFile(file);
+      const sourcePath = file.storedPath;
+      const stat = await fs.promises.lstat(sourcePath);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > MAX_AI_REFERENCE_AUDIO_SOURCE_BYTES) {
+        const error = new Error('The reference audio exceeds the supported upload size.');
+        error.code = 'reference-audio-too-large';
+        throw error;
+      }
+      const audioBuffer = await fs.promises.readFile(sourcePath);
+      const mime = MIME_BY_EXTENSION[ext];
+      if (!/^audio\/(?:wav|mpeg|mp3)$/i.test(String(mime || ''))) {
+        const error = new Error('Atlas Cloud reference audio must be WAV or MP3.');
+        error.code = 'invalid-reference-audio';
+        throw error;
+      }
+      const upload = await aiGateway.uploadReferenceAudio(audioBuffer, mime);
+      audioUploadIds.push(upload.uploadId);
+      continue;
+    }
     if (mediaType === 'video') {
       const source = await butlerSourceVideo(file.id, { aiReference: true });
       const upload = await aiGateway.uploadReferenceVideo(source.videoBuffer, source.toolOptions.sourceMime);
@@ -2103,7 +2132,163 @@ async function resolveAiVideoReferences(request) {
     urls.push(dataUrl);
     mediaTypes.push('image');
   }
-  return { urls, mediaTypes, uploadIds };
+  return { urls, mediaTypes, uploadIds, audioUploadIds };
+}
+
+const MAX_CANVAS_AGENT_HISTORY_SESSIONS = 100;
+const MAX_CANVAS_AGENT_HISTORY_MESSAGES = 100;
+const MAX_AI_ASSISTANT_HISTORY_SESSIONS = 60;
+const MAX_AI_ASSISTANT_HISTORY_MESSAGES = 100;
+
+function sanitizeCanvasAgentHistory(value) {
+  const sessions = Array.isArray(value) ? value : [];
+  return sessions.slice(0, MAX_CANVAS_AGENT_HISTORY_SESSIONS).map((session) => {
+    const id = String(session && session.id || '').trim().slice(0, 120);
+    if (!id) return null;
+    const createdAt = String(session.createdAt || new Date().toISOString()).slice(0, 40);
+    const updatedAt = String(session.updatedAt || createdAt).slice(0, 40);
+    const messages = Array.isArray(session.messages) ? session.messages
+      .slice(-MAX_CANVAS_AGENT_HISTORY_MESSAGES)
+      .map((message) => {
+        const role = message && message.role === 'assistant' ? 'assistant' : 'user';
+        const content = String(message && message.content || '').slice(0, 16000);
+        const displayContent = String(message && (message.displayContent ?? message.content) || '').slice(0, 12000);
+        if (!content && !displayContent) return null;
+        return {
+          role,
+          content,
+          displayContent,
+          attachmentFileIds: Array.isArray(message && message.attachmentFileIds)
+            ? [...new Set(message.attachmentFileIds.map((entry) => String(entry || '').trim()).filter(Boolean))].slice(0, 50)
+            : [],
+          attachments: Array.isArray(message && message.attachments)
+            ? message.attachments.slice(0, 50).map((attachment) => ({
+              id: String(attachment && attachment.id || '').slice(0, 120),
+              name: String(attachment && attachment.name || '').slice(0, 240),
+              mimeType: String(attachment && attachment.mimeType || '').slice(0, 120),
+              sizeBytes: Math.max(0, Math.min(64 * 1024 * 1024, Number(attachment && attachment.sizeBytes) || 0)),
+              kind: ['image', 'video', 'file'].includes(attachment && attachment.kind) ? attachment.kind : 'file'
+            })).filter((attachment) => attachment.id || attachment.name)
+            : []
+        };
+      }).filter(Boolean)
+      : [];
+    return {
+      id,
+      title: String(session.title || 'New conversation').trim().slice(0, 120) || 'New conversation',
+      canvasId: String(session.canvasId || '').trim().slice(0, 120) || null,
+      createdAt,
+      updatedAt,
+      favorite: session.favorite === true || session.pinned === true,
+      messages
+    };
+  }).filter(Boolean);
+}
+
+function sanitizeAiAssistantHistory(value) {
+  const sessions = Array.isArray(value) ? value : [];
+  return sessions.slice(0, MAX_AI_ASSISTANT_HISTORY_SESSIONS).map((session) => {
+    const id = String(session && session.id || '').trim().slice(0, 120);
+    if (!id) return null;
+    const createdAt = String(session.createdAt || new Date().toISOString()).slice(0, 40);
+    const updatedAt = String(session.updatedAt || createdAt).slice(0, 40);
+    const messages = Array.isArray(session.messages) ? session.messages
+      .slice(-MAX_AI_ASSISTANT_HISTORY_MESSAGES)
+      .map((message) => {
+        const role = message && message.role === 'assistant' ? 'assistant' : 'user';
+        const content = String(message && message.content || '').slice(0, 16000);
+        if (!content) return null;
+        return {
+          role,
+          content,
+          attachmentFileIds: Array.isArray(message && message.attachmentFileIds)
+            ? [...new Set(message.attachmentFileIds.map((entry) => String(entry || '').trim()).filter(Boolean))].slice(0, 50)
+            : [],
+          attachmentTokens: Array.isArray(message && message.attachmentTokens)
+            ? [...new Set(message.attachmentTokens.map((entry) => String(entry || '').trim()).filter(Boolean))].slice(0, 20)
+            : [],
+          attachments: Array.isArray(message && message.attachments)
+            ? message.attachments.slice(0, 50).map((attachment) => ({
+              id: String(attachment && attachment.id || '').slice(0, 120),
+              name: String(attachment && attachment.name || '').slice(0, 240),
+              mimeType: String(attachment && attachment.mimeType || '').slice(0, 120),
+              sizeBytes: Math.max(0, Math.min(64 * 1024 * 1024, Number(attachment && attachment.sizeBytes) || 0)),
+              kind: ['image', 'video', 'file'].includes(attachment && attachment.kind) ? attachment.kind : 'file'
+            })).filter((attachment) => attachment.id || attachment.name)
+            : [],
+          generatedFiles: Array.isArray(message && message.generatedFiles)
+            ? message.generatedFiles.slice(0, 12).map((file) => ({
+              token: String(file && file.token || '').slice(0, 240),
+              name: String(file && file.name || '').slice(0, 240),
+              mimeType: String(file && file.mimeType || '').slice(0, 120),
+              sizeBytes: Math.max(0, Math.min(1024 * 1024 * 1024, Number(file && file.sizeBytes) || 0))
+            })).filter((file) => file.name || file.token)
+            : []
+        };
+      }).filter(Boolean)
+      : [];
+    return {
+      id,
+      title: String(session.title || 'New conversation').trim().slice(0, 120) || 'New conversation',
+      createdAt,
+      updatedAt,
+      favorite: session.favorite === true || session.pinned === true,
+      messages
+    };
+  }).filter(Boolean);
+}
+
+function canvasCreditUsage(canvasId) {
+  const id = String(canvasId || '').trim();
+  const canvas = store.data.canvases.find((entry) => entry.id === id);
+  if (!canvas) return { ok: false, reason: 'canvas-not-found' };
+  const details = store.data.files
+    .filter((file) => file && file.canvasId === id && (file.aiGeneration || file.butlerOperation))
+    .map((file) => {
+      const operation = file.aiGeneration || file.butlerOperation;
+      const rawCredits = operation && operation.credits;
+      const credits = Number(rawCredits);
+      const recorded = rawCredits !== null && rawCredits !== undefined && rawCredits !== ''
+        && Number.isFinite(credits) && credits >= 0;
+      return {
+        id: file.id,
+        name: String(file.name || '').slice(0, 240),
+        kind: file.aiGeneration
+          ? (file.aiGeneration.kind === 'video' ? 'video' : 'image')
+          : (String(file.butlerOperation.kind || '').includes('3d') ? '3d'
+            : String(file.butlerOperation.kind || '').includes('video') ? 'video' : 'image'),
+        providerId: String(operation.providerId || operation.modelId || '').slice(0, 100) || null,
+        modelName: String(operation.modelName || operation.modelId || 'AI tool').slice(0, 160),
+        credits: recorded ? Math.max(0, credits) : null,
+        createdAt: String(operation.createdAt || file.importedAt || '').slice(0, 40)
+      };
+    })
+    .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt))
+    .slice(0, 500);
+  const recorded = details.filter((entry) => entry.credits !== null);
+  const breakdown = ['image', 'video', '3d'].reduce((result, kind) => {
+    const entries = details.filter((entry) => entry.kind === kind);
+    const known = entries.filter((entry) => entry.credits !== null);
+    result[kind] = {
+      credits: known.reduce((sum, entry) => sum + entry.credits, 0),
+      generations: entries.length,
+      recorded: known.length,
+      unrecorded: entries.length - known.length
+    };
+    return result;
+  }, {});
+  return {
+    ok: true,
+    canvas: { id: canvas.id, name: canvas.name },
+    totals: {
+      credits: recorded.reduce((sum, entry) => sum + entry.credits, 0),
+      generations: details.length,
+      recorded: recorded.length,
+      unrecorded: details.length - recorded.length
+    },
+    breakdown,
+    details
+  };
 }
 
 function normalizedVideoModes(capabilities = {}) {
@@ -2114,7 +2299,7 @@ function normalizedVideoModes(capabilities = {}) {
   const configuredMinimum = Math.max(0, Number(capabilities.minReferenceImages) || 0);
   const configuredMaximum = Number(capabilities.maxReferenceImages);
   const maximumReferences = Number.isInteger(configuredMaximum) && configuredMaximum >= 0
-    ? Math.min(14, configuredMaximum)
+    ? Math.min(30, configuredMaximum)
     : 2;
   return [
     ...(configuredMinimum === 0 ? [{ id: 'text', minReferences: 0, maxReferences: 0 }] : []),
@@ -2521,6 +2706,10 @@ async function generateAiMediaBuffer(kind, prompt, options = {}) {
         videoMode: options.videoMode,
         referenceMediaTypes: options.referenceMediaTypes,
         referenceVideoUploadIds: options.referenceVideoUploadIds,
+        referenceAudioUrls: options.referenceAudioUrls,
+        outputFormat: options.outputFormat,
+        generateAudio: options.generateAudio,
+        returnLastFrame: options.returnLastFrame,
         enhancePrompt: options.enhancePrompt,
         seed: options.seed,
         styleId: options.styleId,
@@ -2585,6 +2774,10 @@ function aiMediaGenerationOptions(request, providerId) {
     videoMode: request.videoMode,
     referenceMediaTypes: request.referenceMediaTypes,
     referenceVideoUploadIds: request.referenceVideoUploadIds,
+    referenceAudioUrls: request.referenceAudioUrls,
+    outputFormat: request.outputFormat,
+    generateAudio: request.generateAudio,
+    returnLastFrame: request.returnLastFrame,
     enhancePrompt: request.enhancePrompt,
     seed: request.seed,
     styleId: request.styleId,
@@ -3216,16 +3409,17 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
     }
   }
   const sourceDimensions = await readSourceMediaMetadata(storedPath, `.${extension}`);
+  const maxArchivedReferences = mediaKind === 'video' ? 30 : 14;
   const referenceFileIds = Array.isArray(request.referenceFileIds)
     ? request.referenceFileIds
       .map((value) => String(value || '').trim())
       .filter(Boolean)
       .filter((value) => !!store.getFile(value))
-      .slice(0, 14)
+       .slice(0, maxArchivedReferences)
     : [];
   const referenceCount = Math.max(
     referenceFileIds.length,
-    Array.isArray(request.urls) ? Math.min(14, request.urls.length) : 0
+    Array.isArray(request.urls) ? Math.min(maxArchivedReferences, request.urls.length) : 0
   );
   const providerId = mediaKind === 'video'
     ? String(request.videoProviderId || '').trim()
@@ -3273,6 +3467,10 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
         ? request.referenceMediaTypes.map((value) => String(value || '').toLowerCase()).slice(0, referenceFileIds.length)
         : referenceFileIds.map(() => 'image'),
       referenceCount,
+      credits: request.credits !== null && request.credits !== undefined
+        && Number.isFinite(Number(request.credits))
+        ? Math.max(0, Number(request.credits))
+        : null,
       createdAt: new Date().toISOString()
     },
     folderId: folderId || null,
@@ -3502,7 +3700,8 @@ function imageDimensionsWithinCapabilities(size, capabilities = {}) {
   const height = Number(match[2]);
   const maxEdge = Math.max(1, Math.min(3840, Number(capabilities.maxSizeEdge) || 3840));
   const maxPixels = Math.max(1, Math.min(8_300_000, Number(capabilities.maxSizePixels) || 8_300_000));
-  return width <= maxEdge && height <= maxEdge && width * height <= maxPixels;
+  return width % 16 === 0 && height % 16 === 0
+    && width <= maxEdge && height <= maxEdge && width * height <= maxPixels;
 }
 
 async function quoteMediaCreditsForAccount(request = {}) {
@@ -3723,13 +3922,6 @@ function normalizeAiMediaGenerationRequest(request, kind) {
       .map((value) => String(value || '').trim().toUpperCase())
       .filter(Boolean)
   );
-  const supportedDurations = new Set(
-    (Array.isArray(capabilities.durations) && capabilities.durations.length
-      ? capabilities.durations
-      : Array.from({ length: 12 }, (_value, index) => index + 4))
-      .map(Number)
-      .filter(Number.isInteger)
-  );
   const textRatios = new Set(
     (Array.isArray(capabilities.ratios) && capabilities.ratios.length
       ? capabilities.ratios
@@ -3750,13 +3942,21 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   const referenceMediaTypes = Array.isArray(request.referenceMediaTypes)
     ? request.referenceMediaTypes.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
     : [];
-  const referenceCount = referenceMediaTypes.length || (Array.isArray(request.urls) ? request.urls.length : 0);
+  const referenceAudioCount = (Array.isArray(request.referenceAudioUploadIds) ? request.referenceAudioUploadIds.length : 0)
+    + (Array.isArray(request.referenceAudioUrls) ? request.referenceAudioUrls.length : 0);
+  const referenceCount = referenceMediaTypes.length + referenceAudioCount
+    || (Array.isArray(request.urls) ? request.urls.length : 0);
   const requestedVideoMode = String(request.videoMode || '').trim().toLowerCase();
-  const fallbackVideoMode = referenceCount > 2
-    ? 'omni'
-    : referenceCount === 2
-      ? 'first-last-frame'
-      : referenceCount === 1 ? 'first-frame' : 'text';
+  const isAtlasReference = String(capabilities.atlasKind || '') === 'reference-to-video';
+  const fallbackVideoMode = isAtlasReference
+    ? (referenceMediaTypes.length === 1 && referenceMediaTypes[0] === 'video'
+      ? (String(providerId).includes('25') ? 'video-edit' : 'omni')
+      : 'omni')
+    : referenceCount > 2
+      ? 'omni'
+      : referenceCount === 2
+        ? 'first-last-frame'
+        : referenceCount === 1 ? 'first-frame' : 'text';
   const videoMode = requestedVideoMode || fallbackVideoMode;
   const videoModes = normalizedVideoModes(capabilities);
   const selectedVideoMode = videoModes.find((entry) => entry && entry.id === videoMode) || null;
@@ -3790,10 +3990,11 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   const hasFrameReference = videoMode === 'first-frame' || videoMode === 'first-last-frame';
   const configuredReferenceLimit = Number(capabilities.maxReferenceImages);
   const modeReferenceLimit = Number(selectedVideoMode.maxReferences);
+  const atlasReferenceLimit = String(provider.model || '').includes('2.5') ? 50 : 12;
   const referenceLimit = Number.isInteger(modeReferenceLimit) && modeReferenceLimit >= 0
-    ? Math.min(14, modeReferenceLimit)
+    ? Math.min(isAtlasReference ? atlasReferenceLimit : 30, modeReferenceLimit)
     : Number.isInteger(configuredReferenceLimit) && configuredReferenceLimit >= 0
-      ? Math.min(14, configuredReferenceLimit)
+      ? Math.min(isAtlasReference ? atlasReferenceLimit : 30, configuredReferenceLimit)
       : 2;
   const providerName = String(provider.name || 'The selected video model').trim();
   const configuredReferenceMinimum = Number(selectedVideoMode.minReferences);
@@ -3809,6 +4010,16 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   if (!supportedResolutions.has(resolution)) {
     throw invalidAiMediaOption('invalid-resolution', `${providerName} does not support the selected resolution.`);
   }
+  if (isAtlasReference && String(provider.model || '').includes('2.0')
+    && referenceAudioCount > 0 && referenceMediaTypes.length === 0) {
+    throw invalidAiMediaOption('reference-required', `${providerName} requires at least one image or video when using reference audio.`);
+  }
+  const durationSource = selectedVideoMode && Array.isArray(selectedVideoMode.durations) && selectedVideoMode.durations.length
+    ? selectedVideoMode.durations
+    : Array.isArray(capabilities.durations) && capabilities.durations.length
+      ? capabilities.durations
+      : Array.from({ length: 12 }, (_value, index) => index + 4);
+  const supportedDurations = new Set(durationSource.map(Number).filter(Number.isInteger));
   if (!Number.isInteger(duration) || !supportedDurations.has(duration)) {
     throw invalidAiMediaOption('invalid-duration', `${providerName} does not support the selected duration.`);
   }
@@ -3833,8 +4044,30 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   normalized.cameraControl = normalizeVideoCameraControl(request.cameraControl);
   normalized.referenceMediaTypes = referenceMediaTypes;
   normalized.referenceVideoUploadIds = Array.isArray(request.referenceVideoUploadIds)
-    ? request.referenceVideoUploadIds.map(String).filter(Boolean).slice(0, 14)
+    ? request.referenceVideoUploadIds.map(String).filter(Boolean).slice(0, 30)
+     : [];
+  normalized.referenceAudioUploadIds = Array.isArray(request.referenceAudioUploadIds)
+    ? request.referenceAudioUploadIds.map(String).filter(Boolean).slice(0, String(provider.model || '').includes('2.5') ? 10 : 3)
     : [];
+  normalized.referenceAudioUrls = Array.isArray(request.referenceAudioUrls)
+    ? request.referenceAudioUrls.map(String).filter((value) => /^https:\/\//i.test(value)).slice(0, String(provider.model || '').includes('2.5') ? 10 : 3)
+    : [];
+  normalized.generateAudio = request.generateAudio !== false;
+  normalized.returnLastFrame = request.returnLastFrame === true;
+  const supportsSeed = capabilities.supportsSeed === true;
+  const requestedSeed = Math.round(Number(request.seed));
+  const seedMinimum = Number.isFinite(Number(capabilities.seedMinimum)) ? Number(capabilities.seedMinimum) : -1;
+  const seedMaximum = Number.isFinite(Number(capabilities.seedMaximum)) ? Number(capabilities.seedMaximum) : 4_294_967_295;
+  normalized.seed = supportsSeed && Number.isInteger(requestedSeed)
+    && requestedSeed >= seedMinimum && requestedSeed <= seedMaximum ? requestedSeed : null;
+  const bitrateModes = Array.isArray(capabilities.bitrateModes)
+    ? new Set(capabilities.bitrateModes.map((value) => String(value || '').trim().toLowerCase())) : null;
+  normalized.bitrateMode = bitrateModes && bitrateModes.has(String(request.bitrateMode || '').trim().toLowerCase())
+    ? String(request.bitrateMode).trim().toLowerCase() : null;
+  normalized.watermark = capabilities.supportsWatermark === true ? request.watermark === true : false;
+  normalized.outputFormat = ['mp4', 'mov'].includes(String(request.outputFormat || '').trim().toLowerCase())
+    ? String(request.outputFormat).trim().toLowerCase()
+    : 'mp4';
   return normalized;
 }
 
@@ -4764,6 +4997,32 @@ function registerIpcHandlers() {
     await fs.promises.writeFile(result.filePath, markdown, 'utf8');
     return { ok: true, filePath: result.filePath };
   });
+
+  ipcMain.handle('canvas-agent:getHistory', () => ({
+    ok: true,
+    sessions: sanitizeCanvasAgentHistory(store.data.canvasAgentHistory)
+  }));
+
+  ipcMain.handle('canvas-agent:saveHistory', (_evt, sessions) => {
+    const normalized = sanitizeCanvasAgentHistory(sessions);
+    store.data.canvasAgentHistory = normalized;
+    store.scheduleSave();
+    return { ok: true, sessions: normalized };
+  });
+
+  ipcMain.handle('ai-assistant:getHistory', () => ({
+    ok: true,
+    sessions: sanitizeAiAssistantHistory(store.data.aiAssistantHistory)
+  }));
+
+  ipcMain.handle('ai-assistant:saveHistory', (_evt, sessions) => {
+    const normalized = sanitizeAiAssistantHistory(sessions);
+    store.data.aiAssistantHistory = normalized;
+    store.scheduleSave();
+    return { ok: true, sessions: normalized };
+  });
+
+  ipcMain.handle('canvas:getCreditUsage', (_evt, canvasId) => canvasCreditUsage(canvasId));
 
   ipcMain.handle('settings:setLanguage', (_evt, language) => {
     store.data.settings.language = normalizeLanguage(language);
@@ -5896,8 +6155,9 @@ function registerIpcHandlers() {
         ...request,
         urls,
         referenceMediaTypes: videoReferences ? videoReferences.mediaTypes : request.referenceMediaTypes,
-        referenceVideoUploadIds: videoReferences ? videoReferences.uploadIds : []
-      }, { limit: 14 });
+        referenceVideoUploadIds: videoReferences ? videoReferences.uploadIds : [],
+        referenceAudioUploadIds: videoReferences ? videoReferences.audioUploadIds : []
+      }, request.kind === 'video' ? { limit: 50, maxReferenceBytes: 64 * 1024 * 1024 } : { limit: 14 });
     } catch (err) {
       return { ok: false, reason: err.code || 'privacy-blocked', message: err.message };
     }
@@ -6017,8 +6277,12 @@ function registerIpcHandlers() {
         if (result.status !== 'fulfilled') continue;
         const generated = result.value;
         const resultRequest = generated.fallbackUsed
-          ? { ...request, imageProviderId: generated.providerId }
-          : request;
+          ? {
+              ...request,
+              imageProviderId: generated.providerId,
+              credits: fallbackProvider && fallbackProvider.quote ? fallbackProvider.quote.unitCredits : creditQuote.unitCredits
+            }
+          : { ...request, credits: kind === 'image' ? creditQuote.unitCredits : creditQuote.totalCredits };
         const added = await addGeneratedMediaFile(
           generated.buffer,
           prompt,

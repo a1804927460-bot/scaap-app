@@ -44,15 +44,15 @@ assert.match(
   /const BOARD_WHEEL_SMOOTHING = 0\.28[\s\S]*?function stepBoardZoom\(now\)[\s\S]*?Math\.pow\(1 - BOARD_WHEEL_SMOOTHING/,
   'Canvas wheel zoom must follow a frame-rate-independent smoothing curve instead of jumping per wheel event.'
 );
-assert.match(
+assert.doesNotMatch(
   boardSource,
-  /function shouldUseBoardInteractionOverview\(\)[\s\S]*?BOARD_INTERACTION_OVERVIEW_THRESHOLD[\s\S]*?function beginBoardInteractionOverview\(\)[\s\S]*?function finishBoardInteractionOverview\(\)/,
-  'Dense canvas interaction must use a lightweight overview layer while real media DOM is temporarily hidden.'
+  /beginBoardInteractionOverview|finishBoardInteractionOverview|is-board-interaction-overview/,
+  'Canvas interaction must keep real media DOM visible instead of swapping in a low-resolution interaction overview.'
 );
-assert.match(
+assert.doesNotMatch(
   boardStyles,
-  /\.board-viewport\.is-board-interaction-overview \.board-overview-canvas[\s\S]*?\.board-viewport\.is-board-interaction-overview \.board-canvas[\s\S]*?visibility: hidden/,
-  'The overview layer must sit above the media DOM during dense canvas interaction.'
+  /\.board-viewport\.is-board-interaction-overview[\s\S]*?visibility:\s*hidden/,
+  'Canvas interaction must not hide the real media DOM behind a blurred overview layer.'
 );
 assert.match(
   boardSource,
@@ -327,7 +327,7 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /const referenceFileIds = Array\.isArray\(request\.referenceFileIds\)[\s\S]*?\.map\(\(value\) => String\(value \|\| ''\)\.trim\(\)\)[\s\S]*?\.filter\(Boolean\)[\s\S]*?\.filter\(\(value\) => !!store\.getFile\(value\)\)[\s\S]*?\.slice\(0, 14\)/,
+  /const maxArchivedReferences = mediaKind === 'video' \? 30 : 14[\s\S]*?const referenceFileIds = Array\.isArray\(request\.referenceFileIds\)[\s\S]*?\.map\(\(value\) => String\(value \|\| ''\)\.trim\(\)\)[\s\S]*?\.filter\(Boolean\)[\s\S]*?\.filter\(\(value\) => !!store\.getFile\(value\)\)[\s\S]*?\.slice\(0, maxArchivedReferences\)/,
   'Generated media metadata must retain repeated first/last-frame file IDs for retry and remix.'
 );
 assert.match(boardStyles, /\.ai-composer-reference-thumb\.is-dragging[\s\S]*?cursor:\s*var\(--cursor-grabbing\)/);
@@ -992,5 +992,30 @@ assert.match(
   /const isVideo = !!\(file && isVideoExt\(file\.ext\)\);[\s\S]*?if \(isImage \|\| isVideo\) \{[\s\S]*?Send to After Effects[\s\S]*?'after-effects'/,
   'Every canvas video must expose Send to After Effects, not only generated videos.'
 );
+assert.match(
+  contextMenuSource,
+  /function openCanvasUsageDetails\(\)[\s\S]*?getCanvasCreditUsage\(activeCanvasId\(\)\)[\s\S]*?renderCanvasUsageDetails/,
+  'Canvas usage must query the active canvas instead of opening account-wide totals.'
+);
+assert.match(
+  contextMenuSource,
+  /function renderCanvasUsageDetails[\s\S]*?breakdown\.image[\s\S]*?breakdown\.video[\s\S]*?breakdown\['3d'\][\s\S]*?older result/,
+  'Canvas usage details must separate media types and disclose historical records without point data.'
+);
+assert.match(indexHtml, /id="canvas-usage-overlay"[\s\S]*?id="canvas-usage-summary"[\s\S]*?id="canvas-usage-rows"/,
+  'Canvas usage needs an accessible summary and detailed rows dialog.');
+assert.match(
+  mainSource,
+  /function canvasCreditUsage\(canvasId\)[\s\S]*?file\.canvasId === id[\s\S]*?rawCredits !== null[\s\S]*?breakdown[\s\S]*?ipcMain\.handle\('canvas:getCreditUsage'/,
+  'The main process must compute usage from current-canvas records and expose a dedicated IPC route.'
+);
+assert.match(
+  workspaceSource,
+  /async function loadCanvasAgentHistory\(\)[\s\S]*?getCanvasAgentHistory[\s\S]*?mergeCanvasAgentSessions\(durable, local, CanvasWorkspace\.agentSessions\)/,
+  'Canvas Agent history must be durable, favoritable, and searchable by date.'
+);
+assert.match(workspaceSource, /saveCanvasAgentHistory/);
+assert.match(workspaceSource, /agentHistoryFavoritesOnly/);
+assert.match(workspaceSource, /canvasAgentHistoryDate/);
 
 process.stdout.write('Canvas interaction tests passed.\n');

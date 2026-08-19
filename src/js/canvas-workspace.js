@@ -2,6 +2,11 @@
 
 const CanvasWorkspace = {
   agentMessages: [],
+  agentSessions: [],
+  activeAgentSessionId: null,
+  agentHistoryFavoritesOnly: false,
+  agentHistoryDate: '',
+  agentHistoryLoaded: false,
   agentBusy: false,
   agentMode: 'chat',
   agentGenerationKind: 'image',
@@ -13,6 +18,160 @@ const CanvasWorkspace = {
   libraryProjectId: null,
   libraryQuery: ''
 };
+
+const CANVAS_AGENT_HISTORY_KEY = 'messs.canvas-agent-history.v1';
+const CANVAS_AGENT_HISTORY_LIMIT = 100;
+
+function canvasAgentHistoryDate(value) {
+  const date = new Date(value || 0);
+  if (!Number.isFinite(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeCanvasAgentSession(session) {
+  if (!session || !session.id) return null;
+  const messages = Array.isArray(session.messages) ? session.messages.slice(-100).map((message) => ({
+    role: message && message.role === 'assistant' ? 'assistant' : 'user',
+    content: String(message && message.content || '').slice(0, 16000),
+    displayContent: String(message && ((message.displayContent ?? message.content) || '')).slice(0, 12000),
+    attachmentFileIds: Array.isArray(message && message.attachmentFileIds)
+      ? [...new Set(message.attachmentFileIds.filter(Boolean))].slice(0, 50)
+      : [],
+    attachments: Array.isArray(message && message.attachments) ? message.attachments.slice(0, 50).map((file) => ({
+      id: file.id,
+      name: file.name,
+      mimeType: file.mimeType,
+      sizeBytes: file.sizeBytes,
+      kind: file.kind
+    })) : []
+  })).filter((message) => message.content || message.displayContent) : [];
+  return {
+    id: String(session.id).slice(0, 120),
+    title: String(session.title || t('New conversation', '\u65b0\u5bf9\u8bdd')).slice(0, 120),
+    canvasId: String(session.canvasId || '').slice(0, 120) || null,
+    createdAt: session.createdAt || new Date().toISOString(),
+    updatedAt: session.updatedAt || session.createdAt || new Date().toISOString(),
+    favorite: session.favorite === true || session.pinned === true,
+    messages
+  };
+}
+
+function normalizedCanvasAgentSessions(value) {
+  return (Array.isArray(value) ? value : [])
+    .map(normalizeCanvasAgentSession)
+    .filter(Boolean)
+    .slice(0, CANVAS_AGENT_HISTORY_LIMIT);
+}
+
+function mergeCanvasAgentSessions(...sources) {
+  const byId = new Map();
+  sources.flatMap((source) => normalizedCanvasAgentSessions(source)).forEach((session) => {
+    const previous = byId.get(session.id);
+    if (!previous || new Date(session.updatedAt) >= new Date(previous.updatedAt)) byId.set(session.id, session);
+  });
+  return [...byId.values()]
+    .sort((a, b) => Number(b.favorite) - Number(a.favorite) || new Date(b.updatedAt) - new Date(a.updatedAt))
+    .slice(0, CANVAS_AGENT_HISTORY_LIMIT);
+}
+
+function persistCanvasAgentHistory() {
+  const sessions = mergeCanvasAgentSessions(CanvasWorkspace.agentSessions);
+  CanvasWorkspace.agentSessions = sessions;
+  try { localStorage.setItem(CANVAS_AGENT_HISTORY_KEY, JSON.stringify(sessions)); } catch (error) {}
+  if (window.messsAPI && typeof window.messsAPI.saveCanvasAgentHistory === 'function') {
+    void window.messsAPI.saveCanvasAgentHistory(sessions).catch(() => {});
+  }
+}
+
+function readLocalCanvasAgentHistory() {
+  try {
+    return normalizedCanvasAgentSessions(JSON.parse(localStorage.getItem(CANVAS_AGENT_HISTORY_KEY) || '[]'));
+  } catch (error) {
+    return [];
+  }
+}
+
+async function loadCanvasAgentHistory() {
+  const local = readLocalCanvasAgentHistory();
+  let durable = [];
+  try {
+    if (window.messsAPI && typeof window.messsAPI.getCanvasAgentHistory === 'function') {
+      const result = await window.messsAPI.getCanvasAgentHistory();
+      durable = normalizedCanvasAgentSessions(result && result.sessions);
+    }
+  } catch (error) {}
+  CanvasWorkspace.agentSessions = mergeCanvasAgentSessions(durable, local, CanvasWorkspace.agentSessions);
+  CanvasWorkspace.agentHistoryLoaded = true;
+  persistCanvasAgentHistory();
+  const active = CanvasWorkspace.agentSessions.find((session) => session.id === CanvasWorkspace.activeAgentSessionId);
+  if (active) loadCanvasAgentSession(active.id);
+  renderCanvasAgentHistory();
+}
+
+function activeCanvasAgentSession() {
+  return CanvasWorkspace.agentSessions.find((session) => session.id === CanvasWorkspace.activeAgentSessionId) || null;
+}
+
+function ensureCanvasAgentSession(title = '') {
+  const active = activeCanvasAgentSession();
+  if (active) return active;
+  const now = new Date().toISOString();
+  const session = {
+    id: `agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    title: String(title || t('New conversation', '\u65b0\u5bf9\u8bdd')).slice(0, 120),
+    canvasId: activeCanvasId(),
+    createdAt: now,
+    updatedAt: now,
+    favorite: false,
+    messages: []
+  };
+  CanvasWorkspace.agentSessions.unshift(session);
+  CanvasWorkspace.activeAgentSessionId = session.id;
+  renderCanvasAgentHistory();
+  return session;
+}
+
+function persistActiveCanvasAgentSession() {
+  const session = ensureCanvasAgentSession();
+  session.messages = CanvasWorkspace.agentMessages.map((message) => ({
+    role: message.role === 'assistant' ? 'assistant' : 'user',
+    content: String(message.content || '').slice(0, 16000),
+    displayContent: String((message.displayContent ?? message.content) || '').slice(0, 12000),
+    attachmentFileIds: Array.isArray(message.attachmentFileIds) ? message.attachmentFileIds.slice(0, 50) : [],
+    attachments: Array.isArray(message.attachments) ? message.attachments.slice(0, 50).map((file) => ({
+      id: file.id, name: file.name, mimeType: file.mimeType, sizeBytes: file.sizeBytes, kind: file.kind
+    })) : []
+  }));
+  session.updatedAt = new Date().toISOString();
+  if (!session.messages.length) session.title = t('New conversation', '\u65b0\u5bf9\u8bdd');
+  else {
+    const first = session.messages.find((message) => message.role === 'user');
+    if (first && session.title === t('New conversation', '\u65b0\u5bf9\u8bdd')) {
+      session.title = String(first.displayContent || first.content).split('\n').pop().slice(0, 120) || session.title;
+    }
+  }
+  persistCanvasAgentHistory();
+  renderCanvasAgentHistory();
+}
+
+function startNewCanvasAgentChat() {
+  CanvasWorkspace.activeAgentSessionId = null;
+  CanvasWorkspace.agentMessages = [];
+  const list = document.getElementById('board-agent-messages');
+  if (list) {
+    list.innerHTML = '';
+    const welcome = document.createElement('div');
+    welcome.id = 'board-agent-welcome';
+    welcome.className = 'board-agent-welcome';
+    welcome.innerHTML = '<img src="assets/logo-mark.png" alt="" draggable="false"><strong>Messs Agent</strong><span></span>';
+    welcome.querySelector('span').textContent = t('Solve your problem.', '\u89e3\u51b3\u4f60\u7684\u95ee\u9898\u3002');
+    list.appendChild(welcome);
+  }
+  renderCanvasAgentHistory();
+}
 
 function activeCanvasRecord() {
   return AppState.canvases.find((canvas) => canvas.id === AppState.activeCanvasId) || AppState.canvases[0] || null;
@@ -663,13 +822,20 @@ function canvasAgentThinkingText(seconds = 0) {
 }
 
 function canvasAgentAttachmentRecord(file) {
+  const liveFile = AppState.files.find((entry) => entry.id === file.id) || file;
+  const mimeType = String(liveFile.mimeType || file.mimeType || '');
+  const kind = ['image', 'video', 'file'].includes(file.kind)
+    ? file.kind
+    : isImageExt(liveFile.ext) || mimeType.startsWith('image/')
+      ? 'image'
+      : isVideoExt(liveFile.ext) || mimeType.startsWith('video/') ? 'video' : 'file';
   return {
-    id: file.id,
-    name: file.name,
-    mimeType: file.mimeType,
-    sizeBytes: file.sizeBytes,
-    kind: isImageExt(file.ext) ? 'image' : isVideoExt(file.ext) ? 'video' : 'file',
-    dataUrl: file.thumbUrl || file.previewUrl || file.url || ''
+    id: liveFile.id || file.id,
+    name: liveFile.name || file.name,
+    mimeType,
+    sizeBytes: liveFile.sizeBytes || file.sizeBytes,
+    kind,
+    dataUrl: liveFile.thumbUrl || liveFile.previewUrl || liveFile.url || file.dataUrl || ''
   };
 }
 
@@ -703,6 +869,96 @@ function appendCanvasAgentAttachments(row, files) {
   row.appendChild(strip);
 }
 
+function canvasAgentSessionMatchesFilter(session) {
+  if (CanvasWorkspace.agentHistoryFavoritesOnly && !session.favorite) return false;
+  if (CanvasWorkspace.agentHistoryDate && canvasAgentHistoryDate(session.updatedAt) !== CanvasWorkspace.agentHistoryDate) return false;
+  return true;
+}
+
+function renderCanvasAgentHistory() {
+  const list = document.getElementById('board-agent-history-list');
+  const empty = document.getElementById('board-agent-history-empty');
+  const drawer = document.getElementById('board-agent-history-drawer');
+  if (!list || !empty) return;
+  const sessions = CanvasWorkspace.agentSessions
+    .slice()
+    .sort((a, b) => Number(b.favorite) - Number(a.favorite) || new Date(b.updatedAt) - new Date(a.updatedAt))
+    .filter(canvasAgentSessionMatchesFilter);
+  list.replaceChildren();
+  empty.hidden = sessions.length > 0;
+  sessions.forEach((session) => {
+    const row = document.createElement('div');
+    row.className = 'board-agent-history-row';
+    row.dataset.sessionId = session.id;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'board-agent-history-item';
+    button.classList.toggle('is-active', session.id === CanvasWorkspace.activeAgentSessionId);
+    button.innerHTML = `<span class="board-agent-history-star" aria-hidden="true">${session.favorite ? '\u2605' : '\u2606'}</span><span class="board-agent-history-copy"><b></b><small></small></span>`;
+    button.querySelector('b').textContent = session.title || t('New conversation', '\u65b0\u5bf9\u8bdd');
+    button.querySelector('small').textContent = canvasAgentHistoryDate(session.updatedAt);
+    button.addEventListener('click', () => loadCanvasAgentSession(session.id));
+    row.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      showCanvasAgentSessionMenu(session.id, event.clientX, event.clientY);
+    });
+    row.appendChild(button);
+    list.appendChild(row);
+  });
+  const favorites = document.getElementById('board-agent-history-favorites');
+  if (favorites) {
+    favorites.classList.toggle('is-active', CanvasWorkspace.agentHistoryFavoritesOnly);
+    favorites.setAttribute('aria-pressed', String(CanvasWorkspace.agentHistoryFavoritesOnly));
+  }
+  if (drawer) drawer.dataset.hasResults = String(sessions.length > 0);
+}
+
+function loadCanvasAgentSession(sessionId) {
+  const session = CanvasWorkspace.agentSessions.find((entry) => entry.id === sessionId);
+  if (!session) return;
+  CanvasWorkspace.activeAgentSessionId = session.id;
+  CanvasWorkspace.agentMessages = session.messages.map((message) => ({ ...message }));
+  const list = document.getElementById('board-agent-messages');
+  if (!list) return;
+  list.replaceChildren();
+  CanvasWorkspace.agentMessages.forEach((message) => {
+    const row = appendCanvasAgentMessage(message.role, message.displayContent || message.content);
+    appendCanvasAgentAttachments(row, Array.isArray(message.attachments) ? message.attachments : []);
+  });
+  renderCanvasAgentHistory();
+  const drawer = document.getElementById('board-agent-history-drawer');
+  if (drawer) drawer.hidden = true;
+}
+
+function showCanvasAgentSessionMenu(sessionId, x, y) {
+  const session = CanvasWorkspace.agentSessions.find((entry) => entry.id === sessionId);
+  if (!session || typeof buildAndShowSimpleMenu !== 'function') return;
+  buildAndShowSimpleMenu([
+    {
+      label: session.favorite ? t('Remove from Favorites', '\u53d6\u6d88\u6536\u85cf') : t('Add to Favorites', '\u52a0\u5165\u6536\u85cf\u5939'),
+      icon: 'M12 3l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3z',
+      action: () => {
+        session.favorite = !session.favorite;
+        persistCanvasAgentHistory();
+        renderCanvasAgentHistory();
+      }
+    },
+    {
+      label: t('Open conversation', '\u6253\u5f00\u5bf9\u8bdd'),
+      icon: 'M4 5h16v12H8l-4 3V5z',
+      action: () => loadCanvasAgentSession(session.id)
+    }
+  ], x, y, 'board-agent-history-context-menu');
+}
+
+function toggleCanvasAgentHistory(open = null) {
+  const drawer = document.getElementById('board-agent-history-drawer');
+  if (!drawer) return;
+  drawer.hidden = open === null ? !drawer.hidden : !open;
+  if (!drawer.hidden) renderCanvasAgentHistory();
+}
+
 function setCanvasAgentOpen(open, options = {}) {
   const agent = document.getElementById('board-agent-panel');
   const board = document.getElementById('board-panel');
@@ -712,6 +968,10 @@ function setCanvasAgentOpen(open, options = {}) {
     !board.classList.contains('is-canvas-library');
   agent.classList.toggle('is-hidden', !allowed);
   if (toggle) toggle.setAttribute('aria-expanded', String(allowed));
+  const historyDrawer = document.getElementById('board-agent-history-drawer');
+  const historyToggle = document.getElementById('board-agent-history');
+  if (!allowed && historyDrawer) historyDrawer.hidden = true;
+  if (!allowed && historyToggle) historyToggle.setAttribute('aria-expanded', 'false');
   if (allowed) {
     renderCanvasAgentContext();
     syncCanvasAgentReferencesToSelection();
@@ -1071,12 +1331,15 @@ async function submitCanvasAgentMessage() {
   const userRow = appendCanvasAgentMessage('user', prompt);
   appendCanvasAgentAttachments(userRow, referenceFiles);
   const contextualPrompt = canvasAgentPrompt(prompt);
+  ensureCanvasAgentSession(prompt);
   CanvasWorkspace.agentMessages.push({
     role: 'user',
     content: contextualPrompt,
+    displayContent: prompt,
     attachmentFileIds: referenceFiles.map((file) => file.id),
     attachments: referenceFiles.map(canvasAgentAttachmentRecord)
   });
+  persistActiveCanvasAgentSession();
   CanvasWorkspace.agentBusy = true;
   input.disabled = true;
   document.getElementById('board-agent-submit').disabled = true;
@@ -1099,7 +1362,8 @@ async function submitCanvasAgentMessage() {
     if (!response || !response.ok) {
       throw new Error((response && response.message) || t('Canvas Agent request failed.', '画布 Agent 请求失败。'));
     }
-    CanvasWorkspace.agentMessages.push({ role: 'assistant', content: response.text });
+    CanvasWorkspace.agentMessages.push({ role: 'assistant', content: response.text, displayContent: response.text });
+    persistActiveCanvasAgentSession();
     pending.classList.remove('is-pending');
     pending.textContent = response.text;
     if (typeof appendAssistantOutputFiles === 'function') appendAssistantOutputFiles(pending, response.files);
@@ -1201,6 +1465,12 @@ function refreshCanvasWorkspaceLanguage() {
   const input = document.getElementById('board-agent-input');
   if (toggle) toggle.textContent = 'Messs Agent';
   if (input) input.placeholder = t('Ask about this canvas...', '询问这个画布...');
+  const historyTitle = document.querySelector('.board-agent-history-drawer > header strong');
+  if (historyTitle) historyTitle.textContent = t('Agent history', 'Agent \u5386\u53f2\u8bb0\u5f55');
+  const historyFavorites = document.getElementById('board-agent-history-favorites');
+  if (historyFavorites) historyFavorites.textContent = t('Favorites', '\u6536\u85cf\u5939');
+  const historyEmpty = document.getElementById('board-agent-history-empty');
+  if (historyEmpty) historyEmpty.textContent = t('No conversations found', '\u6ca1\u6709\u627e\u5230\u5bf9\u8bdd');
   const send = document.getElementById('board-agent-submit');
   if (send) {
     send.title = t('Send', '发送');
@@ -1281,6 +1551,32 @@ async function initCanvasWorkspace(initial) {
   });
   document.getElementById('board-agent-close').addEventListener('click', () => {
     setCanvasAgentOpen(false);
+  });
+  document.getElementById('board-agent-history').addEventListener('click', (event) => {
+    event.stopPropagation();
+    const drawer = document.getElementById('board-agent-history-drawer');
+    toggleCanvasAgentHistory(drawer && drawer.hidden);
+    event.currentTarget.setAttribute('aria-expanded', String(!!drawer && !drawer.hidden));
+  });
+  document.getElementById('board-agent-history-new').addEventListener('click', () => {
+    startNewCanvasAgentChat();
+    toggleCanvasAgentHistory(false);
+    document.getElementById('board-agent-history').setAttribute('aria-expanded', 'false');
+    document.getElementById('board-agent-input').focus();
+  });
+  document.getElementById('board-agent-history-favorites').addEventListener('click', (event) => {
+    CanvasWorkspace.agentHistoryFavoritesOnly = !CanvasWorkspace.agentHistoryFavoritesOnly;
+    event.currentTarget.setAttribute('aria-pressed', String(CanvasWorkspace.agentHistoryFavoritesOnly));
+    renderCanvasAgentHistory();
+  });
+  document.getElementById('board-agent-history-date').addEventListener('change', (event) => {
+    CanvasWorkspace.agentHistoryDate = String(event.target.value || '');
+    renderCanvasAgentHistory();
+  });
+  document.getElementById('board-agent-history-date-clear').addEventListener('click', () => {
+    CanvasWorkspace.agentHistoryDate = '';
+    document.getElementById('board-agent-history-date').value = '';
+    renderCanvasAgentHistory();
   });
   const modelTrigger = document.getElementById('board-agent-model-trigger');
   const modelMenu = document.getElementById('board-agent-model-menu');
@@ -1371,6 +1667,8 @@ async function initCanvasWorkspace(initial) {
   }
   renderCanvasAgentModels();
   renderCanvasAgentReferences();
+  renderCanvasAgentHistory();
+  void loadCanvasAgentHistory();
   showCanvasLibrary();
   refreshCanvasWorkspaceLanguage();
 }

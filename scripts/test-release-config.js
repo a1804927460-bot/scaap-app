@@ -76,14 +76,18 @@ assert.ok(catalog.version >= 8);
 assert.deepEqual(
   catalog.providers.filter((provider) => provider.kind === 'image' && provider.hidden !== true).map((provider) => provider.name),
   [
-    'Nano Banana Pro', 'Seedream 5.0', 'Midjourney Turbo', 'GPT Image 2',
+    'GPT Image 2 (Atlas Cloud)', 'Nano Banana Pro', 'Seedream 5.0', 'Midjourney Turbo', 'GPT Image 2',
     'Higgsfield Soul', 'Seedream 5.0 Pro', 'Kling Image 2', 'Jimeng Drawing 3.0',
     'Midjourney V8.1', 'Midjourney V8.2'
   ]
 );
 assert.deepEqual(
   catalog.providers.filter((provider) => provider.kind === 'video' && provider.hidden !== true).map((provider) => provider.name),
-  ['MiniMax H3', 'Seedance 2.0', 'Seedance 2.5', 'Kling V3 Standard', 'Kling V3 Pro', 'Kling O3 Standard', 'Kling O3 Pro']
+  [
+    'Seedance 2.0 (Atlas Cloud)', 'Seedance 2.0 Universal Reference (Atlas Cloud)',
+    'Seedance 2.5 (Atlas Cloud)', 'Seedance 2.5 Universal Reference (Atlas Cloud)',
+    'MiniMax H3', 'Seedance 2.0', 'Seedance 2.5', 'Kling V3 Standard', 'Kling V3 Pro', 'Kling O3 Standard', 'Kling O3 Pro'
+  ]
 );
 assert.deepEqual(
   catalog.providers.filter((provider) => provider.hidden === true).map((provider) => provider.id),

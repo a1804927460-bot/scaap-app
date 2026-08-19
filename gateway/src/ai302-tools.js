@@ -20,6 +20,7 @@ const MAX_JSON_BYTES = 1024 * 1024;
 const MAX_BACKGROUND_INPUT_BYTES = 24 * 1024 * 1024;
 const MAX_3D_INPUT_BYTES = 8 * 1024 * 1024;
 const MAX_VIDEO_INPUT_BYTES = 48 * 1024 * 1024;
+const MAX_AUDIO_INPUT_BYTES = 32 * 1024 * 1024;
 const MAX_BACKGROUND_OUTPUT_BYTES = 64 * 1024 * 1024;
 const MAX_GLB_BYTES = 256 * 1024 * 1024;
 const MAX_VIDEO_OUTPUT_BYTES = 256 * 1024 * 1024;
@@ -38,6 +39,7 @@ const MAX_VIDEO_UPLOAD_SESSIONS = 16;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const ALLOWED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const ALLOWED_VIDEO_MIME = new Set(['video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska']);
+const ALLOWED_AUDIO_MIME = new Set(['audio/wav', 'audio/mpeg', 'audio/mp3']);
 const THREE_D_PROVIDERS = new Set(['hunyuan3d', 'hyper3d', 'tripo3d']);
 const TOPAZ_VIDEO_PROVIDER = 'topaz-video-upscale';
 const QUEUED_STATES = new Set([
@@ -71,8 +73,10 @@ const PRIVATE_INPUT_PATTERNS = [
 ];
 const relayAssets = new Map();
 const videoUploadSessions = new Map();
+const audioUploadSessions = new Map();
 let relayAssetBytes = 0;
 let videoUploadBytes = 0;
+let audioUploadBytes = 0;
 const crcTable = new Uint32Array(256);
 for (let index = 0; index < crcTable.length; index += 1) {
   let value = index;
@@ -553,6 +557,12 @@ export function cleanupVideoUploadSessions(now = Date.now()) {
       videoUploadSessions.delete(uploadId);
     }
   }
+  for (const [uploadId, session] of audioUploadSessions) {
+    if (session.expiresAt <= currentTime) {
+      audioUploadBytes -= session.totalBytes;
+      audioUploadSessions.delete(uploadId);
+    }
+  }
 }
 
 function validVideoUploadId(value) {
@@ -693,14 +703,18 @@ function storeRelayAsset(image, options = {}) {
   relayAssets.set(token, {
     buffer: image.buffer,
     mime: image.mime,
-    extension: image.extension || (image.mime === 'video/quicktime' ? 'mov'
+    extension: image.extension || (image.mime === 'audio/mpeg' || image.mime === 'audio/mp3' ? 'mp3'
+      : image.mime === 'audio/wav' ? 'wav'
+      : image.mime === 'video/quicktime' ? 'mov'
       : image.mime === 'video/x-matroska' ? 'mkv'
         : String(image.mime || '').split('/')[1] || 'bin'),
     expiresAt: now + ttlMs
   });
   relayAssetBytes += image.buffer.length;
-  const filenameSuffix = ALLOWED_VIDEO_MIME.has(image.mime)
-    ? `.${image.extension || (image.mime === 'video/quicktime' ? 'mov'
+  const filenameSuffix = (ALLOWED_VIDEO_MIME.has(image.mime) || ALLOWED_AUDIO_MIME.has(image.mime))
+    ? `.${image.extension || (image.mime === 'audio/mpeg' || image.mime === 'audio/mp3' ? 'mp3'
+      : image.mime === 'audio/wav' ? 'wav'
+      : image.mime === 'video/quicktime' ? 'mov'
       : image.mime === 'video/x-matroska' ? 'mkv'
         : String(image.mime || '').split('/')[1] || 'mp4')}`
     : '';
@@ -714,7 +728,7 @@ export function storeAi302RelayAsset(asset, options = {}) {
   const mime = String(asset && asset.mime || '').toLowerCase();
   if (
     !asset || !Buffer.isBuffer(asset.buffer) || !asset.buffer.length
-    || (!ALLOWED_IMAGE_MIME.has(mime) && !ALLOWED_VIDEO_MIME.has(mime))
+    || (!ALLOWED_IMAGE_MIME.has(mime) && !ALLOWED_VIDEO_MIME.has(mime) && !ALLOWED_AUDIO_MIME.has(mime))
   ) {
     throw toolError('invalid-relay-asset', 'The temporary relay asset is invalid.', 400);
   }
@@ -1629,6 +1643,76 @@ export function validateGlb(buffer) {
 export function normalizeBackgroundRemovalOptions(value = {}) {
   void value;
   return {};
+}
+
+function ownedAudioUpload(value, userId, now = Date.now()) {
+  const uploadId = validVideoUploadId(value);
+  cleanupVideoUploadSessions(now);
+  const session = audioUploadSessions.get(uploadId);
+  if (!session || session.userId !== String(userId || '')) {
+    throw toolError('audio-upload-not-found', 'The audio upload session was not found.', 404);
+  }
+  session.expiresAt = Number(now) + VIDEO_UPLOAD_TTL_MS;
+  return { uploadId, session };
+}
+
+export function createAudioUploadSession({ userId, size, mime } = {}, options = {}) {
+  const ownerId = String(userId || '').trim();
+  const totalBytes = Math.round(Number(size));
+  const normalizedMime = String(mime || '').trim().toLowerCase();
+  const extension = normalizedMime === 'audio/mpeg' || normalizedMime === 'audio/mp3' ? 'mp3' : 'wav';
+  if (!ownerId || ownerId.length > 256 || /[\u0000-\u001f\u007f]/.test(ownerId)
+    || !Number.isSafeInteger(totalBytes) || totalBytes < 12 || totalBytes > MAX_AUDIO_INPUT_BYTES) {
+    throw toolError('audio-too-large', 'The audio exceeds the supported upload size.', 413);
+  }
+  if (!ALLOWED_AUDIO_MIME.has(normalizedMime)) {
+    throw toolError('invalid-audio-data', 'The audio MIME type is not supported.', 400);
+  }
+  const now = Number(options.now ?? Date.now());
+  cleanupVideoUploadSessions(now);
+  if (audioUploadSessions.size >= MAX_VIDEO_UPLOAD_SESSIONS || audioUploadBytes + totalBytes > MAX_RELAY_ASSET_BYTES) {
+    throw toolError('tool-asset-capacity-exceeded', 'The temporary audio upload service is busy.', 503);
+  }
+  let uploadId;
+  do { uploadId = crypto.randomBytes(32).toString('base64url'); } while (audioUploadSessions.has(uploadId));
+  audioUploadSessions.set(uploadId, { userId: ownerId, totalBytes, mime: normalizedMime, extension, chunks: new Map(), receivedBytes: 0, expiresAt: now + VIDEO_UPLOAD_TTL_MS });
+  audioUploadBytes += totalBytes;
+  return { uploadId, chunkSize: VIDEO_UPLOAD_CHUNK_BYTES, totalBytes };
+}
+
+export function appendAudioUploadChunk({ uploadId, userId, index, chunk } = {}, options = {}) {
+  const owned = ownedAudioUpload(uploadId, userId, Number(options.now ?? Date.now()));
+  const chunkIndex = Math.round(Number(index));
+  const expectedChunks = Math.ceil(owned.session.totalBytes / VIDEO_UPLOAD_CHUNK_BYTES);
+  if (!Number.isSafeInteger(chunkIndex) || chunkIndex < 0 || chunkIndex >= expectedChunks || !Buffer.isBuffer(chunk) || !chunk.length || chunk.length > VIDEO_UPLOAD_CHUNK_BYTES) {
+    throw toolError('invalid-audio-upload-chunk', 'The audio upload chunk is invalid.', 400);
+  }
+  const expectedLength = chunkIndex === expectedChunks - 1 ? owned.session.totalBytes - chunkIndex * VIDEO_UPLOAD_CHUNK_BYTES : VIDEO_UPLOAD_CHUNK_BYTES;
+  if (chunk.length !== expectedLength) throw toolError('invalid-audio-upload-chunk', 'The audio upload chunk length is invalid.', 400);
+  const existing = owned.session.chunks.get(chunkIndex);
+  if (existing) {
+    if (existing.length !== chunk.length || !crypto.timingSafeEqual(existing, chunk)) throw toolError('audio-upload-chunk-conflict', 'The audio upload chunk does not match the previous retry.', 409);
+    return { uploadId: owned.uploadId, index: chunkIndex, receivedBytes: owned.session.receivedBytes };
+  }
+  owned.session.chunks.set(chunkIndex, Buffer.from(chunk));
+  owned.session.receivedBytes += chunk.length;
+  return { uploadId: owned.uploadId, index: chunkIndex, receivedBytes: owned.session.receivedBytes };
+}
+
+export function consumeAudioUpload({ uploadId, userId } = {}, options = {}) {
+  const owned = ownedAudioUpload(uploadId, userId, Number(options.now ?? Date.now()));
+  const expectedChunks = Math.ceil(owned.session.totalBytes / VIDEO_UPLOAD_CHUNK_BYTES);
+  if (owned.session.chunks.size !== expectedChunks || owned.session.receivedBytes !== owned.session.totalBytes) throw toolError('audio-upload-incomplete', 'The audio upload is incomplete.', 409);
+  const chunks = [];
+  for (let index = 0; index < expectedChunks; index += 1) {
+    const chunk = owned.session.chunks.get(index);
+    if (!chunk) throw toolError('audio-upload-incomplete', 'The audio upload is incomplete.', 409);
+    chunks.push(chunk);
+  }
+  const buffer = Buffer.concat(chunks, owned.session.totalBytes);
+  audioUploadBytes -= owned.session.totalBytes;
+  audioUploadSessions.delete(owned.uploadId);
+  return { buffer, mime: owned.session.mime, extension: owned.session.extension };
 }
 
 export async function removeBackground({ imageDataUrl, toolOptions } = {}, options = {}) {

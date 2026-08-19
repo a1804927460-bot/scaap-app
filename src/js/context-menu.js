@@ -399,6 +399,149 @@ async function sendBoardMediaToChat(fileIds) {
   return window.queueBoardMediaToChat(fileIds);
 }
 
+function formatCanvasUsagePoints(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return t('Not recorded', '\u672a\u8bb0\u5f55');
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(Math.max(0, numeric));
+}
+
+function formatCanvasUsageDate(value) {
+  const date = new Date(value || 0);
+  if (!Number.isFinite(date.getTime())) return '-';
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+  }).format(date);
+}
+
+function closeCanvasUsageDetails() {
+  const overlay = document.getElementById('canvas-usage-overlay');
+  if (!overlay || overlay.hidden) return;
+  overlay.classList.remove('is-visible');
+  window.setTimeout(() => { overlay.hidden = true; }, 160);
+}
+
+function initCanvasUsageDialog() {
+  const overlay = document.getElementById('canvas-usage-overlay');
+  if (!overlay || overlay.dataset.initialized === 'true') return overlay;
+  overlay.dataset.initialized = 'true';
+  document.getElementById('canvas-usage-close').addEventListener('click', closeCanvasUsageDetails);
+  document.getElementById('canvas-usage-done').addEventListener('click', closeCanvasUsageDetails);
+  document.getElementById('canvas-usage-account').addEventListener('click', () => {
+    closeCanvasUsageDetails();
+    if (typeof window.openUsageSettings === 'function') window.openUsageSettings();
+    else {
+      const opener = document.getElementById('usage-settings-open');
+      if (opener) opener.click();
+    }
+  });
+  overlay.addEventListener('pointerdown', (event) => {
+    if (event.target === overlay) closeCanvasUsageDetails();
+  });
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !overlay.hidden) closeCanvasUsageDetails();
+  });
+  return overlay;
+}
+
+function renderCanvasUsageDetails(result) {
+  const summary = document.getElementById('canvas-usage-summary');
+  const rows = document.getElementById('canvas-usage-rows');
+  const note = document.getElementById('canvas-usage-note');
+  const empty = document.getElementById('canvas-usage-empty');
+  const details = Array.isArray(result.details) ? result.details : [];
+  const totals = result.totals || {};
+  const breakdown = result.breakdown || {};
+  document.getElementById('canvas-usage-kicker').textContent = t('Canvas points usage', '\u753b\u5e03\u79ef\u5206\u7528\u91cf');
+  document.getElementById('canvas-usage-title').textContent = result.canvas && result.canvas.name
+    ? result.canvas.name
+    : t('Usage details', '\u4f7f\u7528\u660e\u7ec6');
+  const tableHeaders = document.querySelectorAll('.canvas-usage-table th');
+  [t('Date', '\u65e5\u671f'), t('Type', '\u7c7b\u578b'), t('Model', '\u6a21\u578b'), t('Output', '\u751f\u6210\u7ed3\u679c'), t('Points', '\u79ef\u5206')]
+    .forEach((label, index) => { if (tableHeaders[index]) tableHeaders[index].textContent = label; });
+  const metrics = [
+    [t('Recorded points', '\u5df2\u8bb0\u5f55\u79ef\u5206'), formatCanvasUsagePoints(totals.credits)],
+    [t('AI results', 'AI \u7ed3\u679c'), String(Math.max(0, Number(totals.generations) || 0))],
+    [t('Images', '\u56fe\u7247'), `${formatCanvasUsagePoints(breakdown.image && breakdown.image.credits)} / ${Number(breakdown.image && breakdown.image.generations) || 0}`],
+    [t('Videos', '\u89c6\u9891'), `${formatCanvasUsagePoints(breakdown.video && breakdown.video.credits)} / ${Number(breakdown.video && breakdown.video.generations) || 0}`],
+    ['3D', `${formatCanvasUsagePoints(breakdown['3d'] && breakdown['3d'].credits)} / ${Number(breakdown['3d'] && breakdown['3d'].generations) || 0}`]
+  ];
+  summary.replaceChildren(...metrics.map(([label, value]) => {
+    const metric = document.createElement('div');
+    const copy = document.createElement('span');
+    const strong = document.createElement('strong');
+    copy.textContent = label;
+    strong.textContent = value;
+    metric.append(copy, strong);
+    return metric;
+  }));
+  const unknown = Math.max(0, Number(totals.unrecorded) || 0);
+  note.hidden = unknown === 0;
+  note.textContent = unknown > 0
+    ? t(
+      `${unknown} older result${unknown === 1 ? '' : 's'} did not store point data and are excluded from the total.`,
+      `${unknown} \u6761\u65e7\u7248\u672c\u7ed3\u679c\u6ca1\u6709\u8bb0\u5f55\u79ef\u5206\uff0c\u672a\u8ba1\u5165\u603b\u6570\u3002`
+    )
+    : '';
+  rows.replaceChildren(...details.map((entry) => {
+    const row = document.createElement('tr');
+    const labels = {
+      image: t('Image', '\u56fe\u7247'),
+      video: t('Video', '\u89c6\u9891'),
+      '3d': '3D'
+    };
+    [
+      formatCanvasUsageDate(entry.createdAt),
+      labels[entry.kind] || entry.kind || '-',
+      entry.modelName || entry.providerId || '-',
+      entry.name || '-',
+      formatCanvasUsagePoints(entry.credits)
+    ].forEach((value, index) => {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      if (index === 4 && entry.credits === null) cell.className = 'is-unrecorded';
+      row.appendChild(cell);
+    });
+    return row;
+  }));
+  empty.hidden = details.length > 0;
+  empty.textContent = t('No AI usage recorded on this canvas.', '\u8fd9\u4e2a\u753b\u5e03\u8fd8\u6ca1\u6709 AI \u4f7f\u7528\u8bb0\u5f55\u3002');
+  document.getElementById('canvas-usage-account').textContent = t('View account usage', '\u67e5\u770b\u8d26\u6237\u7528\u91cf');
+  document.getElementById('canvas-usage-done').textContent = t('Done', '\u5b8c\u6210');
+}
+
+async function openCanvasUsageDetails() {
+  const overlay = initCanvasUsageDialog();
+  if (!overlay || !window.messsAPI || typeof window.messsAPI.getCanvasCreditUsage !== 'function') {
+    if (typeof window.openUsageSettings === 'function') window.openUsageSettings();
+    return;
+  }
+  const loading = document.getElementById('canvas-usage-loading');
+  const content = document.getElementById('canvas-usage-content');
+  overlay.hidden = false;
+  loading.hidden = false;
+  loading.textContent = t('Loading usage...', '\u6b63\u5728\u52a0\u8f7d\u7528\u91cf...');
+  content.hidden = true;
+  requestAnimationFrame(() => overlay.classList.add('is-visible'));
+  document.getElementById('canvas-usage-close').focus({ preventScroll: true });
+  try {
+    const result = await window.messsAPI.getCanvasCreditUsage(activeCanvasId());
+    if (!result || !result.ok) throw new Error(result && result.reason || 'usage-unavailable');
+    renderCanvasUsageDetails(result);
+    loading.hidden = true;
+    content.hidden = false;
+  } catch (error) {
+    loading.textContent = t('Canvas usage could not be loaded.', '\u65e0\u6cd5\u52a0\u8f7d\u753b\u5e03\u7528\u91cf\u3002');
+  }
+}
+
+function showBoardCanvasContextMenu(x, y) {
+  buildAndShowSimpleMenu([{
+    label: t('View points usage', '\u67e5\u770b\u79ef\u5206\u7528\u91cf'),
+    icon: 'M4 19V5M4 19h16M8 16v-4M12 16V8M16 16v-7',
+    action: openCanvasUsageDetails
+  }], x, y, 'board-canvas-context-menu');
+}
+
 function duplicateBoardItem(item) {
   copyBoardSelection([item]);
   const copies = pasteBoardClipboard(item.x + 28, item.y + 28);
@@ -461,6 +604,12 @@ function showBoardItemContextMenu(item, x, y) {
       });
     }
     items.push({
+      label: t('View points usage', '\u67e5\u770b\u79ef\u5206\u7528\u91cf'),
+      icon: 'M4 19V5M4 19h16M8 16v-4M12 16V8M16 16v-7',
+      divider: true,
+      action: openCanvasUsageDetails
+    });
+    items.push({
       label: t('Delete', '\u5220\u9664'),
       icon: 'M3 6h18;M8 6V4h8v2;M7 6l1 15h8l1-15;M10 10v7;M14 10v7',
       divider: true,
@@ -501,6 +650,7 @@ const MULTI_MENU_ITEMS = [
   ] },
   { key: 'download', label: ['Export', '导出'] },
   { key: 'send-chat', label: ['Send to Chat', '发送到聊天'] },
+  { key: 'usage', label: ['View points usage', '\u67e5\u770b\u79ef\u5206\u7528\u91cf'] },
   { key: 'group', label: ['Group', '成组'] },
   { key: 'ungroup', label: ['Ungroup', '取消成组'] },
   { key: 'delete', label: ['Delete', '删除'], danger: true }
@@ -653,6 +803,9 @@ async function runMultiMenuAction(key, x, y) {
       await sendBoardMediaToChat(mediaIds);
       break;
     }
+    case 'usage':
+      openCanvasUsageDetails();
+      break;
     case 'group': {
       const groupId = 'g_' + Math.random().toString(36).slice(2, 10);
       selected.forEach((item) => { item.groupId = groupId; window.messsAPI.upsertBoardItem(item); });

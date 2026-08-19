@@ -588,6 +588,7 @@ function initUsageSettings() {
 if (typeof window !== 'undefined') {
   window.initUsageSettings = initUsageSettings;
   window.setSettingsView = setSettingsView;
+  window.openUsageSettings = openUsageSettings;
 }
 if (typeof module === 'object' && module.exports) {
   module.exports = { normalizeUsageSummary, fillUsageRange, smoothUsagePath, usageDecimalNumber };

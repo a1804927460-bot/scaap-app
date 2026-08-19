@@ -37,6 +37,16 @@ Legnext Midjourney V8.1 and V8.2 use the sealed Railway variable
 header; task polling is performed server-side against the private job URL and
 the key is never returned to the desktop.
 
+AtlasCloud is the preferred provider for GPT Image 2 and Seedance 2.0/2.5.
+Store its credential as the sealed Railway variable `ATLASCLOUD_API_KEY`.
+The catalog includes GPT Image 2 text-to-image and edit, Seedance image-to-video,
+reference-to-video, first/last-frame, audio references, Seedance 2.5 video edit
+and extension, and 30-second generation where the upstream model supports it.
+AtlasCloud is selected only when this variable is present; otherwise the gateway
+fails closed for those provider IDs and keeps the existing 302/QuickRouter
+providers available as configured fallbacks. Never put the key in the desktop
+bundle, `runtime.json`, provider catalog, or client-visible responses.
+
 ## Butler tools
 
 Butler uses the 302 tool gateway for background removal, 3D generation, and

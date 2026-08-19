@@ -237,6 +237,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   setAiMediaConfig: (config) => ipcRenderer.invoke('settings:setAiMediaConfig', config),
   discoverAiModels: (request) => ipcRenderer.invoke('settings:discoverAiModels', request),
   saveCanvasState: (state) => ipcRenderer.invoke('canvas:saveState', state),
+  getCanvasCreditUsage: (canvasId) => ipcRenderer.invoke('canvas:getCreditUsage', canvasId),
   exportCanvas: (canvasId) => ipcRenderer.invoke('canvas:export', canvasId),
   deleteCanvas: (canvasId) => ipcRenderer.invoke('canvas:delete', canvasId),
 
@@ -248,6 +249,10 @@ contextBridge.exposeInMainWorld('messsAPI', {
   chatWithAi: (request) => ipcRenderer.invoke('ai:chat', request),
   saveGeneratedAiFile: (token) => ipcRenderer.invoke('ai:saveGeneratedFile', token),
   exportAiChat: (session) => ipcRenderer.invoke('ai:exportChat', session),
+  getCanvasAgentHistory: () => ipcRenderer.invoke('canvas-agent:getHistory'),
+  saveCanvasAgentHistory: (sessions) => ipcRenderer.invoke('canvas-agent:saveHistory', sessions),
+  getAiAssistantHistory: () => ipcRenderer.invoke('ai-assistant:getHistory'),
+  saveAiAssistantHistory: (sessions) => ipcRenderer.invoke('ai-assistant:saveHistory', sessions),
   butler: Object.freeze({
     removeBackground: (fileId, options) => ipcRenderer.invoke('butler:removeBackground', fileId, options),
     editImage: (fileId, options) => ipcRenderer.invoke('butler:image-edit', fileId, options),

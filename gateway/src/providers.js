@@ -19,6 +19,7 @@ const MAX_PROVIDERS = 100;
 const ASYNC_VIDEO_PROTOCOLS = new Set([
   'minimax-video-v2',
   'seedance-video-v3',
+  'atlas-seedance-video',
   'jimeng-video-v30',
   'jimeng-video-v30-pro',
   'kling-v3-image-to-video',
@@ -140,8 +141,137 @@ function providerFor(kind, id) {
   return { ...selected, apiKey };
 }
 
+function deepAtlasOutputUrl(value, seen = new Set(), depth = 0) {
+  if (depth > 8 || value === null || value === undefined) return '';
+  if (typeof value === 'string') {
+    const candidate = value.trim();
+    if (/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/i.test(candidate)) return candidate;
+    if (/^https:\/\/\S+$/i.test(candidate)) {
+      let atlasHost = false;
+      try {
+        const hostname = new URL(candidate).hostname.toLowerCase();
+        atlasHost = hostname === 'atlascloud.ai' || hostname.endsWith('.atlascloud.ai');
+      } catch {}
+      if (atlasHost || /(?:\.png|\.jpe?g|\.webp)(?:\?|$)|image|download/i.test(candidate)) return candidate;
+    }
+    return '';
+  }
+  if (typeof value !== 'object' || seen.has(value)) return '';
+  seen.add(value);
+  for (const key of ['outputs', 'image_url', 'imageUrl', 'result_url', 'resultUrl', 'download_url', 'downloadUrl', 'url', 'output']) {
+    const found = deepAtlasOutputUrl(value[key], seen, depth + 1);
+    if (found) return found;
+  }
+  for (const child of Object.values(value)) {
+    const found = deepAtlasOutputUrl(child, seen, depth + 1);
+    if (found) return found;
+  }
+  return '';
+}
+
+async function downloadGeneratedImage(url, signal, maxBytes = 64 * 1024 * 1024) {
+  if (/^data:image\//i.test(url)) {
+    return parseImageDataUrl(url, { maxBytes }).buffer;
+  }
+  const safeUrl = safeServerEndpoint(url);
+  if (!safeUrl) throw Object.assign(new Error('The image provider returned an unsafe image URL.'), {
+    status: 502, code: 'unsafe-media-url'
+  });
+  const response = await fetch(safeUrl, { signal: providerSignal(signal, 120_000) });
+  if (!response.ok) throw Object.assign(new Error(`Could not download the generated image (HTTP ${response.status}).`), {
+    status: response.status, code: 'provider-download-failed'
+  });
+  const advertisedBytes = Number(response.headers.get('content-length')) || 0;
+  if (advertisedBytes > maxBytes) throw Object.assign(new Error('The generated image is too large.'), {
+    status: 413, code: 'media-too-large'
+  });
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.length > maxBytes) throw Object.assign(new Error('The generated image is too large.'), {
+    status: 413, code: 'media-too-large'
+  });
+  return buffer;
+}
+
+async function generateAtlasGptImage(provider, body, signal) {
+  const relayTokens = [];
+  try {
+    const urls = Array.isArray(body.urls) ? body.urls.slice(0, 10).map((value) => {
+      const source = String(value || '').trim();
+      if (!/^data:image\//i.test(source)) return source;
+      const image = stripImageMetadata(parseImageDataUrl(source, { maxBytes: 30 * 1024 * 1024 }));
+      const relay = storeAi302RelayAsset(image, { relayTtlMs: 20 * 60 * 1000 });
+      relayTokens.push(relay.token);
+      return relay.url;
+    }) : [];
+    const outputFormat = String(body.outputFormat || 'jpeg').trim().toLowerCase();
+    const requestBody = {
+      model: urls.length ? 'openai/gpt-image-2/edit' : 'openai/gpt-image-2/text-to-image',
+      prompt: String(body.prompt || '').trim(),
+      size: String(body.size || '1024x1024').trim(),
+      quality: ['low', 'medium', 'high'].includes(String(body.quality || '').toLowerCase())
+        ? String(body.quality).toLowerCase() : 'medium',
+      output_format: ['jpeg', 'png'].includes(outputFormat) ? outputFormat : 'jpeg',
+      ...(urls.length ? { images: urls } : {}),
+      enable_sync_mode: false,
+      enable_base64_output: false
+    };
+    const created = await responseJson(await fetch(provider.endpoint, {
+      method: 'POST',
+      headers: providerTaskHeaders(provider, body),
+      signal: providerSignal(signal, 45_000),
+      body: JSON.stringify(requestBody)
+    }), provider.name);
+    const taskId = providerVideoTaskId(created);
+    if (!taskId || taskId.length > 256) {
+      throw Object.assign(new Error(`${provider.name} did not return a valid prediction ID.`), {
+        status: 502, code: 'provider-invalid-response', retryable: false
+      });
+    }
+    const deadline = Date.now() + 20 * 60_000;
+    while (Date.now() < deadline) {
+      let result;
+      try {
+        result = await responseJson(await fetch(
+          `${provider.resultEndpoint}/${encodeURIComponent(taskId)}`,
+          { headers: providerHeaders(provider), signal: providerSignal(signal, 30_000) }
+        ), provider.name);
+      } catch (error) {
+        if (Number(error && error.status) !== 404) throw error;
+        const fallbackEndpoint = String(provider.resultEndpoint).replace(/\/prediction$/i, '/result');
+        result = await responseJson(await fetch(
+          `${fallbackEndpoint}/${encodeURIComponent(taskId)}`,
+          { headers: providerHeaders(provider), signal: providerSignal(signal, 30_000) }
+        ), provider.name);
+      }
+      const status = providerVideoTaskStatus(result);
+      if (status === 'succeeded') {
+        const outputUrl = deepAtlasOutputUrl(result);
+        if (!outputUrl) throw Object.assign(new Error(`${provider.name} completed without an image output.`), {
+          status: 502, code: 'provider-result-missing'
+        });
+        return await downloadGeneratedImage(outputUrl, signal);
+      }
+      if (TERMINAL_VIDEO_FAILURES.has(status)) {
+        throw Object.assign(new Error(safeProviderText(
+          nestedVideoTaskValue(result, ['error', 'message', 'msg']),
+          `${provider.name} image generation ${status}.`
+        )), { status: 502, code: `provider-${status}` });
+      }
+      await delayWithSignal(2_000, signal);
+    }
+    throw Object.assign(new Error(`${provider.name} image generation timed out.`), {
+      status: 504, code: 'provider-timeout'
+    });
+  } finally {
+    relayTokens.forEach((token) => deleteAi302RelayAsset(token));
+  }
+}
+
 export async function generateMedia(kind, body, signal) {
   const provider = providerFor(kind, String(body.providerId || ''));
+  if (kind === 'image' && provider.protocol === 'atlas-gpt-image-2') {
+    return generateAtlasGptImage(provider, body, signal);
+  }
   if (kind === 'video' && ASYNC_VIDEO_PROTOCOLS.has(provider.protocol)) {
     throw Object.assign(new Error('The selected video provider must use the asynchronous task API.'), {
       status: 409,
@@ -367,7 +497,7 @@ function normalizeVideoTaskStatus(value) {
   if (['succeeded', 'success', 'completed', 'complete', 'done', 'finished'].includes(status)) return 'succeeded';
   if (['failed', 'failure', 'error'].includes(status)) return 'failed';
   if (['cancelled', 'canceled'].includes(status)) return 'cancelled';
-  if (status === 'expired') return 'expired';
+  if (['expired', 'timeout', 'timed_out', 'timed-out'].includes(status)) return 'expired';
   if (['processing', 'running', 'generating', 'in_progress'].includes(status)) return 'running';
   return 'queued';
 }
@@ -403,7 +533,7 @@ function nestedVideoTaskObject(value, keys, seen = new Set(), depth = 0) {
 }
 
 function providerVideoTaskId(payload) {
-  return String(nestedVideoTaskValue(payload, ['task_id', 'taskId', 'id']) || '').trim();
+  return String(nestedVideoTaskValue(payload, ['request_id', 'requestId', 'task_id', 'taskId', 'id']) || '').trim();
 }
 
 function providerVideoTaskStatus(payload) {
@@ -422,10 +552,14 @@ function deepVideoResultUrl(value, seen = new Set(), depth = 0) {
   if (!value || depth > 10 || seen.has(value)) return '';
   if (typeof value === 'string') {
     const candidate = value.trim();
-    return /^https:\/\/\S+$/i.test(candidate)
-      && /(?:\.mp4(?:\?|$)|\.mov(?:\?|$)|\.webm(?:\?|$)|video|download)/i.test(candidate)
-      ? candidate
-      : '';
+    if (!/^https:\/\/\S+$/i.test(candidate)) return '';
+    let atlasHost = false;
+    try {
+      const hostname = new URL(candidate).hostname.toLowerCase();
+      atlasHost = hostname === 'atlascloud.ai' || hostname.endsWith('.atlascloud.ai');
+    } catch {}
+    return atlasHost || /(?:\.mp4(?:\?|$)|\.mov(?:\?|$)|\.webm(?:\?|$)|video|download)/i.test(candidate)
+      ? candidate : '';
   }
   if (typeof value !== 'object') return '';
   seen.add(value);
@@ -447,7 +581,7 @@ function deepVideoResultUrl(value, seen = new Set(), depth = 0) {
 function providerVideoTaskError(payload, fallbackCode, fallbackMessage) {
   const errorPayload = nestedVideoTaskObject(payload, ['error', 'failure']) || payload;
   const rawMessage = nestedVideoTaskValue(errorPayload, [
-    'error_message', 'errorMessage', 'failure_reason', 'failureReason', 'message', 'msg'
+    'error_message', 'errorMessage', 'failure_reason', 'failureReason', 'message', 'msg', 'error'
   ]);
   if (providerChannelConfigurationUnavailable(rawMessage)) {
     return {
@@ -464,7 +598,7 @@ function providerVideoTaskError(payload, fallbackCode, fallbackMessage) {
 }
 
 const VIDEO_MODE_IDS = new Set([
-  'text', 'first-frame', 'first-last-frame', 'omni', 'video-reference', 'video-edit'
+  'text', 'first-frame', 'first-last-frame', 'omni', 'video-reference', 'video-edit', 'video-extend'
 ]);
 
 function videoModeDefinition(capabilities, value, referenceCount) {
@@ -510,8 +644,9 @@ function validatedVideoTaskInput(provider, body) {
     : {};
   const submittedUrls = Array.isArray(body.urls) ? body.urls.filter(Boolean) : [];
   const mode = videoModeDefinition(capabilities, body.videoMode, submittedUrls.length);
-  const minReferenceImages = Math.max(0, Math.min(14, Number(mode.minReferences) || 0));
-  const maxReferenceImages = Math.max(minReferenceImages, Math.min(14, Number(mode.maxReferences) || 0));
+  const referenceLimit = Math.max(0, Math.min(30, Number(capabilities.maxTotalReferences) || Number(mode.maxReferences) || 0));
+  const minReferenceImages = Math.max(0, Math.min(referenceLimit, Number(mode.minReferences) || 0));
+  const maxReferenceImages = Math.max(minReferenceImages, Math.min(referenceLimit, Number(mode.maxReferences) || referenceLimit));
   if (submittedUrls.length > maxReferenceImages) {
     throw Object.assign(new Error(`${provider.name} accepts at most ${maxReferenceImages} reference images.`), {
       status: 400,
@@ -546,7 +681,15 @@ function validatedVideoTaskInput(provider, body) {
     });
   }
   const referenceVideoCount = referenceMediaTypes.filter((mediaType) => mediaType === 'video').length;
-  const maximumReferenceVideos = Math.max(0, Number(mode.maxReferenceVideos) || 0);
+  const referenceImageCount = referenceMediaTypes.filter((mediaType) => mediaType === 'image').length;
+  const maximumReferenceImages = Math.max(0, Number(mode.maxReferenceImages ?? capabilities.maxReferenceImages) || 0);
+  if (maximumReferenceImages && referenceImageCount > maximumReferenceImages) {
+    throw Object.assign(new Error(`${provider.name} accepts at most ${maximumReferenceImages} reference images.`), {
+      status: 400,
+      code: 'too-many-references'
+    });
+  }
+  const maximumReferenceVideos = Math.max(0, Number(mode.maxReferenceVideos ?? capabilities.maxReferenceVideos) || 0);
   if (referenceVideoCount > maximumReferenceVideos) {
     throw Object.assign(new Error(`${provider.name} accepts at most ${maximumReferenceVideos} reference videos.`), {
       status: 400,
@@ -555,7 +698,6 @@ function validatedVideoTaskInput(provider, body) {
   }
   if (referenceVideoCount > 0) {
     const maximumImagesWithVideo = Number(mode.maxReferenceImagesWithVideo);
-    const referenceImageCount = referenceMediaTypes.filter((mediaType) => mediaType === 'image').length;
     if (Number.isInteger(maximumImagesWithVideo) && maximumImagesWithVideo >= 0
       && referenceImageCount > maximumImagesWithVideo) {
       throw Object.assign(new Error(`${provider.name} accepts at most ${maximumImagesWithVideo} reference images with a reference video.`), {
@@ -708,6 +850,181 @@ async function createSeedanceVideoTask(provider, body, signal) {
       status: 502,
       code: 'provider-invalid-response',
       retryable: false
+    });
+  }
+  return { providerId: provider.id, taskId };
+}
+
+function atlasRelayMediaUrl(rawUrl, mediaType = 'image') {
+  const url = String(rawUrl || '').trim();
+  if (mediaType === 'image' && /^data:image\//i.test(url)) {
+    const image = stripImageMetadata(parseImageDataUrl(url, { maxBytes: 30 * 1024 * 1024 }));
+    return storeAi302RelayAsset(image, { relayTtlMs: 2 * 60 * 60 * 1000 }).url;
+  }
+  if (/^https:\/\//i.test(url)) return url;
+  throw Object.assign(new Error(`Atlas Cloud requires HTTPS ${mediaType} references or sanitized data URLs.`), {
+    status: 400,
+    code: 'invalid-reference-media'
+  });
+}
+
+function atlasResolution(value) {
+  const normalized = String(value || '720P').trim().toLowerCase();
+  return normalized === '4k' ? '4k'
+    : normalized.replace(/\s*&\s*/g, ' & ');
+}
+
+function atlasVideoTaskInput(provider, body) {
+  const capabilities = provider.capabilities && typeof provider.capabilities === 'object'
+    ? provider.capabilities
+    : {};
+  const isI2v = String(capabilities.atlasKind || '') === 'image-to-video';
+  const urls = Array.isArray(body.urls) ? body.urls.filter(Boolean) : [];
+  const mediaTypes = Array.isArray(body.referenceMediaTypes)
+    ? body.referenceMediaTypes.slice(0, 50).map((value) => String(value || '').trim().toLowerCase())
+    : urls.map(() => 'image');
+  const audioUrls = Array.isArray(body.referenceAudioUrls)
+    ? body.referenceAudioUrls.filter(Boolean).slice(0, Number(capabilities.maxReferenceAudios) || 10)
+    : [];
+  if (mediaTypes.length !== urls.length || mediaTypes.some((type) => !['image', 'video'].includes(type))) {
+    throw Object.assign(new Error('Atlas Cloud reference media selection is incomplete.'), {
+      status: 400, code: 'invalid-reference-media'
+    });
+  }
+  const videoCount = mediaTypes.filter((type) => type === 'video').length;
+  let mode = String(body.videoMode || '').trim().toLowerCase();
+  if (isI2v) {
+    if (!urls.length || urls.length > 2 || audioUrls.length || mediaTypes.some((type) => type !== 'image')) {
+      throw Object.assign(new Error(`${provider.name} requires one first-frame image and an optional last-frame image.`), {
+        status: 400, code: 'reference-required'
+      });
+    }
+    mode = urls.length === 2 ? 'first-last-frame' : 'first-frame';
+  } else {
+    if (!mode) mode = videoCount === 1 && urls.length === 1 ? 'video-edit' : 'omni';
+    if (!['omni', 'video-reference', 'video-edit', 'video-extend'].includes(mode)) {
+      throw Object.assign(new Error(`${provider.name} does not support this reference mode.`), {
+        status: 400, code: 'invalid-video-mode'
+      });
+    }
+    const maxImages = Math.max(0, Number(capabilities.maxReferenceImages) || 30);
+    const maxVideos = Math.max(0, Number(capabilities.maxReferenceVideos) || 10);
+    const maxTotal = Math.max(1, Number(capabilities.maxTotalReferences) || maxImages + maxVideos);
+    const imageCount = mediaTypes.filter((type) => type === 'image').length;
+    if (urls.length + audioUrls.length > maxTotal || imageCount > maxImages || videoCount > maxVideos) {
+      throw Object.assign(new Error(`${provider.name} received too many reference files.`), {
+        status: 400, code: 'too-many-references'
+      });
+    }
+    if (!urls.length && !audioUrls.length) {
+      throw Object.assign(new Error(`${provider.name} requires at least one reference asset.`), {
+        status: 400, code: 'reference-required'
+      });
+    }
+    if (['video-edit', 'video-extend'].includes(mode) && (videoCount !== 1 || urls.length !== 1 || audioUrls.length)) {
+      throw Object.assign(new Error(`${provider.name} ${mode === 'video-extend' ? 'video extension' : 'video editing'} requires exactly one reference video.`), {
+        status: 400, code: 'invalid-video-mode'
+      });
+    }
+    if (String(provider.model).includes('2.0') && !urls.length) {
+      throw Object.assign(new Error(`${provider.name} requires an image or video reference in addition to audio.`), {
+        status: 400, code: 'reference-required'
+      });
+    }
+  }
+  const resolution = String(body.resolution || '').trim().toUpperCase();
+  const validResolutions = new Set((Array.isArray(capabilities.resolutions) ? capabilities.resolutions : [])
+    .map((value) => String(value).toUpperCase()));
+  if (!validResolutions.has(resolution)) {
+    throw Object.assign(new Error(`${provider.name} does not support this resolution.`), {
+      status: 400, code: 'invalid-resolution'
+    });
+  }
+  const duration = Number(body.duration);
+  const durations = Array.isArray(capabilities.durations) ? capabilities.durations.map(Number) : [];
+  if (!Number.isInteger(duration) || !durations.includes(duration)) {
+    throw Object.assign(new Error(`${provider.name} does not support this duration.`), {
+      status: 400, code: 'invalid-duration'
+    });
+  }
+  let ratio = String(body.aspectRatio || '').trim();
+  const validRatios = Array.isArray(capabilities.ratios) ? capabilities.ratios.map(String) : [];
+  if (isI2v) ratio = 'adaptive';
+  if (['video-edit', 'video-extend'].includes(mode) && String(provider.model).includes('2.5')) {
+    ratio = 'adaptive';
+    if (duration !== -1) {
+      throw Object.assign(new Error('Seedance 2.5 video editing and extension require duration -1.'), {
+        status: 400, code: 'invalid-duration'
+      });
+    }
+  }
+  if (!validRatios.includes(ratio)) {
+    throw Object.assign(new Error(`${provider.name} does not support this aspect ratio.`), {
+      status: 400, code: 'invalid-aspect-ratio'
+    });
+  }
+  const outputFormat = String(body.outputFormat || 'mp4').trim().toLowerCase();
+  if (!['mp4', 'mov'].includes(outputFormat)) {
+    throw Object.assign(new Error(`${provider.name} does not support this output format.`), {
+      status: 400, code: 'invalid-output-format'
+    });
+  }
+  if (audioUrls.length > Number(capabilities.maxReferenceAudios || 0)) {
+    throw Object.assign(new Error(`${provider.name} received too many reference audio files.`), { status: 400, code: 'too-many-reference-audios' });
+  }
+  if (String(provider.model).includes('2.0') && audioUrls.length && !urls.length) {
+    throw Object.assign(new Error(`${provider.name} requires an image or video reference in addition to audio.`), { status: 400, code: 'reference-required' });
+  }
+  return { capabilities, isI2v, urls, mediaTypes, audioUrls, mode, resolution, duration, ratio, outputFormat };
+}
+
+async function createAtlasSeedanceVideoTask(provider, body, signal) {
+  const input = atlasVideoTaskInput(provider, body);
+  const { capabilities, isI2v, urls, mediaTypes, audioUrls, mode, resolution, duration, ratio, outputFormat } = input;
+  const prompt = String(body.prompt || '').trim();
+  const common = {
+    model: provider.model,
+    prompt,
+    duration,
+    resolution: atlasResolution(resolution),
+    ratio,
+    output_format: outputFormat,
+    generate_audio: body.generateAudio !== false,
+    ...(capabilities.supportsSeed && Number.isInteger(Number(body.seed)) ? { seed: Number(body.seed) } : {}),
+    ...(Array.isArray(capabilities.bitrateModes) && capabilities.bitrateModes.includes(String(body.bitrateMode || '').toLowerCase())
+      ? { bitrate_mode: String(body.bitrateMode).toLowerCase() } : {}),
+    watermark: capabilities.supportsWatermark === true ? body.watermark === true : false,
+    return_last_frame: body.returnLastFrame === true
+  };
+  const requestBody = isI2v
+    ? {
+        ...common,
+        image: atlasRelayMediaUrl(urls[0], 'image'),
+        ...(urls[1] ? { last_image: atlasRelayMediaUrl(urls[1], 'image') } : {})
+      }
+    : {
+        ...common,
+        reference_images: urls
+          .map((url, index) => mediaTypes[index] === 'image' ? atlasRelayMediaUrl(url, 'image') : null)
+          .filter(Boolean),
+        reference_videos: urls
+          .map((url, index) => mediaTypes[index] === 'video' ? atlasRelayMediaUrl(url, 'video') : null)
+          .filter(Boolean),
+        reference_audios: audioUrls.map((url) => atlasRelayMediaUrl(url, 'audio')),
+        ...(mode === 'video-edit' ? { omni_reference_task_type: 'edit' }
+          : mode === 'video-extend' ? { omni_reference_task_type: 'extend' }
+            : mode === 'video-reference' ? { omni_reference_task_type: 'reference' } : {})
+      };
+  const created = await responseJson(await fetch(provider.endpoint, {
+    method: 'POST',
+    headers: providerTaskHeaders(provider, body),
+    signal: providerSignal(signal, Number(capabilities.createTimeoutMs) || 45_000),
+    body: JSON.stringify(requestBody)
+  }), provider.name);
+  const taskId = providerVideoTaskId(created);
+  if (!taskId || taskId.length > 256) {
+    throw Object.assign(new Error(`${provider.name} did not return a valid prediction ID.`), {
+      status: 502, code: 'provider-invalid-response', retryable: false
     });
   }
   return { providerId: provider.id, taskId };
@@ -941,6 +1258,7 @@ export async function createVideoTask(body, signal) {
   const provider = providerFor('video', String(body.providerId || ''));
   if (provider.protocol === 'minimax-video-v2') return createMiniMaxVideoTask(provider, body, signal);
   if (provider.protocol === 'seedance-video-v3') return createSeedanceVideoTask(provider, body, signal);
+  if (provider.protocol === 'atlas-seedance-video') return createAtlasSeedanceVideoTask(provider, body, signal);
   if (['jimeng-video-v30', 'jimeng-video-v30-pro'].includes(provider.protocol)) {
     return createJimengVideoTask(provider, body, signal);
   }
@@ -996,6 +1314,26 @@ async function pollSeedanceVideoTask(provider, taskId, signal) {
       return { status: 'running' };
     }
     return { status, resultUrl };
+  }
+  if (TERMINAL_VIDEO_FAILURES.has(status)) {
+    return {
+      status,
+      ...providerVideoTaskError(result, `provider-${status}`, `${provider.name} video generation ${status}.`)
+    };
+  }
+  return { status };
+}
+
+async function pollAtlasSeedanceVideoTask(provider, taskId, signal) {
+  const normalizedTaskId = validVideoTaskId(taskId);
+  const result = await responseJson(await fetch(
+    `${provider.resultEndpoint}/${encodeURIComponent(normalizedTaskId)}`,
+    { headers: providerHeaders(provider), signal: providerSignal(signal, 30_000) }
+  ), provider.name);
+  const status = providerVideoTaskStatus(result);
+  if (status === 'succeeded') {
+    const resultUrl = providerVideoResultUrl(result);
+    return resultUrl ? { status, resultUrl } : { status: 'running' };
   }
   if (TERMINAL_VIDEO_FAILURES.has(status)) {
     return {
@@ -1083,6 +1421,7 @@ export async function pollVideoTask(providerId, taskId, signal) {
   const provider = providerFor('video', String(providerId || ''));
   if (provider.protocol === 'minimax-video-v2') return pollMiniMaxVideoTask(provider, taskId, signal);
   if (provider.protocol === 'seedance-video-v3') return pollSeedanceVideoTask(provider, taskId, signal);
+  if (provider.protocol === 'atlas-seedance-video') return pollAtlasSeedanceVideoTask(provider, taskId, signal);
   if (['jimeng-video-v30', 'jimeng-video-v30-pro'].includes(provider.protocol)) {
     return pollJimengVideoTask(provider, taskId, signal);
   }

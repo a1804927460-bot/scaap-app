@@ -7,6 +7,9 @@ const html = fs.readFileSync(path.join(root, 'src', 'index.html'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'src', 'styles', 'main.css'), 'utf8');
 const assistantSource = fs.readFileSync(path.join(root, 'src', 'js', 'ai-assistant.js'), 'utf8');
 const sidebarSource = fs.readFileSync(path.join(root, 'src', 'js', 'sidebar.js'), 'utf8');
+const mainSource = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+const preloadSource = fs.readFileSync(path.join(root, 'preload.js'), 'utf8');
+const storeSource = fs.readFileSync(path.join(root, 'lib', 'store.js'), 'utf8');
 
 const footerStart = html.indexOf('<div class="ai-assistant-form-footer">');
 const modeStart = html.indexOf('<div class="ai-assistant-mode"');
@@ -80,5 +83,24 @@ assert.match(
   /\.ai-assistant-panel\.is-chat-only-compact \[data-assistant-kind="image"\][\s\S]*?\.ai-assistant-tools[\s\S]*?display: none !important/,
   'Agent-only mode must remove media and model controls that no longer fit.'
 );
+assert.match(
+  assistantSource,
+  /async function loadAiChatHistory\(\)[\s\S]*?getAiAssistantHistory[\s\S]*?mergeAiChatSessions\(durable, local, AiAssistant\.sessions\)/,
+  'Agent history must merge legacy renderer history into durable main-process storage.'
+);
+assert.match(assistantSource, /saveAiAssistantHistory/);
+assert.match(
+  assistantSource,
+  /historyFavoritesOnly[\s\S]*?historyDate[\s\S]*?Add to Favorites[\s\S]*?session\.favorite = !session\.favorite/,
+  'Agent history must support favorite and date filtering with a right-click favorite action.'
+);
+assert.match(html, /id="ai-chat-history-favorites"[\s\S]*?id="ai-chat-history-date"/,
+  'The Agent history sidebar must expose Favorites and date lookup.');
+assert.match(storeSource, /canvasAgentHistory:\s*\[\][\s\S]*?aiAssistantHistory:\s*\[\]/,
+  'Both Agent surfaces must have update-safe store defaults.');
+assert.match(mainSource, /sanitizeAiAssistantHistory[\s\S]*?ipcMain\.handle\('ai-assistant:getHistory'[\s\S]*?ipcMain\.handle\('ai-assistant:saveHistory'/,
+  'The main process must sanitize and persist regular Agent history.');
+assert.match(preloadSource, /getAiAssistantHistory[\s\S]*?saveAiAssistantHistory/,
+  'The renderer must access durable Agent history only through scoped preload IPC methods.');
 
 console.log('AI assistant layout checks passed');
