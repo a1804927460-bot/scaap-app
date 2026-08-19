@@ -56,7 +56,11 @@ const {
   parseAiArtifacts,
   prepareTextAttachment
 } = require('./lib/ai-attachments');
-const { PROVIDER_CATALOG_VERSION, providerCatalog } = require('./lib/provider-catalog');
+const {
+  PROVIDER_CATALOG_VERSION,
+  providerCatalog,
+  canonicalProviderCapabilities
+} = require('./lib/provider-catalog');
 const { loadRuntimeConfig } = require('./lib/runtime-config');
 const { SupabaseAuth, createPkcePair } = require('./lib/supabase-auth');
 const { AiGatewayClient, assertValidGlbBuffer } = require('./lib/ai-gateway-client');
@@ -2074,16 +2078,25 @@ function normalizeVideoProviders(value, fallbackEndpoint, fallbackName) {
   const source = Array.isArray(value) ? value : [];
   return Array.from({ length: Math.max(10, source.length) }, (_, index) => {
     const saved = source[index] || {};
+    const providerId = `video-${index + 1}`;
+    const savedCapabilities = saved.capabilities && typeof saved.capabilities === 'object'
+      ? saved.capabilities
+      : null;
+    // The renderer can receive a fresh gateway catalog while the desktop
+    // settings still contain an older capability matrix. Keep the logical
+    // Seedance slots authoritative locally so newly exposed modes are not
+    // rejected before submission.
+    const capabilities = canonicalProviderCapabilities('video', providerId, savedCapabilities);
     const endpoint = normalizeProviderEndpoint(
       saved.endpoint || (index === 0 ? fallbackEndpoint || DEFAULT_VIDEO_ENDPOINT : '')
     );
     return {
-      id: `video-${index + 1}`,
+      id: providerId,
       name: String(saved.name || (index === 0 ? fallbackName || DEFAULT_CATALOG_VIDEO.name : endpoint ? deriveProviderName(endpoint) : '')).trim().slice(0, 40),
       endpoint,
       model: String(saved.model || '').trim().slice(0, 120),
       protocol: String(saved.protocol || '').trim().slice(0, 40),
-      capabilities: saved.capabilities && typeof saved.capabilities === 'object' ? saved.capabilities : null,
+      capabilities,
       resultEndpoint: normalizeProviderEndpoint(saved.resultEndpoint)
     };
   });

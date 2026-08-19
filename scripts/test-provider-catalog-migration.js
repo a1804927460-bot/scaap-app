@@ -3,7 +3,10 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { PROVIDER_CATALOG_VERSION } = require('../lib/provider-catalog');
+const {
+  PROVIDER_CATALOG_VERSION,
+  canonicalProviderCapabilities
+} = require('../lib/provider-catalog');
 const { upgradeAiDefaults } = require('../lib/store');
 const {
   normalizeGatewayCatalog,
@@ -127,6 +130,12 @@ for (const provider of [seedance20, seedance25]) {
 assert.equal(seedance20.capabilities.videoModes[2].maxReferenceVideos, 3);
 assert.equal(seedance25.capabilities.videoModes[2].maxReferenceVideos, 10);
 assert.equal(seedance25.capabilities.videoModes[0].ratios.includes('adaptive'), true);
+const staleSeedance25Capabilities = { videoModes: [{ id: 'first-frame', minReferences: 1, maxReferences: 1 }] };
+assert.deepEqual(
+  canonicalProviderCapabilities('video', 'video-3', staleSeedance25Capabilities).videoModes.map((mode) => mode.id),
+  ['first-frame', 'first-last-frame', 'omni', 'video-reference', 'video-edit', 'video-extend'],
+  'Seedance 2.5 must recover its complete mode matrix from the bundled catalog.'
+);
 assert.equal(require('../lib/provider-catalog').catalogProvider('video-2').keyEnv, 'AI302_KEY');
 assert.equal(require('../lib/provider-catalog').catalogProvider('video-3').keyEnv, 'AI302_KEY');
 assert.match(require('../lib/provider-catalog').catalogProvider('video-10').endpoint, /kling-v3\.0-std\/image-to-video$/);
