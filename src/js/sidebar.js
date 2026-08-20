@@ -15,6 +15,8 @@ let accountProfileSignature = '';
 let accountProfileFallbackName = 'Messs user';
 let colorManagementState = { profile: 'auto', activeProfile: 'auto', restartRequired: false };
 let displayP3MediaQuery = null;
+const expandedDateYears = new Set();
+const expandedDateMonths = new Set();
 
 function appendFileThumbnail(container, file, alt = '') {
   const image = document.createElement('img');
@@ -120,6 +122,87 @@ function buildDateFolderLabel(dayKey, count, active = false) {
   return label;
 }
 
+function buildDateTreeFolder({ key, label, count, level, expanded, onToggle }) {
+  const row = document.createElement('li');
+  row.className = 'file-group-label file-date-folder file-date-tree-folder';
+  row.dataset.dateTreeKey = key;
+  row.dataset.dateTreeLevel = level;
+  row.tabIndex = 0;
+  row.setAttribute('role', 'button');
+  row.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  row.innerHTML = `
+    <span class="file-date-tree-caret" aria-hidden="true">
+      <svg viewBox="0 0 12 12" width="11" height="11"><path d="m4 2.5 4 3.5-4 3.5"/></svg>
+    </span>
+    <span class="file-date-folder-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3.2l2 2H18a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5z"/></svg>
+    </span>
+    <span class="file-date-folder-name"></span>
+    <small class="file-date-folder-count">${count}</small>
+  `;
+  row.querySelector('.file-date-folder-name').textContent = label;
+  const toggle = () => onToggle(!expanded);
+  row.addEventListener('click', toggle);
+  row.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    toggle();
+  });
+  return row;
+}
+
+function dateFolderHierarchy(files) {
+  const years = new Map();
+  for (const [dayKey, items] of groupFilesByDay(files)) {
+    const [year, month] = dayKey.split('-');
+    if (!years.has(year)) years.set(year, new Map());
+    const months = years.get(year);
+    if (!months.has(month)) months.set(month, []);
+    months.get(month).push({ dayKey, items });
+  }
+  return years;
+}
+
+function monthFolderLabel(year, month) {
+  return new Date(Number(year), Number(month) - 1, 1).toLocaleDateString(appLocale(), {
+    month: 'long'
+  });
+}
+
+function renderDateFolderTree(list, files) {
+  const hierarchy = dateFolderHierarchy(files);
+  for (const [year, months] of hierarchy) {
+    const yearCount = Array.from(months.values()).flat().reduce((sum, group) => sum + group.items.length, 0);
+    const yearExpanded = expandedDateYears.has(year);
+    list.appendChild(buildDateTreeFolder({
+      key: year, label: year, count: yearCount, level: 'year', expanded: yearExpanded,
+      onToggle: (open) => {
+        if (open) expandedDateYears.add(year); else expandedDateYears.delete(year);
+        renderFileList(currentFileListScope());
+      }
+    }));
+    if (!yearExpanded) continue;
+    for (const [month, days] of months) {
+      const monthKey = `${year}-${month}`;
+      const monthCount = days.reduce((sum, group) => sum + group.items.length, 0);
+      const monthExpanded = expandedDateMonths.has(monthKey);
+      list.appendChild(buildDateTreeFolder({
+        key: monthKey,
+        label: monthFolderLabel(year, month),
+        count: monthCount,
+        level: 'month',
+        expanded: monthExpanded,
+        onToggle: (open) => {
+          if (open) expandedDateMonths.add(monthKey); else expandedDateMonths.delete(monthKey);
+          renderFileList(currentFileListScope());
+        }
+      }));
+      if (!monthExpanded) continue;
+      days.forEach(({ dayKey, items }) => list.appendChild(buildDateFolderLabel(dayKey, items.length)));
+    }
+  }
+}
+
 function renderFileList(files) {
   const list = document.getElementById('file-list');
   const empty = document.getElementById('file-list-empty');
@@ -151,11 +234,12 @@ function renderFileList(files) {
     list.appendChild(badge);
   }
 
-  const groups = groupFilesByDay(files);
-  for (const [dayKey, items] of groups) {
-    list.appendChild(buildDateFolderLabel(dayKey, items.length, activeDate));
-    for (const f of items) list.appendChild(buildFileItem(f));
+  if (activeDate) {
+    list.appendChild(buildDateFolderLabel(AppState.activeDateFolderKey, files.length, true));
+    for (const file of files) list.appendChild(buildFileItem(file));
+    return;
   }
+  renderDateFolderTree(list, files);
 }
 
 function buildFileItem(f) {

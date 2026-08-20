@@ -482,8 +482,8 @@ assert.match(
 );
 assert.match(
   boardStyles,
-  /#resize-handle-board-agent \{[\s\S]*?top:\s*0;[\s\S]*?bottom:\s*0;[\s\S]*?#resize-handle-board-agent::before \{[\s\S]*?top:\s*0;[\s\S]*?bottom:\s*0;[\s\S]*?background:\s*linear-gradient[\s\S]*?filter:\s*blur\(\.45px\);/,
-  'The Agent divider must be a soft, low-contrast full-height gradient.'
+  /\.resize-handle::before \{[\s\S]*?opacity:\s*0;[\s\S]*?\.resize-handle:hover::before[\s\S]*?opacity:\s*1;[\s\S]*?#resize-handle-board-agent::before \{[\s\S]*?background:\s*linear-gradient[\s\S]*?opacity:\s*0;/,
+  'Panel dividers must stay hidden until hover or active dragging.'
 );
 assert.match(
   boardStyles,
@@ -1055,9 +1055,9 @@ const ledgerSource = mainSource.slice(
 const ledgerSandbox = {
   store: { data: { files: [], canvasUsageLedger: [] } },
   quoteMediaCredits: (request) => request && request.kind === 'video'
-    ? { unitCredits: 166.294, totalCredits: 1012 }
-    : { unitCredits: 24, totalCredits: 24 },
-  CREDIT_PRICING_VERSION: '202608200002',
+    ? { unitCredits: 202.5073064868, totalCredits: 1216 }
+    : { unitCredits: 12, totalCredits: 12 },
+  CREDIT_PRICING_VERSION: '202608200003',
   BUTLER_IMAGE_TOOL_CREDITS: {}
 };
 vm.runInNewContext(
@@ -1088,7 +1088,7 @@ ledgerSandbox.store.data.files = [];
 ledgerSandbox.store.data.canvasUsageLedger = JSON.parse(JSON.stringify(ledgerSandbox.store.data.canvasUsageLedger));
 ledgerSandbox.canvasLedgerApi.ensureCanvasUsageLedger();
 assert.equal(ledgerSandbox.store.data.canvasUsageLedger.length, 1, 'Deleting media and reloading after an update must preserve canvas usage.');
-assert.equal(ledgerSandbox.store.data.canvasUsageLedger[0].credits, 24);
+assert.equal(ledgerSandbox.store.data.canvasUsageLedger[0].credits, 12);
 assert.equal(ledgerSandbox.store.data.canvasUsageLedger[0].canvasId, 'canvas-history');
 const staleVideo = {
   id: 'generated-video-1',
@@ -1104,7 +1104,7 @@ const staleVideo = {
 ledgerSandbox.canvasLedgerApi.recordCanvasUsageFile(staleVideo);
 assert.equal(
   ledgerSandbox.store.data.canvasUsageLedger.find((entry) => entry.sourceFileId === staleVideo.id).credits,
-  1012,
+  1216,
   'Canvas history must refresh a stale Seedance charge to the current pricing table.'
 );
 assert.match(

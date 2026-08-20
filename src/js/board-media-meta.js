@@ -106,8 +106,8 @@ const BOARD_BUTLER_ICONS = {
 
 const BOARD_BUTLER_IMAGE_TOOL_HOOKS = Object.freeze({
   imageEdit: Object.freeze({ method: 'editImage', toolId: 'seededit-v3' }),
-  imageExpand: Object.freeze({ method: 'expandImage', toolId: 'kling-image-expand' }),
-  imageUpscale: Object.freeze({ method: 'upscaleImage', toolId: 'generative-upscale' }),
+  imageExpand: Object.freeze({ method: 'expandImage', toolId: 'clipdrop-uncrop' }),
+  imageEnhance: Object.freeze({ method: 'upscaleImage', toolId: 'clipdrop-upscale' }),
   eraseObject: Object.freeze({ method: 'eraseObject', toolId: 'cleanup' }),
   topazSharpen: Object.freeze({ method: 'topazImage', toolId: 'topaz-image-sharpen' }),
   topazSharpenGen: Object.freeze({ method: 'topazImage', toolId: 'topaz-image-sharpen-gen' }),
@@ -122,11 +122,44 @@ const BOARD_BUTLER_VIDEO_TOOL_HOOKS = Object.freeze({
   videoUpscale: Object.freeze({ method: 'upscaleVideo', toolId: 'topaz-video-upscale' })
 });
 
+// Keep the renderer estimate aligned with gateway/src/tool-pricing.js. These
+// are whole retail points after applying the 20% markup to verified upstream
+// cost and rounding upward. Topaz remains dynamic and is intentionally absent.
+const BOARD_BUTLER_RETAIL_CREDITS = Object.freeze({
+  removeBackground: 0,
+  imageEdit: 0,
+  imageExpand: 0,
+  imageEnhance: 0,
+  eraseObject: 0,
+  hunyuan3d: 36,
+  hyper3d: 62,
+  tripo3d: 53
+});
+
+function boardButlerThreeDCredits(providerId, options = {}) {
+  let ptcCents;
+  if (providerId === 'hunyuan3d') {
+    const type = String(options.generateType || 'Normal');
+    ptcCents = type === 'Geometry' ? 30 : (['LowPoly', 'Sketch'].includes(type) ? 50 : 40);
+    if (options.enablePbr === true && type !== 'Geometry') ptcCents += 20;
+    if (Number(options.faceCount) > 0 && Number(options.faceCount) !== 500000) ptcCents += 20;
+  } else if (providerId === 'hyper3d') {
+    ptcCents = 70;
+  } else if (providerId === 'tripo3d') {
+    ptcCents = options.texture === false
+      ? 30
+      : (String(options.textureQuality || 'standard') === 'standard' ? 45 : 60);
+  } else {
+    return 0;
+  }
+  return Math.ceil(ptcCents * 0.01 * 7.3 * 10 * 1.2);
+}
+
 const BOARD_BUTLER_TASK_ACTIONS = Object.freeze([
   'removeBackground',
   'imageEdit',
   'imageExpand',
-  'imageUpscale',
+  'imageEnhance',
   'eraseObject',
   'topazSharpen',
   'topazSharpenGen',
@@ -188,7 +221,7 @@ function boardButlerStatusText(action, task) {
   }
   if (action === 'eraseObject') return t('Erasing...', '消除中...', '지우는 중...');
   if (action === 'imageExpand') return t('Expanding...', '扩图中...', '이미지 확장 중...');
-  if (action === 'imageUpscale') return t('Upscaling...', '创意放大中...', '창의 확대 중...');
+  if (action === 'imageEnhance') return t('Enhancing...', '画质提升中...', '화질 향상 중...');
   if (action === 'imageEdit') return t('Editing...', '修改中...', '편집 중...');
   if (action === 'topazSharpen') return t('Sharpening...', '锐化中...', '선명화 중...');
   if (action === 'topazSharpenGen') return t('Generative sharpening...', '生成式锐化中...', '생성형 선명화 중...');
@@ -1132,7 +1165,7 @@ function openBoardButlerSeedEditPanel(anchor, file, item) {
   );
   const cost = document.createElement('div');
   cost.className = 'board-butler-cost-estimate';
-  cost.textContent = t('18 pts · SeedEdit 3.0', '18 积分 · SeedEdit 3.0', '18포인트 · SeedEdit 3.0');
+  cost.textContent = t('Free · SeedEdit 3.0', '免费 · SeedEdit 3.0', '무료 · SeedEdit 3.0');
   form.appendChild(cost);
   appendBoardButlerFormActions(form, t('Edit', '开始编辑', '편집'));
   form.addEventListener('submit', (event) => {
@@ -1188,9 +1221,9 @@ function openBoardButlerLegacyExpandPanel(anchor, file, item) {
     const vertical = 1 + Number(data.get('butler-expand-up') || 0) + Number(data.get('butler-expand-down') || 0);
     const multiplier = horizontal * vertical;
     area.textContent = t(
-      `${multiplier.toFixed(2)}x area · 17 pts`,
-      `画布面积 ${multiplier.toFixed(2)} 倍 · 17 积分`,
-      `면적 ${multiplier.toFixed(2)}배 · 17포인트`
+      `${multiplier.toFixed(2)}x area · ${BOARD_BUTLER_RETAIL_CREDITS.imageExpand} pts`,
+      `画布面积 ${multiplier.toFixed(2)} 倍 · ${BOARD_BUTLER_RETAIL_CREDITS.imageExpand} 积分`,
+      `면적 ${multiplier.toFixed(2)}배 · ${BOARD_BUTLER_RETAIL_CREDITS.imageExpand}포인트`
     );
     area.classList.toggle('is-error', multiplier <= 1 || multiplier > 3);
   };
@@ -1221,8 +1254,8 @@ function openBoardButlerLegacyExpandPanel(anchor, file, item) {
 function openBoardButlerExpandPanel(anchor, file, item) {
   const sourceWidth = Math.max(1, Math.round(Number(file && file.sourceWidth) || 1024));
   const sourceHeight = Math.max(1, Math.round(Number(file && file.sourceHeight) || 1024));
-  const initialWidth = sourceWidth + Math.min(1024, Math.max(256, Math.round(sourceWidth * 0.25)));
-  const initialHeight = sourceHeight + Math.min(1024, Math.max(256, Math.round(sourceHeight * 0.25)));
+  const initialWidth = sourceWidth + Math.min(1000, Math.max(160, Math.round(sourceWidth * 0.25)));
+  const initialHeight = sourceHeight + Math.min(1000, Math.max(160, Math.round(sourceHeight * 0.25)));
   const { body } = createBoardButlerConfigPanel(
     anchor,
     BOARD_BUTLER_ICONS.imageLayer,
@@ -1230,19 +1263,44 @@ function openBoardButlerExpandPanel(anchor, file, item) {
     'Clipdrop Uncrop'
   );
   const form = document.createElement('form');
-  form.className = 'board-butler-config-form';
-  form.appendChild(boardButlerSelectField(
-    BOARD_BUTLER_ICONS.detail,
-    t('Expansion preset', '扩展尺寸', '확장 크기'),
-    'butler-expand-preset',
-    [
-      { value: '512', label: t('+512 px each axis', '宽高各增加 512 px', '각 축 +512 px') },
-      { value: '1024', label: t('+1024 px each axis', '宽高各增加 1024 px', '각 축 +1024 px') },
-      { value: '2048', label: t('+2048 px each axis', '宽高各增加 2048 px', '각 축 +2048 px') },
-      { value: 'custom', label: t('Custom target size', '自定义目标尺寸', '사용자 지정 크기') }
-    ],
-    'custom'
-  ));
+  form.className = 'board-butler-config-form board-butler-expand-form';
+  const ratioOptions = [
+    ['source', t('Original', '原比例', '원본')], ['1:1', '1:1'], ['4:3', '4:3'],
+    ['3:4', '3:4'], ['16:9', '16:9'], ['9:16', '9:16'], ['3:2', '3:2'],
+    ['2:3', '2:3'], ['21:9', '21:9']
+  ];
+  const ratios = document.createElement('fieldset');
+  ratios.className = 'board-butler-config-field board-butler-expand-ratios';
+  const ratioLegend = document.createElement('legend');
+  ratioLegend.innerHTML = `${BOARD_BUTLER_ICONS.detail}<strong>${t('Target ratio', '目标比例', '대상 비율')}</strong>`;
+  const ratioButtons = document.createElement('div');
+  ratioButtons.className = 'board-butler-ratio-buttons';
+  ratioOptions.forEach(([value, label]) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.expandRatio = value;
+    button.textContent = label;
+    ratioButtons.appendChild(button);
+  });
+  ratios.append(ratioLegend, ratioButtons);
+  form.appendChild(ratios);
+
+  const preview = document.createElement('section');
+  preview.className = 'board-butler-expand-preview';
+  preview.innerHTML = `
+    <div class="board-butler-expand-stage">
+      <div class="board-butler-expand-source"><img alt="" draggable="false" /></div>
+      <button type="button" class="board-butler-expand-handle is-left" data-expand-edge="left" aria-label="${t('Drag left edge', '拖动左边界', '왼쪽 가장자리 드래그')}"></button>
+      <button type="button" class="board-butler-expand-handle is-right" data-expand-edge="right" aria-label="${t('Drag right edge', '拖动右边界', '오른쪽 가장자리 드래그')}"></button>
+      <button type="button" class="board-butler-expand-handle is-top" data-expand-edge="up" aria-label="${t('Drag top edge', '拖动上边界', '위쪽 가장자리 드래그')}"></button>
+      <button type="button" class="board-butler-expand-handle is-bottom" data-expand-edge="down" aria-label="${t('Drag bottom edge', '拖动下边界', '아래쪽 가장자리 드래그')}"></button>
+    </div>
+    <small>${t('Drag any edge to position the original inside the expanded canvas.', '拖动四边，确定原图在扩展画布中的位置。', '가장자리를 드래그해 원본 위치를 정하세요.')}</small>
+  `;
+  const stage = preview.querySelector('.board-butler-expand-stage');
+  const source = preview.querySelector('.board-butler-expand-source');
+  source.querySelector('img').src = file.thumbUrl || file.url || '';
+  form.appendChild(preview);
   const dimensions = document.createElement('div');
   dimensions.className = 'board-butler-direction-grid';
   dimensions.append(
@@ -1270,55 +1328,124 @@ function openBoardButlerExpandPanel(anchor, file, item) {
   form.appendChild(advanced.details);
   const estimate = document.createElement('div');
   estimate.className = 'board-butler-cost-estimate';
-  const preset = form.querySelector('[name="butler-expand-preset"]');
   const widthInput = form.querySelector('[name="butler-expand-width"]');
   const heightInput = form.querySelector('[name="butler-expand-height"]');
-  const updateEstimate = () => {
-    const targetWidth = Math.round(Number(widthInput.value) || sourceWidth);
-    const targetHeight = Math.round(Number(heightInput.value) || sourceHeight);
-    const widthDelta = targetWidth - sourceWidth;
-    const heightDelta = targetHeight - sourceHeight;
-    const invalid = widthDelta < 0 || heightDelta < 0 || widthDelta > 4000 || heightDelta > 4000 || (widthDelta === 0 && heightDelta === 0);
+  const offsets = {
+    left: Math.floor((initialWidth - sourceWidth) / 2),
+    right: Math.ceil((initialWidth - sourceWidth) / 2),
+    up: Math.floor((initialHeight - sourceHeight) / 2),
+    down: Math.ceil((initialHeight - sourceHeight) / 2)
+  };
+  const targetSize = () => ({
+    width: sourceWidth + offsets.left + offsets.right,
+    height: sourceHeight + offsets.up + offsets.down
+  });
+  const setActiveRatio = (value = '') => {
+    ratioButtons.querySelectorAll('button').forEach((button) => {
+      button.classList.toggle('is-active', button.dataset.expandRatio === value);
+    });
+  };
+  const renderPreview = () => {
+    const target = targetSize();
+    widthInput.value = String(target.width);
+    heightInput.value = String(target.height);
+    const previewScale = Math.min(456 / target.width, 230 / target.height);
+    stage.style.width = `${Math.max(36, Math.round(target.width * previewScale))}px`;
+    stage.style.height = `${Math.max(36, Math.round(target.height * previewScale))}px`;
+    source.style.left = `${offsets.left / target.width * 100}%`;
+    source.style.top = `${offsets.up / target.height * 100}%`;
+    source.style.width = `${sourceWidth / target.width * 100}%`;
+    source.style.height = `${sourceHeight / target.height * 100}%`;
+    const invalid = Object.values(offsets).some((value) => value < 0 || value > 2000)
+      || Object.values(offsets).every((value) => value === 0);
     estimate.textContent = invalid
       ? t('Choose a larger target size within 2000 px per side.', '目标尺寸必须更大，且每边最多扩展 2000 px。', '각 변은 최대 2000 px까지 확장할 수 있습니다.')
-      : `${sourceWidth} x ${sourceHeight} -> ${targetWidth} x ${targetHeight} · 48 ${t('pts', '积分', '포인트')}`;
+      : `${sourceWidth} x ${sourceHeight} -> ${target.width} x ${target.height} · ${t('Free', '免费', '무료')}`;
     estimate.classList.toggle('is-error', invalid);
+    return !invalid;
   };
-  preset.addEventListener('change', () => {
-    if (preset.value === 'custom') return;
-    const delta = Number(preset.value) || 512;
-    widthInput.value = String(Math.min(sourceWidth + 4000, sourceWidth + delta));
-    heightInput.value = String(Math.min(sourceHeight + 4000, sourceHeight + delta));
-    updateEstimate();
+  const setTargetSize = (requestedWidth, requestedHeight, activeRatio = '') => {
+    const width = Math.max(sourceWidth, Math.min(sourceWidth + 4000, Math.round(requestedWidth)));
+    const height = Math.max(sourceHeight, Math.min(sourceHeight + 4000, Math.round(requestedHeight)));
+    offsets.left = Math.floor((width - sourceWidth) / 2);
+    offsets.right = Math.ceil((width - sourceWidth) / 2);
+    offsets.up = Math.floor((height - sourceHeight) / 2);
+    offsets.down = Math.ceil((height - sourceHeight) / 2);
+    setActiveRatio(activeRatio);
+    renderPreview();
+  };
+  ratioButtons.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-expand-ratio]');
+    if (!button) return;
+    const value = button.dataset.expandRatio;
+    const ratio = value === 'source'
+      ? sourceWidth / sourceHeight
+      : Number(value.split(':')[0]) / Number(value.split(':')[1]);
+    let targetWidth = sourceWidth;
+    let targetHeight = sourceHeight;
+    if (sourceWidth / sourceHeight > ratio) targetHeight = Math.ceil(sourceWidth / ratio);
+    else targetWidth = Math.ceil(sourceHeight * ratio);
+    if (targetWidth === sourceWidth && targetHeight === sourceHeight) {
+      targetWidth = Math.ceil(sourceWidth * 1.2);
+      targetHeight = Math.ceil(targetWidth / ratio);
+    }
+    setTargetSize(targetWidth, targetHeight, value);
   });
-  [widthInput, heightInput].forEach((input) => input.addEventListener('input', () => {
-    preset.value = 'custom';
-    updateEstimate();
+  [widthInput, heightInput].forEach((input) => input.addEventListener('change', () => {
+    setTargetSize(Number(widthInput.value) || sourceWidth, Number(heightInput.value) || sourceHeight);
   }));
+  preview.querySelectorAll('[data-expand-edge]').forEach((handle) => {
+    handle.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      const edge = handle.dataset.expandEdge;
+      const start = { x: event.clientX, y: event.clientY, ...offsets };
+      const bounds = stage.getBoundingClientRect();
+      const initialTarget = targetSize();
+      const pixelsPerCssX = initialTarget.width / Math.max(1, bounds.width);
+      const pixelsPerCssY = initialTarget.height / Math.max(1, bounds.height);
+      const move = (moveEvent) => {
+        if (moveEvent.pointerId !== event.pointerId) return;
+        const dx = (moveEvent.clientX - start.x) * pixelsPerCssX;
+        const dy = (moveEvent.clientY - start.y) * pixelsPerCssY;
+        if (edge === 'left') offsets.left = Math.max(0, Math.min(2000, Math.round(start.left - dx)));
+        if (edge === 'right') offsets.right = Math.max(0, Math.min(2000, Math.round(start.right + dx)));
+        if (edge === 'up') offsets.up = Math.max(0, Math.min(2000, Math.round(start.up - dy)));
+        if (edge === 'down') offsets.down = Math.max(0, Math.min(2000, Math.round(start.down + dy)));
+        setActiveRatio();
+        renderPreview();
+      };
+      const finish = (finishEvent) => {
+        if (finishEvent.pointerId !== event.pointerId) return;
+        handle.removeEventListener('pointermove', move);
+        handle.removeEventListener('pointerup', finish);
+        handle.removeEventListener('pointercancel', finish);
+        handle.classList.remove('is-dragging');
+      };
+      handle.classList.add('is-dragging');
+      handle.setPointerCapture(event.pointerId);
+      handle.addEventListener('pointermove', move);
+      handle.addEventListener('pointerup', finish);
+      handle.addEventListener('pointercancel', finish);
+      event.preventDefault();
+    });
+  });
   form.appendChild(estimate);
   appendBoardButlerFormActions(form, t('Expand', '开始扩展', '확장'));
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     const data = new FormData(form);
-    const targetWidth = Math.round(Number(data.get('butler-expand-width')) || sourceWidth);
-    const targetHeight = Math.round(Number(data.get('butler-expand-height')) || sourceHeight);
-    const widthDelta = targetWidth - sourceWidth;
-    const heightDelta = targetHeight - sourceHeight;
-    if (widthDelta < 0 || heightDelta < 0 || widthDelta > 4000 || heightDelta > 4000 || (widthDelta === 0 && heightDelta === 0)) {
-      updateEstimate();
-      return;
-    }
+    if (!renderPreview()) return;
     const options = {
-      left: Math.floor(widthDelta / 2),
-      right: Math.ceil(widthDelta / 2),
-      up: Math.floor(heightDelta / 2),
-      down: Math.ceil(heightDelta / 2),
+      left: offsets.left,
+      right: offsets.right,
+      up: offsets.up,
+      down: offsets.down,
       ...(data.get('butler-expand-seed') !== '' ? { seed: Number(data.get('butler-expand-seed')) } : {})
     };
     if (launchBoardButlerImageTool('imageExpand', file, item, options)) closeBoardButlerPanel();
   });
   body.appendChild(form);
-  updateEstimate();
+  renderPreview();
 }
 
 function boardButlerSegmentedField(icon, title, name, options, selectedValue) {
@@ -1445,7 +1572,7 @@ function openBoardButlerVideoUpscalePanel(anchor, file, item) {
     const duration = Math.max(1, Number(file.sourceDuration) || 5);
     const pixelFactor = resolution === dimensions[0] ? 0.25 : (resolution === dimensions[1] ? 0.45 : 1);
     const providerEstimate = Math.max(1, Math.ceil(duration * 0.75 * pixelFactor * frameRate / 24));
-    const credits = providerEstimate * 73 + 14;
+    const credits = Math.ceil(providerEstimate * 7.3 * 10 * 1.2);
     cost.textContent = t(
       `About ${credits} pts · final charge follows the provider quote`,
       `约 ${credits} 积分 · 最终按服务商实际费用结算`,
@@ -1729,9 +1856,9 @@ async function runBoardButlerRemoveBackground(file, item, options = {}) {
 function openBoardButlerThreeDPanel(anchor, file, item, providerId) {
   const provider = ['hunyuan3d', 'hyper3d', 'tripo3d'].includes(providerId) ? providerId : 'hunyuan3d';
   const providerMeta = {
-    hunyuan3d: { icon: BOARD_BUTLER_ICONS.hunyuan3d, name: 'Hunyuan 3D', credits: 22 },
-    hyper3d: { icon: BOARD_BUTLER_ICONS.hyper3d, name: 'Hyper3D Rodin', credits: 28 },
-    tripo3d: { icon: BOARD_BUTLER_ICONS.tripo3d, name: 'Tripo3D', credits: 24 }
+    hunyuan3d: { icon: BOARD_BUTLER_ICONS.hunyuan3d, name: 'Hunyuan 3D', credits: BOARD_BUTLER_RETAIL_CREDITS.hunyuan3d },
+    hyper3d: { icon: BOARD_BUTLER_ICONS.hyper3d, name: 'Hyper3D Rodin', credits: BOARD_BUTLER_RETAIL_CREDITS.hyper3d },
+    tripo3d: { icon: BOARD_BUTLER_ICONS.tripo3d, name: 'Tripo3D', credits: BOARD_BUTLER_RETAIL_CREDITS.tripo3d }
   }[provider];
   const { body } = createBoardButlerConfigPanel(
     anchor,
@@ -1882,12 +2009,30 @@ function openBoardButlerThreeDPanel(anchor, file, item, providerId) {
 
   const cost = document.createElement('div');
   cost.className = 'board-butler-cost-estimate';
-  cost.textContent = t(
-    `${providerMeta.credits} pts · GLB output for canvas preview`,
-    `${providerMeta.credits} 积分 · 输出 GLB 以便画布预览`,
-    `${providerMeta.credits} 포인트 · 캔버스 미리보기용 GLB 출력`
-  );
+  const updateThreeDCost = () => {
+    const data = new FormData(form);
+    const quoteOptions = provider === 'hunyuan3d'
+      ? {
+          generateType: String(data.get('butler-3d-generate-type') || 'Normal'),
+          faceCount: Number(data.get('butler-3d-face-count')) || 500000,
+          enablePbr: data.get('butler-3d-pbr') === 'on'
+        }
+      : provider === 'tripo3d'
+        ? {
+            texture: data.get('butler-3d-texture') === 'on',
+            textureQuality: String(data.get('butler-3d-texture-quality') || 'standard')
+          }
+        : {};
+    const credits = boardButlerThreeDCredits(provider, quoteOptions);
+    cost.textContent = t(
+      `${credits} pts · upstream cost + 20%`,
+      `${credits} 积分 · 上游真实成本加 20%`,
+      `${credits} 포인트 · 공급자 원가 + 20%`
+    );
+  };
   form.appendChild(cost);
+  form.addEventListener('input', updateThreeDCost);
+  form.addEventListener('change', () => queueMicrotask(updateThreeDCost));
   appendBoardButlerFormActions(form, t('Generate', '开始生成', '생성'));
   form.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -1939,6 +2084,7 @@ function openBoardButlerThreeDPanel(anchor, file, item, providerId) {
     closeBoardButlerPanel();
   });
   body.appendChild(form);
+  updateThreeDCost();
 }
 
 async function runBoardButlerGenerate3d(file, item, providerId, options = {}) {
@@ -2020,7 +2166,7 @@ function createBoardButlerMenuButton(file, action, icon, label, onClick, options
   button.innerHTML = `
     <span class="board-butler-menu-icon" aria-hidden="true">${icon}</span>
     <span class="board-butler-menu-label">${label}</span>
-    ${Number.isFinite(Number(options.credits)) ? `<small class="board-butler-menu-cost">${Math.max(0, Math.ceil(Number(options.credits)))} ${t('pts', '积分', '포인트')}</small>` : ''}
+    ${Number.isFinite(Number(options.credits)) ? `<small class="board-butler-menu-cost">${Number(options.credits) <= 0 ? t('Free', '免费', '무료') : `${Math.ceil(Number(options.credits))} ${t('pts', '积分', '포인트')}`}</small>` : ''}
     <small class="board-butler-menu-status" hidden></small>
     ${options.hasSubmenu ? BOARD_BUTLER_ICONS.caret : ''}
   `;
@@ -2117,7 +2263,7 @@ function openBoardButlerMenu(trigger, file, item) {
       closeBoardButlerMenu();
       void runBoardButlerRemoveBackground(file, item, {});
     },
-    { popup: null, credits: 48 }
+    { popup: null, credits: BOARD_BUTLER_RETAIL_CREDITS.removeBackground }
   ));
   menu.appendChild(createBoardButlerMenuButton(
     file,
@@ -2125,7 +2271,7 @@ function openBoardButlerMenu(trigger, file, item) {
     BOARD_BUTLER_ICONS.imageEdit,
     t('Edit image', '图片修改', '이미지 편집'),
     (button) => openBoardButlerSeedEditPanel(button, file, item),
-    { popup: 'dialog', credits: 18 }
+    { popup: 'dialog', credits: BOARD_BUTLER_RETAIL_CREDITS.imageEdit }
   ));
   menu.appendChild(createBoardButlerMenuButton(
     file,
@@ -2133,18 +2279,18 @@ function openBoardButlerMenu(trigger, file, item) {
     BOARD_BUTLER_ICONS.imageLayer,
     t('Expand image', '图片扩展', '이미지 확장'),
     (button) => openBoardButlerExpandPanel(button, file, item),
-    { popup: 'dialog', credits: 48 }
+    { popup: 'dialog', credits: BOARD_BUTLER_RETAIL_CREDITS.imageExpand }
   ));
   menu.appendChild(createBoardButlerMenuButton(
     file,
-    'imageUpscale',
+    'imageEnhance',
     BOARD_BUTLER_ICONS.enhance,
-    t('Creative upscale', '图片创意放大', '창의 이미지 확대'),
+    t('Enhance quality', '画质提升', '화질 향상'),
     () => {
       closeBoardButlerMenu();
-      void runBoardButlerImageTool('imageUpscale', file, item, {});
+      void runBoardButlerImageTool('imageEnhance', file, item, {});
     },
-    { popup: null, credits: 69 }
+    { popup: null, credits: BOARD_BUTLER_RETAIL_CREDITS.imageEnhance }
   ));
   menu.appendChild(createBoardButlerMenuButton(
     file,
@@ -2152,7 +2298,7 @@ function openBoardButlerMenu(trigger, file, item) {
     BOARD_BUTLER_ICONS.eraseObject,
     t('Erase objects', '物体消除', '개체 지우기'),
     () => openBoardButlerErasePanel(file, item),
-    { popup: 'dialog', credits: 48 }
+    { popup: 'dialog', credits: BOARD_BUTLER_RETAIL_CREDITS.eraseObject }
   ));
 
   const topazGroup = document.createElement('div');
@@ -2186,7 +2332,7 @@ function openBoardButlerMenu(trigger, file, item) {
     button.setAttribute('role', 'menuitem');
     button.innerHTML = `
       <span class="board-butler-submenu-icon" aria-hidden="true">${icon}</span>
-      <span class="board-butler-submenu-label">${label} · ${t('from 3 pts', '3 积分起', '3 포인트부터')}</span>
+      <span class="board-butler-submenu-label">${label} · ${t('billed from actual cost', '按实际费用结算', '실제 비용으로 정산')}</span>
       <small class="board-butler-menu-status" hidden></small>
     `;
     button.addEventListener('click', () => {
@@ -2221,17 +2367,17 @@ function openBoardButlerMenu(trigger, file, item) {
   modelMenu.innerHTML = `
     <button type="button" class="board-butler-model-option board-butler-submenu-option board-butler-menu-item" data-butler-action="generate3d:hunyuan3d" role="menuitem">
       <span class="board-butler-submenu-icon" aria-hidden="true">${BOARD_BUTLER_ICONS.hunyuan3d}</span>
-      <span class="board-butler-submenu-label">${t('Hunyuan 3D', '混元 3D', '혼위안 3D')} · 8 pts</span>
+      <span class="board-butler-submenu-label">${t('Hunyuan 3D', '混元 3D', '혼위안 3D')} · ${BOARD_BUTLER_RETAIL_CREDITS.hunyuan3d} pts</span>
       <small class="board-butler-menu-status" hidden></small>
     </button>
     <button type="button" class="board-butler-model-option board-butler-submenu-option board-butler-menu-item" data-butler-action="generate3d:hyper3d" role="menuitem">
       <span class="board-butler-submenu-icon" aria-hidden="true">${BOARD_BUTLER_ICONS.hyper3d}</span>
-      <span class="board-butler-submenu-label">Hyper3D · 14 pts</span>
+      <span class="board-butler-submenu-label">Hyper3D · ${BOARD_BUTLER_RETAIL_CREDITS.hyper3d} pts</span>
       <small class="board-butler-menu-status" hidden></small>
     </button>
     <button type="button" class="board-butler-model-option board-butler-submenu-option board-butler-menu-item" data-butler-action="generate3d:tripo3d" role="menuitem">
       <span class="board-butler-submenu-icon" aria-hidden="true">${BOARD_BUTLER_ICONS.tripo3d}</span>
-      <span class="board-butler-submenu-label">Tripo3D · 10 pts</span>
+      <span class="board-butler-submenu-label">Tripo3D · ${BOARD_BUTLER_RETAIL_CREDITS.tripo3d} pts</span>
       <small class="board-butler-menu-status" hidden></small>
     </button>
   `;

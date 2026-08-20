@@ -1979,6 +1979,9 @@ export async function createVideoUpscaleTask({ videoDataUrl, videoAsset, toolOpt
         throw toolError(reason, 'The video enhancement credits could not be reserved.', status);
       }
     }
+    const billedCredits = reservation && Number.isFinite(Number(reservation.credits))
+      ? Number(reservation.credits)
+      : credits;
     return {
       taskToken: createVideoTaskToken(
         providerJobId,
@@ -1986,13 +1989,13 @@ export async function createVideoUpscaleTask({ videoDataUrl, videoAsset, toolOpt
         relay.token,
         ownerId,
         providerCost,
-        credits,
+        billedCredits,
         taskKey,
         options.now ?? Date.now()
       ),
       status: 'queued',
       retryAfterMs: 5_000,
-      credits,
+      credits: billedCredits,
       providerCost,
       ...(reservation && Number.isFinite(Number(reservation.availableCredits))
         ? { availableCredits: Number(reservation.availableCredits) }

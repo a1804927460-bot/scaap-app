@@ -671,10 +671,10 @@ test('quality-first synchronous image tools use the documented 302 multipart end
   assert.deepEqual(await generativeUpscaleImage({ imageDataUrl: source }, { apiKey: 'quality-key', fetchImpl }), output);
   assert.deepEqual(await cleanupImageObjects({ imageDataUrl: source, maskImageDataUrl: mask }, { apiKey: 'quality-key', fetchImpl }), output);
   assert.deepEqual(calls.map((entry) => entry.url), [
-    'https://api.302.ai/recraft/v1/images/generativeUpscale',
+    'https://api.302.ai/clipdrop/image-upscaling/v1/upscale',
     'https://api.302.ai/clipdrop/cleanup/v1'
   ]);
-  assert.equal(calls[0].form.get('file') instanceof Blob, true);
+  assert.equal(calls[0].form.get('image_file') instanceof Blob, true);
   assert.equal(calls[1].form.get('image_file') instanceof Blob, true);
   assert.equal(calls[1].form.get('mask_file') instanceof Blob, true);
 });
@@ -711,7 +711,7 @@ test('result downloads follow only allowlisted redirects, omit the 302 key, and 
   );
 });
 
-test('gateway wires every image tool route through durable credits and opaque result downloads', () => {
+test('gateway keeps image tools free while retaining opaque asynchronous result downloads', () => {
   const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
   assert.match(
     server,
@@ -719,7 +719,7 @@ test('gateway wires every image tool route through durable credits and opaque re
   );
   assert.match(
     server,
-    /url\.pathname === '\/v1\/tools\/image\/expand'[\s\S]*?modelId !== 'kling-image-expand'[\s\S]*?reserveFixedTool\(user\.id, modelId, requestId\)[\s\S]*?uncropImage[\s\S]*?settleToolUsage\(user\.id, usage\.requestId, 'succeeded'/
+    /url\.pathname === '\/v1\/tools\/image\/expand'[\s\S]*?clipdrop-uncrop[\s\S]*?reserveFixedTool\(user\.id, providerId, requestId\)[\s\S]*?uncropImage[\s\S]*?settleReservedTool\(user\.id, usage\)/
   );
   assert.match(
     server,
@@ -727,7 +727,7 @@ test('gateway wires every image tool route through durable credits and opaque re
   );
   assert.match(
     server,
-    /url\.pathname === '\/v1\/tools\/image\/status'[\s\S]*?touchToolUsage[\s\S]*?settleToolUsage[\s\S]*?resultCount/
+    /url\.pathname === '\/v1\/tools\/image\/status'[\s\S]*?toolAccountingCallbacks\(user\.id, modelId\)[\s\S]*?resultCount/
   );
   assert.match(
     server,
@@ -735,11 +735,11 @@ test('gateway wires every image tool route through durable credits and opaque re
   );
   assert.match(
     server,
-    /url\.pathname === '\/v1\/tools\/image\/upscale'[\s\S]*?modelId !== 'generative-upscale'[\s\S]*?reserveFixedTool[\s\S]*?generativeUpscaleImage[\s\S]*?settleToolUsage\(user\.id, usage\.requestId, 'succeeded'/
+    /url\.pathname === '\/v1\/tools\/image\/upscale'[\s\S]*?clipdrop-upscale[\s\S]*?reserveFixedTool[\s\S]*?generativeUpscaleImage[\s\S]*?settleReservedTool\(user\.id, usage\)/
   );
   assert.match(
     server,
-    /url\.pathname === '\/v1\/tools\/image\/erase'[\s\S]*?modelId !== 'cleanup'[\s\S]*?reserveFixedTool[\s\S]*?cleanupImageObjects[\s\S]*?settleToolUsage\(user\.id, usage\.requestId, 'succeeded'/
+    /url\.pathname === '\/v1\/tools\/image\/erase'[\s\S]*?modelId !== 'cleanup'[\s\S]*?reserveFixedTool[\s\S]*?cleanupImageObjects[\s\S]*?settleReservedTool\(user\.id, usage\)/
   );
   assert.doesNotMatch(
     server,

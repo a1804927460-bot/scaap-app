@@ -65,6 +65,10 @@ import {
   CREDIT_PRICING_VERSION
 } from './usage.js';
 import {
+  FREE_BUTLER_PROVIDERS,
+  quoteThreeDProviderCostPtcCents
+} from './tool-pricing.js';
+import {
   attachVideoTask,
   finalizeVideoJob,
   getVideoDownload,
@@ -88,7 +92,6 @@ const TOPAZ_IMAGE_TOOL_IDS = new Set([
   'topaz-image-restore',
   'topaz-image-lighting'
 ]);
-const TOPAZ_IMAGE_MAX_RETAIL_CREDITS = 452;
 const allowedOrigins = new Set(String(process.env.ALLOWED_ORIGINS || '').split(',').map((v) => v.trim()).filter(Boolean));
 const secretPatterns = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,
@@ -756,18 +759,24 @@ function deniedReservation(response, reservation) {
   });
 }
 
-function availableAccountCredits(account) {
-  if (!account || typeof account !== 'object' || Array.isArray(account)) return null;
-  const direct = Number(account.availableCredits ?? account.available_credits);
-  if (Number.isFinite(direct)) return Math.max(0, direct);
-  const balance = Number(account.balance);
-  const reserved = Number(account.reserved);
-  return Number.isFinite(balance) && Number.isFinite(reserved) ? Math.max(0, balance - reserved) : null;
-}
-
-async function reserveFixedTool(userId, providerId, requestId) {
+async function reserveFixedTool(userId, providerId, requestId, options = {}) {
   const startedAt = Date.now();
-  const reservation = await reserveToolUsage(userId, requestId, { providerId });
+  const normalizedProvider = String(providerId || '').trim().toLowerCase();
+  if (FREE_BUTLER_PROVIDERS.has(normalizedProvider)) {
+    return {
+      requestId,
+      startedAt,
+      free: true,
+      reservation: { ok: true, providerId: normalizedProvider, credits: 0, availableCredits: null }
+    };
+  }
+  const providerCost = ['hunyuan3d', 'hyper3d', 'tripo3d'].includes(normalizedProvider)
+    ? quoteThreeDProviderCostPtcCents(normalizedProvider, options)
+    : null;
+  const reservation = await reserveToolUsage(userId, requestId, {
+    providerId: normalizedProvider,
+    ...(providerCost !== null ? { providerCost, options } : {})
+  });
   if (!reservation || reservation.ok !== true) {
     const reason = String(reservation && reservation.reason || 'credit-service-failed');
     const statuses = {
@@ -788,7 +797,7 @@ async function reserveFixedTool(userId, providerId, requestId) {
 }
 
 async function releaseFailedToolReservation(userId, usage) {
-  if (!usage) return;
+  if (!usage || usage.free) return;
   try {
     await settleToolUsage(userId, usage.requestId, 'failed', Date.now() - usage.startedAt);
   } catch (error) {
@@ -799,6 +808,23 @@ async function releaseFailedToolReservation(userId, usage) {
       status: Number(error && error.status) || 503
     }));
   }
+}
+
+async function settleReservedTool(userId, usage, status = 'succeeded') {
+  if (!usage || usage.free) {
+    return { ok: true, reason: 'free-tool', status, creditsCharged: 0, creditsReleased: 0 };
+  }
+  return settleToolUsage(userId, usage.requestId, status, Date.now() - usage.startedAt);
+}
+
+function toolAccountingCallbacks(userId, providerId) {
+  if (FREE_BUTLER_PROVIDERS.has(String(providerId || '').trim().toLowerCase())) return {};
+  return {
+    touchCredits: ({ requestId }) => touchToolUsage(userId, requestId),
+    settleCredits: ({ requestId, status, durationMs }) => settleToolUsage(
+      userId, requestId, status, durationMs
+    )
+  };
 }
 
 function imageToolPoller(providerId) {
@@ -1034,7 +1060,7 @@ async function handle(request, response) {
           imageDataUrl: body && body.imageDataUrl,
           toolOptions: body && body.options
         });
-        await settleToolUsage(user.id, usage.requestId, 'succeeded', Date.now() - usage.startedAt);
+        await settleReservedTool(user.id, usage);
         return result;
       } catch (error) {
         await releaseFailedToolReservation(user.id, usage);
@@ -1080,17 +1106,18 @@ async function handle(request, response) {
     if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
     const body = await readJson(request);
     const modelId = String(body && body.modelId || '').trim().toLowerCase();
-    if (modelId !== 'kling-image-expand') {
+    if (!['clipdrop-uncrop', 'kling-image-expand'].includes(modelId)) {
       throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
     }
+    const providerId = 'clipdrop-uncrop';
     const png = await runIdempotentImageOperation(user.id, requestId, async () => {
-      const usage = await reserveFixedTool(user.id, modelId, requestId);
+      const usage = await reserveFixedTool(user.id, providerId, requestId);
       try {
         const output = await uncropImage({
           imageDataUrl: body && body.imageDataUrl,
           toolOptions: body && body.options
         });
-        await settleToolUsage(user.id, usage.requestId, 'succeeded', Date.now() - usage.startedAt);
+        await settleReservedTool(user.id, usage);
         return output;
       } catch (error) {
         await releaseFailedToolReservation(user.id, usage);
@@ -1140,15 +1167,6 @@ async function handle(request, response) {
     if (!TOPAZ_IMAGE_TOOL_IDS.has(modelId)) {
       throw invalidOption('invalid-image-tool', 'The selected Topaz image tool is not supported.');
     }
-    const account = await getUsageAccount(user.id);
-    const availableCredits = availableAccountCredits(account);
-    if (availableCredits !== null && availableCredits < TOPAZ_IMAGE_MAX_RETAIL_CREDITS) {
-      return deniedReservation(response, {
-        reason: 'insufficient-credits',
-        credits: TOPAZ_IMAGE_MAX_RETAIL_CREDITS,
-        availableCredits
-      });
-    }
     const task = await runIdempotentImageOperation(user.id, requestId, () => submitTopazImageTool({
       modelId,
       imageDataUrl: body && body.imageDataUrl,
@@ -1172,15 +1190,7 @@ async function handle(request, response) {
     const result = await poll({
       taskToken: body && body.taskToken,
       userId: user.id
-    }, {
-      touchCredits: ({ requestId }) => touchToolUsage(user.id, requestId),
-      settleCredits: ({ requestId, status, durationMs }) => settleToolUsage(
-        user.id,
-        requestId,
-        status,
-        durationMs
-      )
-    });
+    }, toolAccountingCallbacks(user.id, modelId));
     return send(response, 200, {
       status: result.status,
       ...(result.progress !== undefined ? { progress: result.progress } : {}),
@@ -1204,15 +1214,7 @@ async function handle(request, response) {
     const result = await poll({
       taskToken: body && body.taskToken,
       userId: user.id
-    }, {
-      touchCredits: ({ requestId }) => touchToolUsage(user.id, requestId),
-      settleCredits: ({ requestId, status, durationMs }) => settleToolUsage(
-        user.id,
-        requestId,
-        status,
-        durationMs
-      )
-    });
+    }, toolAccountingCallbacks(user.id, modelId));
     if (result.status !== 'succeeded') {
       const error = new Error('The processed image is not ready yet.');
       error.code = 'image-tool-task-not-ready';
@@ -1233,14 +1235,15 @@ async function handle(request, response) {
     if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
     const body = await readJson(request);
     const modelId = String(body && body.modelId || '').trim().toLowerCase();
-    if (modelId !== 'generative-upscale') {
+    if (!['clipdrop-upscale', 'generative-upscale'].includes(modelId)) {
       throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
     }
+    const providerId = 'clipdrop-upscale';
     const png = await runIdempotentImageOperation(user.id, requestId, async () => {
-      const usage = await reserveFixedTool(user.id, modelId, requestId);
+      const usage = await reserveFixedTool(user.id, providerId, requestId);
       try {
         const output = await generativeUpscaleImage({ imageDataUrl: body && body.imageDataUrl });
-        await settleToolUsage(user.id, usage.requestId, 'succeeded', Date.now() - usage.startedAt);
+        await settleReservedTool(user.id, usage);
         return output;
       } catch (error) {
         await releaseFailedToolReservation(user.id, usage);
@@ -1249,7 +1252,7 @@ async function handle(request, response) {
     });
     return send(response, 200, png, {
       'Content-Type': 'image/png',
-      'Content-Disposition': 'attachment; filename="generative-upscaled.png"'
+      'Content-Disposition': 'attachment; filename="quality-enhanced.png"'
     });
   }
 
@@ -1264,7 +1267,7 @@ async function handle(request, response) {
       const usage = await reserveFixedTool(user.id, modelId, requestId);
       try {
         const output = await cleanupImageObjects({ imageDataUrl: body && body.imageDataUrl, maskImageDataUrl: body && body.maskDataUrl });
-        await settleToolUsage(user.id, usage.requestId, 'succeeded', Date.now() - usage.startedAt);
+        await settleReservedTool(user.id, usage);
         return output;
       } catch (error) {
         await releaseFailedToolReservation(user.id, usage);
@@ -1283,7 +1286,7 @@ async function handle(request, response) {
     const flag = AI302_FLAGS[providerId];
     if (!flag || !ai302Enabled(flag)) return disabledTool(response);
     const task = await runIdempotentImageOperation(user.id, requestId, async () => {
-      const usage = await reserveFixedTool(user.id, providerId, requestId);
+      const usage = await reserveFixedTool(user.id, providerId, requestId, body && body.options);
       try {
         const created = await createThreeDTask({
           providerId,
@@ -1346,15 +1349,6 @@ async function handle(request, response) {
     if (modelId !== 'topaz-video-upscale') {
       throw invalidOption('invalid-video-tool', 'The selected video tool is not supported.');
     }
-    const account = await getUsageAccount(user.id);
-    const availableCredits = availableAccountCredits(account);
-    if (availableCredits !== null && availableCredits <= 0) {
-      return deniedReservation(response, {
-        reason: 'insufficient-credits',
-        credits: 1,
-        availableCredits
-      });
-    }
     const task = await runIdempotentImageOperation(user.id, requestId, async () => {
       const uploadId = String(body && body.uploadId || '').trim();
       const videoAsset = uploadId ? consumeVideoUpload({ uploadId, userId: user.id }) : null;
@@ -1378,15 +1372,7 @@ async function handle(request, response) {
     return send(response, 200, await getVideoUpscaleStatus({
       taskToken: body && body.taskToken,
       userId: user.id
-    }, {
-      touchCredits: ({ requestId }) => touchToolUsage(user.id, requestId),
-      settleCredits: ({ requestId, status, durationMs }) => settleToolUsage(
-        user.id,
-        requestId,
-        status,
-        durationMs
-      )
-    }));
+    }, toolAccountingCallbacks(user.id, 'topaz-video-upscale')));
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/tools/video/download') {
@@ -1395,15 +1381,7 @@ async function handle(request, response) {
     const video = await downloadVideoUpscaleResult({
       taskToken: body && body.taskToken,
       userId: user.id
-    }, {
-      touchCredits: ({ requestId }) => touchToolUsage(user.id, requestId),
-      settleCredits: ({ requestId, status, durationMs }) => settleToolUsage(
-        user.id,
-        requestId,
-        status,
-        durationMs
-      )
-    });
+    }, toolAccountingCallbacks(user.id, 'topaz-video-upscale'));
     return send(response, 200, video, {
       'Content-Type': 'video/mp4',
       'Content-Disposition': 'attachment; filename="enhanced-video.mp4"'

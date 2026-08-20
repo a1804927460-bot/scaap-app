@@ -61,7 +61,7 @@ test('start is idempotency-bound to operation, owner token, and canonical reques
         reason: calls.length === 1 ? 'reserved' : 'already-started',
         requestId: operationId,
         status: 'starting',
-        credits: 70
+        credits: 68
       });
     };
 
@@ -70,13 +70,13 @@ test('start is idempotency-bound to operation, owner token, and canonical reques
 
     assert.equal(created.created, true);
     assert.equal(repeated.created, false);
-    assert.equal(created.credits, 70);
+    assert.equal(created.credits, 68);
     assert.match(calls[0].url, /\/rpc\/start_ai_video_job$/);
     assert.equal(calls[0].body.p_request_id, operationId);
     assert.equal(calls[0].body.p_user_id, userId);
     assert.equal(calls[0].body.p_token_hash, hashVideoTaskToken(taskToken));
     assert.equal(calls[0].body.p_request_hash, calls[1].body.p_request_hash);
-    assert.equal(calls[0].body.p_expected_credits, 70);
+    assert.equal(calls[0].body.p_expected_credits, 68);
     assert.equal(JSON.stringify(calls[0].body).includes(taskToken), false);
     assert.equal(JSON.stringify(calls[0].body).includes('private prompt text'), false);
   });
@@ -98,7 +98,7 @@ test('start replays a server-authorized price without exposing an account tier',
       }
     });
     assert.equal(calls.length, 2);
-    assert.equal(calls[0].p_expected_credits, 70);
+    assert.equal(calls[0].p_expected_credits, 68);
     assert.equal(calls[1].p_expected_credits, 65);
     assert.equal(created.credits, 65);
     assert.equal(JSON.stringify(created).includes('pricingTier'), false);
@@ -118,12 +118,12 @@ test('Kling Pro jobs persist the actual tier provider and reserve the Pro price'
       },
       fetchImpl: async (_url, options) => {
         call = JSON.parse(options.body);
-        return jsonResponse({ ok: true, reason: 'reserved', credits: 260, status: 'starting' });
+        return jsonResponse({ ok: true, reason: 'reserved', credits: 296, status: 'starting' });
       }
     });
     assert.equal(call.p_provider_id, 'video-11');
     assert.equal(call.p_resolution, '1080P');
-    assert.equal(call.p_expected_credits, 260);
+    assert.equal(call.p_expected_credits, 296);
   });
 });
 

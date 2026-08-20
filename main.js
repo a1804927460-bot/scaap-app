@@ -316,7 +316,9 @@ const MODEL_PREVIEW_MARKER_FILENAME = `model-preview.${MODEL_PREVIEW_CACHE_VERSI
 const BUTLER_IMAGE_TOOL_IDS = new Set([
   'seededit-v3',
   'kling-image-expand',
+  'clipdrop-uncrop',
   'cleanup',
+  'clipdrop-upscale',
   'generative-upscale',
   'qwen-image-edit-plus',
   'qwen-image-layered',
@@ -331,14 +333,16 @@ const BUTLER_IMAGE_TOOL_IDS = new Set([
   'topaz-image-lighting'
 ]);
 const BUTLER_IMAGE_TOOL_CREDITS = Object.freeze({
-  'seededit-v3': 18,
-  'kling-image-expand': 51,
-  cleanup: 51,
-  'generative-upscale': 73,
-  'qwen-image-edit-plus': 16,
-  'qwen-image-layered': 16,
-  'super-upscale-v2': 16,
-  erase: 16
+  'seededit-v3': 0,
+  'kling-image-expand': 0,
+  'clipdrop-uncrop': 0,
+  cleanup: 0,
+  'clipdrop-upscale': 0,
+  'generative-upscale': 0,
+  'qwen-image-edit-plus': 0,
+  'qwen-image-layered': 0,
+  'super-upscale-v2': 0,
+  erase: 0
 });
 const BUTLER_VIDEO_TOOL_ID = 'topaz-video-upscale';
 const BUTLER_VIDEO_MIME_BY_EXTENSION = Object.freeze({
@@ -4479,7 +4483,7 @@ function normalizeButlerImageOptions(modelId, requested = {}) {
       ...(seed !== undefined ? { seed } : {})
     };
   }
-  if (modelId === 'kling-image-expand') {
+  if (modelId === 'kling-image-expand' || modelId === 'clipdrop-uncrop') {
     const boundedPixels = (value) => Math.max(0, Math.min(2000, Math.round(finiteOr(value, 0))));
     const options = {
       up: boundedPixels(source.up),
@@ -5987,7 +5991,7 @@ function registerIpcHandlers() {
         error.code = 'gateway-not-configured';
         throw error;
       }
-      const modelId = 'kling-image-expand';
+      const modelId = 'clipdrop-uncrop';
       const options = normalizeButlerImageOptions(modelId, requestedOptions);
       const source = await butlerSourceImage(fileId);
       const responseBuffer = await aiGateway.expandImage(source.imageDataUrl, options);
@@ -6012,7 +6016,7 @@ function registerIpcHandlers() {
         error.code = 'gateway-not-configured';
         throw error;
       }
-      const modelId = 'generative-upscale';
+      const modelId = 'clipdrop-upscale';
       const source = await butlerSourceImage(fileId);
       const responseBuffer = await aiGateway.upscaleImage(source.imageDataUrl);
       const pngBuffer = await sanitizeButlerImagePng(responseBuffer);
@@ -6023,8 +6027,8 @@ function registerIpcHandlers() {
       if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
       return { ok: true, file: fileToPayload(record) };
     } catch (error) {
-      const failure = butlerFailure(error, 'Creative image upscaling failed.');
-      console.error('Butler creative upscale failed:', failure.reason);
+      const failure = butlerFailure(error, 'Image enhancement failed.');
+      console.error('Butler image enhancement failed:', failure.reason);
       return failure;
     }
   });
@@ -6195,7 +6199,7 @@ function registerIpcHandlers() {
           canvasId: store.data.canvases[0] && store.data.canvases[0].id
         };
         const operation = currentTask.operation
-          || (modelId === 'kling-image-expand'
+          || (['clipdrop-uncrop', 'kling-image-expand'].includes(modelId)
             ? 'image-expand'
             : modelId === 'qwen-image-layered' ? 'image-layer' : 'image-edit');
         const records = [];

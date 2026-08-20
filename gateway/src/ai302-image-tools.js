@@ -18,7 +18,7 @@ const SEED_EDIT_RESULT_PATH = '/doubao/drawing/seededit_v30_result';
 const KLING_EXPAND_PATH = '/klingai/v1/images/editing/expand';
 const CLIPDROP_UNCROP_PATH = '/clipdrop/uncrop/v1';
 const CLEANUP_PATH = '/clipdrop/cleanup/v1';
-const GENERATIVE_UPSCALE_PATH = '/recraft/v1/images/generativeUpscale';
+const CLIPDROP_UPSCALE_PATH = '/clipdrop/image-upscaling/v1/upscale';
 const TOPAZ_IMAGE_PATHS = Object.freeze({
   'topaz-image-sharpen': '/topazlabs/image/v1/sharpen/async',
   'topaz-image-sharpen-gen': '/topazlabs/image/v1/sharpen-gen/async',
@@ -1033,8 +1033,8 @@ async function fetch302BinaryImage(path, form, options = {}) {
 export async function generativeUpscaleImage({ imageDataUrl } = {}, options = {}) {
   const image = parseSanitizedImage(imageDataUrl);
   const form = new FormData();
-  form.append('file', new Blob([image.buffer], { type: image.mime }), `image.${image.extension}`);
-  return fetch302BinaryImage(GENERATIVE_UPSCALE_PATH, form, options);
+  form.append('image_file', new Blob([image.buffer], { type: image.mime }), `image.${image.extension}`);
+  return fetch302BinaryImage(CLIPDROP_UPSCALE_PATH, form, options);
 }
 
 export async function uncropImage({ imageDataUrl, toolOptions } = {}, options = {}) {

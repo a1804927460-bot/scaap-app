@@ -37,8 +37,18 @@ assert.match(
 );
 assert.match(
   sidebarSource,
-  /const groups = groupFilesByDay\(files\)[\s\S]*?buildDateFolderLabel\(dayKey, items\.length, activeDate\)/,
-  'Date rows must keep their item count and active-folder state.'
+  /const expandedDateYears = new Set\(\)[\s\S]*?const expandedDateMonths = new Set\(\)[\s\S]*?function dateFolderHierarchy/,
+  'The date library must use explicit collapsed year and month state.'
+);
+assert.match(
+  sidebarSource,
+  /function renderDateFolderTree[\s\S]*?level: 'year'[\s\S]*?level: 'month'[\s\S]*?buildDateFolderLabel\(dayKey, items\.length\)/,
+  'The library must render year, month, and day folders before showing files.'
+);
+assert.match(
+  sidebarSource,
+  /if \(activeDate\)[\s\S]*?buildDateFolderLabel\(AppState\.activeDateFolderKey, files\.length, true\)[\s\S]*?buildFileItem\(file\)[\s\S]*?renderDateFolderTree/,
+  'Files must render only after a day folder is selected.'
 );
 assert.match(
   stylesSource,

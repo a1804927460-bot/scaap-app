@@ -7,6 +7,8 @@ const { pathToFileURL } = require('url');
 const {
   POINTS_PER_CNY,
   CREDIT_PRICING_VERSION,
+  RETAIL_MARKUP_PERCENT,
+  RETAIL_MULTIPLIER,
   PROFIT_PER_REQUEST_CNY,
   PROFIT_PER_REQUEST_CREDITS,
   USD_TO_CNY,
@@ -22,13 +24,15 @@ const {
 } = require('../lib/credit-pricing');
 
 assert.strictEqual(POINTS_PER_CNY, 10);
-assert.strictEqual(CREDIT_PRICING_VERSION, '202608200002');
-assert.strictEqual(PROFIT_PER_REQUEST_CNY, 1.4);
-assert.strictEqual(PROFIT_PER_REQUEST_CREDITS, 14);
+assert.strictEqual(CREDIT_PRICING_VERSION, '202608200003');
+assert.strictEqual(RETAIL_MARKUP_PERCENT, 20);
+assert.strictEqual(RETAIL_MULTIPLIER, 1.2);
+assert.strictEqual(PROFIT_PER_REQUEST_CNY, 0);
+assert.strictEqual(PROFIT_PER_REQUEST_CREDITS, 0);
 assert.strictEqual(USD_TO_CNY, 7.3);
-assert.strictEqual(MINIMUM_VIDEO_CREDITS, 30);
-assert.strictEqual(retailCreditsFromUpstreamCny(1.5), 29, 'CNY 1.5 upstream cost must retail for CNY 2.9.');
-assert.strictEqual(retailCreditsFromUpstreamCny(0), 14, 'Every paid request must include the CNY 1.4 fixed profit.');
+assert.strictEqual(MINIMUM_VIDEO_CREDITS, 0);
+assert.strictEqual(retailCreditsFromUpstreamCny(1.5), 18, 'CNY 1.5 upstream cost must retail at exactly 20% markup.');
+assert.strictEqual(retailCreditsFromUpstreamCny(0), 0, 'A zero-cost operation must not receive a fixed charge.');
 assert.throws(() => retailCreditsFromUpstreamCny(-0.01), TypeError);
 
 assert.deepStrictEqual(quoteMediaCredits({
@@ -42,15 +46,15 @@ assert.deepStrictEqual(quoteMediaCredits({
   count: 2,
   units: 2,
   unit: 'image',
-  unitCredits: 22,
-  totalCredits: 44
+  unitCredits: 10,
+  totalCredits: 20
 });
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'image',
   imageProviderId: 'image-4',
   count: 99
-}).totalCredits, 64, 'Image count must be capped at four.');
+}).totalCredits, 12, 'Image count must be capped at four.');
 
 const localBatchQuote = quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-2', count: 4, size: '2K'
@@ -61,8 +65,8 @@ assert.deepStrictEqual(
   }, { count: 4 }),
   {
     ...localBatchQuote,
-    unitCredits: 20,
-    totalCredits: 80
+    unitCredits: 18,
+    totalCredits: 72
   },
   'A stale gateway quote must never lower the bundled four-image estimate.'
 );
@@ -84,7 +88,7 @@ assert.equal(
   conservativeMediaCreditQuote(currentVideoQuote, {
     providerId: 'video-3', unitCredits: 22.78, totalCredits: 151, duration: 6
   }).totalCredits,
-  1012,
+  1216,
   'A stale 151-point Seedance quote must never lower the current six-second estimate.'
 );
 const localVideoQuote = quoteMediaCredits({
@@ -93,8 +97,8 @@ const localVideoQuote = quoteMediaCredits({
 assert.ok(
   conservativeMediaCreditQuote(localVideoQuote, {
     kind: 'video', providerId: 'video-11', unitCredits: 24.6, totalCredits: 24.6, duration: 10
-  }).totalCredits >= 260,
-  'A malformed remote video total must still include the complete duration and fixed margin.'
+  }).totalCredits >= 246,
+  'A malformed remote video total must still include the complete duration.'
 );
 
 assert.deepStrictEqual(quoteMediaCredits({
@@ -110,40 +114,40 @@ assert.deepStrictEqual(quoteMediaCredits({
   count: 2,
   units: 2,
   unit: 'image',
-  unitCredits: 30,
-  totalCredits: 60
+  unitCredits: 20,
+  totalCredits: 40
 });
 assert.strictEqual(quoteMediaCredits({
   kind: 'image',
   imageProviderId: 'image-6',
   quality: 'invalid'
-}).totalCredits, 19, 'Unknown GPT Image 2 quality must use the automatic-quality price.');
+}).totalCredits, 6, 'Unknown GPT Image 2 quality must use the automatic-quality price.');
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-7', resolution: '720p', count: 4
-}).totalCredits, 64);
+}).totalCredits, 12);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-8', size: '1080p', count: 4
-}).totalCredits, 72);
+}).totalCredits, 20);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-1', size: '4K'
-}).totalCredits, 28);
-assert.strictEqual(quoteMediaCredits({
-  kind: 'image', imageProviderId: 'image-2', size: '1K'
-}).totalCredits, 18);
-assert.strictEqual(quoteMediaCredits({
-  kind: 'image', imageProviderId: 'image-9'
 }).totalCredits, 17);
 assert.strictEqual(quoteMediaCredits({
+  kind: 'image', imageProviderId: 'image-2', size: '1K'
+}).totalCredits, 5);
+assert.strictEqual(quoteMediaCredits({
+  kind: 'image', imageProviderId: 'image-9'
+}).totalCredits, 4);
+assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-17'
-}).totalCredits, 16);
+}).totalCredits, 3);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-18', size: '2K'
-}).totalCredits, 24);
+}).totalCredits, 12);
 
 const imageResolutionMatrix = {
-  'image-1': { '1K': 22, '2K': 22, '4K': 28 },
-  'image-2': { '1K': 18, '2K': 20, '4K': 22 }
+  'image-1': { '1K': 10, '2K': 10, '4K': 17 },
+  'image-2': { '1K': 5, '2K': 8, '4K': 10 }
 };
 Object.entries(imageResolutionMatrix).forEach(([imageProviderId, resolutions]) => {
   Object.entries(resolutions).forEach(([size, expectedCredits]) => {
@@ -176,23 +180,23 @@ assert.deepStrictEqual(quoteMediaCredits({
   duration: 6,
   units: 6,
   unit: 'second',
-  unitCredits: 8,
-  fixedCredits: 14,
-  minimumCredits: 30,
-  totalCredits: 62
+  unitCredits: 9.6,
+  fixedCredits: 0,
+  minimumCredits: 0,
+  totalCredits: 58
 });
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'video',
   resolution: '768P',
   duration: undefined
-}).totalCredits, 44, 'Invalid duration must use the six-second default.');
+}).totalCredits, 36, 'Invalid duration must use the six-second default.');
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'video',
   resolution: '768P',
   duration: 0
-}).totalCredits, 34, 'Video billing must enforce the four-second minimum.');
+}).totalCredits, 24, 'Video billing must enforce the four-second minimum.');
 
 assert.deepStrictEqual(quoteMediaCredits({
   kind: 'video',
@@ -206,10 +210,10 @@ assert.deepStrictEqual(quoteMediaCredits({
   duration: 5,
   units: 5,
   unit: 'second',
-  unitCredits: 8.268929,
-  fixedCredits: 14,
-  minimumCredits: 30,
-  totalCredits: 56
+  unitCredits: 9.9227148,
+  fixedCredits: 0,
+  minimumCredits: 0,
+  totalCredits: 50
 });
 
 assert.strictEqual(quoteMediaCredits({
@@ -217,7 +221,7 @@ assert.strictEqual(quoteMediaCredits({
   videoProviderId: 'video-3',
   resolution: '720P',
   duration: 5
-}).totalCredits, 125);
+}).totalCredits, 133);
 
 assert.deepStrictEqual(
   {
@@ -228,7 +232,7 @@ assert.deepStrictEqual(
       kind: 'video', videoProviderId: 'video-2', resolution: '720P', duration: -1
     }).totalCredits
   },
-  { duration: 15, totalCredits: 281 },
+  { duration: 15, totalCredits: 321 },
   'Seedance 2.0 automatic duration must reserve its full 15-second maximum.'
 );
 
@@ -241,7 +245,7 @@ assert.deepStrictEqual(
       kind: 'video', videoProviderId: 'video-3', resolution: '720P', duration: -1
     }).totalCredits
   },
-  { duration: 30, totalCredits: 677 },
+  { duration: 30, totalCredits: 796 },
   'Seedance 2.5 automatic duration must reserve its full 30-second maximum.'
 );
 
@@ -250,37 +254,37 @@ assert.strictEqual(quoteMediaCredits({
   videoProviderId: 'video-2',
   resolution: 'unsupported',
   duration: 6
-}).totalCredits, 121, 'Unknown Seedance resolutions must use that provider\'s default 720P rate.');
+}).totalCredits, 129, 'Unknown Seedance resolutions must use that provider\'s default 720P rate.');
 
 assert.strictEqual(
   quoteMediaCredits({ kind: 'video', videoProviderId: 'video-3', resolution: '480P', duration: 30 }).totalCredits,
-  323,
-  'Seedance 2.5 must support 30 seconds and add the fixed profit only once.'
+  370,
+  'Seedance 2.5 must support 30 seconds and apply the proportional markup once.'
 );
 
 assert.strictEqual(
   quoteMediaCredits({ kind: 'video', videoProviderId: 'video-3', resolution: '720P', duration: 10 }).totalCredits,
-  235,
+  266,
   'Seedance 2.5 720P must use the verified Atlas primary-route cost.'
 );
 assert.strictEqual(
   quoteMediaCredits({ kind: 'video', videoProviderId: 'video-3', resolution: '4K-ESR', duration: 10 }).totalCredits,
-  1677,
-  'Seedance 2.5 4K-ESR must use the 22.780 PTC per ten-second upstream quote.'
+  2026,
+  'Seedance 2.5 4K-ESR must use the observed 23.11727243 PTC per ten-second upstream quote.'
 );
 assert.strictEqual(
   quoteMediaCredits({ kind: 'video', videoProviderId: 'video-3', resolution: '4K-ESR', duration: 6 }).totalCredits,
-  1012,
+  1216,
   'Seedance 2.5 4K-ESR at the default six seconds must not use the retired 151-point quote.'
 );
 assert.strictEqual(
   quoteMediaCredits({ kind: 'video', videoProviderId: 'video-2', resolution: '720P', duration: 10 }).totalCredits,
-  192,
+  214,
   'Seedance 2.0 must use the verified Atlas primary-route cost.'
 );
 assert.strictEqual(
   quoteMediaCredits({ kind: 'video', videoProviderId: 'video-4', resolution: '720P', duration: 10 }).totalCredits,
-  138,
+  148,
   'Seedance 2.0 Fast must use its documented 6.516 PTC/M-token multiplier.'
 );
 
@@ -290,8 +294,8 @@ assert.deepStrictEqual(
   }),
   {
     kind: 'video', providerId: 'video-11', resolution: '1080P', duration: 10,
-    units: 10, unit: 'second', unitCredits: 24.6, fixedCredits: 14,
-    minimumCredits: 30, totalCredits: 260
+    units: 10, unit: 'second', unitCredits: 29.52, fixedCredits: 0,
+    minimumCredits: 0, totalCredits: 296
   },
   'Kling V3 1080P must quote and reserve against the Pro route.'
 );
@@ -299,25 +303,27 @@ assert.strictEqual(
   quoteMediaCredits({
     kind: 'video', videoProviderId: 'video-12', serviceTier: 'pro', resolution: '1080P', duration: 15
   }).totalCredits,
-  409,
+  474,
   'Kling O3 Pro must never be quoted at the Standard route price.'
 );
 assert.strictEqual(
   quoteMediaCredits({
     kind: 'video', videoProviderId: 'video-12', serviceTier: 'standard', resolution: '720P', duration: 15
   }).totalCredits,
-  343,
+  395,
   'Kling O3 Standard must retain its own route price.'
 );
 
 const publicPricing = publicCreditPricing();
 assert.strictEqual(publicPricing.pricingVersion, CREDIT_PRICING_VERSION);
 assert.strictEqual(publicPricing.pointsPerCny, 10);
-assert.strictEqual(publicPricing.profitPerRequestCny, 1.4);
-assert.strictEqual(publicPricing.minimumVideoCredits, 30);
-assert.strictEqual(publicPricing.image['image-5'], 16);
-assert.strictEqual(publicPricing.image['image-9'], 17);
-assert.strictEqual(publicPricing.image['image-6'], 20);
+assert.strictEqual(publicPricing.retailMarkupPercent, 20);
+assert.strictEqual(publicPricing.retailMultiplier, 1.2);
+assert.strictEqual(publicPricing.profitPerRequestCny, 0);
+assert.strictEqual(publicPricing.minimumVideoCredits, 0);
+assert.strictEqual(publicPricing.image['image-5'], 3);
+assert.strictEqual(publicPricing.image['image-9'], 4);
+assert.strictEqual(publicPricing.image['image-6'], 8);
 assert.deepStrictEqual(publicPricing.imageQuality['image-6'], IMAGE_QUALITY_PRICES['image-6']);
 assert.deepStrictEqual(publicPricing.imageQualityResolution['image-6'], IMAGE_QUALITY_RESOLUTION_PRICES['image-6']);
 assert.deepStrictEqual(publicPricing.imageResolution['image-7'], IMAGE_RESOLUTION_PRICES['image-7']);
@@ -367,6 +373,7 @@ const runtimeSource = fs.readFileSync(path.join(__dirname, '..', 'config', 'prov
 const unifiedPricingMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608180001_unified_credit_pricing.sql'), 'utf8');
 const seedancePtcMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608180003_seedance_ptc_credit_pricing.sql'), 'utf8');
 const rebuiltPricingMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608200002_rebuild_credit_pricing.sql'), 'utf8');
+const proportionalPricingMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608200003_percentage_markup_credit_pricing.sql'), 'utf8');
 const legnextMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608180005_legnext_midjourney_credits.sql'), 'utf8');
 const redemptionMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608180002_three_666_credit_codes.sql'), 'utf8');
 const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
@@ -418,7 +425,6 @@ assert.doesNotMatch(mainSource, /Chaser0713|49c8f3fd5b5b39253cf33a3bbcd14a270c8f
 assert.doesNotMatch(preloadSource, /Chaser0713|staff15|pricing_tier/);
 assert.doesNotMatch(runtimeSource, /Chaser0713|staff15|pricing_tier/);
 assert.match(unifiedPricingMigration, /pricing_tier = 'standard'/);
-assert.match(unifiedPricingMigration, /greatest\(30,[\s\S]*?normalized_duration/);
 assert.match(seedancePtcMigration, /302 PTC is USD/i);
 assert.match(seedancePtcMigration, /0\.2592 \* \(7\.884 \/ 10\)/);
 assert.match(seedancePtcMigration, /0\.2592 \* \(6\.516 \/ 10\)/);
@@ -427,6 +433,11 @@ assert.match(rebuiltPricingMigration, /USD 1 = CNY 7\.3/);
 assert.match(rebuiltPricingMigration, /when '4K-ESR' then 166\.294/);
 assert.match(rebuiltPricingMigration, /normalized_quality \|\| ':' \|\| normalized_image_resolution/);
 assert.match(rebuiltPricingMigration, /p_provider_cost::numeric \* 7\.3/);
+assert.match(proportionalPricingMigration, /upstream cost plus 20%/i);
+assert.match(proportionalPricingMigration, /23\.11727243/);
+assert.match(proportionalPricingMigration, /quote_retail_credits_from_upstream_points/);
+assert.match(proportionalPricingMigration, /p_provider_cost::numeric \* 0\.01 \* 7\.3 \* 10 \* 1\.20/);
+assert.doesNotMatch(proportionalPricingMigration, /greatest\(30|\+\s*14/);
 assert.doesNotMatch(unifiedPricingMigration, /Chaser0713|staff15/);
 assert.strictEqual((redemptionMigration.match(/, 666, false, 1, null, true\)/g) || []).length, 3);
 assert.strictEqual((redemptionMigration.match(/'[0-9a-f]{64}'/g) || []).length, 3);
