@@ -46,6 +46,8 @@ assert.match(workflow, /signature\.Status -ne 'Valid'/);
 assert.match(workflow, /MESSS_SIGNING_ENABLED/);
 assert.match(workflow, /signature\.Status -ne 'NotSigned'/);
 assert.match(workflow, /CSC_LINK and CSC_KEY_PASSWORD must be configured together/);
+assert.match(workflow, /CSC_IDENTITY_AUTO_DISCOVERY=false/);
+assert.match(workflow, /Do not export empty CSC_LINK\/CSC_KEY_PASSWORD values/);
 assert.match(workflow, /macos-release:/);
 assert.match(workflow, /latest-mac\.yml/);
 assert.match(workflow, /runs-on:\s*macos-14/);
