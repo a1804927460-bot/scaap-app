@@ -164,7 +164,9 @@ jobs:
     # Windows remains the release gate. macOS then adds both architectures to
     # the same public release so electron-updater can consume latest-mac.yml.
     needs: windows-release
-    runs-on: macos-13
+    # macos-13 no longer receives standard hosted runners. macos-14 remains
+    # Intel-based, which lets electron-builder produce both x64 and arm64.
+    runs-on: macos-14
     env:
       GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
       MESSS_SUPABASE_URL: https://trmbhcniijedpmohkbzx.supabase.co
