@@ -163,6 +163,12 @@ function pngHeader(width, height) {
       videoMode: 'omni', resolution: '720P', aspectRatio: 'adaptive', duration: 6,
       outputFormat: 'mp4'
     });
+    await providers.createVideoTask({
+      providerId: 'video-3', prompt: 'full reference follows a 16:9 source',
+      urls: ['https://cdn.example.com/source.png'], referenceMediaTypes: ['image'],
+      videoMode: 'omni', resolution: '1080P-ESR & 60FPS', aspectRatio: 'adaptive', duration: 6,
+      outputFormat: 'mp4'
+    });
 
     const imageRequest = requests.find((entry) => entry.endpoint.endsWith('/generateImage'));
     assert.equal(imageRequest.body.model, 'openai/gpt-image-2/text-to-image');
@@ -194,6 +200,10 @@ function pngHeader(width, height) {
     assert.equal(seedance20I2vRequest.body.ratio, '9:16');
     assert.equal(seedance20I2vRequest.body.duration, -1);
     const audioOnlyRequest = requests.find((entry) => entry.body.model === 'bytedance/seedance-2.5/reference-to-video' && entry.body.reference_audios && entry.body.reference_audios.length > 0);
+    const fullReferenceRequest = requests.find((entry) => entry.body.prompt.includes('full reference follows a 16:9 source'));
+    assert.equal(fullReferenceRequest.body.model, 'bytedance/seedance-2.5/reference-to-video');
+    assert.equal(fullReferenceRequest.body.ratio, 'adaptive');
+    assert.equal(fullReferenceRequest.body.resolution, '1080p-esr & 60fps');
     assert.equal(audioOnlyRequest.body.reference_images.length, 0);
     assert.equal(audioOnlyRequest.body.reference_audios.length, 1);
 

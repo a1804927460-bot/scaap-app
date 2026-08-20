@@ -50,6 +50,23 @@ win:
       arch:
         - x64
   artifactName: "Messs-${version}-${arch}-Setup.${ext}"
+mac:
+  # Keep both Intel and Apple Silicon artifacts in the same latest-mac.yml so
+  # electron-updater can select the correct download for each Mac.
+  icon: build-resources/icon.png
+  category: public.app-category.graphics-design
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  artifactName: "Messs-${version}-${arch}.${ext}"
+  hardenedRuntime: true
+  gatekeeperAssess: false
 nsis:
   oneClick: false
   perMachine: true

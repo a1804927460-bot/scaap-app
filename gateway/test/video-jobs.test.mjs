@@ -403,6 +403,11 @@ test('gateway exposes async task routes while preserving the v0.0.5 synchronous 
   assert.match(server, /capabilities\.frameReferenceRatios[\s\S]*?invalid-aspect-ratio/);
   assert.match(
     server,
+    /const generalRatios = new Set\(configuredGeneralRatios\.map\(String\)\)[\s\S]*?videoMode === 'text' \? textRatios : generalRatios/,
+    'Omni and video-reference modes must use general ratios rather than the text-only matrix.'
+  );
+  assert.match(
+    server,
     /submittedReferenceCount > 0 && allowedRatios\.size === 1 && allowedRatios\.has\('adaptive'\)[\s\S]*?requestedRatio = 'adaptive'/
   );
   assert.doesNotMatch(server, /MiniMax H3 resolution must be/);

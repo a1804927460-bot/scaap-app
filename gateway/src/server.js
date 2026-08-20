@@ -61,7 +61,8 @@ import {
   touchToolUsage,
   settleUsage,
   tagUsageCanvas,
-  quoteUsageForUser
+  quoteUsageForUser,
+  CREDIT_PRICING_VERSION
 } from './usage.js';
 import {
   attachVideoTask,
@@ -87,7 +88,7 @@ const TOPAZ_IMAGE_TOOL_IDS = new Set([
   'topaz-image-restore',
   'topaz-image-lighting'
 ]);
-const TOPAZ_IMAGE_MAX_RETAIL_CREDITS = 422;
+const TOPAZ_IMAGE_MAX_RETAIL_CREDITS = 452;
 const allowedOrigins = new Set(String(process.env.ALLOWED_ORIGINS || '').split(',').map((v) => v.trim()).filter(Boolean));
 const secretPatterns = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,
@@ -632,9 +633,13 @@ function validateBody(body, kind) {
       || (allowedDurations ? !allowedDurations.has(requestedDuration) : requestedDuration < 4 || requestedDuration > 15)) {
       throw invalidOption('invalid-duration', 'The selected video model does not support this duration.');
     }
+    const configuredGeneralRatios = Array.isArray(capabilities.ratios) && capabilities.ratios.length
+      ? capabilities.ratios
+      : [...defaultVideoRatios];
+    const generalRatios = new Set(configuredGeneralRatios.map(String));
     const configuredTextRatios = Array.isArray(capabilities.textRatios) && capabilities.textRatios.length
       ? capabilities.textRatios
-      : capabilities.ratios;
+      : configuredGeneralRatios;
     const textRatios = Array.isArray(configuredTextRatios) && configuredTextRatios.length
       ? new Set(configuredTextRatios.map(String))
       : defaultVideoRatios;
@@ -643,12 +648,14 @@ function validateBody(body, kind) {
     }
     const referenceRatios = Array.isArray(capabilities.frameReferenceRatios) && capabilities.frameReferenceRatios.length
       ? new Set(capabilities.frameReferenceRatios.map(String))
-      : textRatios;
+      : generalRatios;
     const modeRatios = selectedVideoMode && Array.isArray(selectedVideoMode.ratios) && selectedVideoMode.ratios.length
       ? new Set(selectedVideoMode.ratios.map(String))
       : null;
     const frameMode = videoMode === 'first-frame' || videoMode === 'first-last-frame';
-    const allowedRatios = modeRatios || (frameMode ? referenceRatios : textRatios);
+    const allowedRatios = modeRatios || (frameMode
+      ? referenceRatios
+      : videoMode === 'text' ? textRatios : generalRatios);
     // Accept requests from older clients that preserved the source image's
     // explicit ratio. Adaptive-only reference modes follow that source ratio
     // upstream, so this is a compatibility normalization rather than a crop.
@@ -1512,9 +1519,11 @@ async function handle(request, response) {
       ? Math.max(0, Math.ceil(Number(quote.credits) || 0))
       : unitCredits * count;
     return send(response, 200, {
+      pricingVersion: CREDIT_PRICING_VERSION,
       kind: quote.kind,
       providerId: quote.providerId,
-      resolution: quote.resolution,
+      resolution: kind === 'image' ? (quote.imageResolution || quote.resolution) : quote.resolution,
+      ...(quote.quality ? { quality: quote.quality } : {}),
       duration: quote.duration,
       unitCredits,
       totalCredits,

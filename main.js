@@ -67,7 +67,12 @@ const { AiGatewayClient, assertValidGlbBuffer } = require('./lib/ai-gateway-clie
 const { normalizeGatewayCatalog, assertGatewayProvider } = require('./lib/gateway-catalog');
 const { assertSafeLocalFile, assertPromptHasNoSecrets, sanitizeAiRequest } = require('./lib/privacy-guard');
 const { activate: activateApp, getActivationStatus } = require('./lib/activation');
-const { conservativeMediaCreditQuote, quoteMediaCredits, publicCreditPricing } = require('./lib/credit-pricing');
+const {
+  CREDIT_PRICING_VERSION,
+  conservativeMediaCreditQuote,
+  quoteMediaCredits,
+  publicCreditPricing
+} = require('./lib/credit-pricing');
 const {
   imageFallbackProviderIds,
   isRetryableMediaError,
@@ -327,9 +332,9 @@ const BUTLER_IMAGE_TOOL_IDS = new Set([
 ]);
 const BUTLER_IMAGE_TOOL_CREDITS = Object.freeze({
   'seededit-v3': 18,
-  'kling-image-expand': 48,
-  cleanup: 48,
-  'generative-upscale': 69,
+  'kling-image-expand': 51,
+  cleanup: 51,
+  'generative-upscale': 73,
   'qwen-image-edit-plus': 16,
   'qwen-image-layered': 16,
   'super-upscale-v2': 16,
@@ -2315,7 +2320,11 @@ function canvasUsageEntryFromFile(file) {
   const parsedCredits = Number(rawCredits);
   const recorded = rawCredits !== null && rawCredits !== undefined && rawCredits !== ''
     && Number.isFinite(parsedCredits) && parsedCredits >= 0;
-  const estimatedCredits = recorded ? null : estimatedHistoricalCanvasCredits(file, operation, kind);
+  // Requote every identifiable media generation with the current retail
+  // table. This keeps a canvas total correct after a pricing-table update,
+  // while chargedCredits remains available for audit/debugging.
+  const currentCredits = estimatedHistoricalCanvasCredits(file, operation, kind);
+  const hasCurrentQuote = Number.isFinite(Number(currentCredits));
   const accountingRequestId = String(operation.accountingRequestId || '').trim();
   return {
     id: `file:${String(file.id || '').slice(0, 120)}`,
@@ -2326,9 +2335,18 @@ function canvasUsageEntryFromFile(file) {
     kind,
     providerId: String(operation.providerId || operation.modelId || '').slice(0, 100) || null,
     modelName: String(operation.modelName || operation.modelId || 'AI tool').slice(0, 160),
-    credits: recorded ? Math.max(0, parsedCredits)
-      : Number.isFinite(Number(estimatedCredits)) ? Math.max(0, Number(estimatedCredits)) : null,
-    estimated: !recorded && Number.isFinite(Number(estimatedCredits)),
+    resolution: String(operation.resolution || operation.size || '').slice(0, 40) || null,
+    size: String(operation.size || '').slice(0, 40) || null,
+    quality: String(operation.quality || '').slice(0, 20) || null,
+    duration: Number.isFinite(Number(operation.requestedDuration ?? operation.duration))
+      ? Number(operation.requestedDuration ?? operation.duration)
+      : null,
+    serviceTier: String(operation.serviceTier || '').slice(0, 20) || null,
+    credits: hasCurrentQuote ? Math.max(0, Number(currentCredits))
+      : recorded ? Math.max(0, parsedCredits) : null,
+    chargedCredits: recorded ? Math.max(0, parsedCredits) : null,
+    pricingVersion: hasCurrentQuote ? CREDIT_PRICING_VERSION : null,
+    estimated: false,
     createdAt: String(operation.createdAt || file.importedAt || new Date().toISOString()).slice(0, 40)
   };
 }
@@ -2352,21 +2370,61 @@ function normalizeCanvasUsageEntry(entry) {
     kind: ['image', 'video', '3d'].includes(entry.kind) ? entry.kind : 'image',
     providerId: String(entry.providerId || '').trim().slice(0, 100) || null,
     modelName: String(entry.modelName || entry.providerId || 'AI tool').slice(0, 160),
+    resolution: String(entry.resolution || '').slice(0, 40) || null,
+    size: String(entry.size || '').slice(0, 40) || null,
+    quality: String(entry.quality || '').slice(0, 20) || null,
+    duration: Number.isFinite(Number(entry.duration)) ? Number(entry.duration) : null,
+    serviceTier: String(entry.serviceTier || '').slice(0, 20) || null,
     credits,
-    estimated: credits !== null && entry.estimated === true,
+    chargedCredits: Number.isFinite(Number(entry.chargedCredits))
+      ? Math.max(0, Number(entry.chargedCredits)) : null,
+    pricingVersion: String(entry.pricingVersion || '').trim().slice(0, 32) || null,
+    estimated: entry.estimated === true,
     createdAt: String(entry.createdAt || new Date().toISOString()).slice(0, 40)
   };
 }
 
+function refreshCanvasUsageEntryPricing(entry) {
+  if (!entry || !['image', 'video'].includes(entry.kind) || !entry.providerId) return entry;
+  try {
+    const quote = quoteMediaCredits({
+      kind: entry.kind,
+      providerId: entry.providerId,
+      size: entry.size || entry.resolution,
+      resolution: entry.resolution || entry.size,
+      quality: entry.quality,
+      duration: entry.duration,
+      serviceTier: entry.serviceTier,
+      count: 1
+    });
+    const credits = entry.kind === 'image' ? quote.unitCredits : quote.totalCredits;
+    if (!Number.isFinite(Number(credits))) return entry;
+    return {
+      ...entry,
+      credits: Math.max(0, Number(credits)),
+      pricingVersion: CREDIT_PRICING_VERSION,
+      estimated: false
+    };
+  } catch (error) {
+    return entry;
+  }
+}
+
 function ensureCanvasUsageLedger() {
   const entries = Array.isArray(store.data.canvasUsageLedger) ? store.data.canvasUsageLedger : [];
-  const normalized = entries.map(normalizeCanvasUsageEntry).filter(Boolean);
+  const normalized = entries.map(normalizeCanvasUsageEntry).filter(Boolean).map(refreshCanvasUsageEntryPricing);
   const ids = new Set(normalized.map((entry) => entry.id));
   for (const file of store.data.files) {
     const entry = canvasUsageEntryFromFile(file);
-    if (!entry || ids.has(entry.id)) continue;
-    normalized.push(entry);
-    ids.add(entry.id);
+    if (!entry) continue;
+    const index = normalized.findIndex((candidate) => candidate.id === entry.id);
+    if (index === -1) {
+      normalized.push(entry);
+      ids.add(entry.id);
+    } else {
+      // File metadata is newer than a previously persisted ledger snapshot.
+      normalized[index] = entry;
+    }
   }
   store.data.canvasUsageLedger = normalized;
 }
@@ -2411,6 +2469,8 @@ async function canvasCreditUsage(canvasId) {
     const key = `request:${requestId}`;
     const local = detailsByKey.get(key) || {};
     const credits = Number(entry.credits);
+    const localHasCurrentQuote = local.pricingVersion === CREDIT_PRICING_VERSION
+      && Number.isFinite(Number(local.credits));
     detailsByKey.set(key, {
       ...local,
       id: local.id || `cloud:${requestId}`,
@@ -2420,7 +2480,13 @@ async function canvasCreditUsage(canvasId) {
       kind: ['image', 'video', '3d'].includes(entry.kind) ? entry.kind : (local.kind || 'image'),
       providerId: String(entry.providerId || local.providerId || '').slice(0, 100) || null,
       modelName: local.modelName || String(entry.modelName || entry.providerId || 'AI model').slice(0, 160),
-      credits: Number.isFinite(credits) ? Math.max(0, credits) : local.credits ?? null,
+      // A cloud row from an older gateway must not overwrite the desktop's
+      // current-table quote for the same request. New cloud rows remain the
+      // authoritative settled amount.
+      credits: localHasCurrentQuote
+        ? Math.max(0, Number(local.credits))
+        : Number.isFinite(credits) ? Math.max(0, credits) : local.credits ?? null,
+      pricingVersion: localHasCurrentQuote ? CREDIT_PRICING_VERSION : (local.pricingVersion || null),
       estimated: false,
       createdAt: String(entry.createdAt || local.createdAt || '').slice(0, 40)
     });
@@ -3895,6 +3961,12 @@ async function quoteMediaCreditsForAccount(request = {}) {
   if (!hasAuthenticatedGatewaySession() || !aiGateway || !aiGateway.isConfigured()) return localQuote;
   try {
     const remoteQuote = await aiGateway.quoteMediaCredits(request);
+    // A quote without a version is from a pre-versioned gateway deployment.
+    // Do not let it replace the bundled table: this is what previously let a
+    // stale Seedance 2.5 4K-ESR quote (151 points) reach the composer.
+    if (String(remoteQuote && remoteQuote.pricingVersion || '').trim() !== CREDIT_PRICING_VERSION) {
+      return localQuote;
+    }
     // A rolling gateway deployment can briefly expose an older price table.
     // Never show a quote below the bundled table: the server remains the
     // authority for reservation, while this upper bound prevents the desktop

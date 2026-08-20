@@ -86,6 +86,16 @@ function renderChildFolderSection() {
   const subList = document.getElementById('subfolder-list');
   subList.innerHTML = '';
 
+  if (activeDateFolderMatchesContext()) {
+    const parent = currentFolderContextId()
+      ? AppState.folders.find((folder) => folder.id === currentFolderContextId())
+      : null;
+    breadcrumb.hidden = false;
+    breadcrumbLabel.textContent = `${folderText('Back to', '\u8fd4\u56de')} ${parent ? parent.name : folderText('Library', '\u8d44\u6599\u5e93')}`;
+    subList.hidden = true;
+    return;
+  }
+
   const context = activeFolderNavContext();
   if (!context) {
     breadcrumb.hidden = true;
@@ -141,6 +151,55 @@ function activeFolderNavContext() {
 function currentFolderContextId() {
   if (!AppState.activeFolderId || AppState.activeFolderId === 'default') return null;
   return AppState.activeFolderId;
+}
+
+function activeDateFolderMatchesContext() {
+  return !!AppState.activeDateFolderKey &&
+    AppState.activeDateFolderBaseId === currentFolderContextId();
+}
+
+function activeDateFolderLabel() {
+  return activeDateFolderMatchesContext()
+    ? formatFileDayLabel(AppState.activeDateFolderKey)
+    : '';
+}
+
+function filterFilesByActiveDateFolder(files) {
+  if (!activeDateFolderMatchesContext()) return files;
+  const contextId = currentFolderContextId();
+  return files.filter((file) => {
+    const inContext = contextId === null ? !file.folderId : file.folderId === contextId;
+    return inContext && fileDayKey(file.importedAt) === AppState.activeDateFolderKey;
+  });
+}
+
+function selectDateFolder(dayKey) {
+  if (!dayKey) return;
+  AppState.activeDateFolderKey = dayKey;
+  AppState.activeDateFolderBaseId = currentFolderContextId();
+  AppState.folderGridVisible = true;
+  AppState.activeFileId = null;
+  hideFileDetailPanel();
+  if (typeof folderGridSelected !== 'undefined') folderGridSelected.clear();
+  if (typeof sidebarSelected !== 'undefined') sidebarSelected.clear();
+  renderFolderList();
+  renderFileList(currentFileListScope());
+  renderFolderGridIfActive();
+}
+
+function exitDateFolder() {
+  if (!AppState.activeDateFolderKey) return false;
+  AppState.activeDateFolderKey = null;
+  AppState.activeDateFolderBaseId = null;
+  AppState.folderGridVisible = false;
+  AppState.activeFileId = null;
+  hideFileDetailPanel();
+  if (typeof folderGridSelected !== 'undefined') folderGridSelected.clear();
+  if (typeof sidebarSelected !== 'undefined') sidebarSelected.clear();
+  renderFolderList();
+  renderFileList(currentFileListScope());
+  clearPreview();
+  return true;
 }
 
 const CLICK_WINDOW_MS = 450;
@@ -414,6 +473,8 @@ async function mergeFolders(ids) {
 }
 
 function selectFolder(folderId) {
+  AppState.activeDateFolderKey = null;
+  AppState.activeDateFolderBaseId = null;
   AppState.activeFolderId = folderId || 'default';
   AppState.folderGridVisible = true;
   AppState.activeFileId = null;
@@ -427,11 +488,15 @@ function selectFolder(folderId) {
 
 function currentFileListScope() {
   const contextId = currentFolderContextId();
-  if (contextId === null) return AppState.files.filter((f) => !f.folderId);
-  return AppState.files.filter((f) => f.folderId === contextId);
+  const files = contextId === null
+    ? AppState.files.filter((f) => !f.folderId)
+    : AppState.files.filter((f) => f.folderId === contextId);
+  return filterFilesByActiveDateFolder(files);
 }
 
 function exitToDefaultFolder() {
+  AppState.activeDateFolderKey = null;
+  AppState.activeDateFolderBaseId = null;
   const wasBrowsing = AppState.folderGridVisible;
   AppState.activeFolderId = 'default';
   AppState.folderGridVisible = false;
@@ -445,6 +510,7 @@ function exitToDefaultFolder() {
 }
 
 function navigateFolderUp() {
+  if (exitDateFolder()) return;
   const active = AppState.folders.find((f) => f.id === AppState.activeFolderId);
   if (active && active.parentId) {
     selectFolder(active.parentId);

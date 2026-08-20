@@ -1,6 +1,6 @@
 // 302 bills one PTC as one USD. The settlement rate is deliberately rounded
-// above the 2026-08-17 spot rate (6.748651) so FX movement cannot undercharge.
-export const USD_TO_CNY = 6.8;
+// above the observed settlement rate so FX movement cannot undercharge.
+export const USD_TO_CNY = 7.3;
 export const TOPAZ_PROVIDER_PTC_PER_POINT = USD_TO_CNY;
 export const APP_CREDITS_PER_CNY = 10;
 export const PROFIT_PER_REQUEST_CNY = 1.4;
@@ -18,11 +18,11 @@ export const TOPAZ_DYNAMIC_PROVIDERS = Object.freeze(new Set([
 ]));
 
 export const BUTLER_FIXED_RETAIL_CREDITS = Object.freeze({
-  'background-remove': 48,      // 0.50 PTC
+  'background-remove': 51,      // 0.50 PTC + CNY 1.4
   'seededit-v3': 18,            // 0.05 PTC + CNY 1.4
-  'kling-image-expand': 48,     // Clipdrop Uncrop, 0.50 PTC + CNY 1.4
-  cleanup: 48,                  // 0.50 PTC
-  'generative-upscale': 69,     // 0.80 PTC + CNY 1.4
+  'kling-image-expand': 51,     // Clipdrop Uncrop, 0.50 PTC + CNY 1.4
+  cleanup: 51,                  // 0.50 PTC + CNY 1.4
+  'generative-upscale': 73,     // 0.80 PTC + CNY 1.4
   // Retain old IDs for in-flight jobs, but never omit the retail margin.
   'qwen-image-edit-plus': 16,
   'qwen-image-layered': 16,
@@ -53,7 +53,8 @@ export function quoteTopazRetailCredits(providerCost) {
     });
   }
   return Math.ceil(
-    (normalizedCost * TOPAZ_PROVIDER_PTC_PER_POINT + PROFIT_PER_REQUEST_CNY) * APP_CREDITS_PER_CNY
+    normalizedCost * TOPAZ_RETAIL_CREDIT_MULTIPLIER
+      + PROFIT_PER_REQUEST_CNY * APP_CREDITS_PER_CNY
   );
 }
 

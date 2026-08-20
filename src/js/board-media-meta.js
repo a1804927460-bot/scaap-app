@@ -1445,7 +1445,7 @@ function openBoardButlerVideoUpscalePanel(anchor, file, item) {
     const duration = Math.max(1, Number(file.sourceDuration) || 5);
     const pixelFactor = resolution === dimensions[0] ? 0.25 : (resolution === dimensions[1] ? 0.45 : 1);
     const providerEstimate = Math.max(1, Math.ceil(duration * 0.75 * pixelFactor * frameRate / 24));
-    const credits = Math.ceil((providerEstimate * 6.8 + 1.4) * 10);
+    const credits = providerEstimate * 73 + 14;
     cost.textContent = t(
       `About ${credits} pts · final charge follows the provider quote`,
       `约 ${credits} 积分 · 最终按服务商实际费用结算`,

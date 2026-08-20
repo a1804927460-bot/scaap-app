@@ -56,6 +56,26 @@ assert.doesNotMatch(
 );
 assert.match(
   boardSource,
+  /function scheduleBoardInteractionPrefetch\(view\)[\s\S]*?viewportRects\([\s\S]*?queryLimited\([\s\S]*?BOARD_DOM_ITEM_LIMIT \+ 1[\s\S]*?queueBoardMounts\(targetIds, regions\.visible, true\)/,
+  'Zoom and pan must pre-mount the target viewport instead of waiting for the interaction to settle.'
+);
+assert.match(
+  boardSource,
+  /function setBoardZoomTarget[\s\S]*?scheduleBoardInteractionPrefetch\(Board\.zoomTarget\)[\s\S]*?function setBoardPanTarget[\s\S]*?scheduleBoardInteractionPrefetch\(target\)/,
+  'Both wheel zoom and wheel pan must warm their destination media.'
+);
+assert.match(
+  boardSource,
+  /BOARD_INTERACTION_MEDIA_MOUNTS_PER_FRAME = 6[\s\S]*?BOARD_MOUNT_FRAME_BUDGET_MS = 7[\s\S]*?function processBoardMountQueue\(\)[\s\S]*?interactionActive[\s\S]*?performance\.now\(\) - frameStartedAt >= BOARD_MOUNT_FRAME_BUDGET_MS/,
+  'Visible media mounting must catch up faster during interaction while retaining a per-frame work budget.'
+);
+assert.match(
+  boardSource,
+  /function queueBoardMounts\(ids, visibleRect, prioritize = false\)[\s\S]*?if \(prioritize && ordered\.length\)[\s\S]*?ordered\.forEach[\s\S]*?pending\.forEach/,
+  'Target-visible mounts must run ahead of stale overscan work.'
+);
+assert.match(
+  boardSource,
   /AppState\.boardItems = AppState\.allBoardItems\.filter[\s\S]*?renderBoard\(\);[\s\S]*?upsertBoardItems\(updates\)/,
   'Generated media must render at the placeholder position before persistence completes.'
 );
@@ -699,6 +719,21 @@ assert.match(
   /function isBoardElementPaintReady[\s\S]*?image\.naturalWidth > 0[\s\S]*?function syncBoardOverviewFallback[\s\S]*?overviewHideFrame = requestAnimationFrame[\s\S]*?overviewHideFrame = requestAnimationFrame[\s\S]*?visibleBoardDomReady\(\)/,
   'The painted overview must remain through two stable frames and only yield to successfully decoded DOM media.'
 );
+assert.match(
+  boardSource,
+  /function unpaintedVisibleBoardIds\(\)[\s\S]*?pending\.add\(id\)[\s\S]*?function syncBoardOverviewFallback[\s\S]*?drawBoardOverview\(unpaintedIds, rect\)/,
+  'The fallback must fill only actual holes and never sit below already sharp or transparent media.'
+);
+assert.match(
+  boardSource,
+  /const visibleCandidateCount = Board\.spatialIndex\.count\(regions\.visible, densityProbeLimit\)/,
+  'Offscreen overscan must not force a manageable visible canvas into low-resolution overview mode.'
+);
+assert.match(
+  boardSource,
+  /if \(!force && mountHash === Board\.lastMountHash[\s\S]*?queueBoardMounts\(mountIds, regions\.visible\)[\s\S]*?syncBoardOverviewFallback/,
+  'An interrupted or failed mount burst must retry even when the viewport hash is unchanged.'
+);
 const renderBoardSource = boardSource.slice(
   boardSource.indexOf('function renderBoard()'),
   boardSource.indexOf('function syncBoardSelectionClasses')
@@ -1019,7 +1054,10 @@ const ledgerSource = mainSource.slice(
 );
 const ledgerSandbox = {
   store: { data: { files: [], canvasUsageLedger: [] } },
-  quoteMediaCredits: () => ({ unitCredits: 24, totalCredits: 24 }),
+  quoteMediaCredits: (request) => request && request.kind === 'video'
+    ? { unitCredits: 166.294, totalCredits: 1012 }
+    : { unitCredits: 24, totalCredits: 24 },
+  CREDIT_PRICING_VERSION: '202608200002',
   BUTLER_IMAGE_TOOL_CREDITS: {}
 };
 vm.runInNewContext(
@@ -1052,6 +1090,23 @@ ledgerSandbox.canvasLedgerApi.ensureCanvasUsageLedger();
 assert.equal(ledgerSandbox.store.data.canvasUsageLedger.length, 1, 'Deleting media and reloading after an update must preserve canvas usage.');
 assert.equal(ledgerSandbox.store.data.canvasUsageLedger[0].credits, 24);
 assert.equal(ledgerSandbox.store.data.canvasUsageLedger[0].canvasId, 'canvas-history');
+const staleVideo = {
+  id: 'generated-video-1',
+  name: 'Seedance.mp4',
+  canvasId: 'canvas-history',
+  importedAt: '2026-08-01T00:00:00.000Z',
+  aiGeneration: {
+    kind: 'video', providerId: 'video-3', resolution: '4K-ESR', duration: 6,
+    credits: 151, accountingRequestId: '00000000-0000-4000-8000-000000000100',
+    createdAt: '2026-08-01T00:00:00.000Z'
+  }
+};
+ledgerSandbox.canvasLedgerApi.recordCanvasUsageFile(staleVideo);
+assert.equal(
+  ledgerSandbox.store.data.canvasUsageLedger.find((entry) => entry.sourceFileId === staleVideo.id).credits,
+  1012,
+  'Canvas history must refresh a stale Seedance charge to the current pricing table.'
+);
 assert.match(
   workspaceSource,
   /async function loadCanvasAgentHistory\(\)[\s\S]*?getCanvasAgentHistory[\s\S]*?mergeCanvasAgentSessions\(durable, local, CanvasWorkspace\.agentSessions\)/,

@@ -13,6 +13,7 @@ const boardStyles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles', 
 const previewSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'preview-canvas.js'), 'utf8');
 const mediaMetaSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'board-media-meta.js'), 'utf8');
 const mainSource = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+const gatewayServerSource = fs.readFileSync(path.join(__dirname, '..', 'gateway', 'src', 'server.js'), 'utf8');
 const localFileResponseSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'local-file-response.js'), 'utf8');
 
 assert.match(
@@ -113,6 +114,11 @@ assert.match(
   mainSource,
   /supportedRatios\.size === 1 && supportedRatios\.has\('adaptive'\)[\s\S]*?aspectRatio = 'adaptive'/,
   'Desktop validation must accept an explicit source ratio for adaptive-only reference modes.'
+);
+assert.match(
+  gatewayServerSource,
+  /const generalRatios = new Set\(configuredGeneralRatios\.map\(String\)\)[\s\S]*?videoMode === 'text' \? textRatios : generalRatios/,
+  'Gateway validation must accept adaptive ratios for Seedance full-reference modes.'
 );
 assert.match(
   boardSource,

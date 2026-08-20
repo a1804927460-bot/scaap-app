@@ -84,15 +84,54 @@ function selectAllSidebarFiles() {
   renderFileList(currentFileListScope());
 }
 
+function buildDateFolderLabel(dayKey, count, active = false) {
+  const label = document.createElement('li');
+  label.className = 'file-group-label file-date-folder' + (active ? ' is-active' : '');
+  label.dataset.dateFolderKey = dayKey;
+  label.setAttribute('role', active ? 'heading' : 'button');
+  if (!active) {
+    label.tabIndex = 0;
+    label.title = t('Open date folder', '\u6253\u5f00\u65e5\u671f\u6587\u4ef6\u5939');
+    label.setAttribute('aria-label', `${t('Open date folder', '\u6253\u5f00\u65e5\u671f\u6587\u4ef6\u5939')}: ${formatFileDayLabel(dayKey)}`);
+  }
+
+  const icon = document.createElement('span');
+  icon.className = 'file-date-folder-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3.2l2 2H18a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5z"/></svg>';
+  const name = document.createElement('span');
+  name.className = 'file-date-folder-name';
+  name.textContent = formatFileDayLabel(dayKey);
+  const countLabel = document.createElement('small');
+  countLabel.className = 'file-date-folder-count';
+  countLabel.textContent = String(count);
+  label.append(icon, name, countLabel);
+
+  if (!active) {
+    const open = () => selectDateFolder(dayKey);
+    label.addEventListener('click', open);
+    label.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        open();
+      }
+    });
+  }
+  return label;
+}
+
 function renderFileList(files) {
   const list = document.getElementById('file-list');
   const empty = document.getElementById('file-list-empty');
   list.innerHTML = '';
   const nested = currentFolderContextId() !== null;
+  const activeDate = activeDateFolderMatchesContext();
   list.classList.toggle('is-folder-contents', nested);
+  list.classList.toggle('is-date-folder-contents', activeDate);
   empty.classList.toggle('is-folder-contents', nested);
 
   if (!files.length) {
+    if (activeDate) list.appendChild(buildDateFolderLabel(AppState.activeDateFolderKey, 0, true));
     empty.hidden = false;
     return;
   }
@@ -113,11 +152,8 @@ function renderFileList(files) {
   }
 
   const groups = groupFilesByDay(files);
-  for (const [day, items] of groups) {
-    const label = document.createElement('li');
-    label.className = 'file-group-label';
-    label.textContent = day;
-    list.appendChild(label);
+  for (const [dayKey, items] of groups) {
+    list.appendChild(buildDateFolderLabel(dayKey, items.length, activeDate));
     for (const f of items) list.appendChild(buildFileItem(f));
   }
 }
@@ -245,7 +281,7 @@ function initSidebar(initial = {}) {
         return;
       }
       const matches = await window.messsAPI.searchFiles(query);
-      renderFileList(matches);
+      renderFileList(filterFilesByActiveDateFolder(matches));
       await refreshAchievements();
     }, 180);
   });

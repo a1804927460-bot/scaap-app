@@ -6,6 +6,9 @@ const BOARD_ZOOM_MIN = 0.03;
 const BOARD_ZOOM_MAX = 32;
 const BOARD_MOUNTS_PER_FRAME = 6;
 const BOARD_MEDIA_MOUNTS_PER_FRAME = 2;
+const BOARD_INTERACTION_MOUNTS_PER_FRAME = 10;
+const BOARD_INTERACTION_MEDIA_MOUNTS_PER_FRAME = 6;
+const BOARD_MOUNT_FRAME_BUDGET_MS = 7;
 const BOARD_DOM_ITEM_LIMIT = 180;
 const BOARD_DOM_ITEM_EXIT_LIMIT = 135;
 const BOARD_DOM_RETAIN_LIMIT = BOARD_DOM_ITEM_LIMIT;
@@ -87,9 +90,13 @@ const Board = {
   zoomFrame: 0,
   zoomTarget: null,
   zoomLastTime: 0,
+  interactionPrefetchFrame: 0,
+  interactionPrefetchView: null,
+  interactionVisibleIds: new Set(),
   wheelSettleTimer: 0,
   isWheelZooming: false,
   reconcileFrame: 0,
+  reconcilePending: false,
   mountFrame: 0,
   qualityTimer: 0,
   qualityIdle: 0,
@@ -293,6 +300,10 @@ function cacheBoardPreview(fileId, result) {
 
 function boardTransform() {
   return `translate3d(${Board.panX}px, ${Board.panY}px, 0) scale(${Board.zoom})`;
+}
+
+function isBoardViewportInteracting() {
+  return !!(Board.isWheelZooming || Board.isPanning || Board.zoomFrame || Board.zoomTarget);
 }
 
 function boardZoomBucket() {
@@ -708,9 +719,51 @@ function finishBoardWheelInteraction() {
   Board.wheelSettleTimer = 0;
   if (!Board.isWheelZooming) return;
   Board.isWheelZooming = false;
+  scheduleBoardInteractionPrefetch(Board.zoomTarget || Board);
   // The transform is already at the latest target. applyBoardTransform runs
   // the deferred overlay, visibility, quality and persistence work once.
   applyBoardTransform();
+}
+
+function scheduleBoardInteractionPrefetch(view) {
+  if (!view || !Number.isFinite(view.zoom) || view.zoom <= 0) return;
+  Board.interactionPrefetchView = {
+    panX: Number(view.panX) || 0,
+    panY: Number(view.panY) || 0,
+    zoom: view.zoom
+  };
+  if (Board.interactionPrefetchFrame) return;
+  Board.interactionPrefetchFrame = requestAnimationFrame(() => {
+    Board.interactionPrefetchFrame = 0;
+    const targetView = Board.interactionPrefetchView;
+    Board.interactionPrefetchView = null;
+    const viewport = document.getElementById('board-viewport');
+    if (!targetView || !viewport || !viewport.clientWidth || !viewport.clientHeight) return;
+    const regions = BoardEngine.viewportRects(
+      targetView,
+      { w: viewport.clientWidth, h: viewport.clientHeight },
+      { mountMarginRatio: 0, keepMarginRatio: 0 }
+    );
+    const targetIds = Board.spatialIndex.queryLimited(
+      regions.visible,
+      BOARD_DOM_ITEM_LIMIT + 1
+    );
+    // At extreme overview zooms the dedicated overview renderer is cheaper
+    // and clearer than creating hundreds of DOM media elements. Normal zoom
+    // levels pre-mount every target-visible item before it enters the screen.
+    if (targetIds.size > BOARD_DOM_ITEM_LIMIT) {
+      Board.interactionVisibleIds.clear();
+      return;
+    }
+    Board.interactionVisibleIds = targetIds;
+    for (const id of targetIds) {
+      const element = Board.mounted.get(id);
+      if (!element) continue;
+      element.style.visibility = '';
+      element.style.pointerEvents = '';
+    }
+    queueBoardMounts(targetIds, regions.visible, true);
+  });
 }
 
 function beginBoardWheelInteraction() {
@@ -744,6 +797,7 @@ function setBoardZoomTarget(screenPoint, factor) {
     factor,
     { min: BOARD_ZOOM_MIN, max: BOARD_ZOOM_MAX }
   );
+  scheduleBoardInteractionPrefetch(Board.zoomTarget);
   if (!Board.isWheelZooming) scheduleBoardFullImagePrewarm(Board.zoomTarget.zoom);
   if (!Board.zoomFrame) {
     Board.zoomLastTime = 0;
@@ -786,6 +840,7 @@ function setBoardPanTarget(deltaX, deltaY) {
   target.panX -= deltaX * BOARD_WHEEL_PAN_GAIN;
   target.panY -= deltaY * BOARD_WHEEL_PAN_GAIN;
   Board.zoomTarget = target;
+  scheduleBoardInteractionPrefetch(target);
   if (!Board.zoomFrame) {
     Board.zoomLastTime = 0;
     Board.zoomFrame = requestAnimationFrame(stepBoardZoom);
@@ -810,6 +865,7 @@ function stepBoardZoom(now) {
     Object.assign(Board, target);
     Board.zoomTarget = null;
     Board.zoomLastTime = 0;
+    scheduleBoardReconcile();
   } else {
     Board.zoomFrame = requestAnimationFrame(stepBoardZoom);
   }
@@ -1406,9 +1462,20 @@ function visibleBoardDomReady() {
   return true;
 }
 
+function unpaintedVisibleBoardIds() {
+  const pending = new Set();
+  for (const id of Board.visibleIds) {
+    if (!isMountableBoardItem(id)) continue;
+    if (!isBoardElementPaintReady(Board.mounted.get(id))) pending.add(id);
+  }
+  return pending;
+}
+
 function syncBoardOverviewFallback(viewportRect) {
-  if (!Board.overviewCanvas || Board.lastZoomBucket === 'overview') return;
-  if (visibleBoardDomReady()) {
+  if (Board.lastZoomBucket === 'overview') return;
+  const unpaintedIds = unpaintedVisibleBoardIds();
+  if (!unpaintedIds.size) {
+    if (!Board.overviewCanvas) return;
     if (Board.overviewHideFrame) return;
     // Keep the painted fallback for two stable frames after the last media
     // load. This covers the compositor gap during zoom/virtual remounts.
@@ -1431,7 +1498,10 @@ function syncBoardOverviewFallback(viewportRect) {
   }
   const viewport = document.getElementById('board-viewport');
   const rect = viewportRect || (viewport && viewport.getBoundingClientRect());
-  if (rect && rect.width && rect.height) drawBoardOverview(Board.visibleIds, rect);
+  // The fallback sits below the media DOM. Drawing only missing/unpainted
+  // items avoids tinting transparent images or softening media that is
+  // already rendered at its real thumbnail/full resolution.
+  if (rect && rect.width && rect.height) drawBoardOverview(unpaintedIds, rect);
 }
 
 function observeBoardElementPaintReady(element) {
@@ -1879,16 +1949,27 @@ function processBoardMountQueue() {
   const canvas = document.getElementById('board-canvas');
   let mountedThisFrame = 0;
   let mountedMediaThisFrame = 0;
+  const frameStartedAt = performance.now();
+  const interactionActive = isBoardViewportInteracting() || Board.interactionVisibleIds.size > 0;
+  const mountLimit = interactionActive
+    ? BOARD_INTERACTION_MOUNTS_PER_FRAME
+    : BOARD_MOUNTS_PER_FRAME;
+  const mediaMountLimit = interactionActive
+    ? BOARD_INTERACTION_MEDIA_MOUNTS_PER_FRAME
+    : BOARD_MEDIA_MOUNTS_PER_FRAME;
 
   for (const id of [...Board.mountQueue]) {
-    if (mountedThisFrame >= BOARD_MOUNTS_PER_FRAME) break;
+    if (
+      mountedThisFrame >= mountLimit ||
+      (mountedThisFrame > 0 && performance.now() - frameStartedAt >= BOARD_MOUNT_FRAME_BUDGET_MS)
+    ) break;
     const item = Board.itemsById.get(id);
     if (!item) {
       Board.mountQueue.delete(id);
       continue;
     }
     const isMedia = isBoardMediaItem(item);
-    if (isMedia && mountedMediaThisFrame >= BOARD_MEDIA_MOUNTS_PER_FRAME) continue;
+    if (isMedia && mountedMediaThisFrame >= mediaMountLimit) continue;
     Board.mountQueue.delete(id);
     if (Board.mounted.has(id)) continue;
 
@@ -1925,6 +2006,9 @@ function processBoardMountQueue() {
   if (Board.mountQueue.size) {
     Board.mountFrame = requestAnimationFrame(processBoardMountQueue);
   } else {
+    if (!Board.isWheelZooming && !Board.isPanning && !Board.zoomFrame && !Board.zoomTarget) {
+      Board.interactionVisibleIds.clear();
+    }
     // A mount burst can span several frames. Prewarming and quality selection
     // once, after the queue drains, avoids repeated image decode/layout work
     // while the user is still scrolling.
@@ -1934,14 +2018,21 @@ function processBoardMountQueue() {
   syncBoardOverviewFallback();
 }
 
-function queueBoardMounts(ids, visibleRect) {
+function queueBoardMounts(ids, visibleRect, prioritize = false) {
   const ordered = BoardEngine.prioritizeIdsByViewport(
     [...ids].filter((id) => !Board.mounted.has(id)),
     Board.spatialIndex,
     visibleRect,
     BOARD_DOM_ITEM_LIMIT
   );
-  ordered.forEach((id) => Board.mountQueue.add(id));
+  if (prioritize && ordered.length) {
+    const pending = [...Board.mountQueue];
+    Board.mountQueue.clear();
+    ordered.forEach((id) => Board.mountQueue.add(id));
+    pending.forEach((id) => Board.mountQueue.add(id));
+  } else {
+    ordered.forEach((id) => Board.mountQueue.add(id));
+  }
   if (Board.mountQueue.size && !Board.mountFrame) {
     Board.mountFrame = requestAnimationFrame(processBoardMountQueue);
   }
@@ -1962,9 +2053,11 @@ function reconcileBoardViewport(force = false) {
   const densityProbeLimit = Board.densityOverview
     ? BOARD_DOM_ITEM_EXIT_LIMIT + 1
     : BOARD_DOM_ITEM_LIMIT + 1;
-  const mountCandidateCount = Board.spatialIndex.count(regions.mount, densityProbeLimit);
+  // Overscan exists only to make the next pan cheap; it must not force the
+  // currently visible, DOM-manageable media into a blurry overview mode.
+  const visibleCandidateCount = Board.spatialIndex.count(regions.visible, densityProbeLimit);
   Board.densityOverview = BoardEngine.isOverDomBudget(
-    mountCandidateCount,
+    visibleCandidateCount,
     Board.densityOverview,
     { enter: BOARD_DOM_ITEM_LIMIT, exit: BOARD_DOM_ITEM_EXIT_LIMIT }
   );
@@ -2016,6 +2109,9 @@ function reconcileBoardViewport(force = false) {
   const mountHash = BoardEngine.hashSet(mountIds);
   const keepHash = BoardEngine.hashSet(retainedIds);
   if (!force && mountHash === Board.lastMountHash && keepHash === Board.lastKeepHash) {
+    // A failed image creation or an interrupted mount burst must self-heal
+    // even when the viewport hashes did not change.
+    queueBoardMounts(mountIds, regions.visible);
     syncBoardOverviewFallback(rect);
     return;
   }
@@ -2040,7 +2136,12 @@ function reconcileBoardViewport(force = false) {
 }
 
 function scheduleBoardReconcile() {
+  if (isBoardViewportInteracting()) {
+    Board.reconcilePending = true;
+    return;
+  }
   if (Board.reconcileFrame) return;
+  Board.reconcilePending = false;
   Board.reconcileFrame = requestAnimationFrame(() => {
     Board.reconcileFrame = 0;
     reconcileBoardViewport();
@@ -2548,6 +2649,7 @@ function initBoardCanvas() {
       Board.panX = Board.panStart.panX + (point.clientX - Board.panStart.x);
       Board.panY = Board.panStart.panY + (point.clientY - Board.panStart.y);
       markBoardInteraction();
+      scheduleBoardInteractionPrefetch(Board);
       applyBoardTransform();
     });
     viewport.classList.add('is-panning');

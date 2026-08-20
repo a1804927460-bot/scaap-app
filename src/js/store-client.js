@@ -14,6 +14,8 @@ const AppState = {
   achievements: [],
   activeFileId: null,
   activeFolderId: 'default',
+  activeDateFolderKey: null,
+  activeDateFolderBaseId: null,
   folderGridVisible: false,
   viewMode: 'grid',
   gridThumbSize: 140,
@@ -155,11 +157,31 @@ function groupFilesByDay(files) {
   const groups = new Map();
   const sorted = [...files].sort((a, b) => new Date(b.importedAt) - new Date(a.importedAt));
   for (const f of sorted) {
-    const day = new Date(f.importedAt).toLocaleDateString(appLocale(), { year: 'numeric', month: 'long', day: 'numeric' });
+    const day = fileDayKey(f.importedAt);
     if (!groups.has(day)) groups.set(day, []);
     groups.get(day).push(f);
   }
   return groups;
+}
+
+function fileDayKey(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return 'unknown';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatFileDayLabel(dayKey) {
+  if (dayKey === 'unknown') return t('Unknown date', '\u672a\u77e5\u65e5\u671f');
+  const date = new Date(`${dayKey}T12:00:00`);
+  if (!Number.isFinite(date.getTime())) return dayKey;
+  return date.toLocaleDateString(appLocale(), {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
 }
 
 function isImageExt(ext) {

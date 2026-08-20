@@ -159,3 +159,103 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Uploading the verified updater artifacts failed.' }
           & gh release edit $env:MESSS_RELEASE_TAG --repo $repo --draft=false --latest
           if ($LASTEXITCODE -ne 0) { throw 'Publishing the verified draft release failed.' }
+
+  macos-release:
+    # Windows remains the release gate. macOS then adds both architectures to
+    # the same public release so electron-updater can consume latest-mac.yml.
+    needs: windows-release
+    runs-on: macos-13
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+      MESSS_SUPABASE_URL: https://trmbhcniijedpmohkbzx.supabase.co
+      MESSS_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+      MESSS_AI_GATEWAY_URL: ${{ vars.AI_GATEWAY_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install desktop dependencies
+        run: npm ci
+
+      - name: Set release version and runtime config
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version='${{ inputs.version }}'
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid semver: $version" >&2
+            exit 1
+          fi
+          echo "MESSS_RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "MESSS_RELEASE_TAG=v$version" >> "$GITHUB_ENV"
+          npm version "$version" --no-git-tag-version --allow-same-version
+          node <<'NODE'
+          const fs = require('node:fs');
+          const config = {
+            supabaseUrl: process.env.MESSS_SUPABASE_URL,
+            supabasePublishableKey: process.env.MESSS_SUPABASE_PUBLISHABLE_KEY,
+            aiGatewayUrl: process.env.MESSS_AI_GATEWAY_URL,
+            githubOwner: 'a1804927460-bot',
+            githubRepo: 'messs-releases'
+          };
+          fs.writeFileSync('config/runtime.json', `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+          NODE
+
+      - name: Validate macOS release configuration
+        shell: bash
+        env:
+          SIGNING_CERT_PRESENT: ${{ secrets.CSC_LINK != '' }}
+          SIGNING_PASSWORD_PRESENT: ${{ secrets.CSC_KEY_PASSWORD != '' }}
+        run: |
+          node - <<'NODE'
+          const config = require('./config/runtime.json');
+          if (!config.supabasePublishableKey) throw new Error('Repository variable SUPABASE_PUBLISHABLE_KEY is missing.');
+          if (!/^https:\/\//.test(config.aiGatewayUrl || '')) throw new Error('Repository variable AI_GATEWAY_URL must be HTTPS.');
+          if (config.githubOwner !== 'a1804927460-bot' || config.githubRepo !== 'messs-releases') throw new Error('Public updater repository is misconfigured.');
+          NODE
+          if [ -z "$GH_TOKEN" ]; then echo 'RELEASES_TOKEN is missing.' >&2; exit 1; fi
+          if [ "$SIGNING_CERT_PRESENT" != "$SIGNING_PASSWORD_PRESENT" ]; then
+            echo 'CSC_LINK and CSC_KEY_PASSWORD must be configured together.' >&2
+            exit 1
+          fi
+          if [ "$SIGNING_CERT_PRESENT" != 'true' ]; then
+            echo 'Publishing an unsigned macOS internal build because no signing certificate is configured.' >&2
+          fi
+
+      - name: Test
+        run: npm test
+
+      - name: Build macOS updater artifacts
+        run: npm run release:mac
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Verify macOS updater artifacts
+        shell: bash
+        run: |
+          test -f release/latest-mac.yml || { echo 'latest-mac.yml was not generated.' >&2; exit 1; }
+          test "$(find release -maxdepth 1 -name 'Messs-*-x64.dmg' | wc -l)" -ge 1 || { echo 'Intel DMG was not generated.' >&2; exit 1; }
+          test "$(find release -maxdepth 1 -name 'Messs-*-arm64.dmg' | wc -l)" -ge 1 || { echo 'Apple Silicon DMG was not generated.' >&2; exit 1; }
+          test "$(find release -maxdepth 1 -name 'Messs-*-x64.zip' | wc -l)" -ge 1 || { echo 'Intel ZIP was not generated.' >&2; exit 1; }
+          test "$(find release -maxdepth 1 -name 'Messs-*-arm64.zip' | wc -l)" -ge 1 || { echo 'Apple Silicon ZIP was not generated.' >&2; exit 1; }
+          grep -Eq "^version: $MESSS_RELEASE_VERSION$" release/latest-mac.yml || { echo 'latest-mac.yml has the wrong version.' >&2; exit 1; }
+
+      - name: Publish macOS updater artifacts
+        shell: bash
+        run: |
+          shopt -s nullglob
+          assets=(release/latest-mac.yml release/*.dmg release/*.zip)
+          if [ "${#assets[@]}" -lt 5 ]; then echo 'macOS release asset set is incomplete.' >&2; exit 1; fi
+          gh release upload "$MESSS_RELEASE_TAG" "${assets[@]}" --repo a1804927460-bot/messs-releases --clobber

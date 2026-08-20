@@ -10,7 +10,10 @@
   --sidebar-w: 272px;
   --stats-w: 320px;
   --preview-h: 340px;
-  --agent-w: 360px;
+  /* The agent panel follows the reference layout on wide screens while
+     retaining a usable minimum on compact windows. Inline values written by
+     panel-resize.js still take precedence after a user drags the handle. */
+  --agent-w: clamp(360px, 30.5vw, 780px);
   position: absolute;
   inset: 0;
   display: grid;
@@ -432,6 +435,28 @@
 }
 .file-list:not(.is-folder-contents) .file-group-label { padding-left: 28px; }
 .file-group-label:first-child { padding-top: 0; }
+.file-date-folder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  border-radius: var(--radius-sm);
+  cursor: var(--cursor-click);
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.file-date-folder:hover,
+.file-date-folder:focus-visible { color: var(--text-primary); background: var(--bg-surface-2); outline: none; }
+.file-date-folder.is-active { color: var(--accent); background: var(--accent-soft); cursor: var(--cursor-default); }
+.file-date-folder-icon { display: flex; flex: 0 0 auto; color: currentColor; }
+.file-date-folder-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-date-folder-count {
+  margin-left: auto;
+  padding-left: 6px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+}
+.file-date-folder.is-active .file-date-folder-count { color: currentColor; opacity: .8; }
 
 .file-list-storage-badge {
   font-size: 10.5px;
@@ -7990,7 +8015,6 @@ body { font-size: var(--font-ui-md); }
     --sidebar-w: 296px;
     --stats-w: 352px;
     --preview-h: 380px;
-    --agent-w: 500px;
   }
 }
 
@@ -7999,7 +8023,6 @@ body { font-size: var(--font-ui-md); }
     --sidebar-w: 320px;
     --stats-w: 384px;
     --preview-h: 420px;
-    --agent-w: 560px;
     gap: 10px;
     padding: 12px;
   }

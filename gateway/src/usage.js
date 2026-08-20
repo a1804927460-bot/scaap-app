@@ -6,6 +6,7 @@ import {
 } from './tool-pricing.js';
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
+export const CREDIT_PRICING_VERSION = '202608200002';
 
 // Keep this table in lockstep with lib/credit-pricing.js. The gateway sends an
 // expected quote to Supabase, while reserve_ai_credits independently recomputes
@@ -20,8 +21,30 @@ export const IMAGE_CREDITS = Object.freeze({
 });
 
 export const IMAGE_QUALITY_CREDITS = Object.freeze({
-  'image-6': Object.freeze({ low: 16, medium: 18, high: 28, auto: 20 }),
-  'atlas-image-gpt2': Object.freeze({ low: 15, medium: 15, high: 20, auto: 15 })
+  'image-6': Object.freeze({ low: 15, medium: 19, high: 30, auto: 19 }),
+  'atlas-image-gpt2': Object.freeze({ low: 15, medium: 19, high: 30, auto: 19 }),
+  'atlas-image-gpt2-edit': Object.freeze({ low: 16, medium: 20, high: 31, auto: 20 })
+});
+
+export const IMAGE_QUALITY_RESOLUTION_CREDITS = Object.freeze({
+  'image-6': Object.freeze({
+    low: Object.freeze({ '1k': 15, '2k': 16, '4k': 16 }),
+    medium: Object.freeze({ '1k': 19, '2k': 23, '4k': 22 }),
+    high: Object.freeze({ '1k': 30, '2k': 46, '4k': 44 }),
+    auto: Object.freeze({ '1k': 19, '2k': 23, '4k': 22 })
+  }),
+  'atlas-image-gpt2': Object.freeze({
+    low: Object.freeze({ '1k': 15, '2k': 16, '4k': 16 }),
+    medium: Object.freeze({ '1k': 19, '2k': 23, '4k': 22 }),
+    high: Object.freeze({ '1k': 30, '2k': 46, '4k': 44 }),
+    auto: Object.freeze({ '1k': 19, '2k': 23, '4k': 22 })
+  }),
+  'atlas-image-gpt2-edit': Object.freeze({
+    low: Object.freeze({ '1k': 16, '2k': 17, '4k': 17 }),
+    medium: Object.freeze({ '1k': 20, '2k': 24, '4k': 23 }),
+    high: Object.freeze({ '1k': 31, '2k': 47, '4k': 45 }),
+    auto: Object.freeze({ '1k': 20, '2k': 24, '4k': 23 })
+  })
 });
 
 export const IMAGE_RESOLUTION_CREDITS = Object.freeze({
@@ -46,11 +69,14 @@ const IMAGE_DEFAULT_RESOLUTIONS = Object.freeze({
 
 // 302 charges PTC in USD. Keep the conversion in the gateway so the server
 // quote remains correct even when a desktop bundle is stale.
-export const USD_TO_CNY = 6.8;
+export const USD_TO_CNY = 7.3;
 const POINTS_PER_CNY = 10;
 const PROFIT_PER_REQUEST_CREDITS = 1.4 * POINTS_PER_CNY;
 const SEEDANCE_720P_PTC_PER_SECOND = 0.2592;
 const SEEDANCE_480P_PTC_PER_SECOND = SEEDANCE_720P_PTC_PER_SECOND * 0.5;
+// 4K-ESR is quoted by 302 as 22.780 PTC per ten-second output. It is not
+// 22.780 points per second; normalize the job quote before adding profit.
+const SEEDANCE_25_4K_ESR_PTC_PER_SECOND = 22.780 / 10;
 const SEEDANCE_PTC_PER_SECOND = Object.freeze({
   'video-2': Object.freeze({
     '480P': SEEDANCE_480P_PTC_PER_SECOND * (7.884 / 10),
@@ -72,7 +98,7 @@ const SEEDANCE_VIDEO_RATES = Object.freeze(Object.fromEntries(
     Object.freeze(Object.fromEntries(
       Object.entries(rates).map(([resolution, ptcPerSecond]) => [
         resolution,
-        ptcPerSecond * USD_TO_CNY * POINTS_PER_CNY
+        Number((ptcPerSecond * USD_TO_CNY * POINTS_PER_CNY).toFixed(9))
       ])
     ))
   ])
@@ -80,35 +106,38 @@ const SEEDANCE_VIDEO_RATES = Object.freeze(Object.fromEntries(
 
 export const VIDEO_CREDITS_PER_SECOND = Object.freeze({
   'atlas-video-seedance20-i2v': Object.freeze({
-    '480P': 3.808, '720P': 7.616, '720P-SR': 8.378, '1080P': 11.424,
-    '1080P-SR': 12.947, '1440P-SR': 15.232, '4K': 19.04
+    '480P': 8.268929, '720P': 17.7828, '720P-SR': 14.88408, '1080P': 40.0113,
+    '1080P-SR': 32.00904, '1440P-SR': 56.90496, '4K': 91.225764
   }),
   'atlas-video-seedance20-ref': Object.freeze({
-    '480P': 3.808, '720P': 7.616, '720P-SR': 8.378, '1080P': 11.424,
-    '1080P-SR': 12.947, '1440P-SR': 15.232, '4K': 19.04
+    '480P': 8.268929, '720P': 17.7828, '720P-SR': 14.88408, '1080P': 40.0113,
+    '1080P-SR': 32.00904, '1440P-SR': 56.90496, '4K': 91.225764
   }),
   'atlas-video-seedance25-i2v': Object.freeze({
-    '480P': 4.556, '720P': 9.112, '720P-SR': 10.023, '720P-ESR': 10.023,
-    '1080P': 13.668, '1080P-SR': 15.490, '1080P-ESR': 15.490,
-    '1080P-ESR & 60FPS': 18.228, '1440P-SR': 18.224, '1440P-ESR': 18.224, '4K-ESR': 22.780
+    '480P': 10.269725, '720P': 22.085603, '720P-SR': 16.123462, '720P-ESR': 18.485498,
+    '1080P': 43.469408, '1080P-SR': 29.815561, '1080P-ESR': 33.128398,
+    '1080P-ESR & 60FPS': 36.441248, '1440P-SR': 51.454793, '1440P-ESR': 55.876573,
+    '4K-ESR': Number((SEEDANCE_25_4K_ESR_PTC_PER_SECOND * USD_TO_CNY * POINTS_PER_CNY).toFixed(9))
   }),
   'atlas-video-seedance25-ref': Object.freeze({
-    '480P': 4.556, '720P': 9.112, '720P-SR': 10.023, '720P-ESR': 10.023,
-    '1080P': 13.668, '1080P-SR': 15.490, '1080P-ESR': 15.490,
-    '1080P-ESR & 60FPS': 18.228, '1440P-SR': 18.224, '1440P-ESR': 18.224, '4K-ESR': 22.780
+    '480P': 10.269725, '720P': 22.085603, '720P-SR': 16.123462, '720P-ESR': 18.485498,
+    '1080P': 43.469408, '1080P-SR': 29.815561, '1080P-ESR': 33.128398,
+    '1080P-ESR & 60FPS': 36.441248, '1440P-SR': 51.454793, '1440P-ESR': 55.876573,
+    '4K-ESR': Number((SEEDANCE_25_4K_ESR_PTC_PER_SECOND * USD_TO_CNY * POINTS_PER_CNY).toFixed(9))
   }),
   'video-1': Object.freeze({ '768P': 5, '2K': 8 }),
   // Logical Seedance billing uses the higher of the Atlas primary price and
   // the USD/PTC 302 fallback for every resolution the fallback supports.
   'video-2': Object.freeze({
-    '480P': 6.94801152, '720P': 13.89602304, '720P-SR': 8.378,
-    '1080P': 11.424, '1080P-SR': 12.947, '1440P-SR': 15.232, '4K': 19.04
+    '480P': 8.268929, '720P': 17.7828, '720P-SR': 14.88408, '1080P': 40.0113,
+    '1080P-SR': 32.00904, '1440P-SR': 56.90496, '4K': 91.225764
   }),
   'video-3': Object.freeze({
-    '480P': 8.8128, '720P': 17.6256, '720P-SR': 10.023, '720P-ESR': 10.023,
-    '1080P': 13.668, '1080P-SR': 15.49, '1080P-ESR': 15.49,
-    '1080P-ESR & 60FPS': 18.228, '1440P-SR': 18.224,
-    '1440P-ESR': 18.224, '4K-ESR': 22.78
+    '480P': 10.269725, '720P': 22.085603, '720P-SR': 16.123462, '720P-ESR': 18.485498,
+    '1080P': 43.469408, '1080P-SR': 29.815561, '1080P-ESR': 33.128398,
+    '1080P-ESR & 60FPS': 36.441248, '1440P-SR': 51.454793,
+    '1440P-ESR': 55.876573,
+    '4K-ESR': Number((SEEDANCE_25_4K_ESR_PTC_PER_SECOND * USD_TO_CNY * POINTS_PER_CNY).toFixed(9))
   }),
   'video-4': SEEDANCE_VIDEO_RATES['video-4'],
   'video-5': Object.freeze({ '480P': 2, '720P': 3 }),
@@ -252,23 +281,37 @@ export function quoteUsage(kind, request = {}) {
       throw Object.assign(new Error('The selected image provider is not allowed.'), { code: 'provider-not-allowed', status: 400 });
     }
     const qualityRates = IMAGE_QUALITY_CREDITS[providerId];
+    const qualityResolutionRates = IMAGE_QUALITY_RESOLUTION_CREDITS[providerId];
     const resolutionRates = IMAGE_RESOLUTION_CREDITS[providerId];
     const requestedQuality = String(request.quality || 'auto').trim().toLowerCase();
     const quality = qualityRates && Object.hasOwn(qualityRates, requestedQuality) ? requestedQuality : 'auto';
-    const defaultResolution = resolutionRates
+    const defaultResolution = qualityResolutionRates
+      ? '1k'
+      : resolutionRates
       ? (IMAGE_DEFAULT_RESOLUTIONS[providerId] || (Object.hasOwn(resolutionRates, '2k') ? '2k' : Object.keys(resolutionRates)[0]))
       : '720p';
     const requestedResolution = String(request.resolution || request.size || defaultResolution).trim().toLowerCase();
-    const resolution = resolutionRates && Object.hasOwn(resolutionRates, requestedResolution)
+    const selectedQualityRates = qualityResolutionRates && qualityResolutionRates[quality];
+    const resolution = selectedQualityRates && Object.hasOwn(selectedQualityRates, requestedResolution)
+      ? requestedResolution
+      : qualityResolutionRates
+        ? defaultResolution
+        : resolutionRates && Object.hasOwn(resolutionRates, requestedResolution)
       ? requestedResolution
       : defaultResolution;
+    const credits = qualityRates
+      ? (selectedQualityRates ? selectedQualityRates[resolution] : qualityRates[quality])
+      : resolutionRates
+        ? resolutionRates[resolution]
+        : IMAGE_CREDITS[providerId];
     return {
       kind: 'image',
       providerId,
-      credits: qualityRates ? qualityRates[quality] : resolutionRates ? resolutionRates[resolution] : IMAGE_CREDITS[providerId],
+      credits,
       resolution: qualityRates ? quality : resolutionRates ? resolution : null,
       ...(qualityRates ? { quality } : {}),
-      ...(resolutionRates ? { imageResolution: resolution } : {}),
+      ...((qualityResolutionRates || resolutionRates) ? { imageResolution: resolution } : {}),
+      ...(qualityResolutionRates ? { billingResolution: `${quality}:${resolution}` } : {}),
       duration: null,
       requiresActivation: false
     };
@@ -393,7 +436,7 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
     p_kind: quote.kind,
     p_provider_id: quote.providerId,
     p_request_id: requestId,
-    p_resolution: quote.resolution,
+    p_resolution: quote.billingResolution || quote.resolution,
     p_duration: quote.duration,
     p_expected_credits: quote.credits
   });
@@ -417,7 +460,7 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
       && Number.isInteger(Number(payload.credits)) && Number(payload.credits) >= 0) {
     requestBody = JSON.stringify({
       p_user_id: userId, p_kind: quote.kind, p_provider_id: quote.providerId,
-      p_request_id: requestId, p_resolution: quote.resolution, p_duration: quote.duration,
+      p_request_id: requestId, p_resolution: quote.billingResolution || quote.resolution, p_duration: quote.duration,
       p_expected_credits: Number(payload.credits)
     });
     ({ response, payload } = await reserveCredits(headers, requestBody, fetchImpl, reserveRpc));
