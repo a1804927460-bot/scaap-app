@@ -39,8 +39,16 @@ assert.deepStrictEqual(
 );
 assert.strictEqual(
   clipboardSourceToLocalPath('file:///C:/Users/Example/Pictures/image.png'),
-  'C:\\Users\\Example\\Pictures\\image.png'
+  process.platform === 'win32'
+    ? 'C:\\Users\\Example\\Pictures\\image.png'
+    : '/C:/Users/Example/Pictures/image.png'
 );
+if (process.platform !== 'win32') {
+  assert.strictEqual(
+    clipboardSourceToLocalPath('file:///Users/Example/Pictures/image.png'),
+    '/Users/Example/Pictures/image.png'
+  );
+}
 assert.strictEqual(normalizeClipboardRemoteUrl('https://cdn.example.com/image.png'), 'https://cdn.example.com/image.png');
 assert.strictEqual(normalizeClipboardRemoteUrl('http://cdn.example.com/image.png'), '');
 assert.strictEqual(normalizeClipboardRemoteUrl('https://user:password@cdn.example.com/image.png'), '');
