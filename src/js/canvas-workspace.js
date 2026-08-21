@@ -11,6 +11,8 @@ const CanvasWorkspace = {
   agentMode: 'chat',
   agentGenerationKind: 'image',
   agentProviderId: null,
+  agentChatProviderId: null,
+  agentChatModel: null,
   agentReferenceFileIds: new Set(),
   agentSelectionFileIds: new Set(),
   config: null,
@@ -1015,16 +1017,28 @@ function canvasAgentPrompt(prompt) {
 }
 
 function activeCanvasAgentProvider() {
+  const options = canvasAgentChatProviders();
+  const selected = options.find((entry) => (
+    entry.providerId === CanvasWorkspace.agentChatProviderId
+      && entry.model === CanvasWorkspace.agentChatModel
+  )) || options[0];
+  return selected || { providerId: null, model: null, name: 'Agent' };
+}
+
+function canvasAgentChatProviders() {
   const config = CanvasWorkspace.config || {};
-  const providers = Array.isArray(config.chatProviders) ? config.chatProviders : [];
-  const provider = providers.find((entry) => entry.available !== false && entry.id === config.activeChatProviderId && entry.endpoint) ||
-    providers.find((entry) => entry && entry.available !== false && entry.endpoint);
-  if (!provider) return { providerId: null, model: config.chatModel || null };
-  const models = Array.isArray(provider.models) ? provider.models.filter(Boolean) : [];
-  return {
-    providerId: provider.id,
-    model: models.includes(config.chatModel) ? config.chatModel : (models[0] || config.chatModel || null)
+  const allowedModels = new Set(['gemini-3.7-flash', 'gpt-5.6-luna']);
+  const names = {
+    'gemini-3.7-flash': 'Gemini 3.7 Flash',
+    'gpt-5.6-luna': 'GPT-5.6 Luna'
   };
+  return (Array.isArray(config.chatProviders) ? config.chatProviders : []).flatMap((provider) => {
+    if (!provider || provider.available === false || !provider.endpoint) return [];
+    return (Array.isArray(provider.models) ? provider.models : [])
+      .map((model) => String(model || '').trim())
+      .filter((model) => allowedModels.has(model))
+      .map((model) => ({ providerId: provider.id, model, name: names[model] || model }));
+  });
 }
 
 function canvasAgentMediaProviders(kind = CanvasWorkspace.agentGenerationKind) {
@@ -1037,9 +1051,32 @@ function canvasAgentMediaProviders(kind = CanvasWorkspace.agentGenerationKind) {
 
 function renderCanvasAgentModels() {
   const list = document.getElementById('board-agent-model-options');
+  const chatList = document.getElementById('board-agent-chat-options');
   const triggerLabel = document.getElementById('board-agent-model-label');
-  const chatOption = document.getElementById('board-agent-chat-mode');
-  if (!list || !triggerLabel || !chatOption) return;
+  if (!list || !chatList || !triggerLabel) return;
+  const chatProviders = canvasAgentChatProviders();
+  if (!chatProviders.some((entry) => (
+    entry.providerId === CanvasWorkspace.agentChatProviderId && entry.model === CanvasWorkspace.agentChatModel
+  ))) {
+    const preferred = chatProviders.find((entry) => entry.model === 'gemini-3.7-flash') || chatProviders[0] || null;
+    CanvasWorkspace.agentChatProviderId = preferred && preferred.providerId;
+    CanvasWorkspace.agentChatModel = preferred && preferred.model;
+  }
+  chatList.replaceChildren();
+  chatProviders.forEach((entry) => {
+    const button = document.createElement('button');
+    const active = CanvasWorkspace.agentMode === 'chat'
+      && entry.providerId === CanvasWorkspace.agentChatProviderId
+      && entry.model === CanvasWorkspace.agentChatModel;
+    button.type = 'button';
+    button.className = `board-agent-model-option${active ? ' is-active' : ''}`;
+    button.dataset.agentChatProviderId = entry.providerId;
+    button.dataset.agentChatModel = entry.model;
+    button.setAttribute('role', 'option');
+    button.innerHTML = '<span></span><i aria-hidden="true">✓</i>';
+    button.querySelector('span').textContent = entry.name;
+    chatList.appendChild(button);
+  });
   const providers = canvasAgentMediaProviders();
   if (!providers.some((provider) => provider.id === CanvasWorkspace.agentProviderId)) {
     const config = CanvasWorkspace.config || {};
@@ -1048,7 +1085,6 @@ function renderCanvasAgentModels() {
       : config.activeImageProviderId;
     CanvasWorkspace.agentProviderId = (providers.find((provider) => provider.id === activeId) || providers[0] || {}).id || null;
   }
-  chatOption.classList.toggle('is-active', CanvasWorkspace.agentMode === 'chat');
   list.innerHTML = '';
   providers.forEach((provider) => {
     const button = document.createElement('button');
@@ -1067,8 +1103,9 @@ function renderCanvasAgentModels() {
     list.appendChild(button);
   });
   const selected = providers.find((provider) => provider.id === CanvasWorkspace.agentProviderId);
+  const selectedChat = activeCanvasAgentProvider();
   triggerLabel.textContent = CanvasWorkspace.agentMode === 'chat'
-    ? 'Agent'
+    ? selectedChat.name
     : (selected ? selected.name : t('No model', '无可用模型'));
   document.querySelectorAll('[data-agent-kind]').forEach((button) => {
     const active = button.dataset.agentKind === CanvasWorkspace.agentGenerationKind;
@@ -1585,8 +1622,12 @@ async function initCanvasWorkspace(initial) {
     modelTrigger.setAttribute('aria-expanded', String(!modelMenu.hidden));
     if (!modelMenu.hidden) renderCanvasAgentModels();
   });
-  document.getElementById('board-agent-chat-mode').addEventListener('click', () => {
+  document.getElementById('board-agent-chat-options').addEventListener('click', (event) => {
+    const option = event.target.closest('[data-agent-chat-model]');
+    if (!option) return;
     CanvasWorkspace.agentMode = 'chat';
+    CanvasWorkspace.agentChatProviderId = option.dataset.agentChatProviderId;
+    CanvasWorkspace.agentChatModel = option.dataset.agentChatModel;
     renderCanvasAgentModels();
     renderCanvasAgentReferences();
     modelMenu.hidden = true;

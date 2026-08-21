@@ -1,16 +1,19 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import { generateLegacyVideo } from '../src/providers.js';
+import { createVideoTask, generateLegacyVideo, pollVideoTask } from '../src/providers.js';
 import {
   canonicalRequestBody,
+  failVideoDownload,
   finalizeVideoJob,
   getVideoDownload,
   getVideoJob,
   hashVideoRequest,
   hashVideoTaskToken,
+  markVideoJobReady,
   runVideoJobWorkerCycle,
   sanitizeVideoJobError,
+  settleVideoDownload,
   startVideoJob,
   startVideoJobWorker
 } from '../src/video-jobs.js';
@@ -61,7 +64,7 @@ test('start is idempotency-bound to operation, owner token, and canonical reques
         reason: calls.length === 1 ? 'reserved' : 'already-started',
         requestId: operationId,
         status: 'starting',
-        credits: 68
+        credits: 84
       });
     };
 
@@ -70,19 +73,19 @@ test('start is idempotency-bound to operation, owner token, and canonical reques
 
     assert.equal(created.created, true);
     assert.equal(repeated.created, false);
-    assert.equal(created.credits, 68);
+    assert.equal(created.credits, 84);
     assert.match(calls[0].url, /\/rpc\/start_ai_video_job$/);
     assert.equal(calls[0].body.p_request_id, operationId);
     assert.equal(calls[0].body.p_user_id, userId);
     assert.equal(calls[0].body.p_token_hash, hashVideoTaskToken(taskToken));
     assert.equal(calls[0].body.p_request_hash, calls[1].body.p_request_hash);
-    assert.equal(calls[0].body.p_expected_credits, 68);
+    assert.equal(calls[0].body.p_expected_credits, 84);
     assert.equal(JSON.stringify(calls[0].body).includes(taskToken), false);
     assert.equal(JSON.stringify(calls[0].body).includes('private prompt text'), false);
   });
 });
 
-test('start replays a server-authorized price without exposing an account tier', async () => {
+test('start accepts only a higher server-authorized price without exposing an account tier', async () => {
   await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test' }, async () => {
     const calls = [];
     const created = await startVideoJob({
@@ -93,18 +96,37 @@ test('start replays a server-authorized price without exposing an account tier',
       fetchImpl: async (_url, options) => {
         calls.push(JSON.parse(options.body));
         return calls.length === 1
-          ? jsonResponse({ ok: false, reason: 'pricing-mismatch', credits: 65 })
-          : jsonResponse({ ok: true, reason: 'reserved', credits: 65, status: 'starting' });
+          ? jsonResponse({ ok: false, reason: 'pricing-mismatch', credits: 90 })
+          : jsonResponse({ ok: true, reason: 'reserved', credits: 90, status: 'starting' });
       }
     });
     assert.equal(calls.length, 2);
-    assert.equal(calls[0].p_expected_credits, 68);
-    assert.equal(calls[1].p_expected_credits, 65);
-    assert.equal(created.credits, 65);
+    assert.equal(calls[0].p_expected_credits, 84);
+    assert.equal(calls[1].p_expected_credits, 90);
+    assert.equal(created.credits, 90);
     assert.equal(JSON.stringify(created).includes('pricingTier'), false);
   });
 });
 
+test('start rejects a stale server price below the conservative gateway quote', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test' }, async () => {
+    let calls = 0;
+    const result = await startVideoJob({
+      userId: '00000000-0000-4000-8000-000000000141',
+      operationId: '00000000-0000-4000-8000-000000000142',
+      taskToken: 'stale-price-task-token-1234567890',
+      body: { prompt: 'test', providerId: 'video-1', resolution: '2K', duration: 7 },
+      fetchImpl: async () => {
+        calls += 1;
+        return jsonResponse({ ok: false, reason: 'pricing-mismatch', credits: 60 });
+      }
+    });
+    assert.equal(calls, 1);
+    assert.equal(result.created, false);
+    assert.equal(result.reason, 'pricing-mismatch');
+    assert.equal(result.credits, 60);
+  });
+});
 test('Kling Pro jobs persist the actual tier provider and reserve the Pro price', async () => {
   await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test' }, async () => {
     let call;
@@ -118,12 +140,12 @@ test('Kling Pro jobs persist the actual tier provider and reserve the Pro price'
       },
       fetchImpl: async (_url, options) => {
         call = JSON.parse(options.body);
-        return jsonResponse({ ok: true, reason: 'reserved', credits: 296, status: 'starting' });
+        return jsonResponse({ ok: true, reason: 'reserved', credits: 352, status: 'starting' });
       }
     });
     assert.equal(call.p_provider_id, 'video-11');
     assert.equal(call.p_resolution, '1080P');
-    assert.equal(call.p_expected_credits, 296);
+    assert.equal(call.p_expected_credits, 352);
   });
 });
 
@@ -165,6 +187,47 @@ test('owner status and download calls send only the task token hash', async () =
   });
 });
 
+test('provider-ready, download settlement, and download failure RPCs preserve authoritative usage', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test' }, async () => {
+    const calls = [];
+    const fetchMock = async (url, options) => {
+      const body = JSON.parse(options.body);
+      calls.push({ url, body });
+      if (url.endsWith('/record_ai_video_provider_result')) return jsonResponse({ ok: true, status: 'ready' });
+      if (url.endsWith('/settle_ai_video_download')) return jsonResponse({ ok: true, creditsEstimated: 168, creditsCharged: 168 });
+      if (url.endsWith('/fail_ai_video_download')) return jsonResponse({ ok: true, creditsCharged: 0, creditsReleased: 168 });
+      throw new Error('Unexpected RPC ' + url);
+    };
+    await markVideoJobReady({
+      requestId: '00000000-0000-4000-8000-000000000131',
+      leaseToken: '00000000-0000-4000-8000-000000000132',
+      resultUrl: 'https://cdn.example.test/result.mp4',
+      usage: { totalSeconds: 21, inputSeconds: 15, outputSeconds: 6, inputImageCount: 9 },
+      durationMs: 12_000,
+      fetchImpl: fetchMock
+    });
+    const settled = await settleVideoDownload('user-one', 'owner-download-token-123456', {
+      contentType: 'video/mp4', bytes: 1024
+    }, fetchMock);
+    const failed = await failVideoDownload('user-one', 'owner-download-token-123456', {
+      code: 'invalid-media', message: 'invalid media'
+    }, fetchMock);
+    assert.equal(settled.creditsCharged, 168);
+    assert.equal(failed.creditsCharged, 0);
+    assert.deepEqual(calls[0].body, {
+      p_request_id: '00000000-0000-4000-8000-000000000131',
+      p_lease_token: '00000000-0000-4000-8000-000000000132',
+      p_result_url: 'https://cdn.example.test/result.mp4',
+      p_total_seconds: 21,
+      p_input_seconds: 15,
+      p_output_seconds: 6,
+      p_input_image_count: 9,
+      p_duration_ms: 12000
+    });
+    assert.equal(calls[1].body.p_token_hash, hashVideoTaskToken('owner-download-token-123456'));
+    assert.equal(calls[2].body.p_error_code, 'invalid-media');
+  });
+});
 test('finalization rejects a mocked credit/job settlement status mismatch', async () => {
   await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test' }, async () => {
     await assert.rejects(() => finalizeVideoJob({
@@ -282,6 +345,49 @@ test('worker fails closed after one clear error when the asynchronous schema is 
   });
 });
 
+test('MiniMax H3 sends typed image, video, and audio references and preserves official usage', async () => {
+  const previousFetch = globalThis.fetch;
+  await withEnvironment({ MINIMAX_API_KEY: 'minimax-test-key' }, async () => {
+    const calls = [];
+    globalThis.fetch = async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      if (String(url) === 'https://api.minimaxi.com/v2/video_generation') {
+        return jsonResponse({ task_id: 'multimodal-task-id' });
+      }
+      if (String(url) === 'https://api.minimaxi.com/v2/query/video_generation/multimodal-task-id') {
+        return jsonResponse({
+          task: {
+            status: 'succeeded',
+            content: { url: 'https://cdn.example.test/multimodal.mp4' },
+            usage: { total_seconds: 21, input_seconds: 15, output_seconds: 6, input_image_count: 1 }
+          }
+        });
+      }
+      throw new Error('Unexpected URL: ' + url);
+    };
+    try {
+      const created = await createVideoTask({
+        providerId: 'video-1', prompt: 'multimodal', resolution: '768P', duration: 6,
+        aspectRatio: '16:9', videoMode: 'omni',
+        urls: ['https://cdn.example.test/reference.png', 'https://cdn.example.test/reference.mp4'],
+        referenceMediaTypes: ['image', 'video'],
+        referenceAudioUrls: ['https://cdn.example.test/reference.mp3']
+      });
+      const request = JSON.parse(calls[0].options.body);
+      assert.deepEqual(request.content.slice(1).map((entry) => [entry.type, entry.role]), [
+        ['image_url', 'reference_image'],
+        ['video_url', 'reference_video'],
+        ['audio_url', 'reference_audio']
+      ]);
+      const result = await pollVideoTask(created.providerId, created.taskId);
+      assert.deepEqual(result.usage, {
+        totalSeconds: 21, inputSeconds: 15, outputSeconds: 6, inputImageCount: 1
+      });
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+});
 test('legacy synchronous video compatibility still creates, polls, and downloads MiniMax output', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({ MINIMAX_API_KEY: 'minimax-test-key' }, async () => {
@@ -371,6 +477,7 @@ test('provider errors are bounded and redact credential-like values', () => {
 test('migration enforces service-only jobs, atomic reserve/settle, leases, and active-job cleanup protection', () => {
   const migration = fs.readFileSync(new URL('../../supabase/migrations/202608080003_async_video_jobs.sql', import.meta.url), 'utf8');
   const seedanceMigration = fs.readFileSync(new URL('../../supabase/migrations/202608080007_seedance_video_credits.sql', import.meta.url), 'utf8');
+  const verifiedMigration = fs.readFileSync(new URL('../../supabase/migrations/202608210004_minimax_h3_verified_settlement.sql', import.meta.url), 'utf8');
   assert.match(migration, /alter table public\.ai_video_jobs enable row level security/i);
   assert.match(migration, /revoke all on table public\.ai_video_jobs from public, anon, authenticated/i);
   assert.match(migration, /create or replace function public\.start_ai_video_job[\s\S]*?reservation := public\.reserve_ai_credits/i);
@@ -385,6 +492,10 @@ test('migration enforces service-only jobs, atomic reserve/settle, leases, and a
   assert.match(migration, /job\.lease_token is null[\s\S]*?job\.lease_token is distinct from p_lease_token[\s\S]*?job\.leased_until is null/i);
   assert.match(seedanceMigration, /drop constraint if exists ai_video_jobs_resolution_check/i);
   assert.match(seedanceMigration, /check \(resolution in \('480P', '720P', '768P', '2K'\)\)/i);
+  assert.match(verifiedMigration, /status in \('starting', 'submitted', 'polling', 'ready', 'succeeded', 'failed'\)/i);
+  assert.match(verifiedMigration, /target_credits := greatest\(target_credits, actual_retail_credits\)/i);
+  assert.match(verifiedMigration, /public\.settle_ai_credits\([\s\S]*?'failed'/i);
+  assert.match(verifiedMigration, /grant execute on function public\.settle_ai_video_download/i);
 });
 
 test('gateway exposes async task routes while preserving the v0.0.5 synchronous video route', () => {

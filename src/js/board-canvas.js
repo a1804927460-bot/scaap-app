@@ -148,6 +148,22 @@ function boardMoveHistoryState(canvasId = activeCanvasId()) {
   return BoardMoveHistory.get(canvasId);
 }
 
+function cloneBoardHistoryItem(item) {
+  if (typeof structuredClone === 'function') {
+    try { return structuredClone(item); } catch (error) {}
+  }
+  return JSON.parse(JSON.stringify(item));
+}
+
+function recordBoardHistoryEntry(entry, canvasId = activeCanvasId()) {
+  if (!entry) return false;
+  const state = boardMoveHistoryState(canvasId);
+  state.undo.push(entry);
+  if (state.undo.length > BOARD_MOVE_HISTORY_LIMIT) state.undo.shift();
+  state.redo.length = 0;
+  return true;
+}
+
 function recordBoardMoveHistory(startPositions) {
   const changes = startPositions.map(({ item, startLeft, startTop }) => ({
     id: item.id,
@@ -156,13 +172,13 @@ function recordBoardMoveHistory(startPositions) {
   })).filter((change) => (
     change.before.x !== change.after.x || change.before.y !== change.after.y
   ));
-  if (!changes.length) return false;
+  return changes.length ? recordBoardHistoryEntry({ type: 'move', changes }) : false;
+}
 
-  const state = boardMoveHistoryState();
-  state.undo.push({ changes });
-  if (state.undo.length > BOARD_MOVE_HISTORY_LIMIT) state.undo.shift();
-  state.redo.length = 0;
-  return true;
+function recordBoardItemsHistory(type, items, canvasId = activeCanvasId()) {
+  const snapshots = (items || []).filter(Boolean).map(cloneBoardHistoryItem);
+  if (!snapshots.length || !['add', 'remove'].includes(type)) return false;
+  return recordBoardHistoryEntry({ type, items: snapshots }, canvasId);
 }
 
 function persistBoardMoveHistory(items, canvasId = activeCanvasId()) {
@@ -173,6 +189,27 @@ function persistBoardMoveHistory(items, canvasId = activeCanvasId()) {
         await window.messsAPI.upsertBoardItems(items);
       } else {
         await Promise.all(items.map((item) => window.messsAPI.upsertBoardItem(item)));
+      }
+      canvasWorkspaceTouch(canvasId);
+      await canvasWorkspaceSave();
+    });
+}
+
+function persistBoardItemMutation({ upsert = [], remove = [] }, canvasId = activeCanvasId()) {
+  const upsertSnapshots = upsert.map(cloneBoardHistoryItem);
+  const removeIds = [...new Set(remove.filter(Boolean))];
+  Board.historyPersistPromise = Board.historyPersistPromise
+    .catch(() => {})
+    .then(async () => {
+      if (removeIds.length) {
+        await Promise.all(removeIds.map((id) => window.messsAPI.removeBoardItem(id)));
+      }
+      if (upsertSnapshots.length) {
+        if (typeof window.messsAPI.upsertBoardItems === 'function') {
+          await window.messsAPI.upsertBoardItems(upsertSnapshots);
+        } else {
+          await Promise.all(upsertSnapshots.map((item) => window.messsAPI.upsertBoardItem(item)));
+        }
       }
       canvasWorkspaceTouch(canvasId);
       await canvasWorkspaceSave();
@@ -202,11 +239,44 @@ function applyBoardMoveHistory(entry, direction) {
   return true;
 }
 
+function applyBoardItemsHistory(entry, direction) {
+  const shouldAdd = (entry.type === 'add' && direction === 'after')
+    || (entry.type === 'remove' && direction === 'before');
+  const snapshots = entry.items.map(cloneBoardHistoryItem);
+  const ids = new Set(snapshots.map((item) => item.id));
+  if (shouldAdd) {
+    AppState.boardItems = AppState.boardItems.filter((item) => !ids.has(item.id));
+    snapshots.forEach((item) => {
+      AppState.boardItems.push(item);
+      canvasWorkspaceAddItem(item);
+    });
+    persistBoardItemMutation({ upsert: snapshots }, snapshots[0].canvasId || activeCanvasId());
+  } else {
+    if (!AppState.boardItems.some((item) => ids.has(item.id))) return false;
+    AppState.boardItems = AppState.boardItems.filter((item) => !ids.has(item.id));
+    canvasWorkspaceRemoveItems([...ids]);
+    persistBoardItemMutation({ remove: [...ids] }, snapshots[0].canvasId || activeCanvasId());
+  }
+  if (typeof activeTextNoteId !== 'undefined' && ids.has(activeTextNoteId)) hideTextToolPanel();
+  renderBoard();
+  return true;
+}
+
+function applyBoardHistory(entry, direction) {
+  if (!entry) return false;
+  return entry.type === 'add' || entry.type === 'remove'
+    ? applyBoardItemsHistory(entry, direction)
+    : applyBoardMoveHistory(entry, direction);
+}
+
 function undoBoardMove() {
   const state = boardMoveHistoryState();
   const entry = state.undo.pop();
   if (!entry) return false;
-  if (!applyBoardMoveHistory(entry, 'before')) return false;
+  if (!applyBoardHistory(entry, 'before')) {
+    state.undo.push(entry);
+    return false;
+  }
   state.redo.push(entry);
   return true;
 }
@@ -215,8 +285,24 @@ function redoBoardMove() {
   const state = boardMoveHistoryState();
   const entry = state.redo.pop();
   if (!entry) return false;
-  if (!applyBoardMoveHistory(entry, 'after')) return false;
+  if (!applyBoardHistory(entry, 'after')) {
+    state.redo.push(entry);
+    return false;
+  }
   state.undo.push(entry);
+  return true;
+}
+
+function removeBoardItemsWithHistory(items) {
+  const liveIds = new Set((items || []).map((item) => item && item.id).filter(Boolean));
+  const liveItems = AppState.boardItems.filter((item) => liveIds.has(item.id));
+  if (!liveItems.length) return false;
+  recordBoardItemsHistory('remove', liveItems);
+  AppState.boardItems = AppState.boardItems.filter((item) => !liveIds.has(item.id));
+  canvasWorkspaceRemoveItems([...liveIds]);
+  if (typeof activeTextNoteId !== 'undefined' && liveIds.has(activeTextNoteId)) hideTextToolPanel();
+  persistBoardItemMutation({ remove: [...liveIds] });
+  renderBoard();
   return true;
 }
 
@@ -280,6 +366,7 @@ function pasteBoardClipboard(atX, atY) {
     window.messsAPI.upsertBoardItem(newItem);
   });
 
+  recordBoardItemsHistory('add', newItems);
   renderBoard();
   return newItems;
 }
@@ -940,6 +1027,7 @@ async function addFilesToBoard(fileIds, x, y, options = {}) {
   if (!ids.length) return;
   const columns = Math.max(1, Math.ceil(Math.sqrt(ids.length)));
   const changed = [];
+  const added = [];
   if (options.selectAdded) AppState.boardItems.forEach((item) => { item.selected = false; });
   const existingByFileId = new Map(
     AppState.boardItems
@@ -1001,6 +1089,7 @@ async function addFilesToBoard(fileIds, x, y, options = {}) {
     canvasWorkspaceAddItem(item);
     existingByFileId.set(fileId, item);
     changed.push(item);
+    added.push(item);
   }
 
   if (typeof window.messsAPI.upsertBoardItems === 'function') {
@@ -1017,6 +1106,7 @@ async function addFilesToBoard(fileIds, x, y, options = {}) {
   }
   canvasWorkspaceTouch(activeCanvasId());
   await canvasWorkspaceSave();
+  recordBoardItemsHistory('add', added);
   return changed;
 }
 
@@ -2611,10 +2701,7 @@ function initBoardCanvas() {
       const selected = AppState.boardItems.filter((item) => item.selected);
       if (!selected.length) return;
       e.preventDefault();
-      selected.forEach((item) => window.messsAPI.removeBoardItem(item.id));
-      canvasWorkspaceRemoveItems(selected.map((item) => item.id));
-      AppState.boardItems = AppState.boardItems.filter((item) => !item.selected);
-      renderBoard();
+      removeBoardItemsWithHistory(selected);
     } else if (e.key === 'Escape') {
       closeBoardQuickGenerate();
       AppState.boardItems.forEach((item) => { item.selected = false; });
@@ -3856,6 +3943,18 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
 const AI_IMAGE_RATIOS = ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9'];
 const DEFAULT_VIDEO_RESOLUTIONS = ['768P', '2K'];
 const DEFAULT_VIDEO_RATIOS = ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
+
+function aiVideoResolutionLabel(value) {
+  const resolution = String(value || '').trim().toUpperCase();
+  if (resolution.includes('-ESR')) {
+    const label = resolution.replace('-ESR', '-ESR（增强超分）').replace(' & 60FPS', ' · 60FPS');
+    return t(resolution, label, resolution);
+  }
+  if (resolution.includes('-SR')) {
+    return t(resolution, resolution.replace('-SR', '-SR（超分）'), resolution);
+  }
+  return resolution;
+}
 
 function normalizedCapabilityValues(values, fallback = []) {
   const normalize = (source) => [...new Set(
@@ -5544,7 +5643,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       const button = document.createElement('button');
       button.type = 'button';
       button.dataset.value = value;
-      button.textContent = value === 'Default' ? t('Default', '默认', '기본') : value;
+      button.textContent = value === 'Default'
+        ? t('Default', '默认', '기본')
+        : kind === 'video' ? aiVideoResolutionLabel(value) : value;
       sizeGroup.appendChild(button);
     });
     const durationRange = pop.querySelector('.ai-duration-range');
@@ -6779,6 +6880,7 @@ function initBoardBottomBar() {
 let textPlacementArmed = false;
 let activeTextNoteId = null;
 let activeTextNoteOriginalText = '';
+const pendingTextNoteHistoryIds = new Set();
 
 /** Click the "T" tool once to arm placement mode �?the next click on empty
     canvas space creates a new, immediately-editable text box there (rather
@@ -6796,6 +6898,27 @@ function disarmTextPlacement() {
   document.getElementById('board-viewport').classList.remove('is-text-armed');
 }
 
+const TEXT_NOTE_DEFAULT_COLOR = '#15171c';
+
+function textNoteUsesThemeColor(note) {
+  if (!note) return true;
+  if (note.colorMode === 'auto') return true;
+  // Notes created before colorMode existed used the fixed default black. Treat
+  // that legacy default as automatic so saved boards remain readable in dark mode.
+  return !note.colorMode && String(note.color || '').toLowerCase() === TEXT_NOTE_DEFAULT_COLOR;
+}
+
+function textNoteDisplayColor(note) {
+  return textNoteUsesThemeColor(note)
+    ? 'var(--text-primary)'
+    : (note.color || TEXT_NOTE_DEFAULT_COLOR);
+}
+
+function textNotePickerColor(note) {
+  if (!textNoteUsesThemeColor(note)) return note.color || TEXT_NOTE_DEFAULT_COLOR;
+  return getComputedStyle(document.documentElement).getPropertyValue('--text-primary').trim() || '#f3f3f3';
+}
+
 function addTextNoteToBoard(x, y) {
   const id = 'note_' + Math.random().toString(36).slice(2, 10);
   const note = {
@@ -6803,11 +6926,12 @@ function addTextNoteToBoard(x, y) {
     x: Math.round(x - 90), y: Math.round(y - 24),
     zIndex: AppState.boardItems.length + 1,
     fontFamily: 'inherit', fontSize: 32, fontWeight: '400',
-    color: '#15171c', noFill: false, align: 'left'
+    color: TEXT_NOTE_DEFAULT_COLOR, colorMode: 'auto', noFill: false, align: 'left'
   };
   note.canvasId = activeCanvasId();
   AppState.boardItems.push(note);
   canvasWorkspaceAddItem(note);
+  pendingTextNoteHistoryIds.add(note.id);
   renderBoard();
   return note;
 }
@@ -6828,8 +6952,9 @@ function showTextToolPanel(note, contentEl) {
   fontSelect.value = note.fontFamily;
   sizeLabel.textContent = note.fontSize;
   weightSelect.value = note.fontWeight;
-  colorSwatch.style.setProperty('--text-swatch-color', note.noFill ? 'transparent' : note.color);
-  colorInput.value = note.color;
+  const pickerColor = textNotePickerColor(note);
+  colorSwatch.style.setProperty('--text-swatch-color', note.noFill ? 'transparent' : pickerColor);
+  colorInput.value = pickerColor;
   document.getElementById('text-color-none').classList.toggle('is-active', note.noFill);
   ['left', 'center', 'right'].forEach((a) => {
     document.getElementById('text-align-' + a).classList.toggle('is-active', note.align === a);
@@ -6911,6 +7036,7 @@ function finishTextNoteEditing({ cancel = false } = {}) {
   if (noteEl) noteEl.classList.remove('is-text-editing');
   hideTextToolPanel();
   if (!note.text.trim()) {
+    pendingTextNoteHistoryIds.delete(note.id);
     AppState.boardItems = AppState.boardItems.filter((item) => item.id !== note.id);
     canvasWorkspaceRemoveItems([note.id]);
     if (window.messsAPI && typeof window.messsAPI.removeBoardItem === 'function') {
@@ -6919,6 +7045,7 @@ function finishTextNoteEditing({ cancel = false } = {}) {
     renderBoard();
     return;
   }
+  if (pendingTextNoteHistoryIds.delete(note.id)) recordBoardItemsHistory('add', [note]);
   window.messsAPI.upsertBoardItem(note);
 }
 
@@ -6936,8 +7063,9 @@ function applyTextNoteStyle(note, contentEl) {
   el.style.fontFamily = note.fontFamily;
   el.style.fontSize = note.fontSize + 'px';
   el.style.fontWeight = note.fontWeight;
-  el.style.color = note.noFill ? 'transparent' : note.color;
-  el.style.webkitTextStroke = note.noFill ? '1px ' + note.color : '';
+  const displayColor = textNoteDisplayColor(note);
+  el.style.color = note.noFill ? 'transparent' : displayColor;
+  el.style.webkitTextStroke = note.noFill ? '1px ' + displayColor : '';
   el.style.textAlign = note.align;
 }
 
@@ -6983,6 +7111,7 @@ function initTextToolPanel() {
   document.getElementById('text-color-input').addEventListener('input', (e) => {
     const note = getActiveTextNote(); if (!note) return;
     note.color = e.target.value;
+    note.colorMode = 'manual';
     note.noFill = false;
     document.getElementById('text-color-swatch').style.setProperty('--text-swatch-color', note.color);
     document.getElementById('text-color-none').classList.remove('is-active');
@@ -7279,6 +7408,7 @@ function commitDoodleToBoard(canvas) {
   AppState.boardItems.forEach((b) => { b.selected = false; });
   AppState.boardItems.push(item);
   canvasWorkspaceAddItem(item);
+  recordBoardItemsHistory('add', [item]);
   window.messsAPI.upsertBoardItem(item);
   renderBoard();
 }

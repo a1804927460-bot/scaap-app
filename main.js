@@ -69,6 +69,7 @@ const { assertSafeLocalFile, assertPromptHasNoSecrets, sanitizeAiRequest } = req
 const { activate: activateApp, getActivationStatus } = require('./lib/activation');
 const {
   CREDIT_PRICING_VERSION,
+  CHAT_CREDITS,
   conservativeMediaCreditQuote,
   quoteMediaCredits,
   publicCreditPricing
@@ -333,16 +334,22 @@ const BUTLER_IMAGE_TOOL_IDS = new Set([
   'topaz-image-lighting'
 ]);
 const BUTLER_IMAGE_TOOL_CREDITS = Object.freeze({
-  'seededit-v3': 0,
-  'kling-image-expand': 0,
-  'clipdrop-uncrop': 0,
-  cleanup: 0,
-  'clipdrop-upscale': 0,
-  'generative-upscale': 0,
-  'qwen-image-edit-plus': 0,
-  'qwen-image-layered': 0,
-  'super-upscale-v2': 0,
-  erase: 0
+  'background-remove': 53,
+  'seededit-v3': 6,
+  'kling-image-expand': 53,
+  'clipdrop-uncrop': 53,
+  cleanup: 53,
+  'clipdrop-upscale': 53,
+  'generative-upscale': 84,
+  'qwen-image-edit-plus': 11,
+  'qwen-image-layered': 6,
+  'super-upscale-v2': 11,
+  erase: 53
+});
+const BUTLER_THREE_D_CREDITS = Object.freeze({
+  hunyuan3d: 42,
+  hyper3d: 74,
+  tripo3d: 63
 });
 const BUTLER_VIDEO_TOOL_ID = 'topaz-video-upscale';
 const BUTLER_VIDEO_MIME_BY_EXTENSION = Object.freeze({
@@ -843,12 +850,42 @@ function fileToPayload(f) {
         ? [...f.aiGeneration.referenceMediaTypes]
         : [],
       referenceCount: Number(f.aiGeneration.referenceCount) || 0,
+      estimatedCredits: f.aiGeneration.estimatedCredits !== null
+        && f.aiGeneration.estimatedCredits !== undefined
+        && Number.isFinite(Number(f.aiGeneration.estimatedCredits))
+        ? Math.max(0, Number(f.aiGeneration.estimatedCredits))
+        : null,
+      creditsCharged: f.aiGeneration.creditsCharged !== null
+        && f.aiGeneration.creditsCharged !== undefined
+        && Number.isFinite(Number(f.aiGeneration.creditsCharged))
+        ? Math.max(0, Number(f.aiGeneration.creditsCharged))
+        : (f.aiGeneration.credits !== null && f.aiGeneration.credits !== undefined
+          && Number.isFinite(Number(f.aiGeneration.credits))
+          ? Math.max(0, Number(f.aiGeneration.credits))
+          : null),
       credits: f.aiGeneration.credits !== null && f.aiGeneration.credits !== undefined
         && Number.isFinite(Number(f.aiGeneration.credits))
         ? Math.max(0, Number(f.aiGeneration.credits))
         : null,
       accountingRequestId: String(f.aiGeneration.accountingRequestId || '').trim() || null,
       createdAt: f.aiGeneration.createdAt
+    } : null,
+    butlerOperation: f.butlerOperation ? {
+      kind: String(f.butlerOperation.kind || '').slice(0, 80),
+      modelId: String(f.butlerOperation.modelId || '').slice(0, 100) || null,
+      sourceFileId: String(f.butlerOperation.sourceFileId || '').slice(0, 120) || null,
+      estimatedCredits: Number.isFinite(Number(f.butlerOperation.estimatedCredits))
+        ? Math.max(0, Number(f.butlerOperation.estimatedCredits)) : null,
+      creditsCharged: Number.isFinite(Number(f.butlerOperation.creditsCharged))
+        ? Math.max(0, Number(f.butlerOperation.creditsCharged))
+        : (Number.isFinite(Number(f.butlerOperation.credits))
+          ? Math.max(0, Number(f.butlerOperation.credits)) : null),
+      credits: Number.isFinite(Number(f.butlerOperation.credits))
+        ? Math.max(0, Number(f.butlerOperation.credits)) : null,
+      providerCost: Number.isFinite(Number(f.butlerOperation.providerCost))
+        ? Math.max(0, Number(f.butlerOperation.providerCost)) : null,
+      pricingVersion: String(f.butlerOperation.pricingVersion || '').slice(0, 32) || null,
+      createdAt: f.butlerOperation.createdAt || null
     } : null,
     folderId: f.folderId || null,
     ext,
@@ -2310,7 +2347,13 @@ function estimatedHistoricalCanvasCredits(file, operation, kind) {
       });
       return kind === 'image' ? quote.unitCredits : quote.totalCredits;
     }
-    const modelId = String(operation && operation.modelId || '').trim().toLowerCase();
+    const operationKind = String(operation && operation.kind || '').trim().toLowerCase();
+    const modelId = String(operation && operation.modelId || (
+      operationKind === 'remove-background' ? 'background-remove' : ''
+    )).trim().toLowerCase();
+    if (kind === '3d' && Object.hasOwn(BUTLER_THREE_D_CREDITS, modelId)) {
+      return BUTLER_THREE_D_CREDITS[modelId];
+    }
     if (Object.hasOwn(BUTLER_IMAGE_TOOL_CREDITS, modelId)) return BUTLER_IMAGE_TOOL_CREDITS[modelId];
   } catch (error) {}
   return null;
@@ -2320,13 +2363,16 @@ function canvasUsageEntryFromFile(file) {
   if (!file || (!file.aiGeneration && !file.butlerOperation)) return null;
   const operation = file.aiGeneration || file.butlerOperation;
   const kind = canvasUsageKind(file, operation);
-  const rawCredits = operation && operation.credits;
-  const parsedCredits = Number(rawCredits);
-  const recorded = rawCredits !== null && rawCredits !== undefined && rawCredits !== ''
-    && Number.isFinite(parsedCredits) && parsedCredits >= 0;
-  // Requote every identifiable media generation with the current retail
-  // table. This keeps a canvas total correct after a pricing-table update,
-  // while chargedCredits remains available for audit/debugging.
+  const rawChargedCredits = operation && (operation.creditsCharged ?? operation.credits);
+  const parsedChargedCredits = Number(rawChargedCredits);
+  const recorded = rawChargedCredits !== null && rawChargedCredits !== undefined && rawChargedCredits !== ''
+    && Number.isFinite(parsedChargedCredits) && parsedChargedCredits >= 0;
+  const rawEstimatedCredits = operation && operation.estimatedCredits;
+  const parsedEstimatedCredits = Number(rawEstimatedCredits);
+  const hasSavedEstimate = rawEstimatedCredits !== null && rawEstimatedCredits !== undefined
+    && rawEstimatedCredits !== '' && Number.isFinite(parsedEstimatedCredits) && parsedEstimatedCredits >= 0;
+  // Current pricing is only a backfill for old files that never saved an
+  // estimate. A settled charge is immutable accounting history.
   const currentCredits = estimatedHistoricalCanvasCredits(file, operation, kind);
   const hasCurrentQuote = Number.isFinite(Number(currentCredits));
   const accountingRequestId = String(operation.accountingRequestId || '').trim();
@@ -2346,11 +2392,15 @@ function canvasUsageEntryFromFile(file) {
       ? Number(operation.requestedDuration ?? operation.duration)
       : null,
     serviceTier: String(operation.serviceTier || '').slice(0, 20) || null,
-    credits: hasCurrentQuote ? Math.max(0, Number(currentCredits))
-      : recorded ? Math.max(0, parsedCredits) : null,
-    chargedCredits: recorded ? Math.max(0, parsedCredits) : null,
-    pricingVersion: hasCurrentQuote ? CREDIT_PRICING_VERSION : null,
-    estimated: false,
+    estimatedCredits: hasSavedEstimate ? Math.max(0, parsedEstimatedCredits)
+      : hasCurrentQuote ? Math.max(0, Number(currentCredits))
+        : recorded ? Math.max(0, parsedChargedCredits) : null,
+    creditsCharged: recorded ? Math.max(0, parsedChargedCredits) : null,
+    credits: recorded ? Math.max(0, parsedChargedCredits) : null,
+    pricingVersion: String(operation.pricingVersion || '').trim().slice(0, 32)
+      || (hasSavedEstimate ? null : hasCurrentQuote ? CREDIT_PRICING_VERSION : null),
+    estimated: !hasSavedEstimate && hasCurrentQuote,
+    status: recorded ? 'succeeded' : 'pending',
     createdAt: String(operation.createdAt || file.importedAt || new Date().toISOString()).slice(0, 40)
   };
 }
@@ -2360,10 +2410,17 @@ function normalizeCanvasUsageEntry(entry) {
   const id = String(entry.id || '').trim().slice(0, 160);
   const canvasId = String(entry.canvasId || '').trim().slice(0, 120);
   if (!id || !canvasId) return null;
-  const rawCredits = entry.credits;
-  const credits = rawCredits !== null && rawCredits !== undefined && rawCredits !== ''
-    && Number.isFinite(Number(rawCredits)) && Number(rawCredits) >= 0
-    ? Math.max(0, Number(rawCredits))
+  const rawChargedCredits = entry.creditsCharged ?? entry.chargedCredits ?? entry.credits;
+  const creditsCharged = rawChargedCredits !== null && rawChargedCredits !== undefined
+    && rawChargedCredits !== '' && Number.isFinite(Number(rawChargedCredits))
+    && Number(rawChargedCredits) >= 0
+    ? Math.max(0, Number(rawChargedCredits))
+    : null;
+  const rawEstimatedCredits = entry.estimatedCredits ?? entry.creditsReserved;
+  const estimatedCredits = rawEstimatedCredits !== null && rawEstimatedCredits !== undefined
+    && rawEstimatedCredits !== '' && Number.isFinite(Number(rawEstimatedCredits))
+    && Number(rawEstimatedCredits) >= 0
+    ? Math.max(0, Number(rawEstimatedCredits))
     : null;
   return {
     id,
@@ -2379,17 +2436,37 @@ function normalizeCanvasUsageEntry(entry) {
     quality: String(entry.quality || '').slice(0, 20) || null,
     duration: Number.isFinite(Number(entry.duration)) ? Number(entry.duration) : null,
     serviceTier: String(entry.serviceTier || '').slice(0, 20) || null,
-    credits,
-    chargedCredits: Number.isFinite(Number(entry.chargedCredits))
-      ? Math.max(0, Number(entry.chargedCredits)) : null,
+    estimatedCredits,
+    creditsCharged,
+    credits: creditsCharged,
     pricingVersion: String(entry.pricingVersion || '').trim().slice(0, 32) || null,
     estimated: entry.estimated === true,
+    status: ['pending', 'succeeded', 'failed'].includes(entry.status) ? entry.status
+      : creditsCharged === null ? 'pending' : 'succeeded',
     createdAt: String(entry.createdAt || new Date().toISOString()).slice(0, 40)
   };
 }
 
-function refreshCanvasUsageEntryPricing(entry) {
-  if (!entry || !['image', 'video'].includes(entry.kind) || !entry.providerId) return entry;
+function backfillCanvasUsageEstimate(entry) {
+  if (!entry) return entry;
+  if (Number.isFinite(Number(entry.estimatedCredits))) return entry;
+  if (entry.kind === '3d' && Object.hasOwn(BUTLER_THREE_D_CREDITS, entry.providerId)) {
+    return {
+      ...entry,
+      estimatedCredits: BUTLER_THREE_D_CREDITS[entry.providerId],
+      pricingVersion: CREDIT_PRICING_VERSION,
+      estimated: true
+    };
+  }
+  if (!['image', 'video'].includes(entry.kind) || !entry.providerId) return entry;
+  if (Object.hasOwn(BUTLER_IMAGE_TOOL_CREDITS, entry.providerId)) {
+    return {
+      ...entry,
+      estimatedCredits: BUTLER_IMAGE_TOOL_CREDITS[entry.providerId],
+      pricingVersion: CREDIT_PRICING_VERSION,
+      estimated: true
+    };
+  }
   try {
     const quote = quoteMediaCredits({
       kind: entry.kind,
@@ -2405,9 +2482,9 @@ function refreshCanvasUsageEntryPricing(entry) {
     if (!Number.isFinite(Number(credits))) return entry;
     return {
       ...entry,
-      credits: Math.max(0, Number(credits)),
+      estimatedCredits: Math.max(0, Number(credits)),
       pricingVersion: CREDIT_PRICING_VERSION,
-      estimated: false
+      estimated: true
     };
   } catch (error) {
     return entry;
@@ -2416,7 +2493,7 @@ function refreshCanvasUsageEntryPricing(entry) {
 
 function ensureCanvasUsageLedger() {
   const entries = Array.isArray(store.data.canvasUsageLedger) ? store.data.canvasUsageLedger : [];
-  const normalized = entries.map(normalizeCanvasUsageEntry).filter(Boolean).map(refreshCanvasUsageEntryPricing);
+  const normalized = entries.map(normalizeCanvasUsageEntry).filter(Boolean).map(backfillCanvasUsageEstimate);
   const ids = new Set(normalized.map((entry) => entry.id));
   for (const file of store.data.files) {
     const entry = canvasUsageEntryFromFile(file);
@@ -2472,9 +2549,10 @@ async function canvasCreditUsage(canvasId) {
     if (!requestId) return;
     const key = `request:${requestId}`;
     const local = detailsByKey.get(key) || {};
-    const credits = Number(entry.credits);
-    const localHasCurrentQuote = local.pricingVersion === CREDIT_PRICING_VERSION
-      && Number.isFinite(Number(local.credits));
+    const estimatedCredits = Number(entry.estimatedCredits ?? entry.creditsReserved);
+    const creditsCharged = Number(entry.creditsCharged ?? entry.credits);
+    const hasCloudEstimate = Number.isFinite(estimatedCredits) && estimatedCredits >= 0;
+    const hasCloudCharge = Number.isFinite(creditsCharged) && creditsCharged >= 0;
     detailsByKey.set(key, {
       ...local,
       id: local.id || `cloud:${requestId}`,
@@ -2484,25 +2562,28 @@ async function canvasCreditUsage(canvasId) {
       kind: ['image', 'video', '3d'].includes(entry.kind) ? entry.kind : (local.kind || 'image'),
       providerId: String(entry.providerId || local.providerId || '').slice(0, 100) || null,
       modelName: local.modelName || String(entry.modelName || entry.providerId || 'AI model').slice(0, 160),
-      // A cloud row from an older gateway must not overwrite the desktop's
-      // current-table quote for the same request. New cloud rows remain the
-      // authoritative settled amount.
-      credits: localHasCurrentQuote
-        ? Math.max(0, Number(local.credits))
-        : Number.isFinite(credits) ? Math.max(0, credits) : local.credits ?? null,
-      pricingVersion: localHasCurrentQuote ? CREDIT_PRICING_VERSION : (local.pricingVersion || null),
-      estimated: false,
+      estimatedCredits: hasCloudEstimate ? Math.max(0, estimatedCredits)
+        : local.estimatedCredits ?? null,
+      creditsCharged: hasCloudCharge ? Math.max(0, creditsCharged)
+        : local.creditsCharged ?? null,
+      credits: hasCloudCharge ? Math.max(0, creditsCharged) : local.creditsCharged ?? null,
+      pricingVersion: local.pricingVersion || null,
+      estimated: local.estimated === true && !hasCloudEstimate,
+      status: ['pending', 'succeeded', 'failed'].includes(entry.status)
+        ? entry.status : hasCloudCharge ? 'succeeded' : (local.status || 'pending'),
       createdAt: String(entry.createdAt || local.createdAt || '').slice(0, 40)
     });
   });
   const details = [...detailsByKey.values()]
     .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
-  const recorded = details.filter((entry) => entry.credits !== null);
+  const recorded = details.filter((entry) => entry.creditsCharged !== null);
   const breakdown = ['image', 'video', '3d'].reduce((result, kind) => {
     const entries = details.filter((entry) => entry.kind === kind);
-    const known = entries.filter((entry) => entry.credits !== null);
+    const known = entries.filter((entry) => entry.creditsCharged !== null);
     result[kind] = {
-      credits: known.reduce((sum, entry) => sum + entry.credits, 0),
+      estimatedCredits: entries.reduce((sum, entry) => sum + (Number(entry.estimatedCredits) || 0), 0),
+      creditsCharged: known.reduce((sum, entry) => sum + entry.creditsCharged, 0),
+      credits: known.reduce((sum, entry) => sum + entry.creditsCharged, 0),
       generations: entries.length,
       recorded: known.length,
       unrecorded: entries.length - known.length
@@ -2513,7 +2594,9 @@ async function canvasCreditUsage(canvasId) {
     ok: true,
     canvas: { id: canvas.id, name: canvas.name },
     totals: {
-      credits: recorded.reduce((sum, entry) => sum + entry.credits, 0),
+      estimatedCredits: details.reduce((sum, entry) => sum + (Number(entry.estimatedCredits) || 0), 0),
+      creditsCharged: recorded.reduce((sum, entry) => sum + entry.creditsCharged, 0),
+      credits: recorded.reduce((sum, entry) => sum + entry.creditsCharged, 0),
       generations: details.length,
       recorded: recorded.length,
       unrecorded: details.length - recorded.length,
@@ -3484,6 +3567,13 @@ async function addButlerOutputFile(buffer, sourceFile, operation, operationDetai
         kind: operation,
         sourceFileId: sourceFile.id,
         ...(operationDetails.modelId ? { modelId: operationDetails.modelId } : {}),
+        pricingVersion: CREDIT_PRICING_VERSION,
+        ...(Number.isFinite(Number(operationDetails.estimatedCredits ?? operationDetails.credits))
+          ? { estimatedCredits: Number(operationDetails.estimatedCredits ?? operationDetails.credits) }
+          : {}),
+        ...(Number.isFinite(Number(operationDetails.creditsCharged ?? operationDetails.credits))
+          ? { creditsCharged: Number(operationDetails.creditsCharged ?? operationDetails.credits) }
+          : {}),
         ...(Number.isFinite(Number(operationDetails.credits))
           ? { credits: Number(operationDetails.credits) }
           : {}),
@@ -3558,6 +3648,10 @@ async function addButlerVideoOutputFile(buffer, sourceFile, operationDetails = {
         modelId: BUTLER_VIDEO_TOOL_ID,
         sourceFileId: sourceFile.id || null,
         output: operationDetails.output || null,
+        estimatedCredits: Number.isFinite(Number(operationDetails.estimatedCredits ?? operationDetails.credits))
+          ? Number(operationDetails.estimatedCredits ?? operationDetails.credits) : null,
+        creditsCharged: Number.isFinite(Number(operationDetails.creditsCharged ?? operationDetails.credits))
+          ? Number(operationDetails.creditsCharged ?? operationDetails.credits) : null,
         credits: Number.isFinite(Number(operationDetails.credits)) ? Number(operationDetails.credits) : null,
         providerCost: Number.isFinite(Number(operationDetails.providerCost)) ? Number(operationDetails.providerCost) : null,
         createdAt: new Date().toISOString()
@@ -3721,6 +3815,17 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
         ? request.referenceMediaTypes.map((value) => String(value || '').toLowerCase()).slice(0, referenceFileIds.length)
         : referenceFileIds.map(() => 'image'),
       referenceCount,
+      estimatedCredits: request.estimatedCredits !== null && request.estimatedCredits !== undefined
+        && Number.isFinite(Number(request.estimatedCredits))
+        ? Math.max(0, Number(request.estimatedCredits))
+        : null,
+      creditsCharged: request.creditsCharged !== null && request.creditsCharged !== undefined
+        && Number.isFinite(Number(request.creditsCharged))
+        ? Math.max(0, Number(request.creditsCharged))
+        : (request.credits !== null && request.credits !== undefined
+          && Number.isFinite(Number(request.credits))
+          ? Math.max(0, Number(request.credits))
+          : null),
       credits: request.credits !== null && request.credits !== undefined
         && Number.isFinite(Number(request.credits))
         ? Math.max(0, Number(request.credits))
@@ -5946,7 +6051,10 @@ function registerIpcHandlers() {
       const source = await butlerSourceImage(fileId);
       const responseBuffer = await aiGateway.removeBackground(source.imageDataUrl, options);
       const pngBuffer = await sanitizeButlerBackgroundPng(responseBuffer);
-      const record = await addButlerOutputFile(pngBuffer, source.file, 'remove-background');
+      const record = await addButlerOutputFile(pngBuffer, source.file, 'remove-background', {
+        modelId: 'background-remove',
+        credits: BUTLER_IMAGE_TOOL_CREDITS['background-remove']
+      });
       return { ok: true, file: fileToPayload(record) };
     } catch (error) {
       const failure = butlerFailure(error, 'Background removal failed. Please try again.');
@@ -6537,7 +6645,8 @@ function registerIpcHandlers() {
       size: request.size,
       resolution: request.resolution,
       duration: request.duration,
-      serviceTier: request.serviceTier
+      serviceTier: request.serviceTier,
+      referenceMediaTypes: request.referenceMediaTypes
     });
     const fallbackProvider = kind === 'image'
       ? await resolveImageFallback(request, creditQuote)
@@ -6617,21 +6726,40 @@ function registerIpcHandlers() {
       let primaryCount = 0;
       let fallbackCount = 0;
       let fallbackProviderName = '';
+      let authoritativeVideoEstimate = null;
+      let authoritativeVideoCharge = null;
       for (let index = 0; index < settled.length; index += 1) {
         const result = settled[index];
         if (result.status !== 'fulfilled') continue;
         const generated = result.value;
+        const providerEstimate = Number(generated.buffer && generated.buffer.estimatedCredits);
+        const providerCharge = Number(generated.buffer && generated.buffer.creditsCharged);
+        if (kind === 'video' && Number.isFinite(providerEstimate) && providerEstimate >= 0) {
+          authoritativeVideoEstimate = providerEstimate;
+        }
+        if (kind === 'video' && Number.isFinite(providerCharge) && providerCharge >= 0) {
+          authoritativeVideoCharge = providerCharge;
+        }
         const resultRequest = generated.fallbackUsed
           ? {
               ...request,
               imageProviderId: generated.providerId,
               accountingRequestId: generated.accountingRequestId,
+              estimatedCredits: kind === 'image' ? reservationQuote.unitCredits : (authoritativeVideoEstimate ?? reservationQuote.totalCredits),
+              creditsCharged: fallbackProvider && fallbackProvider.quote
+                ? fallbackProvider.quote.unitCredits : creditQuote.unitCredits,
               credits: fallbackProvider && fallbackProvider.quote ? fallbackProvider.quote.unitCredits : creditQuote.unitCredits
             }
           : {
               ...request,
               accountingRequestId: generated.accountingRequestId,
-              credits: kind === 'image' ? creditQuote.unitCredits : creditQuote.totalCredits
+              estimatedCredits: kind === 'image' ? reservationQuote.unitCredits : (authoritativeVideoEstimate ?? reservationQuote.totalCredits),
+              creditsCharged: kind === 'image'
+                ? creditQuote.unitCredits
+                : (authoritativeVideoCharge ?? creditQuote.totalCredits),
+              credits: kind === 'image'
+                ? creditQuote.unitCredits
+                : (authoritativeVideoCharge ?? creditQuote.totalCredits)
             };
         const added = await addGeneratedMediaFile(
           generated.buffer,
@@ -6666,7 +6794,7 @@ function registerIpcHandlers() {
           + (fallbackProvider && fallbackProvider.quote
             ? fallbackProvider.quote.unitCredits * fallbackCount
             : 0)
-        : creditQuote.totalCredits;
+        : (authoritativeVideoCharge ?? creditQuote.totalCredits);
       membershipService.finishUsage(usage.usageId, {
         status: failures.length ? 'partial' : 'succeeded',
         resultUnits: files.length,
@@ -6682,7 +6810,9 @@ function registerIpcHandlers() {
         boardItems,
         failedCount: failures.length,
         unlocked: [...unlockedKeys],
-        estimatedCredits: reservationQuote.totalCredits,
+        estimatedCredits: kind === 'video'
+          ? (authoritativeVideoEstimate ?? reservationQuote.totalCredits)
+          : reservationQuote.totalCredits,
         creditsCharged,
         ...(fallbackCount > 0 ? {
           fallback: {
@@ -6766,6 +6896,7 @@ function registerIpcHandlers() {
       message: localizedMessage('Enter a message.', '请输入消息。', '메시지를 입력하세요.')
     };
     const usage = membershipService.beginUsage('ai.chat', {
+      estimatedCredits: CHAT_CREDITS,
       metadata: {
         providerId: String(request.chatProviderId || '').trim() || null,
         modelName: String(request.chatModel || '').trim() || null,
@@ -6808,6 +6939,7 @@ function registerIpcHandlers() {
       membershipService.finishUsage(usage.usageId, {
         status: 'succeeded',
         resultUnits: 1,
+        settledCredits: CHAT_CREDITS,
         metadata: { responseCharacters: String(text || '').length }
       });
       return { ok: true, text, files };

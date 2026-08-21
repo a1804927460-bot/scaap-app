@@ -937,7 +937,10 @@ function hyper3dResponseObject(payload, { terminalOnBusinessError = false } = {}
   const response = nestedResponseObject(
     payload,
     (value) => [
-      'request_id', 'requestId', 'task_id', 'taskId', 'status', 'model_mesh',
+      'request_id', 'requestId', 'task_id', 'taskId', 'job_id', 'jobId', 'uuid',
+      'status', 'model_mesh', 'modelMesh', 'model_urls', 'modelUrls',
+      'output', 'outputs', 'result', 'results', 'glb', 'glb_url', 'glbUrl',
+      'model_url', 'modelUrl', 'download_url', 'downloadUrl',
       'queue_position', 'queuePosition', 'progress', 'error_code', 'errorCode',
       'error', 'detail'
     ].some((key) => Object.hasOwn(value, key)),
@@ -1424,8 +1427,58 @@ async function queryHyper3dJob(jobId, dependencies) {
   }), { terminalOnBusinessError: true });
 }
 
+export function quoteTopazVideoProviderCreditReserve(normalizedOptions = {}) {
+  const duration = Number(normalizedOptions.sourceDuration);
+  if (!Number.isFinite(duration) || duration <= 0) {
+    throw toolError('invalid-video-duration', 'The source video duration is required for credit reservation.', 400);
+  }
+  const output = normalizedOptions.output || {};
+  const resolution = output.resolution || {};
+  const pixels = Math.max(1, Number(resolution.width) * Number(resolution.height));
+  const pixelFactor = Math.max(0.25, pixels / (3840 * 2160));
+  const frameRateFactor = Math.max(1, Number(output.frameRate) / 24);
+  const filterCount = Math.max(1, Array.isArray(normalizedOptions.filters) ? normalizedOptions.filters.length : 1);
+  // Four provider credits per 4K/24fps output second is deliberately above
+  // observed bills and scales with every cost-bearing output dimension.
+  return Math.min(1_000_000, Math.max(1, Math.ceil(
+    duration * 4 * pixelFactor * frameRateFactor * filterCount
+  )));
+}
+
+function hyper3dModelUrl(job) {
+  const candidates = [];
+  const visited = new Set();
+  const visit = (value, path = [], depth = 0) => {
+    if (depth > 7 || value === null || value === undefined) return;
+    if (typeof value === 'string') {
+      const url = value.trim();
+      if (!/^https:\/\//i.test(url)) return;
+      const context = path.join('.').toLowerCase();
+      if (/(?:preview|thumbnail|texture|image)(?:_|\.|$)/.test(context)) return;
+      let score = 0;
+      if (/\.glb(?:[?#]|$)/i.test(url)) score += 100;
+      if (/(?:^|\.)(?:glb|glb_url|glburl)(?:\.|$)/.test(context)) score += 80;
+      if (/(?:model_mesh|modelmesh|model_url|modelurl|model_urls|modelurls|mesh)/.test(context)) score += 60;
+      if (/(?:download_url|downloadurl)/.test(context)) score += 40;
+      if (/(?:output|result)/.test(context) && /(?:^|\.)url$/.test(context)) score += 20;
+      if (score > 0) candidates.push({ url, score, order: candidates.length });
+      return;
+    }
+    if (typeof value !== 'object' || visited.has(value)) return;
+    visited.add(value);
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => visit(entry, [...path, String(index)], depth + 1));
+      return;
+    }
+    Object.entries(value).forEach(([key, entry]) => visit(entry, [...path, key], depth + 1));
+  };
+  visit(job);
+  candidates.sort((left, right) => right.score - left.score || left.order - right.order);
+  return candidates[0] ? candidates[0].url : '';
+}
+
 function hyper3dStatus(job) {
-  if (job && job.model_mesh && typeof job.model_mesh.url === 'string') return 'succeeded';
+  if (hyper3dModelUrl(job)) return 'succeeded';
   const rawStatus = job && job.status;
   if (rawStatus !== undefined && rawStatus !== null && String(rawStatus).trim()) {
     return normalizeThreeDStatus(rawStatus);
@@ -1440,11 +1493,11 @@ function hyper3dStatus(job) {
 }
 
 function findHyper3dGlb(job) {
-  const result = job && job.model_mesh;
-  if (!result || typeof result.url !== 'string') {
+  const url = hyper3dModelUrl(job);
+  if (!url) {
     throw toolError('three-d-result-invalid', 'The completed 3D task did not contain a GLB model.', 502);
   }
-  return { url: result.url };
+  return { url };
 }
 
 async function createHyper3dJob(image, prompt, dependencies, toolOptions) {
@@ -1468,7 +1521,10 @@ async function createHyper3dJob(image, prompt, dependencies, toolOptions) {
       })
     }, dependencies);
     const response = hyper3dResponseObject(payload);
-    const jobId = String(response.request_id || response.requestId || response.task_id || response.taskId || '').trim();
+    const jobId = String(
+      response.request_id || response.requestId || response.task_id || response.taskId
+      || response.job_id || response.jobId || response.uuid || ''
+    ).trim();
     if (!jobId || jobId.length > 512 || /[\u0000-\u001f\u007f]/.test(jobId)) {
       throw toolError('ai302-invalid-response', 'The 3D service did not return a valid task.', 502);
     }
@@ -1864,7 +1920,9 @@ export async function getThreeDStatus({ taskToken, userId } = {}, options = {}) 
     result.errorCode = 'three-d-generation-failed';
     result.errorMessage = '3D generation failed.';
   }
-  const settlement = await settleThreeDCredits(task, status, options);
+  const settlement = status === 'failed'
+    ? await settleThreeDCredits(task, 'failed', options)
+    : null;
   if (Number.isInteger(task.credits)) result.credits = task.credits;
   if (settlement && Number.isFinite(Number(settlement.creditsCharged))) {
     result.creditsCharged = Number(settlement.creditsCharged);
@@ -1893,8 +1951,8 @@ export async function downloadThreeDModel({ taskToken, userId } = {}, options = 
     signal: options.signal
   });
   const status = handler.status(job);
-  await settleThreeDCredits(task, status, options);
   if (status !== 'succeeded') {
+    if (status === 'failed') await settleThreeDCredits(task, 'failed', options);
     throw toolError(
       status === 'failed' ? 'three-d-generation-failed' : 'three-d-task-not-ready',
       status === 'failed' ? '3D generation failed.' : 'The 3D model is not ready to download.',
@@ -1903,11 +1961,18 @@ export async function downloadThreeDModel({ taskToken, userId } = {}, options = 
   }
   const result = handler.result(job);
   const url = validateAssetUrl(result.url).toString();
-  const glb = await fetchAsset(url, MAX_GLB_BYTES, {
-    fetchImpl: options.fetchImpl || fetch,
-    signal: options.signal
-  });
-  validateGlb(glb);
+  let glb;
+  try {
+    glb = await fetchAsset(url, MAX_GLB_BYTES, {
+      fetchImpl: options.fetchImpl || fetch,
+      signal: options.signal
+    });
+    validateGlb(glb);
+  } catch (error) {
+    await settleThreeDCredits(task, 'failed', options);
+    throw error;
+  }
+  await settleThreeDCredits(task, 'succeeded', options);
   return glb;
 }
 
@@ -1932,12 +1997,31 @@ export async function createVideoUpscaleTask({ videoDataUrl, videoAsset, toolOpt
     validateVideo(video.buffer, video.mime);
   }
   const normalized = normalizeVideoUpscaleOptions(toolOptions);
-  const relay = storeRelayAsset(video, {
-    ...options,
-    relayTtlMs: VIDEO_RELAY_ASSET_TTL_MS
-  });
+  const providerCreditReserve = quoteTopazVideoProviderCreditReserve(normalized);
   const localRequestId = crypto.randomUUID();
+  if (typeof options.reserveCredits !== 'function') {
+    throw toolError('credit-service-failed', 'Topaz credit enforcement is unavailable.', 503);
+  }
+  const reservation = await options.reserveCredits({
+    userId: ownerId,
+    requestId: localRequestId,
+    providerId: TOPAZ_VIDEO_PROVIDER,
+    credits: quoteTopazRetailCredits(providerCreditReserve),
+    providerCost: providerCreditReserve,
+    resolution: `${normalized.output.resolution.width}x${normalized.output.resolution.height}`,
+    duration: Math.ceil(normalized.sourceDuration)
+  });
+  if (!reservation || reservation.ok !== true) {
+    const reason = String(reservation && reservation.reason || 'credit-service-failed');
+    const status = reason === 'insufficient-credits' ? 402 : reason === 'account-suspended' ? 403 : 503;
+    throw toolError(reason, 'The video enhancement credits could not be reserved.', status);
+  }
+  let relay = null;
   try {
+    relay = storeRelayAsset(video, {
+      ...options,
+      relayTtlMs: VIDEO_RELAY_ASSET_TTL_MS
+    });
     const payload = await fetch302Json(TOPAZ_VIDEO_UPLOAD_PATH, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1961,34 +2045,37 @@ export async function createVideoUpscaleTask({ videoDataUrl, videoAsset, toolOpt
         || !Number.isInteger(providerCost) || providerCost < 0 || providerCost > 1_000_000) {
       throw toolError('ai302-invalid-response', 'The video enhancement service did not return a valid task.', 502);
     }
-    const credits = quoteTopazRetailCredits(providerCost);
-    let reservation = null;
-    if (typeof options.reserveCredits === 'function') {
-      reservation = await options.reserveCredits({
-        userId: ownerId,
+    let settledProviderReserve = providerCreditReserve;
+    let billedCredits = reservation && Number.isFinite(Number(reservation.credits))
+      ? Number(reservation.credits)
+      : quoteTopazRetailCredits(providerCreditReserve);
+    if (providerCost > providerCreditReserve) {
+      if (typeof options.topUpCredits !== 'function') {
+        throw toolError('credit-service-failed', 'Topaz credit adjustment is unavailable.', 503);
+      }
+      const adjustment = await options.topUpCredits({
         requestId: localRequestId,
         providerId: TOPAZ_VIDEO_PROVIDER,
-        credits,
-        providerCost,
-        resolution: `${normalized.output.resolution.width}x${normalized.output.resolution.height}`,
-        duration: normalized.sourceDuration > 0 ? Math.ceil(normalized.sourceDuration) : null
+        providerCost
       });
-      if (!reservation || reservation.ok !== true) {
-        const reason = String(reservation && reservation.reason || 'credit-service-failed');
-        const status = reason === 'insufficient-credits' ? 402 : reason === 'account-suspended' ? 403 : 503;
-        throw toolError(reason, 'The video enhancement credits could not be reserved.', status);
+      if (!adjustment || adjustment.ok !== true) {
+        const reason = String(adjustment && adjustment.reason || 'credit-service-failed');
+        throw toolError(
+          reason,
+          'The Topaz credit reservation could not cover the provider cost.',
+          reason === 'insufficient-credits' ? 402 : 503
+        );
       }
+      settledProviderReserve = providerCost;
+      billedCredits = Number(adjustment.credits) || quoteTopazRetailCredits(providerCost);
     }
-    const billedCredits = reservation && Number.isFinite(Number(reservation.credits))
-      ? Number(reservation.credits)
-      : credits;
     return {
       taskToken: createVideoTaskToken(
         providerJobId,
         localRequestId,
         relay.token,
         ownerId,
-        providerCost,
+        settledProviderReserve,
         billedCredits,
         taskKey,
         options.now ?? Date.now()
@@ -2002,7 +2089,12 @@ export async function createVideoUpscaleTask({ videoDataUrl, videoAsset, toolOpt
         : {})
     };
   } catch (error) {
-    deleteRelayAsset(relay.token);
+    if (relay) deleteRelayAsset(relay.token);
+    if (typeof options.releaseCredits === 'function') {
+      try {
+        await options.releaseCredits({ requestId: localRequestId, status: 'failed', durationMs: 0 });
+      } catch {}
+    }
     if (error && error.code === 'ai302-upstream-error' && [400, 404, 409, 415, 422].includes(Number(error.upstreamStatus))) {
       throw toolError(
         'video-upscale-request-rejected',
@@ -2031,7 +2123,9 @@ export async function getVideoUpscaleStatus({ taskToken, userId } = {}, options 
   });
   const status = normalizeTopazVideoStatus(job);
   if (status === 'succeeded') validateAssetUrl(topazDownloadUrl(job));
-  const settlement = await settleVideoUpscaleCredits(task, status, options);
+  const settlement = status === 'failed'
+    ? await settleVideoUpscaleCredits(task, 'failed', options)
+    : null;
   if (['succeeded', 'failed'].includes(status)) deleteRelayAsset(task.relayToken);
   const progress = topazProgress(job, status);
   return {
@@ -2068,8 +2162,8 @@ export async function downloadVideoUpscaleResult({ taskToken, userId } = {}, opt
     signal: options.signal
   });
   const status = normalizeTopazVideoStatus(job);
-  await settleVideoUpscaleCredits(task, status, options);
   if (status !== 'succeeded') {
+    if (status === 'failed') await settleVideoUpscaleCredits(task, 'failed', options);
     if (status === 'failed') deleteRelayAsset(task.relayToken);
     throw toolError(
       status === 'failed' ? 'video-upscale-failed' : 'video-tool-task-not-ready',
@@ -2078,15 +2172,35 @@ export async function downloadVideoUpscaleResult({ taskToken, userId } = {}, opt
     );
   }
   const resultUrl = validateAssetUrl(topazDownloadUrl(job)).toString();
-  const video = await fetchAsset(resultUrl, MAX_VIDEO_OUTPUT_BYTES, {
-    fetchImpl: options.fetchImpl || fetch,
-    signal: options.signal
-  });
+  let video;
   try {
+    video = await fetchAsset(resultUrl, MAX_VIDEO_OUTPUT_BYTES, {
+      fetchImpl: options.fetchImpl || fetch,
+      signal: options.signal
+    });
     validateVideo(video);
   } catch (error) {
+    await settleVideoUpscaleCredits(task, 'failed', options);
     throw toolError('invalid-video-result', 'The enhanced video result is invalid.', 502);
   }
+  const reportedProviderCost = Number(topazField(job, ['cost', 'credits', 'providerCost', 'provider_cost']));
+  if (Number.isInteger(reportedProviderCost) && reportedProviderCost > task.providerCost) {
+    if (typeof options.topUpCredits !== 'function') {
+      await settleVideoUpscaleCredits(task, 'failed', options);
+      throw toolError('credit-service-failed', 'Topaz credit adjustment is unavailable.', 503);
+    }
+    const adjustment = await options.topUpCredits({
+      requestId: task.requestId,
+      providerId: TOPAZ_VIDEO_PROVIDER,
+      providerCost: reportedProviderCost
+    });
+    if (!adjustment || adjustment.ok !== true) {
+      await settleVideoUpscaleCredits(task, 'failed', options);
+      const reason = String(adjustment && adjustment.reason || 'credit-service-failed');
+      throw toolError(reason, 'The Topaz credit reservation could not cover the provider cost.', reason === 'insufficient-credits' ? 402 : 503);
+    }
+  }
+  await settleVideoUpscaleCredits(task, 'succeeded', options);
   deleteRelayAsset(task.relayToken);
   return video;
 }

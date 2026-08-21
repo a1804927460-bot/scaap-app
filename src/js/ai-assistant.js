@@ -20,6 +20,7 @@ const AiAssistant = {
 
 const AI_CHAT_HISTORY_KEY = 'messs.ai-chat-history.v1';
 const AI_CHAT_HISTORY_LIMIT = 60;
+const AI_ASSISTANT_CHAT_MODELS = new Set(['gemini-3.7-flash', 'gpt-5.6-luna']);
 
 function aiChatHistoryDate(value) {
   const date = new Date(value || 0);
@@ -482,23 +483,21 @@ function configuredAssistantProviders(kind) {
           id: 'chat-1',
           name: config.chatProviderName || 'OpenAI Compatible',
           endpoint: config.chatEndpoint || '',
-          models: [config.chatModel || 'gpt-4o-mini']
+          models: [config.chatModel || 'gemini-3.7-flash']
         }];
     const options = [];
     const displayNames = {
       'gemini-3.7-flash': 'Gemini 3.7 Flash',
-      'gpt-5.6-luna': 'GPT-5.6Luna',
-      'doubao-seed-2-1-pro-260628': 'Doubao2.1pro',
-      'deepseek-v4-pro': 'DeepSeek-V4-Pro'
+      'gpt-5.6-luna': 'GPT-5.6 Luna'
     };
     chatProviders.forEach((provider) => {
       if (!provider || provider.available === false || !provider.name || !provider.endpoint) return;
       const models = Array.isArray(provider.models) && provider.models.length
         ? provider.models
-        : [provider.model || 'gpt-4o-mini'];
+        : [provider.model || 'gemini-3.7-flash'];
       models.forEach((model) => {
         const modelId = String(model || '').trim();
-        if (!modelId) return;
+        if (!AI_ASSISTANT_CHAT_MODELS.has(modelId)) return;
         options.push({
           id: `${provider.id}::${modelId}`,
           providerId: provider.id,
@@ -593,7 +592,7 @@ function renderAssistantCreditEstimate(totalCredits) {
   const estimate = document.getElementById('ai-assistant-credit-estimate');
   if (!estimate) return;
   const total = Math.max(0, Math.ceil(Number(totalCredits) || 0));
-  if (AiAssistant.kind === 'chat' || !total) {
+  if (!total) {
     delete estimate.dataset.credits;
     estimate.hidden = true;
     estimate.textContent = '';
@@ -621,7 +620,17 @@ function updateAssistantCreditEstimate() {
   const kind = AiAssistant.kind;
   const quoteApi = window.messsAPI && window.messsAPI.quoteMediaCredits;
   const revision = ++AiAssistant.creditQuoteRevision;
-  if (!estimate || kind === 'chat' || !provider || typeof quoteApi !== 'function') {
+  if (!estimate || !provider) {
+    renderAssistantCreditEstimate(0);
+    return;
+  }
+  if (kind === 'chat') {
+    renderAssistantCreditEstimate(AiAssistant.config && AiAssistant.config.creditPricing
+      ? AiAssistant.config.creditPricing.chat
+      : 0);
+    return;
+  }
+  if (typeof quoteApi !== 'function') {
     renderAssistantCreditEstimate(0);
     return;
   }
@@ -869,7 +878,9 @@ function syncAssistantMediaOptions() {
   resolutions.forEach((value) => {
     const option = document.createElement('option');
     option.value = value;
-    option.textContent = value === 'Default' ? t('Default', '默认', '기본') : value;
+    option.textContent = value === 'Default'
+      ? t('Default', '默认', '기본')
+      : isVideo ? assistantVideoResolutionLabel(value) : value;
     sizeSelect.appendChild(option);
   });
   if (isVideo) {
@@ -967,6 +978,18 @@ function appendAssistantMessageAttachments(row, attachments) {
   row.appendChild(strip);
   const messages = document.getElementById('ai-assistant-messages');
   messages.scrollTop = messages.scrollHeight;
+}
+
+function assistantVideoResolutionLabel(value) {
+  const resolution = String(value || '').trim().toUpperCase();
+  if (resolution.includes('-ESR')) {
+    const label = resolution.replace('-ESR', '-ESR（增强超分）').replace(' & 60FPS', ' · 60FPS');
+    return t(resolution, label, resolution);
+  }
+  if (resolution.includes('-SR')) {
+    return t(resolution, resolution.replace('-SR', '-SR（超分）'), resolution);
+  }
+  return resolution;
 }
 
 function appendAssistantOutputFiles(row, files) {

@@ -92,6 +92,7 @@ assert.strictEqual(
   assert.deepStrictEqual(JSON.parse(calls[0].options.body), {
     model: 'gpt-4o-mini',
     messages: [{ role: 'user', content: 'Hello' }],
+    max_tokens: 4096,
     stream: false
   });
 

@@ -24,7 +24,7 @@ assert.match(themeCss, /body\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?inset:\s*0;/)
 assert.match(mainCss, /\.app-section\s*\{[\s\S]*?top:\s*var\(--titlebar-h\);[\s\S]*?bottom:\s*0;/);
 assert.match(mainCss, /\.main-app\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0;/);
 assert.match(mainCss, /#search-input\s*\{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-width:\s*0;/);
-assert.match(sidebarJs, /badge\.textContent\s*=\s*t\('Library',\s*'资料库'\)/, 'The Library label should not include a decorative cube icon.');
+assert.doesNotMatch(sidebarJs, /file-list-storage-badge|badge\.textContent\s*=\s*t\('Library',\s*'资料库'\)/, 'The redundant Library badge must stay removed.');
 assert.doesNotMatch(sidebarJs, /file-list-storage-badge[\s\S]{0,180}innerHTML/, 'The Library label must stay text-only.');
 assert.match(mainCss, /\.file-list:not\(\.is-folder-contents\) \.file-item\s*\{\s*padding-left:\s*28px;/, 'Root file thumbnails must align with the folder icon column.');
 assert.match(indexHtml, /id="add-folder-btn"[\s\S]*?<svg[\s\S]*?<path d="M12 10v6M9 13h6"/);
@@ -79,6 +79,10 @@ assert.match(appJs, /initTextSizeSettings\(initial\.textSize\)/);
 assert.match(indexHtml, /id="text-size-range"[^>]*type="range"[^>]*min="0"[^>]*max="4"/);
 assert.match(indexHtml, /id="text-size-label-0"[\s\S]*?id="text-size-label-4"/);
 assert.match(sidebarJs, /const TEXT_SIZE_LEVELS[\s\S]*?MutationObserver[\s\S]*?setTextSize/);
+assert.match(sidebarJs, /const rawIndex = Number\(range\.value\);[\s\S]*?Number\.isFinite\(rawIndex\)[\s\S]*?applyTextSize\(TEXT_SIZE_LEVELS\[index\]\.id\)/,
+  'The text-size slider must preserve index 0 so Extra small can be selected.');
+assert.doesNotMatch(sidebarJs, /Number\(range\.value\) \|\| 2/,
+  'The text-size slider must not treat its valid minimum value (0) as Medium.');
 assert.match(sidebarJs, /TEXT_SIZE_DYNAMIC_SURFACE = '#board-canvas, \.drawflow'[\s\S]*?root\.closest\(TEXT_SIZE_DYNAMIC_SURFACE\)\) return/,
   'Dynamic canvas mounts must bypass synchronous computed-style text scans.');
 assert.match(main, /ipcMain\.on\('window:readyForInteraction'[\s\S]*?revealMainWindow\(\)/);

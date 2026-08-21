@@ -4,6 +4,7 @@ function aiModelBadgeKind(provider = {}) {
   const id = String(provider.id || '').trim().toLowerCase();
   const name = String(provider.name || provider.model || '').trim();
   if (id === 'image-1' || /^nano\s+banana\s+pro$/i.test(name)) return 'banana-pro';
+  if (provider.icon === 'chaser-pro' || id === 'image-3' || /^chaser\s+pro$/i.test(name)) return 'chaser-pro';
   return null;
 }
 
@@ -14,6 +15,12 @@ function createAiModelBadge(kind) {
   if (kind === 'banana-pro') {
     badge.textContent = '\uD83C\uDF4C';
     return badge;
+  }
+  if (kind === 'chaser-pro') {
+    const icon = document.createElement('img');
+    icon.src = 'assets/model-icons/chaser-pro.png';
+    icon.alt = '';
+    badge.appendChild(icon);
   }
   return badge;
 }

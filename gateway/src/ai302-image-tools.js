@@ -30,6 +30,9 @@ const TOPAZ_IMAGE_PATHS = Object.freeze({
 });
 const TOPAZ_STATUS_PATH = '/topazlabs/image/v1/status';
 const TOPAZ_DOWNLOAD_PATH = '/topazlabs/image/v1/download';
+// Documented image responses can consume up to six Topaz credits. Reserve the
+// complete ceiling before contacting the provider and retain it on success.
+export const TOPAZ_IMAGE_PROVIDER_CREDIT_RESERVE = 6;
 const REQUEST_TIMEOUT_MS = 2 * 60_000;
 const LONG_RUNNING_REQUEST_TIMEOUT_MS = 10 * 60_000;
 const STATUS_TIMEOUT_MS = 20_000;
@@ -404,10 +407,10 @@ function normalizedDocumentedStatus(payload) {
 
 async function settledDocumentedTask(providerId, task, payload, userId, options) {
   const status = normalizedDocumentedStatus(payload);
-  const settlement = ['succeeded', 'failed'].includes(status) && typeof options.settleCredits === 'function'
+  const settlement = status === 'failed' && typeof options.settleCredits === 'function'
     ? await options.settleCredits({
       requestId: task.accountingRequestId,
-      status,
+      status: 'failed',
       durationMs: Math.max(0, (Math.floor(Number(options.now ?? Date.now()) / 1000) - task.issuedAt) * 1000)
     })
     : null;
@@ -418,6 +421,8 @@ async function settledDocumentedTask(providerId, task, payload, userId, options)
     status,
     retryAfterMs: ['succeeded', 'failed'].includes(status) ? 0 : 5000,
     urls: status === 'succeeded' ? nestedResultUrls(payload) : [],
+    accountingRequestId: task.accountingRequestId,
+    accountingDurationMs: Math.max(0, (Math.floor(Number(options.now ?? Date.now()) / 1000) - task.issuedAt) * 1000),
     ...(settlement && Number.isFinite(Number(settlement.creditsCharged))
       ? { creditsCharged: Number(settlement.creditsCharged) }
       : {}),
@@ -594,10 +599,10 @@ async function pollAsyncImageTask(expectedProviderId, path, { taskToken, userId 
   }, requestDependencies);
   const response = imageToolResponseObject(payload);
   const status = normalizedStatus(response);
-  const settlement = ['succeeded', 'failed'].includes(status) && typeof options.settleCredits === 'function'
+  const settlement = status === 'failed' && typeof options.settleCredits === 'function'
     ? await options.settleCredits({
       requestId: task.accountingRequestId,
-      status,
+      status: 'failed',
       durationMs: Math.max(0, (Math.floor(Number(options.now ?? Date.now()) / 1000) - task.issuedAt) * 1000)
     })
     : null;
@@ -608,6 +613,8 @@ async function pollAsyncImageTask(expectedProviderId, path, { taskToken, userId 
     status,
     retryAfterMs: status === 'queued' || status === 'processing' ? 5000 : 0,
     urls: status === 'succeeded' ? safeResultUrls(response.images) : [],
+    accountingRequestId: task.accountingRequestId,
+    accountingDurationMs: Math.max(0, (Math.floor(Number(options.now ?? Date.now()) / 1000) - task.issuedAt) * 1000),
     ...(settlement && Number.isFinite(Number(settlement.creditsCharged))
       ? { creditsCharged: Number(settlement.creditsCharged) }
       : {}),
@@ -845,7 +852,14 @@ export async function submitTopazImageTool({ modelId, imageDataUrl, toolOptions,
     ? String(options.accountingRequestId).trim().toLowerCase()
     : crypto.randomUUID();
   const relays = createRelays([imageDataUrl], options);
+  let reservation = null;
   try {
+    reservation = await options.reserveCredits({
+      requestId: accountingRequestId,
+      providerId,
+      providerCost: TOPAZ_IMAGE_PROVIDER_CREDIT_RESERVE
+    });
+    if (!reservation || reservation.ok !== true) throw deniedTopazReservation(reservation);
     const requestBody = normalizeTopazOptions(providerId, toolOptions);
     requestBody.image = relays[0].url;
     const payload = await fetch302Json(path, {
@@ -858,12 +872,19 @@ export async function submitTopazImageTool({ modelId, imageDataUrl, toolOptions,
     if (!Number.isInteger(providerCost) || providerCost < 0 || providerCost > 1_000_000) {
       throw imageToolError('ai302-invalid-response', 'Topaz did not return a valid credit cost.', 502);
     }
-    const reservation = await options.reserveCredits({
-      requestId: accountingRequestId,
-      providerId,
-      providerCost
-    });
-    if (!reservation || reservation.ok !== true) throw deniedTopazReservation(reservation);
+    let billedCredits = Number(reservation.credits) || 0;
+    if (providerCost > TOPAZ_IMAGE_PROVIDER_CREDIT_RESERVE) {
+      if (typeof options.topUpCredits !== 'function') {
+        throw imageToolError('credit-service-failed', 'Topaz credit adjustment is unavailable.', 503);
+      }
+      const adjustment = await options.topUpCredits({
+        requestId: accountingRequestId,
+        providerId,
+        providerCost
+      });
+      if (!adjustment || adjustment.ok !== true) throw deniedTopazReservation(adjustment);
+      billedCredits = Number(adjustment.credits) || billedCredits;
+    }
     return {
       taskToken: createTaskToken(
         providerId,
@@ -877,11 +898,16 @@ export async function submitTopazImageTool({ modelId, imageDataUrl, toolOptions,
       retryAfterMs: 5000,
       resultCount: 0,
       providerCost,
-      credits: Number(reservation.credits) || 0,
+      credits: billedCredits,
       availableCredits: reservation.availableCredits ?? reservation.available_credits
     };
   } catch (error) {
     for (const relay of relays) deleteAi302RelayAsset(relay.token);
+    if (reservation && reservation.ok === true && typeof options.releaseCredits === 'function') {
+      try {
+        await options.releaseCredits({ requestId: accountingRequestId, status: 'failed', durationMs: 0 });
+      } catch {}
+    }
     throw error;
   }
 }
@@ -925,11 +951,15 @@ export async function pollTopazImageTool({ taskToken, userId } = {}, options = {
     if (downloadUrl) urls = [validateAssetUrl(String(downloadUrl).trim()).toString()];
     else status = 'processing';
   }
-  const settlement = ['succeeded', 'failed'].includes(status) && typeof options.settleCredits === 'function'
+  const accountingDurationMs = Math.max(
+    0,
+    (Math.floor(Number(options.now ?? Date.now()) / 1000) - task.issuedAt) * 1000
+  );
+  const settlement = status === 'failed' && typeof options.settleCredits === 'function'
     ? await options.settleCredits({
         requestId: task.accountingRequestId,
-        status,
-        durationMs: Math.max(0, (Math.floor(Number(options.now ?? Date.now()) / 1000) - task.issuedAt) * 1000)
+        status: 'failed',
+        durationMs: accountingDurationMs
       })
     : null;
   if (settlement && settlement.ok !== true) {
@@ -942,6 +972,8 @@ export async function pollTopazImageTool({ taskToken, userId } = {}, options = {
     ])) || (status === 'succeeded' ? 100 : 0)))),
     retryAfterMs: ['succeeded', 'failed'].includes(status) ? 0 : 5000,
     urls,
+    accountingRequestId: task.accountingRequestId,
+    accountingDurationMs,
     providerCost: Number.isFinite(Number(topazField(statusPayload, [
       'credits', 'cost', 'provider_cost', 'providerCost'
     ]))) ? Number(topazField(statusPayload, [

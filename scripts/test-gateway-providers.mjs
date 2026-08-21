@@ -57,9 +57,8 @@ assert.deepEqual(
 );
 assert.equal(config.providers.find((provider) => provider.id === 'image-1').name, 'Nano Banana Pro');
 assert.equal(config.providers.find((provider) => provider.id === 'image-1').protocol, 'gemini-native');
-assert.equal(config.providers.find((provider) => provider.id === 'image-3').name, 'Seedream 5.0');
-assert.equal(config.providers.find((provider) => provider.id === 'image-3').model, 'doubao-seedream-5-0-260128');
-assert.equal(config.providers.find((provider) => provider.id === 'image-4').name, 'Midjourney Turbo');
+assert.equal(config.providers.find((provider) => provider.id === 'image-3').name, 'Chaser Pro');
+assert.equal(config.providers.find((provider) => provider.id === 'image-3').model, 'doubao-seedream-5-0-pro-260628');
 for (const [id, model] of [['image-17', '8.1'], ['image-18', '8.2']]) {
   const provider = config.providers.find((entry) => entry.id === id);
   assert.equal(provider.name, `Midjourney V${model}`);
@@ -67,7 +66,7 @@ for (const [id, model] of [['image-17', '8.1'], ['image-18', '8.2']]) {
   assert.equal(provider.protocol, 'legnext-midjourney');
   assert.equal(provider.capabilities.maxReferenceImages, 0);
 }
-for (const id of ['image-2', 'image-5', 'image-7', 'image-9', 'image-11', 'image-12', 'image-13', 'image-14']) {
+for (const id of ['image-2', 'image-4', 'image-5', 'image-7', 'image-8', 'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16']) {
   assert.equal(ids.includes(id), false);
 }
 for (const id of ['video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9']) {
@@ -188,11 +187,7 @@ assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-1').m
 assert.equal(config.providers.find((provider) => provider.id === 'chat-1').protocol, 'openai-chat');
 assert.equal(config.providers.find((provider) => provider.id === 'chat-2').name, 'AI Chat');
 assert.equal(config.providers.find((provider) => provider.id === 'chat-2').protocol, 'openai-chat');
-assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-2').models, [
-  'gpt-5.6-luna',
-  'doubao-seed-2-1-pro-260628',
-  'deepseek-v4-pro'
-]);
+assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-2').models, ['gpt-5.6-luna']);
 
 const publicText = JSON.stringify(config);
 assert.equal(publicText.includes('quickrouter-secret'), false);
@@ -417,7 +412,7 @@ const chatReply = await chat({
   prompt: 'Hello',
   messages: [{ role: 'user', content: 'Hello' }]
 });
-assert.equal(chatReply, 'Gateway chat reply');
+assert.deepEqual(chatReply, { text: 'Gateway chat reply', usage: null });
 assert.equal(
   chatCalls[0].url,
   'https://api.302.ai/v1/chat/completions'
@@ -426,6 +421,7 @@ assert.equal(chatCalls[0].options.headers.Authorization, 'Bearer ai302-secret');
 assert.deepEqual(JSON.parse(chatCalls[0].options.body), {
   model: 'gemini-3.7-flash',
   messages: [{ role: 'user', content: 'Hello' }],
+  max_tokens: 4096,
   stream: false
 });
 
@@ -434,21 +430,21 @@ globalThis.fetch = async (url, options = {}) => {
   advancedChatCalls.push({ url: String(url), options });
   return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'Advanced chat reply' } }] });
 };
-for (const model of ['gpt-5.6-luna', 'doubao-seed-2-1-pro-260628', 'deepseek-v4-pro']) {
+for (const model of ['gpt-5.6-luna', 'deepseek-v4-pro']) {
   const reply = await chat({
     providerId: 'chat-2',
     model,
     prompt: `Hello ${model}`,
     messages: [{ role: 'user', content: `Hello ${model}` }]
   });
-  assert.equal(reply, 'Advanced chat reply');
+  assert.deepEqual(reply, { text: 'Advanced chat reply', usage: null });
 }
-assert.equal(advancedChatCalls.length, 3);
-advancedChatCalls.forEach((call, index) => {
+assert.equal(advancedChatCalls.length, 2);
+advancedChatCalls.forEach((call) => {
   assert.equal(call.url, 'https://api.quickrouter.ai/v1/chat/completions');
   assert.equal(call.options.headers.Authorization, 'Bearer quickrouter-secret');
   const body = JSON.parse(call.options.body);
-  assert.equal(body.model, ['gpt-5.6-luna', 'doubao-seed-2-1-pro-260628', 'deepseek-v4-pro'][index]);
+  assert.equal(body.model, 'gpt-5.6-luna');
   assert.equal(body.stream, false);
 });
 
@@ -481,7 +477,8 @@ const createdVideo = await createVideoTask({
 assert.deepEqual(createdVideo, { providerId: 'video-1', taskId: 'h3-task-1' });
 assert.deepEqual(await pollVideoTask('video-1', createdVideo.taskId), {
   status: 'succeeded',
-  resultUrl: 'https://cdn.example/h3.mp4'
+  resultUrl: 'https://cdn.example/h3.mp4',
+  usage: null
 });
 const miniMaxBody = JSON.parse(miniMaxCalls[0].options.body);
 assert.deepEqual(miniMaxBody, {

@@ -16,7 +16,7 @@ async function main() {
     <link rel="stylesheet" href="../../src/styles/theme.css">
     <link rel="stylesheet" href="../../src/styles/main.css">
     <link rel="stylesheet" href="../../node_modules/drawflow/dist/drawflow.min.css">
-    <style>html,body{width:100%;height:100%;margin:0;overflow:hidden}.board-panel,.board-workspace-body,.board-node-mode{width:100%;height:100%}.board-workspace-body{display:flex}</style>
+    <style>html,body{width:100%;height:100%;margin:0;overflow:hidden}.board-panel,.board-workspace-body,.board-node-mode{width:100%;height:100%}.board-workspace-body{display:flex}.board-node-add-menu,.board-node-connection-menu{animation:none!important}</style>
   </head><body><main id="board-panel" class="board-panel is-node-mode">
     <div class="board-workspace-body"><div id="board-node-mode" class="board-node-mode">
       <div id="board-node-editor" class="board-node-editor"></div>
@@ -74,7 +74,7 @@ async function main() {
 
   win.webContents.sendInputEvent({ type: 'mouseDown', x: 360, y: 260, button: 'right', clickCount: 1 });
   win.webContents.sendInputEvent({ type: 'mouseUp', x: 360, y: 260, button: 'right', clickCount: 1 });
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  await new Promise((resolve) => setTimeout(resolve, 380));
   const menu = await win.webContents.executeJavaScript(`({
     hidden:document.getElementById('board-node-add-menu').hidden,
     labels:[...document.querySelectorAll('#board-node-add-menu .board-node-menu-copy b')].map((el)=>el.textContent),
@@ -106,6 +106,26 @@ async function main() {
   })`);
   if (state.before !== 0 || state.after !== 1 || Math.abs(state.ratio - 0.5625) > 0.01 || state.boardItems !== 1 || !state.menuHidden) {
     throw new Error(`Node creation/composer/ratio isolation failed: ${JSON.stringify(state)}`);
+  }
+
+  const inlineText = await win.webContents.executeJavaScript(`new Promise((resolve)=>{
+    addCanvasWorkflowNode('text', null, {x:800,y:110});
+    setTimeout(()=>{
+      const text=Object.entries(canvasNodeData()).find(([,node])=>node.data.nodeRole==='text');
+      const node=document.getElementById('node-'+text[0]);
+      const input=node.querySelector('.canvas-node-textarea');
+      input.value='Inline prompt';
+      input.dispatchEvent(new Event('input',{bubbles:true}));
+      setTimeout(()=>resolve({
+        visible:getComputedStyle(input).display,
+        focused:document.activeElement===input,
+        overlay:document.querySelector('.board-node-text-editor') !== null,
+        saved:canvasNodeData()[text[0]].data.text
+      }),20);
+    },100);
+  })`);
+  if (inlineText.visible === 'none' || !inlineText.focused || inlineText.overlay || inlineText.saved !== 'Inline prompt') {
+    throw new Error(`Text node is not an inline editable node: ${JSON.stringify(inlineText)}`);
   }
 
   await new Promise((resolve) => setTimeout(resolve, 120));

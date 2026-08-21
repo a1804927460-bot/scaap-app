@@ -804,6 +804,7 @@ function testSeedreamSizeAndRatioMapping() {
     model: 'doubao-seedream-5-0-260128',
     prompt: 'wide editorial scene',
     size: '2K',
+    aspect_ratio: '16:9',
     sequential_image_generation: 'disabled',
     response_format: 'url',
     watermark: false

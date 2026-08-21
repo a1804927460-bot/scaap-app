@@ -22,6 +22,22 @@ const modelViewerSource = fs.readFileSync(path.join(root, 'src', 'js', 'model-vi
 const usageSettingsSource = fs.readFileSync(path.join(root, 'src', 'js', 'usage-settings.js'), 'utf8');
 const documentEditorSource = fs.readFileSync(path.join(root, 'src', 'js', 'document-editor.js'), 'utf8');
 
+assert.match(
+  boardSource,
+  /const TEXT_NOTE_DEFAULT_COLOR = '#15171c';[\s\S]*?function textNoteUsesThemeColor\(note\)[\s\S]*?note\.colorMode === 'auto'/,
+  'Board text needs a theme-aware automatic color mode.'
+);
+assert.match(
+  boardSource,
+  /color: TEXT_NOTE_DEFAULT_COLOR, colorMode: 'auto', noFill: false, align: 'left'/,
+  'New board text should inherit the active theme foreground by default.'
+);
+assert.match(
+  boardSource,
+  /el\.style\.color = note\.noFill \? 'transparent' : displayColor;[\s\S]*?note\.colorMode = 'manual';/,
+  'Manual text colors must remain an explicit user choice while automatic text follows the theme.'
+);
+
 const clipboardPaths = [
   'C:\\Users\\Example\\Pictures\\copied image.png',
   'C:\\素材\\参考图.webp'
@@ -86,8 +102,18 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /function recordBoardMoveHistory[\s\S]*?before:[\s\S]*?after:[\s\S]*?function undoBoardMove[\s\S]*?applyBoardMoveHistory\(entry, 'before'\)/,
+  /function recordBoardMoveHistory[\s\S]*?before:[\s\S]*?after:[\s\S]*?function undoBoardMove[\s\S]*?applyBoardHistory\(entry, 'before'\)/,
   'Board moves must retain their previous coordinates for Ctrl+Z.'
+);
+assert.match(
+  boardSource,
+  /function recordBoardItemsHistory[\s\S]*?type, items[\s\S]*?function applyBoardItemsHistory[\s\S]*?canvasWorkspaceAddItem[\s\S]*?canvasWorkspaceRemoveItems/,
+  'Added and removed board items must retain complete snapshots for undo and redo.'
+);
+assert.match(
+  boardSource,
+  /Delete'[\s\S]*?removeBoardItemsWithHistory\(selected\)/,
+  'Keyboard deletion must enter the same undo history as context-menu deletion.'
 );
 assert.match(
   boardSource,
@@ -933,7 +959,12 @@ assert.match(
 assert.match(contextMenuSource, /if \(item\.divider\)[\s\S]*?context-menu-divider/,
   'The destructive canvas command must support a visual divider.');
 assert.match(contextMenuSource, /function exportBoardItemFile[\s\S]*?exportFile\(item\.fileId\)/);
-assert.match(contextMenuSource, /function removeBoardItemFromCanvas[\s\S]*?removeBoardItem\(item\.id\)/);
+assert.match(contextMenuSource, /function removeBoardItemFromCanvas[\s\S]*?removeBoardItemsWithHistory\(\[item\]\)/);
+assert.match(
+  contextMenuSource,
+  /function showBoardCanvasContextMenu[\s\S]*?Import files[\s\S]*?pickFiles\(\)[\s\S]*?importFiles[\s\S]*?addFilesToBoard/,
+  'Blank-canvas right click must import selected files at the clicked board location.'
+);
 assert.match(
   mainSource,
   /const supported = normalizedTarget === 'photoshop'[\s\S]*?preview\.isImageExt\(ext\)[\s\S]*?preview\.isImageExt\(ext\) \|\| preview\.isVideoExt\(ext\)/,
@@ -1057,7 +1088,7 @@ const ledgerSandbox = {
   quoteMediaCredits: (request) => request && request.kind === 'video'
     ? { unitCredits: 202.5073064868, totalCredits: 1216 }
     : { unitCredits: 12, totalCredits: 12 },
-  CREDIT_PRICING_VERSION: '202608200003',
+  CREDIT_PRICING_VERSION: '202608210002',
   BUTLER_IMAGE_TOOL_CREDITS: {}
 };
 vm.runInNewContext(
@@ -1088,7 +1119,9 @@ ledgerSandbox.store.data.files = [];
 ledgerSandbox.store.data.canvasUsageLedger = JSON.parse(JSON.stringify(ledgerSandbox.store.data.canvasUsageLedger));
 ledgerSandbox.canvasLedgerApi.ensureCanvasUsageLedger();
 assert.equal(ledgerSandbox.store.data.canvasUsageLedger.length, 1, 'Deleting media and reloading after an update must preserve canvas usage.');
-assert.equal(ledgerSandbox.store.data.canvasUsageLedger[0].credits, 12);
+assert.equal(ledgerSandbox.store.data.canvasUsageLedger[0].estimatedCredits, 12);
+assert.equal(ledgerSandbox.store.data.canvasUsageLedger[0].creditsCharged, 24);
+assert.equal(ledgerSandbox.store.data.canvasUsageLedger[0].credits, 24);
 assert.equal(ledgerSandbox.store.data.canvasUsageLedger[0].canvasId, 'canvas-history');
 const staleVideo = {
   id: 'generated-video-1',
@@ -1103,9 +1136,14 @@ const staleVideo = {
 };
 ledgerSandbox.canvasLedgerApi.recordCanvasUsageFile(staleVideo);
 assert.equal(
-  ledgerSandbox.store.data.canvasUsageLedger.find((entry) => entry.sourceFileId === staleVideo.id).credits,
+  ledgerSandbox.store.data.canvasUsageLedger.find((entry) => entry.sourceFileId === staleVideo.id).estimatedCredits,
   1216,
-  'Canvas history must refresh a stale Seedance charge to the current pricing table.'
+  'Canvas history may backfill a missing estimate from the current pricing table.'
+);
+assert.equal(
+  ledgerSandbox.store.data.canvasUsageLedger.find((entry) => entry.sourceFileId === staleVideo.id).creditsCharged,
+  151,
+  'Canvas history must never rewrite a settled historical charge.'
 );
 assert.match(
   workspaceSource,

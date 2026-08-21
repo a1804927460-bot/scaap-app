@@ -123,17 +123,18 @@ const BOARD_BUTLER_VIDEO_TOOL_HOOKS = Object.freeze({
 });
 
 // Keep the renderer estimate aligned with gateway/src/tool-pricing.js. These
-// are whole retail points after applying the 20% markup to verified upstream
-// cost and rounding upward. Topaz remains dynamic and is intentionally absent.
+// include the estimate buffer and 30% margin, rounded upward. Topaz images
+// reserve six app points so an accepted upstream request cannot be underquoted.
 const BOARD_BUTLER_RETAIL_CREDITS = Object.freeze({
-  removeBackground: 0,
-  imageEdit: 0,
-  imageExpand: 0,
-  imageEnhance: 0,
-  eraseObject: 0,
-  hunyuan3d: 36,
-  hyper3d: 62,
-  tripo3d: 53
+  removeBackground: 53,
+  imageEdit: 6,
+  imageExpand: 53,
+  imageEnhance: 53,
+  eraseObject: 53,
+  topazImage: 94,
+  hunyuan3d: 42,
+  hyper3d: 74,
+  tripo3d: 63
 });
 
 function boardButlerThreeDCredits(providerId, options = {}) {
@@ -152,7 +153,7 @@ function boardButlerThreeDCredits(providerId, options = {}) {
   } else {
     return 0;
   }
-  return Math.ceil(ptcCents * 0.01 * 7.3 * 10 * 1.2);
+  return Math.ceil(ptcCents * 0.01 * 7.3 * 10 * 1.1 * 1.3);
 }
 
 const BOARD_BUTLER_TASK_ACTIONS = Object.freeze([
@@ -1165,7 +1166,7 @@ function openBoardButlerSeedEditPanel(anchor, file, item) {
   );
   const cost = document.createElement('div');
   cost.className = 'board-butler-cost-estimate';
-  cost.textContent = t('Free · SeedEdit 3.0', '免费 · SeedEdit 3.0', '무료 · SeedEdit 3.0');
+  cost.textContent = t(`${BOARD_BUTLER_RETAIL_CREDITS.imageEdit} pts · SeedEdit 3.0`, `${BOARD_BUTLER_RETAIL_CREDITS.imageEdit} 积分 · SeedEdit 3.0`, `${BOARD_BUTLER_RETAIL_CREDITS.imageEdit}포인트 · SeedEdit 3.0`);
   form.appendChild(cost);
   appendBoardButlerFormActions(form, t('Edit', '开始编辑', '편집'));
   form.addEventListener('submit', (event) => {
@@ -1360,7 +1361,7 @@ function openBoardButlerExpandPanel(anchor, file, item) {
       || Object.values(offsets).every((value) => value === 0);
     estimate.textContent = invalid
       ? t('Choose a larger target size within 2000 px per side.', '目标尺寸必须更大，且每边最多扩展 2000 px。', '각 변은 최대 2000 px까지 확장할 수 있습니다.')
-      : `${sourceWidth} x ${sourceHeight} -> ${target.width} x ${target.height} · ${t('Free', '免费', '무료')}`;
+      : `${sourceWidth} x ${sourceHeight} -> ${target.width} x ${target.height} · ${BOARD_BUTLER_RETAIL_CREDITS.imageExpand} ${t('pts', '积分', '포인트')}`;
     estimate.classList.toggle('is-error', invalid);
     return !invalid;
   };
@@ -1570,13 +1571,14 @@ function openBoardButlerVideoUpscalePanel(anchor, file, item) {
     const resolution = String(formData.get('butler-video-resolution') || dimensions[2]);
     const frameRate = Number(formData.get('butler-video-frame-rate')) || 30;
     const duration = Math.max(1, Number(file.sourceDuration) || 5);
-    const pixelFactor = resolution === dimensions[0] ? 0.25 : (resolution === dimensions[1] ? 0.45 : 1);
-    const providerEstimate = Math.max(1, Math.ceil(duration * 0.75 * pixelFactor * frameRate / 24));
-    const credits = Math.ceil(providerEstimate * 7.3 * 10 * 1.2);
+    const [outputWidth, outputHeight] = resolution.split('x').map(Number);
+    const pixelFactor = Math.max(0.25, outputWidth * outputHeight / (3840 * 2160));
+    const providerEstimate = Math.max(1, Math.ceil(duration * 4 * pixelFactor * Math.max(1, frameRate / 24)));
+    const credits = Math.ceil(providerEstimate * 0.15 * 7.3 * 10 * 1.1 * 1.3);
     cost.textContent = t(
-      `About ${credits} pts · final charge follows the provider quote`,
-      `约 ${credits} 积分 · 最终按服务商实际费用结算`,
-      `약 ${credits}포인트 · 최종 요금은 제공업체 견적 기준`
+      `About ${credits} pts · conservative price`,
+      `约 ${credits} 积分 · 保守计费`,
+      `약 ${credits}포인트 · 보수적 요금`
     );
   };
   form.appendChild(cost);
@@ -2025,9 +2027,9 @@ function openBoardButlerThreeDPanel(anchor, file, item, providerId) {
         : {};
     const credits = boardButlerThreeDCredits(provider, quoteOptions);
     cost.textContent = t(
-      `${credits} pts · upstream cost + 20%`,
-      `${credits} 积分 · 上游真实成本加 20%`,
-      `${credits} 포인트 · 공급자 원가 + 20%`
+      `${credits} pts · conservative price`,
+      `${credits} 积分 · 保守计费`,
+      `${credits} 포인트 · 보수적 요금`
     );
   };
   form.appendChild(cost);
@@ -2166,7 +2168,7 @@ function createBoardButlerMenuButton(file, action, icon, label, onClick, options
   button.innerHTML = `
     <span class="board-butler-menu-icon" aria-hidden="true">${icon}</span>
     <span class="board-butler-menu-label">${label}</span>
-    ${Number.isFinite(Number(options.credits)) ? `<small class="board-butler-menu-cost">${Number(options.credits) <= 0 ? t('Free', '免费', '무료') : `${Math.ceil(Number(options.credits))} ${t('pts', '积分', '포인트')}`}</small>` : ''}
+    ${Number.isFinite(Number(options.credits)) && Number(options.credits) > 0 ? `<small class="board-butler-menu-cost">${Math.ceil(Number(options.credits))} ${t('pts', '积分', '포인트')}</small>` : ''}
     <small class="board-butler-menu-status" hidden></small>
     ${options.hasSubmenu ? BOARD_BUTLER_ICONS.caret : ''}
   `;
@@ -2332,7 +2334,7 @@ function openBoardButlerMenu(trigger, file, item) {
     button.setAttribute('role', 'menuitem');
     button.innerHTML = `
       <span class="board-butler-submenu-icon" aria-hidden="true">${icon}</span>
-      <span class="board-butler-submenu-label">${label} · ${t('billed from actual cost', '按实际费用结算', '실제 비용으로 정산')}</span>
+      <span class="board-butler-submenu-label">${label} · ${BOARD_BUTLER_RETAIL_CREDITS.topazImage} ${t('pts reserved', '积分预扣', '포인트 예약')}</span>
       <small class="board-butler-menu-status" hidden></small>
     `;
     button.addEventListener('click', () => {
@@ -2645,8 +2647,16 @@ function showGeneratedMediaDetails(file, anchorElement) {
   const mediaDuration = Number(file.sourceDuration) > 0
     ? Number(file.sourceDuration)
     : Number(generation.duration) > 0 ? Number(generation.duration) : 0;
-  const operationCredits = Number.isFinite(Number(butlerOperation.credits))
-    ? Math.max(0, Math.round(Number(butlerOperation.credits)))
+  const billingOperation = file.aiGeneration || file.butlerOperation || {};
+  const rawEstimatedCredits = billingOperation.estimatedCredits;
+  const estimatedCredits = rawEstimatedCredits !== null && rawEstimatedCredits !== undefined
+    && Number.isFinite(Number(rawEstimatedCredits))
+    ? Math.max(0, Math.round(Number(rawEstimatedCredits)))
+    : null;
+  const rawChargedCredits = billingOperation.creditsCharged ?? billingOperation.credits;
+  const chargedCredits = rawChargedCredits !== null && rawChargedCredits !== undefined
+    && Number.isFinite(Number(rawChargedCredits))
+    ? Math.max(0, Math.round(Number(rawChargedCredits)))
     : null;
 
   const overlay = document.createElement('div');
@@ -2725,10 +2735,17 @@ function showGeneratedMediaDetails(file, anchorElement) {
       : `${t('Requested', '请求')} ${requestedSize} · ${t('Actual', '实际')} ${dimensions || t('Unknown', '未知')}`;
     chips.appendChild(size);
   }
-  if (operationCredits !== null) {
-    const points = document.createElement('span');
-    points.textContent = `${t('Points', '积分', '포인트')} ${operationCredits}`;
-    chips.appendChild(points);
+  if (file.aiGeneration || file.butlerOperation) {
+    const estimate = document.createElement('span');
+    estimate.textContent = estimatedCredits === null
+      ? `${t('Estimated points', '预估积分', '예상 포인트')} ${t('Not recorded', '未记录', '기록 없음')}`
+      : `${t('Estimated points', '预估积分', '예상 포인트')} ${estimatedCredits}`;
+    chips.appendChild(estimate);
+    const actual = document.createElement('span');
+    actual.textContent = chargedCredits === null
+      ? `${t('Actual points', '实际积分', '실제 포인트')} ${t('Pending', '待结算', '정산 대기')}`
+      : `${t('Actual points', '实际积分', '실제 포인트')} ${chargedCredits}`;
+    chips.appendChild(actual);
   }
   if (Number.isFinite(Number(file.sizeBytes)) && Number(file.sizeBytes) >= 0) {
     const fileSize = document.createElement('span');

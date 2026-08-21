@@ -52,11 +52,14 @@ assert.match(boardMedia, /BOARD_BUTLER_ICONS\.imageLayer/, 'Image expansion must
   );
 });
 assert.match(boardMedia, /SeedEdit 3\.0/, 'Image edit must identify SeedEdit 3.0.');
+assert.match(boardMedia, /imageEdit: 6[\s\S]*imageExpand: 53/, 'Image edit and expansion must show the gateway-aligned paid prices.');
+assert.doesNotMatch(boardMedia, /Free · SeedEdit|免费 · SeedEdit|무료 · SeedEdit/, 'SeedEdit must never be presented as free.');
+assert.doesNotMatch(boardMedia, /\$\{t\('Free', '免费', '무료'\)\}/, 'Paid expansion must never be presented as free.');
 assert.match(boardMedia, /Clipdrop Uncrop/, 'Image expansion must identify the documented Clipdrop endpoint.');
 assert.match(boardMedia, /butler-expand-width[\s\S]*butler-expand-height/, 'Image expansion must expose exact target dimensions.');
 assert.match(boardMedia, /21:9[\s\S]*dataset\.expandRatio[\s\S]*data-expand-edge/, 'Image expansion must expose ratio presets and four draggable edges.');
 assert.match(boardMedia, /offsets\.left[\s\S]*Math\.min\(2000[\s\S]*offsets\.down/, 'Expansion must enforce Clipdrop\'s 2000-pixel limit on each side.');
-assert.match(boardMedia, /imageEnhance: 0[\s\S]*Enhance quality/, 'Clipdrop quality enhancement must replace creative upscale and be free.');
+assert.match(boardMedia, /imageEnhance: 53[\s\S]*Enhance quality/, 'Clipdrop quality enhancement must replace creative upscale and show its conservative paid price.');
 assert.doesNotMatch(boardMedia, /Creative upscale|图片创意放大/, 'The removed creative-upscale product must not remain visible.');
 assert.match(boardMedia, /maskDataUrl[\s\S]*maskWidth[\s\S]*maskHeight/, 'Erase must submit a real PNG mask with dimensions.');
 assert.match(boardMedia, /videoUpscale: Object\.freeze/, 'Video enhancement must have an isolated bridge hook.');
@@ -77,7 +80,7 @@ assert.match(
   'Every Topaz status and result bridge must share the transient retry policy.'
 );
 assert.match(boardMedia, /BOARD_BUTLER_VIDEO_EXTENSIONS[\s\S]*?\.mp4[\s\S]*?\.mkv[\s\S]*?appendBoardVideoButlerToolbar/, 'The Butler video entry must use the same supported container list as the desktop bridge.');
-assert.match(boardMedia, /butlerOperation\.kind === 'video-upscale'[\s\S]*?operationCredits/, 'Enhanced-video details must preserve the charged points.');
+assert.match(boardMedia, /const billingOperation = file\.aiGeneration \|\| file\.butlerOperation[\s\S]*?rawEstimatedCredits[\s\S]*?rawChargedCredits[\s\S]*?creditsCharged/, 'Generated-media details must preserve both estimated and charged points.');
 assert.match(boardMedia, /butler-video-model[\s\S]*filters:\s*\[\{[\s\S]*videoType:[\s\S]*audioTransfer: 'Copy'/, 'Video enhancement must send the selected documented filter/output shape.');
 assert.match(boardCanvas, /appendBoardVideoButlerToolbar\(el, f, item\)/, 'Selected videos must expose the Butler capsule.');
 assert.match(

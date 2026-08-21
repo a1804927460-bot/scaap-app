@@ -124,7 +124,12 @@ test('Qwen Image Edit Plus submits sanitized relay images and polls with an owne
       return jsonResponse({ status: 'PROCESSING' });
     }
   });
-  assert.deepEqual(pending, { status: 'processing', retryAfterMs: 5000, urls: [] });
+  assert.match(pending.accountingRequestId, /^[0-9a-f-]{36}$/);
+  assert.deepEqual(pending, {
+    status: 'processing', retryAfterMs: 5000, urls: [],
+    accountingRequestId: pending.accountingRequestId,
+    accountingDurationMs: 5000
+  });
 
   const complete = await pollQwenImageEdit({ taskToken: created.taskToken, userId: 'edit-owner' }, {
     apiKey: 'server-only-302-key',
@@ -134,10 +139,13 @@ test('Qwen Image Edit Plus submits sanitized relay images and polls with an owne
       images: [{ url: 'https://file.302.ai/gpt/imgs/result.png', content_type: 'image/png' }]
     })
   });
+  assert.equal(complete.accountingRequestId, pending.accountingRequestId);
   assert.deepEqual(complete, {
     status: 'succeeded',
     retryAfterMs: 0,
-    urls: ['https://file.302.ai/gpt/imgs/result.png']
+    urls: ['https://file.302.ai/gpt/imgs/result.png'],
+    accountingRequestId: pending.accountingRequestId,
+    accountingDurationMs: 10000
   });
 
   await assert.rejects(
@@ -193,13 +201,16 @@ test('Qwen Image Layered submits one relay and accepts only allowlisted result U
       });
     }
   });
+  assert.match(complete.accountingRequestId, /^[0-9a-f-]{36}$/);
   assert.deepEqual(complete, {
     status: 'succeeded',
     retryAfterMs: 0,
     urls: [
       'https://file.302.ai/layers/base.png',
       'https://v3b.fal.media/files/layer-1.png'
-    ]
+    ],
+    accountingRequestId: complete.accountingRequestId,
+    accountingDurationMs: 2000
   });
 
   await assert.rejects(
@@ -311,10 +322,13 @@ test('image tools accept wrapped 302 task and synchronous result payloads', asyn
       response: { images: [{ url: 'https://file.302.ai/wrapped/edit.png' }] }
     })
   });
+  assert.match(completed.accountingRequestId, /^[0-9a-f-]{36}$/);
   assert.deepEqual(completed, {
     status: 'succeeded',
     retryAfterMs: 0,
-    urls: ['https://file.302.ai/wrapped/edit.png']
+    urls: ['https://file.302.ai/wrapped/edit.png'],
+    accountingRequestId: completed.accountingRequestId,
+    accountingDurationMs: 1000
   });
 
   const upscaled = await superUpscaleImage({ imageDataUrl: imageDataUrl(source) }, {
@@ -357,9 +371,9 @@ test('Topaz image tools use documented endpoints, real provider credits, polling
       assert.deepEqual(request, {
         requestId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
         providerId: 'topaz-image-enhance',
-        providerCost: 2
+        providerCost: 6
       });
-      return { ok: true, credits: 6, availableCredits: 94 };
+      return { ok: true, credits: 94, availableCredits: 906 };
     }
   });
   assert.equal(createBody.model, 'Standard V2');
@@ -369,7 +383,7 @@ test('Topaz image tools use documented endpoints, real provider credits, polling
   assert.equal(createBody.crop_to_fill, true);
   assert.match(createBody.image, /^https:\/\/gateway\.example\.com\/v1\/tools\/assets\//);
   assert.equal(created.providerCost, 2);
-  assert.equal(created.credits, 6);
+  assert.equal(created.credits, 94);
   assert.equal(created.taskToken.includes(processId), false);
 
   const calls = [];
@@ -388,10 +402,7 @@ test('Topaz image tools use documented endpoints, real provider credits, polling
       return jsonResponse({ download_url: 'https://file.302.ai/topaz/enhanced.png' });
     },
     touchCredits: async ({ requestId }) => ({ ok: requestId === 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' }),
-    settleCredits: async ({ requestId, status }) => ({
-      ok: requestId === 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' && status === 'succeeded',
-      creditsCharged: 6
-    })
+    settleCredits: async () => { throw new Error('Provider-ready status must not charge before download validation.'); }
   });
   assert.equal(calls[0].url, `https://api.302.ai/topazlabs/image/v1/status/${processId}`);
   assert.equal(calls[1].url, `https://api.302.ai/topazlabs/image/v1/download/${processId}`);
@@ -400,8 +411,9 @@ test('Topaz image tools use documented endpoints, real provider credits, polling
     progress: 100,
     retryAfterMs: 0,
     urls: ['https://file.302.ai/topaz/enhanced.png'],
-    providerCost: 2,
-    creditsCharged: 6
+    accountingRequestId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    accountingDurationMs: 5000,
+    providerCost: 2
   });
 });
 
@@ -443,13 +455,13 @@ test('Topaz generative sharpen and enhance use their distinct documented endpoin
       },
       reserveCredits: async ({ providerId, providerCost }) => {
         assert.equal(providerId, entry.modelId);
-        assert.equal(providerCost, 1);
-        return { ok: true, credits: 3, availableCredits: 97 };
+        assert.equal(providerCost, 6);
+        return { ok: true, credits: 94, availableCredits: 906 };
       }
     });
     assert.equal(body.model, entry.model);
     assert.equal(created.providerCost, 1);
-    assert.equal(created.credits, 3);
+    assert.equal(created.credits, 94);
     if (entry.modelId.endsWith('enhance-gen')) {
       assert.equal(body.output_width, 1600);
       assert.equal(body.output_height, 1200);
@@ -487,14 +499,15 @@ test('all seven Topaz image tools use their documented endpoint and default mode
         return jsonResponse({ process_id: processId, credits: 1 });
       },
       reserveCredits: async ({ providerId, providerCost }) => ({
-        ok: providerId === modelId && providerCost === 1,
-        credits: 3,
-        availableCredits: 97
+        ok: providerId === modelId && providerCost === 6,
+        credits: 94,
+        availableCredits: 906
       })
     });
     assert.equal(requestBody.model, model);
     assert.match(requestBody.image, /^https:\/\/gateway\.example\.com\/v1\/tools\/assets\//);
     assert.equal(created.providerCost, 1);
+    assert.equal(created.credits, 94);
   }
 });
 
@@ -510,7 +523,7 @@ test('Topaz image tools unwrap aliases and keep polling until a download URL exi
     publicBaseUrl: 'https://gateway.example.com',
     now: 1_800_000_000_000,
     fetchImpl: async () => jsonResponse({ data: { result: { processId, providerCost: 2 } } }),
-    reserveCredits: async ({ providerCost }) => ({ ok: providerCost === 2, credits: 6 })
+    reserveCredits: async ({ providerCost }) => ({ ok: providerCost === 6, credits: 94 })
   });
 
   let call = 0;
@@ -535,6 +548,8 @@ test('Topaz image tools unwrap aliases and keep polling until a download URL exi
     progress: 100,
     retryAfterMs: 5000,
     urls: [],
+    accountingRequestId: waiting.accountingRequestId,
+    accountingDurationMs: 2000,
     providerCost: 2
   });
 
@@ -553,15 +568,16 @@ test('Topaz image tools unwrap aliases and keep polling until a download URL exi
         : jsonResponse({ data: { result: { downloadUrl: 'https://file.302.ai/topaz/wrapped.png' } } });
     },
     touchCredits: async () => ({ ok: true }),
-    settleCredits: async ({ status }) => ({ ok: status === 'succeeded', creditsCharged: 6 })
+    settleCredits: async () => { throw new Error('Provider-ready status must not charge before download validation.'); }
   });
   assert.deepEqual(completed, {
     status: 'succeeded',
     progress: 100,
     retryAfterMs: 0,
     urls: ['https://file.302.ai/topaz/wrapped.png'],
-    providerCost: 2,
-    creditsCharged: 6
+    accountingRequestId: waiting.accountingRequestId,
+    accountingDurationMs: 4000,
+    providerCost: 2
   });
 });
 
@@ -577,7 +593,7 @@ test('Topaz image failure settles as released credits', async () => {
     publicBaseUrl: 'https://gateway.example.com',
     now: 1_800_000_000_000,
     fetchImpl: async () => jsonResponse({ process_id: processId, credits: 1 }),
-    reserveCredits: async () => ({ ok: true, credits: 3, availableCredits: 97 })
+    reserveCredits: async () => ({ ok: true, credits: 94, availableCredits: 906 })
   });
   const failed = await pollTopazImageTool({
     taskToken: created.taskToken,
@@ -588,15 +604,17 @@ test('Topaz image failure settles as released credits', async () => {
     now: 1_800_000_003_000,
     fetchImpl: async () => jsonResponse({ status: 'failed', progress: 40, credits: 1 }),
     touchCredits: async () => ({ ok: true }),
-    settleCredits: async ({ status }) => ({ ok: status === 'failed', creditsReleased: 3 })
+    settleCredits: async ({ status }) => ({ ok: status === 'failed', creditsReleased: 94 })
   });
   assert.deepEqual(failed, {
     status: 'failed',
     progress: 40,
     retryAfterMs: 0,
     urls: [],
+    accountingRequestId: failed.accountingRequestId,
+    accountingDurationMs: 3000,
     providerCost: 1,
-    creditsReleased: 3
+    creditsReleased: 94
   });
 });
 
@@ -711,7 +729,7 @@ test('result downloads follow only allowlisted redirects, omit the 302 key, and 
   );
 });
 
-test('gateway keeps image tools free while retaining opaque asynchronous result downloads', () => {
+test('gateway charges image tools while retaining opaque asynchronous result downloads', () => {
   const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
   assert.match(
     server,

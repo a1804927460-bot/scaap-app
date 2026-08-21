@@ -37,6 +37,10 @@ const addWorkflow = functionBody(source, 'addCanvasWorkflowNode', 'reconcileCanv
 assert.doesNotMatch(addWorkflow, /openCanvasGenerationSettings/,
   'Creating a generation node must not open the composer until the node is clicked.');
 assert.match(addWorkflow, /role === 'text'[\s\S]*?openCanvasTextEditor/);
+assert.match(styles, /\.canvas-text-node > \.canvas-node-textarea \{\s*display:\s*block;/,
+  'Text prompts must remain editable directly inside their node.');
+assert.match(source, /const inlineInput = document\.querySelector\(`[^`]*canvas-node-textarea`\);[\s\S]*?inlineInput\.focus/,
+  'Opening a text node must focus its inline field before any floating editor is created.');
 
 assert.match(source, /function canvasNodeMediaKind\(file\)[\s\S]*?return 'model'[\s\S]*?return 'audio'/);
 assert.match(source, /function canvasNodeMediaRatio\(file, fallback = 16 \/ 9\)/);
@@ -141,6 +145,10 @@ assert.deepStrictEqual(
 );
 assert.match(source, /draft\.input_id[\s\S]*?Text prompt[\s\S]*?Image generation[\s\S]*?Video generation/,
   'Dropping a left connection on empty canvas must offer upstream node choices.');
+assert.match(source, /function canvasNodePlacementBeside\(nodeId, side, nextRole\)[\s\S]*?const compactPortClearance = 12;[\s\S]*?const compactPortGap = 34 \+ compactPortClearance;/,
+  'Connected nodes should use a compact, role-aware port gap.');
+assert.match(source, /const anchorNodeId = upstream \? draft\.input_id : draft\.output_id;[\s\S]*?canvasNodePlacementBeside\(anchorNodeId, upstream \? 'left' : 'right', role\)/,
+  'Connected nodes must be placed beside their anchor node instead of at a distant cursor location.');
 assert.match(boardSource, /generationHooks\.placeOnBoard === false\) request\.placeOnBoard = false/);
 assert.match(boardSource, /const placeOnBoard = request\.placeOnBoard !== false/);
 assert.match(boardSource, /const placeholders = placeOnBoard \? createAiPlaceholders\(generationRequest\) : \[\]/);

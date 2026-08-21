@@ -86,9 +86,7 @@ assert.ok(catalog.version >= 8);
 assert.deepEqual(
   catalog.providers.filter((provider) => provider.kind === 'image' && provider.hidden !== true).map((provider) => provider.name),
   [
-    'Nano Banana Pro', 'Seedream 5.0', 'Midjourney Turbo', 'GPT Image 2',
-    'Higgsfield Soul', 'Seedream 5.0 Pro', 'Kling Image 2', 'Jimeng Drawing 3.0',
-    'Midjourney V8.1', 'Midjourney V8.2'
+    'Nano Banana Pro', 'Chaser Pro', 'GPT Image 2', 'Midjourney V8.1', 'Midjourney V8.2'
   ]
 );
 assert.deepEqual(
@@ -99,7 +97,7 @@ assert.deepEqual(
 );
 assert.deepEqual(
   catalog.providers.filter((provider) => provider.hidden === true).map((provider) => provider.id),
-  ['atlas-image-gpt2', 'atlas-video-seedance20-i2v', 'atlas-video-seedance20-ref', 'atlas-video-seedance25-i2v', 'atlas-video-seedance25-ref', 'image-2', 'image-5', 'image-7', 'image-9', 'image-11', 'image-12', 'image-13', 'image-14', 'video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9', 'video-11', 'video-13']
+  ['atlas-image-gpt2', 'atlas-video-seedance20-i2v', 'atlas-video-seedance20-ref', 'atlas-video-seedance25-i2v', 'atlas-video-seedance25-ref', 'image-2', 'image-4', 'image-5', 'image-7', 'image-8', 'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16', 'video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9', 'video-11', 'video-13']
 );
 assert.equal(catalog.providers.find((provider) => provider.name === 'MiniMax H3').requiresActivation, false);
 assert.equal(catalog.providers.every((provider) => provider.requiresActivation === false), true);

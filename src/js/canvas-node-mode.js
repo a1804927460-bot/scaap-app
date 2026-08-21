@@ -207,6 +207,15 @@ function openCanvasTextEditor(nodeId) {
   const node = canvasNodeData()[id];
   const mode = document.getElementById('board-node-mode');
   if (!node || !node.data || node.data.nodeRole !== 'text' || !mode) return;
+  const inlineInput = document.querySelector(`#node-${CSS.escape(id)} .canvas-node-textarea`);
+  if (inlineInput) {
+    closeCanvasTextEditor();
+    window.requestAnimationFrame(() => {
+      inlineInput.focus({ preventScroll: true });
+      inlineInput.setSelectionRange?.(inlineInput.value.length, inlineInput.value.length);
+    });
+    return;
+  }
   closeCanvasTextEditor();
   if (typeof closeAiImagePopover === 'function') closeAiImagePopover();
   const editorElement = document.createElement('section');
@@ -476,13 +485,46 @@ function canvasNodeWorldPoint(clientX, clientY) {
   };
 }
 
+function canvasNodePlacementBeside(nodeId, side, nextRole) {
+  const editor = CanvasNodeMode.editor;
+  const node = canvasNodeData()[String(nodeId)];
+  if (!editor || !node) return null;
+  const nodeElement = document.getElementById(`node-${CSS.escape(String(nodeId))}`);
+  const zoom = Math.max(0.01, Number(editor.zoom) || 1);
+  const rect = nodeElement?.getBoundingClientRect();
+  const currentWidth = Math.round((rect?.width || (node.data?.nodeRole === 'generate' ? 360 : node.data?.nodeRole === 'media' ? 260 : 280)) / zoom);
+  const currentHeight = Math.round((rect?.height || (node.data?.nodeRole === 'generate' ? 236 : 164)) / zoom);
+  const nextWidth = nextRole === 'text' ? 280 : 360;
+  const nextHeight = nextRole === 'text' ? 164 : 236;
+  const inputRect = nodeElement?.querySelector('.input')?.getBoundingClientRect();
+  const outputRect = nodeElement?.querySelector('.output')?.getBoundingClientRect();
+  const inputReach = rect && inputRect
+    ? Math.max(0, (rect.left - (inputRect.left + inputRect.width / 2)) / zoom)
+    : 35;
+  const outputReach = rect && outputRect
+    ? Math.max(0, ((outputRect.left + outputRect.width / 2) - rect.right) / zoom)
+    : 35;
+  // Keep the visible plus-ring edges 12px apart. This stays correct for each
+  // node type and at every zoom level instead of using a cursor-drop position.
+  const compactPortClearance = 12;
+  const compactPortGap = 34 + compactPortClearance;
+  const x = side === 'left'
+    ? Number(node.pos_x || 0) - inputReach - nextWidth - outputReach - compactPortGap
+    : Number(node.pos_x || 0) + currentWidth + outputReach + inputReach + compactPortGap;
+  return {
+    x: Math.round(x),
+    y: Math.round(Number(node.pos_y || 0) + (currentHeight - nextHeight) / 2)
+  };
+}
+
 function addCanvasNodeFromConnection(choice, draft) {
   if (!draft || !CanvasNodeMode.editor) return null;
   const upstream = Boolean(draft.input_id);
   const role = choice && choice.role === 'text' ? 'text' : 'generate';
   const kind = choice && choice.kind === 'video' ? 'video' : 'image';
-  const position = {
-    x: Math.round(draft.worldX + (upstream ? (role === 'text' ? -316 : -396) : 36)),
+  const anchorNodeId = upstream ? draft.input_id : draft.output_id;
+  const position = canvasNodePlacementBeside(anchorNodeId, upstream ? 'left' : 'right', role) || {
+    x: Math.round(draft.worldX + (upstream ? -296 : 16)),
     y: Math.round(draft.worldY - 92)
   };
   const nodeId = addCanvasWorkflowNode(role, kind, position);
@@ -1269,6 +1311,7 @@ function ensureCanvasNodeEditor() {
     else if (event.deltaY > 0) editor.zoom_out();
   }, { capture: true, passive: false });
   host.addEventListener('click', (event) => {
+    if (isCanvasNodeTextTarget(event.target)) return;
     const openButton = event.target.closest('button[data-node-file-id]');
     if (openButton) {
       event.preventDefault();
@@ -1286,7 +1329,17 @@ function ensureCanvasNodeEditor() {
     if (action.dataset.nodeAction === 'settings') void openCanvasGenerationSettings(nodeId);
     else if (action.dataset.nodeAction === 'text') openCanvasTextEditor(nodeId);
   });
+  host.addEventListener('input', (event) => {
+    const input = event.target.closest('.canvas-node-textarea');
+    if (!input) return;
+    const nodeId = canvasNodeIdFromElement(input.closest('.drawflow-node'));
+    const node = nodeId && canvasNodeData()[nodeId];
+    if (!node || !node.data || node.data.nodeRole !== 'text') return;
+    CanvasNodeMode.editor.updateNodeDataFromId(nodeId, { ...node.data, text: input.value });
+    saveCanvasNodeLayout();
+  });
   host.addEventListener('keydown', (event) => {
+    if (isCanvasNodeTextTarget(event.target)) return;
     if (event.key !== 'Enter' && event.key !== ' ') return;
     const action = event.target.closest('[data-node-action]');
     if (!action) return;

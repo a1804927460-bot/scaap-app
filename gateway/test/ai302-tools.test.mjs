@@ -15,6 +15,7 @@ import {
   getVideoUpscaleStatus,
   normalizeThreeDOptions,
   normalizeVideoUpscaleOptions,
+  quoteTopazVideoProviderCreditReserve,
   parseImageDataUrl,
   parseVideoDataUrl,
   removeBackground,
@@ -393,6 +394,15 @@ test('Hyper3D receives a short-lived metadata-free image relay and uses the docu
     status: 'failed', retryAfterMs: 0,
     errorCode: 'three-d-generation-failed', errorMessage: '3D generation failed.'
   });
+  const completedWithAlternateResultShape = await getThreeDStatus({
+    taskToken: created.taskToken, userId: 'user-hyper'
+  }, {
+    apiKey: 'test-key', taskSecret: 'independent-task-secret', now: 1_800_000_003_000,
+    fetchImpl: async () => jsonResponse({
+      data: { status: 'COMPLETED', result: { model_url: 'https://file.302.ai/models/alternate.glb' } }
+    })
+  });
+  assert.deepEqual(completedWithAlternateResultShape, { status: 'succeeded', retryAfterMs: 0 });
 });
 
 test('Tripo3D uploads the image, creates a PBR task, polls, settles credits, and downloads GLB', async () => {
@@ -558,7 +568,11 @@ test('3D providers download only validated GLB bytes and never return upstream U
       call += 1;
       if (call === 1) {
         assert.match(String(url), /request_id=download-job$/);
-        return jsonResponse({ model_mesh: { url: 'https://file.302.ai/models/result.glb' }, textures: [] });
+        return jsonResponse({
+          status: 'COMPLETED',
+          output: { model_urls: { glb: 'https://file.302.ai/models/result.glb' } },
+          textures: [{ url: 'https://file.302.ai/models/texture.png' }]
+        });
       }
       assert.equal(String(url), 'https://file.302.ai/models/result.glb');
       assert.equal(options.headers.Authorization, undefined);
@@ -611,10 +625,11 @@ test('Topaz video creation uses the documented relay contract and server-only re
     }
   });
 
-  assert.ok(Math.abs(TOPAZ_RETAIL_CREDIT_MULTIPLIER - 87.6) < 1e-12);
-  assert.equal(quoteTopazRetailCredits(21), 1840);
+  assert.ok(Math.abs(TOPAZ_RETAIL_CREDIT_MULTIPLIER - 15.6585) < 1e-12);
+  assert.equal(quoteTopazRetailCredits(21), 329);
+  assert.equal(quoteTopazRetailCredits(61), 956);
   assert.equal(created.providerCost, 21);
-  assert.equal(created.credits, 1840);
+  assert.equal(created.credits, 956);
   assert.equal(created.availableCredits, 937);
   assert.equal(created.taskToken.includes('private-topaz-request-id'), false);
   assert.equal(created.taskToken.includes(reservation.requestId), false);
@@ -623,8 +638,8 @@ test('Topaz video creation uses the documented relay contract and server-only re
     userId: 'video-user-one',
     requestId: reservation.requestId,
     providerId: 'topaz-video-upscale',
-    credits: 1840,
-    providerCost: 21,
+    credits: 956,
+    providerCost: 61,
     resolution: '3840x2160',
     duration: 13
   });
@@ -662,7 +677,7 @@ test('Topaz video creation uses the documented relay contract and server-only re
     },
     settleCredits: async (value) => {
       settled = value;
-      return { ok: true, status: 'succeeded', creditsCharged: 1840 };
+      throw new Error('Provider-ready status must not charge before video validation.');
     },
     fetchImpl: async (url, options) => {
       assert.equal(String(url), 'https://api.302.ai/topazlabs/video/private-topaz-request-id/status');
@@ -676,14 +691,13 @@ test('Topaz video creation uses the documented relay contract and server-only re
     }
   });
   assert.deepEqual(touched, { requestId: reservation.requestId, userId: 'video-user-one' });
-  assert.deepEqual(settled, { requestId: reservation.requestId, status: 'succeeded', durationMs: 9000 });
+  assert.equal(settled, undefined);
   assert.deepEqual(status, {
     status: 'succeeded',
     progress: 100,
     retryAfterMs: 0,
-    credits: 1840,
-    providerCost: 21,
-    creditsCharged: 1840
+    credits: 956,
+    providerCost: 61
   });
 
   await assert.rejects(
@@ -702,7 +716,7 @@ test('Topaz result download validates the provider URL and returns only video by
   const output = mp4Fixture();
   const created = await createVideoUpscaleTask({
     videoDataUrl: videoDataUrl(input),
-    toolOptions: { output: { resolution: { width: 1920, height: 1080 } } },
+    toolOptions: { sourceDuration: 10, output: { resolution: { width: 1920, height: 1080 } } },
     userId: 'video-download-user'
   }, {
     apiKey: 'server-only-302-key',
@@ -711,7 +725,7 @@ test('Topaz result download validates the provider URL and returns only video by
     now: 1_800_000_000_000,
     fetchImpl: async () => jsonResponse({ cost: 4, requestId: 'download-topaz-request' }),
     reserveCredits: async ({ credits, providerCost }) => ({
-      ok: credits === 351 && providerCost === 4,
+      ok: credits === 204 && providerCost === 13,
       reason: 'reserved'
     })
   });
@@ -724,7 +738,7 @@ test('Topaz result download validates the provider URL and returns only video by
     taskSecret: 'video-download-secret',
     now: 1_800_000_002_000,
     touchCredits: async () => ({ ok: true }),
-    settleCredits: async () => ({ ok: true, status: 'succeeded', creditsCharged: 351 }),
+    settleCredits: async () => ({ ok: true, status: 'succeeded', creditsCharged: 204 }),
     fetchImpl: async (url, options) => {
       call += 1;
       if (call === 1) {
@@ -815,7 +829,7 @@ test('Topaz chunk uploads are owner-bound, retry-safe, and consumed only when co
 test('Topaz creation unwraps generic 302 status envelopes and accepts task field aliases', async () => {
   const created = await createVideoUpscaleTask({
     videoDataUrl: videoDataUrl(mp4Fixture()),
-    toolOptions: { output: { resolution: { width: 1920, height: 1080 } } },
+    toolOptions: { sourceDuration: 10, output: { resolution: { width: 1920, height: 1080 } } },
     userId: 'wrapped-video-owner'
   }, {
     apiKey: 'server-only-302-key',
@@ -828,13 +842,13 @@ test('Topaz creation unwraps generic 302 status envelopes and accepts task field
       data: { task_id: 'wrapped-topaz-task', provider_cost: 9 }
     }),
     reserveCredits: async ({ credits, providerCost }) => ({
-      ok: credits === 789 && providerCost === 9,
+      ok: credits === 204 && providerCost === 13,
       availableCredits: 73
     })
   });
   assert.equal(created.status, 'queued');
   assert.equal(created.providerCost, 9);
-  assert.equal(created.credits, 789);
+  assert.equal(created.credits, 204);
   assert.equal(created.availableCredits, 73);
 });
 
@@ -843,7 +857,7 @@ test('Topaz accepts wrapped 302 responses and derives progress from processing j
   const output = mp4Fixture();
   const created = await createVideoUpscaleTask({
     videoDataUrl: videoDataUrl(input),
-    toolOptions: { output: { resolution: { width: 1920, height: 1080 } } },
+    toolOptions: { sourceDuration: 10, output: { resolution: { width: 1920, height: 1080 } } },
     userId: 'wrapped-topaz-user'
   }, {
     apiKey: 'server-only-302-key',
@@ -854,7 +868,7 @@ test('Topaz accepts wrapped 302 responses and derives progress from processing j
       data: { cost: '7', request_id: 'wrapped-topaz-request' }
     }),
     reserveCredits: async ({ credits, providerCost }) => ({
-      ok: credits === 614 && providerCost === 7,
+      ok: credits === 204 && providerCost === 13,
       reason: 'reserved'
     })
   });
@@ -878,8 +892,8 @@ test('Topaz accepts wrapped 302 responses and derives progress from processing j
     status: 'processing',
     progress: 46,
     retryAfterMs: 5_000,
-    credits: 614,
-    providerCost: 7
+    credits: 204,
+    providerCost: 13
   });
 
   let call = 0;
@@ -891,7 +905,7 @@ test('Topaz accepts wrapped 302 responses and derives progress from processing j
     taskSecret: 'wrapped-topaz-secret',
     now: 1_800_000_004_000,
     touchCredits: async () => ({ ok: true }),
-    settleCredits: async () => ({ ok: true, status: 'succeeded', creditsCharged: 614 }),
+    settleCredits: async () => ({ ok: true, status: 'succeeded', creditsCharged: 204 }),
     fetchImpl: async (url, options) => {
       call += 1;
       if (call === 1) {
@@ -913,7 +927,7 @@ test('Topaz accepts wrapped 302 responses and derives progress from processing j
 test('Topaz video accepts snake_case jobs and waits for a delayed download URL', async () => {
   const created = await createVideoUpscaleTask({
     videoDataUrl: videoDataUrl(mp4Fixture()),
-    toolOptions: { output: { resolution: { width: 1920, height: 1080 } } },
+    toolOptions: { sourceDuration: 10, output: { resolution: { width: 1920, height: 1080 } } },
     userId: 'delayed-topaz-user'
   }, {
     apiKey: 'server-only-302-key',
@@ -921,7 +935,7 @@ test('Topaz video accepts snake_case jobs and waits for a delayed download URL',
     publicBaseUrl: 'https://gateway.example.com',
     now: 1_800_000_000_000,
     fetchImpl: async () => jsonResponse({ data: { process_id: 'delayed-topaz-request', credits: 5 } }),
-    reserveCredits: async ({ credits, providerCost }) => ({ ok: credits === 438 && providerCost === 5 })
+    reserveCredits: async ({ credits, providerCost }) => ({ ok: credits === 204 && providerCost === 13 })
   });
 
   const waiting = await getVideoUpscaleStatus({
@@ -943,8 +957,8 @@ test('Topaz video accepts snake_case jobs and waits for a delayed download URL',
     status: 'processing',
     progress: 100,
     retryAfterMs: 5_000,
-    credits: 438,
-    providerCost: 5
+    credits: 204,
+    providerCost: 13
   });
 
   const completed = await getVideoUpscaleStatus({
@@ -955,7 +969,7 @@ test('Topaz video accepts snake_case jobs and waits for a delayed download URL',
     taskSecret: 'delayed-topaz-secret',
     now: 1_800_000_004_000,
     touchCredits: async () => ({ ok: true }),
-    settleCredits: async ({ status }) => ({ ok: status === 'succeeded', creditsCharged: 438 }),
+    settleCredits: async () => { throw new Error('Provider-ready status must not charge before video validation.'); },
     fetchImpl: async () => jsonResponse({
       payload: {
         taskStatus: 'complete',
@@ -968,9 +982,8 @@ test('Topaz video accepts snake_case jobs and waits for a delayed download URL',
     status: 'succeeded',
     progress: 100,
     retryAfterMs: 0,
-    credits: 438,
-    providerCost: 5,
-    creditsCharged: 438
+    credits: 204,
+    providerCost: 13
   });
 });
 
@@ -1004,18 +1017,21 @@ test('Topaz video inputs and output options fail closed', () => {
     }
   );
   assert.throws(() => quoteTopazRetailCredits(1.5), { code: 'invalid-provider-cost' });
+  assert.throws(() => quoteTopazVideoProviderCreditReserve(normalizeVideoUpscaleOptions({})), { code: 'invalid-video-duration' });
 });
 
 test('Topaz documents a creation rejection instead of returning a generic start failure', async () => {
   await assert.rejects(
     () => createVideoUpscaleTask({
       videoDataUrl: videoDataUrl(mp4Fixture()),
-      toolOptions: { output: { resolution: { width: 1920, height: 1080 } } },
+      toolOptions: { sourceDuration: 10, output: { resolution: { width: 1920, height: 1080 } } },
       userId: 'video-rejected-owner'
     }, {
       apiKey: 'server-only-302-key',
       taskSecret: 'video-rejected-secret',
       publicBaseUrl: 'https://gateway.example.com',
+      reserveCredits: async ({ credits, providerCost }) => ({ ok: credits === 204 && providerCost === 13 }),
+      releaseCredits: async () => ({ ok: true, creditsReleased: 204 }),
       fetchImpl: async () => jsonResponse({ message: 'source format rejected' }, 422)
     }),
     (error) => error && error.code === 'video-upscale-request-rejected' && error.status === 422

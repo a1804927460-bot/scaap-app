@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { quoteUsage } from './usage.js';
+import { FairConcurrencyGate } from './fair-concurrency-gate.js';
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
 const RPC_TIMEOUT_MS = 8_000;
@@ -121,7 +122,7 @@ export async function startVideoJob({ userId, operationId, taskToken, body = {},
   };
   let payload = requireObject(await rpc('start_ai_video_job', rpcBody, fetchImpl));
   if (payload.ok === false && payload.reason === 'pricing-mismatch'
-      && Number.isInteger(Number(payload.credits)) && Number(payload.credits) >= 0) {
+      && Number.isInteger(Number(payload.credits)) && Number(payload.credits) >= quote.credits) {
     payload = requireObject(await rpc('start_ai_video_job', {
       ...rpcBody,
       p_expected_credits: Number(payload.credits)
@@ -233,6 +234,47 @@ export async function finalizeVideoJob({
   return payload;
 }
 
+export async function markVideoJobReady({
+  requestId,
+  leaseToken,
+  resultUrl,
+  usage = null,
+  durationMs = 0,
+  fetchImpl = fetch
+}) {
+  const normalizedUsage = usage && typeof usage === 'object' ? usage : {};
+  const payload = requireObject(await rpc('record_ai_video_provider_result', {
+    p_request_id: requestId,
+    p_lease_token: leaseToken || null,
+    p_result_url: String(resultUrl || ''),
+    p_total_seconds: Number.isFinite(Number(normalizedUsage.totalSeconds)) ? Math.max(0, Math.round(Number(normalizedUsage.totalSeconds))) : null,
+    p_input_seconds: Number.isFinite(Number(normalizedUsage.inputSeconds)) ? Math.max(0, Math.round(Number(normalizedUsage.inputSeconds))) : null,
+    p_output_seconds: Number.isFinite(Number(normalizedUsage.outputSeconds)) ? Math.max(0, Math.round(Number(normalizedUsage.outputSeconds))) : null,
+    p_input_image_count: Number.isFinite(Number(normalizedUsage.inputImageCount)) ? Math.max(0, Math.round(Number(normalizedUsage.inputImageCount))) : null,
+    p_duration_ms: Math.max(0, Math.round(Number(durationMs) || 0))
+  }, fetchImpl));
+  if (payload.ok !== true) throw serviceError('video-job-finalization-failed', 'The video result could not be persisted.');
+  return payload;
+}
+
+export async function settleVideoDownload(userId, taskToken, details = {}, fetchImpl = fetch) {
+  return requireObject(await rpc('settle_ai_video_download', {
+    p_user_id: userId,
+    p_token_hash: hashVideoTaskToken(taskToken),
+    p_result_content_type: String(details.contentType || 'video/mp4').slice(0, 128),
+    p_result_bytes: Math.max(0, Math.round(Number(details.bytes) || 0))
+  }, fetchImpl));
+}
+
+export async function failVideoDownload(userId, taskToken, error, fetchImpl = fetch) {
+  const safeError = sanitizeVideoJobError(error, 'video-download-failed');
+  return requireObject(await rpc('fail_ai_video_download', {
+    p_user_id: userId,
+    p_token_hash: hashVideoTaskToken(taskToken),
+    p_error_code: safeError.code,
+    p_error_message: safeError.message
+  }, fetchImpl));
+}
 export async function getVideoJob(userId, taskToken, fetchImpl = fetch) {
   return requireObject(await rpc('get_ai_video_job_owner_status', {
     p_user_id: userId,
@@ -307,17 +349,15 @@ async function processClaimedJob(job, pollVideoTask, fetchImpl, now) {
         });
         return 'failed';
       }
-      await finalizeVideoJob({
+      await markVideoJobReady({
         requestId: job.requestId,
         leaseToken: job.leaseToken,
-        status: 'succeeded',
         resultUrl,
-        contentType: result && (result.contentType || result.content_type),
-        bytes: result && result.bytes,
+        usage: result && result.usage,
         durationMs: elapsedMs(),
         fetchImpl
       });
-      return 'succeeded';
+      return 'ready';
     }
     if (FAILURE_PROVIDER_STATES.has(status)) {
       await finalizeVideoJob({
@@ -368,15 +408,27 @@ export async function runVideoJobWorkerCycle({
   fetchImpl = fetch,
   workerId = `gateway-${process.pid}`,
   concurrency = 4,
+  providerPollConcurrency = 2,
   leaseSeconds = 60,
   now = Date.now
 } = {}) {
   if (typeof pollVideoTask !== 'function') throw new TypeError('pollVideoTask must be a function.');
   const jobs = await claimDueVideoJobs(workerId, concurrency, leaseSeconds, fetchImpl);
-  const results = await Promise.allSettled(jobs.map((job) => processClaimedJob(job, pollVideoTask, fetchImpl, now)));
+  // Prevent one upstream from receiving a polling burst while still allowing
+  // different providers to make progress during the same durable lease cycle.
+  const pollGate = new FairConcurrencyGate({
+    name: 'video-provider-poll',
+    maxConcurrent: Math.max(1, Math.min(32, Math.round(Number(providerPollConcurrency) || 2))),
+    maxPerKey: 1,
+    maxQueue: Math.max(1, jobs.length),
+    timeoutMs: 120_000
+  });
+  const gatedPoll = (job) => pollGate.run(job.providerId || 'unknown', () => pollVideoTask(job));
+  const results = await Promise.allSettled(jobs.map((job) => processClaimedJob(job, gatedPoll, fetchImpl, now)));
   return {
     claimed: jobs.length,
-    succeeded: results.filter((result) => result.status === 'fulfilled' && result.value === 'succeeded').length,
+    succeeded: results.filter((result) => result.status === 'fulfilled'
+      && ['ready', 'succeeded'].includes(result.value)).length,
     failed: results.filter((result) => result.status === 'fulfilled' && result.value === 'failed').length,
     pending: results.filter((result) => result.status === 'fulfilled' && result.value === 'pending').length,
     errors: results.filter((result) => result.status === 'rejected').length

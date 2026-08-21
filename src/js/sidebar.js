@@ -227,13 +227,6 @@ function renderFileList(files) {
     list.appendChild(contentLabel);
   }
 
-  if (currentFolderContextId() === null) {
-    const badge = document.createElement('li');
-    badge.className = 'file-list-storage-badge';
-    badge.textContent = t('Library', '资料库');
-    list.appendChild(badge);
-  }
-
   if (activeDate) {
     list.appendChild(buildDateFolderLabel(AppState.activeDateFolderKey, files.length, true));
     for (const file of files) list.appendChild(buildFileItem(file));
@@ -955,7 +948,10 @@ function initTextSizeSettings(initialValue = 'medium') {
   if (!range || range.dataset.bound === 'true') return;
   range.dataset.bound = 'true';
   range.addEventListener('input', () => {
-    const index = Math.max(0, Math.min(TEXT_SIZE_LEVELS.length - 1, Number(range.value) || 2));
+    const rawIndex = Number(range.value);
+    const index = Number.isFinite(rawIndex)
+      ? Math.max(0, Math.min(TEXT_SIZE_LEVELS.length - 1, Math.round(rawIndex)))
+      : 2;
     applyTextSize(TEXT_SIZE_LEVELS[index].id);
   });
   range.addEventListener('change', async () => {

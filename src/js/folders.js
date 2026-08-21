@@ -21,9 +21,9 @@
    Click empty space anywhere to return to the default folder. */
 
 function defaultFolderEntry() {
-  const defaultName = AppState.defaultFolderName && AppState.defaultFolderName !== 'Library'
-    ? AppState.defaultFolderName
-    : t('Library', '资料库');
+  const savedName = String(AppState.defaultFolderName || '').trim();
+  const genericNames = new Set(['', 'Library', '资料库', 'Default', '默认']);
+  const defaultName = genericNames.has(savedName) ? t('All files', '全部文件') : savedName;
   return { id: 'default', name: defaultName, isDefault: true, parentId: null };
 }
 

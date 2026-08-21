@@ -1,5 +1,6 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { FairConcurrencyGate } from './fair-concurrency-gate.js';
 import { authenticate } from './auth.js';
 import { publicGatewayError } from './public-errors.js';
 import {
@@ -17,7 +18,8 @@ import {
   getThreeDStatus,
   getVideoUpscaleStatus,
   removeBackground,
-  storeAi302RelayAsset
+  storeAi302RelayAsset,
+  validateVideo
 } from './ai302-tools.js';
 import {
   cleanupImageObjects,
@@ -54,6 +56,7 @@ import {
   getCanvasUsage,
   getUsageAccount,
   getUsageSummary,
+  increaseTopazToolReservation,
   redeemUsageCode,
   reserveUsage,
   reserveToolUsage,
@@ -70,9 +73,11 @@ import {
 } from './tool-pricing.js';
 import {
   attachVideoTask,
+  failVideoDownload,
   finalizeVideoJob,
   getVideoDownload,
   getVideoJob,
+  settleVideoDownload,
   startVideoJob,
   startVideoJobWorker
 } from './video-jobs.js';
@@ -80,6 +85,7 @@ import {
 const port = Math.max(1, Number(process.env.PORT) || 3000);
 const maxBodyBytes = 70 * 1024 * 1024;
 const rateBuckets = new Map();
+const MAX_RATE_BUCKETS = Math.max(1_000, Math.min(100_000, Number(process.env.GATEWAY_RATE_BUCKET_LIMIT) || 20_000));
 const imageOperationCache = new Map();
 const referenceVideoRelays = new Map();
 const referenceAudioRelays = new Map();
@@ -108,6 +114,26 @@ const imageRatios = new Set([
 ]);
 const defaultVideoRatios = new Set(['21:9', '16:9', '4:3', '1:1', '3:4', '9:16']);
 const defaultVideoResolutions = new Set(['768P', '2K']);
+const sharedGateOptions = Object.freeze({
+  maxPerKey: Math.max(1, Number(process.env.GATEWAY_PER_USER_CONCURRENCY) || 2),
+  maxQueue: Math.max(10, Number(process.env.GATEWAY_QUEUE_LIMIT) || 160),
+  timeoutMs: Math.max(5_000, Number(process.env.GATEWAY_QUEUE_TIMEOUT_MS) || 90_000)
+});
+const imageGenerationGate = new FairConcurrencyGate({
+  name: 'image-generation',
+  ...sharedGateOptions,
+  maxConcurrent: Math.max(1, Number(process.env.GATEWAY_IMAGE_CONCURRENCY) || 6)
+});
+const videoGenerationGate = new FairConcurrencyGate({
+  name: 'video-generation',
+  ...sharedGateOptions,
+  maxConcurrent: Math.max(1, Number(process.env.GATEWAY_VIDEO_CONCURRENCY) || 4)
+});
+const chatGenerationGate = new FairConcurrencyGate({
+  name: 'chat-generation',
+  ...sharedGateOptions,
+  maxConcurrent: Math.max(1, Number(process.env.GATEWAY_CHAT_CONCURRENCY) || 12)
+});
 
 // Paid 302 tools are staged independently from the desktop release. Missing
 // or malformed flags must never expose a paid upstream route.
@@ -349,6 +375,13 @@ function rateAllowed(userId, ip, bucketName = 'default', maximum = null) {
   const now = Date.now();
   const current = rateBuckets.get(key);
   if (!current || current.resetAt <= now) {
+    if (!current && rateBuckets.size >= MAX_RATE_BUCKETS) {
+      for (const [staleKey, bucket] of rateBuckets) {
+        if (bucket.resetAt <= now) rateBuckets.delete(staleKey);
+        if (rateBuckets.size < MAX_RATE_BUCKETS) break;
+      }
+      if (rateBuckets.size >= MAX_RATE_BUCKETS) return false;
+    }
     rateBuckets.set(key, { count: 1, resetAt: now + 60_000 });
     return true;
   }
@@ -386,10 +419,21 @@ function validateBody(body, kind) {
     throw Object.assign(new Error('The conversation appears to contain a private credential.'), { status: 400, code: 'privacy-blocked' });
   }
   const configuredReferenceLimit = Number(capabilities.maxReferenceImages);
-  const atlasReferenceCap = isAtlasVideo && isSeedance25 ? 50 : 30;
+  const configuredTotalReferenceLimit = Number(capabilities.maxTotalReferences);
+  const supportsReferenceAudio = kind === 'video'
+    && (isAtlasVideo || Math.max(0, Number(capabilities.maxReferenceAudios) || 0) > 0);
+  const supportsMultimodalReferences = kind === 'video'
+    && (isAtlasVideo
+      || Math.max(0, Number(capabilities.maxReferenceVideos) || 0) > 0
+      || supportsReferenceAudio);
+  const videoReferenceCap = isAtlasVideo && isSeedance25
+    ? 50
+    : supportsMultimodalReferences && Number.isInteger(configuredTotalReferenceLimit)
+      ? Math.max(0, Math.min(50, configuredTotalReferenceLimit))
+      : isAtlasVideo ? 30 : 14;
   let maxReferenceImages = Number.isInteger(configuredReferenceLimit) && configuredReferenceLimit >= 0
-    ? Math.min(isAtlasVideo ? atlasReferenceCap : 14, configuredReferenceLimit)
-    : (isAtlasVideo ? atlasReferenceCap : 14);
+    ? Math.min(videoReferenceCap, configuredReferenceLimit)
+    : videoReferenceCap;
   const configuredReferenceMinimum = Number(capabilities.minReferenceImages);
   let minReferenceImages = Number.isInteger(configuredReferenceMinimum) && configuredReferenceMinimum > 0
     ? Math.min(maxReferenceImages, configuredReferenceMinimum)
@@ -401,6 +445,20 @@ function validateBody(body, kind) {
   const submittedMediaTypes = Array.isArray(body.referenceMediaTypes)
     ? body.referenceMediaTypes.map((value) => String(value || '').trim().toLowerCase())
     : [];
+  if (kind === 'chat') {
+    const totalCharacters = prompt.length + messages.reduce((sum, message) => sum + message.content.length, 0);
+    const imageUrls = messages.flatMap((message) => message.images);
+    const imageBytes = imageUrls.reduce((sum, value) => {
+      const encoded = String(value).split(',', 2)[1] || '';
+      return sum + base64DecodedBytes(encoded);
+    }, 0);
+    if (totalCharacters > 160_000) {
+      throw Object.assign(new Error('The conversation is too long.'), { status: 413, code: 'chat-context-too-large' });
+    }
+    if (imageUrls.length > 8 || imageBytes > 20 * 1024 * 1024) {
+      throw Object.assign(new Error('The conversation contains too many images.'), { status: 413, code: 'chat-images-too-large' });
+    }
+  }
   const submittedAudioReferenceCount = (Array.isArray(body.referenceAudioUrls)
     ? body.referenceAudioUrls.length : 0)
     + (Array.isArray(body.referenceAudioUploadIds) ? body.referenceAudioUploadIds.length : 0);
@@ -430,11 +488,11 @@ function validateBody(body, kind) {
     if (!selectedVideoMode) {
       throw invalidOption('invalid-video-mode', 'The selected video generation mode is not supported.');
     }
-    minReferenceImages = Math.max(0, Math.min(isAtlasVideo ? atlasReferenceCap : 14, Number(selectedVideoMode.minReferences) || 0));
-    maxReferenceImages = Math.max(minReferenceImages, Math.min(isAtlasVideo ? atlasReferenceCap : 14, Number(selectedVideoMode.maxReferences) || 0));
+    minReferenceImages = Math.max(0, Math.min(videoReferenceCap, Number(selectedVideoMode.minReferences) || 0));
+    maxReferenceImages = Math.max(minReferenceImages, Math.min(videoReferenceCap, Number(selectedVideoMode.maxReferences) || 0));
   }
   const submittedReferenceCount = submittedUrlCount
-    + (isAtlasReferenceProvider ? submittedAudioReferenceCount : 0);
+    + (supportsReferenceAudio ? submittedAudioReferenceCount : 0);
   if (submittedReferenceCount < minReferenceImages) {
     throw invalidOption('reference-required', `The selected model requires at least ${minReferenceImages} reference image${minReferenceImages === 1 ? '' : 's'}.`);
   }
@@ -473,7 +531,7 @@ function validateBody(body, kind) {
       );
     }
   }
-  if (isAtlasVideo) {
+  if (supportsMultimodalReferences) {
     const maximumReferenceImages = Math.max(0, Number(capabilities.maxReferenceImages) || 0);
     const maximumTotalReferences = Math.max(0, Number(capabilities.maxTotalReferences) || maxReferenceImages);
     if (maximumReferenceImages && referenceImageCount > maximumReferenceImages) {
@@ -539,9 +597,11 @@ function validateBody(body, kind) {
   const requestedGenerateAudio = body.generateAudio !== false;
   const requestedReturnLastFrame = body.returnLastFrame === true;
   const requestedAudioUrls = Array.isArray(body.referenceAudioUrls)
-    ? body.referenceAudioUrls.slice(0, isAtlasVideo ? 10 : 0).map((value) => String(value || '').trim())
+    ? body.referenceAudioUrls.slice(0, supportsReferenceAudio
+      ? Math.max(0, Number(capabilities.maxReferenceAudios) || 0) : 0)
+      .map((value) => String(value || '').trim())
     : [];
-  if (isAtlasVideo) {
+  if (supportsReferenceAudio) {
     const maxAudios = Math.max(0, Number(capabilities.maxReferenceAudios) || 0);
     if (requestedAudioUrls.length > maxAudios) {
       throw invalidOption('too-many-reference-audios', 'The selected video model accepts fewer reference audio files.');
@@ -551,7 +611,8 @@ function validateBody(body, kind) {
     }
   }
   const requestedAudioUploadIds = Array.isArray(body.referenceAudioUploadIds)
-    ? body.referenceAudioUploadIds.map((value) => String(value || '').trim()).filter(Boolean).slice(0, isAtlasVideo ? 10 : 0)
+    ? body.referenceAudioUploadIds.map((value) => String(value || '').trim()).filter(Boolean)
+      .slice(0, supportsReferenceAudio ? Math.max(0, Number(capabilities.maxReferenceAudios) || 0) : 0)
     : [];
   const requestedBitrateMode = String(body.bitrateMode || '').trim().toLowerCase();
   const requestedWatermark = body.watermark === true;
@@ -819,8 +880,14 @@ async function settleReservedTool(userId, usage, status = 'succeeded') {
 
 function toolAccountingCallbacks(userId, providerId) {
   if (FREE_BUTLER_PROVIDERS.has(String(providerId || '').trim().toLowerCase())) return {};
+  const normalizedProviderId = String(providerId || '').trim().toLowerCase();
   return {
     touchCredits: ({ requestId }) => touchToolUsage(userId, requestId),
+    ...(TOPAZ_DYNAMIC_PROVIDERS.has(normalizedProviderId) ? {
+      topUpCredits: ({ requestId, providerId: reportedProviderId, providerCost }) => increaseTopazToolReservation(
+        userId, requestId, reportedProviderId || normalizedProviderId, providerCost
+      )
+    } : {}),
     settleCredits: ({ requestId, status, durationMs }) => settleToolUsage(
       userId, requestId, status, durationMs
     )
@@ -882,6 +949,77 @@ function publicDownloadUrl(value) {
   }
 }
 
+const MAX_GENERATED_VIDEO_BYTES = 256 * 1024 * 1024;
+
+async function downloadValidatedVideo(downloadUrl) {
+  const safeUrl = publicDownloadUrl(downloadUrl);
+  if (!safeUrl) {
+    throw Object.assign(new Error('The video provider returned an invalid download address.'), {
+      code: 'unsafe-media-url', status: 502, retryable: false
+    });
+  }
+  let response;
+  try {
+    response = await fetch(safeUrl, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(120_000),
+      headers: { Accept: 'video/mp4,video/quicktime,video/webm,application/octet-stream' }
+    });
+  } catch (cause) {
+    throw Object.assign(new Error('The generated video could not be downloaded.'), {
+      code: 'provider-download-failed', status: 502, retryable: true, cause
+    });
+  }
+  if (!response.ok) {
+    throw Object.assign(new Error('The generated video could not be downloaded (HTTP ' + response.status + ').'), {
+      code: 'provider-download-failed',
+      status: 502,
+      upstreamStatus: response.status,
+      retryable: response.status === 408 || response.status === 429 || response.status >= 500
+    });
+  }
+  if (!publicDownloadUrl(response.url || safeUrl)) {
+    if (response.body) await response.body.cancel().catch(() => {});
+    throw Object.assign(new Error('The video provider redirected to an unsafe address.'), {
+      code: 'unsafe-media-url', status: 502, retryable: false
+    });
+  }
+  const advertisedBytes = Number(response.headers && response.headers.get('content-length')) || 0;
+  if (advertisedBytes > MAX_GENERATED_VIDEO_BYTES) {
+    if (response.body) await response.body.cancel().catch(() => {});
+    throw Object.assign(new Error('The generated video exceeds the download size limit.'), {
+      code: 'media-too-large', status: 502, retryable: false
+    });
+  }
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of response.body || []) {
+    const part = Buffer.from(chunk);
+    total += part.length;
+    if (total > MAX_GENERATED_VIDEO_BYTES) {
+      if (response.body) await response.body.cancel().catch(() => {});
+      throw Object.assign(new Error('The generated video exceeds the download size limit.'), {
+        code: 'media-too-large', status: 502, retryable: false
+      });
+    }
+    chunks.push(part);
+  }
+  const video = Buffer.concat(chunks, total);
+  const suppliedType = String(response.headers && response.headers.get('content-type') || '')
+    .split(';', 1)[0].trim().toLowerCase();
+  const validationType = suppliedType.startsWith('video/') ? suppliedType : '';
+  try {
+    validateVideo(video, validationType);
+  } catch (cause) {
+    throw Object.assign(new Error('The video provider returned an invalid media file.'), {
+      code: 'invalid-media', status: 502, retryable: false, cause
+    });
+  }
+  const contentType = suppliedType.startsWith('video/')
+    ? suppliedType
+    : video.toString('ascii', 4, 8) === 'ftyp' ? 'video/mp4' : 'video/webm';
+  return { buffer: video, contentType };
+}
 function publicVideoJob(job) {
   const rawStatus = String(job && job.status || '').toLowerCase();
   const status = rawStatus === 'starting'
@@ -890,7 +1028,9 @@ function publicVideoJob(job) {
       ? 'queued'
       : rawStatus === 'polling'
         ? 'running'
-        : rawStatus;
+        : rawStatus === 'ready'
+          ? 'succeeded'
+          : rawStatus;
   return {
     requestId: String(job && job.requestId || ''),
     status,
@@ -1177,6 +1317,12 @@ async function handle(request, response) {
         user.id,
         accountingRequestId,
         { providerId, providerCost }
+      ),
+      topUpCredits: ({ requestId: accountingRequestId, providerId, providerCost }) => increaseTopazToolReservation(
+        user.id, accountingRequestId, providerId, providerCost
+      ),
+      releaseCredits: ({ requestId: accountingRequestId, status, durationMs }) => settleToolUsage(
+        user.id, accountingRequestId, status, durationMs
       )
     }));
     return send(response, 202, task);
@@ -1224,10 +1370,42 @@ async function handle(request, response) {
     if (!Array.isArray(result.urls) || index >= result.urls.length) {
       throw invalidOption('invalid-image-result-index', 'The selected image result is invalid.');
     }
-    const png = await downloadAi302ImageResult(result.urls[index]);
+    let png;
+    let settlement;
+    try {
+      png = await downloadAi302ImageResult(result.urls[index]);
+      if (TOPAZ_IMAGE_TOOL_IDS.has(modelId) && Number.isInteger(Number(result.providerCost))) {
+        const adjustment = await increaseTopazToolReservation(
+          user.id,
+          result.accountingRequestId,
+          modelId,
+          Number(result.providerCost)
+        );
+        if (!adjustment || adjustment.ok !== true) {
+          const error = new Error('The Topaz credit reservation could not cover the provider cost.');
+          error.code = String(adjustment && adjustment.reason || 'credit-service-failed');
+          error.status = error.code === 'insufficient-credits' ? 402 : 503;
+          throw error;
+        }
+      }
+      settlement = await settleToolUsage(
+        user.id,
+        result.accountingRequestId,
+        'succeeded',
+        result.accountingDurationMs
+      );
+    } catch (error) {
+      try {
+        await settleToolUsage(user.id, result.accountingRequestId, 'failed', result.accountingDurationMs);
+      } catch {}
+      throw error;
+    }
     return send(response, 200, png, {
       'Content-Type': 'image/png',
-      'Content-Disposition': `attachment; filename="${modelId}-${index + 1}.png"`
+      'Content-Disposition': `attachment; filename="${modelId}-${index + 1}.png"`,
+      ...(Number.isFinite(Number(settlement && settlement.creditsCharged))
+        ? { 'X-Messs-Credits-Charged': String(Number(settlement.creditsCharged)) }
+        : {})
     });
   }
 
@@ -1360,6 +1538,12 @@ async function handle(request, response) {
       }, {
         reserveCredits: ({ requestId: accountingRequestId, providerId, credits, providerCost, resolution, duration }) => reserveToolUsage(
           user.id, accountingRequestId, { providerId, credits, providerCost, resolution, duration }
+        ),
+        topUpCredits: ({ requestId: accountingRequestId, providerId, providerCost }) => increaseTopazToolReservation(
+          user.id, accountingRequestId, providerId, providerCost
+        ),
+        releaseCredits: ({ requestId: accountingRequestId, status, durationMs }) => settleToolUsage(
+          user.id, accountingRequestId, status, durationMs
         )
       });
     });
@@ -1403,9 +1587,21 @@ async function handle(request, response) {
     if (!job.created) return send(response, 202, publicVideoJob(job));
 
     const startedAt = Date.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5 * 60_000);
+    timeout.unref?.();
+    request.once('aborted', () => controller.abort());
+    response.once('close', () => {
+      if (!response.writableEnded) controller.abort();
+    });
     try {
-      const providerTask = await createVideoTask({ ...body, operationId });
+      const providerTask = await videoGenerationGate.run(
+        user.id,
+        () => createVideoTask({ ...body, operationId }, controller.signal),
+        { signal: controller.signal }
+      );
       await attachVideoTaskWithRetry(operationId, providerTask.taskId);
+      clearTimeout(timeout);
       return send(response, 202, {
         requestId: operationId,
         status: 'queued',
@@ -1413,6 +1609,7 @@ async function handle(request, response) {
         creditsReserved: Math.max(0, Number(job.credits) || 0)
       });
     } catch (error) {
+      clearTimeout(timeout);
       try {
         await finalizeVideoJob({
           requestId: operationId,
@@ -1458,22 +1655,53 @@ async function handle(request, response) {
       });
     }
     let downloadUrl = publicDownloadUrl(result.url);
-    if (result.providerId && result.providerTaskId) {
+    let downloaded = null;
+    let lastDownloadError = null;
+    for (let attempt = 0; attempt < 3 && !downloaded; attempt += 1) {
+      if (result.providerId && result.providerTaskId) {
+        try {
+          const refreshed = await pollVideoTask(result.providerId, result.providerTaskId);
+          if (refreshed.status === 'succeeded' && publicDownloadUrl(refreshed.resultUrl)) {
+            downloadUrl = publicDownloadUrl(refreshed.resultUrl);
+          }
+        } catch (error) {}
+      }
       try {
-        const refreshed = await pollVideoTask(result.providerId, result.providerTaskId);
-        if (refreshed.status === 'succeeded' && publicDownloadUrl(refreshed.resultUrl)) {
-          downloadUrl = publicDownloadUrl(refreshed.resultUrl);
-        }
+        downloaded = await downloadValidatedVideo(downloadUrl);
       } catch (error) {
-        // The stored URL can still be used when a refresh request is temporarily unavailable.
+        lastDownloadError = error;
+        if (error && error.retryable === false) break;
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
       }
     }
-    if (!downloadUrl) {
-      return send(response, 502, { code: 'unsafe-media-url', message: 'The video provider returned an invalid download address.' });
+    if (!downloaded) {
+      await failVideoDownload(user.id, body.taskToken, lastDownloadError || {
+        code: 'video-download-failed', message: 'The generated video could not be downloaded.'
+      });
+      throw lastDownloadError || Object.assign(new Error('The generated video could not be downloaded.'), {
+        code: 'video-download-failed', status: 502
+      });
     }
-    return send(response, 200, { url: downloadUrl });
+    const settlement = await settleVideoDownload(user.id, body.taskToken, {
+      contentType: downloaded.contentType,
+      bytes: downloaded.buffer.length
+    });
+    if (!settlement || settlement.ok !== true) {
+      const insufficient = settlement && settlement.reason === 'insufficient-credits';
+      throw Object.assign(new Error(insufficient
+        ? 'The final provider cost exceeded the available point balance. No points were charged.'
+        : 'The video charge could not be finalized.'), {
+        code: insufficient ? 'insufficient-credits' : 'video-job-finalization-failed',
+        status: insufficient ? 402 : 503
+      });
+    }
+    return send(response, 200, downloaded.buffer, {
+      'Content-Type': downloaded.contentType,
+      'Content-Disposition': 'attachment; filename=generated-video.mp4',
+      'X-Messs-Credits-Estimated': String(Math.max(0, Number(settlement.creditsEstimated) || 0)),
+      'X-Messs-Credits-Charged': String(Math.max(0, Number(settlement.creditsCharged) || 0))
+    });
   }
-
   if (request.method === 'POST' && url.pathname === '/v1/usage/quote') {
     const raw = await readJson(request);
     const kind = String(raw && raw.kind || '').trim().toLowerCase() === 'video' ? 'video' : 'image';
@@ -1528,11 +1756,19 @@ async function handle(request, response) {
       if (body.canvasId) await tagUsageCanvas(user.id, requestId, body.canvasId);
       const startedAt = Date.now();
       try {
-        const result = await generateMedia(
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 20 * 60_000);
+        timeout.unref?.();
+        request.once('aborted', () => controller.abort());
+        response.once('close', () => {
+          if (!response.writableEnded) controller.abort();
+        });
+        const result = await imageGenerationGate.run(user.id, () => generateMedia(
           kind,
           { ...body, operationId: requestId },
-          AbortSignal.timeout(20 * 60_000)
-        );
+          controller.signal
+        ), { signal: controller.signal });
+        clearTimeout(timeout);
         await settleUsage(requestId, 'succeeded', Date.now() - startedAt);
         return result;
       } catch (error) {
@@ -1553,13 +1789,15 @@ async function handle(request, response) {
   });
   try {
     if (kind === 'chat') {
-      const text = await chat(body, controller.signal);
+      const result = await chatGenerationGate.run(user.id, () => chat(body, controller.signal), { signal: controller.signal });
+      const text = typeof result === 'string' ? result : String(result && result.text || '');
       await settleUsage(requestId, 'succeeded', Date.now() - startedAt);
-      return send(response, 200, { text });
+      return send(response, 200, {
+        text,
+        ...(result && typeof result === 'object' && result.usage ? { usage: result.usage } : {})
+      });
     }
-    const media = kind === 'video'
-      ? await generateLegacyVideo(body, controller.signal)
-      : await generateMedia(kind, body, controller.signal);
+    const media = await videoGenerationGate.run(user.id, () => generateLegacyVideo(body, controller.signal), { signal: controller.signal });
     await settleUsage(requestId, 'succeeded', Date.now() - startedAt);
     return send(response, 200, media, {
       'Content-Type': kind === 'video' ? 'video/mp4' : 'application/octet-stream'
@@ -1605,6 +1843,8 @@ const server = http.createServer((request, response) => {
       'video-job-schema-missing': 'Background video generation is being upgraded. Please try again shortly.',
       'video-job-service-failed': 'Background video generation is temporarily unavailable.',
       'video-job-finalization-failed': 'The video task could not be completed safely.',
+      'gateway-queue-full': 'The AI generation queue is full. Please retry shortly.',
+      'gateway-queue-timeout': 'The AI generation queue took too long. Please retry shortly.',
       'ai302-not-configured': 'The 302 tool gateway is not configured.',
       'ai302-unavailable': 'The 302 tool service is temporarily unavailable.',
       'ai302-upstream-error': 'The 302 tool service rejected the request.',
@@ -1649,15 +1889,20 @@ const server = http.createServer((request, response) => {
       status,
       ...(Number.isInteger(upstreamStatus) ? { upstreamStatus } : {})
     }));
+    const retryAfter = code === 'gateway-queue-full' || code === 'gateway-queue-timeout'
+      ? Math.max(1, Math.round(Number(error && error.retryAfterSeconds) || 5))
+      : null;
     if (!response.headersSent) send(response, status, {
       code,
       message: safeMessages[code] || (status >= 500 ? 'The AI gateway could not complete this request.' : publicError.message)
-    });
+    }, retryAfter ? { 'Retry-After': String(retryAfter) } : {});
   });
 });
 
 const videoWorker = String(process.env.SUPABASE_SECRET_KEY || '').trim()
   ? startVideoJobWorker({
+      concurrency: Math.max(1, Number(process.env.VIDEO_JOB_WORKER_CONCURRENCY) || 4),
+      providerPollConcurrency: Math.max(1, Number(process.env.VIDEO_PROVIDER_POLL_CONCURRENCY) || 2),
       pollVideoTask: (job) => pollVideoTask(job.providerId, job.providerTaskId),
       onError: (error) => console.error(JSON.stringify({
         level: 'error',
@@ -1676,6 +1921,11 @@ setInterval(() => {
   const now = Date.now();
   for (const [key, bucket] of rateBuckets) {
     if (bucket.resetAt <= now) rateBuckets.delete(key);
+  }
+  for (const relays of [referenceVideoRelays, referenceAudioRelays]) {
+    for (const [key, relay] of relays) {
+      if (!relay || relay.expiresAt <= now) relays.delete(key);
+    }
   }
 }, 5 * 60_000).unref();
 

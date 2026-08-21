@@ -1,15 +1,17 @@
 // 302 bills one PTC as one USD. The settlement rate is deliberately rounded
 // above the observed settlement rate so FX movement cannot undercharge.
 export const USD_TO_CNY = 7.3;
-// Topaz returns its billed provider cost directly in PTC (USD).
-export const TOPAZ_PROVIDER_PTC_PER_POINT = 1;
+// Topaz reports provider credits, not PTC. One Topaz credit costs 0.15 PTC.
+export const TOPAZ_PROVIDER_PTC_PER_POINT = 0.15;
 export const APP_CREDITS_PER_CNY = 10;
-export const RETAIL_MARKUP_PERCENT = 20;
+export const RETAIL_MARKUP_PERCENT = 30;
 export const RETAIL_MULTIPLIER = 1 + RETAIL_MARKUP_PERCENT / 100;
+export const UPSTREAM_COST_SAFETY_PERCENT = 10;
+export const UPSTREAM_COST_SAFETY_MULTIPLIER = 1 + UPSTREAM_COST_SAFETY_PERCENT / 100;
 export const PROFIT_PER_REQUEST_CNY = 0;
 export const TOPAZ_RETAIL_MARKUP = RETAIL_MARKUP_PERCENT / 100;
 export const TOPAZ_RETAIL_CREDIT_MULTIPLIER = TOPAZ_PROVIDER_PTC_PER_POINT
-  * USD_TO_CNY * APP_CREDITS_PER_CNY * RETAIL_MULTIPLIER;
+  * USD_TO_CNY * APP_CREDITS_PER_CNY * UPSTREAM_COST_SAFETY_MULTIPLIER * RETAIL_MULTIPLIER;
 export const TOPAZ_DYNAMIC_PROVIDERS = Object.freeze(new Set([
   'topaz-video-upscale',
   'topaz-image-sharpen',
@@ -21,18 +23,9 @@ export const TOPAZ_DYNAMIC_PROVIDERS = Object.freeze(new Set([
   'topaz-image-lighting'
 ]));
 
-// Butler image/video actions are included in the product experience at no
-// credit cost. Keep this list explicit so a newly added paid provider cannot
-// accidentally become free by omission.
-export const FREE_BUTLER_PROVIDERS = Object.freeze(new Set([
-  'background-remove', 'seededit-v3', 'clipdrop-uncrop', 'kling-image-expand',
-  'cleanup', 'clipdrop-upscale', 'generative-upscale',
-  'qwen-image-edit-plus', 'qwen-image-layered', 'super-upscale-v2', 'erase',
-  'topaz-video-upscale',
-  'topaz-image-sharpen', 'topaz-image-sharpen-gen', 'topaz-image-enhance',
-  'topaz-image-enhance-gen', 'topaz-image-denoise', 'topaz-image-restore',
-  'topaz-image-lighting'
-]));
+// No Butler action is free. Keep the empty compatibility set explicit so a
+// newly added provider cannot accidentally bypass reservation and settlement.
+export const FREE_BUTLER_PROVIDERS = Object.freeze(new Set());
 
 export const BUTLER_FIXED_PROVIDER_PTC = Object.freeze({
   'background-remove': 0.50,
@@ -47,10 +40,10 @@ export const BUTLER_FIXED_PROVIDER_PTC = Object.freeze({
 // These legacy/3D providers are quoted as protective whole app-point upstream
 // costs. Keeping costs separate makes every retail value use the same formula.
 export const BUTLER_FIXED_UPSTREAM_CREDITS = Object.freeze({
-  'qwen-image-edit-plus': 2,
-  'qwen-image-layered': 2,
-  'super-upscale-v2': 2,
-  erase: 2
+  'qwen-image-edit-plus': 0.10 * USD_TO_CNY * APP_CREDITS_PER_CNY,
+  'qwen-image-layered': 0.05 * USD_TO_CNY * APP_CREDITS_PER_CNY,
+  'super-upscale-v2': 0.10 * USD_TO_CNY * APP_CREDITS_PER_CNY,
+  erase: 0.50 * USD_TO_CNY * APP_CREDITS_PER_CNY
 });
 
 export function quoteThreeDProviderCostPtcCents(providerId, options = {}) {
@@ -84,7 +77,7 @@ export function quoteRetailCreditsFromCny(upstreamCostCny) {
       status: 502
     });
   }
-  return Math.ceil(normalizedCost * RETAIL_MULTIPLIER * APP_CREDITS_PER_CNY);
+  return Math.ceil(normalizedCost * UPSTREAM_COST_SAFETY_MULTIPLIER * RETAIL_MULTIPLIER * APP_CREDITS_PER_CNY);
 }
 
 export function quoteRetailCreditsFromPtc(upstreamCostPtc) {
@@ -95,7 +88,10 @@ export function quoteRetailCreditsFromPtc(upstreamCostPtc) {
       status: 502
     });
   }
-  return Math.ceil(normalizedCost * USD_TO_CNY * APP_CREDITS_PER_CNY * RETAIL_MULTIPLIER);
+  return Math.ceil(
+    normalizedCost * USD_TO_CNY * APP_CREDITS_PER_CNY
+      * UPSTREAM_COST_SAFETY_MULTIPLIER * RETAIL_MULTIPLIER
+  );
 }
 
 export const BUTLER_FIXED_RETAIL_CREDITS = Object.freeze({
@@ -103,7 +99,9 @@ export const BUTLER_FIXED_RETAIL_CREDITS = Object.freeze({
     providerId, FREE_BUTLER_PROVIDERS.has(providerId) ? 0 : quoteRetailCreditsFromPtc(cost)
   ])),
   ...Object.fromEntries(Object.entries(BUTLER_FIXED_UPSTREAM_CREDITS).map(([providerId, cost]) => [
-    providerId, FREE_BUTLER_PROVIDERS.has(providerId) || cost === 0 ? 0 : Math.ceil(cost * RETAIL_MULTIPLIER)
+    providerId, FREE_BUTLER_PROVIDERS.has(providerId) || cost === 0
+      ? 0
+      : Math.ceil(cost * UPSTREAM_COST_SAFETY_MULTIPLIER * RETAIL_MULTIPLIER)
   ]))
 });
 

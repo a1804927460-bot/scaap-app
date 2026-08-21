@@ -15,7 +15,8 @@ assert.equal(context.aiModelBadgeKind({ id: 'dynamic', name: 'GPT Image 2' }), n
 assert.equal(context.aiModelBadgeKind({ id: 'chat-1::gpt-5', name: 'gpt-5' }), null);
 assert.equal(context.aiModelBadgeKind({ id: 'image-2', name: 'Nano Banana 2' }), null);
 assert.equal(context.aiModelBadgeKind({ id: 'image-5', name: 'Nano Banana 2 Lite' }), null);
-assert.equal(context.aiModelBadgeKind({ id: 'image-3', name: 'Seedream 5.0' }), null);
+assert.equal(context.aiModelBadgeKind({ id: 'image-3', name: 'Chaser Pro', icon: 'chaser-pro' }), 'chaser-pro');
+assert.match(source, /assets\/model-icons\/chaser-pro\.png/);
 assert.equal(context.aiModelBadgeKind({ id: 'custom', model: 'doubao-seedream-5-0-260128' }), null);
 assert.equal(context.aiModelBadgeKind({ id: 'video-1', name: 'MiniMax H3' }), null);
 

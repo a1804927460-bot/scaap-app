@@ -80,23 +80,42 @@ async function testGatewayClient() {
       if (url.endsWith('/v1/account')) return new Response(JSON.stringify({ account: { balance: 100, overseasUnlocked: true } }), { status: 200 });
       if (url.endsWith('/v1/account/redeem')) return new Response(JSON.stringify({ redemption: { ok: true, creditsAdded: 100 } }), { status: 200 });
       if (url.endsWith('/v1/media/video/tasks/create')) return new Response(JSON.stringify({ status: 'succeeded' }), { status: 202 });
-      if (url.endsWith('/v1/media/video/tasks/download')) return new Response(JSON.stringify({ url: 'https://cdn.example/video.mp4' }), { status: 200 });
+      if (url.endsWith('/v1/media/video/tasks/download')) return new Response(video, {
+        status: 200,
+        headers: {
+          'Content-Type': 'video/mp4',
+          'Content-Length': String(video.length),
+          'X-Messs-Credits-Estimated': '48',
+          'X-Messs-Credits-Charged': '48'
+        }
+      });
       if (url.endsWith('/v1/tools/background/remove')) return new Response(backgroundPng, { status: 200 });
       if (url.endsWith('/v1/tools/3d/create')) return new Response(JSON.stringify({ taskToken, status: 'queued', retryAfterMs: 5000 }), { status: 202 });
       if (url.endsWith('/v1/tools/3d/status')) return new Response(JSON.stringify({ status: 'processing', retryAfterMs: 4000 }), { status: 200 });
       if (url.endsWith('/v1/tools/3d/download')) return new Response(glb, { status: 200, headers: { 'Content-Length': String(glb.length) } });
-      if (url === 'https://cdn.example/video.mp4') return new Response(video, { status: 200, headers: { 'Content-Length': String(video.length) } });
       return new Response(Buffer.from([1, 2, 3]), { status: 200 });
     }
   });
   assert.strictEqual(await client.chat({ prompt: 'hi' }), 'hello');
-  assert.deepStrictEqual(await client.generateMedia('image', { prompt: 'hi' }), Buffer.from([1, 2, 3]));
-  assert.deepStrictEqual(await client.generateMedia('video', { prompt: 'move' }), video);
+  const generatedImage = await client.generateMedia('image', { prompt: 'hi' });
+  assert.deepStrictEqual(Buffer.from(generatedImage), Buffer.from([1, 2, 3]));
+  assert.strictEqual(generatedImage.estimatedCredits, 0);
+  assert.strictEqual(generatedImage.creditsCharged, 0);
+  const generatedVideo = await client.generateMedia('video', { prompt: 'move' });
+  assert.deepStrictEqual(Buffer.from(generatedVideo), video);
+  assert.strictEqual(generatedVideo.estimatedCredits, 48);
+  assert.strictEqual(generatedVideo.creditsCharged, 48);
   const imageDataUrl = 'data:image/jpeg;base64,/9j/2Q==';
-  assert.deepStrictEqual(await client.removeBackground(imageDataUrl), backgroundPng);
+  const removedBackground = await client.removeBackground(imageDataUrl);
+  assert.deepStrictEqual(Buffer.from(removedBackground), backgroundPng);
+  assert.strictEqual(removedBackground.estimatedCredits, 0);
+  assert.strictEqual(removedBackground.creditsCharged, 0);
   assert.strictEqual((await client.create3d('hyper3d', imageDataUrl, 'Make a model')).taskToken, taskToken);
   assert.strictEqual((await client.get3dStatus(taskToken)).status, 'processing');
-  assert.deepStrictEqual(await client.download3d(taskToken), glb);
+  const downloaded3d = await client.download3d(taskToken);
+  assert.deepStrictEqual(Buffer.from(downloaded3d), glb);
+  assert.strictEqual(downloaded3d.estimatedCredits, 0);
+  assert.strictEqual(downloaded3d.creditsCharged, 0);
   assert.strictEqual((await client.getAccount()).account.balance, 100);
   assert.strictEqual((await client.redeemCode('synthetic-test-code')).redemption.creditsAdded, 100);
   assert.strictEqual(calls[0].options.headers.Authorization, 'Bearer user-jwt');
@@ -107,8 +126,7 @@ async function testGatewayClient() {
   const videoCreateBody = JSON.parse(videoCreateCall.options.body);
   assert.match(videoCreateBody.operationId, /^[0-9a-f-]{36}$/i);
   assert.match(videoCreateBody.taskToken, /^[A-Za-z0-9_-]{43}$/);
-  const cdnCall = calls.find((call) => call.url === 'https://cdn.example/video.mp4');
-  assert.strictEqual(cdnCall.options.headers.Authorization, undefined);
+  assert.strictEqual(calls.some((call) => call.url === 'https://cdn.example/video.mp4'), false);
   const backgroundCall = calls.find((call) => call.url.endsWith('/v1/tools/background/remove'));
   assert.deepStrictEqual(JSON.parse(backgroundCall.options.body), { imageDataUrl, options: {} });
   const create3dCall = calls.find((call) => call.url.endsWith('/v1/tools/3d/create'));
@@ -274,10 +292,10 @@ async function testPaidImageCreationRecoversWithOneOperationId() {
       return new Response(Buffer.from([1, 2, 3]), { status: 200 });
     }
   });
-  assert.deepStrictEqual(
-    await client.generateMedia('image', { prompt: 'recover one paid result' }),
-    Buffer.from([1, 2, 3])
-  );
+  const recoveredImage = await client.generateMedia('image', { prompt: 'recover one paid result' });
+  assert.deepStrictEqual(Buffer.from(recoveredImage), Buffer.from([1, 2, 3]));
+  assert.strictEqual(recoveredImage.estimatedCredits, 0);
+  assert.strictEqual(recoveredImage.creditsCharged, 0);
   assert.strictEqual(calls.length, 2);
   assert.strictEqual(
     calls[0].options.headers['X-Idempotency-Key'],
@@ -357,15 +375,18 @@ async function testVideoCreateRetriesTransientGatewayFailure() {
         return new Response(JSON.stringify({ status: 'succeeded' }), { status: 202 });
       }
       if (url.endsWith('/v1/media/video/tasks/download')) {
-        return new Response(JSON.stringify({ url: 'https://cdn.example/retried-video.mp4' }), { status: 200 });
-      }
-      if (url === 'https://cdn.example/retried-video.mp4') {
-        return new Response(video, { status: 200, headers: { 'Content-Length': String(video.length) } });
+        return new Response(video, {
+          status: 200,
+          headers: { 'Content-Type': 'video/mp4', 'Content-Length': String(video.length) }
+        });
       }
       throw new Error(`Unexpected URL: ${url}`);
     }
   });
-  assert.deepStrictEqual(await client.generateMedia('video', { prompt: 'retry gateway edge failure' }), video);
+  const generatedVideo = await client.generateMedia('video', { prompt: 'retry gateway edge failure' });
+  assert.deepStrictEqual(Buffer.from(generatedVideo), video);
+  assert.strictEqual(generatedVideo.estimatedCredits, 0);
+  assert.strictEqual(generatedVideo.creditsCharged, 0);
   const createCalls = calls.filter((call) => call.url.endsWith('/v1/media/video/tasks/create'));
   assert.strictEqual(createCalls.length, 2);
   assert.strictEqual(createCalls[0].options.headers['X-Idempotency-Key'], createCalls[1].options.headers['X-Idempotency-Key']);

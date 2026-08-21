@@ -902,8 +902,8 @@ function validatedVideoTaskInput(provider, body) {
       code: 'too-many-references'
     });
   }
-  if (submittedUrls.length < minReferenceImages) {
-    throw Object.assign(new Error(`${provider.name} requires at least ${minReferenceImages} reference image${minReferenceImages === 1 ? '' : 's'}.`), {
+  if (submittedUrls.length + audioCountForMode < minReferenceImages) {
+    throw Object.assign(new Error(`${provider.name} requires at least ${minReferenceImages} reference file${minReferenceImages === 1 ? '' : 's'}.`), {
       status: 400,
       code: 'reference-required'
     });
@@ -1062,13 +1062,26 @@ function validatedVideoTaskInput(provider, body) {
 }
 
 async function createMiniMaxVideoTask(provider, body, signal) {
-  const { duration, ratio, resolution, roles, urls } = validatedVideoTaskInput(provider, body);
+  const { duration, ratio, referenceMediaTypes, resolution, roles, urls } = validatedVideoTaskInput(provider, body);
   const content = [{ type: 'text', text: String(body.prompt || '').trim() }];
-  urls.forEach((url, index) => content.push({
-    type: 'image_url',
-    image_url: { url: String(url) },
-    role: roles[index]
-  }));
+  urls.forEach((url, index) => {
+    const mediaType = referenceMediaTypes[index] === 'video' ? 'video' : 'image';
+    const type = mediaType + '_url';
+    content.push({
+      type,
+      [type]: { url: String(url) },
+      role: roles[index] && roles[index] !== 'reference_image'
+        ? roles[index]
+        : 'reference_' + mediaType
+    });
+  });
+  for (const url of Array.isArray(body.referenceAudioUrls) ? body.referenceAudioUrls : []) {
+    content.push({
+      type: 'audio_url',
+      audio_url: { url: String(url) },
+      role: 'reference_audio'
+    });
+  }
   const requestBody = JSON.stringify({ model: provider.model || 'MiniMax-H3', content, resolution, duration, ratio, aigc_watermark: false });
   const created = await responseJson(await fetch(provider.endpoint, {
     method: 'POST', headers: providerTaskHeaders(provider, body), signal: providerSignal(signal), body: requestBody
@@ -1691,6 +1704,24 @@ function validVideoTaskId(taskId) {
   return normalizedTaskId;
 }
 
+function miniMaxVideoUsage(payload) {
+  const source = nestedVideoTaskObject(payload, ['usage']);
+  if (!source) return null;
+  const value = (...keys) => {
+    for (const key of keys) {
+      const parsed = Number(source[key]);
+      if (Number.isFinite(parsed) && parsed >= 0) return Math.max(0, Math.round(parsed));
+    }
+    return null;
+  };
+  const usage = {
+    totalSeconds: value('total_seconds', 'totalSeconds'),
+    inputSeconds: value('input_seconds', 'inputSeconds'),
+    outputSeconds: value('output_seconds', 'outputSeconds'),
+    inputImageCount: value('input_image_count', 'inputImageCount')
+  };
+  return Object.values(usage).some((entry) => entry !== null) ? usage : null;
+}
 async function pollMiniMaxVideoTask(provider, taskId, signal) {
   const normalizedTaskId = validVideoTaskId(taskId);
   const result = await responseJson(await fetch(
@@ -1703,7 +1734,7 @@ async function pollMiniMaxVideoTask(provider, taskId, signal) {
     if (!resultUrl) {
       return { status: 'running' };
     }
-    return { status, resultUrl };
+    return { status, resultUrl, usage: miniMaxVideoUsage(result) };
   }
   if (TERMINAL_VIDEO_FAILURES.has(status)) {
     return {
@@ -1855,7 +1886,8 @@ export async function chat(body, signal) {
     apiKey: provider.apiKey,
     chatEndpoint: provider.endpoint,
     chatProviderName: provider.name,
-    chatModel: model || requestedModel
+    chatModel: model || requestedModel,
+    returnUsage: true
   }, { prompt: body.prompt, messages: body.messages }, signal);
 }
 

@@ -469,11 +469,8 @@
                       <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="m7 10 5 5 5-5"/></svg>
                     </button>
                     <div id="board-agent-model-menu" class="board-agent-model-menu" role="dialog" hidden>
-                      <div class="board-agent-model-menu-title">生成时使用的模型</div>
-                      <button id="board-agent-chat-mode" class="board-agent-model-option is-active" type="button">
-                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v11H9l-5 4V5Z"/></svg>
-                        <span>Agent 对话</span><i aria-hidden="true">✓</i>
-                      </button>
+                      <div class="board-agent-model-menu-title">选择模型</div>
+                      <div id="board-agent-chat-options" class="board-agent-model-options" role="listbox"></div>
                       <div class="board-agent-kind-switch" role="tablist" aria-label="Generation type">
                         <button type="button" role="tab" data-agent-kind="image" class="is-active">
                           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="2"/><path d="m4 17 5-5 4 4 2-2 5 5"/></svg>
@@ -536,8 +533,8 @@
             <option value="900">Black</option>
           </select>
           <div class="text-tool-divider"></div>
-          <button id="text-color-swatch" class="text-color-swatch" title="Text color" style="--text-swatch-color:#15171c"></button>
-          <input id="text-color-input" class="text-color-input-hidden" type="color" value="#15171c" />
+          <button id="text-color-swatch" class="text-color-swatch" title="Text color" style="--text-swatch-color:#f3f3f3"></button>
+          <input id="text-color-input" class="text-color-input-hidden" type="color" value="#f3f3f3" />
           <button id="text-color-none" class="text-tool-btn" title="No fill">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><line x1="6" y1="18" x2="18" y2="6" stroke="#e0594f"/></svg>
           </button>
@@ -1155,7 +1152,7 @@
         <div id="canvas-usage-note" class="canvas-usage-note" hidden></div>
         <div class="canvas-usage-table-wrap">
           <table class="canvas-usage-table">
-            <thead><tr><th>Date</th><th>Type</th><th>Model</th><th>Output</th><th>Points</th></tr></thead>
+            <thead><tr><th>Date</th><th>Type</th><th>Model</th><th>Output</th><th>Estimated</th><th>Actual</th></tr></thead>
             <tbody id="canvas-usage-rows"></tbody>
           </table>
           <div id="canvas-usage-empty" class="canvas-usage-empty" hidden>No AI usage recorded on this canvas.</div>

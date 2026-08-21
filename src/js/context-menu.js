@@ -31,11 +31,7 @@ function copyBoardSelection(items) {
 
 function cutBoardSelection(items) {
   copyBoardSelection(items);
-  const ids = new Set(items.map((item) => item.id));
-  AppState.boardItems = AppState.boardItems.filter((item) => !ids.has(item.id));
-  canvasWorkspaceRemoveItems([...ids]);
-  items.forEach((item) => window.messsAPI.removeBoardItem(item.id));
-  renderBoard();
+  removeBoardItemsWithHistory(items);
 }
 
 function pasteBoardSelectionAt(clickX, clickY) {
@@ -456,14 +452,15 @@ function renderCanvasUsageDetails(result) {
     ? result.canvas.name
     : t('Usage details', '\u4f7f\u7528\u660e\u7ec6');
   const tableHeaders = document.querySelectorAll('.canvas-usage-table th');
-  [t('Date', '\u65e5\u671f'), t('Type', '\u7c7b\u578b'), t('Model', '\u6a21\u578b'), t('Output', '\u751f\u6210\u7ed3\u679c'), t('Points', '\u79ef\u5206')]
+  [t('Date', '\u65e5\u671f'), t('Type', '\u7c7b\u578b'), t('Model', '\u6a21\u578b'), t('Output', '\u751f\u6210\u7ed3\u679c'), t('Estimated points', '\u9884\u4f30\u79ef\u5206'), t('Actual points', '\u5b9e\u9645\u79ef\u5206')]
     .forEach((label, index) => { if (tableHeaders[index]) tableHeaders[index].textContent = label; });
   const metrics = [
-    [t('Total points', '\u7d2f\u8ba1\u79ef\u5206'), formatCanvasUsagePoints(totals.credits)],
+    [t('Actual charged', '\u5b9e\u9645\u6263\u9664'), formatCanvasUsagePoints(totals.creditsCharged ?? totals.credits)],
+    [t('Estimated total', '\u9884\u4f30\u603b\u989d'), formatCanvasUsagePoints(totals.estimatedCredits)],
     [t('AI results', 'AI \u7ed3\u679c'), String(Math.max(0, Number(totals.generations) || 0))],
-    [t('Images', '\u56fe\u7247'), `${formatCanvasUsagePoints(breakdown.image && breakdown.image.credits)} / ${Number(breakdown.image && breakdown.image.generations) || 0}`],
-    [t('Videos', '\u89c6\u9891'), `${formatCanvasUsagePoints(breakdown.video && breakdown.video.credits)} / ${Number(breakdown.video && breakdown.video.generations) || 0}`],
-    ['3D', `${formatCanvasUsagePoints(breakdown['3d'] && breakdown['3d'].credits)} / ${Number(breakdown['3d'] && breakdown['3d'].generations) || 0}`]
+    [t('Images', '\u56fe\u7247'), `${formatCanvasUsagePoints(breakdown.image && (breakdown.image.creditsCharged ?? breakdown.image.credits))} / ${Number(breakdown.image && breakdown.image.generations) || 0}`],
+    [t('Videos', '\u89c6\u9891'), `${formatCanvasUsagePoints(breakdown.video && (breakdown.video.creditsCharged ?? breakdown.video.credits))} / ${Number(breakdown.video && breakdown.video.generations) || 0}`],
+    ['3D', `${formatCanvasUsagePoints(breakdown['3d'] && (breakdown['3d'].creditsCharged ?? breakdown['3d'].credits))} / ${Number(breakdown['3d'] && breakdown['3d'].generations) || 0}`]
   ];
   summary.replaceChildren(...metrics.map(([label, value]) => {
     const metric = document.createElement('div');
@@ -499,14 +496,15 @@ function renderCanvasUsageDetails(result) {
       labels[entry.kind] || entry.kind || '-',
       entry.modelName || entry.providerId || '-',
       entry.name || '-',
-      entry.estimated === true
-        ? `\u2248 ${formatCanvasUsagePoints(entry.credits)}`
-        : formatCanvasUsagePoints(entry.credits)
+      formatCanvasUsagePoints(entry.estimatedCredits),
+      entry.status === 'pending'
+        ? t('Pending', '\u5f85\u7ed3\u7b97')
+        : formatCanvasUsagePoints(entry.creditsCharged ?? entry.credits)
     ].forEach((value, index) => {
       const cell = document.createElement('td');
       cell.textContent = value;
-      if (index === 4 && entry.credits === null) cell.className = 'is-unrecorded';
-      if (index === 4 && entry.estimated === true) cell.className = 'is-estimated';
+      if (index === 4 && entry.estimatedCredits === null) cell.className = 'is-unrecorded';
+      if (index === 5 && entry.status === 'pending') cell.className = 'is-unrecorded';
       row.appendChild(cell);
     });
     return row;
@@ -543,11 +541,32 @@ async function openCanvasUsageDetails() {
 }
 
 function showBoardCanvasContextMenu(x, y) {
-  buildAndShowSimpleMenu([{
-    label: t('View points usage', '\u67e5\u770b\u79ef\u5206\u7528\u91cf'),
-    icon: 'M4 19V5M4 19h16M8 16v-4M12 16V8M16 16v-7',
-    action: openCanvasUsageDetails
-  }], x, y, 'board-canvas-context-menu');
+  buildAndShowSimpleMenu([
+    {
+      label: t('Import files', '\u5bfc\u5165\u6587\u4ef6'),
+      icon: 'M12 3v12;M7 8l5-5 5 5;M4 20h16',
+      action: async () => {
+        const paths = await window.messsAPI.pickFiles();
+        if (!paths || !paths.length) return;
+        const targetFolderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
+          ? AppState.activeFolderId : null;
+        const result = await window.messsAPI.importFiles(paths, targetFolderId, activeCanvasId());
+        const imported = Array.isArray(result && result.imported) ? result.imported : [];
+        if (!imported.length) return;
+        AppState.files = [...imported, ...AppState.files];
+        renderFileList(currentFileListScope());
+        if (typeof renderFolderGridIfActive === 'function') renderFolderGridIfActive();
+        const point = clientToBoardCoords(x, y);
+        await addFilesToBoard(imported.map((file) => file.id), point.x, point.y, { selectAdded: true });
+        showToast(t('Imported and added to the canvas', '\u5df2\u5bfc\u5165\u5e76\u653e\u5165\u753b\u5e03'));
+      }
+    },
+    {
+      label: t('View points usage', '\u67e5\u770b\u79ef\u5206\u7528\u91cf'),
+      icon: 'M4 19V5M4 19h16M8 16v-4M12 16V8M16 16v-7',
+      action: openCanvasUsageDetails
+    }
+  ], x, y, 'board-canvas-context-menu');
 }
 
 function duplicateBoardItem(item) {
@@ -562,12 +581,9 @@ async function exportBoardItemFile(item) {
 }
 
 async function removeBoardItemFromCanvas(item) {
-  AppState.boardItems = AppState.boardItems.filter((boardItem) => boardItem.id !== item.id);
-  canvasWorkspaceRemoveItems([item.id]);
-  await window.messsAPI.removeBoardItem(item.id);
-  if (item.isNote && typeof activeTextNoteId !== 'undefined' && activeTextNoteId === item.id) hideTextToolPanel();
-  renderBoard();
-  showToast(t('Removed from canvas', '\u5df2\u4ece\u753b\u5e03\u79fb\u9664'));
+  if (removeBoardItemsWithHistory([item])) {
+    showToast(t('Removed from canvas', '\u5df2\u4ece\u753b\u5e03\u79fb\u9664'));
+  }
 }
 
 function showBoardItemContextMenu(item, x, y) {
@@ -825,10 +841,7 @@ async function runMultiMenuAction(key, x, y) {
       showToast(t('Ungrouped', '已取消成组'));
       break;
     case 'delete':
-      selected.forEach((item) => window.messsAPI.removeBoardItem(item.id));
-      canvasWorkspaceRemoveItems(selected.map((item) => item.id));
-      AppState.boardItems = AppState.boardItems.filter((item) => !item.selected);
-      renderBoard();
+      removeBoardItemsWithHistory(selected);
       break;
   }
 }
