@@ -117,5 +117,15 @@ assert.match(
   /catch \(err\) \{[\s\S]*?removeAiPlaceholders\(mediaPlaceholders\)/,
   'Failed assistant generation must remove its pending canvas placements.'
 );
+assert.match(
+  assistantSource,
+  /function assistantVideoResolutionGroups[\s\S]*?id: 'native'[\s\S]*?id: 'upscaled'[\s\S]*?id: 'enhanced'/,
+  'The assistant must classify Seedance native, upscaled, and enhanced-upscale resolutions independently.'
+);
+assert.match(
+  assistantSource,
+  /document\.createElement\('optgroup'\)[\s\S]*?dataset\.resolutionTier = group\.id[\s\S]*?appendResolutionOption\(optionGroup, value\)/,
+  'The assistant resolution selector must render the Seedance tiers as labelled option groups.'
+);
 
 console.log('AI assistant layout checks passed');

@@ -3983,7 +3983,27 @@ function aiVideoResolutionLabel(value) {
   if (resolution.includes('-SR')) {
     return t(resolution, resolution.replace('-SR', '-SR（超分）'), resolution);
   }
+  if (resolution === '4K') return t(resolution, '4K（增强超分）', resolution);
   return resolution;
+}
+
+function aiVideoResolutionTier(value) {
+  const resolution = String(value || '').trim().toUpperCase();
+  if (resolution.includes('-ESR') || resolution === '4K') return 'enhanced';
+  if (resolution.includes('-SR')) return 'upscaled';
+  return 'native';
+}
+
+function aiVideoResolutionGroups(values) {
+  const definitions = [
+    { id: 'native', label: t('Native', '原生', '원본') },
+    { id: 'upscaled', label: t('Upscaled', '超分', '업스케일') },
+    { id: 'enhanced', label: t('Enhanced upscale', '增强超分', '향상 업스케일') }
+  ];
+  return definitions.map((definition) => ({
+    ...definition,
+    values: values.filter((value) => aiVideoResolutionTier(value) === definition.id)
+  })).filter((group) => group.values.length);
 }
 
 function normalizedCapabilityValues(values, fallback = []) {
@@ -5684,16 +5704,36 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     });
     const sizeGroup = pop.querySelector('[data-option="size"]');
     sizeGroup.innerHTML = '';
-    sizeGroup.classList.toggle('is-grid', resolutions.length > 6);
-    resolutions.forEach((value) => {
+    const appendResolutionButton = (container, value) => {
       const button = document.createElement('button');
       button.type = 'button';
       button.dataset.value = value;
       button.textContent = value === 'Default'
         ? t('Default', '默认', '기본')
         : kind === 'video' ? aiVideoResolutionLabel(value) : value;
-      sizeGroup.appendChild(button);
-    });
+      container.appendChild(button);
+    };
+    const resolutionGroups = kind === 'video' ? aiVideoResolutionGroups(resolutions) : [];
+    const showResolutionGroups = resolutionGroups.length > 1;
+    sizeGroup.classList.toggle('is-resolution-groups', showResolutionGroups);
+    sizeGroup.classList.toggle('is-grid', !showResolutionGroups && resolutions.length > 6);
+    if (showResolutionGroups) {
+      resolutionGroups.forEach((group) => {
+        const section = document.createElement('section');
+        section.className = 'ai-resolution-group';
+        section.dataset.resolutionTier = group.id;
+        const label = document.createElement('span');
+        label.className = 'ai-resolution-group-label';
+        label.textContent = group.label;
+        const options = document.createElement('div');
+        options.className = 'ai-resolution-group-options';
+        group.values.forEach((value) => appendResolutionButton(options, value));
+        section.append(label, options);
+        sizeGroup.appendChild(section);
+      });
+    } else {
+      resolutions.forEach((value) => appendResolutionButton(sizeGroup, value));
+    }
     const qualityGroup = pop.querySelector('[data-option="quality"]');
     qualityGroup.innerHTML = '';
     supportedQualities.forEach((value) => {

@@ -24,6 +24,21 @@ assert.match(boardMedia, /t\('Requested', '请求'\)[\s\S]*?t\('Actual', '实际
 assert.match(boardCanvas, /class="ai-option-block ai-quality-block"[\s\S]*?data-option="quality"[\s\S]*?data-value="low"[\s\S]*?data-value="medium"[\s\S]*?data-value="high"/, 'The canvas capsule must expose GPT Image 2 low, medium, and high quality controls.');
 assert.match(boardCanvas, /quality: kind === 'image' \? quality : undefined[\s\S]*?Promise\.resolve\(quoteApi/, 'The canvas capsule estimate must include the selected image quality.');
 assert.match(boardCanvas, /const request = \{[\s\S]*?quality: kind === 'image' \? quality : undefined[\s\S]*?imageProviderId:/, 'The canvas capsule generation request must include the selected image quality.');
+assert.match(
+  boardCanvas,
+  /function aiVideoResolutionTier[\s\S]*?includes\('-ESR'\)[\s\S]*?resolution === '4K'[\s\S]*?function aiVideoResolutionGroups[\s\S]*?id: 'native'[\s\S]*?id: 'upscaled'[\s\S]*?id: 'enhanced'/,
+  'Seedance resolutions must be classified as native, upscaled, or enhanced-upscale without changing the provider value.'
+);
+assert.match(
+  boardCanvas,
+  /className = 'ai-resolution-group'[\s\S]*?dataset\.resolutionTier = group\.id[\s\S]*?className = 'ai-resolution-group-options'/,
+  'The canvas capsule must render Seedance resolution tiers as three visible groups.'
+);
+assert.match(
+  styles,
+  /\.ai-segmented\.is-resolution-groups[\s\S]*?\.ai-resolution-group-label[\s\S]*?\.ai-resolution-group-options/,
+  'Grouped Seedance controls must keep stable labels and a bounded option grid.'
+);
 assert.doesNotMatch(boardMedia, /key:\s*'more'/, 'The old three-dot toolbar action must be removed.');
 assert.match(boardMedia, /window\.messsAPI && window\.messsAPI\.butler/, 'Butler must use the isolated preload namespace.');
 assert.match(boardMedia, /api\.removeBackground\(file\.id, options\)/, 'Background removal must send only documented settings with the file id.');

@@ -176,6 +176,53 @@ async function run() {
   fs.writeFileSync(path.join(screenshotDir, 'board-prompt-styles.png'), (await window.webContents.capturePage()).toPNG());
   await window.webContents.executeJavaScript(`document.querySelector('.ai-prompt-style-panel').hidden = true`);
 
+  const resolutionGroups = await window.webContents.executeJavaScript(`(() => {
+    const panel = document.createElement('section');
+    panel.className = 'ai-options-panel';
+    panel.style.animation = 'none';
+    panel.innerHTML = '<div class="ai-option-block"><div class="ai-options-heading"><strong>分辨率</strong></div><div class="ai-segmented is-resolution-groups"><section class="ai-resolution-group" data-resolution-tier="native"><span class="ai-resolution-group-label">原生</span><div class="ai-resolution-group-options"><button>480P</button><button class="is-active">720P</button><button>1080P</button></div></section><section class="ai-resolution-group" data-resolution-tier="upscaled"><span class="ai-resolution-group-label">超分</span><div class="ai-resolution-group-options"><button>720P-SR</button><button>1080P-SR</button><button>1440P-SR</button></div></section><section class="ai-resolution-group" data-resolution-tier="enhanced"><span class="ai-resolution-group-label">增强超分</span><div class="ai-resolution-group-options"><button>720P-ESR</button><button>1080P-ESR</button><button>1440P-ESR</button><button>4K-ESR</button></div></section></div></div>';
+    document.querySelector('.ai-composer-form').appendChild(panel);
+    const panelRect = panel.getBoundingClientRect();
+    const groups = [...panel.querySelectorAll('.ai-resolution-group')].map((group) => {
+      const rect = group.getBoundingClientRect();
+      const options = group.querySelector('.ai-resolution-group-options').getBoundingClientRect();
+      const buttons = [...group.querySelectorAll('button')].map((button) => {
+        const buttonRect = button.getBoundingClientRect();
+        return { left:buttonRect.left, right:buttonRect.right, top:buttonRect.top, bottom:buttonRect.bottom };
+      });
+      return {
+        tier:group.dataset.resolutionTier,
+        label:group.querySelector('.ai-resolution-group-label').textContent,
+        top:rect.top,
+        bottom:rect.bottom,
+        options:{ left:options.left, right:options.right },
+        buttons
+      };
+    });
+    return {
+      panel:{ left:panelRect.left, right:panelRect.right, top:panelRect.top, bottom:panelRect.bottom },
+      groups
+    };
+  })()`);
+  if (resolutionGroups.groups.map((group) => group.tier).join(',') !== 'native,upscaled,enhanced'
+      || resolutionGroups.groups.map((group) => group.label).join(',') !== '原生,超分,增强超分') {
+    throw new Error(`Seedance resolution groups lost their labels or order: ${JSON.stringify(resolutionGroups)}`);
+  }
+  resolutionGroups.groups.forEach((group, index) => {
+    if (index > 0 && group.top <= resolutionGroups.groups[index - 1].bottom) {
+      throw new Error(`Seedance resolution groups overlap: ${JSON.stringify(resolutionGroups)}`);
+    }
+    if (group.buttons.some((button) => button.left < group.options.left - 1 || button.right > group.options.right + 1)) {
+      throw new Error(`Seedance resolution buttons overflow their group: ${JSON.stringify(group)}`);
+    }
+  });
+  if (resolutionGroups.panel.left < full.composer.left || resolutionGroups.panel.right > full.composer.right
+      || resolutionGroups.panel.top < full.viewport.top || resolutionGroups.panel.bottom > full.viewport.bottom) {
+    throw new Error(`Seedance resolution panel escaped the canvas: ${JSON.stringify(resolutionGroups)}`);
+  }
+  fs.writeFileSync(path.join(screenshotDir, 'seedance-resolution-groups.png'), (await window.webContents.capturePage()).toPNG());
+  await window.webContents.executeJavaScript(`document.querySelector('.ai-options-panel').remove()`);
+
   window.setSize(2048, 1152);
   await wait(700);
   const largeAgent = await window.webContents.executeJavaScript(`(() => {

@@ -877,14 +877,26 @@ function syncAssistantMediaOptions() {
 
   sizeWrap.hidden = isVideo && !capabilities.resolutions;
   sizeSelect.innerHTML = '';
-  resolutions.forEach((value) => {
+  const appendResolutionOption = (container, value) => {
     const option = document.createElement('option');
     option.value = value;
     option.textContent = value === 'Default'
       ? t('Default', '默认', '기본')
       : isVideo ? assistantVideoResolutionLabel(value) : value;
-    sizeSelect.appendChild(option);
-  });
+    container.appendChild(option);
+  };
+  const resolutionGroups = isVideo ? assistantVideoResolutionGroups(resolutions) : [];
+  if (resolutionGroups.length > 1) {
+    resolutionGroups.forEach((group) => {
+      const optionGroup = document.createElement('optgroup');
+      optionGroup.label = group.label;
+      optionGroup.dataset.resolutionTier = group.id;
+      group.values.forEach((value) => appendResolutionOption(optionGroup, value));
+      sizeSelect.appendChild(optionGroup);
+    });
+  } else {
+    resolutions.forEach((value) => appendResolutionOption(sizeSelect, value));
+  }
   if (isVideo) {
     sizeSelect.value = resolutions.includes(previousSize) ? previousSize : resolutions[0];
   } else {
@@ -1012,7 +1024,27 @@ function assistantVideoResolutionLabel(value) {
   if (resolution.includes('-SR')) {
     return t(resolution, resolution.replace('-SR', '-SR（超分）'), resolution);
   }
+  if (resolution === '4K') return t(resolution, '4K（增强超分）', resolution);
   return resolution;
+}
+
+function assistantVideoResolutionTier(value) {
+  const resolution = String(value || '').trim().toUpperCase();
+  if (resolution.includes('-ESR') || resolution === '4K') return 'enhanced';
+  if (resolution.includes('-SR')) return 'upscaled';
+  return 'native';
+}
+
+function assistantVideoResolutionGroups(values) {
+  const definitions = [
+    { id: 'native', label: t('Native', '原生', '원본') },
+    { id: 'upscaled', label: t('Upscaled', '超分', '업스케일') },
+    { id: 'enhanced', label: t('Enhanced upscale', '增强超分', '향상 업스케일') }
+  ];
+  return definitions.map((definition) => ({
+    ...definition,
+    values: values.filter((value) => assistantVideoResolutionTier(value) === definition.id)
+  })).filter((group) => group.values.length);
 }
 
 function appendAssistantOutputFiles(row, files) {

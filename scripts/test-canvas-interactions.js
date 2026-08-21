@@ -1046,8 +1046,8 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /sizeGroup\.classList\.toggle\('is-grid', resolutions\.length > 6\)/,
-  'Large provider size catalogs must switch to the compact scrolling grid.'
+  /sizeGroup\.classList\.toggle\('is-resolution-groups', showResolutionGroups\);[\s\S]*?sizeGroup\.classList\.toggle\('is-grid', !showResolutionGroups && resolutions\.length > 6\)/,
+  'Seedance must use labelled resolution groups while other large catalogs keep the compact scrolling grid.'
 );
 assert.match(
   boardStyles,
