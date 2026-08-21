@@ -55,6 +55,8 @@ let boardButlerMenuKeyHandler = null;
 let boardButlerPanel = null;
 let boardButlerPanelClickCloser = null;
 let boardButlerPanelKeyHandler = null;
+let boardButlerExpandEditor = null;
+let boardButlerExpandEditorKeyHandler = null;
 const BoardButlerTasks = new Map();
 const BOARD_BUTLER_MAX_POLLS = 360;
 const BOARD_BUTLER_MAX_TRANSIENT_RETRIES = 5;
@@ -122,19 +124,28 @@ const BOARD_BUTLER_VIDEO_TOOL_HOOKS = Object.freeze({
   videoUpscale: Object.freeze({ method: 'upscaleVideo', toolId: 'topaz-video-upscale' })
 });
 
-// Keep the renderer estimate aligned with gateway/src/tool-pricing.js. These
-// include the estimate buffer and 30% margin, rounded upward. Topaz images
-// reserve six app points so an accepted upstream request cannot be underquoted.
+// Keep renderer estimates aligned with gateway/src/tool-pricing.js.
+const BOARD_BUTLER_POINTS_PER_CNY = 1000 / 70;
+const BOARD_BUTLER_SAFETY_MULTIPLIER = 1.1;
+const BOARD_BUTLER_RETAIL_MULTIPLIER = 1 / (1 - 0.25);
+
+function boardButlerCreditsFromPtc(ptc) {
+  return Math.ceil(
+    Number(ptc) * 7.3 * BOARD_BUTLER_POINTS_PER_CNY
+      * BOARD_BUTLER_SAFETY_MULTIPLIER * BOARD_BUTLER_RETAIL_MULTIPLIER
+  );
+}
+
 const BOARD_BUTLER_RETAIL_CREDITS = Object.freeze({
-  removeBackground: 53,
-  imageEdit: 6,
-  imageExpand: 53,
-  imageEnhance: 53,
-  eraseObject: 53,
-  topazImage: 94,
-  hunyuan3d: 42,
-  hyper3d: 74,
-  tripo3d: 63
+  removeBackground: boardButlerCreditsFromPtc(0.50),
+  imageEdit: boardButlerCreditsFromPtc(0.05),
+  imageExpand: boardButlerCreditsFromPtc(0.50),
+  imageEnhance: boardButlerCreditsFromPtc(0.50),
+  eraseObject: boardButlerCreditsFromPtc(0.50),
+  topazImage: boardButlerCreditsFromPtc(6 * 0.15),
+  hunyuan3d: boardButlerCreditsFromPtc(0.40),
+  hyper3d: boardButlerCreditsFromPtc(0.70),
+  tripo3d: boardButlerCreditsFromPtc(0.60)
 });
 
 function boardButlerThreeDCredits(providerId, options = {}) {
@@ -153,7 +164,7 @@ function boardButlerThreeDCredits(providerId, options = {}) {
   } else {
     return 0;
   }
-  return Math.ceil(ptcCents * 0.01 * 7.3 * 10 * 1.1 * 1.3);
+  return boardButlerCreditsFromPtc(ptcCents * 0.01);
 }
 
 const BOARD_BUTLER_TASK_ACTIONS = Object.freeze([
@@ -495,6 +506,99 @@ async function invokeBoardButlerWithTransientRetry(invoke, state, fileId) {
   return result;
 }
 
+function boardButlerDeliveryTokens(files) {
+  return [...new Set((Array.isArray(files) ? files : [])
+    .map((file) => String(file && file.butlerDeliveryToken || '').trim())
+    .filter(Boolean))];
+}
+
+function mergeConfirmedBoardButlerFiles(files) {
+  for (const file of Array.isArray(files) ? files : []) {
+    if (!file || !file.id) continue;
+    const previous = AppState.files.find((entry) => entry.id === file.id) || {};
+    const merged = { ...previous, ...file };
+    AppState.files = [merged, ...AppState.files.filter((entry) => entry.id !== file.id)];
+    if (typeof Board !== 'undefined' && Board.filesById instanceof Map) Board.filesById.set(file.id, merged);
+  }
+  if (typeof renderFileList === 'function') renderFileList(currentFileListScope());
+  if (typeof renderFolderGridIfActive === 'function') renderFolderGridIfActive();
+}
+
+function removeReleasedBoardButlerFiles(fileIds) {
+  const removedFiles = new Set((Array.isArray(fileIds) ? fileIds : []).map(String).filter(Boolean));
+  if (!removedFiles.size) return;
+  const removedBoardItemIds = (Array.isArray(AppState.allBoardItems) ? AppState.allBoardItems : [])
+    .filter((item) => removedFiles.has(String(item && item.fileId || '')))
+    .map((item) => item.id);
+  AppState.boardItems = AppState.boardItems.filter((item) => !removedFiles.has(String(item && item.fileId || '')));
+  canvasWorkspaceRemoveItems(removedBoardItemIds);
+  AppState.files = AppState.files.filter((file) => !removedFiles.has(String(file && file.id || '')));
+  if (typeof Board !== 'undefined' && Board.filesById instanceof Map) {
+    removedFiles.forEach((fileId) => Board.filesById.delete(fileId));
+  }
+  if (typeof BoardPreviewCache !== 'undefined') {
+    removedFiles.forEach((fileId) => BoardPreviewCache.delete(fileId));
+  }
+  renderBoard();
+  if (typeof renderFileList === 'function') renderFileList(currentFileListScope());
+  if (typeof renderFolderGridIfActive === 'function') renderFolderGridIfActive();
+  if (typeof renderCanvasLibrary === 'function') renderCanvasLibrary();
+}
+
+async function confirmBoardButlerDeliveries(files) {
+  const api = boardButlerApi();
+  const tokens = boardButlerDeliveryTokens(files);
+  if (!tokens.length) return;
+  if (!api || typeof api.confirmDelivery !== 'function') {
+    throw new Error(t(
+      'The desktop service cannot confirm this Butler result.',
+      '桌面服务无法确认此 Butler 结果。',
+      '데스크톱 서비스에서 이 Butler 결과를 확인할 수 없습니다.'
+    ));
+  }
+  for (const token of tokens) {
+    const result = await api.confirmDelivery(token);
+    if (!result || !result.ok) {
+      throw boardButlerError(result, t(
+        'The Butler result charge could not be confirmed safely.',
+        'Butler 结果的积分无法安全确认。',
+        'Butler 결과 포인트를 안전하게 확인하지 못했습니다.'
+      ));
+    }
+    mergeConfirmedBoardButlerFiles(result.files);
+  }
+}
+
+async function releaseBoardButlerDeliveries(files) {
+  const safeFiles = Array.isArray(files) ? files.filter((file) => file && file.id) : [];
+  const api = boardButlerApi();
+  const tokens = boardButlerDeliveryTokens(safeFiles);
+  const removedFileIds = new Set(safeFiles.map((file) => file.id));
+  let releaseError = null;
+  for (const token of tokens) {
+    if (!api || typeof api.releaseDelivery !== 'function') {
+      releaseError = new Error(t(
+        'The desktop service cannot release this Butler reservation.',
+        '桌面服务无法释放此 Butler 预留积分。',
+        '데스크톱 서비스에서 이 Butler 예약 포인트를 해제할 수 없습니다.'
+      ));
+      break;
+    }
+    const result = await api.releaseDelivery(token);
+    if (!result || !result.ok) {
+      releaseError = boardButlerError(result, t(
+        'The unused Butler reservation could not be released safely.',
+        '未使用的 Butler 预留积分无法安全释放。',
+        '사용하지 않은 Butler 예약 포인트를 안전하게 해제하지 못했습니다.'
+      ));
+      break;
+    }
+    (result.removedFileIds || []).forEach((fileId) => removedFileIds.add(fileId));
+  }
+  removeReleasedBoardButlerFiles([...removedFileIds]);
+  if (releaseError) throw releaseError;
+}
+
 async function placeBoardButlerResult(file, sourceItem, action) {
   if (!file || !file.id) throw new Error(t('The result file is missing.', '结果文件缺失。', '결과 파일이 없습니다.'));
   AppState.files = [file, ...AppState.files.filter((entry) => entry.id !== file.id)];
@@ -511,7 +615,15 @@ async function placeBoardButlerResult(file, sourceItem, action) {
       : (action.startsWith('generate3d:') ? 320 : 110);
   const placementY = sourceY + placementOffset;
   closeBoardButlerMenu();
-  await addFileToBoard(file.id, placementX, placementY);
+  try {
+    await addFileToBoard(file.id, placementX, placementY);
+  } catch (error) {
+    try { await releaseBoardButlerDeliveries([file]); } catch (releaseError) {
+      console.error('Could not release an unplaced Butler result:', releaseError);
+    }
+    throw error;
+  }
+  await confirmBoardButlerDeliveries([file]);
 }
 
 async function placeBoardButlerResults(files, sourceItem, action) {
@@ -535,15 +647,23 @@ async function placeBoardButlerResults(files, sourceItem, action) {
   const baseY = sourceY + (action === 'imageLayer' ? 80 : 110);
   closeBoardButlerMenu();
   closeBoardButlerPanel();
-  for (let index = 0; index < validFiles.length; index += 1) {
-    const column = index % 3;
-    const row = Math.floor(index / 3);
-    await addFileToBoard(
-      validFiles[index].id,
-      baseX + column * (columnWidth + cardGap),
-      baseY + row * (rowHeight + cardGap)
-    );
+  try {
+    for (let index = 0; index < validFiles.length; index += 1) {
+      const column = index % 3;
+      const row = Math.floor(index / 3);
+      await addFileToBoard(
+        validFiles[index].id,
+        baseX + column * (columnWidth + cardGap),
+        baseY + row * (rowHeight + cardGap)
+      );
+    }
+  } catch (error) {
+    try { await releaseBoardButlerDeliveries(validFiles); } catch (releaseError) {
+      console.error('Could not release unplaced Butler results:', releaseError);
+    }
+    throw error;
   }
+  await confirmBoardButlerDeliveries(validFiles);
 }
 
 function boardButlerImageToolInvoker(action) {
@@ -1252,7 +1372,7 @@ function openBoardButlerLegacyExpandPanel(anchor, file, item) {
   updateArea();
 }
 
-function openBoardButlerExpandPanel(anchor, file, item) {
+function openBoardButlerExpandPanelLegacyPreview(anchor, file, item) {
   const sourceWidth = Math.max(1, Math.round(Number(file && file.sourceWidth) || 1024));
   const sourceHeight = Math.max(1, Math.round(Number(file && file.sourceHeight) || 1024));
   const initialWidth = sourceWidth + Math.min(1000, Math.max(160, Math.round(sourceWidth * 0.25)));
@@ -1449,6 +1569,268 @@ function openBoardButlerExpandPanel(anchor, file, item) {
   renderPreview();
 }
 
+function closeBoardButlerExpandEditor() {
+  const editor = boardButlerExpandEditor;
+  boardButlerExpandEditor = null;
+  if (editor) editor.remove();
+  if (boardButlerExpandEditorKeyHandler) {
+    document.removeEventListener('keydown', boardButlerExpandEditorKeyHandler, true);
+    boardButlerExpandEditorKeyHandler = null;
+  }
+  document.getElementById('board-viewport')?.classList.remove('is-board-expand-mode');
+}
+
+function syncBoardButlerExpandEditorToSelection() {
+  if (!boardButlerExpandEditor) return;
+  const sourceItem = boardButlerExpandEditor._sourceItem;
+  const liveItem = sourceItem && AppState.boardItems.find((entry) => entry.id === sourceItem.id);
+  if (!liveItem || !liveItem.selected || (liveItem.canvasId || 'canvas-1') !== activeCanvasId()) {
+    closeBoardButlerExpandEditor();
+  }
+}
+
+function keepBoardButlerExpandEditorInViewport(editor) {
+  const viewport = document.getElementById('board-viewport');
+  if (!editor || !editor.isConnected || !viewport || typeof Board === 'undefined') return;
+  const viewportRect = viewport.getBoundingClientRect();
+  const rectangles = [
+    editor,
+    editor.querySelector('.board-butler-expand-ratio-toolbar'),
+    editor.querySelector('.board-butler-expand-controls')
+  ].filter(Boolean).map((element) => element.getBoundingClientRect());
+  const left = Math.min(...rectangles.map((rect) => rect.left));
+  const right = Math.max(...rectangles.map((rect) => rect.right));
+  const top = Math.min(...rectangles.map((rect) => rect.top));
+  const bottom = Math.max(...rectangles.map((rect) => rect.bottom));
+  const margin = 22;
+  const safeLeft = viewportRect.left + margin;
+  const safeRight = viewportRect.right - margin;
+  const safeTop = viewportRect.top + margin;
+  const safeBottom = viewportRect.bottom - margin;
+  let shiftX = left < safeLeft ? safeLeft - left : (right > safeRight ? safeRight - right : 0);
+  let shiftY = top < safeTop ? safeTop - top : (bottom > safeBottom ? safeBottom - bottom : 0);
+  if (right - left > safeRight - safeLeft) shiftX = (viewportRect.left + viewportRect.width / 2) - (left + right) / 2;
+  if (bottom - top > safeBottom - safeTop) shiftY = (viewportRect.top + viewportRect.height / 2) - (top + bottom) / 2;
+  if (Math.abs(shiftX) < 0.5 && Math.abs(shiftY) < 0.5) return;
+  Board.panX += shiftX;
+  Board.panY += shiftY;
+  Board.zoomTarget = null;
+  applyBoardTransform();
+}
+
+function openBoardButlerExpandPanel(anchor, file, item) {
+  const sourceWidth = Math.max(1, Math.round(Number(file && file.sourceWidth) || 1024));
+  const sourceHeight = Math.max(1, Math.round(Number(file && file.sourceHeight) || 1024));
+  const initialWidth = sourceWidth + Math.min(1000, Math.max(160, Math.round(sourceWidth * 0.25)));
+  const initialHeight = sourceHeight + Math.min(1000, Math.max(160, Math.round(sourceHeight * 0.25)));
+  const canvas = document.getElementById('board-canvas');
+  if (!canvas || typeof Board === 'undefined') return;
+  closeBoardButlerPanel();
+  closeBoardButlerExpandEditor();
+  closeBoardButlerMenu();
+
+  const zoom = Math.max(0.001, Number(Board.zoom) || 1);
+  const sourceElement = [...document.querySelectorAll('#board-canvas .board-item')]
+    .find((element) => element.dataset.boardId === String(item.id));
+  const sourceRect = sourceElement && sourceElement.getBoundingClientRect();
+  const displayWidth = Math.max(1, sourceRect && sourceRect.width > 0
+    ? sourceRect.width / zoom
+    : Number(item.width) || 220);
+  const displayHeight = Math.max(1, sourceRect && sourceRect.height > 0
+    ? sourceRect.height / zoom
+    : Number(item.height) || displayWidth * sourceHeight / sourceWidth);
+  const displayScaleX = displayWidth / sourceWidth;
+  const displayScaleY = displayHeight / sourceHeight;
+  const ratioOptions = [
+    ['source', t('Original', '原比例', '원본')], ['1:1', '1:1'], ['4:3', '4:3'],
+    ['3:4', '3:4'], ['16:9', '16:9'], ['9:16', '9:16'], ['3:2', '3:2'],
+    ['2:3', '2:3'], ['21:9', '21:9']
+  ];
+  const editor = document.createElement('form');
+  editor.className = 'board-butler-expand-editor';
+  editor.dataset.boardUiLayer = 'true';
+  editor.dataset.boardId = String(item.id);
+  editor.setAttribute('role', 'dialog');
+  editor.setAttribute('aria-modal', 'false');
+  editor.setAttribute('aria-label', t('Expand image on canvas', '在画布上扩展图片', '캔버스에서 이미지 확장'));
+  editor.innerHTML = `
+    <div class="board-butler-expand-ratio-toolbar" role="toolbar" aria-label="${t('Target ratio', '目标比例', '대상 비율')}">
+      <span class="board-butler-expand-mode-icon" aria-hidden="true">${BOARD_BUTLER_ICONS.imageLayer}</span>
+      <div class="board-butler-expand-ratio-buttons"></div>
+      <button type="button" class="board-butler-expand-close" data-expand-cancel title="${t('Cancel', '取消', '취소')}" aria-label="${t('Cancel', '取消', '취소')}">${BOARD_BUTLER_ICONS.close}</button>
+    </div>
+    <div class="board-butler-expand-source"><img alt="" draggable="false" /></div>
+    <button type="button" class="board-butler-expand-handle is-left" data-expand-edge="left" aria-label="${t('Drag left edge', '拖动左边界', '왼쪽 가장자리 드래그')}"></button>
+    <button type="button" class="board-butler-expand-handle is-right" data-expand-edge="right" aria-label="${t('Drag right edge', '拖动右边界', '오른쪽 가장자리 드래그')}"></button>
+    <button type="button" class="board-butler-expand-handle is-top" data-expand-edge="up" aria-label="${t('Drag top edge', '拖动上边界', '위쪽 가장자리 드래그')}"></button>
+    <button type="button" class="board-butler-expand-handle is-bottom" data-expand-edge="down" aria-label="${t('Drag bottom edge', '拖动下边界', '아래쪽 가장자리 드래그')}"></button>
+    <div class="board-butler-expand-controls">
+      <label class="board-butler-expand-number" title="${t('Target width', '目标宽度', '목표 너비')}"><span>W</span><input name="butler-expand-width" type="number" min="${sourceWidth}" max="${sourceWidth + 4000}" step="1" /></label>
+      <span class="board-butler-expand-dimension-separator">×</span>
+      <label class="board-butler-expand-number" title="${t('Target height', '目标高度', '목표 높이')}"><span>H</span><input name="butler-expand-height" type="number" min="${sourceHeight}" max="${sourceHeight + 4000}" step="1" /></label>
+      <label class="board-butler-expand-number is-seed" title="${t('Seed', '随机种子', '시드')}"><span>Seed</span><input name="butler-expand-seed" type="number" min="0" max="100000" placeholder="${t('Random', '随机', '무작위')}" /></label>
+      <output class="board-butler-expand-estimate"></output>
+      <button type="submit" class="board-butler-expand-submit"><span>${t('Expand', '开始扩展', '확장')}</span><small>${BOARD_BUTLER_RETAIL_CREDITS.imageExpand} ${t('pts', '积分', '포인트')}</small></button>
+    </div>
+  `;
+  const ratioButtons = editor.querySelector('.board-butler-expand-ratio-buttons');
+  ratioOptions.forEach(([value, label]) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.expandRatio = value;
+    button.textContent = label;
+    ratioButtons.appendChild(button);
+  });
+  const source = editor.querySelector('.board-butler-expand-source');
+  const sourceImage = source.querySelector('img');
+  sourceImage.alt = String(file.name || '');
+  sourceImage.src = file.thumbUrl || file.url || '';
+  const estimate = editor.querySelector('.board-butler-expand-estimate');
+  const submit = editor.querySelector('.board-butler-expand-submit');
+  const widthInput = editor.querySelector('[name="butler-expand-width"]');
+  const heightInput = editor.querySelector('[name="butler-expand-height"]');
+  const offsets = {
+    left: Math.floor((initialWidth - sourceWidth) / 2),
+    right: Math.ceil((initialWidth - sourceWidth) / 2),
+    up: Math.floor((initialHeight - sourceHeight) / 2),
+    down: Math.ceil((initialHeight - sourceHeight) / 2)
+  };
+  const targetSize = () => ({
+    width: sourceWidth + offsets.left + offsets.right,
+    height: sourceHeight + offsets.up + offsets.down
+  });
+  const setActiveRatio = (value = '') => {
+    ratioButtons.querySelectorAll('button').forEach((button) => {
+      button.classList.toggle('is-active', button.dataset.expandRatio === value);
+    });
+  };
+  const renderPreview = () => {
+    const target = targetSize();
+    widthInput.value = String(target.width);
+    heightInput.value = String(target.height);
+    editor.style.left = `${Number(item.x || 0) - offsets.left * displayScaleX}px`;
+    editor.style.top = `${Number(item.y || 0) - offsets.up * displayScaleY}px`;
+    editor.style.width = `${Math.max(1, target.width * displayScaleX)}px`;
+    editor.style.height = `${Math.max(1, target.height * displayScaleY)}px`;
+    source.style.left = `${offsets.left * displayScaleX}px`;
+    source.style.top = `${offsets.up * displayScaleY}px`;
+    source.style.width = `${displayWidth}px`;
+    source.style.height = `${displayHeight}px`;
+    const invalid = Object.values(offsets).some((value) => value < 0 || value > 2000)
+      || Object.values(offsets).every((value) => value === 0);
+    estimate.textContent = invalid
+      ? t('Choose a larger size', '请选择更大的尺寸', '더 큰 크기를 선택하세요')
+      : `Clipdrop Uncrop · ${sourceWidth} × ${sourceHeight} → ${target.width} × ${target.height}`;
+    estimate.classList.toggle('is-error', invalid);
+    submit.disabled = invalid;
+    return !invalid;
+  };
+  const setTargetSize = (requestedWidth, requestedHeight, activeRatio = '') => {
+    const width = Math.max(sourceWidth, Math.min(sourceWidth + 4000, Math.round(requestedWidth)));
+    const height = Math.max(sourceHeight, Math.min(sourceHeight + 4000, Math.round(requestedHeight)));
+    offsets.left = Math.floor((width - sourceWidth) / 2);
+    offsets.right = Math.ceil((width - sourceWidth) / 2);
+    offsets.up = Math.floor((height - sourceHeight) / 2);
+    offsets.down = Math.ceil((height - sourceHeight) / 2);
+    setActiveRatio(activeRatio);
+    renderPreview();
+  };
+  ratioButtons.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-expand-ratio]');
+    if (!button) return;
+    const value = button.dataset.expandRatio;
+    const ratio = value === 'source'
+      ? sourceWidth / sourceHeight
+      : Number(value.split(':')[0]) / Number(value.split(':')[1]);
+    let targetWidth = sourceWidth;
+    let targetHeight = sourceHeight;
+    if (sourceWidth / sourceHeight > ratio) targetHeight = Math.ceil(sourceWidth / ratio);
+    else targetWidth = Math.ceil(sourceHeight * ratio);
+    if (targetWidth === sourceWidth && targetHeight === sourceHeight) {
+      targetWidth = Math.ceil(sourceWidth * 1.2);
+      targetHeight = Math.ceil(targetWidth / ratio);
+    }
+    setTargetSize(targetWidth, targetHeight, value);
+    requestAnimationFrame(() => keepBoardButlerExpandEditorInViewport(editor));
+  });
+  [widthInput, heightInput].forEach((input) => input.addEventListener('change', () => {
+    setTargetSize(Number(widthInput.value) || sourceWidth, Number(heightInput.value) || sourceHeight);
+    requestAnimationFrame(() => keepBoardButlerExpandEditorInViewport(editor));
+  }));
+  editor.querySelectorAll('[data-expand-edge]').forEach((handle) => {
+    handle.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      const edge = handle.dataset.expandEdge;
+      const start = { x: event.clientX, y: event.clientY, ...offsets };
+      const bounds = editor.getBoundingClientRect();
+      const initialTarget = targetSize();
+      const pixelsPerCssX = initialTarget.width / Math.max(1, bounds.width);
+      const pixelsPerCssY = initialTarget.height / Math.max(1, bounds.height);
+      const move = (moveEvent) => {
+        if (moveEvent.pointerId !== event.pointerId) return;
+        const dx = (moveEvent.clientX - start.x) * pixelsPerCssX;
+        const dy = (moveEvent.clientY - start.y) * pixelsPerCssY;
+        if (edge === 'left') offsets.left = Math.max(0, Math.min(2000, Math.round(start.left - dx)));
+        if (edge === 'right') offsets.right = Math.max(0, Math.min(2000, Math.round(start.right + dx)));
+        if (edge === 'up') offsets.up = Math.max(0, Math.min(2000, Math.round(start.up - dy)));
+        if (edge === 'down') offsets.down = Math.max(0, Math.min(2000, Math.round(start.down + dy)));
+        setActiveRatio();
+        renderPreview();
+      };
+      const finish = (finishEvent) => {
+        if (finishEvent.pointerId !== event.pointerId) return;
+        handle.removeEventListener('pointermove', move);
+        handle.removeEventListener('pointerup', finish);
+        handle.removeEventListener('pointercancel', finish);
+        handle.removeEventListener('lostpointercapture', finish);
+        handle.classList.remove('is-dragging');
+        requestAnimationFrame(() => keepBoardButlerExpandEditorInViewport(editor));
+      };
+      handle.classList.add('is-dragging');
+      handle.setPointerCapture(event.pointerId);
+      handle.addEventListener('pointermove', move);
+      handle.addEventListener('pointerup', finish);
+      handle.addEventListener('pointercancel', finish);
+      handle.addEventListener('lostpointercapture', finish);
+      event.preventDefault();
+      event.stopPropagation();
+    });
+  });
+  editor.querySelectorAll('[data-expand-cancel]').forEach((button) => {
+    button.addEventListener('click', closeBoardButlerExpandEditor);
+  });
+  editor.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(editor);
+    if (!renderPreview()) return;
+    const options = {
+      left: offsets.left,
+      right: offsets.right,
+      up: offsets.up,
+      down: offsets.down,
+      ...(data.get('butler-expand-seed') !== '' ? { seed: Number(data.get('butler-expand-seed')) } : {})
+    };
+    if (launchBoardButlerImageTool('imageExpand', file, item, options)) closeBoardButlerExpandEditor();
+  });
+  editor._sourceItem = item;
+  canvas.appendChild(editor);
+  boardButlerExpandEditor = editor;
+  document.getElementById('board-viewport')?.classList.add('is-board-expand-mode');
+  boardButlerExpandEditorKeyHandler = (event) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeBoardButlerExpandEditor();
+  };
+  document.addEventListener('keydown', boardButlerExpandEditorKeyHandler, true);
+  renderPreview();
+  requestAnimationFrame(() => {
+    if (boardButlerExpandEditor !== editor) return;
+    editor.classList.add('is-visible');
+    keepBoardButlerExpandEditorInViewport(editor);
+  });
+}
+
 function boardButlerSegmentedField(icon, title, name, options, selectedValue) {
   const field = document.createElement('fieldset');
   field.className = 'board-butler-config-field board-butler-segmented-field';
@@ -1574,7 +1956,7 @@ function openBoardButlerVideoUpscalePanel(anchor, file, item) {
     const [outputWidth, outputHeight] = resolution.split('x').map(Number);
     const pixelFactor = Math.max(0.25, outputWidth * outputHeight / (3840 * 2160));
     const providerEstimate = Math.max(1, Math.ceil(duration * 4 * pixelFactor * Math.max(1, frameRate / 24)));
-    const credits = Math.ceil(providerEstimate * 0.15 * 7.3 * 10 * 1.1 * 1.3);
+    const credits = boardButlerCreditsFromPtc(providerEstimate * 0.15);
     cost.textContent = t(
       `About ${credits} pts · conservative price`,
       `约 ${credits} 积分 · 保守计费`,

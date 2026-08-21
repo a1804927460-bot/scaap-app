@@ -253,7 +253,15 @@ contextBridge.exposeInMainWorld('messsAPI', {
   saveCanvasAgentHistory: (sessions) => ipcRenderer.invoke('canvas-agent:saveHistory', sessions),
   getAiAssistantHistory: () => ipcRenderer.invoke('ai-assistant:getHistory'),
   saveAiAssistantHistory: (sessions) => ipcRenderer.invoke('ai-assistant:saveHistory', sessions),
+  workshop: Object.freeze({
+    list: () => ipcRenderer.invoke('workshop:list'),
+    publish: (fileId, metadata) => ipcRenderer.invoke('workshop:publish', fileId, metadata),
+    incrementClick: (postId) => ipcRenderer.invoke('workshop:incrementClick', postId),
+    toggleLike: (postId) => ipcRenderer.invoke('workshop:toggleLike', postId)
+  }),
   butler: Object.freeze({
+    confirmDelivery: (deliveryToken) => ipcRenderer.invoke('butler:confirmDelivery', deliveryToken),
+    releaseDelivery: (deliveryToken) => ipcRenderer.invoke('butler:releaseDelivery', deliveryToken),
     removeBackground: (fileId, options) => ipcRenderer.invoke('butler:removeBackground', fileId, options),
     editImage: (fileId, options) => ipcRenderer.invoke('butler:image-edit', fileId, options),
     expandImage: (fileId, options) => ipcRenderer.invoke('butler:image-expand', fileId, options),

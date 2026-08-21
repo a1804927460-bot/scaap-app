@@ -826,6 +826,11 @@ assert.match(
   'Action capsules must track active wheel zoom without a delayed size trail.'
 );
 assert.match(boardStyles, /\.board-item\.is-selected \{[\s\S]*?outline:\s*var\(--board-selection-width/);
+assert.match(
+  boardStyles,
+  /\.board-item-image\.is-selected\.is-single-selection,[\s\S]*?\.board-item-video\.is-selected\.is-single-selection[\s\S]*?z-index:\s*100000\s*!important/,
+  'A single selected media item must keep its action capsule above neighboring canvas items.'
+);
 assert.match(boardStyles, /width:\s*min\(760px, calc\(100% - 40px\)\)/, 'The generation composer must keep the shorter centered footprint.');
 assert.match(
   boardSource,
@@ -956,6 +961,21 @@ assert.match(
   /function duplicateBoardItem[\s\S]*?pasteBoardClipboard\(item\.x \+ 28, item\.y \+ 28\)/,
   'Creating a duplicate must place an offset canvas copy instead of overlapping the source.'
 );
+assert.match(
+  boardSource,
+  /function setBoardClipboardItems[\s\S]*?map\(cloneBoardHistoryItem\)[\s\S]*?sourceCanvasId = BoardClipboard\.items\.length \? activeCanvasId\(\) : null/,
+  'Canvas copy must preserve an independent application-level snapshot and its source canvas.'
+);
+assert.match(
+  boardSource,
+  /function pasteBoardClipboard[\s\S]*?cloneBoardHistoryItem\(clipboardItem\)[\s\S]*?canvasId: activeCanvasId\(\)/,
+  'Canvas paste must clone copied items into the currently active canvas.'
+);
+assert.match(
+  workspaceSource,
+  /function switchCanvas[\s\S]*?AppState\.activeCanvasId = next\.id[\s\S]*?AppState\.boardItems = AppState\.allBoardItems\.filter/,
+  'Switching canvases must retain the application-level board clipboard while loading the target canvas.'
+);
 assert.match(contextMenuSource, /if \(item\.divider\)[\s\S]*?context-menu-divider/,
   'The destructive canvas command must support a visual divider.');
 assert.match(contextMenuSource, /function exportBoardItemFile[\s\S]*?exportFile\(item\.fileId\)/);
@@ -1065,8 +1085,8 @@ assert.match(
 );
 assert.match(
   contextMenuSource,
-  /function renderCanvasUsageDetails[\s\S]*?breakdown\.image[\s\S]*?breakdown\.video[\s\S]*?breakdown\['3d'\][\s\S]*?marked as estimates/,
-  'Canvas usage details must separate media types and disclose estimated historical records.'
+  /function renderCanvasUsageDetails[\s\S]*?breakdown\.image[\s\S]*?breakdown\.video[\s\S]*?breakdown\['3d'\][\s\S]*?latest price table[\s\S]*?not included in the current-price total/,
+  'Canvas usage details must total the latest prices while retaining historical settlements only for audit.'
 );
 assert.match(indexHtml, /id="canvas-usage-overlay"[\s\S]*?id="canvas-usage-summary"[\s\S]*?id="canvas-usage-rows"/,
   'Canvas usage needs an accessible summary and detailed rows dialog.');
@@ -1143,7 +1163,7 @@ assert.equal(
 assert.equal(
   ledgerSandbox.store.data.canvasUsageLedger.find((entry) => entry.sourceFileId === staleVideo.id).creditsCharged,
   151,
-  'Canvas history must never rewrite a settled historical charge.'
+  'Canvas history must retain the old settled charge as an audit record.'
 );
 assert.match(
   workspaceSource,

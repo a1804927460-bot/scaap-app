@@ -70,9 +70,11 @@ const { activate: activateApp, getActivationStatus } = require('./lib/activation
 const {
   CREDIT_PRICING_VERSION,
   CHAT_CREDITS,
+  USD_TO_CNY,
   conservativeMediaCreditQuote,
   quoteMediaCredits,
-  publicCreditPricing
+  publicCreditPricing,
+  retailCreditsFromUpstreamCny
 } = require('./lib/credit-pricing');
 const {
   imageFallbackProviderIds,
@@ -302,6 +304,8 @@ const butler3dTasks = new Map();
 const butler3dDownloads = new Map();
 const butlerVideoTasks = new Map();
 const butlerVideoDownloads = new Map();
+const butlerDeliveries = new Map();
+const BUTLER_DELIVERY_TTL_MS = 30 * 60 * 1000;
 const MAX_BUTLER_IMAGE_BYTES = Math.floor(7.5 * 1024 * 1024);
 const MAX_BUTLER_VIDEO_BYTES = 48 * 1024 * 1024;
 const MAX_BUTLER_VIDEO_OUTPUT_BYTES = 256 * 1024 * 1024;
@@ -333,23 +337,65 @@ const BUTLER_IMAGE_TOOL_IDS = new Set([
   'topaz-image-restore',
   'topaz-image-lighting'
 ]);
+function butlerRetailCreditsFromPtc(ptc) {
+  return retailCreditsFromUpstreamCny(Math.max(0, Number(ptc) || 0) * USD_TO_CNY);
+}
+
 const BUTLER_IMAGE_TOOL_CREDITS = Object.freeze({
-  'background-remove': 53,
-  'seededit-v3': 6,
-  'kling-image-expand': 53,
-  'clipdrop-uncrop': 53,
-  cleanup: 53,
-  'clipdrop-upscale': 53,
-  'generative-upscale': 84,
-  'qwen-image-edit-plus': 11,
-  'qwen-image-layered': 6,
-  'super-upscale-v2': 11,
-  erase: 53
+  'background-remove': butlerRetailCreditsFromPtc(0.50),
+  'seededit-v3': butlerRetailCreditsFromPtc(0.05),
+  'kling-image-expand': butlerRetailCreditsFromPtc(0.50),
+  'clipdrop-uncrop': butlerRetailCreditsFromPtc(0.50),
+  cleanup: butlerRetailCreditsFromPtc(0.50),
+  'clipdrop-upscale': butlerRetailCreditsFromPtc(0.50),
+  'generative-upscale': butlerRetailCreditsFromPtc(0.80),
+  'qwen-image-edit-plus': butlerRetailCreditsFromPtc(0.10),
+  'qwen-image-layered': butlerRetailCreditsFromPtc(0.05),
+  'super-upscale-v2': butlerRetailCreditsFromPtc(0.10),
+  erase: butlerRetailCreditsFromPtc(0.50)
 });
+
+function butlerThreeDPricingOptions(providerId, options = {}) {
+  const source = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+  if (providerId === 'hunyuan3d') {
+    return {
+      generateType: ['Normal', 'LowPoly', 'Geometry', 'Sketch'].includes(source.generateType)
+        ? source.generateType : 'Normal',
+      enablePbr: source.enablePbr === true,
+      faceCount: Number.isFinite(Number(source.faceCount)) ? Number(source.faceCount) : 500000
+    };
+  }
+  if (providerId === 'tripo3d') {
+    return {
+      texture: source.texture !== false,
+      textureQuality: ['standard', 'detailed', 'extreme'].includes(source.textureQuality)
+        ? source.textureQuality : 'standard'
+    };
+  }
+  return {};
+}
+
+function butlerThreeDRetailCredits(providerId, options = {}) {
+  const pricingOptions = butlerThreeDPricingOptions(providerId, options);
+  if (providerId === 'hunyuan3d') {
+    const type = pricingOptions.generateType;
+    let ptc = type === 'Geometry' ? 0.30 : (type === 'LowPoly' || type === 'Sketch' ? 0.50 : 0.40);
+    if (pricingOptions.enablePbr && type !== 'Geometry') ptc += 0.20;
+    if (pricingOptions.faceCount > 0 && pricingOptions.faceCount !== 500000) ptc += 0.20;
+    return butlerRetailCreditsFromPtc(ptc);
+  }
+  if (providerId === 'hyper3d') return butlerRetailCreditsFromPtc(0.70);
+  if (providerId === 'tripo3d') {
+    if (!pricingOptions.texture) return butlerRetailCreditsFromPtc(0.30);
+    return butlerRetailCreditsFromPtc(pricingOptions.textureQuality === 'standard' ? 0.45 : 0.60);
+  }
+  return null;
+}
+
 const BUTLER_THREE_D_CREDITS = Object.freeze({
-  hunyuan3d: 42,
-  hyper3d: 74,
-  tripo3d: 63
+  hunyuan3d: butlerThreeDRetailCredits('hunyuan3d'),
+  hyper3d: butlerThreeDRetailCredits('hyper3d'),
+  tripo3d: butlerThreeDRetailCredits('tripo3d')
 });
 const BUTLER_VIDEO_TOOL_ID = 'topaz-video-upscale';
 const BUTLER_VIDEO_MIME_BY_EXTENSION = Object.freeze({
@@ -884,6 +930,7 @@ function fileToPayload(f) {
         ? Math.max(0, Number(f.butlerOperation.credits)) : null,
       providerCost: Number.isFinite(Number(f.butlerOperation.providerCost))
         ? Math.max(0, Number(f.butlerOperation.providerCost)) : null,
+      accountingRequestId: String(f.butlerOperation.accountingRequestId || '').trim().slice(0, 80) || null,
       pricingVersion: String(f.butlerOperation.pricingVersion || '').slice(0, 32) || null,
       createdAt: f.butlerOperation.createdAt || null
     } : null,
@@ -1353,6 +1400,175 @@ async function importOneFile(originalPath, folderId, unlockedKeys, today, canvas
 function appFetch(url, options) {
   if (typeof fetch === 'function') return fetch(url, options);
   return net.fetch(url, options);
+}
+
+const MAX_WORKSHOP_MEDIA_BYTES = 128 * 1024 * 1024;
+const WORKSHOP_MEDIA_BUCKET = 'workshop-media';
+
+function workshopCloudError(code, message, status = 503) {
+  return Object.assign(new Error(message), { code, status });
+}
+
+function assertWorkshopCloudConfigured() {
+  if (!runtimeConfig || !runtimeConfig.supabaseUrl || !runtimeConfig.supabasePublishableKey) {
+    throw workshopCloudError('cloud-not-configured', 'Workshop cloud storage is not configured in this build.');
+  }
+  if (!supabaseAuth) throw workshopCloudError('auth-required', 'Sign in to use Workshop cloud sharing.', 401);
+}
+
+async function workshopCloudRequest(pathname, options = {}) {
+  assertWorkshopCloudConfigured();
+  const token = await supabaseAuth.getAccessToken();
+  const response = await appFetch(`${String(runtimeConfig.supabaseUrl).replace(/\/$/, '')}${pathname}`, {
+    method: options.method || 'GET',
+    headers: {
+      apikey: runtimeConfig.supabasePublishableKey,
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+      ...(options.contentType ? { 'Content-Type': options.contentType } : {}),
+      ...(options.headers || {})
+    },
+    ...(options.body === undefined ? {} : { body: options.body })
+  });
+  const text = await response.text();
+  let payload = null;
+  try { payload = text ? JSON.parse(text) : null; } catch (error) { payload = text || null; }
+  if (!response.ok) {
+    const detail = payload && typeof payload === 'object'
+      ? payload.message || payload.hint || payload.details || payload.error
+      : payload;
+    throw workshopCloudError(
+      String(payload && payload.code || (response.status === 401 ? 'auth-required' : 'workshop-cloud-failed')),
+      String(detail || `Workshop cloud request failed (HTTP ${response.status}).`),
+      response.status
+    );
+  }
+  return payload;
+}
+
+function workshopSourceFile(fileId) {
+  const file = store && store.getFile(String(fileId || ''));
+  if (!file || !file.storedPath) throw workshopCloudError('not-found', 'The selected canvas file is no longer available.', 404);
+  const ext = String(file.ext || path.extname(file.name)).toLowerCase();
+  if (!preview.isImageExt(ext) && !preview.isVideoExt(ext)) {
+    throw workshopCloudError('unsupported-media', 'Workshop only accepts images and videos.', 400);
+  }
+  let libraryRoot;
+  let resolvedPath;
+  try {
+    libraryRoot = fs.realpathSync(store.libraryDir);
+    resolvedPath = fs.realpathSync(file.storedPath);
+  } catch (error) {
+    throw workshopCloudError('not-found', 'The selected canvas file could not be read.', 404);
+  }
+  const relative = path.relative(libraryRoot, resolvedPath);
+  if (!relative || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
+    throw workshopCloudError('unsafe-file', 'The selected file is outside the Messs library.', 400);
+  }
+  const stat = fs.statSync(resolvedPath);
+  if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_WORKSHOP_MEDIA_BYTES) {
+    throw workshopCloudError('media-too-large', 'This image or video is empty or larger than 128 MB.', 413);
+  }
+  return { file, ext, resolvedPath, stat };
+}
+
+function workshopStoragePathSegment(value, fallback = 'media') {
+  const cleaned = String(value || fallback)
+    .normalize('NFKC')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '')
+    .slice(0, 90);
+  return cleaned || fallback;
+}
+
+function workshopStoragePublicUrl(storagePath) {
+  const encoded = String(storagePath || '').split('/').map((part) => encodeURIComponent(part)).join('/');
+  return `${String(runtimeConfig.supabaseUrl).replace(/\/$/, '')}/storage/v1/object/public/${WORKSHOP_MEDIA_BUCKET}/${encoded}`;
+}
+
+function workshopPostUrl() {
+  const url = new URL(`${String(runtimeConfig.supabaseUrl).replace(/\/$/, '')}/rest/v1/workshop_posts`);
+  url.searchParams.set('select', 'id,owner_id,title,description,kind,media_path,media_url,mime_type,source_file_name,tags,clicks,likes,created_at');
+  return url;
+}
+
+async function listWorkshopPosts() {
+  const url = workshopPostUrl();
+  url.searchParams.set('order', 'clicks.desc,created_at.desc');
+  url.searchParams.set('limit', '200');
+  const posts = await workshopCloudRequest(`${url.pathname}${url.search}`, { method: 'GET' });
+  return { ok: true, posts: Array.isArray(posts) ? posts : [] };
+}
+
+async function publishWorkshopPost(fileId, metadata = {}) {
+  const source = workshopSourceFile(fileId);
+  const title = String(metadata.title || '').trim().slice(0, 80);
+  if (!title) throw workshopCloudError('invalid-title', 'A Workshop title is required.', 400);
+  const description = String(metadata.description || '').trim().slice(0, 300);
+  const tags = [...new Set((Array.isArray(metadata.tags) ? metadata.tags : [])
+    .map((tag) => String(tag || '').trim().slice(0, 24))
+    .filter(Boolean))].slice(0, 12);
+  const session = supabaseAuth.getPublicSession();
+  const ownerId = session && session.user && session.user.id;
+  if (!ownerId) throw workshopCloudError('auth-required', 'Sign in before publishing to Workshop.', 401);
+  const kind = preview.isVideoExt(source.ext) ? 'video' : 'image';
+  const storagePath = `${ownerId}/${crypto.randomUUID()}-${workshopStoragePathSegment(source.file.name, 'media')}`;
+  const mediaBuffer = await fs.promises.readFile(source.resolvedPath);
+  try {
+    await workshopCloudRequest(`/storage/v1/object/${WORKSHOP_MEDIA_BUCKET}/${storagePath.split('/').map((part) => encodeURIComponent(part)).join('/')}`, {
+      method: 'POST',
+      contentType: source.file.mimeType || localMediaMimeType(source.resolvedPath),
+      headers: { 'x-upsert': 'false' },
+      body: mediaBuffer
+    });
+    const payload = JSON.stringify({
+      owner_id: ownerId,
+      title,
+      description,
+      kind,
+      media_path: storagePath,
+      media_url: workshopStoragePublicUrl(storagePath),
+      mime_type: source.file.mimeType || localMediaMimeType(source.resolvedPath),
+      source_file_name: String(source.file.name || 'media').slice(0, 240),
+      tags
+    });
+    const url = workshopPostUrl();
+    const posts = await workshopCloudRequest(`${url.pathname}${url.search}`, {
+      method: 'POST',
+      contentType: 'application/json',
+      headers: { Prefer: 'return=representation' },
+      body: payload
+    });
+    return { ok: true, post: Array.isArray(posts) ? posts[0] || null : posts };
+  } catch (error) {
+    // A failed row insert must not leave an orphaned public media object.
+    try {
+      await workshopCloudRequest(`/storage/v1/object/${WORKSHOP_MEDIA_BUCKET}/${storagePath.split('/').map((part) => encodeURIComponent(part)).join('/')}`, {
+        method: 'DELETE'
+      });
+    } catch (cleanupError) {}
+    throw error;
+  }
+}
+
+async function incrementWorkshopClick(postId) {
+  const id = String(postId || '').trim();
+  if (!/^[0-9a-f-]{20,80}$/i.test(id)) throw workshopCloudError('invalid-post', 'The Workshop post id is invalid.', 400);
+  const payload = JSON.stringify({ p_post_id: id });
+  const result = await workshopCloudRequest('/rest/v1/rpc/workshop_increment_click', {
+    method: 'POST', contentType: 'application/json', body: payload
+  });
+  return { ok: true, post: Array.isArray(result) ? result[0] || null : result };
+}
+
+async function toggleWorkshopLike(postId) {
+  const id = String(postId || '').trim();
+  if (!/^[0-9a-f-]{20,80}$/i.test(id)) throw workshopCloudError('invalid-post', 'The Workshop post id is invalid.', 400);
+  const result = await workshopCloudRequest('/rest/v1/rpc/workshop_toggle_like', {
+    method: 'POST', contentType: 'application/json', body: JSON.stringify({ p_post_id: id })
+  });
+  return { ok: true, ...(result && typeof result === 'object' && !Array.isArray(result) ? result : { result }) };
 }
 
 async function sanitizeImageForAi(input) {
@@ -2352,7 +2568,7 @@ function estimatedHistoricalCanvasCredits(file, operation, kind) {
       operationKind === 'remove-background' ? 'background-remove' : ''
     )).trim().toLowerCase();
     if (kind === '3d' && Object.hasOwn(BUTLER_THREE_D_CREDITS, modelId)) {
-      return BUTLER_THREE_D_CREDITS[modelId];
+      return butlerThreeDRetailCredits(modelId, operation.pricingOptions);
     }
     if (Object.hasOwn(BUTLER_IMAGE_TOOL_CREDITS, modelId)) return BUTLER_IMAGE_TOOL_CREDITS[modelId];
   } catch (error) {}
@@ -2371,10 +2587,12 @@ function canvasUsageEntryFromFile(file) {
   const parsedEstimatedCredits = Number(rawEstimatedCredits);
   const hasSavedEstimate = rawEstimatedCredits !== null && rawEstimatedCredits !== undefined
     && rawEstimatedCredits !== '' && Number.isFinite(parsedEstimatedCredits) && parsedEstimatedCredits >= 0;
-  // Current pricing is only a backfill for old files that never saved an
-  // estimate. A settled charge is immutable accounting history.
+  // Reprice saved model parameters with the current catalog. The settled
+  // charge remains immutable accounting history, but it is not the current
+  // price shown in usage totals after a pricing-table update.
   const currentCredits = estimatedHistoricalCanvasCredits(file, operation, kind);
   const hasCurrentQuote = Number.isFinite(Number(currentCredits));
+  const savedPricingVersion = String(operation.pricingVersion || '').trim().slice(0, 32);
   const accountingRequestId = String(operation.accountingRequestId || '').trim();
   return {
     id: `file:${String(file.id || '').slice(0, 120)}`,
@@ -2392,14 +2610,20 @@ function canvasUsageEntryFromFile(file) {
       ? Number(operation.requestedDuration ?? operation.duration)
       : null,
     serviceTier: String(operation.serviceTier || '').slice(0, 20) || null,
-    estimatedCredits: hasSavedEstimate ? Math.max(0, parsedEstimatedCredits)
-      : hasCurrentQuote ? Math.max(0, Number(currentCredits))
+    pricingOptions: kind === '3d'
+      ? butlerThreeDPricingOptions(String(operation.modelId || ''), operation.pricingOptions)
+      : null,
+    estimatedCredits: hasCurrentQuote ? Math.max(0, Number(currentCredits))
+      : hasSavedEstimate ? Math.max(0, parsedEstimatedCredits)
         : recorded ? Math.max(0, parsedChargedCredits) : null,
     creditsCharged: recorded ? Math.max(0, parsedChargedCredits) : null,
     credits: recorded ? Math.max(0, parsedChargedCredits) : null,
-    pricingVersion: String(operation.pricingVersion || '').trim().slice(0, 32)
-      || (hasSavedEstimate ? null : hasCurrentQuote ? CREDIT_PRICING_VERSION : null),
-    estimated: !hasSavedEstimate && hasCurrentQuote,
+    pricingVersion: hasCurrentQuote ? CREDIT_PRICING_VERSION : savedPricingVersion || null,
+    estimated: hasCurrentQuote && (
+      savedPricingVersion !== CREDIT_PRICING_VERSION
+      || !hasSavedEstimate
+      || Math.max(0, parsedEstimatedCredits) !== Math.max(0, Number(currentCredits))
+    ),
     status: recorded ? 'succeeded' : 'pending',
     createdAt: String(operation.createdAt || file.importedAt || new Date().toISOString()).slice(0, 40)
   };
@@ -2436,6 +2660,9 @@ function normalizeCanvasUsageEntry(entry) {
     quality: String(entry.quality || '').slice(0, 20) || null,
     duration: Number.isFinite(Number(entry.duration)) ? Number(entry.duration) : null,
     serviceTier: String(entry.serviceTier || '').slice(0, 20) || null,
+    pricingOptions: entry.kind === '3d'
+      ? butlerThreeDPricingOptions(String(entry.providerId || ''), entry.pricingOptions)
+      : null,
     estimatedCredits,
     creditsCharged,
     credits: creditsCharged,
@@ -2449,22 +2676,25 @@ function normalizeCanvasUsageEntry(entry) {
 
 function backfillCanvasUsageEstimate(entry) {
   if (!entry) return entry;
-  if (Number.isFinite(Number(entry.estimatedCredits))) return entry;
   if (entry.kind === '3d' && Object.hasOwn(BUTLER_THREE_D_CREDITS, entry.providerId)) {
+    const currentCredits = butlerThreeDRetailCredits(entry.providerId, entry.pricingOptions);
     return {
       ...entry,
-      estimatedCredits: BUTLER_THREE_D_CREDITS[entry.providerId],
+      estimatedCredits: currentCredits,
       pricingVersion: CREDIT_PRICING_VERSION,
-      estimated: true
+      estimated: entry.pricingVersion !== CREDIT_PRICING_VERSION
+        || Number(entry.estimatedCredits) !== currentCredits
     };
   }
   if (!['image', 'video'].includes(entry.kind) || !entry.providerId) return entry;
   if (Object.hasOwn(BUTLER_IMAGE_TOOL_CREDITS, entry.providerId)) {
+    const currentCredits = BUTLER_IMAGE_TOOL_CREDITS[entry.providerId];
     return {
       ...entry,
-      estimatedCredits: BUTLER_IMAGE_TOOL_CREDITS[entry.providerId],
+      estimatedCredits: currentCredits,
       pricingVersion: CREDIT_PRICING_VERSION,
-      estimated: true
+      estimated: entry.pricingVersion !== CREDIT_PRICING_VERSION
+        || Number(entry.estimatedCredits) !== currentCredits
     };
   }
   try {
@@ -2484,7 +2714,8 @@ function backfillCanvasUsageEstimate(entry) {
       ...entry,
       estimatedCredits: Math.max(0, Number(credits)),
       pricingVersion: CREDIT_PRICING_VERSION,
-      estimated: true
+      estimated: entry.pricingVersion !== CREDIT_PRICING_VERSION
+        || Number(entry.estimatedCredits) !== Math.max(0, Number(credits))
     };
   } catch (error) {
     return entry;
@@ -2553,6 +2784,10 @@ async function canvasCreditUsage(canvasId) {
     const creditsCharged = Number(entry.creditsCharged ?? entry.credits);
     const hasCloudEstimate = Number.isFinite(estimatedCredits) && estimatedCredits >= 0;
     const hasCloudCharge = Number.isFinite(creditsCharged) && creditsCharged >= 0;
+    const cloudResolution = String(entry.resolution || '').trim().slice(0, 40);
+    const [cloudQuality, cloudImageResolution] = cloudResolution.includes(':')
+      ? cloudResolution.toLowerCase().split(':', 2)
+      : [null, cloudResolution];
     detailsByKey.set(key, {
       ...local,
       id: local.id || `cloud:${requestId}`,
@@ -2562,6 +2797,10 @@ async function canvasCreditUsage(canvasId) {
       kind: ['image', 'video', '3d'].includes(entry.kind) ? entry.kind : (local.kind || 'image'),
       providerId: String(entry.providerId || local.providerId || '').slice(0, 100) || null,
       modelName: local.modelName || String(entry.modelName || entry.providerId || 'AI model').slice(0, 160),
+      resolution: local.resolution || cloudImageResolution || null,
+      size: local.size || cloudImageResolution || null,
+      quality: local.quality || cloudQuality || null,
+      duration: Number.isFinite(Number(entry.duration)) ? Number(entry.duration) : local.duration ?? null,
       estimatedCredits: hasCloudEstimate ? Math.max(0, estimatedCredits)
         : local.estimatedCredits ?? null,
       creditsCharged: hasCloudCharge ? Math.max(0, creditsCharged)
@@ -2575,18 +2814,21 @@ async function canvasCreditUsage(canvasId) {
     });
   });
   const details = [...detailsByKey.values()]
+    .map(backfillCanvasUsageEstimate)
     .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
   const recorded = details.filter((entry) => entry.creditsCharged !== null);
+  const currentlyPriced = details.filter((entry) => entry.estimatedCredits !== null);
   const breakdown = ['image', 'video', '3d'].reduce((result, kind) => {
     const entries = details.filter((entry) => entry.kind === kind);
     const known = entries.filter((entry) => entry.creditsCharged !== null);
+    const priced = entries.filter((entry) => entry.estimatedCredits !== null);
     result[kind] = {
       estimatedCredits: entries.reduce((sum, entry) => sum + (Number(entry.estimatedCredits) || 0), 0),
       creditsCharged: known.reduce((sum, entry) => sum + entry.creditsCharged, 0),
-      credits: known.reduce((sum, entry) => sum + entry.creditsCharged, 0),
+      credits: priced.reduce((sum, entry) => sum + entry.estimatedCredits, 0),
       generations: entries.length,
       recorded: known.length,
-      unrecorded: entries.length - known.length
+      unrecorded: entries.length - priced.length
     };
     return result;
   }, {});
@@ -2596,10 +2838,10 @@ async function canvasCreditUsage(canvasId) {
     totals: {
       estimatedCredits: details.reduce((sum, entry) => sum + (Number(entry.estimatedCredits) || 0), 0),
       creditsCharged: recorded.reduce((sum, entry) => sum + entry.creditsCharged, 0),
-      credits: recorded.reduce((sum, entry) => sum + entry.creditsCharged, 0),
+      credits: currentlyPriced.reduce((sum, entry) => sum + entry.estimatedCredits, 0),
       generations: details.length,
       recorded: recorded.length,
-      unrecorded: details.length - recorded.length,
+      unrecorded: details.length - currentlyPriced.length,
       estimated: details.filter((entry) => entry.estimated === true).length
     },
     breakdown,
@@ -3535,6 +3777,25 @@ async function sanitizeButlerMaskDataUrl(value) {
   }
 }
 
+function butlerOutputAccounting(buffer, fallbackCredits) {
+  const estimated = Number(buffer && buffer.estimatedCredits);
+  const charged = Number(buffer && buffer.creditsCharged);
+  const fallback = Number(fallbackCredits);
+  const estimatedCredits = Number.isFinite(estimated) && estimated >= 0
+    ? estimated
+    : Number.isFinite(fallback) && fallback >= 0 ? fallback : null;
+  if (buffer && buffer.deliveryPending === true) {
+    return estimatedCredits === null ? {} : { estimatedCredits };
+  }
+  const creditsCharged = Number.isFinite(charged) && charged >= 0
+    ? charged
+    : estimatedCredits;
+  return {
+    ...(estimatedCredits === null ? {} : { estimatedCredits }),
+    ...(creditsCharged === null ? {} : { creditsCharged, credits: creditsCharged })
+  };
+}
+
 async function addButlerOutputFile(buffer, sourceFile, operation, operationDetails = {}) {
   const isModel = operation === 'generate-3d';
   if (isModel) assertValidGlbBuffer(buffer);
@@ -3567,6 +3828,9 @@ async function addButlerOutputFile(buffer, sourceFile, operation, operationDetai
         kind: operation,
         sourceFileId: sourceFile.id,
         ...(operationDetails.modelId ? { modelId: operationDetails.modelId } : {}),
+        ...(operationDetails.modelId && operationDetails.pricingOptions
+          ? { pricingOptions: butlerThreeDPricingOptions(operationDetails.modelId, operationDetails.pricingOptions) }
+          : {}),
         pricingVersion: CREDIT_PRICING_VERSION,
         ...(Number.isFinite(Number(operationDetails.estimatedCredits ?? operationDetails.credits))
           ? { estimatedCredits: Number(operationDetails.estimatedCredits ?? operationDetails.credits) }
@@ -3894,6 +4158,236 @@ function addGeneratedMediaBoardItem(record, request, placement, index) {
   if (existingIndex === -1) store.data.boardItems.push(item);
   else store.data.boardItems[existingIndex] = item;
   return item;
+}
+
+async function rollbackGeneratedMediaFile(record) {
+  if (!record || !record.id) return;
+  store.data.boardItems = store.data.boardItems.filter((item) => item.fileId !== record.id);
+  if (Array.isArray(store.data.canvasUsageLedger)) {
+    const usageEntryId = `file:${record.id}`;
+    store.data.canvasUsageLedger = store.data.canvasUsageLedger.filter((entry) => entry && entry.id !== usageEntryId);
+  }
+  store.removeFileById(record.id);
+  await fs.promises.rm(record.storedPath, { force: true }).catch(() => {});
+  await fs.promises.rm(path.join(previewCacheDir, record.id), { recursive: true, force: true }).catch(() => {});
+  thumbnails.deleteThumbnail(record.id, thumbCacheDir);
+  store.scheduleSave();
+}
+
+function deliverySettlement(payload) {
+  return payload && payload.settlement && typeof payload.settlement === 'object'
+    ? payload.settlement
+    : payload && typeof payload === 'object' ? payload : null;
+}
+
+function butlerDeliveryRequest(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.deliveryPending !== true) return null;
+  const requestId = String(buffer.deliveryRequestId || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(requestId)) return null;
+  return {
+    requestId,
+    durationMs: Math.max(0, Math.round(Number(buffer.deliveryDurationMs) || 0)),
+    estimatedCredits: Number.isFinite(Number(buffer.estimatedCredits))
+      ? Math.max(0, Number(buffer.estimatedCredits))
+      : null
+  };
+}
+
+async function releaseButlerBufferDeliveries(buffers) {
+  if (!aiGateway || typeof aiGateway.releaseMediaDelivery !== 'function') return;
+  const requests = new Map();
+  for (const buffer of Array.isArray(buffers) ? buffers : []) {
+    const delivery = butlerDeliveryRequest(buffer);
+    if (!delivery) continue;
+    const previous = requests.get(delivery.requestId);
+    if (!previous || delivery.durationMs > previous.durationMs) requests.set(delivery.requestId, delivery);
+  }
+  for (const delivery of requests.values()) {
+    try {
+      await aiGateway.releaseMediaDelivery(delivery.requestId, delivery.durationMs);
+    } catch (error) {
+      console.error('Could not release an unsaved Butler reservation:', error && error.code || error);
+    }
+  }
+}
+
+function scheduleButlerDeliveryRecovery(token, delayMs = BUTLER_DELIVERY_TTL_MS) {
+  const entry = butlerDeliveries.get(token);
+  if (!entry || entry.status !== 'pending') return;
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.timer = setTimeout(async () => {
+    const current = butlerDeliveries.get(token);
+    if (!current || current.status !== 'pending') return;
+    try {
+      await settleButlerDeliveryToken(token, current.confirmRequested === true);
+    } catch (error) {
+      console.error('Could not recover a pending Butler delivery:', error && error.code || error);
+      scheduleButlerDeliveryRecovery(token, 5 * 60 * 1000);
+    }
+  }, delayMs);
+  entry.timer.unref?.();
+}
+
+async function registerButlerDelivery(buffers, records) {
+  const safeBuffers = Array.isArray(buffers) ? buffers.filter(Buffer.isBuffer) : [];
+  const safeRecords = Array.isArray(records) ? records.filter((record) => record && record.id) : [];
+  const requests = safeBuffers.map(butlerDeliveryRequest).filter(Boolean);
+  if (!requests.length) {
+    safeRecords.forEach((record, index) => {
+      const accounting = butlerOutputAccounting(safeBuffers[index] || safeBuffers[0], null);
+      if (!record.butlerOperation || !Object.keys(accounting).length) return;
+      Object.assign(record.butlerOperation, accounting);
+      recordCanvasUsageFile(record);
+    });
+    if (safeRecords.length) store.scheduleSave();
+    return null;
+  }
+  const requestIds = [...new Set(requests.map((entry) => entry.requestId))];
+  if (requestIds.length !== 1) {
+    await Promise.all(safeRecords.map((record) => rollbackGeneratedMediaFile(record)));
+    await releaseButlerBufferDeliveries(safeBuffers);
+    const error = new Error('The Butler delivery accounting was inconsistent.');
+    error.code = 'invalid-delivery-confirmation';
+    throw error;
+  }
+  const requestId = requestIds[0];
+  const durationMs = requests.reduce((maximum, entry) => Math.max(maximum, entry.durationMs), 0);
+  const estimatedCredits = requests.reduce((maximum, entry) => (
+    entry.estimatedCredits === null ? maximum : Math.max(maximum, entry.estimatedCredits)
+  ), -1);
+  for (const record of safeRecords) {
+    if (!record.butlerOperation) continue;
+    record.butlerOperation.accountingRequestId = requestId;
+    if (estimatedCredits >= 0) record.butlerOperation.estimatedCredits = estimatedCredits;
+    delete record.butlerOperation.creditsCharged;
+    delete record.butlerOperation.credits;
+    recordCanvasUsageFile(record);
+  }
+  store.scheduleSave();
+  const token = `bd_${crypto.randomBytes(24).toString('base64url')}`;
+  butlerDeliveries.set(token, {
+    token,
+    requestId,
+    durationMs,
+    estimatedCredits: estimatedCredits >= 0 ? estimatedCredits : null,
+    recordIds: safeRecords.map((record) => record.id),
+    status: 'pending',
+    confirmRequested: false,
+    createdAt: Date.now(),
+    timer: null,
+    inFlight: null,
+    result: null
+  });
+  scheduleButlerDeliveryRecovery(token);
+  return token;
+}
+
+function butlerFilePayload(record, deliveryToken = null) {
+  const payload = fileToPayload(record);
+  return deliveryToken ? { ...payload, butlerDeliveryToken: deliveryToken } : payload;
+}
+
+async function settleButlerDeliveryToken(rawToken, delivered) {
+  const token = String(rawToken || '').trim();
+  const entry = butlerDeliveries.get(token);
+  if (!entry) {
+    const error = new Error('The Butler delivery token is invalid or has expired.');
+    error.code = 'invalid-delivery-token';
+    throw error;
+  }
+  const expectedStatus = delivered === true ? 'confirmed' : 'released';
+  if (entry.status !== 'pending') {
+    if (entry.status === expectedStatus) return entry.result;
+    const error = new Error('The Butler delivery was already settled differently.');
+    error.code = 'delivery-status-conflict';
+    throw error;
+  }
+  if (delivered === true) entry.confirmRequested = true;
+  if (entry.inFlight) return entry.inFlight;
+  entry.inFlight = (async () => {
+    const settlement = deliverySettlement(delivered === true
+      ? await aiGateway.confirmMediaDelivery(entry.requestId, entry.durationMs)
+      : await aiGateway.releaseMediaDelivery(entry.requestId, entry.durationMs));
+    const expectedGatewayStatus = delivered === true ? 'succeeded' : 'failed';
+    if (!settlement || settlement.ok !== true || String(settlement.status || '') !== expectedGatewayStatus) {
+      const error = new Error('The Butler delivery charge could not be settled safely.');
+      error.code = 'delivery-confirmation-failed';
+      throw error;
+    }
+    const records = entry.recordIds.map((id) => store.getFile(id)).filter(Boolean);
+    if (delivered === true) {
+      const charged = Number(settlement.creditsCharged);
+      for (const record of records) {
+        if (!record.butlerOperation) continue;
+        record.butlerOperation.accountingRequestId = entry.requestId;
+        if (entry.estimatedCredits !== null) record.butlerOperation.estimatedCredits = entry.estimatedCredits;
+        if (Number.isFinite(charged) && charged >= 0) {
+          record.butlerOperation.creditsCharged = charged;
+          record.butlerOperation.credits = charged;
+        }
+        recordCanvasUsageFile(record);
+      }
+    } else {
+      await Promise.all(records.map((record) => rollbackGeneratedMediaFile(record)));
+    }
+    store.scheduleSave();
+    if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.timer = null;
+    entry.status = expectedStatus;
+    entry.result = {
+      ok: true,
+      status: entry.status,
+      settlement,
+      files: delivered === true ? records.map(fileToPayload) : [],
+      removedFileIds: delivered === true ? [] : [...entry.recordIds]
+    };
+    const cleanup = setTimeout(() => butlerDeliveries.delete(token), 5 * 60 * 1000);
+    cleanup.unref?.();
+    return entry.result;
+  })();
+  try {
+    return await entry.inFlight;
+  } catch (error) {
+    if (entry.status === 'pending') scheduleButlerDeliveryRecovery(token, 15 * 1000);
+    throw error;
+  } finally {
+    entry.inFlight = null;
+  }
+}
+
+async function confirmGeneratedMediaDelivery(kind, generated) {
+  const buffer = generated && generated.buffer;
+  if (!buffer || buffer.deliveryPending !== true) return null;
+  const settlement = kind === 'video'
+    ? deliverySettlement(await aiGateway.confirmVideoDelivery(buffer.deliveryTaskToken, {
+      contentType: buffer.deliveryContentType,
+      bytes: buffer.length
+    }))
+    : deliverySettlement(await aiGateway.confirmMediaDelivery(
+      buffer.deliveryRequestId || generated.accountingRequestId,
+      buffer.deliveryDurationMs
+    ));
+  if (!settlement || settlement.ok !== true || String(settlement.status || '') !== 'succeeded') {
+    const error = new Error('The generated media charge could not be confirmed safely.');
+    error.code = 'delivery-confirmation-failed';
+    throw error;
+  }
+  return settlement;
+}
+
+async function releaseGeneratedMediaDelivery(kind, generated) {
+  const buffer = generated && generated.buffer;
+  if (!buffer || buffer.deliveryPending !== true) return;
+  try {
+    if (kind === 'video') await aiGateway.releaseVideoDelivery(buffer.deliveryTaskToken);
+    else await aiGateway.releaseMediaDelivery(
+      buffer.deliveryRequestId || generated.accountingRequestId,
+      buffer.deliveryDurationMs
+    );
+  } catch (error) {
+    console.error('Could not release undelivered AI media reservation:', error && error.code || error);
+  }
 }
 
 /** Quick recursive count of how many files (not folders) live under a
@@ -4759,7 +5253,10 @@ function normalizeButlerImageStatus(payload) {
     ...(numeric('creditsReleased') !== undefined ? { creditsReleased: numeric('creditsReleased') } : {}),
     ...(numeric('availableCredits') !== undefined ? { availableCredits: numeric('availableCredits') } : {}),
     ...(status === 'failed'
-      ? { message: String(payload && payload.errorMessage || 'Image processing failed.') }
+      ? {
+          message: String(payload && payload.errorMessage || 'Image processing failed.'),
+          errorCode: String(payload && payload.errorCode || 'image-tool-failed')
+        }
       : {})
   };
 }
@@ -4944,6 +5441,10 @@ function butlerFailure(error, fallbackMessage) {
     'credit-service-not-configured': 'The points service is not configured on the server.',
     'credit-schema-missing': 'The points service is being upgraded. Please try again shortly.',
     'credit-service-failed': 'The points balance could not be checked. Please try again.',
+    'invalid-delivery-token': 'The Butler result confirmation expired. Run the tool again.',
+    'invalid-delivery-confirmation': 'The Butler result could not be matched to its reserved points.',
+    'delivery-confirmation-failed': 'The Butler result charge could not be confirmed safely. Please try again.',
+    'delivery-status-conflict': 'This Butler result was already settled differently.',
     'provider-auth-failed': 'The video provider rejected the server credential. Ask the administrator to update it.',
     'ai302-unauthorized': 'The 302 gateway credential is invalid. Ask the administrator to update it.',
     'ai302-balance-exhausted': 'The 302 account balance is insufficient.',
@@ -4959,15 +5460,25 @@ function butlerFailure(error, fallbackMessage) {
     'body-too-large': 'The video exceeds the gateway upload size limit.',
     'invalid-gateway-response': 'The secure AI gateway returned an invalid response.',
     'gateway-request-failed': 'The secure AI gateway could not start this request.',
+    'gateway-error': 'The secure AI gateway returned a server error. Please retry shortly.',
+    'gateway-queue-full': 'The AI generation queue is full. Please retry shortly.',
+    'gateway-queue-timeout': 'The AI generation queue timed out. Please retry shortly.',
     'media-too-large': 'The generated result exceeds the safe download size.',
     'rate-limited': 'Too many Butler requests. Please wait and try again.'
   };
   const httpStatus = Number(error && error.status);
+  const requestId = String(error && error.requestId || '').trim();
+  const retryAfterMs = Number(error && error.retryAfterMs);
+  const message = reason === 'gateway-request-failed' && Number.isInteger(httpStatus)
+    ? `The secure AI gateway could not start this request (HTTP ${httpStatus}). Please retry shortly.`
+    : knownMessages[reason] || fallbackMessage;
   return {
     ok: false,
     reason,
-    message: knownMessages[reason] || fallbackMessage,
-    ...(Number.isInteger(httpStatus) && httpStatus >= 400 && httpStatus <= 599 ? { httpStatus } : {})
+    message,
+    ...(Number.isInteger(httpStatus) && httpStatus >= 400 && httpStatus <= 599 ? { httpStatus } : {}),
+    ...(requestId ? { requestId } : {}),
+    ...(Number.isFinite(retryAfterMs) && retryAfterMs > 0 ? { retryAfterMs } : {})
   };
 }
 
@@ -5537,6 +6048,54 @@ function registerIpcHandlers() {
     return session;
   });
 
+  ipcMain.handle('workshop:list', async () => {
+    try {
+      return await listWorkshopPosts();
+    } catch (error) {
+      return {
+        ok: false,
+        reason: error && error.code || 'workshop-cloud-unavailable',
+        message: error && error.message || 'Workshop cloud sharing is unavailable.'
+      };
+    }
+  });
+
+  ipcMain.handle('workshop:publish', async (_evt, fileId, metadata = {}) => {
+    try {
+      return await publishWorkshopPost(fileId, metadata);
+    } catch (error) {
+      return {
+        ok: false,
+        reason: error && error.code || 'workshop-publish-failed',
+        message: error && error.message || 'The Workshop post could not be published.'
+      };
+    }
+  });
+
+  ipcMain.handle('workshop:incrementClick', async (_evt, postId) => {
+    try {
+      return await incrementWorkshopClick(postId);
+    } catch (error) {
+      return {
+        ok: false,
+        reason: error && error.code || 'workshop-click-failed',
+        message: error && error.message || 'The Workshop view could not be recorded.'
+      };
+    }
+  });
+
+  ipcMain.handle('workshop:toggleLike', async (_evt, postId) => {
+    try {
+      return await toggleWorkshopLike(postId);
+    } catch (error) {
+      return {
+        ok: false,
+        reason: error && error.code || 'workshop-like-failed',
+        message: error && error.message || 'The Workshop like could not be saved.'
+      };
+    }
+  });
+
   ipcMain.handle('chat:initialize', () => chatService.initialize());
 
   ipcMain.handle('chat:sync', () => chatService.sync());
@@ -6040,7 +6599,28 @@ function registerIpcHandlers() {
     return { imported: importedNow, unlocked: Array.from(unlockedKeys) };
   });
 
+  ipcMain.handle('butler:confirmDelivery', async (_evt, deliveryToken) => {
+    try {
+      return await settleButlerDeliveryToken(deliveryToken, true);
+    } catch (error) {
+      const failure = butlerFailure(error, 'The Butler result could not be charged safely.');
+      console.error('Butler delivery confirmation failed:', failure.reason);
+      return failure;
+    }
+  });
+
+  ipcMain.handle('butler:releaseDelivery', async (_evt, deliveryToken) => {
+    try {
+      return await settleButlerDeliveryToken(deliveryToken, false);
+    } catch (error) {
+      const failure = butlerFailure(error, 'The unused Butler reservation could not be released safely.');
+      console.error('Butler delivery release failed:', failure.reason);
+      return failure;
+    }
+  });
+
   ipcMain.handle('butler:removeBackground', async (_evt, fileId, requestedOptions = {}) => {
+    let responseBuffer = null;
     try {
       if (!aiGateway || !aiGateway.isConfigured()) {
         const error = new Error('Butler is not configured.');
@@ -6049,14 +6629,17 @@ function registerIpcHandlers() {
       }
       const options = normalizeButlerBackgroundOptions(requestedOptions);
       const source = await butlerSourceImage(fileId);
-      const responseBuffer = await aiGateway.removeBackground(source.imageDataUrl, options);
+      responseBuffer = await aiGateway.removeBackground(source.imageDataUrl, options);
       const pngBuffer = await sanitizeButlerBackgroundPng(responseBuffer);
       const record = await addButlerOutputFile(pngBuffer, source.file, 'remove-background', {
         modelId: 'background-remove',
-        credits: BUTLER_IMAGE_TOOL_CREDITS['background-remove']
+        ...butlerOutputAccounting(responseBuffer, BUTLER_IMAGE_TOOL_CREDITS['background-remove'])
       });
-      return { ok: true, file: fileToPayload(record) };
+      const deliveryToken = await registerButlerDelivery([responseBuffer], [record]);
+      if (!deliveryToken && runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
+      return { ok: true, file: butlerFilePayload(record, deliveryToken) };
     } catch (error) {
+      await releaseButlerBufferDeliveries([responseBuffer]);
       const failure = butlerFailure(error, 'Background removal failed. Please try again.');
       console.error('Butler background removal failed:', failure.reason);
       return failure;
@@ -6093,6 +6676,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('butler:image-expand', async (_evt, fileId, requestedOptions = {}) => {
+    let responseBuffer = null;
     try {
       if (!aiGateway || !aiGateway.isConfigured()) {
         const error = new Error('Butler is not configured.');
@@ -6102,15 +6686,17 @@ function registerIpcHandlers() {
       const modelId = 'clipdrop-uncrop';
       const options = normalizeButlerImageOptions(modelId, requestedOptions);
       const source = await butlerSourceImage(fileId);
-      const responseBuffer = await aiGateway.expandImage(source.imageDataUrl, options);
+      responseBuffer = await aiGateway.expandImage(source.imageDataUrl, options);
       const pngBuffer = await sanitizeButlerImagePng(responseBuffer);
       const record = await addButlerOutputFile(pngBuffer, source.file, 'image-expand', {
         modelId,
-        credits: BUTLER_IMAGE_TOOL_CREDITS[modelId]
+        ...butlerOutputAccounting(responseBuffer, BUTLER_IMAGE_TOOL_CREDITS[modelId])
       });
-      if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
-      return { ok: true, file: fileToPayload(record) };
+      const deliveryToken = await registerButlerDelivery([responseBuffer], [record]);
+      if (!deliveryToken && runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
+      return { ok: true, file: butlerFilePayload(record, deliveryToken) };
     } catch (error) {
+      await releaseButlerBufferDeliveries([responseBuffer]);
       const failure = butlerFailure(error, 'The image expansion task could not be started.');
       console.error('Butler image expansion failed:', failure.reason);
       return failure;
@@ -6118,6 +6704,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('butler:image-upscale', async (_evt, fileId) => {
+    let responseBuffer = null;
     try {
       if (!aiGateway || !aiGateway.isConfigured()) {
         const error = new Error('Butler is not configured.');
@@ -6126,15 +6713,17 @@ function registerIpcHandlers() {
       }
       const modelId = 'clipdrop-upscale';
       const source = await butlerSourceImage(fileId);
-      const responseBuffer = await aiGateway.upscaleImage(source.imageDataUrl);
+      responseBuffer = await aiGateway.upscaleImage(source.imageDataUrl);
       const pngBuffer = await sanitizeButlerImagePng(responseBuffer);
       const record = await addButlerOutputFile(pngBuffer, source.file, 'image-upscale', {
         modelId,
-        credits: BUTLER_IMAGE_TOOL_CREDITS[modelId]
+        ...butlerOutputAccounting(responseBuffer, BUTLER_IMAGE_TOOL_CREDITS[modelId])
       });
-      if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
-      return { ok: true, file: fileToPayload(record) };
+      const deliveryToken = await registerButlerDelivery([responseBuffer], [record]);
+      if (!deliveryToken && runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
+      return { ok: true, file: butlerFilePayload(record, deliveryToken) };
     } catch (error) {
+      await releaseButlerBufferDeliveries([responseBuffer]);
       const failure = butlerFailure(error, 'Image enhancement failed.');
       console.error('Butler image enhancement failed:', failure.reason);
       return failure;
@@ -6206,6 +6795,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('butler:image-erase', async (_evt, fileId, requestedOptions = {}) => {
+    let responseBuffer = null;
     try {
       if (!aiGateway || !aiGateway.isConfigured()) {
         const error = new Error('Butler is not configured.');
@@ -6218,18 +6808,20 @@ function registerIpcHandlers() {
         butlerSourceImage(fileId),
         sanitizeButlerMaskDataUrl(options.maskDataUrl)
       ]);
-      const responseBuffer = await aiGateway.eraseObject(source.imageDataUrl, mask.dataUrl, {
+      responseBuffer = await aiGateway.eraseObject(source.imageDataUrl, mask.dataUrl, {
         maskWidth: mask.width,
         maskHeight: mask.height
       });
       const pngBuffer = await sanitizeButlerImagePng(responseBuffer);
       const record = await addButlerOutputFile(pngBuffer, source.file, 'image-erase', {
         modelId,
-        credits: BUTLER_IMAGE_TOOL_CREDITS[modelId]
+        ...butlerOutputAccounting(responseBuffer, BUTLER_IMAGE_TOOL_CREDITS[modelId])
       });
-      if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
-      return { ok: true, file: fileToPayload(record) };
+      const deliveryToken = await registerButlerDelivery([responseBuffer], [record]);
+      if (!deliveryToken && runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
+      return { ok: true, file: butlerFilePayload(record, deliveryToken) };
     } catch (error) {
+      await releaseButlerBufferDeliveries([responseBuffer]);
       const failure = butlerFailure(error, 'The selected object could not be erased.');
       console.error('Butler object erase failed:', failure.reason);
       return failure;
@@ -6292,7 +6884,10 @@ function registerIpcHandlers() {
         ? task.downloadedFileIds.map((id) => store.getFile(id)).filter(Boolean)
         : [];
       if (existingFiles.length) {
-        return { ok: true, files: existingFiles.map(fileToPayload) };
+        return {
+          ok: true,
+          files: existingFiles.map((record) => butlerFilePayload(record, task.deliveryToken))
+        };
       }
       if (butlerImageDownloads.has(taskToken)) return await butlerImageDownloads.get(taskToken);
 
@@ -6311,21 +6906,36 @@ function registerIpcHandlers() {
             ? 'image-expand'
             : modelId === 'qwen-image-layered' ? 'image-layer' : 'image-edit');
         const records = [];
-        for (const buffer of buffers) {
-          const pngBuffer = await sanitizeButlerImagePng(buffer);
-          records.push(await addButlerOutputFile(pngBuffer, sourceFile, operation, {
-            modelId,
-            credits: currentTask.creditsCharged !== undefined ? currentTask.creditsCharged : currentTask.credits
-          }));
+        let deliveryToken = null;
+        try {
+          for (const buffer of buffers) {
+            const pngBuffer = await sanitizeButlerImagePng(buffer);
+            records.push(await addButlerOutputFile(pngBuffer, sourceFile, operation, {
+              modelId,
+              ...butlerOutputAccounting(
+                buffer,
+                currentTask.creditsCharged !== undefined ? currentTask.creditsCharged : currentTask.credits
+              )
+            }));
+          }
+          deliveryToken = await registerButlerDelivery(buffers, records);
+        } catch (error) {
+          await Promise.all(records.map((record) => rollbackGeneratedMediaFile(record)));
+          await releaseButlerBufferDeliveries(buffers);
+          throw error;
         }
         rememberButlerImageTask(taskToken, {
           ...currentTask,
           modelId,
           downloadedFileIds: records.map((record) => record.id),
+          ...(deliveryToken ? { deliveryToken } : {}),
           status: 'succeeded'
         });
-        if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
-        return { ok: true, files: records.map(fileToPayload) };
+        if (!deliveryToken && runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
+        return {
+          ok: true,
+          files: records.map((record) => butlerFilePayload(record, deliveryToken))
+        };
       })();
       butlerImageDownloads.set(taskToken, download);
       try {
@@ -6363,6 +6973,7 @@ function registerIpcHandlers() {
       rememberButler3dTask(taskToken, {
         sourceFileId: source.file.id,
         providerId,
+        options,
         previewUrl: status.previewUrl || '',
         credits: status.credits
       });
@@ -6427,7 +7038,9 @@ function registerIpcHandlers() {
       }
       if (task.downloadedFileId) {
         const existingFile = store.getFile(task.downloadedFileId);
-        if (existingFile) return { ok: true, file: fileToPayload(existingFile) };
+        if (existingFile) {
+          return { ok: true, file: butlerFilePayload(existingFile, task.deliveryToken) };
+        }
       }
       if (butler3dDownloads.has(taskToken)) return await butler3dDownloads.get(taskToken);
 
@@ -6441,16 +7054,31 @@ function registerIpcHandlers() {
           folderId: null,
           canvasId: store.data.canvases[0] && store.data.canvases[0].id
         };
-        const record = await addButlerOutputFile(buffer, sourceFile, 'generate-3d', {
-          modelId: currentTask.providerId,
-          credits: currentTask.creditsCharged !== undefined ? currentTask.creditsCharged : currentTask.credits
-        });
+        let record = null;
+        let deliveryToken = null;
+        try {
+          record = await addButlerOutputFile(buffer, sourceFile, 'generate-3d', {
+            modelId: currentTask.providerId,
+            pricingOptions: currentTask.options,
+            ...butlerOutputAccounting(
+              buffer,
+              currentTask.creditsCharged !== undefined ? currentTask.creditsCharged : currentTask.credits
+            )
+          });
+          deliveryToken = await registerButlerDelivery([buffer], [record]);
+        } catch (error) {
+          if (record) await rollbackGeneratedMediaFile(record);
+          await releaseButlerBufferDeliveries([buffer]);
+          throw error;
+        }
         rememberButler3dTask(taskToken, {
           ...currentTask,
           downloadedFileId: record.id,
+          ...(deliveryToken ? { deliveryToken } : {}),
           status: 'succeeded'
         });
-        return { ok: true, file: fileToPayload(record) };
+        if (!deliveryToken && runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
+        return { ok: true, file: butlerFilePayload(record, deliveryToken) };
       })();
       butler3dDownloads.set(taskToken, download);
       try {
@@ -6553,7 +7181,9 @@ function registerIpcHandlers() {
       }
       if (task.downloadedFileId) {
         const existingFile = store.getFile(task.downloadedFileId);
-        if (existingFile) return { ok: true, file: fileToPayload(existingFile) };
+        if (existingFile) {
+          return { ok: true, file: butlerFilePayload(existingFile, task.deliveryToken) };
+        }
       }
       if (butlerVideoDownloads.has(taskToken)) return await butlerVideoDownloads.get(taskToken);
 
@@ -6566,19 +7196,32 @@ function registerIpcHandlers() {
           folderId: null,
           canvasId: store.data.canvases[0] && store.data.canvases[0].id
         };
-        const record = await addButlerVideoOutputFile(buffer, sourceFile, {
-          output: currentTask.output || null,
-          credits: currentTask.creditsCharged !== undefined ? currentTask.creditsCharged : currentTask.credits,
-          providerCost: currentTask.providerCost
-        });
+        let record = null;
+        let deliveryToken = null;
+        try {
+          record = await addButlerVideoOutputFile(buffer, sourceFile, {
+            output: currentTask.output || null,
+            ...butlerOutputAccounting(
+              buffer,
+              currentTask.creditsCharged !== undefined ? currentTask.creditsCharged : currentTask.credits
+            ),
+            providerCost: currentTask.providerCost
+          });
+          deliveryToken = await registerButlerDelivery([buffer], [record]);
+        } catch (error) {
+          if (record) await rollbackGeneratedMediaFile(record);
+          await releaseButlerBufferDeliveries([buffer]);
+          throw error;
+        }
         rememberButlerVideoTask(taskToken, {
           ...currentTask,
           modelId,
           downloadedFileId: record.id,
+          ...(deliveryToken ? { deliveryToken } : {}),
           status: 'succeeded'
         });
-        if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
-        return { ok: true, file: fileToPayload(record) };
+        if (!deliveryToken && runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
+        return { ok: true, file: butlerFilePayload(record, deliveryToken) };
       })();
       butlerVideoDownloads.set(taskToken, download);
       try {
@@ -6728,6 +7371,8 @@ function registerIpcHandlers() {
       let fallbackProviderName = '';
       let authoritativeVideoEstimate = null;
       let authoritativeVideoCharge = null;
+      let creditsCharged = 0;
+      const deliveryFailures = [];
       for (let index = 0; index < settled.length; index += 1) {
         const result = settled[index];
         if (result.status !== 'fulfilled') continue;
@@ -6740,6 +7385,9 @@ function registerIpcHandlers() {
         if (kind === 'video' && Number.isFinite(providerCharge) && providerCharge >= 0) {
           authoritativeVideoCharge = providerCharge;
         }
+        const quotedResultCredits = generated.fallbackUsed && fallbackProvider && fallbackProvider.quote
+          ? fallbackProvider.quote.unitCredits
+          : kind === 'image' ? creditQuote.unitCredits : creditQuote.totalCredits;
         const resultRequest = generated.fallbackUsed
           ? {
               ...request,
@@ -6761,40 +7409,57 @@ function registerIpcHandlers() {
                 ? creditQuote.unitCredits
                 : (authoritativeVideoCharge ?? creditQuote.totalCredits)
             };
-        const added = await addGeneratedMediaFile(
-          generated.buffer,
-          prompt,
-          request.folderId,
-          kind,
-          request.canvasId,
-          resultRequest
-        );
-        if (generated.fallbackUsed) {
-          fallbackCount += 1;
-          fallbackProviderName = generated.fallbackProviderName || fallbackProviderName;
-        } else {
-          primaryCount += 1;
-        }
-        files.push(fileToPayload(added.record));
-        const boardItem = request.placeOnBoard === false
-          ? null
-          : addGeneratedMediaBoardItem(
-            added.record,
-            resultRequest,
-            Array.isArray(request.placements) ? request.placements[index] : null,
-            index
+        let added = null;
+        try {
+          added = await addGeneratedMediaFile(
+            generated.buffer,
+            prompt,
+            request.folderId,
+            kind,
+            request.canvasId,
+            resultRequest
           );
-        if (boardItem) boardItems.push(boardItem);
-        added.unlocked.forEach((key) => unlockedKeys.add(key));
+          const boardItem = request.placeOnBoard === false
+            ? null
+            : addGeneratedMediaBoardItem(
+              added.record,
+              resultRequest,
+              Array.isArray(request.placements) ? request.placements[index] : null,
+              index
+            );
+          const delivery = await confirmGeneratedMediaDelivery(kind, generated);
+          const confirmedCharge = delivery && delivery.creditsCharged !== null && delivery.creditsCharged !== undefined
+            ? Number(delivery.creditsCharged)
+            : NaN;
+          const resultCharge = Number.isFinite(confirmedCharge) && confirmedCharge >= 0
+            ? confirmedCharge
+            : (Number.isFinite(providerCharge) && providerCharge >= 0 ? providerCharge : quotedResultCredits);
+          creditsCharged += resultCharge;
+          if (kind === 'video') authoritativeVideoCharge = resultCharge;
+          if (added.record.aiGeneration) {
+            added.record.aiGeneration.creditsCharged = resultCharge;
+            added.record.aiGeneration.credits = resultCharge;
+          }
+          if (generated.fallbackUsed) {
+            fallbackCount += 1;
+            fallbackProviderName = generated.fallbackProviderName || fallbackProviderName;
+          } else {
+            primaryCount += 1;
+          }
+          files.push(fileToPayload(added.record));
+          if (boardItem) boardItems.push(boardItem);
+          added.unlocked.forEach((key) => unlockedKeys.add(key));
+        } catch (error) {
+          if (added && added.record) await rollbackGeneratedMediaFile(added.record);
+          await releaseGeneratedMediaDelivery(kind, generated);
+          deliveryFailures.push(error);
+        }
       }
-      const failures = settled.filter((result) => result.status === 'rejected');
-      if (!files.length) throw (failures[0] && failures[0].reason) || new Error('AI generation failed.');
-      const creditsCharged = kind === 'image'
-        ? creditQuote.unitCredits * primaryCount
-          + (fallbackProvider && fallbackProvider.quote
-            ? fallbackProvider.quote.unitCredits * fallbackCount
-            : 0)
-        : (authoritativeVideoCharge ?? creditQuote.totalCredits);
+      const failures = [
+        ...settled.filter((result) => result.status === 'rejected').map((result) => result.reason),
+        ...deliveryFailures
+      ];
+      if (!files.length) throw failures[0] || new Error('AI generation failed.');
       membershipService.finishUsage(usage.usageId, {
         status: failures.length ? 'partial' : 'succeeded',
         resultUnits: files.length,
@@ -6896,7 +7561,7 @@ function registerIpcHandlers() {
       message: localizedMessage('Enter a message.', '请输入消息。', '메시지를 입력하세요.')
     };
     const usage = membershipService.beginUsage('ai.chat', {
-      estimatedCredits: CHAT_CREDITS,
+      estimatedCredits: 0,
       metadata: {
         providerId: String(request.chatProviderId || '').trim() || null,
         modelName: String(request.chatModel || '').trim() || null,

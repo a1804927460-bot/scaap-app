@@ -88,6 +88,15 @@ function toolError(code, message, status = 500) {
   return Object.assign(new Error(message), { code, status });
 }
 
+function setBufferMetadata(buffer, key, value) {
+  Object.defineProperty(buffer, key, {
+    value,
+    writable: true,
+    configurable: true,
+    enumerable: false
+  });
+}
+
 function configuredApiKey(explicitKey) {
   const key = String(explicitKey ?? process.env.AI302_KEY ?? process.env.AI_302_API_KEY ?? '')
     .trim()
@@ -1972,7 +1981,20 @@ export async function downloadThreeDModel({ taskToken, userId } = {}, options = 
     await settleThreeDCredits(task, 'failed', options);
     throw error;
   }
-  await settleThreeDCredits(task, 'succeeded', options);
+  if (options.deferSuccessfulSettlement === true) {
+    setBufferMetadata(glb, 'deliveryPending', true);
+    setBufferMetadata(glb, 'deliveryRequestId', task.requestId);
+    setBufferMetadata(glb, 'deliveryDurationMs', Math.max(
+      0,
+      (Math.floor(Number(options.now ?? Date.now()) / 1000) - task.issuedAt) * 1000
+    ));
+    if (Number.isInteger(task.credits)) setBufferMetadata(glb, 'estimatedCredits', task.credits);
+  } else {
+    const settlement = await settleThreeDCredits(task, 'succeeded', options);
+    if (settlement && Number.isFinite(Number(settlement.creditsCharged))) {
+      setBufferMetadata(glb, 'creditsCharged', Number(settlement.creditsCharged));
+    }
+  }
   return glb;
 }
 
@@ -2184,6 +2206,7 @@ export async function downloadVideoUpscaleResult({ taskToken, userId } = {}, opt
     throw toolError('invalid-video-result', 'The enhanced video result is invalid.', 502);
   }
   const reportedProviderCost = Number(topazField(job, ['cost', 'credits', 'providerCost', 'provider_cost']));
+  let finalCredits = task.credits;
   if (Number.isInteger(reportedProviderCost) && reportedProviderCost > task.providerCost) {
     if (typeof options.topUpCredits !== 'function') {
       await settleVideoUpscaleCredits(task, 'failed', options);
@@ -2199,8 +2222,24 @@ export async function downloadVideoUpscaleResult({ taskToken, userId } = {}, opt
       const reason = String(adjustment && adjustment.reason || 'credit-service-failed');
       throw toolError(reason, 'The Topaz credit reservation could not cover the provider cost.', reason === 'insufficient-credits' ? 402 : 503);
     }
+    if (Number.isFinite(Number(adjustment.credits))) finalCredits = Number(adjustment.credits);
   }
-  await settleVideoUpscaleCredits(task, 'succeeded', options);
+  if (options.deferSuccessfulSettlement === true) {
+    setBufferMetadata(video, 'deliveryPending', true);
+    setBufferMetadata(video, 'deliveryRequestId', task.requestId);
+    setBufferMetadata(video, 'deliveryDurationMs', Math.max(
+      0,
+      (Math.floor(Number(options.now ?? Date.now()) / 1000) - task.issuedAt) * 1000
+    ));
+    if (Number.isFinite(Number(finalCredits))) {
+      setBufferMetadata(video, 'estimatedCredits', Math.max(0, Number(finalCredits)));
+    }
+  } else {
+    const settlement = await settleVideoUpscaleCredits(task, 'succeeded', options);
+    if (settlement && Number.isFinite(Number(settlement.creditsCharged))) {
+      setBufferMetadata(video, 'creditsCharged', Number(settlement.creditsCharged));
+    }
+  }
   deleteRelayAsset(task.relayToken);
   return video;
 }

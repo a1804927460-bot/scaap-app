@@ -71,6 +71,7 @@ async function testGatewayClient() {
   const backgroundPng = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4]);
   const glb = makeGlb();
   const taskToken = '3d_task_token_abcdefghijklmnopqrstuvwxyz';
+  const deliveryRequestId = '11111111-2222-4333-8444-555555555555';
   const client = new AiGatewayClient({
     baseUrl: 'https://gateway.example.com/',
     getAccessToken: async () => 'user-jwt',
@@ -89,18 +90,37 @@ async function testGatewayClient() {
           'X-Messs-Credits-Charged': '48'
         }
       });
-      if (url.endsWith('/v1/tools/background/remove')) return new Response(backgroundPng, { status: 200 });
+      if (url.endsWith('/v1/tools/background/remove')) return new Response(backgroundPng, {
+        status: 200,
+        headers: {
+          'X-Messs-Credits-Estimated': '53',
+          'X-Messs-Delivery-Pending': '1',
+          'X-Messs-Delivery-Request-Id': deliveryRequestId,
+          'X-Messs-Delivery-Duration-Ms': '1250'
+        }
+      });
+      if (url.endsWith('/v1/tools/image/status')) return new Response(JSON.stringify({ status: 'processing', retryAfterMs: 2400 }), { status: 200 });
+      if (url.endsWith('/v1/tools/image/download')) return new Response(Buffer.from([1, 2, 3]), { status: 200 });
       if (url.endsWith('/v1/tools/3d/create')) return new Response(JSON.stringify({ taskToken, status: 'queued', retryAfterMs: 5000 }), { status: 202 });
       if (url.endsWith('/v1/tools/3d/status')) return new Response(JSON.stringify({ status: 'processing', retryAfterMs: 4000 }), { status: 200 });
-      if (url.endsWith('/v1/tools/3d/download')) return new Response(glb, { status: 200, headers: { 'Content-Length': String(glb.length) } });
+      if (url.endsWith('/v1/tools/3d/download')) return new Response(glb, {
+        status: 200,
+        headers: {
+          'Content-Length': String(glb.length),
+          'X-Messs-Credits-Estimated': '74',
+          'X-Messs-Delivery-Pending': '1',
+          'X-Messs-Delivery-Request-Id': deliveryRequestId,
+          'X-Messs-Delivery-Duration-Ms': '6400'
+        }
+      });
       return new Response(Buffer.from([1, 2, 3]), { status: 200 });
     }
   });
   assert.strictEqual(await client.chat({ prompt: 'hi' }), 'hello');
   const generatedImage = await client.generateMedia('image', { prompt: 'hi' });
   assert.deepStrictEqual(Buffer.from(generatedImage), Buffer.from([1, 2, 3]));
-  assert.strictEqual(generatedImage.estimatedCredits, 0);
-  assert.strictEqual(generatedImage.creditsCharged, 0);
+  assert.strictEqual(generatedImage.estimatedCredits, undefined);
+  assert.strictEqual(generatedImage.creditsCharged, undefined);
   const generatedVideo = await client.generateMedia('video', { prompt: 'move' });
   assert.deepStrictEqual(Buffer.from(generatedVideo), video);
   assert.strictEqual(generatedVideo.estimatedCredits, 48);
@@ -108,14 +128,24 @@ async function testGatewayClient() {
   const imageDataUrl = 'data:image/jpeg;base64,/9j/2Q==';
   const removedBackground = await client.removeBackground(imageDataUrl);
   assert.deepStrictEqual(Buffer.from(removedBackground), backgroundPng);
-  assert.strictEqual(removedBackground.estimatedCredits, 0);
-  assert.strictEqual(removedBackground.creditsCharged, 0);
+  assert.strictEqual(removedBackground.estimatedCredits, 53);
+  assert.strictEqual(removedBackground.creditsCharged, undefined);
+  assert.strictEqual(removedBackground.deliveryPending, true);
+  assert.strictEqual(removedBackground.deliveryRequestId, deliveryRequestId);
+  assert.strictEqual(removedBackground.deliveryDurationMs, 1250);
+  assert.strictEqual((await client.getImageToolStatus(taskToken, 'seededit-v3')).status, 'processing',
+    'SeedEdit must remain usable through the asynchronous status bridge after creation.');
+  const seedEditDownloads = await client.downloadImageToolResult(taskToken, 'seededit-v3');
+  assert.strictEqual(seedEditDownloads.length, 1);
+  assert.deepStrictEqual(Buffer.from(seedEditDownloads[0]), Buffer.from([1, 2, 3]));
   assert.strictEqual((await client.create3d('hyper3d', imageDataUrl, 'Make a model')).taskToken, taskToken);
   assert.strictEqual((await client.get3dStatus(taskToken)).status, 'processing');
   const downloaded3d = await client.download3d(taskToken);
   assert.deepStrictEqual(Buffer.from(downloaded3d), glb);
-  assert.strictEqual(downloaded3d.estimatedCredits, 0);
-  assert.strictEqual(downloaded3d.creditsCharged, 0);
+  assert.strictEqual(downloaded3d.estimatedCredits, 74);
+  assert.strictEqual(downloaded3d.creditsCharged, undefined);
+  assert.strictEqual(downloaded3d.deliveryPending, true);
+  assert.strictEqual(downloaded3d.deliveryRequestId, deliveryRequestId);
   assert.strictEqual((await client.getAccount()).account.balance, 100);
   assert.strictEqual((await client.redeemCode('synthetic-test-code')).redemption.creditsAdded, 100);
   assert.strictEqual(calls[0].options.headers.Authorization, 'Bearer user-jwt');
@@ -125,10 +155,16 @@ async function testGatewayClient() {
   const videoCreateCall = calls.find((call) => call.url.endsWith('/v1/media/video/tasks/create'));
   const videoCreateBody = JSON.parse(videoCreateCall.options.body);
   assert.match(videoCreateBody.operationId, /^[0-9a-f-]{36}$/i);
-  assert.match(videoCreateBody.taskToken, /^[A-Za-z0-9_-]{43}$/);
+  assert.match(videoCreateBody.taskToken, /^d_[A-Za-z0-9_-]{43}$/);
   assert.strictEqual(calls.some((call) => call.url === 'https://cdn.example/video.mp4'), false);
   const backgroundCall = calls.find((call) => call.url.endsWith('/v1/tools/background/remove'));
-  assert.deepStrictEqual(JSON.parse(backgroundCall.options.body), { imageDataUrl, options: {} });
+  assert.deepStrictEqual(JSON.parse(backgroundCall.options.body), {
+    imageDataUrl,
+    options: {},
+    deliveryConfirmation: true
+  });
+  const seedEditStatusCall = calls.find((call) => call.url.endsWith('/v1/tools/image/status'));
+  assert.deepStrictEqual(JSON.parse(seedEditStatusCall.options.body), { taskToken, modelId: 'seededit-v3' });
   const create3dCall = calls.find((call) => call.url.endsWith('/v1/tools/3d/create'));
   assert.deepStrictEqual(JSON.parse(create3dCall.options.body), {
     providerId: 'hyper3d',
@@ -139,7 +175,10 @@ async function testGatewayClient() {
   const status3dCall = calls.find((call) => call.url.endsWith('/v1/tools/3d/status'));
   assert.deepStrictEqual(JSON.parse(status3dCall.options.body), { taskToken });
   const download3dCall = calls.find((call) => call.url.endsWith('/v1/tools/3d/download'));
-  assert.deepStrictEqual(JSON.parse(download3dCall.options.body), { taskToken });
+  assert.deepStrictEqual(JSON.parse(download3dCall.options.body), {
+    taskToken,
+    deliveryConfirmation: true
+  });
   [backgroundCall, create3dCall, status3dCall, download3dCall].forEach((call) => {
     assert.strictEqual(call.options.headers.Authorization, 'Bearer user-jwt');
     assert.strictEqual(JSON.stringify(call).includes('302-secret'), false);
@@ -294,8 +333,8 @@ async function testPaidImageCreationRecoversWithOneOperationId() {
   });
   const recoveredImage = await client.generateMedia('image', { prompt: 'recover one paid result' });
   assert.deepStrictEqual(Buffer.from(recoveredImage), Buffer.from([1, 2, 3]));
-  assert.strictEqual(recoveredImage.estimatedCredits, 0);
-  assert.strictEqual(recoveredImage.creditsCharged, 0);
+  assert.strictEqual(recoveredImage.estimatedCredits, undefined);
+  assert.strictEqual(recoveredImage.creditsCharged, undefined);
   assert.strictEqual(calls.length, 2);
   assert.strictEqual(
     calls[0].options.headers['X-Idempotency-Key'],
@@ -385,8 +424,8 @@ async function testVideoCreateRetriesTransientGatewayFailure() {
   });
   const generatedVideo = await client.generateMedia('video', { prompt: 'retry gateway edge failure' });
   assert.deepStrictEqual(Buffer.from(generatedVideo), video);
-  assert.strictEqual(generatedVideo.estimatedCredits, 0);
-  assert.strictEqual(generatedVideo.creditsCharged, 0);
+  assert.strictEqual(generatedVideo.estimatedCredits, undefined);
+  assert.strictEqual(generatedVideo.creditsCharged, undefined);
   const createCalls = calls.filter((call) => call.url.endsWith('/v1/media/video/tasks/create'));
   assert.strictEqual(createCalls.length, 2);
   assert.strictEqual(createCalls[0].options.headers['X-Idempotency-Key'], createCalls[1].options.headers['X-Idempotency-Key']);
@@ -398,10 +437,13 @@ function testButlerDesktopBridgeSurface() {
   const mainSource = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   const clientSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'ai-gateway-client.js'), 'utf8');
   assert.match(preloadSource, /butler:\s*Object\.freeze\(\{/);
-  ['removeBackground', 'create3d', 'get3dStatus', 'download3d'].forEach((method) => {
+  ['confirmDelivery', 'releaseDelivery', 'removeBackground', 'create3d', 'get3dStatus', 'download3d'].forEach((method) => {
     assert.match(preloadSource, new RegExp(`${method}:`));
   });
-  ['butler:removeBackground', 'butler:create3d', 'butler:get3dStatus', 'butler:download3d'].forEach((channel) => {
+  [
+    'butler:confirmDelivery', 'butler:releaseDelivery', 'butler:removeBackground',
+    'butler:create3d', 'butler:get3dStatus', 'butler:download3d'
+  ].forEach((channel) => {
     assert.match(mainSource, new RegExp(channel));
   });
   assert.match(mainSource, /sanitizeImageForButler/);

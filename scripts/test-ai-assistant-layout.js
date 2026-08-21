@@ -25,8 +25,8 @@ assert.strictEqual((html.match(/data-ai-quick-action=/g) || []).length, 4,
   'the AI home should expose exactly four quick actions');
 assert.match(html, /data-assistant-kind="chat"[^>]*>Agent<\/button>/,
   'the chat mode should be labelled Agent');
-assert.match(html, /id="ai-assistant-upload"[\s\S]*?M14 2H6[\s\S]*?M12 11v6/,
-  'the attachment action should use a recognizable file-add icon');
+assert.match(html, /id="ai-assistant-upload"[\s\S]*?m21\.44 11\.05[\s\S]*?M18\.5 15\.5v5[\s\S]*?M16 18h5/,
+  'the attachment action should use the Canvas Agent paperclip-plus icon');
 
 ['image', 'video'].forEach((kind) => {
   const pattern = new RegExp(`data-assistant-kind="${kind}"[\\s\\S]*?<svg[\\s\\S]*?<\\/svg>[\\s\\S]*?<\\/button>`);
@@ -102,5 +102,20 @@ assert.match(mainSource, /sanitizeAiAssistantHistory[\s\S]*?ipcMain\.handle\('ai
   'The main process must sanitize and persist regular Agent history.');
 assert.match(preloadSource, /getAiAssistantHistory[\s\S]*?saveAiAssistantHistory/,
   'The renderer must access durable Agent history only through scoped preload IPC methods.');
+assert.match(
+  html,
+  /id="ai-assistant-quality-buttons"[\s\S]*?data-quality="low"[\s\S]*?data-quality="medium"[\s\S]*?data-quality="high"/,
+  'GPT Image 2 must expose low, medium, and high quality controls.'
+);
+assert.match(
+  assistantSource,
+  /quality:\s*submittedKind === 'image'[\s\S]*?createAiPlaceholders\(request\)[\s\S]*?request\.placements = mediaPlaceholders\.map[\s\S]*?replaceAiPlaceholders\(mediaPlaceholders, files, request, response\.boardItems \|\| \[\]\)/,
+  'Assistant media requests must preserve GPT quality and confirm delivery against persisted canvas placements.'
+);
+assert.match(
+  assistantSource,
+  /catch \(err\) \{[\s\S]*?removeAiPlaceholders\(mediaPlaceholders\)/,
+  'Failed assistant generation must remove its pending canvas placements.'
+);
 
 console.log('AI assistant layout checks passed');

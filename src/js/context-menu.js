@@ -452,15 +452,15 @@ function renderCanvasUsageDetails(result) {
     ? result.canvas.name
     : t('Usage details', '\u4f7f\u7528\u660e\u7ec6');
   const tableHeaders = document.querySelectorAll('.canvas-usage-table th');
-  [t('Date', '\u65e5\u671f'), t('Type', '\u7c7b\u578b'), t('Model', '\u6a21\u578b'), t('Output', '\u751f\u6210\u7ed3\u679c'), t('Estimated points', '\u9884\u4f30\u79ef\u5206'), t('Actual points', '\u5b9e\u9645\u79ef\u5206')]
+  [t('Date', '\u65e5\u671f'), t('Type', '\u7c7b\u578b'), t('Model', '\u6a21\u578b'), t('Output', '\u751f\u6210\u7ed3\u679c'), t('Current points', '\u5f53\u524d\u79ef\u5206'), t('Settlement record', '\u5f53\u65f6\u7ed3\u7b97')]
     .forEach((label, index) => { if (tableHeaders[index]) tableHeaders[index].textContent = label; });
   const metrics = [
-    [t('Actual charged', '\u5b9e\u9645\u6263\u9664'), formatCanvasUsagePoints(totals.creditsCharged ?? totals.credits)],
-    [t('Estimated total', '\u9884\u4f30\u603b\u989d'), formatCanvasUsagePoints(totals.estimatedCredits)],
+    [t('Current-price total', '\u6309\u73b0\u4ef7\u603b\u989d'), formatCanvasUsagePoints(totals.estimatedCredits ?? totals.credits)],
+    [t('Historical settled', '\u5386\u53f2\u7ed3\u7b97'), formatCanvasUsagePoints(totals.creditsCharged)],
     [t('AI results', 'AI \u7ed3\u679c'), String(Math.max(0, Number(totals.generations) || 0))],
-    [t('Images', '\u56fe\u7247'), `${formatCanvasUsagePoints(breakdown.image && (breakdown.image.creditsCharged ?? breakdown.image.credits))} / ${Number(breakdown.image && breakdown.image.generations) || 0}`],
-    [t('Videos', '\u89c6\u9891'), `${formatCanvasUsagePoints(breakdown.video && (breakdown.video.creditsCharged ?? breakdown.video.credits))} / ${Number(breakdown.video && breakdown.video.generations) || 0}`],
-    ['3D', `${formatCanvasUsagePoints(breakdown['3d'] && (breakdown['3d'].creditsCharged ?? breakdown['3d'].credits))} / ${Number(breakdown['3d'] && breakdown['3d'].generations) || 0}`]
+    [t('Images', '\u56fe\u7247'), `${formatCanvasUsagePoints(breakdown.image && (breakdown.image.estimatedCredits ?? breakdown.image.credits))} / ${Number(breakdown.image && breakdown.image.generations) || 0}`],
+    [t('Videos', '\u89c6\u9891'), `${formatCanvasUsagePoints(breakdown.video && (breakdown.video.estimatedCredits ?? breakdown.video.credits))} / ${Number(breakdown.video && breakdown.video.generations) || 0}`],
+    ['3D', `${formatCanvasUsagePoints(breakdown['3d'] && (breakdown['3d'].estimatedCredits ?? breakdown['3d'].credits))} / ${Number(breakdown['3d'] && breakdown['3d'].generations) || 0}`]
   ];
   summary.replaceChildren(...metrics.map(([label, value]) => {
     const metric = document.createElement('div');
@@ -475,12 +475,12 @@ function renderCanvasUsageDetails(result) {
   const estimated = Math.max(0, Number(totals.estimated) || 0);
   const notes = [];
   if (estimated > 0) notes.push(t(
-    `${estimated} older result${estimated === 1 ? '' : 's'} were restored from their saved model settings and are marked as estimates. New usage is read from the actual billing record.`,
-    `${estimated} \u6761\u65e7\u7248\u672c\u7ed3\u679c\u5df2\u6309\u4fdd\u5b58\u7684\u6a21\u578b\u53c2\u6570\u56de\u586b\uff0c\u5e76\u6807\u8bb0\u4e3a\u4f30\u7b97\uff1b\u65b0\u8bb0\u5f55\u4f7f\u7528\u5b9e\u9645\u6263\u8d39\u6d41\u6c34\u3002`
+    `${estimated} result${estimated === 1 ? '' : 's'} were recalculated from saved model settings using the latest price table. Historical settlements are retained for audit and are not included in the current-price total.`,
+    `${estimated} \u6761\u7ed3\u679c\u5df2\u6839\u636e\u4fdd\u5b58\u7684\u6a21\u578b\u53c2\u6570\u6309\u6700\u65b0\u4ef7\u683c\u91cd\u7b97\uff1b\u5f53\u65f6\u7ed3\u7b97\u4ec5\u4f5c\u5ba1\u8ba1\u8bb0\u5f55\uff0c\u4e0d\u8ba1\u5165\u6309\u73b0\u4ef7\u603b\u989d\u3002`
   ));
   if (unknown > 0) notes.push(t(
-    `${unknown} older result${unknown === 1 ? '' : 's'} do not contain enough billing data and are excluded from the point total.`,
-    `${unknown} \u6761\u65e7\u7248\u672c\u7ed3\u679c\u7f3a\u5c11\u53ef\u9a8c\u8bc1\u7684\u8ba1\u8d39\u53c2\u6570\uff0c\u672a\u8ba1\u5165\u79ef\u5206\u603b\u6570\u3002`
+    `${unknown} result${unknown === 1 ? '' : 's'} do not contain enough model parameters to calculate the latest price and are excluded from the current-price total.`,
+    `${unknown} \u6761\u7ed3\u679c\u7f3a\u5c11\u6309\u6700\u65b0\u4ef7\u683c\u91cd\u7b97\u6240\u9700\u7684\u6a21\u578b\u53c2\u6570\uff0c\u672a\u8ba1\u5165\u6309\u73b0\u4ef7\u603b\u989d\u3002`
   ));
   note.hidden = notes.length === 0;
   note.textContent = notes.join(' ');

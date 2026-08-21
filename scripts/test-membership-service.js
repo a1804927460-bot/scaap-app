@@ -34,7 +34,7 @@ assert.strictEqual(migrated.plan.id, 'free');
 assert.strictEqual(migrated.credits.balance, 0);
 assert.strictEqual(migrated.credits.reserved, 0);
 assert.strictEqual(migrated.credits.isAuthoritative, false);
-assert.strictEqual(migrated.entitlements['ai.chat'].metering, 'credits');
+assert.strictEqual(migrated.entitlements['ai.chat'].metering, 'unmetered');
 assert.strictEqual(migrated.entitlements['ai.image'].metering, 'credits');
 assert.strictEqual(migrated.entitlements['ai.video'].metering, 'credits');
 
@@ -48,7 +48,7 @@ const legacy = normalizeMembershipState({
   }
 });
 assert.strictEqual(legacy.credits.balance, 0);
-assert.strictEqual(legacy.entitlements['ai.chat'].metering, 'credits');
+assert.strictEqual(legacy.entitlements['ai.chat'].metering, 'unmetered');
 assert.strictEqual(legacy.entitlements['ai.image'].metering, 'credits');
 assert.strictEqual(legacy.entitlements['ai.video'].metering, 'credits');
 
@@ -139,14 +139,14 @@ assert.strictEqual(failedResult.settledCredits, 0);
 assert.strictEqual(service.getSnapshot().credits.balance, 85);
 assert.strictEqual(service.getSnapshot().credits.reserved, 0);
 
-// Chat uses the same points gate as every other AI function.
+// Agent/chat is free and must never reserve or block on points.
 store.data.membership.credits.balance = 0;
 const blockedChat = service.beginUsage('ai.chat', {
   estimatedCredits: 105,
   metadata: { messageCount: 3 }
 });
-assert.strictEqual(blockedChat.ok, false);
-assert.strictEqual(blockedChat.reason, 'insufficient-credits');
+assert.strictEqual(blockedChat.ok, true);
+assert.strictEqual(blockedChat.entitlement.metering, 'unmetered');
 assert.strictEqual(service.getSnapshot().credits.reserved, 0);
 const interruptedStore = makeStore({
   credits: { balance: 20, reserved: 8 },
@@ -207,7 +207,7 @@ assert.strictEqual(serverSnapshot.account.id, 'user-1');
 assert.strictEqual(serverSnapshot.credits.balance, 42);
 assert.strictEqual(serverSnapshot.credits.isAuthoritative, true);
 assert.strictEqual(store.data.membership.credits.balance, 42);
-assert.strictEqual(service.checkFeature('ai.chat').entitlement.metering, 'credits');
+assert.strictEqual(service.checkFeature('ai.chat').entitlement.metering, 'unmetered');
 assert.strictEqual(service.checkFeature('ai.image').entitlement.metering, 'credits');
 assert.strictEqual(service.checkFeature('ai.image').requiresServerReservation, true);
 assert.strictEqual(service.checkFeature('ai.video').allowed, false);

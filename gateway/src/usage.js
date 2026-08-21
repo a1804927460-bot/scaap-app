@@ -9,19 +9,21 @@ import {
 } from './tool-pricing.js';
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
-export const CREDIT_PRICING_VERSION = '202608210004';
-export const RETAIL_MARKUP_PERCENT = 30;
-export const RETAIL_MULTIPLIER = 1 + RETAIL_MARKUP_PERCENT / 100;
+export const CREDIT_PRICING_VERSION = '202608220003';
+const LEGACY_POINTS_PER_CNY = 10;
+const POINTS_PER_CNY = 1000 / 70;
+const POINT_DENOMINATION_SCALE = POINTS_PER_CNY / LEGACY_POINTS_PER_CNY;
+export const RETAIL_GROSS_MARGIN_PERCENT = 25;
+export const RETAIL_MULTIPLIER = 1 / (1 - RETAIL_GROSS_MARGIN_PERCENT / 100);
+export const RETAIL_MARKUP_PERCENT = (RETAIL_MULTIPLIER - 1) * 100;
 export const UPSTREAM_COST_SAFETY_PERCENT = 10;
 export const UPSTREAM_COST_SAFETY_MULTIPLIER = 1 + UPSTREAM_COST_SAFETY_PERCENT / 100;
 export const USD_TO_CNY = 7.3;
-const POINTS_PER_CNY = 10;
 const PTC_TO_CREDITS = USD_TO_CNY * POINTS_PER_CNY;
-export const CHAT_UPSTREAM_PTC_RESERVE = 1;
-export const CHAT_CREDITS = Math.ceil(
-  CHAT_UPSTREAM_PTC_RESERVE * PTC_TO_CREDITS
-    * UPSTREAM_COST_SAFETY_MULTIPLIER * RETAIL_MULTIPLIER
-);
+// Agent and AI chat are explicitly free. Keep the named exports for clients
+// that still read the public pricing object, but never reserve points here.
+export const CHAT_UPSTREAM_PTC_RESERVE = 0;
+export const CHAT_CREDITS = 0;
 
 function retailCreditsFromUpstreamPoints(upstreamPoints) {
   const normalized = Number(upstreamPoints);
@@ -29,6 +31,14 @@ function retailCreditsFromUpstreamPoints(upstreamPoints) {
     throw new TypeError('Upstream point cost is invalid.');
   }
   return Math.ceil(normalized * UPSTREAM_COST_SAFETY_MULTIPLIER * RETAIL_MULTIPLIER);
+}
+
+function retailCreditsFromUpstreamCny(upstreamCny) {
+  const normalized = Number(upstreamCny);
+  if (!Number.isFinite(normalized) || normalized < 0) {
+    throw new TypeError('Upstream CNY cost is invalid.');
+  }
+  return Math.ceil(normalized * UPSTREAM_COST_SAFETY_MULTIPLIER * RETAIL_MULTIPLIER * POINTS_PER_CNY);
 }
 
 function retailRateTable(upstreamRates) {
@@ -43,97 +53,109 @@ function retailNestedRateTable(upstreamRates) {
   ])));
 }
 
+function legacyPointRateTable(rates) {
+  return Object.freeze(Object.fromEntries(Object.entries(rates).map(([key, value]) => [
+    key, value * POINT_DENOMINATION_SCALE
+  ])));
+}
+
 // Keep this table in lockstep with lib/credit-pricing.js. The gateway sends an
 // expected quote to Supabase, while reserve_ai_credits independently recomputes
 // it. A version mismatch therefore fails closed instead of undercharging.
 export const IMAGE_UPSTREAM_CREDITS = Object.freeze({
-  'atlas-image-gpt2': 1, 'atlas-image-gpt2-edit': 1,
-  'image-1': 0.14 * PTC_TO_CREDITS, 'image-2': 6, 'image-3': 0.043 * PTC_TO_CREDITS, 'image-4': 2,
-  'image-5': 2, 'image-6': 1, 'image-7': 2, 'image-8': 2,
-  'image-9': 3, 'image-10': 4, 'image-11': 3, 'image-12': 2,
-  'image-13': 2, 'image-14': 2, 'image-15': 3, 'image-16': 2,
+  'atlas-image-gpt2': 1 * POINT_DENOMINATION_SCALE,
+  'atlas-image-gpt2-edit': 2 * POINT_DENOMINATION_SCALE,
+  'image-1': 0.24 * PTC_TO_CREDITS, 'image-2': 6 * POINT_DENOMINATION_SCALE,
+  'image-3': 0.28 * POINTS_PER_CNY, 'image-4': 2 * POINT_DENOMINATION_SCALE,
+  'image-5': 2 * POINT_DENOMINATION_SCALE, 'image-6': 2 * POINT_DENOMINATION_SCALE,
+  'image-7': 2 * POINT_DENOMINATION_SCALE, 'image-8': 2 * POINT_DENOMINATION_SCALE,
+  'image-9': 3 * POINT_DENOMINATION_SCALE, 'image-10': 4 * POINT_DENOMINATION_SCALE,
+  'image-11': 3 * POINT_DENOMINATION_SCALE, 'image-12': 2 * POINT_DENOMINATION_SCALE,
+  'image-13': 2 * POINT_DENOMINATION_SCALE, 'image-14': 2 * POINT_DENOMINATION_SCALE,
+  'image-15': 3 * POINT_DENOMINATION_SCALE, 'image-16': 2 * POINT_DENOMINATION_SCALE,
   'image-17': 0.08 * PTC_TO_CREDITS, 'image-18': 0.08 * PTC_TO_CREDITS
 });
 const IMAGE_CREDITS_BASE = retailRateTable(IMAGE_UPSTREAM_CREDITS);
 
-export const GPT_IMAGE_2_MAX_INPUT_RETAIL_CREDITS = 25;
-export const GPT_IMAGE_2_OUTPUT_RETAIL_CREDITS = Object.freeze({
-  low: Object.freeze({ '1k': 1, '2k': 2, '4k': 3 }),
-  medium: Object.freeze({ '1k': 6, '2k': 12, '4k': 19 }),
-  high: Object.freeze({ '1k': 22, '2k': 45, '4k': 75 }),
-  auto: Object.freeze({ '1k': 22, '2k': 45, '4k': 75 })
+const GPT_IMAGE_2_GENERATE_UPSTREAM_POINTS = Object.freeze({
+  low: Object.freeze({ '1k': 1, '2k': 2, '4k': 2 }),
+  medium: Object.freeze({ '1k': 5, '2k': 9, '4k': 9 }),
+  high: Object.freeze({ '1k': 16, '2k': 32, '4k': 32 }),
+  auto: Object.freeze({ '1k': 5, '2k': 9, '4k': 9 })
 });
-const GPT_IMAGE_2_RETAIL_CREDITS = Object.freeze(Object.fromEntries(
-  Object.entries(GPT_IMAGE_2_OUTPUT_RETAIL_CREDITS).map(([quality, rates]) => [
-    quality,
-    Object.freeze(Object.fromEntries(Object.entries(rates).map(([resolution, credits]) => [
-      resolution, credits + GPT_IMAGE_2_MAX_INPUT_RETAIL_CREDITS
-    ])))
-  ])
+const GPT_IMAGE_2_EDIT_UPSTREAM_POINTS = Object.freeze({
+  low: Object.freeze({ '1k': 2, '2k': 3, '4k': 3 }),
+  medium: Object.freeze({ '1k': 6, '2k': 10, '4k': 10 }),
+  high: Object.freeze({ '1k': 17, '2k': 33, '4k': 33 }),
+  auto: Object.freeze({ '1k': 6, '2k': 10, '4k': 10 })
+});
+const scaleGptImage2Upstream = (matrix) => Object.freeze(Object.fromEntries(
+  Object.entries(matrix).map(([quality, rates]) => [quality, Object.freeze(Object.fromEntries(
+    Object.entries(rates).map(([resolution, points]) => [resolution, points * POINT_DENOMINATION_SCALE])
+  ))])
 ));
+const GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS = scaleGptImage2Upstream(GPT_IMAGE_2_GENERATE_UPSTREAM_POINTS);
+const GPT_IMAGE_2_EDIT_UPSTREAM_CREDITS = scaleGptImage2Upstream(GPT_IMAGE_2_EDIT_UPSTREAM_POINTS);
+const GPT_IMAGE_2_GENERATE_RETAIL_CREDITS = retailNestedRateTable(GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS);
+const GPT_IMAGE_2_EDIT_RETAIL_CREDITS = retailNestedRateTable(GPT_IMAGE_2_EDIT_UPSTREAM_CREDITS);
+const GPT_IMAGE_2_RETAIL_CREDITS = GPT_IMAGE_2_EDIT_RETAIL_CREDITS;
+export const GPT_IMAGE_2_MAX_INPUT_RETAIL_CREDITS = 0;
+export const GPT_IMAGE_2_OUTPUT_RETAIL_CREDITS = GPT_IMAGE_2_RETAIL_CREDITS;
 
 export const IMAGE_QUALITY_UPSTREAM_CREDITS = Object.freeze({
-  'image-6': Object.freeze({ low: 1, medium: 5, high: 16, auto: 5 }),
-  'atlas-image-gpt2': Object.freeze({ low: 1, medium: 5, high: 16, auto: 5 }),
-  'atlas-image-gpt2-edit': Object.freeze({ low: 2, medium: 6, high: 17, auto: 6 })
+  'image-6': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_EDIT_UPSTREAM_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
+  'atlas-image-gpt2': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
+  'atlas-image-gpt2-edit': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_EDIT_UPSTREAM_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
 });
 export const IMAGE_QUALITY_CREDITS = Object.freeze({
   'image-6': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_RETAIL_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
-  'atlas-image-gpt2': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_RETAIL_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
-  'atlas-image-gpt2-edit': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_RETAIL_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
+  'atlas-image-gpt2': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_GENERATE_RETAIL_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
+  'atlas-image-gpt2-edit': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_EDIT_RETAIL_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
 });
 
 export const IMAGE_QUALITY_RESOLUTION_UPSTREAM_CREDITS = Object.freeze({
-  'image-6': Object.freeze({
-    low: Object.freeze({ '1k': 1, '2k': 2, '4k': 2 }),
-    medium: Object.freeze({ '1k': 5, '2k': 9, '4k': 8 }),
-    high: Object.freeze({ '1k': 16, '2k': 32, '4k': 30 }),
-    auto: Object.freeze({ '1k': 5, '2k': 9, '4k': 8 })
-  }),
-  'atlas-image-gpt2': Object.freeze({
-    low: Object.freeze({ '1k': 1, '2k': 2, '4k': 2 }),
-    medium: Object.freeze({ '1k': 5, '2k': 9, '4k': 8 }),
-    high: Object.freeze({ '1k': 16, '2k': 32, '4k': 30 }),
-    auto: Object.freeze({ '1k': 5, '2k': 9, '4k': 8 })
-  }),
-  'atlas-image-gpt2-edit': Object.freeze({
-    low: Object.freeze({ '1k': 2, '2k': 3, '4k': 3 }),
-    medium: Object.freeze({ '1k': 6, '2k': 10, '4k': 9 }),
-    high: Object.freeze({ '1k': 17, '2k': 33, '4k': 31 }),
-    auto: Object.freeze({ '1k': 6, '2k': 10, '4k': 9 })
-  })
+  'image-6': GPT_IMAGE_2_EDIT_UPSTREAM_CREDITS,
+  'atlas-image-gpt2': GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS,
+  'atlas-image-gpt2-edit': GPT_IMAGE_2_EDIT_UPSTREAM_CREDITS
 });
 export const IMAGE_QUALITY_RESOLUTION_CREDITS = Object.freeze({
   'image-6': GPT_IMAGE_2_RETAIL_CREDITS,
-  'atlas-image-gpt2': GPT_IMAGE_2_RETAIL_CREDITS,
-  'atlas-image-gpt2-edit': GPT_IMAGE_2_RETAIL_CREDITS
+  'atlas-image-gpt2': GPT_IMAGE_2_GENERATE_RETAIL_CREDITS,
+  'atlas-image-gpt2-edit': GPT_IMAGE_2_EDIT_RETAIL_CREDITS
 });
 
 export const IMAGE_RESOLUTION_UPSTREAM_CREDITS = Object.freeze({
   'image-1': Object.freeze({
     '1k': 0.14 * PTC_TO_CREDITS,
-    '2k': 0.14 * PTC_TO_CREDITS,
-    '4k': 0.24 * PTC_TO_CREDITS
+    '2k': 0.24 * PTC_TO_CREDITS,
+    '4k': 0.48 * PTC_TO_CREDITS
   }),
-  'image-2': Object.freeze({ '1k': 4, '2k': 6, '4k': 8 }),
-  'image-3': Object.freeze({ '2k': 0.043 * PTC_TO_CREDITS, '4k': 0.043 * PTC_TO_CREDITS }),
-  'image-7': Object.freeze({ '720p': 2, '1080p': 4 }),
-  'image-8': Object.freeze({ '720p': 2, '1080p': 4 }),
-  'image-10': Object.freeze({ '2k': 4, '4k': 7 }),
-  'image-11': Object.freeze({ '2k': 3, '4k': 4 }),
-  'image-12': Object.freeze({ '1k': 2, '2k': 3, '4k': 4 }),
-  'image-15': Object.freeze({ '1k': 3, '2k': 4 }),
-  'image-16': Object.freeze({ '512x512': 2, '1024x1024': 2 }),
+  'image-2': legacyPointRateTable({ '1k': 4, '2k': 6, '4k': 8 }),
+  'image-3': Object.freeze({ '2k': 0.28 * POINTS_PER_CNY, '4k': 0.50 * POINTS_PER_CNY }),
+  'image-7': legacyPointRateTable({ '720p': 2, '1080p': 4 }),
+  'image-8': legacyPointRateTable({ '720p': 2, '1080p': 4 }),
+  'image-10': legacyPointRateTable({ '2k': 4, '4k': 7 }),
+  'image-11': legacyPointRateTable({ '2k': 3, '4k': 4 }),
+  'image-12': legacyPointRateTable({ '1k': 2, '2k': 3, '4k': 4 }),
+  'image-15': legacyPointRateTable({ '1k': 3, '2k': 4 }),
+  'image-16': legacyPointRateTable({ '512x512': 2, '1024x1024': 2 }),
   'image-17': Object.freeze({ '1k': 0.08 * PTC_TO_CREDITS, '2k': 0.32 * PTC_TO_CREDITS }),
   'image-18': Object.freeze({ '1k': 0.08 * PTC_TO_CREDITS, '2k': 0.32 * PTC_TO_CREDITS })
 });
-export const IMAGE_RESOLUTION_CREDITS = retailNestedRateTable(IMAGE_RESOLUTION_UPSTREAM_CREDITS);
+export const IMAGE_RESOLUTION_CREDITS = Object.freeze({
+  ...retailNestedRateTable(IMAGE_RESOLUTION_UPSTREAM_CREDITS),
+  'image-3': Object.freeze({ '2k': 5, '4k': 8 })
+});
 
 export const IMAGE_CREDITS = Object.freeze({
   ...IMAGE_CREDITS_BASE,
+  'image-1': IMAGE_RESOLUTION_CREDITS['image-1']['2k'],
+  'image-3': IMAGE_RESOLUTION_CREDITS['image-3']['2k'],
   'image-6': GPT_IMAGE_2_RETAIL_CREDITS.auto['1k'],
-  'atlas-image-gpt2': GPT_IMAGE_2_RETAIL_CREDITS.auto['1k'],
-  'atlas-image-gpt2-edit': GPT_IMAGE_2_RETAIL_CREDITS.auto['1k']
+  'atlas-image-gpt2': GPT_IMAGE_2_GENERATE_RETAIL_CREDITS.auto['1k'],
+  'atlas-image-gpt2-edit': GPT_IMAGE_2_EDIT_RETAIL_CREDITS.auto['1k'],
+  'image-17': IMAGE_RESOLUTION_CREDITS['image-17']['1k'],
+  'image-18': IMAGE_RESOLUTION_CREDITS['image-18']['1k']
 });
 
 const IMAGE_DEFAULT_RESOLUTIONS = Object.freeze({
@@ -149,6 +171,9 @@ const SEEDANCE_480P_PTC_PER_SECOND = SEEDANCE_720P_PTC_PER_SECOND * 0.5;
 // complete job quote before applying the proportional retail margin.
 const SEEDANCE_25_4K_ESR_PTC_PER_JOB = 23.11727243;
 const SEEDANCE_25_4K_ESR_PTC_PER_SECOND = SEEDANCE_25_4K_ESR_PTC_PER_JOB / 10;
+// Observed Atlas charge for a five-second Seedance 2.5 720P job.
+const SEEDANCE_25_720P_USD_PER_SECOND = 1.514799 / 5;
+const SEEDANCE_25_720P_UPSTREAM_CREDITS = SEEDANCE_25_720P_USD_PER_SECOND * PTC_TO_CREDITS;
 const SEEDANCE_PTC_PER_SECOND = Object.freeze({
   'video-2': Object.freeze({
     '480P': SEEDANCE_480P_PTC_PER_SECOND * (7.884 / 10),
@@ -177,50 +202,63 @@ const SEEDANCE_VIDEO_RATES = Object.freeze(Object.fromEntries(
 ));
 
 export const VIDEO_CREDITS_PER_SECOND = Object.freeze({
-  'atlas-video-seedance20-i2v': Object.freeze({
+  'atlas-video-seedance20-i2v': legacyPointRateTable({
     '480P': 8.268929, '720P': 17.7828, '720P-SR': 14.88408, '1080P': 40.0113,
     '1080P-SR': 32.00904, '1440P-SR': 56.90496, '4K': 91.225764
   }),
-  'atlas-video-seedance20-ref': Object.freeze({
+  'atlas-video-seedance20-ref': legacyPointRateTable({
     '480P': 8.268929, '720P': 17.7828, '720P-SR': 14.88408, '1080P': 40.0113,
     '1080P-SR': 32.00904, '1440P-SR': 56.90496, '4K': 91.225764
   }),
   'atlas-video-seedance25-i2v': Object.freeze({
-    '480P': 10.269725, '720P': 22.085603, '720P-SR': 16.123462, '720P-ESR': 18.485498,
-    '1080P': 43.469408, '1080P-SR': 29.815561, '1080P-ESR': 33.128398,
-    '1080P-ESR & 60FPS': 36.441248, '1440P-SR': 51.454793, '1440P-ESR': 55.876573,
+    '480P': 10.269725 * POINT_DENOMINATION_SCALE, '720P': SEEDANCE_25_720P_UPSTREAM_CREDITS,
+    '720P-SR': 16.123462 * POINT_DENOMINATION_SCALE, '720P-ESR': 18.485498 * POINT_DENOMINATION_SCALE,
+    '1080P': 43.469408 * POINT_DENOMINATION_SCALE, '1080P-SR': 29.815561 * POINT_DENOMINATION_SCALE,
+    '1080P-ESR': 33.128398 * POINT_DENOMINATION_SCALE,
+    '1080P-ESR & 60FPS': 36.441248 * POINT_DENOMINATION_SCALE,
+    '1440P-SR': 51.454793 * POINT_DENOMINATION_SCALE, '1440P-ESR': 55.876573 * POINT_DENOMINATION_SCALE,
     '4K-ESR': Number((SEEDANCE_25_4K_ESR_PTC_PER_SECOND * USD_TO_CNY * POINTS_PER_CNY).toFixed(9))
   }),
   'atlas-video-seedance25-ref': Object.freeze({
-    '480P': 10.269725, '720P': 22.085603, '720P-SR': 16.123462, '720P-ESR': 18.485498,
-    '1080P': 43.469408, '1080P-SR': 29.815561, '1080P-ESR': 33.128398,
-    '1080P-ESR & 60FPS': 36.441248, '1440P-SR': 51.454793, '1440P-ESR': 55.876573,
+    '480P': 10.269725 * POINT_DENOMINATION_SCALE, '720P': SEEDANCE_25_720P_UPSTREAM_CREDITS,
+    '720P-SR': 16.123462 * POINT_DENOMINATION_SCALE, '720P-ESR': 18.485498 * POINT_DENOMINATION_SCALE,
+    '1080P': 43.469408 * POINT_DENOMINATION_SCALE, '1080P-SR': 29.815561 * POINT_DENOMINATION_SCALE,
+    '1080P-ESR': 33.128398 * POINT_DENOMINATION_SCALE,
+    '1080P-ESR & 60FPS': 36.441248 * POINT_DENOMINATION_SCALE,
+    '1440P-SR': 51.454793 * POINT_DENOMINATION_SCALE, '1440P-ESR': 55.876573 * POINT_DENOMINATION_SCALE,
     '4K-ESR': Number((SEEDANCE_25_4K_ESR_PTC_PER_SECOND * USD_TO_CNY * POINTS_PER_CNY).toFixed(9))
   }),
-  'video-1': Object.freeze({ '768P': 5, '2K': 8 }),
+  // Approved CNY retail prices converted to the current point denomination.
+  'video-1': Object.freeze({
+    '768P': retailCreditsFromUpstreamCny(0.50),
+    '2K': retailCreditsFromUpstreamCny(0.80)
+  }),
   // Logical Seedance billing uses the higher of the Atlas primary price and
   // the USD/PTC 302 fallback for every resolution the fallback supports.
-  'video-2': Object.freeze({
+  'video-2': legacyPointRateTable({
     '480P': 8.268929, '720P': 17.7828, '720P-SR': 14.88408, '1080P': 40.0113,
     '1080P-SR': 32.00904, '1440P-SR': 56.90496, '4K': 91.225764
   }),
   'video-3': Object.freeze({
-    '480P': 10.269725, '720P': 22.085603, '720P-SR': 16.123462, '720P-ESR': 18.485498,
-    '1080P': 43.469408, '1080P-SR': 29.815561, '1080P-ESR': 33.128398,
-    '1080P-ESR & 60FPS': 36.441248, '1440P-SR': 51.454793,
-    '1440P-ESR': 55.876573,
+    '480P': 10.269725 * POINT_DENOMINATION_SCALE, '720P': SEEDANCE_25_720P_UPSTREAM_CREDITS,
+    '720P-SR': 16.123462 * POINT_DENOMINATION_SCALE, '720P-ESR': 18.485498 * POINT_DENOMINATION_SCALE,
+    '1080P': 43.469408 * POINT_DENOMINATION_SCALE, '1080P-SR': 29.815561 * POINT_DENOMINATION_SCALE,
+    '1080P-ESR': 33.128398 * POINT_DENOMINATION_SCALE,
+    '1080P-ESR & 60FPS': 36.441248 * POINT_DENOMINATION_SCALE,
+    '1440P-SR': 51.454793 * POINT_DENOMINATION_SCALE,
+    '1440P-ESR': 55.876573 * POINT_DENOMINATION_SCALE,
     '4K-ESR': Number((SEEDANCE_25_4K_ESR_PTC_PER_SECOND * USD_TO_CNY * POINTS_PER_CNY).toFixed(9))
   }),
   'video-4': SEEDANCE_VIDEO_RATES['video-4'],
-  'video-5': Object.freeze({ '480P': 2, '720P': 3 }),
-  'video-6': Object.freeze({ '480P': 2, '720P': 3, '1080P': 4 }),
-  'video-7': Object.freeze({ '480P': 1.5, '720P': 2.5 }),
-  'video-8': Object.freeze({ '720P': 0.5, '1080P': 1 }),
-  'video-9': Object.freeze({ '1080P': 2 }),
-  'video-10': Object.freeze({ '720P': 18.4 }),
-  'video-11': Object.freeze({ '1080P': 24.6 }),
-  'video-12': Object.freeze({ '720P': 21.9 }),
-  'video-13': Object.freeze({ '1080P': 26.3 })
+  'video-5': legacyPointRateTable({ '480P': 2, '720P': 3 }),
+  'video-6': legacyPointRateTable({ '480P': 2, '720P': 3, '1080P': 4 }),
+  'video-7': legacyPointRateTable({ '480P': 1.5, '720P': 2.5 }),
+  'video-8': legacyPointRateTable({ '720P': 0.5, '1080P': 1 }),
+  'video-9': legacyPointRateTable({ '1080P': 2 }),
+  'video-10': legacyPointRateTable({ '720P': 18.4 }),
+  'video-11': legacyPointRateTable({ '1080P': 24.6 }),
+  'video-12': legacyPointRateTable({ '720P': 21.9 }),
+  'video-13': legacyPointRateTable({ '1080P': 26.3 })
 });
 
 export const VIDEO_DEFAULT_RESOLUTIONS = Object.freeze({
@@ -424,7 +462,7 @@ export function quoteUsage(kind, request = {}) {
     );
     const guardedMultiplier = UPSTREAM_COST_SAFETY_MULTIPLIER * RETAIL_MULTIPLIER;
     const unitCredits = providerId === 'video-1'
-      ? Math.ceil(rates[resolution] * guardedMultiplier)
+      ? rates[resolution]
       : (upstreamCredits / duration) * guardedMultiplier;
     const referenceMediaTypes = Array.isArray(request.referenceMediaTypes)
       ? request.referenceMediaTypes.map((value) => String(value || '').trim().toLowerCase())
@@ -434,7 +472,8 @@ export function quoteUsage(kind, request = {}) {
       ? unitCredits * 15
       : 0;
     const extraImageCredits = providerId === 'video-1'
-      ? Math.max(0, referenceImageCount - 5) * Math.ceil(2 * guardedMultiplier)
+      ? Math.max(0, referenceImageCount - 5)
+        * Math.ceil(2 * POINT_DENOMINATION_SCALE * guardedMultiplier)
       : 0;
     const baseCredits = providerId === 'video-1'
       ? unitCredits * duration
@@ -538,6 +577,9 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
   // Every account uses the same quote. Supabase independently recomputes the
   // total and a mismatch fails closed during rolling deployments.
   const quote = quoteUsage(kind, request);
+  if (quote.kind === 'chat' && quote.credits === 0) {
+    return { ok: true, reason: 'free', ...quote, developmentBypass: false };
+  }
 
   let requestBody = JSON.stringify({
     p_user_id: userId,
@@ -672,6 +714,42 @@ export async function settleUsage(requestId, status, durationMs, fetchImpl = fet
       'The AI request was already settled with a different result.',
       409
     );
+  }
+  return payload;
+}
+
+export async function confirmUsageDelivery(userId, requestId, delivered = true, durationMs = 0, fetchImpl = fetch) {
+  const headers = serviceHeaders();
+  if (!headers) return { ok: !durableRequired(), reason: 'not-configured' };
+  const normalizedUserId = String(userId || '').trim().toLowerCase();
+  const normalizedRequestId = String(requestId || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(normalizedUserId)
+      || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(normalizedRequestId)) {
+    throw serviceError('invalid-delivery-confirmation', 'The media delivery confirmation is invalid.', 400);
+  }
+  const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/confirm_ai_media_delivery`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      p_user_id: normalizedUserId,
+      p_request_id: normalizedRequestId,
+      p_delivered: delivered === true,
+      p_duration_ms: Math.max(0, Math.round(Number(durationMs) || 0))
+    }),
+    signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
+  });
+  const payload = await responsePayload(response);
+  if (!response.ok) {
+    const code = isMissingCreditRpc(response, payload) ? 'credit-schema-missing' : 'credit-settlement-failed';
+    throw serviceError(code, 'Could not confirm AI media delivery.');
+  }
+  if (!payload || payload.ok !== true) {
+    const reason = String(payload && payload.reason || 'credit-settlement-failed');
+    throw serviceError(reason, 'The credit service rejected media delivery confirmation.', reason === 'not-found' ? 404 : 409);
+  }
+  const expectedStatus = delivered === true ? 'succeeded' : 'failed';
+  if (String(payload.status || '') !== expectedStatus) {
+    throw serviceError('credit-settlement-conflict', 'This AI request was already settled with a different result.', 409);
   }
   return payload;
 }
@@ -1127,6 +1205,8 @@ export async function getCanvasUsage(userId, canvasId, fetchImpl = fetch) {
   return {
     canvasId: normalizedCanvasId,
     totals: {
+      estimatedCredits: nonnegativeNumber(payload.totals && payload.totals.estimatedCredits),
+      creditsCharged: nonnegativeNumber(payload.totals && payload.totals.creditsCharged),
       credits: nonnegativeNumber(payload.totals && payload.totals.credits),
       generations: nonnegativeNumber(payload.totals && payload.totals.generations)
     },
@@ -1139,7 +1219,12 @@ export async function getCanvasUsage(userId, canvasId, fetchImpl = fetch) {
       providerId: String(row.providerId || '').trim().toLowerCase().slice(0, 64),
       modelName: String(row.modelName || '').trim().slice(0, 160),
       name: String(row.name || '').trim().slice(0, 240),
+      estimatedCredits: row.estimatedCredits === null || row.estimatedCredits === undefined
+        ? null : nonnegativeNumber(row.estimatedCredits),
+      creditsCharged: row.creditsCharged === null || row.creditsCharged === undefined
+        ? null : nonnegativeNumber(row.creditsCharged),
       credits: nonnegativeNumber(row.credits),
+      status: ['reserved', 'succeeded', 'failed'].includes(row.status) ? row.status : 'succeeded',
       resolution: String(row.resolution || '').trim().slice(0, 32) || null,
       duration: nonnegativeNumber(row.duration),
       createdAt: String(row.createdAt || '').slice(0, 40)

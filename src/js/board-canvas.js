@@ -59,6 +59,7 @@ const BOARD_UI_EVENT_SELECTOR = [
   '.shortcuts-popover',
   '.board-butler-menu',
   '.board-butler-config-panel',
+  '.board-butler-expand-editor',
   '.board-butler-mask-overlay',
   '.generated-media-detail-overlay',
   '.context-menu',
@@ -313,9 +314,17 @@ function removeBoardItemsWithHistory(items) {
 const BoardClipboard = {
   items: [],
   mediaFileIds: [],
+  sourceCanvasId: null,
   sourceMode: '',
   preferInternal: false
 };
+
+function setBoardClipboardItems(items) {
+  BoardClipboard.items = (items || []).filter(Boolean).map(cloneBoardHistoryItem);
+  BoardClipboard.sourceCanvasId = BoardClipboard.items.length ? activeCanvasId() : null;
+  const mediaFileIds = BoardClipboard.items.map((item) => item.fileId).filter(Boolean);
+  setBoardClipboardMedia(mediaFileIds, 'canvas');
+}
 
 function boardClipboardMediaFiles() {
   const filesById = new Map(AppState.files.map((file) => [file.id, file]));
@@ -350,7 +359,8 @@ function pasteBoardClipboard(atX, atY) {
   const newItems = [];
   AppState.boardItems.forEach((item) => { item.selected = false; });
 
-  BoardClipboard.items.forEach((srcItem, i) => {
+  BoardClipboard.items.forEach((clipboardItem, i) => {
+    const srcItem = cloneBoardHistoryItem(clipboardItem);
     const newItem = {
       ...srcItem,
       id: (srcItem.isNote ? 'note_' : 'b_') + Math.random().toString(36).slice(2, 10),
@@ -789,6 +799,9 @@ function applyBoardTransform() {
       '--board-selection-width',
       `${Math.min(40, Math.max(0.2, 1.2 / Math.max(Board.zoom, 0.001)))}px`
     );
+    canvas.style.setProperty('--board-expand-hit-size', `${18 / Math.max(Board.zoom, 0.001)}px`);
+    canvas.style.setProperty('--board-expand-grip-thickness', `${4 / Math.max(Board.zoom, 0.001)}px`);
+    canvas.style.setProperty('--board-expand-grip-length', `${30 / Math.max(Board.zoom, 0.001)}px`);
     document.getElementById('board-zoom-label').textContent = Math.round(Board.zoom * 100) + '%';
     updateInfiniteGrid();
     clearTimeout(Board.transformSettleTimer);
@@ -2245,6 +2258,7 @@ function renderBoard() {
   rebuildBoardSpatialIndex();
   reconcileMountedBoardItemsAfterDataChange();
   reconcileBoardViewport(true);
+  if (typeof syncBoardButlerExpandEditorToSelection === 'function') syncBoardButlerExpandEditorToSelection();
   if (typeof syncCanvasNodeMode === 'function') syncCanvasNodeMode();
 }
 
@@ -2257,6 +2271,7 @@ function syncBoardSelectionClasses() {
     element.classList.toggle('is-selected', selected);
     element.classList.toggle('is-single-selection', selected && hasSingleSelection);
   });
+  if (typeof syncBoardButlerExpandEditorToSelection === 'function') syncBoardButlerExpandEditorToSelection();
   if (typeof syncCanvasAgentReferencesToSelection === 'function') syncCanvasAgentReferencesToSelection();
   scheduleMountedImageQuality(0);
 }
@@ -2626,6 +2641,7 @@ function initBoardCanvas() {
   window.addEventListener('blur', () => {
     BoardClipboard.items = [];
     BoardClipboard.mediaFileIds = [];
+    BoardClipboard.sourceCanvasId = null;
     BoardClipboard.sourceMode = '';
     BoardClipboard.preferInternal = false;
     const composer = activeAiComposer();
@@ -2667,9 +2683,8 @@ function initBoardCanvas() {
       const selected = AppState.boardItems.filter((item) => item.selected);
       if (!selected.length) return;
       e.preventDefault();
-      BoardClipboard.items = selected.map((item) => ({ ...item }));
-      const mediaFileIds = selected.map((item) => item.fileId).filter(Boolean);
-      setBoardClipboardMedia(mediaFileIds, 'canvas');
+      setBoardClipboardItems(selected);
+      const mediaFileIds = BoardClipboard.mediaFileIds;
       if (mediaFileIds.length && window.messsAPI.copyBoardMediaToClipboard) {
         window.messsAPI.copyBoardMediaToClipboard(mediaFileIds).catch(() => {});
       }
@@ -3906,7 +3921,22 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
       ? AppState.activeFolderId
       : null;
     const center = boardViewportCenterCoords();
-    const res = await window.messsAPI.generateAiMedia({ ...request, folderId, canvasId: activeCanvasId() });
+    const placements = placeholders.map((placeholder) => ({
+      id: placeholder.id,
+      canvasId: placeholder.canvasId,
+      x: placeholder.x,
+      y: placeholder.y,
+      width: placeholder.width,
+      height: placeholder.height,
+      aspectRatio: placeholder.aspectRatio,
+      zIndex: placeholder.zIndex
+    }));
+    const res = await window.messsAPI.generateAiMedia({
+      ...request,
+      folderId,
+      canvasId: activeCanvasId(),
+      placements
+    });
 
     if (!res || !res.ok) {
       const msg = res && res.reason === 'missing-api-key'
@@ -4671,6 +4701,14 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
             <button type="button" data-value="4K">4K</button>
           </div>
         </div>
+        <div class="ai-option-block ai-quality-block" hidden>
+          <div class="ai-options-heading"><strong>${t('Quality', '精细度')}</strong></div>
+          <div class="ai-segmented" data-option="quality">
+            <button type="button" data-value="low">${t('Low', '低')}</button>
+            <button type="button" data-value="medium">${t('Medium', '中')}</button>
+            <button type="button" data-value="high">${t('High', '高')}</button>
+          </div>
+        </div>
         <div class="ai-option-block ai-count-block">
           <div class="ai-options-heading"><strong>数量</strong><span class="ai-count-value">× 1</span></div>
           <div class="ai-segmented" data-option="count">
@@ -4790,6 +4828,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   let videoMode = 'first-last-frame';
   let ratio = kind === 'video' ? (aiConfig.videoAspectRatio || '16:9') : (aiConfig.imageAspectRatio || '1:1');
   let size = aiConfig.imageSize || '1K';
+  let quality = 'medium';
   let count = 1;
   let duration = Number(aiConfig.videoDuration) || 6;
   let styleId = '';
@@ -5478,6 +5517,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       videoProviderId: kind === 'video' ? provider.id : null,
       count: kind === 'image' ? count : undefined,
       size: kind === 'image' ? size : undefined,
+      quality: kind === 'image' ? quality : undefined,
       resolution: size,
       duration: kind === 'video' ? duration : undefined
     };
@@ -5626,6 +5666,12 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const supportedCounts = kind === 'image' && Array.isArray(capabilities.counts) && capabilities.counts.length
       ? capabilities.counts.map(Number).filter((value) => Number.isInteger(value) && value >= 1 && value <= 4)
       : [1, 2, 3, 4];
+    const supportedQualities = kind === 'image' && Array.isArray(capabilities.qualities)
+      ? capabilities.qualities.filter((value) => ['low', 'medium', 'high'].includes(value))
+      : [];
+    if (supportedQualities.length && !supportedQualities.includes(quality)) {
+      quality = supportedQualities.includes('medium') ? 'medium' : supportedQualities[0];
+    }
     if (!supportedCounts.includes(count)) count = supportedCounts[0] || 1;
     const countGroup = pop.querySelector('[data-option="count"]');
     countGroup.innerHTML = '';
@@ -5648,6 +5694,18 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
         : kind === 'video' ? aiVideoResolutionLabel(value) : value;
       sizeGroup.appendChild(button);
     });
+    const qualityGroup = pop.querySelector('[data-option="quality"]');
+    qualityGroup.innerHTML = '';
+    supportedQualities.forEach((value) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.value = value;
+      button.textContent = value === 'low'
+        ? t('Low', '低')
+        : value === 'high' ? t('High', '高') : t('Medium', '中');
+      qualityGroup.appendChild(button);
+    });
+    pop.querySelector('.ai-quality-block').hidden = supportedQualities.length === 0;
     const durationRange = pop.querySelector('.ai-duration-range');
     duration = kind === 'video'
       ? supportedVideoDurationFor(duration, composerVideoRequestMode(videoMode, boardReferences.size, capabilities), capabilities)
@@ -5717,6 +5775,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     });
     pop.querySelectorAll('[data-option="count"] button').forEach((button) => {
       button.classList.toggle('is-active', Number(button.dataset.value) === count);
+    });
+    pop.querySelectorAll('[data-option="quality"] button').forEach((button) => {
+      button.classList.toggle('is-active', button.dataset.value === quality);
     });
     pop.querySelector('.ai-count-value').textContent = `× ${count}`;
     const sizeHint = resolutionDisplayHint(size);
@@ -5950,6 +6011,14 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     updateCreditEstimate();
     setOptionsOpen(true);
   });
+  pop.querySelector('[data-option="quality"]').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-value]');
+    if (!button) return;
+    quality = button.dataset.value;
+    syncSegments();
+    updateCreditEstimate();
+    setOptionsOpen(true);
+  });
   pop.querySelector('.ai-duration-range').addEventListener('input', (event) => {
     const capabilities = selectedVideoCapabilities();
     const allowedDurations = videoModeDurations(
@@ -6066,6 +6135,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       promptStyleName: promptStyle ? promptStyle.name : null,
       size,
       resolution: size,
+      quality: kind === 'image' ? quality : undefined,
       count,
        duration: kind === 'video'
          ? supportedVideoDurationFor(duration, selectedMode, videoCapabilities)
@@ -6183,7 +6253,7 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
     AppState.files = [...files, ...AppState.files.filter((file) => !files.some((next) => next.id === file.id))];
     renderFileList(currentFileListScope());
     renderFolderGridIfActive();
-    await replaceAiPlaceholders(placeholders, files, request);
+    await replaceAiPlaceholders(placeholders, files, request, res.boardItems || []);
     selectFileForPreview(files[0].id);
     if (res.unlocked && res.unlocked.length) await refreshAchievements();
     const fallbackNotice = res.fallback && res.fallback.notice ? res.fallback.notice : '';

@@ -56,9 +56,9 @@ async function main() {
   const win = new BrowserWindow({
     width: 1360,
     height: 820,
-    show: true,
+    show: false,
     backgroundColor: '#111318',
-    webPreferences: { nodeIntegration: false, contextIsolation: true }
+    webPreferences: { nodeIntegration: false, contextIsolation: true, offscreen: true }
   });
   await win.loadFile(fixturePath);
   await new Promise((resolve) => setTimeout(resolve, 180));
@@ -141,9 +141,16 @@ async function main() {
     const rect=(target)=>{const value=target.getBoundingClientRect();return {x:value.x+value.width/2,y:value.y+value.height/2};};
     const inputCenter=rect(input);
     const outputCenter=rect(output);
+    const hostRect=document.getElementById('board-node-editor').getBoundingClientRect();
+    const rightDrop=[
+      {x:outputCenter.x+150,y:outputCenter.y+200},
+      {x:outputCenter.x+240,y:outputCenter.y+180},
+      {x:outputCenter.x+300,y:outputCenter.y-120}
+    ].find((point)=>point.x<hostRect.right-20&&point.y>hostRect.top+20&&point.y<hostRect.bottom-20&&!document.elementFromPoint(point.x,point.y)?.closest('.drawflow-node'));
     return {
       input:inputCenter,
       output:outputCenter,
+      rightDrop:rightDrop||{x:Math.min(hostRect.right-30,outputCenter.x+150),y:Math.min(hostRect.bottom-30,outputCenter.y+200)},
       inputGap:nodeRect.left-inputCenter.x,
       outputGap:outputCenter.x-nodeRect.right,
       inputMark:getComputedStyle(input,'::after').content,
@@ -192,8 +199,8 @@ async function main() {
   await win.webContents.executeJavaScript(`closeCanvasNodeConnectionMenu()`);
 
   win.webContents.sendInputEvent({ type: 'mouseDown', x: Math.round(ports.output.x), y: Math.round(ports.output.y), button: 'left', clickCount: 1 });
-  win.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(ports.output.x + 150), y: Math.round(ports.output.y - 150), movementX: 150, movementY: -150 });
-  win.webContents.sendInputEvent({ type: 'mouseUp', x: Math.round(ports.output.x + 150), y: Math.round(ports.output.y - 150), button: 'left', clickCount: 1 });
+  win.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(ports.rightDrop.x), y: Math.round(ports.rightDrop.y), movementX: Math.round(ports.rightDrop.x - ports.output.x), movementY: Math.round(ports.rightDrop.y - ports.output.y) });
+  win.webContents.sendInputEvent({ type: 'mouseUp', x: Math.round(ports.rightDrop.x), y: Math.round(ports.rightDrop.y), button: 'left', clickCount: 1 });
   await new Promise((resolve) => setTimeout(resolve, 80));
   const rightMenu = await win.webContents.executeJavaScript(`({
     choices:[...document.querySelectorAll('.board-node-connection-menu button')].map((button)=>button.textContent.trim()),

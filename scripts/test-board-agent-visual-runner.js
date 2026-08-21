@@ -183,7 +183,9 @@ async function run() {
     const viewport = document.getElementById('board-viewport').getBoundingClientRect();
     return { width:agent.width, left:agent.left, right:agent.right, viewportRight:viewport.right };
   })()`);
-  if (largeAgent.width < 498 || largeAgent.width > 502 || largeAgent.right > 2048 || largeAgent.left < largeAgent.viewportRight - 1) {
+  const expectedLargeAgentWidth = Math.max(360, Math.min(780, 2048 * 0.305));
+  if (Math.abs(largeAgent.width - expectedLargeAgentWidth) > 2 || largeAgent.right > 2048
+    || Math.abs(largeAgent.left - largeAgent.viewportRight) > 1) {
     throw new Error(`Large-screen Agent default does not match the reference layout: ${JSON.stringify(largeAgent)}`);
   }
   fs.writeFileSync(path.join(screenshotDir, 'board-agent-large-screen.png'), (await window.webContents.capturePage()).toPNG());

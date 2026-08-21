@@ -625,9 +625,8 @@ function updateAssistantCreditEstimate() {
     return;
   }
   if (kind === 'chat') {
-    renderAssistantCreditEstimate(AiAssistant.config && AiAssistant.config.creditPricing
-      ? AiAssistant.config.creditPricing.chat
-      : 0);
+    // Chat/Agent is free. Clear a stale media quote when switching modes.
+    renderAssistantCreditEstimate(0);
     return;
   }
   if (typeof quoteApi !== 'function') {
@@ -646,6 +645,7 @@ function updateAssistantCreditEstimate() {
     videoProviderId: kind === 'video' ? provider.id : null,
     count: kind === 'image' ? Number(document.getElementById('ai-assistant-count').value) : undefined,
     size: kind === 'image' ? document.getElementById('ai-assistant-size').value : undefined,
+    quality: kind === 'image' ? document.getElementById('ai-assistant-quality').value : undefined,
     resolution: kind === 'video' ? document.getElementById('ai-assistant-size').value : undefined,
     duration: kind === 'video' ? Number(document.getElementById('ai-assistant-duration').value) : undefined
   };
@@ -851,6 +851,8 @@ function syncAssistantMediaOptions() {
   }
   const sizeWrap = document.getElementById('ai-assistant-size-wrap');
   const sizeSelect = document.getElementById('ai-assistant-size');
+  const qualityWrap = document.getElementById('ai-assistant-quality-wrap');
+  const qualityInput = document.getElementById('ai-assistant-quality');
   const durationSelect = document.getElementById('ai-assistant-duration');
   const resolutions = isVideo
     ? (Array.isArray(capabilities.resolutions) ? capabilities.resolutions : ['768P', '2K'])
@@ -893,6 +895,26 @@ function syncAssistantMediaOptions() {
       assistantMediaAttachmentCount()
     );
   }
+
+  const configuredQualities = !isVideo && Array.isArray(capabilities.qualities)
+    ? capabilities.qualities.map((value) => String(value || '').trim().toLowerCase())
+    : [];
+  const visibleQualities = ['low', 'medium', 'high'].filter((quality) => configuredQualities.includes(quality));
+  qualityWrap.hidden = visibleQualities.length < 2;
+  const previousQuality = String(qualityInput.value || '').toLowerCase();
+  qualityInput.value = visibleQualities.includes(previousQuality)
+    ? previousQuality
+    : visibleQualities.includes('medium') ? 'medium' : visibleQualities[0] || 'auto';
+  document.querySelectorAll('#ai-assistant-quality-buttons [data-quality]').forEach((button) => {
+    const quality = button.dataset.quality;
+    button.hidden = !visibleQualities.includes(quality);
+    const active = quality === qualityInput.value;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', String(active));
+    button.textContent = quality === 'low'
+      ? t('Low', '低')
+      : quality === 'high' ? t('High', '高') : t('Medium', '中');
+  });
 
   durationSelect.innerHTML = '';
   durations.forEach((value) => {
@@ -986,6 +1008,7 @@ function assistantVideoResolutionLabel(value) {
     const label = resolution.replace('-ESR', '-ESR（增强超分）').replace(' & 60FPS', ' · 60FPS');
     return t(resolution, label, resolution);
   }
+
   if (resolution.includes('-SR')) {
     return t(resolution, resolution.replace('-SR', '-SR（超分）'), resolution);
   }
@@ -1102,7 +1125,10 @@ function refreshAssistantOptionSummary() {
   } else {
     const size = document.getElementById('ai-assistant-size').value || '1K';
     const count = document.getElementById('ai-assistant-count').value || '1';
-    toggle.textContent = `${ratio} · ${size} · x${count}`;
+    const qualityWrap = document.getElementById('ai-assistant-quality-wrap');
+    const quality = document.getElementById('ai-assistant-quality').value;
+    const qualityLabel = qualityWrap.hidden ? '' : ` · ${quality === 'low' ? t('Low', '低') : quality === 'high' ? t('High', '高') : t('Medium', '中')}`;
+    toggle.textContent = `${ratio} · ${size}${qualityLabel} · x${count}`;
   }
 }
 
@@ -1262,6 +1288,7 @@ async function submitAssistantMessage() {
   let submittedMediaOptions = {
     aspectRatio: document.getElementById('ai-assistant-ratio').value,
     size: document.getElementById('ai-assistant-size').value,
+    quality: document.getElementById('ai-assistant-quality').value,
     count: Number(document.getElementById('ai-assistant-count').value),
     duration: Number(document.getElementById('ai-assistant-duration').value)
   };
@@ -1292,11 +1319,13 @@ async function submitAssistantMessage() {
       imageProviderId: submittedKind === 'image' && submittedProvider ? submittedProvider.id : null,
       videoProviderId: submittedKind === 'video' && submittedProvider ? submittedProvider.id : null,
       count: submittedMediaOptions.count,
+      quality: submittedKind === 'image' ? submittedMediaOptions.quality : undefined,
       duration: submittedMediaOptions.duration,
       size: submittedKind === 'image' ? submittedMediaOptions.size : undefined,
       resolution: submittedKind === 'video'
         ? submittedMediaOptions.size
-        : undefined
+        : undefined,
+      referenceMediaTypes: attachments.map((attachment) => assistantFileKind(attachment))
     });
     if (!creditAccess.ok) return;
   }
@@ -1350,6 +1379,7 @@ async function submitAssistantMessage() {
         ? t(`Thinking... ${seconds}s`, `思考中... ${seconds} 秒`)
         : t(`Using ${modelName} for ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`, `正在使用 ${modelNameZh} 生成 ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`);
   }, 1000);
+  let mediaPlaceholders = [];
 
   try {
     if (submittedKind === 'chat') {
@@ -1379,6 +1409,7 @@ async function submitAssistantMessage() {
         prompt,
         aspectRatio: submittedMediaOptions.aspectRatio,
         size: submittedMediaOptions.size,
+        quality: submittedKind === 'image' ? submittedMediaOptions.quality : undefined,
         resolution: submittedKind === 'video'
           ? submittedMediaOptions.size
           : undefined,
@@ -1395,6 +1426,19 @@ async function submitAssistantMessage() {
           ? AppState.activeFolderId
           : null
       };
+      if (typeof createAiPlaceholders === 'function') {
+        mediaPlaceholders = createAiPlaceholders(request);
+        request.placements = mediaPlaceholders.map((placeholder) => ({
+          id: placeholder.id,
+          canvasId: placeholder.canvasId,
+          x: placeholder.x,
+          y: placeholder.y,
+          width: placeholder.width,
+          height: placeholder.height,
+          aspectRatio: placeholder.aspectRatio,
+          zIndex: placeholder.zIndex
+        }));
+      }
       const response = await window.messsAPI.generateAiMedia(request);
       if (response && response.membership) window.MesssCredits.publish(response.membership);
       const files = response && Array.isArray(response.files)
@@ -1406,8 +1450,13 @@ async function submitAssistantMessage() {
       AppState.files = [...files, ...AppState.files.filter((file) =>
         !files.some((generated) => generated.id === file.id)
       )];
-      const center = boardViewportCenterCoords();
-      await addFilesToBoard(files.map((file) => file.id), center.x, center.y);
+      if (mediaPlaceholders.length && typeof replaceAiPlaceholders === 'function') {
+        await replaceAiPlaceholders(mediaPlaceholders, files, request, response.boardItems || []);
+        mediaPlaceholders = [];
+      } else {
+        const center = boardViewportCenterCoords();
+        await addFilesToBoard(files.map((file) => file.id), center.x, center.y);
+      }
       renderFileList(currentFileListScope());
       renderFolderGridIfActive();
       if (response.unlocked && response.unlocked.length) await refreshAchievements();
@@ -1428,6 +1477,10 @@ async function submitAssistantMessage() {
       persistActiveAiChatSession();
     }
   } catch (err) {
+    if (mediaPlaceholders.length && typeof removeAiPlaceholders === 'function') {
+      removeAiPlaceholders(mediaPlaceholders);
+      mediaPlaceholders = [];
+    }
     pending.classList.remove('is-pending');
     pending.classList.add('is-error');
     pending.querySelector('.ai-assistant-message-body').textContent =
@@ -1605,6 +1658,18 @@ function initAiAssistant() {
   document.getElementById('ai-chat-history-favorites').addEventListener('click', () => {
     AiAssistant.historyFavoritesOnly = !AiAssistant.historyFavoritesOnly;
     renderAiChatHistory();
+  });
+  document.getElementById('ai-assistant-quality-buttons').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-quality]');
+    if (!button || button.hidden) return;
+    document.getElementById('ai-assistant-quality').value = button.dataset.quality;
+    document.querySelectorAll('#ai-assistant-quality-buttons [data-quality]').forEach((option) => {
+      const active = option === button;
+      option.classList.toggle('is-active', active);
+      option.setAttribute('aria-pressed', String(active));
+    });
+    refreshAssistantOptionSummary();
+    updateAssistantCreditEstimate();
   });
   document.getElementById('ai-chat-history-date').addEventListener('change', (event) => {
     AiAssistant.historyDate = event.target.value || '';

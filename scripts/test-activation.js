@@ -34,7 +34,7 @@ assert.equal(new Set(BETA_GRANTS.map((entry) => entry.id)).size, 10);
 assert.equal(new Set(BETA_GRANTS.map((entry) => entry.hash)).size, 10);
 BETA_GRANTS.forEach((entry) => {
   assert.match(entry.hash, /^[a-f0-9]{64}$/);
-  assert.equal(entry.credits, 100);
+  assert.equal(entry.credits, 143);
 });
 
 const mainSource = fs.readFileSync(path.resolve(__dirname, '../main.js'), 'utf8');

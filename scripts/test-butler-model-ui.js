@@ -8,6 +8,7 @@ const root = path.join(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 const boardMedia = read('src', 'js', 'board-media-meta.js');
 const boardCanvas = read('src', 'js', 'board-canvas.js');
+const canvasWorkspace = read('src', 'js', 'canvas-workspace.js');
 const storeClient = read('src', 'js', 'store-client.js');
 const modelViewer = read('src', 'js', 'model-viewer.js');
 const styles = read('src', 'styles', 'main.css');
@@ -20,6 +21,9 @@ const bundlePath = path.join(root, 'src', 'vendor', 'model-viewer.bundle.js');
 assert.match(boardMedia, /className = 'board-butler-trigger'/, 'The selected-image toolbar must expose the Butler capsule.');
 assert.match(boardMedia, /requestedMinimum = requestedSize === '4K' \? 3072[\s\S]*?requestedSize === '2K' \? 1536/, 'Generated-image details must verify requested quality against actual pixels.');
 assert.match(boardMedia, /t\('Requested', '请求'\)[\s\S]*?t\('Actual', '实际'\)/, 'A legacy low-resolution result must not be labelled as its requested quality.');
+assert.match(boardCanvas, /class="ai-option-block ai-quality-block"[\s\S]*?data-option="quality"[\s\S]*?data-value="low"[\s\S]*?data-value="medium"[\s\S]*?data-value="high"/, 'The canvas capsule must expose GPT Image 2 low, medium, and high quality controls.');
+assert.match(boardCanvas, /quality: kind === 'image' \? quality : undefined[\s\S]*?Promise\.resolve\(quoteApi/, 'The canvas capsule estimate must include the selected image quality.');
+assert.match(boardCanvas, /const request = \{[\s\S]*?quality: kind === 'image' \? quality : undefined[\s\S]*?imageProviderId:/, 'The canvas capsule generation request must include the selected image quality.');
 assert.doesNotMatch(boardMedia, /key:\s*'more'/, 'The old three-dot toolbar action must be removed.');
 assert.match(boardMedia, /window\.messsAPI && window\.messsAPI\.butler/, 'Butler must use the isolated preload namespace.');
 assert.match(boardMedia, /api\.removeBackground\(file\.id, options\)/, 'Background removal must send only documented settings with the file id.');
@@ -52,14 +56,33 @@ assert.match(boardMedia, /BOARD_BUTLER_ICONS\.imageLayer/, 'Image expansion must
   );
 });
 assert.match(boardMedia, /SeedEdit 3\.0/, 'Image edit must identify SeedEdit 3.0.');
-assert.match(boardMedia, /imageEdit: 6[\s\S]*imageExpand: 53/, 'Image edit and expansion must show the gateway-aligned paid prices.');
+assert.match(boardMedia, /imageEdit: boardButlerCreditsFromPtc\(0\.05\)[\s\S]*imageExpand: boardButlerCreditsFromPtc\(0\.50\)/, 'Image edit and expansion must derive the gateway-aligned paid prices from protected provider cost.');
 assert.doesNotMatch(boardMedia, /Free · SeedEdit|免费 · SeedEdit|무료 · SeedEdit/, 'SeedEdit must never be presented as free.');
 assert.doesNotMatch(boardMedia, /\$\{t\('Free', '免费', '무료'\)\}/, 'Paid expansion must never be presented as free.');
 assert.match(boardMedia, /Clipdrop Uncrop/, 'Image expansion must identify the documented Clipdrop endpoint.');
 assert.match(boardMedia, /butler-expand-width[\s\S]*butler-expand-height/, 'Image expansion must expose exact target dimensions.');
 assert.match(boardMedia, /21:9[\s\S]*dataset\.expandRatio[\s\S]*data-expand-edge/, 'Image expansion must expose ratio presets and four draggable edges.');
 assert.match(boardMedia, /offsets\.left[\s\S]*Math\.min\(2000[\s\S]*offsets\.down/, 'Expansion must enforce Clipdrop\'s 2000-pixel limit on each side.');
-assert.match(boardMedia, /imageEnhance: 53[\s\S]*Enhance quality/, 'Clipdrop quality enhancement must replace creative upscale and show its conservative paid price.');
+assert.match(
+  boardMedia,
+  /function openBoardButlerExpandPanel\([\s\S]*?className = 'board-butler-expand-editor'[\s\S]*?canvas\.appendChild\(editor\)/,
+  'Image expansion must open as an editor attached to the transformed canvas.'
+);
+assert.match(
+  boardMedia,
+  /board-butler-expand-ratio-toolbar[\s\S]*?butler-expand-width[\s\S]*?butler-expand-height[\s\S]*?butler-expand-seed[\s\S]*?board-butler-expand-submit/,
+  'The canvas expansion editor must retain ratio, dimensions, seed, cost, and submit controls.'
+);
+assert.match(
+  boardMedia,
+  /const options = \{[\s\S]*?left: offsets\.left[\s\S]*?right: offsets\.right[\s\S]*?up: offsets\.up[\s\S]*?down: offsets\.down[\s\S]*?launchBoardButlerImageTool\('imageExpand'/,
+  'The canvas expansion editor must submit the four visible edge offsets to the existing paid tool.'
+);
+assert.match(boardMedia, /function syncBoardButlerExpandEditorToSelection[\s\S]*?closeBoardButlerExpandEditor/,
+  'Changing the source selection must close its canvas expansion editor.');
+assert.match(canvasWorkspace, /function showCanvasLibrary[\s\S]*?closeBoardButlerExpandEditor/,
+  'Leaving the canvas workspace must close the expansion editor.');
+assert.match(boardMedia, /imageEnhance: boardButlerCreditsFromPtc\(0\.50\)[\s\S]*Enhance quality/, 'Clipdrop quality enhancement must replace creative upscale and show its conservative paid price.');
 assert.doesNotMatch(boardMedia, /Creative upscale|图片创意放大/, 'The removed creative-upscale product must not remain visible.');
 assert.match(boardMedia, /maskDataUrl[\s\S]*maskWidth[\s\S]*maskHeight/, 'Erase must submit a real PNG mask with dimensions.');
 assert.match(boardMedia, /videoUpscale: Object\.freeze/, 'Video enhancement must have an isolated bridge hook.');
@@ -124,6 +147,20 @@ assert.match(main, /videoBuffer:\s*buffer[\s\S]*upscaleVideo\(source\.videoBuffe
 assert.match(main, /const butlerVideoTasks = new Map\(\)[\s\S]*const butlerVideoDownloads = new Map\(\)/, 'Video tasks and downloads must be independently concurrent and deduplicated.');
 assert.match(main, /addButlerVideoOutputFile[\s\S]*butlerOperation:[\s\S]*kind: 'video-upscale'/, 'Enhanced videos must be archived with Butler provenance.');
 assert.match(main, /creditsCharged !== undefined \? currentTask\.creditsCharged : currentTask\.credits/, 'Enhanced videos must archive the settled charge when available.');
+assert.match(main, /function butlerRetailCreditsFromPtc[\s\S]*?retailCreditsFromUpstreamCny[\s\S]*?const BUTLER_IMAGE_TOOL_CREDITS/, 'Main-process Butler history must derive current prices from the shared retail formula.');
+assert.match(main, /function butlerThreeDRetailCredits[\s\S]*?butlerThreeDPricingOptions[\s\S]*?pricingOptions: currentTask\.options/, '3D usage repricing must preserve the options that affect current retail points.');
+assert.match(preload, /confirmDelivery:[^\n]+butler:confirmDelivery[\s\S]*releaseDelivery:[^\n]+butler:releaseDelivery/,
+  'The isolated Butler bridge must expose only opaque delivery confirmation tokens.');
+assert.match(main, /function registerButlerDelivery[\s\S]*accountingRequestId = requestId[\s\S]*delete record\.butlerOperation\.creditsCharged/,
+  'Pending Butler files must retain one accounting request without recording an unconfirmed charge.');
+assert.match(main, /ipcMain\.handle\('butler:confirmDelivery'[\s\S]*settleButlerDeliveryToken\(deliveryToken, true\)[\s\S]*ipcMain\.handle\('butler:releaseDelivery'[\s\S]*settleButlerDeliveryToken\(deliveryToken, false\)/,
+  'Main-process Butler delivery must explicitly confirm successful placement or release failed placement.');
+assert.match(boardMedia, /await addFileToBoard\(file\.id, placementX, placementY\)[\s\S]*await confirmBoardButlerDeliveries\(\[file\]\)/,
+  'A single Butler result must be charged only after it is added to the canvas.');
+assert.match(boardMedia, /for \(let index = 0; index < validFiles\.length[\s\S]*await addFileToBoard[\s\S]*await confirmBoardButlerDeliveries\(validFiles\)/,
+  'A multi-result Butler task must confirm its charge only after every result reaches the canvas.');
+assert.match(boardMedia, /catch \(error\) \{[\s\S]*releaseBoardButlerDeliveries\(validFiles\)[\s\S]*throw error/,
+  'A failed multi-result placement must release points and remove partial local results.');
 
 assert.match(storeClient, /MODEL_FILE_EXTENSIONS = new Set\(\['\.glb', '\.fbx', '\.obj'\]\)/, 'GLB, FBX and OBJ must share model recognition.');
 assert.match(storeClient, /mime === 'model\/gltf-binary'/, 'GLB recognition must include the standard model MIME type.');
@@ -159,6 +196,10 @@ assert.match(styles, /\.board-butler-config-panel[\s\S]*\.board-butler-segmented
 assert.match(boardMedia, /function makeBoardButlerPanelDraggable[\s\S]*?setPointerCapture[\s\S]*?clampBoardButlerPanelToViewport/, 'Butler parameter panels must be draggable and remain fully inside the window.');
 assert.match(boardMedia, /ResizeObserver[\s\S]*?clampBoardButlerPanelToViewport/, 'Growing Butler option panels must be reclamped after their content is rendered.');
 assert.match(styles, /\.board-butler-mask-overlay[\s\S]*\.board-butler-mask-stage/, 'Erase must use a dedicated mask workspace.');
+assert.match(styles, /\.board-butler-expand-editor \{[\s\S]*?z-index:\s*120000[\s\S]*?\.board-butler-expand-ratio-toolbar,[\s\S]*?\.board-butler-expand-controls/,
+  'Canvas expansion must render above media with floating ratio and parameter capsules.');
+assert.match(boardCanvas, /BOARD_UI_EVENT_SELECTOR[\s\S]*?\.board-butler-expand-editor/,
+  'Expansion handles and controls must not leak drag or zoom gestures into the canvas.');
 assert.match(styles, /\.board-item-video\.is-selected\.is-single-selection \.board-image-toolbar/, 'Video Butler toolbar must appear for a selected video.');
 assert.match(styles, /\.generated-media-detail-trigger\.is-inline\s*\{[\s\S]*?position:\s*static;[\s\S]*?flex:\s*0 0 25px;/,
   'The inline video details control must participate in toolbar layout.');

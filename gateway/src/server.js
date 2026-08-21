@@ -60,6 +60,7 @@ import {
   redeemUsageCode,
   reserveUsage,
   reserveToolUsage,
+  confirmUsageDelivery,
   settleToolUsage,
   touchToolUsage,
   settleUsage,
@@ -158,6 +159,13 @@ function disabledTool(response) {
     code: 'tool-disabled',
     message: 'This Butler tool is not enabled on the server.'
   });
+}
+
+function configuredGatewayPublicUrl() {
+  const explicit = String(process.env.AI_GATEWAY_PUBLIC_URL || '').trim();
+  if (explicit) return explicit;
+  const railwayDomain = String(process.env.RAILWAY_PUBLIC_DOMAIN || '').trim();
+  return railwayDomain ? `https://${railwayDomain}` : '';
 }
 
 function invalidOption(code, message) {
@@ -771,6 +779,7 @@ function validateBody(body, kind) {
       : (Number.isInteger(requestedSeed) && requestedSeed >= 1 && requestedSeed <= 1_000_000 ? requestedSeed : null),
     styleId: /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(requestedStyleId) ? requestedStyleId : null,
     styleStrength: requestedStyleStrength,
+    deliveryConfirmation: body.deliveryConfirmation === true,
     ...(kind === 'video' ? {
       outputFormat: requestedOutputFormat,
       generateAudio: requestedGenerateAudio,
@@ -876,6 +885,62 @@ async function settleReservedTool(userId, usage, status = 'succeeded') {
     return { ok: true, reason: 'free-tool', status, creditsCharged: 0, creditsReleased: 0 };
   }
   return settleToolUsage(userId, usage.requestId, status, Date.now() - usage.startedAt);
+}
+
+function setBufferMetadata(buffer, key, value) {
+  Object.defineProperty(buffer, key, {
+    value,
+    writable: true,
+    configurable: true,
+    enumerable: false
+  });
+}
+
+function annotateToolDelivery(buffer, {
+  requestId,
+  credits,
+  settlement = null,
+  deferred = false,
+  durationMs = 0
+} = {}) {
+  if (!Buffer.isBuffer(buffer)) return buffer;
+  const normalizedRequestId = String(requestId || '').trim().toLowerCase();
+  const estimatedCredits = Number(credits);
+  if (credits !== null && credits !== undefined && Number.isFinite(estimatedCredits) && estimatedCredits >= 0) {
+    setBufferMetadata(buffer, 'estimatedCredits', estimatedCredits);
+  }
+  if (deferred && validUuid(normalizedRequestId)) {
+    setBufferMetadata(buffer, 'deliveryPending', true);
+    setBufferMetadata(buffer, 'deliveryRequestId', normalizedRequestId);
+    setBufferMetadata(buffer, 'deliveryDurationMs', Math.max(0, Math.round(Number(durationMs) || 0)));
+  } else if (settlement && Number.isFinite(Number(settlement.creditsCharged))) {
+    setBufferMetadata(buffer, 'creditsCharged', Math.max(0, Number(settlement.creditsCharged)));
+  }
+  return buffer;
+}
+
+function toolDeliveryHeaders(buffer) {
+  if (!Buffer.isBuffer(buffer)) return {};
+  const estimated = Number(buffer.estimatedCredits);
+  const charged = Number(buffer.creditsCharged);
+  const durationMs = Number(buffer.deliveryDurationMs);
+  const requestId = String(buffer.deliveryRequestId || '').trim().toLowerCase();
+  return {
+    ...(Number.isFinite(estimated) && estimated >= 0
+      ? { 'X-Messs-Credits-Estimated': String(estimated) }
+      : {}),
+    ...(buffer.deliveryPending === true && validUuid(requestId)
+      ? {
+          'X-Messs-Delivery-Pending': '1',
+          'X-Messs-Delivery-Request-Id': requestId,
+          ...(Number.isFinite(durationMs) && durationMs >= 0
+            ? { 'X-Messs-Delivery-Duration-Ms': String(Math.round(durationMs)) }
+            : {})
+        }
+      : Number.isFinite(charged) && charged >= 0
+        ? { 'X-Messs-Credits-Charged': String(charged) }
+        : {})
+  };
 }
 
 function toolAccountingCallbacks(userId, providerId) {
@@ -1121,6 +1186,20 @@ async function handle(request, response) {
     const canvasId = String(url.searchParams.get('canvasId') || '').trim();
     return send(response, 200, { usage: await getCanvasUsage(user.id, canvasId) });
   }
+  if (request.method === 'POST' && url.pathname === '/v1/usage/delivery') {
+    const body = await readJson(request);
+    const deliveryRequestId = String(body && body.requestId || '').trim().toLowerCase();
+    if (!validUuid(deliveryRequestId)) {
+      return send(response, 400, { code: 'invalid-delivery-confirmation', message: 'The media delivery confirmation is invalid.' });
+    }
+    const settlement = await confirmUsageDelivery(
+      user.id,
+      deliveryRequestId,
+      body && body.delivered === true,
+      body && body.durationMs
+    );
+    return send(response, 200, { settlement });
+  }
   if (request.method === 'POST' && url.pathname === '/v1/account/redeem') {
     const redemptionBody = await readJson(request);
     const result = await redeemUsageCode(user.id, redemptionBody.code);
@@ -1193,6 +1272,7 @@ async function handle(request, response) {
   if (request.method === 'POST' && url.pathname === '/v1/tools/background/remove') {
     if (!ai302Enabled(AI302_FLAGS.background)) return disabledTool(response);
     const body = await readJson(request);
+    const deferredDelivery = body && body.deliveryConfirmation === true;
     const png = await runIdempotentImageOperation(user.id, requestId, async () => {
       const usage = await reserveFixedTool(user.id, 'background-remove', requestId);
       try {
@@ -1200,8 +1280,14 @@ async function handle(request, response) {
           imageDataUrl: body && body.imageDataUrl,
           toolOptions: body && body.options
         });
-        await settleReservedTool(user.id, usage);
-        return result;
+        const settlement = deferredDelivery ? null : await settleReservedTool(user.id, usage);
+        return annotateToolDelivery(result, {
+          requestId: usage.requestId,
+          credits: usage.reservation.credits,
+          settlement,
+          deferred: deferredDelivery,
+          durationMs: Date.now() - usage.startedAt
+        });
       } catch (error) {
         await releaseFailedToolReservation(user.id, usage);
         throw error;
@@ -1209,7 +1295,8 @@ async function handle(request, response) {
     });
     return send(response, 200, png, {
       'Content-Type': 'image/png',
-      'Content-Disposition': 'attachment; filename="background-removed.png"'
+      'Content-Disposition': 'attachment; filename="background-removed.png"',
+      ...toolDeliveryHeaders(png)
     });
   }
 
@@ -1245,6 +1332,7 @@ async function handle(request, response) {
   if (request.method === 'POST' && url.pathname === '/v1/tools/image/expand') {
     if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
     const body = await readJson(request);
+    const deferredDelivery = body && body.deliveryConfirmation === true;
     const modelId = String(body && body.modelId || '').trim().toLowerCase();
     if (!['clipdrop-uncrop', 'kling-image-expand'].includes(modelId)) {
       throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
@@ -1257,8 +1345,14 @@ async function handle(request, response) {
           imageDataUrl: body && body.imageDataUrl,
           toolOptions: body && body.options
         });
-        await settleReservedTool(user.id, usage);
-        return output;
+        const settlement = deferredDelivery ? null : await settleReservedTool(user.id, usage);
+        return annotateToolDelivery(output, {
+          requestId: usage.requestId,
+          credits: usage.reservation.credits,
+          settlement,
+          deferred: deferredDelivery,
+          durationMs: Date.now() - usage.startedAt
+        });
       } catch (error) {
         await releaseFailedToolReservation(user.id, usage);
         throw error;
@@ -1266,7 +1360,8 @@ async function handle(request, response) {
     });
     return send(response, 200, png, {
       'Content-Type': 'image/png',
-      'Content-Disposition': 'attachment; filename="expanded.png"'
+      'Content-Disposition': 'attachment; filename="expanded.png"',
+      ...toolDeliveryHeaders(png)
     });
   }
 
@@ -1343,6 +1438,8 @@ async function handle(request, response) {
       retryAfterMs: result.retryAfterMs,
       resultCount: Array.isArray(result.urls) ? result.urls.length : 0,
       ...(result.providerCost !== undefined ? { providerCost: result.providerCost } : {}),
+      ...(result.errorCode ? { errorCode: String(result.errorCode) } : {}),
+      ...(result.errorMessage ? { errorMessage: String(result.errorMessage) } : {}),
       ...(result.creditsCharged !== undefined ? { creditsCharged: result.creditsCharged } : {}),
       ...(result.creditsReleased !== undefined ? { creditsReleased: result.creditsReleased } : {})
     });
@@ -1350,6 +1447,7 @@ async function handle(request, response) {
 
   if (request.method === 'POST' && url.pathname === '/v1/tools/image/download') {
     const body = await readJson(request);
+    const deferredDelivery = body && body.deliveryConfirmation === true;
     const modelId = String(body && body.modelId || '').trim().toLowerCase();
     if (!ai302Enabled(imageToolFlag(modelId))) return disabledTool(response);
     const index = Number(body && body.index);
@@ -1372,6 +1470,7 @@ async function handle(request, response) {
     }
     let png;
     let settlement;
+    let adjustedCredits;
     try {
       png = await downloadAi302ImageResult(result.urls[index]);
       if (TOPAZ_IMAGE_TOOL_IDS.has(modelId) && Number.isInteger(Number(result.providerCost))) {
@@ -1387,13 +1486,21 @@ async function handle(request, response) {
           error.status = error.code === 'insufficient-credits' ? 402 : 503;
           throw error;
         }
+        adjustedCredits = adjustment.credits;
       }
-      settlement = await settleToolUsage(
-        user.id,
-        result.accountingRequestId,
-        'succeeded',
-        result.accountingDurationMs
-      );
+      settlement = deferredDelivery ? null : await settleToolUsage(
+          user.id,
+          result.accountingRequestId,
+          'succeeded',
+          result.accountingDurationMs
+        );
+      annotateToolDelivery(png, {
+        requestId: result.accountingRequestId,
+        credits: adjustedCredits ?? result.credits,
+        settlement,
+        deferred: deferredDelivery,
+        durationMs: result.accountingDurationMs
+      });
     } catch (error) {
       try {
         await settleToolUsage(user.id, result.accountingRequestId, 'failed', result.accountingDurationMs);
@@ -1403,15 +1510,14 @@ async function handle(request, response) {
     return send(response, 200, png, {
       'Content-Type': 'image/png',
       'Content-Disposition': `attachment; filename="${modelId}-${index + 1}.png"`,
-      ...(Number.isFinite(Number(settlement && settlement.creditsCharged))
-        ? { 'X-Messs-Credits-Charged': String(Number(settlement.creditsCharged)) }
-        : {})
+      ...toolDeliveryHeaders(png)
     });
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/tools/image/upscale') {
     if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
     const body = await readJson(request);
+    const deferredDelivery = body && body.deliveryConfirmation === true;
     const modelId = String(body && body.modelId || '').trim().toLowerCase();
     if (!['clipdrop-upscale', 'generative-upscale'].includes(modelId)) {
       throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
@@ -1421,8 +1527,14 @@ async function handle(request, response) {
       const usage = await reserveFixedTool(user.id, providerId, requestId);
       try {
         const output = await generativeUpscaleImage({ imageDataUrl: body && body.imageDataUrl });
-        await settleReservedTool(user.id, usage);
-        return output;
+        const settlement = deferredDelivery ? null : await settleReservedTool(user.id, usage);
+        return annotateToolDelivery(output, {
+          requestId: usage.requestId,
+          credits: usage.reservation.credits,
+          settlement,
+          deferred: deferredDelivery,
+          durationMs: Date.now() - usage.startedAt
+        });
       } catch (error) {
         await releaseFailedToolReservation(user.id, usage);
         throw error;
@@ -1430,13 +1542,15 @@ async function handle(request, response) {
     });
     return send(response, 200, png, {
       'Content-Type': 'image/png',
-      'Content-Disposition': 'attachment; filename="quality-enhanced.png"'
+      'Content-Disposition': 'attachment; filename="quality-enhanced.png"',
+      ...toolDeliveryHeaders(png)
     });
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/tools/image/erase') {
     if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
     const body = await readJson(request);
+    const deferredDelivery = body && body.deliveryConfirmation === true;
     const modelId = String(body && body.modelId || '').trim().toLowerCase();
     if (modelId !== 'cleanup') {
       throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
@@ -1445,8 +1559,14 @@ async function handle(request, response) {
       const usage = await reserveFixedTool(user.id, modelId, requestId);
       try {
         const output = await cleanupImageObjects({ imageDataUrl: body && body.imageDataUrl, maskImageDataUrl: body && body.maskDataUrl });
-        await settleReservedTool(user.id, usage);
-        return output;
+        const settlement = deferredDelivery ? null : await settleReservedTool(user.id, usage);
+        return annotateToolDelivery(output, {
+          requestId: usage.requestId,
+          credits: usage.reservation.credits,
+          settlement,
+          deferred: deferredDelivery,
+          durationMs: Date.now() - usage.startedAt
+        });
       } catch (error) {
         await releaseFailedToolReservation(user.id, usage);
         throw error;
@@ -1454,7 +1574,8 @@ async function handle(request, response) {
     });
     return send(response, 200, png, {
       'Content-Type': 'image/png',
-      'Content-Disposition': 'attachment; filename="erased.png"'
+      'Content-Disposition': 'attachment; filename="erased.png"',
+      ...toolDeliveryHeaders(png)
     });
   }
 
@@ -1474,7 +1595,11 @@ async function handle(request, response) {
           userId: user.id
         }, {
           accountingRequestId: usage.requestId,
-          credits: usage.reservation.credits
+          credits: usage.reservation.credits,
+          // Hyper3D fetches the source image from a short-lived gateway relay.
+          // Pass the resolved public origin explicitly so a Railway deployment
+          // without AI_GATEWAY_PUBLIC_URL still uses its public domain.
+          publicBaseUrl: configuredGatewayPublicUrl()
         });
         return {
           ...created,
@@ -1505,6 +1630,7 @@ async function handle(request, response) {
   if (request.method === 'POST' && url.pathname === '/v1/tools/3d/download') {
     if (!ai302Enabled(AI302_FLAGS.hunyuan3d) && !ai302Enabled(AI302_FLAGS.hyper3d) && !ai302Enabled(AI302_FLAGS.tripo3d)) return disabledTool(response);
     const body = await readJson(request);
+    const deferredDelivery = body && body.deliveryConfirmation === true;
     const glb = await downloadThreeDModel({
       taskToken: body && body.taskToken,
       userId: user.id
@@ -1512,11 +1638,13 @@ async function handle(request, response) {
       touchCredits: ({ requestId: accountingRequestId }) => touchToolUsage(user.id, accountingRequestId),
       settleCredits: ({ requestId: accountingRequestId, status, durationMs }) => settleToolUsage(
         user.id, accountingRequestId, status, durationMs
-      )
+      ),
+      deferSuccessfulSettlement: deferredDelivery
     });
     return send(response, 200, glb, {
       'Content-Type': 'model/gltf-binary',
-      'Content-Disposition': 'attachment; filename="model.glb"'
+      'Content-Disposition': 'attachment; filename="model.glb"',
+      ...toolDeliveryHeaders(glb)
     });
   }
 
@@ -1562,13 +1690,18 @@ async function handle(request, response) {
   if (request.method === 'POST' && url.pathname === '/v1/tools/video/download') {
     if (!ai302Enabled(AI302_FLAGS.topaz)) return disabledTool(response);
     const body = await readJson(request);
+    const deferredDelivery = body && body.deliveryConfirmation === true;
     const video = await downloadVideoUpscaleResult({
       taskToken: body && body.taskToken,
       userId: user.id
-    }, toolAccountingCallbacks(user.id, 'topaz-video-upscale'));
+    }, {
+      ...toolAccountingCallbacks(user.id, 'topaz-video-upscale'),
+      deferSuccessfulSettlement: deferredDelivery
+    });
     return send(response, 200, video, {
       'Content-Type': 'video/mp4',
-      'Content-Disposition': 'attachment; filename="enhanced-video.mp4"'
+      'Content-Disposition': 'attachment; filename="enhanced-video.mp4"',
+      ...toolDeliveryHeaders(video)
     });
   }
 
@@ -1641,6 +1774,41 @@ async function handle(request, response) {
     return send(response, 200, publicVideoJob(job));
   }
 
+  if (request.method === 'POST' && url.pathname === '/v1/media/video/tasks/confirm') {
+    const body = await readJson(request);
+    const taskToken = String(body && body.taskToken || '').trim();
+    if (!validTaskToken(taskToken) || !taskToken.startsWith('d_')) {
+      return send(response, 404, { code: 'video-task-not-found', message: 'Video task not found.' });
+    }
+    const settlement = await settleVideoDownload(user.id, taskToken, {
+      contentType: body && body.contentType,
+      bytes: Math.min(MAX_GENERATED_VIDEO_BYTES, Math.max(0, Math.round(Number(body && body.bytes) || 0)))
+    });
+    if (!settlement || settlement.ok !== true) {
+      const insufficient = settlement && settlement.reason === 'insufficient-credits';
+      throw Object.assign(new Error(insufficient
+        ? 'The final provider cost exceeded the available point balance. No points were charged.'
+        : 'The video charge could not be finalized.'), {
+        code: insufficient ? 'insufficient-credits' : 'video-job-finalization-failed',
+        status: insufficient ? 402 : 503
+      });
+    }
+    return send(response, 200, { settlement });
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/media/video/tasks/release') {
+    const body = await readJson(request);
+    const taskToken = String(body && body.taskToken || '').trim();
+    if (!validTaskToken(taskToken) || !taskToken.startsWith('d_')) {
+      return send(response, 404, { code: 'video-task-not-found', message: 'Video task not found.' });
+    }
+    const released = await failVideoDownload(user.id, taskToken, {
+      code: 'local-delivery-failed',
+      message: 'The generated video could not be saved to the local canvas.'
+    });
+    return send(response, 200, { settlement: released });
+  }
+
   if (request.method === 'POST' && url.pathname === '/v1/media/video/tasks/download') {
     const body = await readJson(request);
     if (!validTaskToken(body.taskToken)) {
@@ -1682,11 +1850,12 @@ async function handle(request, response) {
         code: 'video-download-failed', status: 502
       });
     }
-    const settlement = await settleVideoDownload(user.id, body.taskToken, {
+    const deferredDelivery = String(body.taskToken).startsWith('d_');
+    const settlement = deferredDelivery ? null : await settleVideoDownload(user.id, body.taskToken, {
       contentType: downloaded.contentType,
       bytes: downloaded.buffer.length
     });
-    if (!settlement || settlement.ok !== true) {
+    if (!deferredDelivery && (!settlement || settlement.ok !== true)) {
       const insufficient = settlement && settlement.reason === 'insufficient-credits';
       throw Object.assign(new Error(insufficient
         ? 'The final provider cost exceeded the available point balance. No points were charged.'
@@ -1698,8 +1867,12 @@ async function handle(request, response) {
     return send(response, 200, downloaded.buffer, {
       'Content-Type': downloaded.contentType,
       'Content-Disposition': 'attachment; filename=generated-video.mp4',
-      'X-Messs-Credits-Estimated': String(Math.max(0, Number(settlement.creditsEstimated) || 0)),
-      'X-Messs-Credits-Charged': String(Math.max(0, Number(settlement.creditsCharged) || 0))
+      'X-Messs-Credits-Estimated': String(Math.max(0, Number(
+        deferredDelivery ? result.creditsEstimated : settlement.creditsEstimated
+      ) || 0)),
+      ...(deferredDelivery
+        ? { 'X-Messs-Delivery-Pending': '1' }
+        : { 'X-Messs-Credits-Charged': String(Math.max(0, Number(settlement.creditsCharged) || 0)) })
     });
   }
   if (request.method === 'POST' && url.pathname === '/v1/usage/quote') {
@@ -1769,14 +1942,27 @@ async function handle(request, response) {
           controller.signal
         ), { signal: controller.signal });
         clearTimeout(timeout);
-        await settleUsage(requestId, 'succeeded', Date.now() - startedAt);
+        const settlement = body.deliveryConfirmation
+          ? null
+          : await settleUsage(requestId, 'succeeded', Date.now() - startedAt);
+        result.estimatedCredits = Math.max(0, Number(reservation.credits) || 0);
+        result.deliveryPending = body.deliveryConfirmation === true;
+        if (settlement && Number.isFinite(Number(settlement.creditsCharged))) {
+          result.creditsCharged = Math.max(0, Number(settlement.creditsCharged));
+        }
         return result;
       } catch (error) {
         try { await settleUsage(requestId, 'failed', Date.now() - startedAt); } catch (settlementError) {}
         throw error;
       }
     });
-    return send(response, 200, media, { 'Content-Type': 'application/octet-stream' });
+    return send(response, 200, media, {
+      'Content-Type': 'application/octet-stream',
+      'X-Messs-Credits-Estimated': String(Math.max(0, Number(media.estimatedCredits) || 0)),
+      ...(media.deliveryPending
+        ? { 'X-Messs-Delivery-Pending': '1' }
+        : { 'X-Messs-Credits-Charged': String(Math.max(0, Number(media.creditsCharged) || 0)) })
+    });
   }
   const reservation = await reserveUsage(user.id, kind, requestId, body);
   if (!reservation.ok) return deniedReservation(response, reservation);

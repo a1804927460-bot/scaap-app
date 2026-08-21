@@ -423,6 +423,10 @@ async function settledDocumentedTask(providerId, task, payload, userId, options)
     urls: status === 'succeeded' ? nestedResultUrls(payload) : [],
     accountingRequestId: task.accountingRequestId,
     accountingDurationMs: Math.max(0, (Math.floor(Number(options.now ?? Date.now()) / 1000) - task.issuedAt) * 1000),
+    ...(status === 'failed' ? {
+      errorCode: 'image-tool-failed',
+      errorMessage: 'Image processing failed.'
+    } : {}),
     ...(settlement && Number.isFinite(Number(settlement.creditsCharged))
       ? { creditsCharged: Number(settlement.creditsCharged) }
       : {}),
@@ -615,6 +619,10 @@ async function pollAsyncImageTask(expectedProviderId, path, { taskToken, userId 
     urls: status === 'succeeded' ? safeResultUrls(response.images) : [],
     accountingRequestId: task.accountingRequestId,
     accountingDurationMs: Math.max(0, (Math.floor(Number(options.now ?? Date.now()) / 1000) - task.issuedAt) * 1000),
+    ...(status === 'failed' ? {
+      errorCode: 'image-tool-failed',
+      errorMessage: 'Image processing failed.'
+    } : {}),
     ...(settlement && Number.isFinite(Number(settlement.creditsCharged))
       ? { creditsCharged: Number(settlement.creditsCharged) }
       : {}),

@@ -40,4 +40,11 @@ function appendAiModelLabel(container, provider, options = {}) {
     sparkle.setAttribute('aria-hidden', 'true');
     container.appendChild(sparkle);
   }
+  if (kind === 'chaser-pro' && options.chaserBadge !== false) {
+    const badge = document.createElement('span');
+    badge.className = 'ai-model-chaser-badge';
+    badge.textContent = 'PRO';
+    badge.setAttribute('aria-hidden', 'true');
+    container.appendChild(badge);
+  }
 }
