@@ -388,6 +388,46 @@ test('MiniMax H3 sends typed image, video, and audio references and preserves of
     }
   });
 });
+test('reference copyright policy rejections keep a specific public-safe error code', async () => {
+  const previousFetch = globalThis.fetch;
+  await withEnvironment({ ATLASCLOUD_API_KEY: 'atlas-test-key' }, async () => {
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return jsonResponse({
+        error: {
+          code: 'InputImageSensitiveContentDetected.PolicyViolation',
+          message: 'The request failed because the input image may be related to copyright restrictions. Request ID: private-upstream-id'
+        }
+      }, 400);
+    };
+    try {
+      await assert.rejects(
+        createVideoTask({
+          providerId: 'video-3',
+          prompt: 'animate this image',
+          resolution: '720P',
+          duration: 6,
+          aspectRatio: '3:4',
+          videoMode: 'first-frame',
+          urls: ['https://cdn.example.test/reference.png'],
+          referenceMediaTypes: ['image']
+        }),
+        (error) => {
+          assert.equal(error.code, 'reference-policy-rejected');
+          assert.equal(error.status, 400);
+          assert.match(error.message, /copyrighted or restricted content/i);
+          assert.equal(error.message.includes('private-upstream-id'), false);
+          assert.equal(error.message.includes('Atlas'), false);
+          return true;
+        }
+      );
+      assert.equal(calls, 1, 'a policy rejection must not be retried through another upstream');
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+});
 test('legacy synchronous video compatibility still creates, polls, and downloads MiniMax output', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({ MINIMAX_API_KEY: 'minimax-test-key' }, async () => {

@@ -56,3 +56,15 @@ test('unexpected aborts are exposed as retryable provider interruptions', () => 
     message: 'The selected AI provider connection was interrupted. Please retry shortly.'
   });
 });
+
+test('reference policy rejections preserve their dedicated safe code', () => {
+  const error = Object.assign(new Error('The reference image may contain copyrighted or restricted content.'), {
+    status: 400,
+    code: 'reference-policy-rejected'
+  });
+  assert.deepEqual(publicGatewayError(error), {
+    status: 400,
+    code: 'reference-policy-rejected',
+    message: 'The reference image may contain copyrighted or restricted content.'
+  });
+});

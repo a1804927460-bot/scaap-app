@@ -4207,6 +4207,13 @@ function conciseAiErrorMessage(error, context = {}) {
       'The AI service is temporarily busy. No points were charged; please retry shortly.'
     );
   }
+  if (code === 'reference-policy-rejected') {
+    return localizedMessage(
+      'The reference image may contain copyrighted or restricted content. Choose another reference image. No points were charged.',
+      '参考图片可能涉及版权或受限内容，请更换参考图后重试。本次未扣积分。',
+      '참조 이미지에 저작권 또는 제한된 콘텐츠가 포함되었을 수 있습니다. 다른 이미지를 선택해 다시 시도하세요. 포인트는 차감되지 않았습니다.'
+    );
+  }
   if (code === 'provider-request-failed') {
     return localizedMessage(
       'The generation request was not accepted. Check the reference files and settings, then try again.',
@@ -6136,6 +6143,7 @@ function butlerFailure(error, fallbackMessage) {
     'delivery-status-conflict': 'This Butler result was already settled differently.',
     'provider-auth-failed': 'The AI service credential was rejected. Ask the administrator to update it.',
     'provider-request-failed': 'The generation request was not accepted. Check the reference files and settings, then try again.',
+    'reference-policy-rejected': 'The reference image may contain copyrighted or restricted content. Choose another reference image. No points were charged.',
     'provider-invalid-response': 'The AI service returned an invalid result. Please try again.',
     'ai302-unauthorized': 'The AI service credential is invalid. Ask the administrator to update it.',
     'ai302-balance-exhausted': 'The AI service balance is insufficient.',

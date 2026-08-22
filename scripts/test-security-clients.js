@@ -467,6 +467,8 @@ function testButlerDesktopBridgeSurface() {
     assert.match(mainSource, new RegExp(channel));
   });
   assert.match(mainSource, /sanitizeImageForButler/);
+  assert.match(mainSource, /code === 'reference-policy-rejected'[\s\S]*?参考图片可能涉及版权或受限内容[\s\S]*?本次未扣积分/,
+    'Reference policy failures should be explained without exposing the upstream provider.');
   assert.match(clientSource, /\/v1\/tools\/video\/uploads[\s\S]*rawBody:\s*chunk[\s\S]*uploadId/);
   assert.match(mainSource, /assertValidGlbBuffer\(buffer\)/);
   assert.match(mainSource, /'pending_queue'[\s\S]*?'waiting_to_run'[\s\S]*?\? 'queued'/,

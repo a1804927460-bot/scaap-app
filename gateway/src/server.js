@@ -2034,6 +2034,7 @@ const server = http.createServer((request, response) => {
       'provider-secret-missing': 'The selected AI model is missing its server credential.',
       'provider-auth-failed': 'The selected AI provider rejected its server credential.',
       'provider-request-failed': 'The generation request was not accepted. Check the reference files and settings, then try again.',
+      'reference-policy-rejected': 'The reference image may contain copyrighted or restricted content. Choose another reference image. No points were charged.',
       'provider-invalid-response': 'The generation service returned an invalid result. Please try again.',
       'provider-rate-limited': 'The generation service is busy. Please try again shortly.',
       'provider-timeout': 'The selected AI provider timed out while accepting the task. No points were charged; please retry shortly.',

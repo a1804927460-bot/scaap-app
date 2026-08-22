@@ -660,15 +660,21 @@ async function responseJson(response, providerName = 'Video provider') {
     const rawMessage = providerResponseErrorMessage(payload)
       || `${providerName} request failed (HTTP ${response.status}).`;
     const channelUnavailable = providerChannelConfigurationUnavailable(rawMessage);
+    const referencePolicyRejected = /\bInputImageSensitiveContentDetected\b|input image may be related to copyright restrictions/i
+      .test(`${upstreamCode} ${rawMessage}`);
     const retryAfter = Number(response.headers && response.headers.get && response.headers.get('retry-after'));
     const retryable = channelUnavailable || response.status === 429 || response.status >= 500;
-    throw Object.assign(new Error(channelUnavailable
-      ? 'The video provider channel is temporarily unavailable.'
-      : safeProviderText(rawMessage, `${providerName} request failed.`)), {
+    throw Object.assign(new Error(referencePolicyRejected
+      ? 'The reference image may contain copyrighted or restricted content. Choose another reference image.'
+      : channelUnavailable
+        ? 'The video provider channel is temporarily unavailable.'
+        : safeProviderText(rawMessage, `${providerName} request failed.`)), {
       status: response.status,
-      code: channelUnavailable
-        ? 'provider-channel-unavailable'
-        : response.status === 429 ? 'provider-rate-limited' : (retryable ? 'provider-temporarily-unavailable' : 'provider-request-failed'),
+      code: referencePolicyRejected
+        ? 'reference-policy-rejected'
+        : channelUnavailable
+          ? 'provider-channel-unavailable'
+          : response.status === 429 ? 'provider-rate-limited' : (retryable ? 'provider-temporarily-unavailable' : 'provider-request-failed'),
       upstreamCode: safeProviderText(upstreamCode, ''),
       retryable,
       retryAfterMs: Number.isFinite(retryAfter) && retryAfter > 0
