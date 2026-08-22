@@ -547,7 +547,7 @@ assert.match(
 );
 assert.match(
   boardStyles,
-  /\.board-panel\.is-fullscreen:has\(\.board-agent-panel:not\(\.is-hidden\)\) \.board-bottom-bar \{[\s\S]*?left:\s*calc\(\(100% - var\(--agent-w, 360px\)\) \/ 2\)/,
+  /\.board-panel\.is-fullscreen:has\(\.board-agent-panel:not\(\.is-hidden\)\) \.board-bottom-bar \{[\s\S]*?left:\s*calc\(\(100% - var\(--agent-w, 420px\)\) \/ 2\)/,
   'The fullscreen toolbar must stay centered in the drawable canvas when Agent is open.'
 );
 assert.match(
@@ -1238,9 +1238,11 @@ assert.match(
 );
 assert.match(
   contextMenuSource,
-  /function renderCanvasUsageDetails[\s\S]*?breakdown\.image[\s\S]*?breakdown\.video[\s\S]*?breakdown\['3d'\][\s\S]*?higher of the original charge and the current price/,
-  'Canvas usage details must reprice settled work conservatively while retaining the original charge for audit.'
+  /function renderCanvasUsageDetails[\s\S]*?breakdown\.image[\s\S]*?breakdown\.video[\s\S]*?breakdown\['3d'\][\s\S]*?latest price table/,
+  'Canvas usage details must show the current repriced totals.'
 );
+assert.doesNotMatch(contextMenuSource, /Original settlement record|\u539f\u59cb\u7ed3\u7b97\u8bb0\u5f55/,
+  'The obsolete original-settlement metric must not be exposed in the UI.');
 assert.match(indexHtml, /id="canvas-usage-overlay"[\s\S]*?id="canvas-usage-summary"[\s\S]*?id="canvas-usage-rows"/,
   'Canvas usage needs an accessible summary and detailed rows dialog.');
 assert.match(

@@ -1722,12 +1722,14 @@ async function handle(request, response) {
 
     const startedAt = Date.now();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5 * 60_000);
+    const timeout = setTimeout(() => controller.abort(new DOMException(
+      'The video provider did not accept the task in time.',
+      'TimeoutError'
+    )), 5 * 60_000);
     timeout.unref?.();
-    request.once('aborted', () => controller.abort());
-    response.once('close', () => {
-      if (!response.writableEnded) controller.abort();
-    });
+    // The task identity is persisted before provider submission. Keep the
+    // submission alive across a short client/Railway disconnect so a retry
+    // resumes the same task instead of turning a paid request into a failure.
     try {
       const providerTask = await videoGenerationGate.run(
         user.id,
@@ -1931,27 +1933,32 @@ async function handle(request, response) {
       const startedAt = Date.now();
       try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 20 * 60_000);
+        const timeout = setTimeout(() => controller.abort(new DOMException(
+          'The image provider did not finish the task in time.',
+          'TimeoutError'
+        )), 20 * 60_000);
         timeout.unref?.();
-        request.once('aborted', () => controller.abort());
-        response.once('close', () => {
-          if (!response.writableEnded) controller.abort();
-        });
-        const result = await imageGenerationGate.run(user.id, () => generateMedia(
-          kind,
-          { ...body, operationId: requestId },
-          controller.signal
-        ), { signal: controller.signal });
-        clearTimeout(timeout);
-        const settlement = body.deliveryConfirmation
-          ? null
-          : await settleUsage(requestId, 'succeeded', Date.now() - startedAt);
-        result.estimatedCredits = Math.max(0, Number(reservation.credits) || 0);
-        result.deliveryPending = body.deliveryConfirmation === true;
-        if (settlement && Number.isFinite(Number(settlement.creditsCharged))) {
-          result.creditsCharged = Math.max(0, Number(settlement.creditsCharged));
+        // Image requests are idempotent and their result remains cached. Do
+        // not cancel the paid upstream task merely because the response edge
+        // closes; the desktop can reconnect with the same operation ID.
+        try {
+          const result = await imageGenerationGate.run(user.id, () => generateMedia(
+            kind,
+            { ...body, operationId: requestId },
+            controller.signal
+          ), { signal: controller.signal });
+          const settlement = body.deliveryConfirmation
+            ? null
+            : await settleUsage(requestId, 'succeeded', Date.now() - startedAt);
+          result.estimatedCredits = Math.max(0, Number(reservation.credits) || 0);
+          result.deliveryPending = body.deliveryConfirmation === true;
+          if (settlement && Number.isFinite(Number(settlement.creditsCharged))) {
+            result.creditsCharged = Math.max(0, Number(settlement.creditsCharged));
+          }
+          return result;
+        } finally {
+          clearTimeout(timeout);
         }
-        return result;
       } catch (error) {
         try { await settleUsage(requestId, 'failed', Date.now() - startedAt); } catch (settlementError) {}
         throw error;

@@ -15,7 +15,7 @@ const migration = read('supabase', 'migrations', '202608220001_workshop_posts.sq
 const followupMigration = read('supabase', 'migrations', '202608220002_workshop_prompt_and_delete.sql');
 
 assert.match(html, /id="section-workshop" class="app-section workshop-section"/);
-['workshop-grid', 'workshop-publish-overlay', 'workshop-detail-overlay', 'workshop-select-from-canvas', 'workshop-detail-prompt', 'workshop-detail-reference', 'workshop-detail-delete', 'workshop-canvas-target-overlay', 'workshop-canvas-target-list', 'workshop-canvas-target-confirm'].forEach((id) => {
+['workshop-grid', 'workshop-publish-overlay', 'workshop-detail-overlay', 'workshop-select-from-canvas', 'workshop-detail-prompt', 'workshop-copy-title', 'workshop-copy-description', 'workshop-copy-prompt', 'workshop-detail-delete', 'workshop-canvas-target-overlay', 'workshop-canvas-target-list', 'workshop-canvas-target-confirm'].forEach((id) => {
   assert.match(html, new RegExp(`id="${id}"`), `Workshop is missing ${id}`);
 });
 assert.match(html, /<script src="js\/workshop\.js"><\/script>/);
@@ -30,12 +30,14 @@ assert.match(workshop, /WorkshopState\.sort === 'newest'[\s\S]*?b\.clicks - a\.c
 assert.match(workshop, /prompt: String\(raw\.prompt/);
 assert.match(workshop, /workshopPostPrompt\(post\)/);
 assert.match(workshop, /workshopCanDeletePost\(post\)/);
-assert.match(workshop, /openAiComposerForSelection\([\s\S]*?mode === 'recreate' \? prompt/);
+assert.match(workshop, /openAiComposerForSelection\([\s\S]*?prompt,[\s\S]*?referenceFileIds/);
 assert.match(workshop, /function chooseWorkshopCanvasTarget\([\s\S]*?WorkshopState\.canvasTargetId/);
 assert.match(workshop, /workshop\.importMedia\(post\.id, folderId, targetCanvasId\)/);
 assert.match(workshop, /switchCanvas\(targetCanvasId, \{ enterWorkspace: true \}\)/);
 assert.match(workshop, /referenceFileIds: file \? \[file\.id\] : \[\]/);
 assert.match(workshop, /canvas\.textContent = workshopText\('Open on canvas', '在画布打开'\)/);
+assert.match(workshop, /copyWorkshopDetailText[\s\S]*?navigator\.clipboard\.writeText/);
+assert.doesNotMatch(html, /id="workshop-detail-reference"/);
 assert.match(workshop, /deleteApi \? await deleteApi\(post\.id\)/);
 assert.match(workshop, /textContent/);
 assert.match(main, /workshop_increment_click/);
@@ -48,7 +50,7 @@ assert.match(main, /method: 'DELETE'/);
 assert.match(css, /\.workshop-grid\s*\{/);
 assert.match(css, /\.workshop-overlay\s*\{/);
 assert.match(css, /\.workshop-card-media video \{[^}]*object-fit: contain/s);
-assert.match(css, /\.workshop-detail-media .*max-height: 100%/s);
+assert.match(css, /\.workshop-detail-media[\s\S]*?object-fit: contain/);
 assert.match(css, /\.workshop-canvas-target-dialog[\s\S]*?\.workshop-canvas-target-option\.is-active/);
 assert.match(migration, /create table if not exists public\.workshop_posts/);
 assert.match(migration, /workshop_post_likes/);

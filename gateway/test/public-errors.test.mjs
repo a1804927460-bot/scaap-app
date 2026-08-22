@@ -47,3 +47,12 @@ test('provider timeouts never leak numeric DOMException codes', () => {
     message: 'The selected AI provider timed out while accepting the task.'
   });
 });
+
+test('unexpected aborts are exposed as retryable provider interruptions', () => {
+  const error = new DOMException('This operation was aborted', 'AbortError');
+  assert.deepEqual(publicGatewayError(error), {
+    status: 503,
+    code: 'provider-temporarily-unavailable',
+    message: 'The selected AI provider connection was interrupted. Please retry shortly.'
+  });
+});

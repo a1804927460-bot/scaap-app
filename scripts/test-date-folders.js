@@ -47,6 +47,16 @@ assert.match(
 );
 assert.match(
   sidebarSource,
+  /function initializeDateFolderBranch\(files\)[\s\S]*?todayDateFolderKey\(\)[\s\S]*?expandDateFolderBranch\(preferred, true\)/,
+  'The first date-tree render must expand and focus today, or the newest available date.'
+);
+assert.match(
+  sidebarSource,
+  /dayKey === todayDateFolderKey\(\)[\s\S]*?addEventListener\('dragover'[\s\S]*?handleExternalDrop\(event\.dataTransfer\)/,
+  'Today must accept external file drops without changing the real folder context.'
+);
+assert.match(
+  sidebarSource,
   /if \(activeDate\)[\s\S]*?buildDateFolderLabel\(AppState\.activeDateFolderKey, files\.length, true\)[\s\S]*?buildFileItem\(file\)[\s\S]*?renderDateFolderTree/,
   'Files must render only after a day folder is selected.'
 );

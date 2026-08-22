@@ -17,7 +17,16 @@ const ChatUiState = {
   groupMode: 'create',
   ownAvatarDataUrl: '',
   ownAvatarUserId: null,
-  ownAvatarLoadGeneration: 0
+  ownAvatarLoadGeneration: 0,
+  messagesById: new Map(),
+  favoriteMessageIds: new Set(),
+  hiddenMessageIds: new Set(),
+  reminders: new Map(),
+  reminderTimers: new Map(),
+  multiSelectMode: false,
+  selectedMessageIds: new Set(),
+  readerText: '',
+  pendingForwardText: ''
 };
 
 function chatEl(id) { return document.getElementById(id); }
@@ -62,6 +71,68 @@ function renderChatAvatarElement(element, profile, preferredDataUrl = '') {
 
 function chatCurrentUserId() {
   return ChatUiState.state && ChatUiState.state.user && String(ChatUiState.state.user.id || '').trim() || '';
+}
+
+function chatMessagePreferencesKey(userId = chatCurrentUserId()) {
+  return `messs-chat-message-preferences:${userId || 'signed-out'}`;
+}
+
+function clearChatReminderTimers() {
+  ChatUiState.reminderTimers.forEach((timer) => clearTimeout(timer));
+  ChatUiState.reminderTimers.clear();
+}
+
+function persistChatMessagePreferences() {
+  const userId = chatCurrentUserId();
+  if (!userId) return;
+  const payload = {
+    favorites: [...ChatUiState.favoriteMessageIds],
+    hidden: [...ChatUiState.hiddenMessageIds],
+    reminders: [...ChatUiState.reminders.values()]
+  };
+  try { localStorage.setItem(chatMessagePreferencesKey(userId), JSON.stringify(payload)); } catch (error) {}
+}
+
+function scheduleChatReminder(reminder) {
+  if (!reminder || !reminder.clientId || !Number.isFinite(Number(reminder.remindAt))) return;
+  const clientId = String(reminder.clientId);
+  const previous = ChatUiState.reminderTimers.get(clientId);
+  if (previous) clearTimeout(previous);
+  const delay = Math.max(0, Number(reminder.remindAt) - Date.now());
+  const timer = setTimeout(() => {
+    ChatUiState.reminderTimers.delete(clientId);
+    if (delay > 2_147_000_000) {
+      scheduleChatReminder(reminder);
+      return;
+    }
+    ChatUiState.reminders.delete(clientId);
+    persistChatMessagePreferences();
+    chatNotice(t(`Reminder: ${reminder.body}`, `消息提醒：${reminder.body}`));
+  }, Math.min(delay, 2_147_000_000));
+  ChatUiState.reminderTimers.set(clientId, timer);
+}
+
+function loadChatMessagePreferences(userId) {
+  clearChatReminderTimers();
+  ChatUiState.favoriteMessageIds.clear();
+  ChatUiState.hiddenMessageIds.clear();
+  ChatUiState.reminders.clear();
+  if (!userId) return;
+  try {
+    const parsed = JSON.parse(localStorage.getItem(chatMessagePreferencesKey(userId)) || '{}');
+    (Array.isArray(parsed.favorites) ? parsed.favorites : []).forEach((id) => ChatUiState.favoriteMessageIds.add(String(id)));
+    (Array.isArray(parsed.hidden) ? parsed.hidden : []).forEach((id) => ChatUiState.hiddenMessageIds.add(String(id)));
+    (Array.isArray(parsed.reminders) ? parsed.reminders : []).forEach((reminder) => {
+      if (!reminder || !reminder.clientId || Number(reminder.remindAt) <= Date.now()) return;
+      const safeReminder = {
+        clientId: String(reminder.clientId),
+        body: String(reminder.body || '').slice(0, 500),
+        remindAt: Number(reminder.remindAt)
+      };
+      ChatUiState.reminders.set(safeReminder.clientId, safeReminder);
+      scheduleChatReminder(safeReminder);
+    });
+  } catch (error) {}
 }
 
 async function refreshChatOwnAvatar(expectedUserId = chatCurrentUserId()) {
@@ -197,6 +268,10 @@ function setChatState(next) {
     ChatUiState.ownAvatarUserId = null;
     ChatUiState.ownAvatarDataUrl = '';
     ChatUiState.ownAvatarLoadGeneration += 1;
+    ChatUiState.messagesById.clear();
+    ChatUiState.multiSelectMode = false;
+    ChatUiState.selectedMessageIds.clear();
+    loadChatMessagePreferences(nextUserId);
   }
   ChatUiState.state = safeState;
   if (previousUserId !== nextUserId) loadChatMoments();
@@ -659,6 +734,7 @@ async function openChatConversation(conversationId) {
   ChatUiState.preserveAttachmentsForConversationChange = false;
   ChatUiState.historyCursor = null;
   ChatUiState.renderedMessageIds.clear();
+  exitChatMultiSelect();
   chatEl('chat-thread-empty').hidden = true;
   chatEl('chat-thread').hidden = false;
   chatEl('chat-shell').classList.add('is-thread-open');
@@ -673,6 +749,7 @@ function closeChatThread() {
   ChatUiState.activeConversationId = null;
   ChatUiState.historyCursor = null;
   ChatUiState.renderedMessageIds.clear();
+  exitChatMultiSelect();
   chatEl('chat-thread').hidden = true;
   chatEl('chat-thread-empty').hidden = false;
   chatEl('chat-shell').classList.remove('is-thread-open');
@@ -708,21 +785,316 @@ async function loadChatHistory(older) {
   }
 }
 
+function chatMessageIsText(message) {
+  return !!message && !message.recalledAt && (!message.kind || message.kind === 'text');
+}
+
+function chatMessageProfile(message, own = message && message.senderId === chatCurrentUserId()) {
+  if (own) return ChatUiState.state && ChatUiState.state.profile || { id: chatCurrentUserId(), displayName: t('Me', '我') };
+  const conversation = activeChatConversation();
+  if (!conversation) return { id: message && message.senderId, displayName: t('Messs user', 'Messs 用户') };
+  if (conversation.type === 'group') {
+    return (conversation.members || []).find((member) => member.id === message.senderId)
+      || { id: message.senderId, displayName: t('Group member', '群成员') };
+  }
+  return conversation.other || { id: message.senderId, displayName: t('Messs user', 'Messs 用户') };
+}
+
+async function copyChatText(text) {
+  const value = String(text || '');
+  if (!value) return false;
+  let copied = false;
+  if (typeof writePlainTextToClipboard === 'function') copied = await writePlainTextToClipboard(value);
+  else {
+    try { await navigator.clipboard.writeText(value); copied = true; } catch (error) {}
+  }
+  chatNotice(copied ? t('Copied.', '已复制。') : t('Could not copy the text.', '无法复制文字。'));
+  return copied;
+}
+
+function closeChatProfileModal() {
+  chatEl('chat-profile-modal').hidden = true;
+}
+
+function openChatProfileModal(profile, preferredDataUrl = '') {
+  const safeProfile = chatPublicProfile(profile) || { displayName: t('Messs user', 'Messs 用户') };
+  renderChatAvatarElement(chatEl('chat-profile-avatar'), safeProfile, preferredDataUrl);
+  chatEl('chat-profile-name').textContent = safeProfile.displayName || t('Messs user', 'Messs 用户');
+  chatEl('chat-profile-email').textContent = safeProfile.email || '';
+  chatEl('chat-profile-email').hidden = !safeProfile.email;
+  chatEl('chat-profile-id').textContent = safeProfile.id || t('Unavailable', '暂无');
+  chatEl('chat-profile-modal').hidden = false;
+}
+
+function closeChatReaderModal() {
+  chatEl('chat-reader-modal').hidden = true;
+  ChatUiState.readerText = '';
+}
+
+function openChatReaderModal(text) {
+  ChatUiState.readerText = String(text || '');
+  chatEl('chat-reader-body').textContent = ChatUiState.readerText;
+  chatEl('chat-reader-modal').hidden = false;
+}
+
+function closeChatForwardModal() {
+  chatEl('chat-forward-modal').hidden = true;
+  ChatUiState.pendingForwardText = '';
+}
+
+function openChatForwardModal(text) {
+  const body = String(text || '').trim();
+  if (!body) return;
+  ChatUiState.pendingForwardText = body;
+  const list = chatEl('chat-forward-list');
+  list.replaceChildren();
+  const conversations = ChatUiState.state && ChatUiState.state.conversations || [];
+  conversations.forEach((conversation) => {
+    const profile = chatConversationProfile(conversation);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'chat-forward-option';
+    button.appendChild(chatAvatar(profile));
+    const copy = document.createElement('span');
+    copy.className = 'chat-forward-option-copy';
+    const name = document.createElement('strong');
+    name.textContent = profile.displayName || t('Messs user', 'Messs 用户');
+    const detail = document.createElement('small');
+    detail.textContent = conversation.type === 'group'
+      ? t(`${conversation.memberCount || conversation.members.length} members`, `${conversation.memberCount || conversation.members.length} 位成员`)
+      : profile.email || '';
+    copy.append(name, detail);
+    button.appendChild(copy);
+    button.addEventListener('click', async () => {
+      if (button.disabled) return;
+      button.disabled = true;
+      try {
+        const result = await window.messsAPI.sendChatText(conversation.id, ChatUiState.pendingForwardText);
+        if (!result || !result.ok) throw new Error(result && result.message || t('Forward failed.', '转发失败。'));
+        const shouldRefresh = conversation.id === ChatUiState.activeConversationId;
+        closeChatForwardModal();
+        if (shouldRefresh) await loadChatHistory(false);
+        chatNotice(t('Forwarded.', '已转发。'));
+      } catch (error) {
+        chatNotice(error && error.message || t('Forward failed.', '转发失败。'));
+        button.disabled = false;
+      }
+    });
+    list.appendChild(button);
+  });
+  if (!conversations.length) {
+    const empty = document.createElement('div');
+    empty.className = 'chat-list-empty';
+    empty.textContent = t('No conversations available.', '暂无可转发的会话。');
+    list.appendChild(empty);
+  }
+  chatEl('chat-forward-modal').hidden = false;
+}
+
+function openChatExternalUrl(url) {
+  const opened = window.open(url, '_blank', 'noopener,noreferrer');
+  if (opened) opened.opener = null;
+}
+
+function quoteChatMessage(message) {
+  const input = chatEl('chat-message-input');
+  const quote = `> ${String(message.body || '').replace(/\n/g, '\n> ')}\n\n`;
+  const start = Number.isFinite(input.selectionStart) ? input.selectionStart : input.value.length;
+  const end = Number.isFinite(input.selectionEnd) ? input.selectionEnd : start;
+  input.value = `${input.value.slice(0, start)}${quote}${input.value.slice(end)}`.slice(0, input.maxLength || 8000);
+  const cursor = Math.min(start + quote.length, input.value.length);
+  input.focus();
+  input.setSelectionRange(cursor, cursor);
+  resizeChatComposer();
+}
+
+function toggleChatFavorite(message) {
+  const clientId = String(message.clientId || '');
+  if (!clientId) return;
+  if (ChatUiState.favoriteMessageIds.has(clientId)) ChatUiState.favoriteMessageIds.delete(clientId);
+  else ChatUiState.favoriteMessageIds.add(clientId);
+  persistChatMessagePreferences();
+  const row = chatEl('chat-message-list').querySelector(`[data-client-id="${CSS.escape(clientId)}"]`);
+  if (row) row.classList.toggle('is-favorite', ChatUiState.favoriteMessageIds.has(clientId));
+  chatNotice(ChatUiState.favoriteMessageIds.has(clientId) ? t('Added to favorites.', '已收藏。') : t('Removed from favorites.', '已取消收藏。'));
+}
+
+function hideChatMessageLocally(message) {
+  const clientId = String(message && message.clientId || '');
+  if (!clientId) return;
+  ChatUiState.hiddenMessageIds.add(clientId);
+  ChatUiState.selectedMessageIds.delete(clientId);
+  persistChatMessagePreferences();
+  const row = chatEl('chat-message-list').querySelector(`[data-client-id="${CSS.escape(clientId)}"]`);
+  if (row) row.remove();
+  updateChatMultiSelectBar();
+}
+
+async function deleteChatMessage(message) {
+  const own = message && message.senderId === chatCurrentUserId();
+  const recallReady = ChatUiState.state && ChatUiState.state.cloud && ChatUiState.state.cloud.recallReady === true;
+  if (own && recallReady && message.serverId && !message.recalledAt) {
+    await recallChatMessage(message, { disabled: false });
+    return;
+  }
+  const confirmed = typeof showConfirmDialog === 'function'
+    ? await showConfirmDialog({
+      title: t('Delete message', '删除消息'),
+      message: t('This only removes the message from this device.', '这只会从当前设备隐藏该消息。'),
+      confirmLabel: t('Delete', '删除'),
+      cancelLabel: t('Cancel', '取消')
+    })
+    : true;
+  if (confirmed) hideChatMessageLocally(message);
+}
+
+function setChatReminder(message, delayMs, label) {
+  const reminder = {
+    clientId: String(message.clientId || ''),
+    body: String(message.body || '').slice(0, 500),
+    remindAt: Date.now() + delayMs
+  };
+  if (!reminder.clientId) return;
+  ChatUiState.reminders.set(reminder.clientId, reminder);
+  scheduleChatReminder(reminder);
+  persistChatMessagePreferences();
+  chatNotice(t(`Reminder set for ${label}.`, `已设置${label}提醒。`));
+}
+
+function showChatReminderMenu(message, x, y) {
+  buildAndShowSimpleMenu([
+    { label: t('In 1 hour', '1 小时后'), action: () => setChatReminder(message, 60 * 60 * 1000, t('in 1 hour', '1 小时后')) },
+    { label: t('Tomorrow', '明天'), action: () => setChatReminder(message, 24 * 60 * 60 * 1000, t('tomorrow', '明天')) },
+    { label: t('Next week', '下周'), action: () => setChatReminder(message, 7 * 24 * 60 * 60 * 1000, t('next week', '下周')) }
+  ], x, y, 'chat-reminder-context-menu');
+}
+
+function selectedChatMessages() {
+  return [...chatEl('chat-message-list').querySelectorAll('.chat-message.is-multi-selected')]
+    .map((row) => ChatUiState.messagesById.get(row.dataset.clientId))
+    .filter(chatMessageIsText);
+}
+
+function updateChatMultiSelectBar() {
+  const bar = chatEl('chat-multi-select-bar');
+  const count = ChatUiState.selectedMessageIds.size;
+  bar.hidden = !ChatUiState.multiSelectMode;
+  chatEl('chat-multi-select-count').textContent = t(`${count} selected`, `已选 ${count} 条`);
+  ['chat-multi-copy', 'chat-multi-forward', 'chat-multi-delete'].forEach((id) => { chatEl(id).disabled = count === 0; });
+  chatEl('chat-message-list').querySelectorAll('.chat-message').forEach((row) => {
+    row.classList.toggle('is-multi-selected', ChatUiState.selectedMessageIds.has(row.dataset.clientId));
+  });
+}
+
+function toggleChatMessageSelection(message) {
+  if (!chatMessageIsText(message)) return;
+  const clientId = String(message.clientId || '');
+  if (ChatUiState.selectedMessageIds.has(clientId)) ChatUiState.selectedMessageIds.delete(clientId);
+  else ChatUiState.selectedMessageIds.add(clientId);
+  updateChatMultiSelectBar();
+}
+
+function enterChatMultiSelect(message) {
+  ChatUiState.multiSelectMode = true;
+  ChatUiState.selectedMessageIds.clear();
+  if (chatMessageIsText(message)) ChatUiState.selectedMessageIds.add(String(message.clientId));
+  updateChatMultiSelectBar();
+}
+
+function exitChatMultiSelect() {
+  ChatUiState.multiSelectMode = false;
+  ChatUiState.selectedMessageIds.clear();
+  updateChatMultiSelectBar();
+}
+
+async function copySelectedChatMessages() {
+  await copyChatText(selectedChatMessages().map((message) => message.body || '').join('\n'));
+}
+
+function forwardSelectedChatMessages() {
+  const body = selectedChatMessages().map((message) => message.body || '').join('\n\n');
+  if (body) openChatForwardModal(body);
+}
+
+async function deleteSelectedChatMessages() {
+  const messages = selectedChatMessages();
+  if (!messages.length) return;
+  const confirmed = typeof showConfirmDialog === 'function'
+    ? await showConfirmDialog({
+      title: t('Delete selected messages', '删除所选消息'),
+      message: t('Sent cloud messages will be recalled. Other messages will only be hidden on this device.', '自己发送的云端消息会被撤回，其他消息只会在当前设备隐藏。'),
+      confirmLabel: t('Delete', '删除'),
+      cancelLabel: t('Cancel', '取消')
+    })
+    : true;
+  if (!confirmed) return;
+  const ownId = chatCurrentUserId();
+  const recallReady = ChatUiState.state && ChatUiState.state.cloud && ChatUiState.state.cloud.recallReady === true;
+  let recalledAny = false;
+  let failed = 0;
+  for (const message of messages) {
+    if (message.senderId === ownId && recallReady && message.serverId && !message.recalledAt) {
+      try {
+        const result = await window.messsAPI.recallChatMessage(message.clientId);
+        if (!result || !result.ok) failed += 1;
+        else recalledAny = true;
+      } catch (error) { failed += 1; }
+    } else {
+      ChatUiState.hiddenMessageIds.add(String(message.clientId));
+    }
+  }
+  persistChatMessagePreferences();
+  exitChatMultiSelect();
+  if (recalledAny) await loadChatHistory(false);
+  else messages.forEach((message) => {
+    if (ChatUiState.hiddenMessageIds.has(String(message.clientId))) {
+      chatEl('chat-message-list').querySelector(`[data-client-id="${CSS.escape(String(message.clientId))}"]`)?.remove();
+    }
+  });
+  if (failed) chatNotice(t(`${failed} messages could not be deleted.`, `${failed} 条消息删除失败。`));
+}
+
+function showChatMessageContextMenu(event, message, bubble) {
+  if (!chatMessageIsText(message)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const selected = typeof textSelectionInside === 'function' ? textSelectionInside(bubble) : '';
+  const body = selected || String(message.body || '');
+  const x = event.clientX;
+  const y = event.clientY;
+  buildAndShowSimpleMenu([
+    { label: t('Copy', '复制'), action: () => copyChatText(body) },
+    { label: t('Enlarge reading', '放大阅读'), action: () => openChatReaderModal(body) },
+    { label: t('Translate', '翻译'), action: () => openChatExternalUrl(`https://translate.google.com/?sl=auto&tl=${appLocale().startsWith('zh') ? 'en' : 'zh-CN'}&text=${encodeURIComponent(body)}&op=translate`) },
+    { label: t('Search', '搜索'), action: () => openChatExternalUrl(`https://www.google.com/search?q=${encodeURIComponent(body)}`) },
+    { label: t('Forward', '转发'), action: () => openChatForwardModal(body) },
+    { label: t('Favorite', '收藏'), action: () => toggleChatFavorite(message) },
+    { label: t('Multi-select', '多选'), action: () => enterChatMultiSelect(message) },
+    { label: t('Reminder', '提醒'), action: () => showChatReminderMenu(message, x, y) },
+    { label: t('Quote', '引用'), action: () => quoteChatMessage(message) },
+    { label: t('Delete', '删除'), danger: true, action: () => deleteChatMessage(message) }
+  ], x, y, 'chat-message-context-menu');
+}
+
 function renderChatMessages(messages, prepend) {
   const list = chatEl('chat-message-list');
   const loadButton = chatEl('chat-load-older');
   if (!prepend) {
     [...list.querySelectorAll('.chat-message')].forEach((node) => node.remove());
     ChatUiState.renderedMessageIds.clear();
+    ChatUiState.messagesById.clear();
   }
   const fragment = document.createDocumentFragment();
   messages.forEach((message) => {
+    if (ChatUiState.hiddenMessageIds.has(String(message.clientId))) return;
     if (ChatUiState.renderedMessageIds.has(message.clientId)) return;
     ChatUiState.renderedMessageIds.add(message.clientId);
+    ChatUiState.messagesById.set(String(message.clientId), message);
     fragment.appendChild(createChatMessage(message));
   });
   if (prepend) loadButton.after(fragment);
   else list.appendChild(fragment);
+  updateChatMultiSelectBar();
 }
 
 function createChatMessage(message) {
@@ -731,6 +1103,21 @@ function createChatMessage(message) {
   const row = document.createElement('article');
   row.className = `chat-message ${own ? 'is-own' : 'is-other'}`;
   row.dataset.clientId = message.clientId;
+  row.classList.toggle('is-favorite', ChatUiState.favoriteMessageIds.has(String(message.clientId)));
+  row.classList.toggle('is-multi-selected', ChatUiState.selectedMessageIds.has(String(message.clientId)));
+  const profile = chatMessageProfile(message, own);
+  const avatar = document.createElement('button');
+  avatar.type = 'button';
+  avatar.className = 'chat-avatar chat-message-avatar';
+  avatar.title = t('View account', '查看账号');
+  avatar.setAttribute('aria-label', t('View account', '查看账号'));
+  renderChatAvatarElement(avatar, profile, own ? ChatUiState.ownAvatarDataUrl : '');
+  avatar.addEventListener('click', (event) => {
+    event.stopPropagation();
+    openChatProfileModal(profile, own ? ChatUiState.ownAvatarDataUrl : '');
+  });
+  const main = document.createElement('div');
+  main.className = 'chat-message-main';
   const bubble = document.createElement('div');
   bubble.className = 'chat-message-bubble';
   if (message.recalledAt) {
@@ -786,6 +1173,7 @@ function createChatMessage(message) {
     });
   } else {
     bubble.textContent = message.body || '';
+    bubble.addEventListener('contextmenu', (event) => showChatMessageContextMenu(event, message, bubble));
   }
   const meta = document.createElement('span');
   meta.className = 'chat-message-meta';
@@ -813,13 +1201,19 @@ function createChatMessage(message) {
   }
   const conversation = activeChatConversation();
   if (!own && conversation && conversation.type === 'group') {
-    const sender = (conversation.members || []).find((member) => member.id === message.senderId);
     const senderLabel = document.createElement('span');
     senderLabel.className = 'chat-message-sender';
-    senderLabel.textContent = sender && sender.displayName || t('Group member', '群成员');
+    senderLabel.textContent = profile.displayName || t('Group member', '群成员');
     bubble.prepend(senderLabel);
   }
-  row.append(bubble, meta);
+  main.append(bubble, meta);
+  row.append(avatar, main);
+  row.addEventListener('click', (event) => {
+    if (!ChatUiState.multiSelectMode || !chatMessageIsText(message)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    toggleChatMessageSelection(message);
+  });
   return row;
 }
 
@@ -1105,6 +1499,18 @@ function refreshChatLanguage() {
   setAttr('#chat-message-input', 'aria-label', 'Message', '消息');
   setAttr('#chat-send-btn', 'title', 'Send', '发送');
   setAttr('#chat-send-btn', 'aria-label', 'Send', '发送');
+  setText('#chat-profile-modal header > strong', 'Account details', '账号资料');
+  setAttr('#chat-profile-close', 'aria-label', 'Close', '关闭');
+  setText('#chat-profile-modal dt', 'Messs ID', 'Messs ID');
+  setText('#chat-reader-title', 'Enlarge reading', '放大阅读');
+  setAttr('#chat-reader-close', 'aria-label', 'Close', '关闭');
+  setText('#chat-reader-copy', 'Copy', '复制');
+  setText('#chat-forward-title', 'Forward to', '转发到');
+  setAttr('#chat-forward-close', 'aria-label', 'Close', '关闭');
+  setText('#chat-multi-copy', 'Copy', '复制');
+  setText('#chat-multi-forward', 'Forward', '转发');
+  setText('#chat-multi-delete', 'Delete', '删除');
+  setText('#chat-multi-cancel', 'Cancel', '取消');
   setText('#chat-auth-empty strong', 'Sign in to start chatting', '登录后开始聊天');
   setText('#chat-auth-empty small', 'Sign in to Messs from More Settings', '请在更多设置中登录 Messs');
   setText('#chat-open-settings', 'Open Settings', '打开设置');
@@ -1119,6 +1525,11 @@ function refreshChatLanguage() {
   document.querySelectorAll('.chat-message-image').forEach((node) => {
     if (!node.complete || !node.naturalWidth) node.alt = t('Shared image', '共享图片');
   });
+  document.querySelectorAll('.chat-message-avatar').forEach((node) => {
+    node.title = t('View account', '查看账号');
+    node.setAttribute('aria-label', t('View account', '查看账号'));
+  });
+  updateChatMultiSelectBar();
 
   renderChatShell();
   if (ChatUiState.activeConversationId) loadChatHistory(false);
@@ -1143,6 +1554,23 @@ function initRealtimeChat() {
   chatEl('chat-group-modal').addEventListener('pointerdown', (event) => {
     if (event.target === chatEl('chat-group-modal')) closeChatGroupModal();
   });
+  chatEl('chat-profile-close').addEventListener('click', closeChatProfileModal);
+  chatEl('chat-profile-modal').addEventListener('pointerdown', (event) => {
+    if (event.target === chatEl('chat-profile-modal')) closeChatProfileModal();
+  });
+  chatEl('chat-reader-close').addEventListener('click', closeChatReaderModal);
+  chatEl('chat-reader-copy').addEventListener('click', () => copyChatText(ChatUiState.readerText));
+  chatEl('chat-reader-modal').addEventListener('pointerdown', (event) => {
+    if (event.target === chatEl('chat-reader-modal')) closeChatReaderModal();
+  });
+  chatEl('chat-forward-close').addEventListener('click', closeChatForwardModal);
+  chatEl('chat-forward-modal').addEventListener('pointerdown', (event) => {
+    if (event.target === chatEl('chat-forward-modal')) closeChatForwardModal();
+  });
+  chatEl('chat-multi-copy').addEventListener('click', copySelectedChatMessages);
+  chatEl('chat-multi-forward').addEventListener('click', forwardSelectedChatMessages);
+  chatEl('chat-multi-delete').addEventListener('click', deleteSelectedChatMessages);
+  chatEl('chat-multi-cancel').addEventListener('click', exitChatMultiSelect);
   chatEl('chat-user-search-form').addEventListener('submit', searchChatUser);
   chatEl('chat-load-older').addEventListener('click', () => loadChatHistory(true));
   chatEl('chat-composer').addEventListener('submit', submitChatMessage);
@@ -1181,6 +1609,13 @@ function initRealtimeChat() {
       picker.hidden = true;
       chatEl('chat-emoji-btn').setAttribute('aria-expanded', 'false');
     }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    if (!chatEl('chat-forward-modal').hidden) closeChatForwardModal();
+    else if (!chatEl('chat-reader-modal').hidden) closeChatReaderModal();
+    else if (!chatEl('chat-profile-modal').hidden) closeChatProfileModal();
+    else if (ChatUiState.multiSelectMode) exitChatMultiSelect();
   });
   document.addEventListener('messs:language-changed', refreshChatLanguage);
   document.addEventListener('messs:profile-avatar-updated', (event) => {

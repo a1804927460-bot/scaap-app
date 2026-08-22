@@ -17,6 +17,47 @@ let colorManagementState = { profile: 'auto', activeProfile: 'auto', restartRequ
 let displayP3MediaQuery = null;
 const expandedDateYears = new Set();
 const expandedDateMonths = new Set();
+const initializedDateFolderContexts = new Set();
+let pendingDateFolderFocusKey = null;
+
+function todayDateFolderKey() {
+  return fileDayKey(new Date());
+}
+
+function dateFolderContextKey() {
+  return String(currentFolderContextId() || '__root__');
+}
+
+function expandDateFolderBranch(dayKey, focus = false) {
+  const [year, month] = String(dayKey || '').split('-');
+  if (!year || !month) return;
+  expandedDateYears.add(year);
+  expandedDateMonths.add(`${year}-${month}`);
+  if (focus) pendingDateFolderFocusKey = dayKey;
+}
+
+function initializeDateFolderBranch(files) {
+  const contextKey = dateFolderContextKey();
+  if (initializedDateFolderContexts.has(contextKey)) return;
+  initializedDateFolderContexts.add(contextKey);
+  const groups = groupFilesByDay(files);
+  if (!groups.length) return;
+  const today = todayDateFolderKey();
+  const preferred = groups.some(([dayKey]) => dayKey === today) ? today : groups[0][0];
+  expandDateFolderBranch(preferred, true);
+}
+
+function focusPendingDateFolder(list) {
+  const dayKey = pendingDateFolderFocusKey;
+  if (!dayKey) return;
+  requestAnimationFrame(() => {
+    const row = Array.from(list.querySelectorAll('[data-date-folder-key]'))
+      .find((entry) => entry.dataset.dateFolderKey === dayKey);
+    if (!row) return;
+    pendingDateFolderFocusKey = null;
+    row.scrollIntoView({ block: 'nearest' });
+  });
+}
 
 function appendFileThumbnail(container, file, alt = '') {
   const image = document.createElement('img');
@@ -89,6 +130,7 @@ function selectAllSidebarFiles() {
 function buildDateFolderLabel(dayKey, count, active = false) {
   const label = document.createElement('li');
   label.className = 'file-group-label file-date-folder' + (active ? ' is-active' : '');
+  label.classList.toggle('is-today', dayKey === todayDateFolderKey());
   label.dataset.dateFolderKey = dayKey;
   label.setAttribute('role', active ? 'heading' : 'button');
   if (!active) {
@@ -118,6 +160,22 @@ function buildDateFolderLabel(dayKey, count, active = false) {
         open();
       }
     });
+    if (dayKey === todayDateFolderKey()) {
+      label.addEventListener('dragover', (event) => {
+        if (!Array.from(event.dataTransfer && event.dataTransfer.types || []).includes('Files')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        label.classList.add('is-drop-target');
+      });
+      label.addEventListener('dragleave', () => label.classList.remove('is-drop-target'));
+      label.addEventListener('drop', async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        label.classList.remove('is-drop-target');
+        expandDateFolderBranch(todayDateFolderKey(), true);
+        await handleExternalDrop(event.dataTransfer);
+      });
+    }
   }
   return label;
 }
@@ -170,6 +228,7 @@ function monthFolderLabel(year, month) {
 }
 
 function renderDateFolderTree(list, files) {
+  initializeDateFolderBranch(files);
   const hierarchy = dateFolderHierarchy(files);
   for (const [year, months] of hierarchy) {
     const yearCount = Array.from(months.values()).flat().reduce((sum, group) => sum + group.items.length, 0);
@@ -201,6 +260,7 @@ function renderDateFolderTree(list, files) {
       days.forEach(({ dayKey, items }) => list.appendChild(buildDateFolderLabel(dayKey, items.length)));
     }
   }
+  focusPendingDateFolder(list);
 }
 
 function renderFileList(files) {
@@ -1105,6 +1165,7 @@ function initSidebarDropZone() {
   sidebar.addEventListener('drop', async (e) => {
     if (e.target.closest('.folder-item')) return;
     e.preventDefault();
+    expandDateFolderBranch(todayDateFolderKey(), true);
     await handleExternalDrop(e.dataTransfer);
   });
 }

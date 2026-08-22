@@ -1031,6 +1031,50 @@ async function testLegnextMidjourneyFlow() {
   assert.strictEqual(calls[2].url, 'https://cdn.test/legnext.jpg');
 }
 
+async function testTransientPollAndDownloadRecovery() {
+  const calls = [];
+  const generatedPng = pngHeader(1024, 1024);
+  let pollAttempts = 0;
+  let downloadAttempts = 0;
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (options.method === 'POST') {
+      return jsonResponse({ code: 200, data: { id: 'recoverable-image-task' } });
+    }
+    if (String(url).includes('recoverable-image-task')) {
+      pollAttempts += 1;
+      if (pollAttempts === 1) throw new TypeError('fetch failed');
+      return jsonResponse({
+        code: 200,
+        data: { status: 2, result: '{"url":"https://cdn.test/recovered.png"}' }
+      });
+    }
+    if (String(url) === 'https://cdn.test/recovered.png') {
+      downloadAttempts += 1;
+      if (downloadAttempts === 1) {
+        return { ok: false, status: 503, headers: { get: () => null }, arrayBuffer: async () => Buffer.alloc(0) };
+      }
+      return { ok: true, status: 200, headers: { get: () => null }, arrayBuffer: async () => generatedPng };
+    }
+    throw new Error(`Unexpected recovery URL: ${url}`);
+  };
+
+  const result = await generateMediaBuffer(fetchImpl, {
+    apiKey: 'secret',
+    pollIntervalMs: 800,
+    timeoutMs: 10000
+  }, 'image', {
+    prompt: 'recover after a transient edge failure',
+    size: '1K',
+    aspectRatio: '1:1'
+  }, null, async () => {});
+
+  assert.deepStrictEqual(result, generatedPng);
+  assert.strictEqual(pollAttempts, 2);
+  assert.strictEqual(downloadAttempts, 2);
+  assert.strictEqual(calls.filter((call) => call.options.method === 'POST').length, 1);
+}
+
 function testNestedResultExtraction() {
   const urls = extractMediaUrls({
     data: {
@@ -1067,6 +1111,7 @@ async function main() {
   await testHiggsfieldFlows();
   await testMidjourneyFlow();
   await testLegnextMidjourneyFlow();
+  await testTransientPollAndDownloadRecovery();
   testOpenAiVideoRequest();
   testChatCompatibleImageRequest();
   await testQuickRouterUnifiedVideoFlow();

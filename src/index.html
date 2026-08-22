@@ -1068,6 +1068,7 @@
           <div id="chat-message-list" class="chat-message-list">
             <button id="chat-load-older" class="chat-load-older" type="button" hidden>View older messages</button>
           </div>
+          <div id="chat-multi-select-bar" class="chat-multi-select-bar" hidden><strong id="chat-multi-select-count">0 selected</strong><button id="chat-multi-copy" type="button">Copy</button><button id="chat-multi-forward" type="button">Forward</button><button id="chat-multi-delete" class="is-danger" type="button">Delete</button><button id="chat-multi-cancel" type="button">Cancel</button></div>
           <form id="chat-composer" class="chat-composer">
             <div id="chat-attachment-tray" class="chat-attachment-tray" hidden></div>
             <textarea id="chat-message-input" maxlength="8000" placeholder="Type a message…" aria-label="Message"></textarea>
@@ -1103,6 +1104,29 @@
           <div id="chat-group-friend-list" class="chat-group-friend-list"></div>
           <footer><button id="chat-group-cancel" type="button">Cancel</button><button id="chat-group-submit" type="submit">Create</button></footer>
         </form>
+      </div>
+
+      <div id="chat-profile-modal" class="chat-modal-backdrop" hidden>
+        <section class="chat-profile-modal" role="dialog" aria-modal="true" aria-labelledby="chat-profile-name">
+          <header><strong>账号资料</strong><button id="chat-profile-close" class="chat-icon-button" type="button" aria-label="关闭">x</button></header>
+          <div class="chat-profile-summary"><span id="chat-profile-avatar" class="chat-avatar">M</span><div><strong id="chat-profile-name"></strong><small id="chat-profile-email"></small></div></div>
+          <dl><div><dt>Messs ID</dt><dd id="chat-profile-id"></dd></div></dl>
+        </section>
+      </div>
+
+      <div id="chat-reader-modal" class="chat-modal-backdrop" hidden>
+        <section class="chat-reader-modal" role="dialog" aria-modal="true" aria-labelledby="chat-reader-title">
+          <header><strong id="chat-reader-title">放大阅读</strong><button id="chat-reader-close" class="chat-icon-button" type="button" aria-label="关闭">x</button></header>
+          <div id="chat-reader-body" class="chat-reader-body"></div>
+          <footer><button id="chat-reader-copy" type="button">复制</button></footer>
+        </section>
+      </div>
+
+      <div id="chat-forward-modal" class="chat-modal-backdrop" hidden>
+        <section class="chat-forward-modal" role="dialog" aria-modal="true" aria-labelledby="chat-forward-title">
+          <header><strong id="chat-forward-title">转发到</strong><button id="chat-forward-close" class="chat-icon-button" type="button" aria-label="关闭">x</button></header>
+          <div id="chat-forward-list" class="chat-forward-list"></div>
+        </section>
       </div>
 
       <div id="chat-auth-empty" class="chat-auth-empty" hidden>
@@ -1221,9 +1245,21 @@
       <section class="workshop-dialog workshop-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="workshop-detail-title">
         <button id="workshop-detail-close" class="icon-btn-sm workshop-detail-close" type="button" aria-label="关闭">x</button>
         <div id="workshop-detail-media" class="workshop-detail-media"></div>
-        <div class="workshop-detail-copy"><span id="workshop-detail-type" class="workshop-card-type"></span><h2 id="workshop-detail-title"></h2><p id="workshop-detail-description"></p><div id="workshop-detail-tags" class="workshop-detail-tags"></div><section id="workshop-detail-prompt" class="workshop-detail-prompt" hidden><span>图片提示词</span><p></p></section></div>
+        <div class="workshop-detail-copy">
+          <span id="workshop-detail-type" class="workshop-card-type"></span>
+          <div class="workshop-copy-field workshop-copy-title">
+            <h2 id="workshop-detail-title"></h2>
+            <button id="workshop-copy-title" class="workshop-copy-button" type="button" title="复制标题" aria-label="复制标题"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></button>
+          </div>
+          <div id="workshop-detail-description-row" class="workshop-copy-field workshop-copy-description">
+            <p id="workshop-detail-description"></p>
+            <button id="workshop-copy-description" class="workshop-copy-button" type="button" title="复制描述" aria-label="复制描述"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></button>
+          </div>
+          <div id="workshop-detail-tags" class="workshop-detail-tags"></div>
+          <section id="workshop-detail-prompt" class="workshop-detail-prompt" hidden><header><span>图片提示词</span><button id="workshop-copy-prompt" class="workshop-copy-button" type="button" title="复制提示词" aria-label="复制提示词"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></button></header><p></p></section>
+        </div>
         <div class="workshop-detail-meta"><span id="workshop-detail-author"></span><span id="workshop-detail-created"></span></div>
-        <div class="workshop-detail-actions"><button id="workshop-detail-like" class="workshop-secondary-button" type="button"></button><button id="workshop-detail-share" class="workshop-secondary-button" type="button"></button><button id="workshop-detail-reference" class="workshop-secondary-button" type="button">用作参考图</button><button id="workshop-detail-delete" class="workshop-secondary-button is-danger" type="button" hidden>删除作品</button><button id="workshop-detail-canvas" class="workshop-primary-button" type="button"></button></div>
+        <div class="workshop-detail-actions"><button id="workshop-detail-like" class="workshop-secondary-button" type="button"></button><button id="workshop-detail-share" class="workshop-secondary-button" type="button"></button><button id="workshop-detail-delete" class="workshop-secondary-button is-danger" type="button" hidden>删除作品</button><button id="workshop-detail-canvas" class="workshop-primary-button" type="button"></button></div>
       </section>
     </div>
     <div id="workshop-canvas-target-overlay" class="workshop-overlay workshop-canvas-target-overlay" hidden>

@@ -1,16 +1,16 @@
 'use strict';
 
 const PANEL_LAYOUT_STORAGE_KEY = 'messs.panel-layout.v2';
-const PANEL_LAYOUT_VERSION = 4;
+const PANEL_LAYOUT_VERSION = 5;
 // Values produced by the previous CSS defaults should not permanently
 // override the new responsive default. Values outside this set are user
 // choices and remain intact across the layout migration.
-const LEGACY_AGENT_DEFAULTS = new Set([320, 352, 360, 384, 500, 560]);
+const LEGACY_AGENT_DEFAULTS = new Set([320, 352, 360, 384, 500, 560, 780]);
 const PANEL_LIMITS = {
   sidebar: { min: 176, cssVar: '--sidebar-w', defaultPx: 272, direction: 1 },
   stats: { min: 220, cssVar: '--stats-w', defaultPx: 320, direction: -1 },
   preview: { min: 150, cssVar: '--preview-h', defaultPx: 340, direction: 1 },
-  agent: { min: 220, cssVar: '--agent-w', defaultPx: 360, direction: -1 }
+  agent: { min: 300, cssVar: '--agent-w', defaultPx: 420, direction: -1 }
 };
 
 const MAIN_HORIZONTAL_CHROME_PX = 36;

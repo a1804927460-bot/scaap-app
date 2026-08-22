@@ -8,11 +8,16 @@ export function publicGatewayError(error) {
     || Number(error.code) === 23
     || String(error.code || '').toUpperCase() === 'ETIMEDOUT'
   );
+  const aborted = !timeout && error && error.name === 'AbortError';
   const originalStatus = timeout
     ? 504
-    : Number(error && error.status) || (error && error.name === 'AbortError' ? 499 : 500);
+    : aborted
+      ? 503
+      : Number(error && error.status) || 500;
   const originalCode = timeout
     ? 'provider-timeout'
+    : aborted
+      ? 'provider-temporarily-unavailable'
     : String(error && error.code || (originalStatus >= 500 ? 'gateway-error' : 'bad-request'));
   const providerAuthFailed = PROVIDER_AUTH_STATUSES.has(originalStatus)
     && PROVIDER_ERROR_CODES.has(originalCode)
@@ -27,6 +32,10 @@ export function publicGatewayError(error) {
   return {
     status: originalStatus,
     code: originalCode,
-    message: timeout ? 'The selected AI provider timed out while accepting the task.' : String(error && error.message || '')
+    message: timeout
+      ? 'The selected AI provider timed out while accepting the task.'
+      : aborted
+        ? 'The selected AI provider connection was interrupted. Please retry shortly.'
+        : String(error && error.message || '')
   };
 }

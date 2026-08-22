@@ -316,7 +316,7 @@ async function testGatewayReadRecoveryAndTransportErrors() {
   });
   await assert.rejects(
     () => transportClient.getConfig(),
-    (error) => error && error.name === 'TypeError' && error.code === 'gateway-request-failed' && error.status === 503
+    (error) => error && error.code === 'gateway-request-failed' && error.status === 503
   );
 }
 
@@ -342,6 +342,26 @@ async function testPaidImageCreationRecoversWithOneOperationId() {
     'Image recovery must reuse the original operation ID.'
   );
   assert.strictEqual(calls[0].options.body, calls[1].options.body);
+}
+
+async function testPaidImageRecoversFromUnexpectedAbort() {
+  const operationIds = [];
+  let attempts = 0;
+  const client = new AiGatewayClient({
+    baseUrl: 'https://gateway.example.com',
+    getAccessToken: async () => 'user-jwt',
+    fetchImpl: async (url, options) => {
+      attempts += 1;
+      operationIds.push(options.headers['X-Idempotency-Key']);
+      if (attempts === 1) throw new DOMException('This operation was aborted', 'AbortError');
+      return new Response(Buffer.from([9, 8, 7]), { status: 200 });
+    }
+  });
+
+  const image = await client.generateMedia('image', { prompt: 'resume after an edge abort' });
+  assert.deepStrictEqual(Buffer.from(image), Buffer.from([9, 8, 7]));
+  assert.strictEqual(attempts, 2);
+  assert.strictEqual(operationIds[0], operationIds[1]);
 }
 
 async function testChunkedTopazUpload() {
@@ -500,6 +520,7 @@ async function testOfflineRefreshKeepsLocalIdentity() {
   await testGatewaySessionRecovery();
   await testGatewayReadRecoveryAndTransportErrors();
   await testPaidImageCreationRecoversWithOneOperationId();
+  await testPaidImageRecoversFromUnexpectedAbort();
   testButlerDesktopBridgeSurface();
   console.log('security client tests passed');
 })().catch((error) => {

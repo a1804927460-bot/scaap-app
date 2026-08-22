@@ -363,9 +363,15 @@ function renderWorkshopDetail(post) {
   const created = document.getElementById('workshop-detail-created');
   const tags = document.getElementById('workshop-detail-tags');
   const prompt = document.getElementById('workshop-detail-prompt');
+  const descriptionRow = document.getElementById('workshop-detail-description-row');
+  const promptText = workshopPostPrompt(post);
+  const descriptionText = String(post.description || '').trim();
   if (type) type.textContent = workshopCategoryLabel(post.kind);
   if (title) title.textContent = post.title;
-  if (description) description.textContent = post.description || workshopText('Shared from canvas', '来自画布的分享');
+  if (description) description.textContent = descriptionText;
+  if (descriptionRow) {
+    descriptionRow.hidden = !descriptionText || descriptionText === promptText;
+  }
   if (author) author.textContent = post.ownerName;
   if (created) created.textContent = workshopFormatDate(post.createdAt);
   if (tags) {
@@ -376,14 +382,12 @@ function renderWorkshopDetail(post) {
     }));
   }
   if (prompt) {
-    const promptText = workshopPostPrompt(post);
     prompt.hidden = !promptText;
     prompt.querySelector('p').textContent = promptText;
   }
   const like = document.getElementById('workshop-detail-like');
   const share = document.getElementById('workshop-detail-share');
   const canvas = document.getElementById('workshop-detail-canvas');
-  const reference = document.getElementById('workshop-detail-reference');
   const deleteButton = document.getElementById('workshop-detail-delete');
   if (like) like.textContent = `${post.liked ? '♥' : '♡'} ${post.likes} ${workshopText('Like', '点赞')}`;
   if (share) share.textContent = workshopText('Share', '分享');
@@ -392,12 +396,20 @@ function renderWorkshopDetail(post) {
     canvas.textContent = workshopText('Open on canvas', '在画布打开');
     canvas.disabled = !available;
   }
-  if (reference) {
-    reference.textContent = workshopText('Use as reference', '用作参考图');
-    reference.disabled = !workshopMediaSource(post);
-  }
   if (deleteButton) {
     deleteButton.hidden = !workshopCanDeletePost(post);
+  }
+}
+
+async function copyWorkshopDetailText(targetSelector, label) {
+  const target = document.querySelector(targetSelector);
+  const value = String(target && target.textContent || '').trim();
+  if (!value) return;
+  try {
+    await navigator.clipboard.writeText(value);
+    workshopToast(workshopText(`${label} copied.`, `已复制${label}。`));
+  } catch (error) {
+    workshopToast(workshopText('Copy was blocked by the system.', '系统阻止了复制操作。'));
   }
 }
 
@@ -537,7 +549,6 @@ async function openWorkshopPostOnCanvas(mode = 'recreate') {
   let file = post && workshopFile(post.sourceFileId);
   const prompt = workshopPostPrompt(post);
   if (mode === 'recreate' && !prompt) return;
-  if (mode === 'reference' && !workshopMediaSource(post)) return;
   const targetCanvasId = await chooseWorkshopCanvasTarget();
   if (!targetCanvasId) return;
   if (!file && window.messsAPI?.workshop?.importMedia) {
@@ -565,7 +576,7 @@ async function openWorkshopPostOnCanvas(mode = 'recreate') {
     await addFilesToBoard([file.id], boardViewportCenterCoords().x, boardViewportCenterCoords().y, { selectAdded: true });
   }
   if (typeof openAiComposerForSelection === 'function') {
-    await openAiComposerForSelection(post.kind === 'video' ? 'video' : 'image', mode === 'recreate' ? prompt : '', {
+    await openAiComposerForSelection(post.kind === 'video' ? 'video' : 'image', prompt, {
       referenceFileIds: file ? [file.id] : []
     });
   }
@@ -646,10 +657,20 @@ function refreshWorkshopLanguage() {
   if (publishOpen) publishOpen.querySelector('span').textContent = workshopText('Share work', '分享作品');
   const publishTitle = document.getElementById('workshop-publish-title');
   if (publishTitle) publishTitle.textContent = workshopText('Share work', '分享作品');
-  const promptLabel = document.querySelector('#workshop-detail-prompt > span');
+  const promptLabel = document.querySelector('#workshop-detail-prompt > header > span');
   if (promptLabel) promptLabel.textContent = workshopText('Image prompt', '图片提示词');
-  const reference = document.getElementById('workshop-detail-reference');
-  if (reference) reference.textContent = workshopText('Use as reference', '用作参考图');
+  const copyLabels = [
+    ['workshop-copy-title', 'Copy title', '复制标题'],
+    ['workshop-copy-description', 'Copy description', '复制描述'],
+    ['workshop-copy-prompt', 'Copy prompt', '复制提示词']
+  ];
+  copyLabels.forEach(([id, en, zh]) => {
+    const button = document.getElementById(id);
+    if (!button) return;
+    const label = workshopText(en, zh);
+    button.title = label;
+    button.setAttribute('aria-label', label);
+  });
   const deleteButton = document.getElementById('workshop-detail-delete');
   if (deleteButton) deleteButton.textContent = workshopText('Delete work', '删除作品');
   const canvasTargetTitle = document.getElementById('workshop-canvas-target-title');
@@ -679,7 +700,9 @@ function initWorkshop() {
   document.getElementById('workshop-detail-like')?.addEventListener('click', () => { void toggleWorkshopLike(); });
   document.getElementById('workshop-detail-share')?.addEventListener('click', () => { void shareWorkshopPost(); });
   document.getElementById('workshop-detail-canvas')?.addEventListener('click', () => { void openWorkshopPostOnCanvas('recreate'); });
-  document.getElementById('workshop-detail-reference')?.addEventListener('click', () => { void openWorkshopPostOnCanvas('reference'); });
+  document.getElementById('workshop-copy-title')?.addEventListener('click', () => { void copyWorkshopDetailText('#workshop-detail-title', workshopText('Title', '标题')); });
+  document.getElementById('workshop-copy-description')?.addEventListener('click', () => { void copyWorkshopDetailText('#workshop-detail-description', workshopText('Description', '描述')); });
+  document.getElementById('workshop-copy-prompt')?.addEventListener('click', () => { void copyWorkshopDetailText('#workshop-detail-prompt > p', workshopText('Prompt', '提示词')); });
   document.getElementById('workshop-detail-delete')?.addEventListener('click', () => { void deleteWorkshopPost(); });
   document.getElementById('workshop-canvas-target-close')?.addEventListener('click', () => finishWorkshopCanvasTarget(null));
   document.getElementById('workshop-canvas-target-cancel')?.addEventListener('click', () => finishWorkshopCanvasTarget(null));

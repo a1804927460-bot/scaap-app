@@ -714,7 +714,7 @@ function message(clientId, conversationId, createdAt, extra = {}) {
   assert.match(groupMigration, /'schema_version', 5/i);
   assert.match(groupMigration, /'group_ready', true/i);
   const chatCssSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles', 'chat.css'), 'utf8');
-  assert.match(chatCssSource, /grid-template-columns:\s*64px\s+clamp\(270px, 23vw, 320px\)\s+minmax\(380px, 1fr\)/);
+  assert.match(chatCssSource, /grid-template-columns:\s*64px\s+clamp\(248px, 19vw, 286px\)\s+minmax\(380px, 1fr\)/);
   assert.match(chatCssSource, /\.chat-shell \{[\s\S]*?grid-template-rows:\s*minmax\(0, 1fr\)/,
     'The chat shell row must not grow beyond the application viewport.');
   assert.match(chatCssSource, /\.chat-thread \{[\s\S]*?grid-template-rows:\s*62px\s+minmax\(0, 1fr\)[\s\S]*?overflow:\s*hidden/,
@@ -731,7 +731,7 @@ function message(clientId, conversationId, createdAt, extra = {}) {
   assert.match(chatCssSource, /\.chat-tool-button\[aria-expanded="true"\]/,
     'The emoji trigger should expose a clear active state.');
   const chatMarkup = indexSource.match(/<div id="section-chat"[\s\S]*?<div id="section-market"/i)[0];
-  assert.doesNotMatch(chatMarkup, /Messs ID|chat-own-id|chat-contacts-toggle|chat-contacts-close/i);
+  assert.doesNotMatch(chatMarkup, /chat-own-id|chat-contacts-toggle|chat-contacts-close/i);
   assert.doesNotMatch(chatMarkup, /chat-account-head|chat-own-avatar|chat-sync-btn/i);
   const chatNavMarkup = chatMarkup.match(/<nav class="chat-nav-rail"[\s\S]*?<\/nav>/i)[0];
   assert.doesNotMatch(chatNavMarkup, /<span>Messages<\/span>|<span>Contacts<\/span>|<span>Moments<\/span>/i);
@@ -741,6 +741,24 @@ function message(clientId, conversationId, createdAt, extra = {}) {
   assert.match(chatUiSource, /function chooseChatOwnAvatar[\s\S]*?window\.messsAPI\.chooseProfileAvatar\(\)[\s\S]*?messs:profile-avatar-updated/);
   assert.match(chatUiSource, /showChatAvatarContextMenu[\s\S]*?Change profile image[\s\S]*?chat-avatar-context-menu/);
   assert.match(chatUiSource, /function renderChatAvatarElement[\s\S]*?document\.createElement\('img'\)[\s\S]*?classList\.add\('has-image'\)/);
+  assert.match(chatMarkup, /id="chat-profile-modal"[\s\S]*?id="chat-reader-modal"[\s\S]*?id="chat-forward-modal"/,
+    'Chat should include account, enlarged-reading, and forwarding dialogs.');
+  assert.match(chatMarkup, /id="chat-multi-select-bar"[\s\S]*?id="chat-multi-copy"[\s\S]*?id="chat-multi-forward"[\s\S]*?id="chat-multi-delete"/,
+    'Chat should expose batch operations while messages are selected.');
+  assert.match(chatUiSource, /function chatMessageProfile[\s\S]*?conversation\.members[\s\S]*?message\.senderId/,
+    'Incoming group messages should resolve the sender profile.');
+  assert.match(chatUiSource, /avatar\.className = 'chat-avatar chat-message-avatar'[\s\S]*?avatar\.addEventListener\('click'[\s\S]*?openChatProfileModal/,
+    'Every message avatar should open the account dialog when clicked.');
+  assert.match(chatUiSource, /showChatMessageContextMenu[\s\S]*?Copy', '复制'[\s\S]*?Enlarge reading', '放大阅读'[\s\S]*?Translate', '翻译'[\s\S]*?Search', '搜索'[\s\S]*?Forward', '转发'[\s\S]*?Favorite', '收藏'[\s\S]*?Multi-select', '多选'[\s\S]*?Reminder', '提醒'[\s\S]*?Quote', '引用'[\s\S]*?Delete', '删除'/,
+    'The text-message context menu should keep the requested action order.');
+  assert.match(chatUiSource, /messs-chat-message-preferences:[\s\S]*?favoriteMessageIds[\s\S]*?hiddenMessageIds[\s\S]*?reminders/,
+    'Favorites, local deletion, and reminders should be isolated and persisted per user.');
+  assert.match(chatUiSource, /openChatForwardModal[\s\S]*?window\.messsAPI\.sendChatText\(conversation\.id, ChatUiState\.pendingForwardText\)/,
+    'Forwarding should send the selected text through the existing synchronized chat API.');
+  assert.match(chatUiSource, /deleteChatMessage[\s\S]*?recallChatMessage\(message,[\s\S]*?hideChatMessageLocally/,
+    'Deleting an owned synchronized message should recall it while other deletion remains local.');
+  assert.match(chatCssSource, /\.chat-message-avatar[\s\S]*?\.chat-message-main/,
+    'Message rows should reserve stable space for avatars and content.');
   assert.match(chatCssSource, /\[data-theme="light"\] \.chat-section \{[\s\S]*?--chat-nav-surface:\s*#e3e4e8;[\s\S]*?--chat-list-surface:\s*#e9eaed;/);
   assert.match(chatCssSource, /\.chat-send-button \{[\s\S]*?width:\s*78px;[\s\S]*?background:\s*var\(--chat-button-gradient\)/);
 

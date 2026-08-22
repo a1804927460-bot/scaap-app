@@ -456,7 +456,6 @@ function renderCanvasUsageDetails(result) {
     .forEach((label, index) => { if (tableHeaders[index]) tableHeaders[index].textContent = label; });
   const metrics = [
     [t('Current settlement total', '\u5f53\u524d\u7ed3\u7b97\u603b\u989d'), formatCanvasUsagePoints(totals.credits)],
-    [t('Original settlement record', '\u539f\u59cb\u7ed3\u7b97\u8bb0\u5f55'), formatCanvasUsagePoints(totals.historicalCreditsCharged)],
     [t('AI results', 'AI \u7ed3\u679c'), String(Math.max(0, Number(totals.generations) || 0))],
     [t('Images', '\u56fe\u7247'), `${formatCanvasUsagePoints(breakdown.image && (breakdown.image.estimatedCredits ?? breakdown.image.credits))} / ${Number(breakdown.image && breakdown.image.generations) || 0}`],
     [t('Videos', '\u89c6\u9891'), `${formatCanvasUsagePoints(breakdown.video && (breakdown.video.estimatedCredits ?? breakdown.video.credits))} / ${Number(breakdown.video && breakdown.video.generations) || 0}`],
@@ -475,8 +474,8 @@ function renderCanvasUsageDetails(result) {
   const estimated = Math.max(0, Number(totals.estimated) || 0);
   const notes = [];
   if (estimated > 0) notes.push(t(
-    `${estimated} result${estimated === 1 ? '' : 's'} were recalculated from saved model settings using the latest price table. Settled totals use the higher of the original charge and the current price; original settlements remain available for audit.`,
-    `${estimated} \u6761\u7ed3\u679c\u5df2\u6839\u636e\u4fdd\u5b58\u7684\u6a21\u578b\u53c2\u6570\u6309\u6700\u65b0\u4ef7\u683c\u91cd\u7b97\uff1b\u7ed3\u7b97\u603b\u989d\u53d6\u539f\u59cb\u6263\u8d39\u4e0e\u5f53\u524d\u4ef7\u683c\u4e2d\u7684\u8f83\u9ad8\u503c\uff0c\u539f\u59cb\u7ed3\u7b97\u4fdd\u7559\u4f5c\u4e3a\u5ba1\u8ba1\u8bb0\u5f55\u3002`
+    `${estimated} result${estimated === 1 ? '' : 's'} were recalculated from saved model settings using the latest price table.`,
+    `${estimated} \u6761\u7ed3\u679c\u5df2\u6839\u636e\u4fdd\u5b58\u7684\u6a21\u578b\u53c2\u6570\u6309\u6700\u65b0\u4ef7\u683c\u91cd\u7b97\u3002`
   ));
   if (unknown > 0) notes.push(t(
     `${unknown} result${unknown === 1 ? '' : 's'} do not contain enough model parameters to calculate the latest price and are excluded from the current-price total.`,
