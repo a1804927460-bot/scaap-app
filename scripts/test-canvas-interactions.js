@@ -1085,8 +1085,8 @@ assert.match(
 );
 assert.match(
   contextMenuSource,
-  /function renderCanvasUsageDetails[\s\S]*?breakdown\.image[\s\S]*?breakdown\.video[\s\S]*?breakdown\['3d'\][\s\S]*?latest price table[\s\S]*?not included in the current-price total/,
-  'Canvas usage details must total the latest prices while retaining historical settlements only for audit.'
+  /function renderCanvasUsageDetails[\s\S]*?breakdown\.image[\s\S]*?breakdown\.video[\s\S]*?breakdown\['3d'\][\s\S]*?higher of the original charge and the current price/,
+  'Canvas usage details must reprice settled work conservatively while retaining the original charge for audit.'
 );
 assert.match(indexHtml, /id="canvas-usage-overlay"[\s\S]*?id="canvas-usage-summary"[\s\S]*?id="canvas-usage-rows"/,
   'Canvas usage needs an accessible summary and detailed rows dialog.');
@@ -1112,7 +1112,7 @@ const ledgerSandbox = {
   BUTLER_IMAGE_TOOL_CREDITS: {}
 };
 vm.runInNewContext(
-  `${ledgerSource}\nthis.canvasLedgerApi = { ensureCanvasUsageLedger, recordCanvasUsageFile };`,
+  `${ledgerSource}\nthis.canvasLedgerApi = { ensureCanvasUsageLedger, recordCanvasUsageFile, repriceSettledCanvasUsage };`,
   ledgerSandbox
 );
 const billedFile = {
@@ -1164,6 +1164,18 @@ assert.equal(
   ledgerSandbox.store.data.canvasUsageLedger.find((entry) => entry.sourceFileId === staleVideo.id).creditsCharged,
   151,
   'Canvas history must retain the old settled charge as an audit record.'
+);
+const repricedVideo = ledgerSandbox.canvasLedgerApi.repriceSettledCanvasUsage({
+  ...ledgerSandbox.store.data.canvasUsageLedger.find((entry) => entry.sourceFileId === staleVideo.id),
+  status: 'succeeded'
+});
+assert.equal(repricedVideo.historicalCreditsCharged, 151);
+assert.equal(repricedVideo.creditsCharged, 1216);
+assert.equal(repricedVideo.credits, 1216, 'Settled canvas reports must use the higher current-policy price.');
+assert.equal(
+  ledgerSandbox.store.data.canvasUsageLedger.find((entry) => entry.sourceFileId === staleVideo.id).creditsCharged,
+  151,
+  'Display repricing must not mutate the persisted canvas ledger.'
 );
 assert.match(
   workspaceSource,

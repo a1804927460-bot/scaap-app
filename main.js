@@ -2616,6 +2616,7 @@ function canvasUsageEntryFromFile(file) {
     estimatedCredits: hasCurrentQuote ? Math.max(0, Number(currentCredits))
       : hasSavedEstimate ? Math.max(0, parsedEstimatedCredits)
         : recorded ? Math.max(0, parsedChargedCredits) : null,
+    historicalCreditsCharged: recorded ? Math.max(0, parsedChargedCredits) : null,
     creditsCharged: recorded ? Math.max(0, parsedChargedCredits) : null,
     credits: recorded ? Math.max(0, parsedChargedCredits) : null,
     pricingVersion: hasCurrentQuote ? CREDIT_PRICING_VERSION : savedPricingVersion || null,
@@ -2664,6 +2665,10 @@ function normalizeCanvasUsageEntry(entry) {
       ? butlerThreeDPricingOptions(String(entry.providerId || ''), entry.pricingOptions)
       : null,
     estimatedCredits,
+    historicalCreditsCharged: Number.isFinite(Number(entry.historicalCreditsCharged))
+      && Number(entry.historicalCreditsCharged) >= 0
+      ? Math.max(0, Number(entry.historicalCreditsCharged))
+      : creditsCharged,
     creditsCharged,
     credits: creditsCharged,
     pricingVersion: String(entry.pricingVersion || '').trim().slice(0, 32) || null,
@@ -2720,6 +2725,26 @@ function backfillCanvasUsageEstimate(entry) {
   } catch (error) {
     return entry;
   }
+}
+
+// Usage reports are repriced for display only. The persisted ledger remains
+// an immutable record of what was originally charged, while report totals use
+// the higher of that amount and the active pricing policy.
+function repriceSettledCanvasUsage(entry) {
+  if (!entry || entry.status !== 'succeeded') return entry;
+  const historical = Number(entry.historicalCreditsCharged ?? entry.creditsCharged ?? entry.credits);
+  const current = Number(entry.estimatedCredits);
+  const hasHistorical = Number.isFinite(historical) && historical >= 0;
+  const hasCurrent = Number.isFinite(current) && current >= 0;
+  if (!hasHistorical && !hasCurrent) return entry;
+  const settledCredits = Math.max(hasHistorical ? historical : 0, hasCurrent ? current : 0);
+  return {
+    ...entry,
+    historicalCreditsCharged: hasHistorical ? Math.max(0, historical) : null,
+    creditsCharged: settledCredits,
+    credits: settledCredits,
+    repriced: hasCurrent && (!hasHistorical || current > historical)
+  };
 }
 
 function ensureCanvasUsageLedger() {
@@ -2781,9 +2806,11 @@ async function canvasCreditUsage(canvasId) {
     const key = `request:${requestId}`;
     const local = detailsByKey.get(key) || {};
     const estimatedCredits = Number(entry.estimatedCredits ?? entry.creditsReserved);
-    const creditsCharged = Number(entry.creditsCharged ?? entry.credits);
+    const historicalCreditsCharged = Number(
+      entry.historicalCreditsCharged ?? entry.creditsCharged ?? entry.credits
+    );
     const hasCloudEstimate = Number.isFinite(estimatedCredits) && estimatedCredits >= 0;
-    const hasCloudCharge = Number.isFinite(creditsCharged) && creditsCharged >= 0;
+    const hasCloudCharge = Number.isFinite(historicalCreditsCharged) && historicalCreditsCharged >= 0;
     const cloudResolution = String(entry.resolution || '').trim().slice(0, 40);
     const [cloudQuality, cloudImageResolution] = cloudResolution.includes(':')
       ? cloudResolution.toLowerCase().split(':', 2)
@@ -2803,9 +2830,11 @@ async function canvasCreditUsage(canvasId) {
       duration: Number.isFinite(Number(entry.duration)) ? Number(entry.duration) : local.duration ?? null,
       estimatedCredits: hasCloudEstimate ? Math.max(0, estimatedCredits)
         : local.estimatedCredits ?? null,
-      creditsCharged: hasCloudCharge ? Math.max(0, creditsCharged)
+      historicalCreditsCharged: hasCloudCharge ? Math.max(0, historicalCreditsCharged)
+        : local.historicalCreditsCharged ?? local.creditsCharged ?? null,
+      creditsCharged: hasCloudCharge ? Math.max(0, historicalCreditsCharged)
         : local.creditsCharged ?? null,
-      credits: hasCloudCharge ? Math.max(0, creditsCharged) : local.creditsCharged ?? null,
+      credits: hasCloudCharge ? Math.max(0, historicalCreditsCharged) : local.creditsCharged ?? null,
       pricingVersion: local.pricingVersion || null,
       estimated: local.estimated === true && !hasCloudEstimate,
       status: ['pending', 'succeeded', 'failed'].includes(entry.status)
@@ -2815,17 +2844,21 @@ async function canvasCreditUsage(canvasId) {
   });
   const details = [...detailsByKey.values()]
     .map(backfillCanvasUsageEstimate)
+    .map(repriceSettledCanvasUsage)
     .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
-  const recorded = details.filter((entry) => entry.creditsCharged !== null);
-  const currentlyPriced = details.filter((entry) => entry.estimatedCredits !== null);
+  const recorded = details.filter((entry) => entry.historicalCreditsCharged !== null);
+  const currentlyPriced = details.filter((entry) => entry.credits !== null || entry.estimatedCredits !== null);
   const breakdown = ['image', 'video', '3d'].reduce((result, kind) => {
     const entries = details.filter((entry) => entry.kind === kind);
-    const known = entries.filter((entry) => entry.creditsCharged !== null);
-    const priced = entries.filter((entry) => entry.estimatedCredits !== null);
+    const known = entries.filter((entry) => entry.historicalCreditsCharged !== null);
+    const priced = entries.filter((entry) => entry.credits !== null || entry.estimatedCredits !== null);
     result[kind] = {
       estimatedCredits: entries.reduce((sum, entry) => sum + (Number(entry.estimatedCredits) || 0), 0),
-      creditsCharged: known.reduce((sum, entry) => sum + entry.creditsCharged, 0),
-      credits: priced.reduce((sum, entry) => sum + entry.estimatedCredits, 0),
+      historicalCreditsCharged: known.reduce((sum, entry) => sum + entry.historicalCreditsCharged, 0),
+      creditsCharged: entries.reduce((sum, entry) => sum + (Number(entry.creditsCharged) || 0), 0),
+      credits: entries.reduce((sum, entry) => sum + (
+        entry.status === 'succeeded' ? (Number(entry.credits) || 0) : (Number(entry.estimatedCredits) || 0)
+      ), 0),
       generations: entries.length,
       recorded: known.length,
       unrecorded: entries.length - priced.length
@@ -2837,8 +2870,11 @@ async function canvasCreditUsage(canvasId) {
     canvas: { id: canvas.id, name: canvas.name },
     totals: {
       estimatedCredits: details.reduce((sum, entry) => sum + (Number(entry.estimatedCredits) || 0), 0),
-      creditsCharged: recorded.reduce((sum, entry) => sum + entry.creditsCharged, 0),
-      credits: currentlyPriced.reduce((sum, entry) => sum + entry.estimatedCredits, 0),
+      historicalCreditsCharged: recorded.reduce((sum, entry) => sum + entry.historicalCreditsCharged, 0),
+      creditsCharged: details.reduce((sum, entry) => sum + (Number(entry.creditsCharged) || 0), 0),
+      credits: details.reduce((sum, entry) => sum + (
+        entry.status === 'succeeded' ? (Number(entry.credits) || 0) : (Number(entry.estimatedCredits) || 0)
+      ), 0),
       generations: details.length,
       recorded: recorded.length,
       unrecorded: details.length - currentlyPriced.length,

@@ -59,76 +59,76 @@ function withEnvironment(values, callback) {
 }
 
 test('gateway quote matches the desktop image table', () => {
-  assert.equal(quoteUsage('image', { providerId: 'image-1' }).credits, 37);
-  assert.equal(quoteUsage('image', { providerId: 'image-2' }).credits, 13);
+  assert.equal(quoteUsage('image', { providerId: 'image-1' }).credits, 31);
+  assert.equal(quoteUsage('image', { providerId: 'image-2' }).credits, 11);
   assert.equal(quoteUsage('image', { providerId: 'image-3' }).credits, 5);
-  assert.equal(quoteUsage('image', { providerId: 'image-4' }).credits, 5);
-  assert.equal(quoteUsage('image', { providerId: 'image-5' }).credits, 5);
-  assert.equal(quoteUsage('image', { providerId: 'image-9' }).credits, 7);
-  assert.equal(quoteUsage('image', { providerId: 'image-1', size: '4K' }).credits, 74);
-  assert.equal(quoteUsage('image', { providerId: 'image-2', size: '1K' }).credits, 9);
+  assert.equal(quoteUsage('image', { providerId: 'image-4' }).credits, 4);
+  assert.equal(quoteUsage('image', { providerId: 'image-5' }).credits, 4);
+  assert.equal(quoteUsage('image', { providerId: 'image-9' }).credits, 6);
+  assert.equal(quoteUsage('image', { providerId: 'image-1', size: '4K' }).credits, 62);
+  assert.equal(quoteUsage('image', { providerId: 'image-2', size: '1K' }).credits, 7);
   assert.deepEqual(quoteUsage('image', { providerId: 'image-6', quality: 'high' }), {
-    kind: 'image', providerId: 'image-6', credits: 36, resolution: 'high', quality: 'high',
+    kind: 'image', providerId: 'image-6', credits: 30, resolution: 'high', quality: 'high',
     imageResolution: '1k', billingResolution: 'high:1k', duration: null, requiresActivation: false
   });
-  assert.equal(quoteUsage('image', { providerId: 'image-6', quality: 'low' }).credits, 5);
-  assert.equal(quoteUsage('image', { providerId: 'image-6', quality: 'medium', size: '2K' }).credits, 21);
-  assert.equal(quoteUsage('image', { providerId: 'image-6', quality: 'auto', size: '4K' }).credits, 21);
-  assert.equal(quoteUsage('image', { providerId: 'image-6', quality: 'invalid' }).credits, 13);
+  assert.equal(quoteUsage('image', { providerId: 'image-6', quality: 'low' }).credits, 4);
+  assert.equal(quoteUsage('image', { providerId: 'image-6', quality: 'medium', size: '2K' }).credits, 18);
+  assert.equal(quoteUsage('image', { providerId: 'image-6', quality: 'auto', size: '4K' }).credits, 18);
+  assert.equal(quoteUsage('image', { providerId: 'image-6', quality: 'invalid' }).credits, 11);
   assert.deepEqual(quoteUsage('image', { providerId: 'image-7', size: '720p' }), {
-    kind: 'image', providerId: 'image-7', credits: 5, resolution: '720p', imageResolution: '720p', duration: null, requiresActivation: false
+    kind: 'image', providerId: 'image-7', credits: 4, resolution: '720p', imageResolution: '720p', duration: null, requiresActivation: false
   });
   assert.deepEqual(quoteUsage('image', { providerId: 'image-8', resolution: '1080p' }), {
-    kind: 'image', providerId: 'image-8', credits: 9, resolution: '1080p', imageResolution: '1080p', duration: null, requiresActivation: false
+    kind: 'image', providerId: 'image-8', credits: 7, resolution: '1080p', imageResolution: '1080p', duration: null, requiresActivation: false
   });
   assert.throws(() => quoteUsage('image', { providerId: 'image-free-bypass' }), { code: 'provider-not-allowed' });
 });
 
 test('video quote clamps provider parameters, keeps chat free, and no provider requires activation', () => {
   assert.deepEqual(quoteUsage('video', { providerId: 'video-1', resolution: '2k', duration: 7 }), {
-    kind: 'video', providerId: 'video-1', credits: 119, unitCredits: 17, resolution: '2K', duration: 7, requiresActivation: false
+    kind: 'video', providerId: 'video-1', credits: 112, unitCredits: 16, resolution: '2K', duration: 7, requiresActivation: false
   });
-  assert.equal(quoteUsage('video', { providerId: 'video-1', resolution: '768P', duration: 1 }).credits, 44);
-  assert.equal(quoteUsage('video', { providerId: 'video-1', resolution: '2K', duration: 99 }).credits, 255);
-  assert.equal(quoteUsage('video', { providerId: 'video-1', resolution: '768P', duration: 6, referenceMediaTypes: ['video'] }).credits, 231);
-  assert.equal(quoteUsage('video', { providerId: 'video-1', resolution: '2K', duration: 6, referenceMediaTypes: Array(9).fill('image') }).credits, 122);
+  assert.equal(quoteUsage('video', { providerId: 'video-1', resolution: '768P', duration: 1 }).credits, 40);
+  assert.equal(quoteUsage('video', { providerId: 'video-1', resolution: '2K', duration: 99 }).credits, 240);
+  assert.equal(quoteUsage('video', { providerId: 'video-1', resolution: '768P', duration: 6, referenceMediaTypes: ['video'] }).credits, 210);
+  assert.equal(quoteUsage('video', { providerId: 'video-1', resolution: '2K', duration: 6, referenceMediaTypes: Array(9).fill('image') }).credits, 112);
   assert.deepEqual(
     quoteUsage('video', { providerId: 'video-2', resolution: '720P', duration: -1 }),
     {
-      kind: 'video', providerId: 'video-2', credits: 559, unitCredits: 37.25920000000001,
+      kind: 'video', providerId: 'video-2', credits: 524, unitCredits: 34.9305,
       resolution: '720P', duration: 15, requiresActivation: false
     }
   );
   assert.deepEqual(
     quoteUsage('video', { providerId: 'video-3', resolution: '720P', duration: -1 }),
     {
-      kind: 'video', providerId: 'video-3', credits: 1391, unitCredits: 46.338422742857155,
+      kind: 'video', providerId: 'video-3', credits: 1304, unitCredits: 43.44227132142858,
       resolution: '720P', duration: 30, requiresActivation: false
     }
   );
   assert.deepEqual(quoteUsage('video', { providerId: 'video-2', resolution: '480p', duration: 5 }), {
-    kind: 'video', providerId: 'video-2', credits: 87, unitCredits: 17.325375047619048, resolution: '480P', duration: 5, requiresActivation: false
+    kind: 'video', providerId: 'video-2', credits: 82, unitCredits: 16.242539107142857, resolution: '480P', duration: 5, requiresActivation: false
   });
-  assert.equal(quoteUsage('video', { providerId: 'video-2', resolution: 'unsupported', duration: 6 }).credits, 224);
+  assert.equal(quoteUsage('video', { providerId: 'video-2', resolution: 'unsupported', duration: 6 }).credits, 210);
   assert.deepEqual(quoteUsage('video', { providerId: 'video-3', resolution: '720p', duration: 5 }), {
-    kind: 'video', providerId: 'video-3', credits: 232, unitCredits: 46.33842274285715, resolution: '720P', duration: 5, requiresActivation: false
+    kind: 'video', providerId: 'video-3', credits: 218, unitCredits: 43.44227132142857, resolution: '720P', duration: 5, requiresActivation: false
   });
-  assert.equal(quoteUsage('video', { providerId: 'video-3', resolution: '720p', duration: 10 }).credits, 464);
+  assert.equal(quoteUsage('video', { providerId: 'video-3', resolution: '720p', duration: 10 }).credits, 435);
   assert.deepEqual(quoteUsage('video', { providerId: 'video-3', resolution: '4K-ESR', duration: 10 }), {
-    kind: 'video', providerId: 'video-3', credits: 3536, unitCredits: 353.5841859293334,
+    kind: 'video', providerId: 'video-3', credits: 3315, unitCredits: 331.48517430875,
     resolution: '4K-ESR', duration: 10, requiresActivation: false
   });
-  assert.equal(quoteUsage('video', { providerId: 'video-2', resolution: '720p', duration: 10 }).credits, 373);
-  assert.equal(quoteUsage('video', { providerId: 'video-4', resolution: '720p', duration: 10 }).credits, 259);
+  assert.equal(quoteUsage('video', { providerId: 'video-2', resolution: '720p', duration: 10 }).credits, 350);
+  assert.equal(quoteUsage('video', { providerId: 'video-4', resolution: '720p', duration: 10 }).credits, 243);
   assert.deepEqual(quoteUsage('video', { providerId: 'video-10', resolution: '1080p', duration: 10 }), {
-    kind: 'video', providerId: 'video-11', credits: 516, unitCredits: 51.54285714285715, resolution: '1080P', duration: 10, requiresActivation: false
+    kind: 'video', providerId: 'video-11', credits: 484, unitCredits: 48.32142857142858, resolution: '1080P', duration: 10, requiresActivation: false
   });
   assert.equal(quoteUsage('video', {
     providerId: 'video-12', serviceTier: 'pro', resolution: '1080p', duration: 15
-  }).credits, 827);
+  }).credits, 775);
   assert.equal(quoteUsage('video', {
     providerId: 'video-12', serviceTier: 'standard', resolution: '720p', duration: 15
-  }).credits, 689);
+  }).credits, 646);
   assert.equal(quoteUsage('chat', { providerId: 'chat-1' }).credits, 0);
   assert.equal(quoteUsage('chat', { providerId: 'chat-2' }).credits, 0);
   assert.equal(quoteUsage('chat', { providerId: 'chat-1' }).requiresActivation, false);
@@ -168,7 +168,7 @@ test('reserve sends normalized server-authoritative pricing parameters', async (
     let call;
     const fetchMock = async (url, options) => {
       call = { url, options, body: JSON.parse(options.body) };
-      return jsonResponse({ ok: true, reason: 'reserved', credits: 119, balance: 200, reserved: 119, availableCredits: 81 });
+      return jsonResponse({ ok: true, reason: 'reserved', credits: 112, balance: 200, reserved: 112, availableCredits: 88 });
     };
     const result = await reserveUsage(
       '00000000-0000-4000-8000-000000000001',
@@ -185,11 +185,11 @@ test('reserve sends normalized server-authoritative pricing parameters', async (
       p_request_id: '00000000-0000-4000-8000-000000000002',
       p_resolution: '2K',
       p_duration: 7,
-      p_expected_credits: 119
+      p_expected_credits: 112
     });
     assert.equal(call.options.headers.Authorization, undefined);
     assert.equal(result.ok, true);
-    assert.equal(result.availableCredits, 81);
+    assert.equal(result.availableCredits, 88);
   });
 });
 
@@ -204,16 +204,16 @@ test('reserve exposes insufficient-credit denials', async () => {
   });
 });
 
-test('retail formula applies the safety buffer and 25% gross margin, with one PTC treated as one USD', () => {
-  assert.equal(CREDIT_PRICING_VERSION, '202608220003');
+test('retail formula applies the safety buffer and current segmented gross margins, with one PTC treated as one USD', () => {
+  assert.equal(CREDIT_PRICING_VERSION, '202608220007');
   assert.equal(APP_CREDITS_PER_CNY, 1000 / 70);
-  assert.ok(Math.abs(RETAIL_MARKUP_PERCENT - (100 / 3)) < 1e-12);
-  assert.equal(RETAIL_MULTIPLIER, 4 / 3);
+  assert.ok(Math.abs(RETAIL_MARKUP_PERCENT - (100 / 9)) < 1e-12);
+  assert.equal(RETAIL_MULTIPLIER, 10 / 9);
   assert.equal(PROFIT_PER_REQUEST_CNY, 0);
   assert.equal(USD_TO_CNY, 7.3);
-  assert.equal(quoteRetailCreditsFromCny(1.5), 32);
-  assert.equal(quoteTopazRetailCredits(1), 23);
-  assert.equal(quoteUsage('video', { providerId: 'video-3', resolution: '4K-ESR', duration: 6 }).credits, 3536);
+  assert.equal(quoteRetailCreditsFromCny(1.5), 27);
+  assert.equal(quoteTopazRetailCredits(1), 20);
+  assert.equal(quoteUsage('video', { providerId: 'video-3', resolution: '4K-ESR', duration: 6 }).credits, 3315);
 });
 
 test('Legnext Midjourney uses its dedicated RPC and HD price', async () => {
@@ -233,7 +233,7 @@ test('Legnext Midjourney uses its dedicated RPC and HD price', async () => {
     assert.match(call.url, /\/rpc\/reserve_legnext_credits$/);
     assert.equal(call.body.p_provider_id, 'image-18');
     assert.equal(call.body.p_resolution, '2k');
-    assert.equal(call.body.p_expected_credits, 49);
+    assert.equal(call.body.p_expected_credits, 41);
     assert.equal(result.ok, true);
   });
 });
@@ -247,7 +247,7 @@ test('every account receives the same quote without consulting a pricing-tier RP
       { providerId: 'image-1', size: '4K' },
       async () => { fetchCalls += 1; return jsonResponse({}, 500); }
     );
-    assert.equal(quote.credits, 74);
+    assert.equal(quote.credits, 62);
     assert.equal(fetchCalls, 0);
   });
 });
@@ -277,24 +277,24 @@ test('Butler Topaz tools reserve conservative retail credits and preserve provid
     const calls = [];
     const fetchMock = async (url, options) => {
       calls.push({ url, body: JSON.parse(options.body) });
-      return jsonResponse({ ok: true, reason: 'reserved', credits: 482, availableCredits: 518 });
+      return jsonResponse({ ok: true, reason: 'reserved', credits: 402, availableCredits: 598 });
     };
     const userId = '00000000-0000-4000-8000-000000000031';
     const requestId = '00000000-0000-4000-8000-000000000032';
     const reserved = await reserveToolUsage(userId, requestId, {
       providerId: 'topaz-video-upscale',
       providerCost: 21,
-      credits: 482,
+      credits: 402,
       resolution: '3840x2160',
       duration: 13
     }, fetchMock);
     assert.equal(reserved.providerCost, 21);
-    assert.equal(reserved.credits, 482);
+    assert.equal(reserved.credits, 402);
     assert.equal(reserved.reason, 'reserved');
     assert.equal(calls.length, 1);
     assert.match(calls[0].url, /\/rpc\/reserve_ai_tool_credits$/);
     assert.equal(calls[0].body.p_provider_cost, 21);
-    assert.equal(calls[0].body.p_credits, 482);
+    assert.equal(calls[0].body.p_credits, 402);
   });
 });
 
@@ -307,7 +307,7 @@ test('Butler Topaz reservations fail closed when the credit service is unavailab
       () => reserveToolUsage(userId, requestId, {
         providerId: 'topaz-video-upscale',
         providerCost: 21,
-        credits: 482,
+        credits: 402,
         resolution: '3840x2160',
         duration: 13
       }, async () => {
@@ -322,21 +322,21 @@ test('Butler Topaz reservations fail closed when the credit service is unavailab
 
 test('Butler image, enhancement, and 3D tools all use conservative paid pricing', async () => {
   assert.deepEqual(BUTLER_FIXED_RETAIL_CREDITS, {
-    'background-remove': 77,
-    'seededit-v3': 8,
-    'clipdrop-uncrop': 77,
-    'kling-image-expand': 77,
-    cleanup: 77,
-    'clipdrop-upscale': 77,
-    'generative-upscale': 123,
-    'qwen-image-edit-plus': 16,
-    'qwen-image-layered': 8,
-    'super-upscale-v2': 16,
-    erase: 77
+    'background-remove': 64,
+    'seededit-v3': 7,
+    'clipdrop-uncrop': 64,
+    'kling-image-expand': 64,
+    cleanup: 64,
+    'clipdrop-upscale': 64,
+    'generative-upscale': 102,
+    'qwen-image-edit-plus': 13,
+    'qwen-image-layered': 7,
+    'super-upscale-v2': 13,
+    erase: 64
   });
-  assert.equal(quoteThreeDRetailCredits('hunyuan3d'), 62);
-  assert.equal(quoteThreeDRetailCredits('hyper3d'), 108);
-  assert.equal(quoteThreeDRetailCredits('tripo3d', { textureQuality: 'detailed' }), 92);
+  assert.equal(quoteThreeDRetailCredits('hunyuan3d'), 51);
+  assert.equal(quoteThreeDRetailCredits('hyper3d'), 90);
+  assert.equal(quoteThreeDRetailCredits('tripo3d', { textureQuality: 'detailed' }), 77);
   assert.equal(quoteThreeDProviderCostPtcCents('hyper3d'), 70);
   assert.throws(() => quoteButlerRetailCredits('unknown-tool'), { code: 'provider-not-allowed' });
 
@@ -364,12 +364,12 @@ test('Butler image, enhancement, and 3D tools all use conservative paid pricing'
     );
     const threeDRequestId = crypto.randomUUID();
     const threeD = await reserveToolUsage(userId, threeDRequestId, {
-      providerId: 'hyper3d', credits: 108, providerCost: 70, options: {}
+      providerId: 'hyper3d', credits: 90, providerCost: 70, options: {}
     }, async (_url, options) => jsonResponse({
-      ok: true, reason: 'reserved', credits: 108, availableCredits: 892,
+      ok: true, reason: 'reserved', credits: 90, availableCredits: 910,
       request: JSON.parse(options.body)
     }));
-    assert.equal(threeD.credits, 108);
+    assert.equal(threeD.credits, 90);
   });
 });
 
@@ -383,7 +383,7 @@ test('GPT Image 2 reserves the selected quality price through the existing RPC p
       { providerId: 'image-6', quality: 'medium', size: '1K' },
       async (url, options) => {
         call = { url, body: JSON.parse(options.body) };
-        return jsonResponse({ ok: true, reason: 'reserved', credits: 13, availableCredits: 87 });
+        return jsonResponse({ ok: true, reason: 'reserved', credits: 11, availableCredits: 89 });
       }
     );
     assert.match(call.url, /\/rpc\/reserve_atlas_catalog_credits$/);
@@ -394,10 +394,10 @@ test('GPT Image 2 reserves the selected quality price through the existing RPC p
       p_request_id: '00000000-0000-4000-8000-000000000022',
       p_resolution: 'medium:1k',
       p_duration: null,
-      p_expected_credits: 13
+      p_expected_credits: 11
     });
     assert.equal(result.quality, 'medium');
-    assert.equal(result.credits, 13);
+    assert.equal(result.credits, 11);
   });
 });
 
@@ -411,7 +411,7 @@ test('Higgsfield reserves resolution pricing through its server-authoritative RP
       { providerId: 'image-7', size: '1080p' },
       async (url, options) => {
         call = { url, body: JSON.parse(options.body) };
-        return jsonResponse({ ok: true, reason: 'reserved', credits: 9, availableCredits: 91 });
+        return jsonResponse({ ok: true, reason: 'reserved', credits: 7, availableCredits: 93 });
       }
     );
     assert.match(call.url, /\/rpc\/reserve_higgsfield_credits$/);
@@ -422,10 +422,10 @@ test('Higgsfield reserves resolution pricing through its server-authoritative RP
       p_request_id: '00000000-0000-4000-8000-000000000052',
       p_resolution: '1080p',
       p_duration: null,
-      p_expected_credits: 9
+      p_expected_credits: 7
     });
     assert.equal(result.imageResolution, '1080p');
-    assert.equal(result.credits, 9);
+    assert.equal(result.credits, 7);
   });
 });
 
@@ -975,6 +975,17 @@ test('canvas usage migration keeps attribution and custom dates server-authorita
   assert.match(migration, /create or replace function public\.get_ai_usage_summary_between/i);
   assert.match(migration, /make_interval\(mins => normalized_offset\)/i);
   assert.doesNotMatch(migration, /provider_cost|providerCost/);
+});
+
+test('settled usage reports use current policy prices without mutating the immutable ledger', () => {
+  const migration = fs.readFileSync(new URL('../../supabase/migrations/202608220007_reprice_settled_usage_reporting.sql', import.meta.url), 'utf8');
+  assert.match(migration, /create or replace function public\.current_policy_ai_usage_credits/i);
+  assert.match(migration, /historical_credits_charged/i);
+  assert.match(migration, /'historicalCreditsCharged'/i);
+  assert.match(migration, /greatest\(\s*0, coalesce\(usage_row\.credits_charged, 0\), coalesce\(/i);
+  assert.match(migration, /get_canvas_ai_usage_summary/i);
+  assert.match(migration, /get_ai_usage_summary_between/i);
+  assert.match(migration, /get_ai_usage_summary\(/i);
 });
 
 test('usage summary HTTP route remains behind authentication', () => {

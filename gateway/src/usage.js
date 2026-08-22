@@ -9,13 +9,18 @@ import {
 } from './tool-pricing.js';
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
-export const CREDIT_PRICING_VERSION = '202608220003';
+export const CREDIT_PRICING_VERSION = '202608220007';
 const LEGACY_POINTS_PER_CNY = 10;
 const POINTS_PER_CNY = 1000 / 70;
 const POINT_DENOMINATION_SCALE = POINTS_PER_CNY / LEGACY_POINTS_PER_CNY;
-export const RETAIL_GROSS_MARGIN_PERCENT = 25;
+export const IMAGE_GROSS_MARGIN_PERCENT = 10;
+export const VIDEO_GROSS_MARGIN_PERCENT = 20;
+// Existing callers use these names for image quotes. Video quotes below use
+// their dedicated margin multiplier.
+export const RETAIL_GROSS_MARGIN_PERCENT = IMAGE_GROSS_MARGIN_PERCENT;
 export const RETAIL_MULTIPLIER = 1 / (1 - RETAIL_GROSS_MARGIN_PERCENT / 100);
 export const RETAIL_MARKUP_PERCENT = (RETAIL_MULTIPLIER - 1) * 100;
+export const VIDEO_RETAIL_MULTIPLIER = 1 / (1 - VIDEO_GROSS_MARGIN_PERCENT / 100);
 export const UPSTREAM_COST_SAFETY_PERCENT = 10;
 export const UPSTREAM_COST_SAFETY_MULTIPLIER = 1 + UPSTREAM_COST_SAFETY_PERCENT / 100;
 export const USD_TO_CNY = 7.3;
@@ -39,6 +44,14 @@ function retailCreditsFromUpstreamCny(upstreamCny) {
     throw new TypeError('Upstream CNY cost is invalid.');
   }
   return Math.ceil(normalized * UPSTREAM_COST_SAFETY_MULTIPLIER * RETAIL_MULTIPLIER * POINTS_PER_CNY);
+}
+
+function retailVideoCreditsFromUpstreamCny(upstreamCny) {
+  const normalized = Number(upstreamCny);
+  if (!Number.isFinite(normalized) || normalized < 0) {
+    throw new TypeError('Upstream CNY cost is invalid.');
+  }
+  return Math.ceil(normalized * UPSTREAM_COST_SAFETY_MULTIPLIER * VIDEO_RETAIL_MULTIPLIER * POINTS_PER_CNY);
 }
 
 function retailRateTable(upstreamRates) {
@@ -230,8 +243,8 @@ export const VIDEO_CREDITS_PER_SECOND = Object.freeze({
   }),
   // Approved CNY retail prices converted to the current point denomination.
   'video-1': Object.freeze({
-    '768P': retailCreditsFromUpstreamCny(0.50),
-    '2K': retailCreditsFromUpstreamCny(0.80)
+    '768P': retailVideoCreditsFromUpstreamCny(0.50),
+    '2K': retailVideoCreditsFromUpstreamCny(0.80)
   }),
   // Logical Seedance billing uses the higher of the Atlas primary price and
   // the USD/PTC 302 fallback for every resolution the fallback supports.
@@ -460,7 +473,7 @@ export function quoteUsage(kind, request = {}) {
       rates[resolution] * duration,
       Number(VIDEO_MINIMUM_UPSTREAM_CREDITS[providerId]?.[resolution]) || 0
     );
-    const guardedMultiplier = UPSTREAM_COST_SAFETY_MULTIPLIER * RETAIL_MULTIPLIER;
+    const guardedMultiplier = UPSTREAM_COST_SAFETY_MULTIPLIER * VIDEO_RETAIL_MULTIPLIER;
     const unitCredits = providerId === 'video-1'
       ? rates[resolution]
       : (upstreamCredits / duration) * guardedMultiplier;
