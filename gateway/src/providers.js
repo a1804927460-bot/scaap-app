@@ -88,6 +88,11 @@ function configuredProviders() {
       endpoint,
       resultEndpoint: safeServerEndpoint(raw.resultEndpoint) || DEFAULT_RESULT_ENDPOINT,
       models: Array.isArray(raw.models) ? raw.models.map(String).map((v) => v.trim()).filter(Boolean).slice(0, 30) : [],
+      upstreamModels: raw.upstreamModels && typeof raw.upstreamModels === 'object' && !Array.isArray(raw.upstreamModels)
+        ? Object.fromEntries(Object.entries(raw.upstreamModels).slice(0, 30).map(([logical, upstream]) => [
+          String(logical).trim().slice(0, 120), String(upstream).trim().slice(0, 120)
+        ]).filter(([logical, upstream]) => logical && upstream))
+        : {},
       model: String(raw.model || '').trim().slice(0, 120),
       protocol: String(raw.protocol || '').trim().slice(0, 40),
       // Capabilities for catalog models are versioned with the application.
@@ -2000,7 +2005,10 @@ export async function pollVideoTask(providerId, taskId, signal) {
 export async function chat(body, signal) {
   const provider = providerFor('chat', String(body.providerId || ''));
   const requestedModel = String(body.model || '').trim();
-  const model = provider.models.includes(requestedModel) ? requestedModel : provider.models[0];
+  const logicalModel = provider.models.includes(requestedModel) ? requestedModel : provider.models[0];
+  const model = provider.upstreamModels && provider.upstreamModels[logicalModel]
+    ? provider.upstreamModels[logicalModel]
+    : logicalModel;
   return requestChat(fetch, {
     apiKey: provider.apiKey,
     chatEndpoint: provider.endpoint,

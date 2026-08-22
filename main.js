@@ -3568,6 +3568,9 @@ function normalizeChatProviders(value, legacy = {}) {
       name: String(saved.name || (endpoint ? deriveProviderName(endpoint) : '')).trim().slice(0, 40),
       endpoint,
       models: normalizeChatModels(saved.models || saved.model, index === 0 ? DEFAULT_CATALOG_CHAT.models[0] : ''),
+      upstreamModels: saved.upstreamModels && typeof saved.upstreamModels === 'object' && !Array.isArray(saved.upstreamModels)
+        ? saved.upstreamModels
+        : {},
       protocol: String(saved.protocol || '').trim().slice(0, 40)
     };
   });
@@ -3845,6 +3848,7 @@ async function getPublicAiMediaConfig() {
         name: provider.name,
         endpoint: gatewayEndpoint,
         models: provider.models,
+        upstreamModels: provider.upstreamModels,
         capabilities: provider.capabilities,
         protocol: provider.protocol,
         hasOwnApiKey: false,
@@ -6153,7 +6157,7 @@ function butlerFailure(error, fallbackMessage) {
     'ai302-upstream-error': 'The AI service rejected this request.',
     'ai302-invalid-response': 'The AI service returned an unsupported response. Please try again.',
     'ai302-not-configured': 'The AI service is not configured on the server.',
-    'tool-disabled': 'Video enhancement is not enabled on the server.',
+    'tool-disabled': 'This AI tool is temporarily unavailable. Please try again later.',
     'tool-public-url-not-configured': 'The gateway public URL is required for this tool.',
     'tool-asset-capacity-exceeded': 'The video upload relay is busy. Please try again shortly.',
     'body-too-large': 'The video exceeds the gateway upload size limit.',

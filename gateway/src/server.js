@@ -158,7 +158,7 @@ function ai302Enabled(flag) {
 function disabledTool(response) {
   return send(response, 503, {
     code: 'tool-disabled',
-    message: 'This Butler tool is not enabled on the server.'
+    message: 'This AI tool is temporarily unavailable. Please try again later.'
   });
 }
 
@@ -2068,7 +2068,7 @@ const server = http.createServer((request, response) => {
       'three-d-result-invalid': 'The completed 3D task did not contain a GLB model.',
       'tool-public-url-not-configured': 'The public gateway URL is not configured.',
       'tool-asset-capacity-exceeded': 'The temporary tool relay is at capacity.',
-      'tool-disabled': 'This Butler tool is not enabled on the server.',
+      'tool-disabled': 'This AI tool is temporarily unavailable. Please try again later.',
       'tool-asset-not-found': 'Temporary tool asset not found.',
       'invalid-image-tool': 'The selected image tool is not supported.',
       'invalid-image-tool-options': 'The selected image tool options are invalid.',

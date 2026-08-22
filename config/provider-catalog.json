@@ -910,6 +910,7 @@
       "name": "AI Chat",
       "endpoint": "https://api.quickrouter.ai/v1/chat/completions",
       "models": ["gpt-5.6-luna"],
+      "upstreamModels": { "gpt-5.6-luna": "gpt-5.6" },
       "protocol": "openai-chat",
       "requiresActivation": false,
       "keyEnv": "QUICKROUTER_API_KEY"

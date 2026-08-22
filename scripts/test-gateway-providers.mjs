@@ -188,6 +188,9 @@ assert.equal(config.providers.find((provider) => provider.id === 'chat-1').proto
 assert.equal(config.providers.find((provider) => provider.id === 'chat-2').name, 'AI Chat');
 assert.equal(config.providers.find((provider) => provider.id === 'chat-2').protocol, 'openai-chat');
 assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-2').models, ['gpt-5.6-luna']);
+assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-2').upstreamModels, {
+  'gpt-5.6-luna': 'gpt-5.6'
+});
 
 const publicText = JSON.stringify(config);
 assert.equal(publicText.includes('quickrouter-secret'), false);
@@ -425,6 +428,16 @@ assert.deepEqual(JSON.parse(chatCalls[0].options.body), {
   stream: false
 });
 
+const lunaReply = await chat({
+  providerId: 'chat-2',
+  model: 'gpt-5.6-luna',
+  prompt: 'Use the Luna logical model.',
+  messages: [{ role: 'user', content: 'Use the Luna logical model.' }]
+});
+assert.deepEqual(lunaReply, { text: 'Gateway chat reply', usage: null });
+assert.equal(JSON.parse(chatCalls[1].options.body).model, 'gpt-5.6');
+assert.notEqual(JSON.parse(chatCalls[1].options.body).model, 'gpt-5.6-luna');
+
 const advancedChatCalls = [];
 globalThis.fetch = async (url, options = {}) => {
   advancedChatCalls.push({ url: String(url), options });
@@ -444,7 +457,7 @@ advancedChatCalls.forEach((call) => {
   assert.equal(call.url, 'https://api.quickrouter.ai/v1/chat/completions');
   assert.equal(call.options.headers.Authorization, 'Bearer quickrouter-secret');
   const body = JSON.parse(call.options.body);
-  assert.equal(body.model, 'gpt-5.6-luna');
+  assert.equal(body.model, 'gpt-5.6');
   assert.equal(body.stream, false);
 });
 
