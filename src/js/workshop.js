@@ -9,6 +9,8 @@ const WorkshopState = {
   posts: [],
   localPosts: [],
   activePost: null,
+  canvasTargetId: null,
+  canvasTargetResolver: null,
   publishFileIds: [],
   publishFileId: null,
   loaded: false,
@@ -45,6 +47,7 @@ function workshopNormalizePost(raw) {
     mimeType: String(raw.mimeType || raw.mime_type || '').trim(),
     sourceFileName: String(raw.sourceFileName || raw.source_file_name || '').trim(),
     sourceFileId: String(raw.sourceFileId || raw.source_file_id || '').trim() || null,
+    prompt: String(raw.prompt || '').trim().slice(0, 12000),
     tags,
     clicks: Math.max(0, Math.floor(Number(raw.clicks) || 0)),
     likes: Math.max(0, Math.floor(Number(raw.likes) || 0)),
@@ -81,6 +84,18 @@ function workshopFileMediaSource(file, kind) {
 function workshopMediaSource(post) {
   if (post.mediaUrl) return post.mediaUrl;
   return workshopFileMediaSource(workshopFile(post.sourceFileId), post.kind);
+}
+
+function workshopPostPrompt(post) {
+  if (post && post.prompt) return post.prompt;
+  const file = post && workshopFile(post.sourceFileId);
+  return String(file && file.aiGeneration && file.aiGeneration.prompt || '').trim().slice(0, 12000);
+}
+
+function workshopCanDeletePost(post) {
+  if (!post) return false;
+  return post.localOnly || post.ownerId === 'local'
+    || (!!WorkshopState.currentUserId && post.ownerId === WorkshopState.currentUserId);
 }
 
 function workshopFormatDate(value) {
@@ -133,7 +148,8 @@ function workshopCreateMedia(post, detail = false) {
   if (post.kind === 'video') {
     media.muted = true;
     media.playsInline = true;
-    media.preload = 'metadata';
+    media.preload = detail ? 'auto' : 'metadata';
+    media.controls = detail;
   }
   media.addEventListener('error', () => {
     frame.classList.add('is-missing');
@@ -321,6 +337,7 @@ async function publishWorkshop() {
       kind,
       sourceFileId: file.id,
       sourceFileName: file.name,
+      prompt: workshopPostPrompt({ sourceFileId: file.id }),
       createdAt: new Date().toISOString(),
       localOnly: true
     });
@@ -345,6 +362,7 @@ function renderWorkshopDetail(post) {
   const author = document.getElementById('workshop-detail-author');
   const created = document.getElementById('workshop-detail-created');
   const tags = document.getElementById('workshop-detail-tags');
+  const prompt = document.getElementById('workshop-detail-prompt');
   if (type) type.textContent = workshopCategoryLabel(post.kind);
   if (title) title.textContent = post.title;
   if (description) description.textContent = post.description || workshopText('Shared from canvas', '来自画布的分享');
@@ -357,16 +375,101 @@ function renderWorkshopDetail(post) {
       return chip;
     }));
   }
+  if (prompt) {
+    const promptText = workshopPostPrompt(post);
+    prompt.hidden = !promptText;
+    prompt.querySelector('p').textContent = promptText;
+  }
   const like = document.getElementById('workshop-detail-like');
   const share = document.getElementById('workshop-detail-share');
   const canvas = document.getElementById('workshop-detail-canvas');
+  const reference = document.getElementById('workshop-detail-reference');
+  const deleteButton = document.getElementById('workshop-detail-delete');
   if (like) like.textContent = `${post.liked ? '♥' : '♡'} ${post.likes} ${workshopText('Like', '点赞')}`;
   if (share) share.textContent = workshopText('Share', '分享');
   if (canvas) {
-    const available = !!workshopFile(post.sourceFileId);
-    canvas.textContent = available ? workshopText('Open on canvas', '在画布打开') : workshopText('Online work', '在线作品');
+    const available = !!workshopPostPrompt(post) && !!workshopMediaSource(post);
+    canvas.textContent = workshopText('Open on canvas', '在画布打开');
     canvas.disabled = !available;
   }
+  if (reference) {
+    reference.textContent = workshopText('Use as reference', '用作参考图');
+    reference.disabled = !workshopMediaSource(post);
+  }
+  if (deleteButton) {
+    deleteButton.hidden = !workshopCanDeletePost(post);
+  }
+}
+
+function workshopCanvasRecords() {
+  const currentId = typeof activeCanvasId === 'function' ? activeCanvasId() : AppState.activeCanvasId;
+  return [...(Array.isArray(AppState.canvases) ? AppState.canvases : [])].sort((a, b) => {
+    return Number(b.pinned === true) - Number(a.pinned === true)
+      || Number(b.id === currentId) - Number(a.id === currentId)
+      || new Date(b.lastOpenedAt || b.updatedAt || b.createdAt || 0) - new Date(a.lastOpenedAt || a.updatedAt || a.createdAt || 0);
+  });
+}
+
+function renderWorkshopCanvasTargets() {
+  const list = document.getElementById('workshop-canvas-target-list');
+  const empty = document.getElementById('workshop-canvas-target-empty');
+  const confirm = document.getElementById('workshop-canvas-target-confirm');
+  if (!list) return;
+  const currentId = typeof activeCanvasId === 'function' ? activeCanvasId() : AppState.activeCanvasId;
+  const canvases = workshopCanvasRecords();
+  list.replaceChildren();
+  canvases.forEach((canvas) => {
+    const project = (AppState.canvasProjects || []).find((entry) => entry.id === canvas.projectId);
+    const option = document.createElement('button');
+    option.type = 'button';
+    option.className = 'workshop-canvas-target-option';
+    option.dataset.canvasId = canvas.id;
+    option.setAttribute('role', 'option');
+    option.setAttribute('aria-selected', String(canvas.id === WorkshopState.canvasTargetId));
+    option.classList.toggle('is-active', canvas.id === WorkshopState.canvasTargetId);
+    const icon = document.createElement('span');
+    icon.className = 'workshop-canvas-target-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.innerHTML = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h6M7 16h8"/></svg>';
+    const copy = document.createElement('span');
+    copy.className = 'workshop-canvas-target-copy';
+    const name = document.createElement('strong');
+    name.textContent = canvas.name || workshopText('Untitled canvas', '未命名画布');
+    const meta = document.createElement('small');
+    const projectName = project ? project.name : workshopText('General', '常规');
+    meta.textContent = `${projectName}${canvas.id === currentId ? ` · ${workshopText('Current', '当前')}` : ''}`;
+    copy.append(name, meta);
+    const check = document.createElement('i');
+    check.textContent = '✓';
+    check.setAttribute('aria-hidden', 'true');
+    option.append(icon, copy, check);
+    list.appendChild(option);
+  });
+  if (empty) empty.hidden = canvases.length > 0;
+  if (confirm) confirm.disabled = !canvases.length || !WorkshopState.canvasTargetId;
+}
+
+function finishWorkshopCanvasTarget(canvasId = null) {
+  const resolver = WorkshopState.canvasTargetResolver;
+  WorkshopState.canvasTargetResolver = null;
+  WorkshopState.canvasTargetId = null;
+  setWorkshopOverlay('workshop-canvas-target-overlay', false);
+  if (resolver) resolver(canvasId);
+}
+
+function chooseWorkshopCanvasTarget() {
+  const overlay = document.getElementById('workshop-canvas-target-overlay');
+  const canvases = workshopCanvasRecords();
+  if (!overlay || !canvases.length) {
+    workshopToast(workshopText('Create a canvas before opening this work.', '请先创建一个画布，再打开这个作品。'));
+    return Promise.resolve(null);
+  }
+  if (WorkshopState.canvasTargetResolver) finishWorkshopCanvasTarget(null);
+  const currentId = typeof activeCanvasId === 'function' ? activeCanvasId() : AppState.activeCanvasId;
+  WorkshopState.canvasTargetId = (canvases.find((canvas) => canvas.id === currentId) || canvases[0]).id;
+  renderWorkshopCanvasTargets();
+  setWorkshopOverlay('workshop-canvas-target-overlay', true);
+  return new Promise((resolve) => { WorkshopState.canvasTargetResolver = resolve; });
 }
 
 async function recordWorkshopClick(post) {
@@ -429,16 +532,73 @@ async function shareWorkshopPost() {
   }
 }
 
-async function openWorkshopPostOnCanvas() {
+async function openWorkshopPostOnCanvas(mode = 'recreate') {
   const post = WorkshopState.activePost;
-  const file = post && workshopFile(post.sourceFileId);
-  if (!file) return;
+  let file = post && workshopFile(post.sourceFileId);
+  const prompt = workshopPostPrompt(post);
+  if (mode === 'recreate' && !prompt) return;
+  if (mode === 'reference' && !workshopMediaSource(post)) return;
+  const targetCanvasId = await chooseWorkshopCanvasTarget();
+  if (!targetCanvasId) return;
+  if (!file && window.messsAPI?.workshop?.importMedia) {
+    const folderId = AppState.activeFolderId && AppState.activeFolderId !== 'default' ? AppState.activeFolderId : null;
+    const result = await window.messsAPI.workshop.importMedia(post.id, folderId, targetCanvasId);
+    if (!result || !result.ok || !result.file) {
+      workshopToast(workshopText('The work could not be added to the canvas.', '作品无法添加到画布。'));
+      return;
+    }
+    file = result.file;
+    AppState.files = [file, ...AppState.files.filter((entry) => entry.id !== file.id)];
+    renderFileList(currentFileListScope());
+    renderFolderGridIfActive();
+    if (result.unlocked && result.unlocked.length && typeof refreshAchievements === 'function') await refreshAchievements();
+  }
+  if (!file) {
+    workshopToast(workshopText('The media is no longer available.', '这个作品的图片已经不可用。'));
+    return;
+  }
   closeWorkshopDetail();
   document.querySelector('.section-tab[data-section="messs"]')?.click();
-  if (typeof showCanvasWorkspace === 'function') showCanvasWorkspace();
+  if (typeof switchCanvas === 'function') switchCanvas(targetCanvasId, { enterWorkspace: true });
+  else if (typeof showCanvasWorkspace === 'function') showCanvasWorkspace();
   if (typeof addFilesToBoard === 'function' && typeof boardViewportCenterCoords === 'function') {
     await addFilesToBoard([file.id], boardViewportCenterCoords().x, boardViewportCenterCoords().y, { selectAdded: true });
   }
+  if (typeof openAiComposerForSelection === 'function') {
+    await openAiComposerForSelection(post.kind === 'video' ? 'video' : 'image', mode === 'recreate' ? prompt : '', {
+      referenceFileIds: file ? [file.id] : []
+    });
+  }
+}
+
+async function deleteWorkshopPost() {
+  const post = WorkshopState.activePost;
+  if (!workshopCanDeletePost(post)) return;
+  const confirmed = await showConfirmDialog({
+    title: workshopText('Delete work', '删除作品'),
+    message: workshopText('This work will be removed from Workshop.', '删除后作品将从创意工坊移除。'),
+    confirmLabel: workshopText('Delete', '删除'),
+    cancelLabel: workshopText('Cancel', '取消'),
+    danger: true
+  });
+  if (!confirmed) return;
+
+  if (post.localOnly || post.ownerId === 'local') {
+    WorkshopState.localPosts = WorkshopState.localPosts.filter((entry) => entry.id !== post.id);
+  } else {
+    const deleteApi = window.messsAPI?.workshop?.delete;
+    const result = deleteApi ? await deleteApi(post.id).catch(() => null) : null;
+    if (!result || !result.ok) {
+      workshopToast(workshopText('Only your own work can be deleted.', '只能删除自己发布的作品。'));
+      return;
+    }
+    WorkshopState.localPosts = WorkshopState.localPosts.filter((entry) => entry.id !== post.id);
+  }
+  saveWorkshopLocalPosts();
+  WorkshopState.posts = WorkshopState.posts.filter((entry) => entry.id !== post.id);
+  closeWorkshopDetail();
+  renderWorkshop();
+  workshopToast(workshopText('Work deleted.', '作品已删除。'));
 }
 
 async function loadWorkshopPosts() {
@@ -482,7 +642,28 @@ function refreshWorkshopLanguage() {
   });
   const search = document.getElementById('workshop-search-input');
   if (search) search.placeholder = workshopText('Search shared work', '搜索分享内容');
+  const publishOpen = document.getElementById('workshop-publish-open');
+  if (publishOpen) publishOpen.querySelector('span').textContent = workshopText('Share work', '分享作品');
+  const publishTitle = document.getElementById('workshop-publish-title');
+  if (publishTitle) publishTitle.textContent = workshopText('Share work', '分享作品');
+  const promptLabel = document.querySelector('#workshop-detail-prompt > span');
+  if (promptLabel) promptLabel.textContent = workshopText('Image prompt', '图片提示词');
+  const reference = document.getElementById('workshop-detail-reference');
+  if (reference) reference.textContent = workshopText('Use as reference', '用作参考图');
+  const deleteButton = document.getElementById('workshop-detail-delete');
+  if (deleteButton) deleteButton.textContent = workshopText('Delete work', '删除作品');
+  const canvasTargetTitle = document.getElementById('workshop-canvas-target-title');
+  const canvasTargetKicker = document.getElementById('workshop-canvas-target-kicker');
+  const canvasTargetDescription = document.getElementById('workshop-canvas-target-description');
+  const canvasTargetCancel = document.getElementById('workshop-canvas-target-cancel');
+  const canvasTargetConfirm = document.getElementById('workshop-canvas-target-confirm');
+  if (canvasTargetTitle) canvasTargetTitle.textContent = workshopText('Choose a canvas', '选择目标画布');
+  if (canvasTargetKicker) canvasTargetKicker.textContent = workshopText('Canvas', '画布');
+  if (canvasTargetDescription) canvasTargetDescription.textContent = workshopText('The image and prompt will be sent to the selected canvas.', '图片和提示词会一起发送到你选择的画布。');
+  if (canvasTargetCancel) canvasTargetCancel.textContent = workshopText('Cancel', '取消');
+  if (canvasTargetConfirm) canvasTargetConfirm.textContent = workshopText('Send to canvas', '发送到画布');
   renderWorkshop();
+  if (WorkshopState.activePost) renderWorkshopDetail(WorkshopState.activePost);
 }
 
 function initWorkshop() {
@@ -497,7 +678,21 @@ function initWorkshop() {
   });
   document.getElementById('workshop-detail-like')?.addEventListener('click', () => { void toggleWorkshopLike(); });
   document.getElementById('workshop-detail-share')?.addEventListener('click', () => { void shareWorkshopPost(); });
-  document.getElementById('workshop-detail-canvas')?.addEventListener('click', () => { void openWorkshopPostOnCanvas(); });
+  document.getElementById('workshop-detail-canvas')?.addEventListener('click', () => { void openWorkshopPostOnCanvas('recreate'); });
+  document.getElementById('workshop-detail-reference')?.addEventListener('click', () => { void openWorkshopPostOnCanvas('reference'); });
+  document.getElementById('workshop-detail-delete')?.addEventListener('click', () => { void deleteWorkshopPost(); });
+  document.getElementById('workshop-canvas-target-close')?.addEventListener('click', () => finishWorkshopCanvasTarget(null));
+  document.getElementById('workshop-canvas-target-cancel')?.addEventListener('click', () => finishWorkshopCanvasTarget(null));
+  document.getElementById('workshop-canvas-target-confirm')?.addEventListener('click', () => finishWorkshopCanvasTarget(WorkshopState.canvasTargetId));
+  document.getElementById('workshop-canvas-target-overlay')?.addEventListener('click', (event) => {
+    if (event.target.id === 'workshop-canvas-target-overlay') finishWorkshopCanvasTarget(null);
+  });
+  document.getElementById('workshop-canvas-target-list')?.addEventListener('click', (event) => {
+    const option = event.target.closest('[data-canvas-id]');
+    if (!option) return;
+    WorkshopState.canvasTargetId = option.dataset.canvasId;
+    renderWorkshopCanvasTargets();
+  });
   document.getElementById('workshop-categories')?.addEventListener('click', (event) => {
     const button = event.target.closest('[data-workshop-category]');
     if (!button) return;
@@ -525,7 +720,8 @@ function initWorkshop() {
   });
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
-    if (!document.getElementById('workshop-detail-overlay')?.hidden) closeWorkshopDetail();
+    if (!document.getElementById('workshop-canvas-target-overlay')?.hidden) finishWorkshopCanvasTarget(null);
+    else if (!document.getElementById('workshop-detail-overlay')?.hidden) closeWorkshopDetail();
     else if (!document.getElementById('workshop-publish-overlay')?.hidden) closeWorkshopPublish();
   });
   document.addEventListener('messs:language-changed', refreshWorkshopLanguage);

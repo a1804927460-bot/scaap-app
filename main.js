@@ -272,6 +272,26 @@ let chatService;
 let chatScreenshotTool;
 let chatScreenshotInFlight = null;
 const CHAT_SCREENSHOT_START_TIMEOUT_MS = 12_000;
+const CHAT_SCREENSHOT_THEME_PATH = path.join(__dirname, 'src', 'assets', 'screenshot-theme.css');
+const chatScreenshotPresentationViews = new WeakSet();
+const CHAT_SCREENSHOT_POLISH_SCRIPT = `(() => {
+  if (window.__messsScreenshotPolishInstalled) return true;
+  window.__messsScreenshotPolishInstalled = true;
+  const formatSize = () => {
+    const label = document.querySelector('.screenshots-canvas-size');
+    if (!label) return;
+    const match = label.textContent.match(/(-?\\d+(?:\\.\\d+)?)\\s*[×x]\\s*(-?\\d+(?:\\.\\d+)?)/);
+    if (!match) return;
+    const width = Math.max(1, Math.round(Number(match[1])));
+    const height = Math.max(1, Math.round(Number(match[2])));
+    const next = width + ' × ' + height;
+    if (label.textContent !== next) label.textContent = next;
+  };
+  const observer = new MutationObserver(formatSize);
+  observer.observe(document.body, { childList: true, characterData: true, subtree: true });
+  formatSize();
+  return true;
+})()`;
 let aiGateway;
 let gatewayCatalogCache = null;
 let gatewayAccountCache = null;
@@ -445,6 +465,461 @@ function createStoreWithFallback() {
   }
 
   throw firstError || new Error('No writable library location is available.');
+}
+
+const CANVAS_PACKAGE_MAGIC = Buffer.from('MESSS-CANVAS-PKG', 'ascii');
+const CANVAS_PACKAGE_VERSION = 1;
+const CANVAS_PACKAGE_HEADER_BYTES = CANVAS_PACKAGE_MAGIC.length + 8;
+const MAX_CANVAS_PACKAGE_BYTES = 8 * 1024 * 1024 * 1024;
+const MAX_CANVAS_PACKAGE_MANIFEST_BYTES = 16 * 1024 * 1024;
+const MAX_CANVAS_PACKAGE_FILES = 10000;
+
+function canvasPackageError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function canvasPackageJsonClone(value) {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (error) {
+    throw canvasPackageError('invalid-canvas-state', 'The canvas contains data that cannot be packaged safely.');
+  }
+}
+
+async function writeCanvasPackageBytes(handle, buffer) {
+  let offset = 0;
+  while (offset < buffer.length) {
+    const result = await handle.write(buffer, offset, buffer.length - offset, null);
+    if (!result || !result.bytesWritten) throw canvasPackageError('package-write-failed', 'The .Messs package could not be written completely.');
+    offset += result.bytesWritten;
+  }
+}
+
+async function readCanvasPackageBytes(handle, length, position) {
+  const buffer = Buffer.alloc(length);
+  let offset = 0;
+  while (offset < length) {
+    const result = await handle.read(buffer, offset, length - offset, position + offset);
+    if (!result || !result.bytesRead) throw canvasPackageError('truncated-package', 'The .Messs package ended before all data was read.');
+    offset += result.bytesRead;
+  }
+  return buffer;
+}
+
+async function hashArchivedFile(filePath, stat) {
+  const handle = await fs.promises.open(filePath, 'r');
+  const hash = crypto.createHash('sha256');
+  const buffer = Buffer.alloc(1024 * 1024);
+  let position = 0;
+  try {
+    while (position < stat.size) {
+      const result = await handle.read(buffer, 0, Math.min(buffer.length, stat.size - position), position);
+      if (!result || !result.bytesRead) throw canvasPackageError('source-read-failed', 'A canvas file could not be read completely.');
+      hash.update(buffer.subarray(0, result.bytesRead));
+      position += result.bytesRead;
+    }
+    return hash.digest('hex');
+  } finally {
+    await handle.close();
+  }
+}
+
+async function assertCanvasPackageSource(file) {
+  if (!file || !file.storedPath) throw canvasPackageError('missing-canvas-file', `The canvas file "${file && file.name || 'Unknown'}" is no longer available.`);
+  let libraryRoot;
+  let sourcePath;
+  let sourceStat;
+  try {
+    [libraryRoot, sourcePath, sourceStat] = await Promise.all([
+      fs.promises.realpath(store.libraryDir),
+      fs.promises.realpath(file.storedPath),
+      fs.promises.lstat(file.storedPath)
+    ]);
+  } catch (error) {
+    throw canvasPackageError('missing-canvas-file', `The canvas file "${file.name || 'Unknown'}" is no longer available.`);
+  }
+  const relative = path.relative(libraryRoot, sourcePath);
+  if (!sourceStat.isFile() || sourceStat.isSymbolicLink() || !relative || relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) {
+    throw canvasPackageError('unsafe-canvas-file', `The canvas file "${file.name || 'Unknown'}" is outside the Messs library.`);
+  }
+  if (!Number.isSafeInteger(sourceStat.size) || sourceStat.size < 0) {
+    throw canvasPackageError('invalid-canvas-file', `The canvas file "${file.name || 'Unknown'}" has an invalid size.`);
+  }
+  return { sourcePath, sourceStat };
+}
+
+function canvasPackageMetadata(file) {
+  const metadata = canvasPackageJsonClone(file);
+  delete metadata.id;
+  delete metadata.storedPath;
+  delete metadata.originalPath;
+  delete metadata.url;
+  delete metadata.thumbUrl;
+  delete metadata.modelPreviewUrl;
+  delete metadata.canvasId;
+  delete metadata.folderId;
+  return metadata;
+}
+
+async function prepareCanvasPackageExport(canvas) {
+  const boardItems = store.data.boardItems
+    .filter((item) => item && item.canvasId === canvas.id)
+    .map((item) => canvasPackageJsonClone(item));
+  const fileIds = new Set();
+  boardItems.forEach((item) => {
+    if (!item.fileId) return;
+    fileIds.add(String(item.fileId));
+  });
+  const allFiles = store.data.files.filter((file) => file && (file.canvasId === canvas.id || fileIds.has(String(file.id))));
+  const filesById = new Map(allFiles.map((file) => [String(file.id), file]));
+  const missingReferenced = [...fileIds].filter((id) => !filesById.has(id));
+  if (missingReferenced.length) {
+    throw canvasPackageError('missing-canvas-file', 'The canvas contains a file record that is no longer available.');
+  }
+
+  const sources = [];
+  let totalBytes = 0;
+  for (const file of allFiles) {
+    const { sourcePath, sourceStat } = await assertCanvasPackageSource(file);
+    totalBytes += sourceStat.size;
+    if (totalBytes > MAX_CANVAS_PACKAGE_BYTES) {
+      throw canvasPackageError('package-too-large', 'This canvas is too large to export as one .Messs file.');
+    }
+    sources.push({
+      sourceId: String(file.id),
+      name: path.basename(String(file.name || 'Untitled')),
+      metadata: canvasPackageMetadata(file),
+      sourcePath,
+      sizeBytes: sourceStat.size,
+      sha256: await hashArchivedFile(sourcePath, sourceStat)
+    });
+  }
+  const manifest = {
+    format: 'messs-canvas-package',
+    version: CANVAS_PACKAGE_VERSION,
+    exportedAt: new Date().toISOString(),
+    project: canvasPackageJsonClone(store.data.canvasProjects.find((entry) => entry.id === canvas.projectId) || null),
+    canvas: canvasPackageJsonClone(canvas),
+    boardItems,
+    files: sources.map((source) => ({
+      id: source.sourceId,
+      name: source.name,
+      metadata: source.metadata,
+      sizeBytes: source.sizeBytes,
+      sha256: source.sha256
+    }))
+  };
+  return { manifest, sources, totalBytes };
+}
+
+function canvasPackageHeader(manifest) {
+  const manifestBuffer = Buffer.from(JSON.stringify(manifest), 'utf8');
+  if (manifestBuffer.length > MAX_CANVAS_PACKAGE_MANIFEST_BYTES) {
+    throw canvasPackageError('manifest-too-large', 'The canvas metadata is too large to export safely.');
+  }
+  const header = Buffer.alloc(CANVAS_PACKAGE_HEADER_BYTES);
+  CANVAS_PACKAGE_MAGIC.copy(header, 0);
+  header.writeUInt32LE(CANVAS_PACKAGE_VERSION, CANVAS_PACKAGE_MAGIC.length);
+  header.writeUInt32LE(manifestBuffer.length, CANVAS_PACKAGE_MAGIC.length + 4);
+  return { header, manifestBuffer };
+}
+
+async function replaceCanvasPackageAtomically(temporaryPath, targetPath) {
+  const backupPath = `${targetPath}.backup-${crypto.randomUUID()}`;
+  let movedExisting = false;
+  try {
+    if (fs.existsSync(targetPath)) {
+      await fs.promises.rename(targetPath, backupPath);
+      movedExisting = true;
+    }
+    await fs.promises.rename(temporaryPath, targetPath);
+    if (movedExisting) await fs.promises.rm(backupPath, { force: true });
+  } catch (error) {
+    if (movedExisting && !fs.existsSync(targetPath) && fs.existsSync(backupPath)) {
+      await fs.promises.rename(backupPath, targetPath).catch(() => {});
+    }
+    throw error;
+  } finally {
+    await fs.promises.rm(backupPath, { force: true }).catch(() => {});
+  }
+}
+
+async function writeCanvasPackage(targetPath, prepared) {
+  const { header, manifestBuffer } = canvasPackageHeader(prepared.manifest);
+  const temporaryPath = `${targetPath}.tmp-${crypto.randomUUID()}`;
+  let output = null;
+  try {
+    output = await fs.promises.open(temporaryPath, 'wx', 0o600);
+    await writeCanvasPackageBytes(output, header);
+    await writeCanvasPackageBytes(output, manifestBuffer);
+    const buffer = Buffer.alloc(1024 * 1024);
+    for (const source of prepared.sources) {
+      const input = await fs.promises.open(source.sourcePath, 'r');
+      const hash = crypto.createHash('sha256');
+      let position = 0;
+      try {
+        while (position < source.sizeBytes) {
+          const result = await input.read(buffer, 0, Math.min(buffer.length, source.sizeBytes - position), position);
+          if (!result || !result.bytesRead) throw canvasPackageError('source-read-failed', `The canvas file "${source.name}" changed while exporting.`);
+          const chunk = buffer.subarray(0, result.bytesRead);
+          hash.update(chunk);
+          await writeCanvasPackageBytes(output, chunk);
+          position += result.bytesRead;
+        }
+      } finally {
+        await input.close();
+      }
+      const finalStat = await fs.promises.stat(source.sourcePath);
+      if (position !== source.sizeBytes || finalStat.size !== source.sizeBytes || hash.digest('hex') !== source.sha256) {
+        throw canvasPackageError('source-changed', `The canvas file "${source.name}" changed while exporting. Please try again.`);
+      }
+    }
+    await output.sync();
+    await output.close();
+    output = null;
+    await replaceCanvasPackageAtomically(temporaryPath, targetPath);
+  } catch (error) {
+    if (output) await output.close().catch(() => {});
+    await fs.promises.rm(temporaryPath, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+async function readCanvasPackageManifest(packagePath) {
+  const stat = await fs.promises.stat(packagePath);
+  if (!stat.isFile() || stat.size > MAX_CANVAS_PACKAGE_BYTES) {
+    throw canvasPackageError('package-too-large', 'This .Messs package is too large or is not a file.');
+  }
+  if (stat.size < CANVAS_PACKAGE_HEADER_BYTES) throw canvasPackageError('invalid-package', 'This is not a valid .Messs canvas package.');
+  const handle = await fs.promises.open(packagePath, 'r');
+  try {
+    const header = await readCanvasPackageBytes(handle, CANVAS_PACKAGE_HEADER_BYTES, 0);
+    if (!header.subarray(0, CANVAS_PACKAGE_MAGIC.length).equals(CANVAS_PACKAGE_MAGIC)) {
+      throw canvasPackageError('invalid-package', 'This is not a valid .Messs canvas package.');
+    }
+    const version = header.readUInt32LE(CANVAS_PACKAGE_MAGIC.length);
+    const manifestLength = header.readUInt32LE(CANVAS_PACKAGE_MAGIC.length + 4);
+    if (version !== CANVAS_PACKAGE_VERSION || manifestLength <= 0 || manifestLength > MAX_CANVAS_PACKAGE_MANIFEST_BYTES) {
+      throw canvasPackageError('unsupported-package', 'This .Messs package was created by an unsupported version of Messs.');
+    }
+    const manifestBuffer = await readCanvasPackageBytes(handle, manifestLength, CANVAS_PACKAGE_HEADER_BYTES);
+    let manifest;
+    try {
+      manifest = JSON.parse(manifestBuffer.toString('utf8'));
+    } catch (error) {
+      throw canvasPackageError('invalid-package', 'The .Messs package metadata is damaged.');
+    }
+    if (!manifest || manifest.format !== 'messs-canvas-package' || manifest.version !== CANVAS_PACKAGE_VERSION ||
+        !manifest.canvas || typeof manifest.canvas !== 'object' || !Array.isArray(manifest.boardItems) || !Array.isArray(manifest.files)) {
+      throw canvasPackageError('invalid-package', 'The .Messs package metadata is incomplete.');
+    }
+    if (manifest.files.length > MAX_CANVAS_PACKAGE_FILES) throw canvasPackageError('package-too-many-files', 'This .Messs package contains too many files.');
+    const ids = new Set();
+    let payloadBytes = 0;
+    manifest.files.forEach((entry) => {
+      const id = String(entry && entry.id || '');
+      const name = String(entry && entry.name || '');
+      const sizeBytes = Number(entry && entry.sizeBytes);
+      if (!id || id.length > 128 || ids.has(id) || !name || path.basename(name) !== name || name.includes('\0') ||
+          !Number.isSafeInteger(sizeBytes) || sizeBytes < 0 || !/^[a-f0-9]{64}$/i.test(String(entry.sha256 || '')) ||
+          !entry.metadata || typeof entry.metadata !== 'object' || Array.isArray(entry.metadata)) {
+        throw canvasPackageError('invalid-package', 'The .Messs package contains an invalid file entry.');
+      }
+      ids.add(id);
+      payloadBytes += sizeBytes;
+      if (payloadBytes > MAX_CANVAS_PACKAGE_BYTES) throw canvasPackageError('package-too-large', 'This .Messs package is too large.');
+    });
+    const payloadOffset = CANVAS_PACKAGE_HEADER_BYTES + manifestLength;
+    if (payloadOffset + payloadBytes !== stat.size) {
+      throw canvasPackageError('truncated-package', 'The .Messs package does not contain exactly the files listed in its metadata.');
+    }
+    return { manifest, payloadOffset, stat };
+  } finally {
+    await handle.close();
+  }
+}
+
+function uniqueImportedCanvasName(value) {
+  const base = canvasFolderName(value || 'Imported canvas');
+  let name = base;
+  let index = 2;
+  while (store.data.canvases.some((canvas) => String(canvas.name).toLowerCase() === name.toLowerCase()) ||
+         fs.existsSync(canvasStorageDir({ name }))) {
+    name = `${base} (${index++})`;
+  }
+  return name;
+}
+
+async function extractCanvasPackageFile(handle, packagePath, position, entry, targetPath) {
+  const output = await fs.promises.open(targetPath, 'wx', 0o600);
+  const hash = crypto.createHash('sha256');
+  const buffer = Buffer.alloc(1024 * 1024);
+  let readTotal = 0;
+  try {
+    while (readTotal < entry.sizeBytes) {
+      const result = await handle.read(buffer, 0, Math.min(buffer.length, entry.sizeBytes - readTotal), position + readTotal);
+      if (!result || !result.bytesRead) throw canvasPackageError('truncated-package', `The .Messs package is missing data for "${entry.name}".`);
+      hash.update(buffer.subarray(0, result.bytesRead));
+      await writeCanvasPackageBytes(output, buffer.subarray(0, result.bytesRead));
+      readTotal += result.bytesRead;
+    }
+    await output.sync();
+  } finally {
+    await output.close();
+  }
+  const sha256 = hash.digest('hex');
+  if (readTotal !== entry.sizeBytes || sha256.toLowerCase() !== String(entry.sha256).toLowerCase()) {
+    await fs.promises.rm(targetPath, { force: true }).catch(() => {});
+    throw canvasPackageError('file-integrity-failed', `The file "${entry.name}" failed its integrity check.`);
+  }
+  return { packagePath, sha256 };
+}
+
+function remapImportedFileMetadata(metadata, fileIdMap) {
+  const next = canvasPackageJsonClone(metadata || {});
+  delete next.id;
+  delete next.storedPath;
+  delete next.originalPath;
+  delete next.url;
+  delete next.thumbUrl;
+  delete next.modelPreviewUrl;
+  delete next.canvasId;
+  delete next.folderId;
+  if (next.aiGeneration && Array.isArray(next.aiGeneration.referenceFileIds)) {
+    next.aiGeneration.referenceFileIds = next.aiGeneration.referenceFileIds.map((id) => fileIdMap.get(String(id))).filter(Boolean);
+  }
+  if (next.butlerOperation && next.butlerOperation.sourceFileId) {
+    next.butlerOperation.sourceFileId = fileIdMap.get(String(next.butlerOperation.sourceFileId)) || null;
+  }
+  return next;
+}
+
+async function importCanvasPackage(packagePath, targetProjectId) {
+  const parsed = await readCanvasPackageManifest(packagePath);
+  const targetProject = store.data.canvasProjects.find((entry) => entry.id === String(targetProjectId || '')) || store.data.canvasProjects[0];
+  if (!targetProject) throw canvasPackageError('missing-folder', 'Create a folder before importing a canvas.');
+  const fileIdMap = new Map();
+  const stagingDir = path.join(store.libraryDir, `.messs-import-${crypto.randomUUID()}`);
+  const extracted = [];
+  const movedPaths = [];
+  let archiveDir = null;
+  let packageHandle = null;
+  let committedCanvasId = null;
+  const committedFileIds = [];
+  const committedItemIds = [];
+  try {
+    await fs.promises.mkdir(stagingDir, { recursive: true, mode: 0o700 });
+    packageHandle = await fs.promises.open(packagePath, 'r');
+    let position = parsed.payloadOffset;
+    for (const entry of parsed.manifest.files) {
+      const newId = crypto.randomUUID();
+      const ext = path.extname(entry.name);
+      const stagedPath = path.join(stagingDir, `${newId}${ext}`);
+      await extractCanvasPackageFile(packageHandle, packagePath, position, entry, stagedPath);
+      extracted.push({ entry, newId, stagedPath });
+      fileIdMap.set(String(entry.id), newId);
+      position += entry.sizeBytes;
+    }
+    await packageHandle.close();
+    packageHandle = null;
+    if (position !== parsed.stat.size) throw canvasPackageError('truncated-package', 'The .Messs package contains unexpected trailing data.');
+
+    const now = new Date().toISOString();
+    const canvas = {
+      id: crypto.randomUUID(),
+      projectId: targetProject.id,
+      name: uniqueImportedCanvasName(parsed.manifest.canvas.name),
+      createdAt: now,
+      updatedAt: now,
+      lastOpenedAt: null,
+      pinned: parsed.manifest.canvas.pinned === true
+    };
+    archiveDir = canvasStorageDir(canvas);
+    if (fs.existsSync(archiveDir)) throw canvasPackageError('canvas-name-conflict', 'A safe archive location for the imported canvas could not be created.');
+    await fs.promises.mkdir(archiveDir, { recursive: true });
+
+    const files = [];
+    for (const item of extracted) {
+      const destinationPath = path.join(archiveDir, `${item.newId}${path.extname(item.entry.name)}`);
+      await fs.promises.rename(item.stagedPath, destinationPath);
+      movedPaths.push(destinationPath);
+      const stat = await fs.promises.stat(destinationPath);
+      const metadata = remapImportedFileMetadata(item.entry.metadata, fileIdMap);
+      files.push({
+        ...metadata,
+        id: item.newId,
+        name: item.entry.name,
+        originalPath: `Messs package: ${path.basename(packagePath)}`,
+        storedPath: destinationPath,
+        importedAt: now,
+        sizeBytes: stat.size,
+        canvasId: canvas.id,
+        folderId: null,
+        fingerprint: await makeFileFingerprint(destinationPath, stat)
+      });
+    }
+    const boardItems = parsed.manifest.boardItems.map((item) => {
+      const next = canvasPackageJsonClone(item);
+      next.id = crypto.randomUUID();
+      next.canvasId = canvas.id;
+      if (next.fileId) {
+        const mappedId = fileIdMap.get(String(next.fileId));
+        if (!mappedId) throw canvasPackageError('invalid-package', `The canvas layout references a file that is not in the package.`);
+        next.fileId = mappedId;
+      }
+      return next;
+    });
+
+    const unlockedKeys = new Set();
+    for (const file of files) {
+      store.addFile(file);
+      committedFileIds.push(file.id);
+    }
+    store.data.canvases.push(canvas);
+    committedCanvasId = canvas.id;
+    store.data.boardItems.push(...boardItems);
+    committedItemIds.push(...boardItems.map((item) => item.id));
+    if (!store.data.usage.importDays.includes(achievements.todayStr())) store.data.usage.importDays.push(achievements.todayStr());
+    files.forEach((file) => {
+      if (achievements.checkFirstImport(store)) unlockedKeys.add('first_import');
+      if (achievements.checkLostFolder(store, file)) unlockedKeys.add('lost_folder');
+      void store.mirrorFileToCustomPathAsync(file).catch((error) => {
+        console.error('Could not mirror imported canvas file:', error && error.message || error);
+      });
+    });
+    store.scheduleSave();
+    if (unlockedKeys.size > 0) notifyAchievements();
+    return {
+      ok: true,
+      canvas,
+      files: files.map(fileToPayload),
+      boardItems,
+      projects: store.data.canvasProjects,
+      canvases: store.data.canvases
+    };
+  } catch (error) {
+    if (packageHandle) await packageHandle.close().catch(() => {});
+    if (committedItemIds.length) {
+      store.data.boardItems = store.data.boardItems.filter((item) => !committedItemIds.includes(item.id));
+    }
+    if (committedCanvasId) {
+      store.data.canvases = store.data.canvases.filter((entry) => entry.id !== committedCanvasId);
+    }
+    committedFileIds.forEach((id) => store.removeFileById(id));
+    for (const file of store.data.files.filter((entry) => movedPaths.includes(entry.storedPath))) store.removeFileById(file.id);
+    await Promise.all(movedPaths.map((filePath) => fs.promises.rm(filePath, { force: true }).catch(() => {})));
+    if (archiveDir) await fs.promises.rm(archiveDir, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+function ensureCanvasPackagePath(filePath) {
+  const normalized = String(filePath || '').trim();
+  if (!normalized.toLowerCase().endsWith('.messs')) return `${normalized}.Messs`;
+  return normalized;
 }
 
 function canvasFolderName(name) {
@@ -1489,7 +1964,7 @@ function workshopStoragePublicUrl(storagePath) {
 
 function workshopPostUrl() {
   const url = new URL(`${String(runtimeConfig.supabaseUrl).replace(/\/$/, '')}/rest/v1/workshop_posts`);
-  url.searchParams.set('select', 'id,owner_id,title,description,kind,media_path,media_url,mime_type,source_file_name,tags,clicks,likes,created_at');
+  url.searchParams.set('select', 'id,owner_id,title,description,prompt,kind,media_path,media_url,mime_type,source_file_name,tags,clicks,likes,created_at');
   return url;
 }
 
@@ -1506,6 +1981,7 @@ async function publishWorkshopPost(fileId, metadata = {}) {
   const title = String(metadata.title || '').trim().slice(0, 80);
   if (!title) throw workshopCloudError('invalid-title', 'A Workshop title is required.', 400);
   const description = String(metadata.description || '').trim().slice(0, 300);
+  const prompt = String(source.file.aiGeneration && source.file.aiGeneration.prompt || '').trim().slice(0, 12000);
   const tags = [...new Set((Array.isArray(metadata.tags) ? metadata.tags : [])
     .map((tag) => String(tag || '').trim().slice(0, 24))
     .filter(Boolean))].slice(0, 12);
@@ -1526,6 +2002,7 @@ async function publishWorkshopPost(fileId, metadata = {}) {
       owner_id: ownerId,
       title,
       description,
+      prompt,
       kind,
       media_path: storagePath,
       media_url: workshopStoragePublicUrl(storagePath),
@@ -1552,6 +2029,121 @@ async function publishWorkshopPost(fileId, metadata = {}) {
   }
 }
 
+async function downloadWorkshopPostMedia(post) {
+  const storagePath = String(post && post.media_path || '').trim();
+  const ownerId = String(post && post.owner_id || '').trim();
+  const parts = storagePath.split('/');
+  if (!ownerId || parts.length < 2 || parts[0] !== ownerId || parts.some((part) => !part || part === '.' || part === '..' || /[\x00-\x1f]/.test(part))) {
+    throw workshopCloudError('unsafe-media-path', 'The Workshop media path is invalid.', 400);
+  }
+  const token = await supabaseAuth.getAccessToken();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 90_000);
+  try {
+    const response = await appFetch(`${String(runtimeConfig.supabaseUrl).replace(/\/$/, '')}/storage/v1/object/public/${WORKSHOP_MEDIA_BUCKET}/${parts.map((part) => encodeURIComponent(part)).join('/')}`, {
+      method: 'GET',
+      headers: {
+        apikey: runtimeConfig.supabasePublishableKey,
+        Authorization: `Bearer ${token}`,
+        Accept: post.kind === 'video' ? 'video/*' : 'image/*'
+      },
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      throw workshopCloudError('media-download-failed', `The Workshop media could not be downloaded (HTTP ${response.status}).`, response.status);
+    }
+    const contentLength = Number(response.headers && response.headers.get('content-length'));
+    if (Number.isFinite(contentLength) && contentLength > MAX_WORKSHOP_MEDIA_BYTES) {
+      throw workshopCloudError('media-too-large', 'This Workshop work is larger than 128 MB.', 413);
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length || buffer.length > MAX_WORKSHOP_MEDIA_BYTES) {
+      throw workshopCloudError('media-too-large', 'This Workshop work is empty or larger than 128 MB.', 413);
+    }
+    return buffer;
+  } catch (error) {
+    if (error && error.name === 'AbortError') {
+      throw workshopCloudError('media-download-timeout', 'The Workshop media download timed out.', 504);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function importWorkshopPostMedia(postId, folderId, canvasId) {
+  const id = String(postId || '').trim();
+  if (!/^[0-9a-f-]{20,80}$/i.test(id)) throw workshopCloudError('invalid-post', 'The Workshop post id is invalid.', 400);
+  const lookup = workshopPostUrl();
+  lookup.searchParams.set('id', `eq.${id}`);
+  lookup.searchParams.set('limit', '1');
+  const matches = await workshopCloudRequest(`${lookup.pathname}${lookup.search}`, { method: 'GET' });
+  const post = Array.isArray(matches) ? matches[0] : null;
+  if (!post) throw workshopCloudError('not-found', 'The Workshop work was not found.', 404);
+
+  const buffer = await downloadWorkshopPostMedia(post);
+  let extension = '';
+  if (post.kind === 'image') {
+    if (!sharp) throw workshopCloudError('image-validation-unavailable', 'Secure image validation is unavailable in this build.', 503);
+    let metadata;
+    try {
+      metadata = await sharp(buffer, { failOn: 'error', limitInputPixels: 512 * 1024 * 1024 }).metadata();
+    } catch (error) {
+      throw workshopCloudError('invalid-image', 'The Workshop image could not be read.', 400);
+    }
+    extension = ({ jpeg: 'jpg', png: 'png', webp: 'webp', gif: 'gif', avif: 'avif', heif: 'heic', tiff: 'tiff', bmp: 'bmp' })[metadata.format];
+    if (!extension || !(metadata.width > 0 && metadata.height > 0)) {
+      throw workshopCloudError('invalid-image', 'The Workshop image format is not supported.', 400);
+    }
+  } else {
+    extension = detectGeneratedVideoExtension(buffer);
+    const mimeType = extension === 'webm' ? 'video/webm' : 'video/mp4';
+    validateButlerVideoBuffer(buffer, mimeType);
+  }
+
+  const idForFile = crypto.randomUUID();
+  const canvas = store.data.canvases.find((entry) => entry.id === canvasId) || store.data.canvases[0];
+  const archiveDir = canvasStorageDir(canvas);
+  const sourceName = path.basename(String(post.source_file_name || post.title || `workshop-${id}`)).replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ').trim();
+  const baseName = path.basename(sourceName, path.extname(sourceName)).replace(/[. ]+$/g, '').trim() || `workshop-${id.slice(0, 8)}`;
+  const name = `${baseName.slice(0, 180)}.${extension}`;
+  const storedPath = path.join(archiveDir, `${idForFile}.${extension}`);
+  const unlockedKeys = new Set();
+  let record = null;
+  try {
+    await fs.promises.mkdir(archiveDir, { recursive: true });
+    await fs.promises.writeFile(storedPath, buffer, { mode: 0o600 });
+    const stat = await fs.promises.stat(storedPath);
+    const sourceDimensions = await readSourceMediaMetadata(storedPath, `.${extension}`);
+    record = {
+      id: idForFile,
+      name,
+      originalPath: `workshop:${id}`,
+      importedAt: new Date().toISOString(),
+      sourceFolder: 'Workshop',
+      sizeBytes: stat.size,
+      ...sourceDimensions,
+      ...(post.kind === 'video' ? { mediaMetadataVersion: 1 } : {}),
+      ...classifyArchiveFile(name),
+      fingerprint: await makeFileFingerprint(storedPath, stat),
+      folderId: folderId || null,
+      canvasId: canvas ? canvas.id : null
+    };
+    store.addFile(record);
+    await store.mirrorFileToCustomPathAsync(record);
+    const today = achievements.todayStr();
+    if (!store.data.usage.importDays.includes(today)) store.data.usage.importDays.push(today);
+    if (achievements.checkFirstImport(store)) unlockedKeys.add('first_import');
+    if (achievements.checkLostFolder(store, record)) unlockedKeys.add('lost_folder');
+    store.scheduleSave();
+    return { ok: true, file: fileToPayload(record), unlocked: Array.from(unlockedKeys) };
+  } catch (error) {
+    if (record) store.removeFileById(record.id);
+    await fs.promises.rm(storedPath, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
 async function incrementWorkshopClick(postId) {
   const id = String(postId || '').trim();
   if (!/^[0-9a-f-]{20,80}$/i.test(id)) throw workshopCloudError('invalid-post', 'The Workshop post id is invalid.', 400);
@@ -1569,6 +2161,44 @@ async function toggleWorkshopLike(postId) {
     method: 'POST', contentType: 'application/json', body: JSON.stringify({ p_post_id: id })
   });
   return { ok: true, ...(result && typeof result === 'object' && !Array.isArray(result) ? result : { result }) };
+}
+
+async function deleteWorkshopPost(postId) {
+  const id = String(postId || '').trim();
+  if (!/^[0-9a-f-]{20,80}$/i.test(id)) throw workshopCloudError('invalid-post', 'The Workshop post id is invalid.', 400);
+  assertWorkshopCloudConfigured();
+  const session = supabaseAuth.getPublicSession();
+  const ownerId = session && session.user && session.user.id;
+  if (!ownerId) throw workshopCloudError('auth-required', 'Sign in before deleting a Workshop work.', 401);
+
+  const lookup = workshopPostUrl();
+  lookup.searchParams.set('id', `eq.${id}`);
+  lookup.searchParams.set('limit', '1');
+  const matches = await workshopCloudRequest(`${lookup.pathname}${lookup.search}`, { method: 'GET' });
+  const post = Array.isArray(matches) ? matches[0] : null;
+  if (!post) throw workshopCloudError('not-found', 'The Workshop work was not found.', 404);
+  if (String(post.owner_id || '') !== String(ownerId)) {
+    throw workshopCloudError('not-owner', 'Only the creator can delete this Workshop work.', 403);
+  }
+
+  const deletion = workshopPostUrl();
+  deletion.searchParams.set('id', `eq.${id}`);
+  deletion.searchParams.delete('order');
+  deletion.searchParams.delete('limit');
+  await workshopCloudRequest(`${deletion.pathname}${deletion.search}`, {
+    method: 'DELETE',
+    headers: { Prefer: 'return=minimal' }
+  });
+  if (post.media_path) {
+    try {
+      await workshopCloudRequest(`/storage/v1/object/${WORKSHOP_MEDIA_BUCKET}/${String(post.media_path).split('/').map((part) => encodeURIComponent(part)).join('/')}`, {
+        method: 'DELETE'
+      });
+    } catch (error) {
+      // The database row is already gone; the object is orphaned but no longer public.
+    }
+  }
+  return { ok: true, postId: id };
 }
 
 async function sanitizeImageForAi(input) {
@@ -3530,8 +4160,17 @@ async function generateAiChatReply(prompt, messages, providerId, model) {
   }
 }
 
+function sanitizeAiErrorText(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .replace(/\b(?:api\.atlascloud\.ai|Atlas\s*Cloud|AtlasCloud|AI302|302\.ai|QuickRouter|Topaz(?:\s+Labs)?|Higgsfield|MiniMax|Kling|Jimeng|Dreamina)\b/gi, 'AI service')
+    .replace(/\s*\(?\s*HTTP\s+\d{3}\s*\)?/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 function conciseAiErrorMessage(error, context = {}) {
-  const raw = String(error && error.message || '').replace(/\s+/g, ' ').trim();
+  const raw = sanitizeAiErrorText(error && error.message);
   const code = String(error && error.code || '').trim().toLowerCase();
   if (code === 'provider-auth-failed' || /invalid token(?:\s|\(|$)/i.test(raw)) {
     return localizedMessage(
@@ -3563,16 +4202,30 @@ function conciseAiErrorMessage(error, context = {}) {
   }
   if (['provider-temporarily-unavailable', 'provider-channel-unavailable'].includes(code)) {
     return localizedMessage(
-      'The selected AI provider is temporarily busy. No points were charged; please retry shortly.',
+      'The AI service is temporarily busy. No points were charged; please retry shortly.',
       '当前 AI 服务暂时繁忙，本次未扣积分，请稍后重试。',
-      'The selected AI provider is temporarily busy. No points were charged; please retry shortly.'
+      'The AI service is temporarily busy. No points were charged; please retry shortly.'
+    );
+  }
+  if (code === 'provider-request-failed') {
+    return localizedMessage(
+      'The generation request was not accepted. Check the reference files and settings, then try again.',
+      '本次生成请求未被接受，请检查参考素材和参数后重试。',
+      'The generation request was not accepted. Check the reference files and settings, then try again.'
+    );
+  }
+  if (['provider-invalid-response', 'provider-result-missing', 'video-generation-failed'].includes(code)) {
+    return localizedMessage(
+      'The AI service returned an invalid result. Please try again.',
+      'AI 服务返回的结果无效，请重试。',
+      'The AI service returned an invalid result. Please try again.'
     );
   }
   if (code === 'gateway-request-failed') {
     return localizedMessage(
-      'The AI gateway could not reach the provider. Check your network and retry.',
-      'AI 网关暂时无法连接上游服务，请检查网络后重试。',
-      'The AI gateway could not reach the provider. Check your network and retry.'
+      'The AI service could not be reached. Check your network and retry.',
+      'AI 服务暂时无法连接，请检查网络后重试。',
+      'The AI service could not be reached. Check your network and retry.'
     );
   }
   if (['credit-service-failed', 'credit-schema-missing', 'credit-service-not-configured'].includes(code)) {
@@ -3587,16 +4240,16 @@ function conciseAiErrorMessage(error, context = {}) {
     const width = Math.round(Number(error.actualWidth) || 0);
     const height = Math.round(Number(error.actualHeight) || 0);
     return localizedMessage(
-      `${requested || 'The requested resolution'} was requested, but the provider returned ${width} x ${height}. The low-resolution result was rejected and your points were refunded. Please retry.`,
-      `请求了 ${requested || '高清'}，但服务商实际返回 ${width} x ${height}。低分辨率结果已拒收，本次积分已退还，请重试。`,
-      `${requested || '고해상도'} 요청에 대해 제공자가 ${width} x ${height} 이미지를 반환했습니다. 저해상도 결과는 거부되었고 포인트는 환불되었습니다. 다시 시도해 주세요.`
+      `${requested || 'The requested resolution'} was requested, but the AI service returned ${width} x ${height}. The low-resolution result was rejected and your points were refunded. Please retry.`,
+      `请求了 ${requested || '高清'}，但 AI 服务实际返回 ${width} x ${height}。低分辨率结果已拒收，本次积分已退还，请重试。`,
+      `${requested || '고해상도'} 요청에 대해 AI 서비스가 ${width} x ${height} 이미지를 반환했습니다. 저해상도 결과는 거부되었고 포인트는 환불되었습니다. 다시 시도해 주세요.`
     );
   }
   if (error && error.code === 'image-resolution-unverified') {
     return localizedMessage(
-      'The provider result dimensions could not be verified. The result was rejected and your points were refunded. Please retry.',
-      '无法验证服务商返回图片的真实分辨率，结果已拒收，本次积分已退还，请重试。',
-      '제공자 결과의 실제 해상도를 확인할 수 없습니다. 결과는 거부되었고 포인트는 환불되었습니다. 다시 시도해 주세요.'
+      'The AI service result dimensions could not be verified. The result was rejected and your points were refunded. Please retry.',
+      '无法验证 AI 服务返回图片的真实分辨率，结果已拒收，本次积分已退还，请重试。',
+      'AI 서비스 결과의 실제 해상도를 확인할 수 없습니다. 결과는 거부되었고 포인트는 환불되었습니다. 다시 시도해 주세요.'
     );
   }
   if (/upstream\s+load\s+is\s+saturated|current\s+group.*saturated|group\s+upstream.*saturated/i.test(raw)) {
@@ -5467,7 +6120,7 @@ function butlerFailure(error, fallbackMessage) {
     'video-tool-task-not-found': 'The video enhancement task was not found or has expired.',
     'video-tool-task-not-ready': 'The enhanced video is not ready yet.',
     'video-upscale-failed': 'Video enhancement failed.',
-    'video-upscale-request-rejected': 'Topaz rejected this video or output combination. Try Proteus 4 with H.264 or H.265.',
+    'video-upscale-request-rejected': 'The video enhancement service rejected this video or output combination. Try a compatible model and format.',
     'video-upload-not-found': 'The video upload expired. Please start the enhancement again.',
     'video-upload-incomplete': 'The video upload was interrupted. Please try again.',
     'invalid-video-upload-chunk': 'Part of the video upload was rejected. Please try again.',
@@ -5481,15 +6134,17 @@ function butlerFailure(error, fallbackMessage) {
     'invalid-delivery-confirmation': 'The Butler result could not be matched to its reserved points.',
     'delivery-confirmation-failed': 'The Butler result charge could not be confirmed safely. Please try again.',
     'delivery-status-conflict': 'This Butler result was already settled differently.',
-    'provider-auth-failed': 'The video provider rejected the server credential. Ask the administrator to update it.',
-    'ai302-unauthorized': 'The 302 gateway credential is invalid. Ask the administrator to update it.',
-    'ai302-balance-exhausted': 'The 302 account balance is insufficient.',
-    'ai302-rate-limited': 'The 302 service is busy. Please try again shortly.',
-    'ai302-timeout': 'The 302 service did not finish in time. This request was not submitted again automatically.',
-    'ai302-unavailable': 'The 302 service is temporarily unavailable. Please try again later.',
-    'ai302-upstream-error': 'The 302 service rejected this request.',
-    'ai302-invalid-response': 'The 302 video service returned an unsupported response. Please try again.',
-    'ai302-not-configured': 'The 302 video service is not configured on the server.',
+    'provider-auth-failed': 'The AI service credential was rejected. Ask the administrator to update it.',
+    'provider-request-failed': 'The generation request was not accepted. Check the reference files and settings, then try again.',
+    'provider-invalid-response': 'The AI service returned an invalid result. Please try again.',
+    'ai302-unauthorized': 'The AI service credential is invalid. Ask the administrator to update it.',
+    'ai302-balance-exhausted': 'The AI service balance is insufficient.',
+    'ai302-rate-limited': 'The AI service is busy. Please try again shortly.',
+    'ai302-timeout': 'The AI service did not finish in time. This request was not submitted again automatically.',
+    'ai302-unavailable': 'The AI service is temporarily unavailable. Please try again later.',
+    'ai302-upstream-error': 'The AI service rejected this request.',
+    'ai302-invalid-response': 'The AI service returned an unsupported response. Please try again.',
+    'ai302-not-configured': 'The AI service is not configured on the server.',
     'tool-disabled': 'Video enhancement is not enabled on the server.',
     'tool-public-url-not-configured': 'The gateway public URL is required for this tool.',
     'tool-asset-capacity-exceeded': 'The video upload relay is busy. Please try again shortly.',
@@ -5505,9 +6160,7 @@ function butlerFailure(error, fallbackMessage) {
   const httpStatus = Number(error && error.status);
   const requestId = String(error && error.requestId || '').trim();
   const retryAfterMs = Number(error && error.retryAfterMs);
-  const message = reason === 'gateway-request-failed' && Number.isInteger(httpStatus)
-    ? `The secure AI gateway could not start this request (HTTP ${httpStatus}). Please retry shortly.`
-    : knownMessages[reason] || fallbackMessage;
+  const message = knownMessages[reason] || fallbackMessage;
   return {
     ok: false,
     reason,
@@ -5692,6 +6345,33 @@ function chatScreenshotLanguage() {
   };
 }
 
+function installChatScreenshotPresentation(tool) {
+  const view = tool && tool.$view;
+  if (!view || !view.webContents || chatScreenshotPresentationViews.has(view.webContents)) return;
+  chatScreenshotPresentationViews.add(view.webContents);
+  let cssPromise = null;
+  let applied = false;
+  const apply = () => {
+    if (applied || cssPromise) return;
+    cssPromise = fs.promises.readFile(CHAT_SCREENSHOT_THEME_PATH, 'utf8')
+      .then((css) => view.webContents.executeJavaScript(`(() => {
+        const style = document.createElement('style');
+        style.dataset.messsScreenshotTheme = 'true';
+        style.textContent = ${JSON.stringify(css)};
+        (document.head || document.documentElement).appendChild(style);
+        return true;
+      })()`))
+      .then(() => view.webContents.executeJavaScript(CHAT_SCREENSHOT_POLISH_SCRIPT))
+      .then(() => { applied = true; })
+      .catch((error) => {
+        cssPromise = null;
+        console.warn('The screenshot editor theme could not be applied:', error && error.message || error);
+      });
+  };
+  view.webContents.on('did-finish-load', apply);
+  return apply;
+}
+
 function getChatScreenshotTool() {
   if (!ElectronScreenshots) return null;
   if (!chatScreenshotTool) {
@@ -5701,8 +6381,10 @@ function getChatScreenshotTool() {
         lang: chatScreenshotLanguage(),
         logger: () => {}
       });
+      const applyScreenshotPresentation = installChatScreenshotPresentation(chatScreenshotTool);
       chatScreenshotTool.on('windowCreated', (window) => {
         if (!window || window.isDestroyed()) return;
+        if (applyScreenshotPresentation) setTimeout(applyScreenshotPresentation, 160);
         window.setAlwaysOnTop(true, 'screen-saver');
       });
     } catch (error) {
@@ -6128,6 +6810,30 @@ function registerIpcHandlers() {
         ok: false,
         reason: error && error.code || 'workshop-like-failed',
         message: error && error.message || 'The Workshop like could not be saved.'
+      };
+    }
+  });
+
+  ipcMain.handle('workshop:importMedia', async (_evt, postId, folderId, canvasId) => {
+    try {
+      return await importWorkshopPostMedia(postId, folderId, canvasId);
+    } catch (error) {
+      return {
+        ok: false,
+        reason: error && error.code || 'workshop-import-failed',
+        message: error && error.message || 'The Workshop media could not be imported.'
+      };
+    }
+  });
+
+  ipcMain.handle('workshop:delete', async (_evt, postId) => {
+    try {
+      return await deleteWorkshopPost(postId);
+    } catch (error) {
+      return {
+        ok: false,
+        reason: error && error.code || 'workshop-delete-failed',
+        message: error && error.message || 'The Workshop work could not be deleted.'
       };
     }
   });
@@ -6657,6 +7363,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('butler:removeBackground', async (_evt, fileId, requestedOptions = {}) => {
     let responseBuffer = null;
+    let record = null;
     try {
       if (!aiGateway || !aiGateway.isConfigured()) {
         const error = new Error('Butler is not configured.');
@@ -6667,7 +7374,7 @@ function registerIpcHandlers() {
       const source = await butlerSourceImage(fileId);
       responseBuffer = await aiGateway.removeBackground(source.imageDataUrl, options);
       const pngBuffer = await sanitizeButlerBackgroundPng(responseBuffer);
-      const record = await addButlerOutputFile(pngBuffer, source.file, 'remove-background', {
+      record = await addButlerOutputFile(pngBuffer, source.file, 'remove-background', {
         modelId: 'background-remove',
         ...butlerOutputAccounting(responseBuffer, BUTLER_IMAGE_TOOL_CREDITS['background-remove'])
       });
@@ -6675,6 +7382,7 @@ function registerIpcHandlers() {
       if (!deliveryToken && runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
       return { ok: true, file: butlerFilePayload(record, deliveryToken) };
     } catch (error) {
+      if (record) await rollbackGeneratedMediaFile(record);
       await releaseButlerBufferDeliveries([responseBuffer]);
       const failure = butlerFailure(error, 'Background removal failed. Please try again.');
       console.error('Butler background removal failed:', failure.reason);
@@ -6713,6 +7421,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('butler:image-expand', async (_evt, fileId, requestedOptions = {}) => {
     let responseBuffer = null;
+    let record = null;
     try {
       if (!aiGateway || !aiGateway.isConfigured()) {
         const error = new Error('Butler is not configured.');
@@ -6724,7 +7433,7 @@ function registerIpcHandlers() {
       const source = await butlerSourceImage(fileId);
       responseBuffer = await aiGateway.expandImage(source.imageDataUrl, options);
       const pngBuffer = await sanitizeButlerImagePng(responseBuffer);
-      const record = await addButlerOutputFile(pngBuffer, source.file, 'image-expand', {
+      record = await addButlerOutputFile(pngBuffer, source.file, 'image-expand', {
         modelId,
         ...butlerOutputAccounting(responseBuffer, BUTLER_IMAGE_TOOL_CREDITS[modelId])
       });
@@ -6732,6 +7441,7 @@ function registerIpcHandlers() {
       if (!deliveryToken && runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
       return { ok: true, file: butlerFilePayload(record, deliveryToken) };
     } catch (error) {
+      if (record) await rollbackGeneratedMediaFile(record);
       await releaseButlerBufferDeliveries([responseBuffer]);
       const failure = butlerFailure(error, 'The image expansion task could not be started.');
       console.error('Butler image expansion failed:', failure.reason);
@@ -6741,6 +7451,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('butler:image-upscale', async (_evt, fileId) => {
     let responseBuffer = null;
+    let record = null;
     try {
       if (!aiGateway || !aiGateway.isConfigured()) {
         const error = new Error('Butler is not configured.');
@@ -6751,7 +7462,7 @@ function registerIpcHandlers() {
       const source = await butlerSourceImage(fileId);
       responseBuffer = await aiGateway.upscaleImage(source.imageDataUrl);
       const pngBuffer = await sanitizeButlerImagePng(responseBuffer);
-      const record = await addButlerOutputFile(pngBuffer, source.file, 'image-upscale', {
+      record = await addButlerOutputFile(pngBuffer, source.file, 'image-upscale', {
         modelId,
         ...butlerOutputAccounting(responseBuffer, BUTLER_IMAGE_TOOL_CREDITS[modelId])
       });
@@ -6759,6 +7470,7 @@ function registerIpcHandlers() {
       if (!deliveryToken && runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
       return { ok: true, file: butlerFilePayload(record, deliveryToken) };
     } catch (error) {
+      if (record) await rollbackGeneratedMediaFile(record);
       await releaseButlerBufferDeliveries([responseBuffer]);
       const failure = butlerFailure(error, 'Image enhancement failed.');
       console.error('Butler image enhancement failed:', failure.reason);
@@ -6832,6 +7544,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('butler:image-erase', async (_evt, fileId, requestedOptions = {}) => {
     let responseBuffer = null;
+    let record = null;
     try {
       if (!aiGateway || !aiGateway.isConfigured()) {
         const error = new Error('Butler is not configured.');
@@ -6849,7 +7562,7 @@ function registerIpcHandlers() {
         maskHeight: mask.height
       });
       const pngBuffer = await sanitizeButlerImagePng(responseBuffer);
-      const record = await addButlerOutputFile(pngBuffer, source.file, 'image-erase', {
+      record = await addButlerOutputFile(pngBuffer, source.file, 'image-erase', {
         modelId,
         ...butlerOutputAccounting(responseBuffer, BUTLER_IMAGE_TOOL_CREDITS[modelId])
       });
@@ -6858,6 +7571,7 @@ function registerIpcHandlers() {
       return { ok: true, file: butlerFilePayload(record, deliveryToken) };
     } catch (error) {
       await releaseButlerBufferDeliveries([responseBuffer]);
+      if (record) await rollbackGeneratedMediaFile(record);
       const failure = butlerFailure(error, 'The selected object could not be erased.');
       console.error('Butler object erase failed:', failure.reason);
       return failure;
@@ -7945,7 +8659,8 @@ function registerIpcHandlers() {
       name: String(canvas.name || 'Untitled').trim().slice(0, 80) || 'Untitled',
       createdAt: canvas.createdAt || new Date().toISOString(),
       updatedAt: canvas.updatedAt || canvas.createdAt || new Date().toISOString(),
-      lastOpenedAt: canvas.lastOpenedAt || null
+      lastOpenedAt: canvas.lastOpenedAt || null,
+      pinned: canvas.pinned === true
     }));
     store.data.canvases.forEach((canvas) => {
       const old = previous.get(canvas.id);
@@ -7967,41 +8682,44 @@ function registerIpcHandlers() {
   ipcMain.handle('canvas:export', async (_evt, canvasId) => {
     const canvas = store.data.canvases.find((entry) => entry.id === canvasId);
     if (!canvas) return { ok: false, reason: 'not-found' };
-    const project = store.data.canvasProjects.find((entry) => entry.id === canvas.projectId) || null;
-    const boardItems = store.data.boardItems.filter((item) => item.canvasId === canvas.id);
-    const fileIds = new Set(boardItems.map((item) => item.fileId).filter(Boolean));
-    const files = store.data.files
-      .filter((file) => fileIds.has(file.id))
-      .map((file) => ({
-        id: file.id,
-        name: file.name,
-        storedPath: file.storedPath,
-        originalPath: file.originalPath || null,
-        importedAt: file.importedAt,
-        sizeBytes: file.sizeBytes,
-        sourceWidth: file.sourceWidth || null,
-        sourceHeight: file.sourceHeight || null,
-        mimeType: file.mimeType || null,
-        fingerprint: file.fingerprint || null,
-        folderId: file.folderId || null
-      }));
     const result = await dialog.showSaveDialog(mainWindow, {
       title: 'Export canvas',
-      defaultPath: `${canvasFolderName(canvas.name)}.messs-canvas.json`,
-      filters: [{ name: 'Messs Canvas', extensions: ['json'] }]
+      defaultPath: `${canvasFolderName(canvas.name)}.Messs`,
+      filters: [{ name: 'Messs Canvas Package', extensions: ['Messs'] }]
     });
     if (result.canceled || !result.filePath) return { ok: false, canceled: true };
-    const payload = {
-      format: 'messs-canvas',
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      project,
-      canvas,
-      boardItems,
-      files
-    };
-    await fs.promises.writeFile(result.filePath, JSON.stringify(payload, null, 2), 'utf8');
-    return { ok: true, filePath: result.filePath };
+    try {
+      const prepared = await prepareCanvasPackageExport(canvas);
+      const filePath = ensureCanvasPackagePath(result.filePath);
+      await writeCanvasPackage(filePath, prepared);
+      return { ok: true, filePath, fileCount: prepared.sources.length };
+    } catch (error) {
+      console.error('Canvas export failed:', error && error.message || error);
+      return {
+        ok: false,
+        reason: error && error.code || 'export-failed',
+        message: error && error.message || 'The canvas could not be exported safely.'
+      };
+    }
+  });
+
+  ipcMain.handle('canvas:import', async (_evt, targetProjectId) => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Import .Messs canvas',
+      properties: ['openFile'],
+      filters: [{ name: 'Messs Canvas Package', extensions: ['Messs'] }]
+    });
+    if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true };
+    try {
+      return await importCanvasPackage(result.filePaths[0], targetProjectId);
+    } catch (error) {
+      console.error('Canvas import failed:', error && error.message || error);
+      return {
+        ok: false,
+        reason: error && error.code || 'import-failed',
+        message: error && error.message || 'The .Messs canvas could not be imported safely.'
+      };
+    }
   });
 
   ipcMain.handle('canvas:delete', async (_evt, canvasId) => {

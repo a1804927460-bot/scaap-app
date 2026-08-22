@@ -64,6 +64,7 @@ import {
   settleToolUsage,
   touchToolUsage,
   settleUsage,
+  isFreeChatReservation,
   tagUsageCanvas,
   quoteUsageForUser,
   CREDIT_PRICING_VERSION
@@ -1966,7 +1967,8 @@ async function handle(request, response) {
   }
   const reservation = await reserveUsage(user.id, kind, requestId, body);
   if (!reservation.ok) return deniedReservation(response, reservation);
-  if (body.canvasId) await tagUsageCanvas(user.id, requestId, body.canvasId);
+  const freeChat = isFreeChatReservation(kind, reservation);
+  if (body.canvasId && !freeChat) await tagUsageCanvas(user.id, requestId, body.canvasId);
   const startedAt = Date.now();
   const controller = new AbortController();
   request.once('aborted', () => controller.abort());
@@ -1977,7 +1979,7 @@ async function handle(request, response) {
     if (kind === 'chat') {
       const result = await chatGenerationGate.run(user.id, () => chat(body, controller.signal), { signal: controller.signal });
       const text = typeof result === 'string' ? result : String(result && result.text || '');
-      await settleUsage(requestId, 'succeeded', Date.now() - startedAt);
+      if (!freeChat) await settleUsage(requestId, 'succeeded', Date.now() - startedAt);
       return send(response, 200, {
         text,
         ...(result && typeof result === 'object' && result.usage ? { usage: result.usage } : {})
@@ -1989,18 +1991,20 @@ async function handle(request, response) {
       'Content-Type': kind === 'video' ? 'video/mp4' : 'application/octet-stream'
     });
   } catch (error) {
-    try {
-      await settleUsage(requestId, 'failed', Date.now() - startedAt);
-    } catch (settlementError) {
-      // Preserve the upstream failure for the client. The reservation remains
-      // locked (not spent) and reserve_ai_credits will release it after the
-      // stale-reservation window if the settlement service is unavailable.
-      console.error(JSON.stringify({
-        level: 'error',
-        requestId,
-        code: String(settlementError.code || 'credit-settlement-failed'),
-        status: Number(settlementError.status) || 503
-      }));
+    if (!freeChat) {
+      try {
+        await settleUsage(requestId, 'failed', Date.now() - startedAt);
+      } catch (settlementError) {
+        // Preserve the upstream failure for the client. The reservation remains
+        // locked (not spent) and reserve_ai_credits will release it after the
+        // stale-reservation window if the settlement service is unavailable.
+        console.error(JSON.stringify({
+          level: 'error',
+          requestId,
+          code: String(settlementError.code || 'credit-settlement-failed'),
+          status: Number(settlementError.status) || 503
+        }));
+      }
     }
     throw error;
   }
@@ -2022,6 +2026,9 @@ const server = http.createServer((request, response) => {
       'provider-not-configured': 'The selected AI model is not configured on the server.',
       'provider-secret-missing': 'The selected AI model is missing its server credential.',
       'provider-auth-failed': 'The selected AI provider rejected its server credential.',
+      'provider-request-failed': 'The generation request was not accepted. Check the reference files and settings, then try again.',
+      'provider-invalid-response': 'The generation service returned an invalid result. Please try again.',
+      'provider-rate-limited': 'The generation service is busy. Please try again shortly.',
       'provider-timeout': 'The selected AI provider timed out while accepting the task. No points were charged; please retry shortly.',
       'provider-channel-unavailable': 'The video provider channel is temporarily unavailable. No points were charged; please retry shortly.',
       'provider-temporarily-unavailable': 'The selected AI provider is temporarily unavailable. Please retry shortly.',

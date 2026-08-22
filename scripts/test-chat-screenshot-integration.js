@@ -12,6 +12,7 @@ const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'messs-screenshot-integra
 const debugPort = 9341;
 let child = null;
 let currentStage = 'starting';
+let diagnostics = '';
 
 async function listTargets() {
   const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`);
@@ -43,7 +44,7 @@ function connectDebugger(url) {
     else resolve(message.result);
   });
   socket.addEventListener('close', () => {
-    for (const { reject } of pending.values()) reject(new Error('Remote debugger target closed.'));
+    for (const { reject } of pending.values()) reject(new Error(`Remote debugger target closed.\\n${diagnostics}`));
     pending.clear();
   });
   return new Promise((resolve, reject) => {
@@ -94,7 +95,6 @@ async function run() {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true
   });
-  let diagnostics = '';
   child.stdout.on('data', (chunk) => { diagnostics += String(chunk); });
   child.stderr.on('data', (chunk) => { diagnostics += String(chunk); });
 
@@ -133,6 +133,32 @@ async function run() {
   await screenshotDebugger.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 520, y: 360, button: 'left' });
   await screenshotDebugger.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 520, y: 360, button: 'left', clickCount: 1 });
   await waitForValue(screenshotDebugger.send, `Boolean(document.querySelector('.icon-ok'))`, 'Screenshot confirmation control');
+  await waitForValue(screenshotDebugger.send,
+    `(() => { const toolbar = document.querySelector('.screenshots-operations-buttons'); return Boolean(toolbar && getComputedStyle(toolbar).backgroundColor !== 'rgb(255, 255, 255)'); })()`,
+    'Screenshot editor theme');
+  await waitForValue(screenshotDebugger.send,
+    `window.__messsScreenshotPolishInstalled === true`,
+    'Screenshot editor size formatter');
+  await evaluate(screenshotDebugger.send,
+    `(() => { const size = document.querySelector('.screenshots-canvas-size'); if (!size) return false; size.textContent = '349.3333740234375 × 195.333740234375'; return true; })()`);
+  await waitForValue(screenshotDebugger.send,
+    `document.querySelector('.screenshots-canvas-size')?.textContent === '349 × 195'`,
+    'Screenshot editor integer size');
+  const presentation = await evaluate(screenshotDebugger.send, `(() => {
+    const toolbar = document.querySelector('.screenshots-operations-buttons');
+    const size = document.querySelector('.screenshots-canvas-size');
+    if (!toolbar || !size) return null;
+    const style = getComputedStyle(toolbar);
+    return {
+      background: style.backgroundColor,
+      borderRadius: style.borderRadius,
+      sizeText: size.textContent.trim()
+    };
+  })()`);
+  assert.ok(presentation, 'Screenshot editor presentation is missing.');
+  assert.notStrictEqual(presentation.background, 'rgb(255, 255, 255)');
+  assert.strictEqual(presentation.borderRadius, '10px');
+  assert.match(presentation.sizeText, /^\d+ × \d+$/);
   currentStage = 'confirming screenshot';
   const clicked = await evaluate(screenshotDebugger.send,
     `Boolean(document.querySelector('.icon-ok')?.closest('.screenshots-button')?.click() ?? true)`);
@@ -153,7 +179,7 @@ async function run() {
 }
 
 run().catch((error) => {
-  process.stderr.write(`Stage: ${currentStage}\n${error.stack || error.message}\n`);
+  process.stderr.write(`Stage: ${currentStage}\n${error.stack || error.message}\n${diagnostics}`);
   process.exitCode = 1;
 }).finally(async () => {
   if (child && !child.killed) child.kill();

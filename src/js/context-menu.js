@@ -877,8 +877,7 @@ async function arrangeItemsGrid(items) {
   const packed = window.MesssBoardEngine.compactMediaGrid(measuredItems, {
     originX,
     originY,
-    gap: 20,
-    columns: Math.max(1, Math.ceil(Math.sqrt(mediaItems.length * 1.35)))
+    gap: 12
   });
   const itemsById = new Map(mediaItems.map((item) => [item.id, item]));
   packed.forEach((position) => {

@@ -289,6 +289,38 @@ test('HUNYUAN3D task tokens hide the job, bind the user and provider, and normal
     status: 'failed', retryAfterMs: 0,
     errorCode: 'three-d-generation-failed', errorMessage: '3D generation failed.'
   });
+  const accountedCreated = await createThreeDTask({
+    providerId: 'hunyuan3d',
+    imageDataUrl: imageDataUrl(input),
+    userId: 'user-one'
+  }, {
+    apiKey: 'test-key',
+    taskSecret: 'independent-task-secret',
+    accountingRequestId: '11111111-1111-4111-8111-111111111111',
+    credits: 20,
+    fetchImpl: createFetch,
+    now: 1_800_000_001_750
+  });
+  let invalidResultReleased = false;
+  const invalidResult = await getThreeDStatus({ taskToken: accountedCreated.taskToken, userId: 'user-one' }, {
+    apiKey: 'test-key',
+    taskSecret: 'independent-task-secret',
+    now: 1_800_000_001_800,
+    fetchImpl: async () => jsonResponse({ ResultFile3Ds: [{ Type: 'GLB' }] }),
+    settleCredits: async ({ status }) => {
+      assert.equal(status, 'failed');
+      invalidResultReleased = true;
+      return { ok: true, creditsReleased: 20 };
+    }
+  });
+  assert.deepEqual(invalidResult, {
+    status: 'failed', retryAfterMs: 0,
+    errorCode: 'three-d-result-invalid',
+    errorMessage: 'The 3D provider completed without a usable model.',
+    credits: 20,
+    creditsReleased: 20
+  });
+  assert.equal(invalidResultReleased, true);
   await assert.rejects(
     () => getThreeDStatus({ taskToken: created.taskToken, userId: 'user-two' }, {
       apiKey: 'test-key',

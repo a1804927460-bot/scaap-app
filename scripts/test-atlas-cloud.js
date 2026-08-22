@@ -188,7 +188,9 @@ function pngHeader(width, height) {
     assert.equal(extendRequest.body.output_format, 'mov');
     const inferredReferenceRequest = requests.find((entry) => entry.body.reference_videos && entry.body.reference_videos.includes('https://cdn.example.com/reference.mp4'));
     assert.equal(inferredReferenceRequest.body.model, 'bytedance/seedance-2.5/reference-to-video');
-    assert.equal(inferredReferenceRequest.body.omni_reference_task_type, 'reference');
+    assert.equal(inferredReferenceRequest.body.omni_reference_task_type, 'auto');
+    assert.equal(Object.hasOwn(inferredReferenceRequest.body, 'watermark'), false);
+    assert.equal(Object.hasOwn(inferredReferenceRequest.body, 'return_last_frame'), false);
     const editRequest = requests.find((entry) => entry.body.omni_reference_task_type === 'edit');
     assert.equal(editRequest.body.duration, -1);
     const seedance20ReferenceRequest = requests.find((entry) => entry.body.model === 'bytedance/seedance-2.0/reference-to-video');
@@ -206,6 +208,31 @@ function pngHeader(width, height) {
     assert.equal(fullReferenceRequest.body.resolution, '1080p-esr & 60fps');
     assert.equal(audioOnlyRequest.body.reference_images.length, 0);
     assert.equal(audioOnlyRequest.body.reference_audios.length, 1);
+
+    // Atlas installations using the older Volcengine spelling may reject the
+    // generic task type. A rejected request has no task id, so the adapter may
+    // safely retry once with that alias.
+    const aliasRequests = [];
+    const previousAliasFetch = global.fetch;
+    global.fetch = async (url, options = {}) => {
+      const endpoint = String(url);
+      if (!endpoint.endsWith('/generateVideo')) throw new Error(`Unexpected alias test request: ${endpoint}`);
+      const body = JSON.parse(options.body);
+      aliasRequests.push(body);
+      if (body.omni_reference_task_type === 'auto') {
+        return new Response(JSON.stringify({ message: 'unsupported task type' }), { status: 400 });
+      }
+      return new Response(JSON.stringify({ request_id: 'atlas-alias-request' }), { status: 200 });
+    };
+    const aliasTask = await providers.createVideoTask({
+      providerId: 'video-3', prompt: 'compatibility alias',
+      urls: ['https://cdn.example.com/alias.mp4'], referenceMediaTypes: ['video'],
+      videoMode: 'omni', resolution: '720P', aspectRatio: 'adaptive', duration: 8,
+      outputFormat: 'mp4'
+    });
+    global.fetch = previousAliasFetch;
+    assert.match(aliasTask.taskId, /^messs-route:atlas-video-seedance25-ref:atlas-alias-request$/);
+    assert.deepEqual(aliasRequests.map((body) => body.omni_reference_task_type), ['auto', 'reference']);
 
     const polled = await providers.pollVideoTask('video-3', extended.taskId);
     assert.equal(polled.status, 'succeeded');

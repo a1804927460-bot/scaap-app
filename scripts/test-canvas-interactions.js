@@ -100,6 +100,35 @@ assert.match(
   /function removeAiPlaceholders\(placeholders\)[\s\S]*?live\.isAiPlaceholder[\s\S]*?if \(!ids\.size\) return/,
   'A persistence failure must not remove a generated result that already replaced its placeholder.'
 );
+const legacyBoardGeneration = boardSource.slice(
+  boardSource.indexOf('async function generateAiMediaForBoard(request'),
+  boardSource.indexOf('const AI_IMAGE_RATIOS')
+);
+assert.match(
+  legacyBoardGeneration,
+  /const placeholders = createAiPlaceholders\(generationRequest\)[\s\S]*?const placements = placeholders\.map/,
+  'The legacy board generation entry point must create placements before submitting to the gateway.'
+);
+assert.match(
+  legacyBoardGeneration,
+  /const files = res && Array\.isArray\(res\.files\)[\s\S]*?!files\.length[\s\S]*?removeAiPlaceholders\(placeholders\)/,
+  'An empty or failed legacy generation response must remove every pending canvas item.'
+);
+assert.match(
+  legacyBoardGeneration,
+  /await replaceAiPlaceholders\(placeholders, files[\s\S]*?catch \(err\) \{[\s\S]*?removeAiPlaceholders\(placeholders\)/,
+  'The legacy board entry point must replace multi-file results and clean up on exceptions.'
+);
+for (const handler of ['removeBackground', 'image-expand', 'image-upscale', 'image-erase']) {
+  const start = mainSource.indexOf(`ipcMain.handle('butler:${handler}`);
+  const end = mainSource.indexOf("ipcMain.handle('", start + 1);
+  const handlerSource = mainSource.slice(start, end === -1 ? undefined : end);
+  assert.match(
+    handlerSource,
+    /let record = null[\s\S]*?record = await addButlerOutputFile[\s\S]*?if \(record\) await rollbackGeneratedMediaFile\(record\)/,
+    `Failed ${handler} delivery must roll back the local output file.`
+  );
+}
 assert.match(
   boardSource,
   /function recordBoardMoveHistory[\s\S]*?before:[\s\S]*?after:[\s\S]*?function undoBoardMove[\s\S]*?applyBoardHistory\(entry, 'before'\)/,
@@ -137,8 +166,13 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /BoardClipboard\.preferInternal = false;[\s\S]*?aiComposerHasDraft\(composer\)[\s\S]*?keepOpenAfterBlur/,
+  /window\.addEventListener\('blur', \(\) => \{[\s\S]*?aiComposerHasDraft\(composer\)[\s\S]*?keepOpenAfterBlur/,
   'Leaving the app with a draft must mark the composer to survive focus loss.'
+);
+assert.doesNotMatch(
+  boardSource,
+  /window\.addEventListener\('blur', \(\) => \{[\s\S]*?BoardClipboard\.items = \[\]/,
+  'The application clipboard must survive focus changes so it can be pasted into another canvas.'
 );
 assert.match(
   boardSource,
@@ -529,6 +563,10 @@ assert.match(
 assert.match(boardStyles, /\.ai-video-mode-picker \{[\s\S]*?position:\s*relative;[\s\S]*?\.ai-video-mode-menu \{[\s\S]*?bottom:\s*calc\(100% \+ 7px\)/);
 assert.match(indexHtml, /id="board-agent-references"[\s\S]*?id="board-agent-add-reference"[\s\S]*?id="board-agent-model-menu"[\s\S]*?data-agent-kind="image"[\s\S]*?data-agent-kind="video"/,
   'Canvas Agent must expose references plus image/video model selection.');
+assert.match(workspaceSource, /button\.className = `board-agent-model-option is-chat-option[\s\S]*?button\.querySelector\('span'\)\.textContent = entry\.name/,
+  'Canvas Agent chat model options must use the full-width chat row variant.');
+assert.match(boardStyles, /\.board-agent-model-option\.is-chat-option \{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) 16px;/,
+  'Canvas Agent chat model names must not be constrained by the media icon column.');
 assert.match(boardStyles, /\.board-agent-form textarea \{[\s\S]*?min-height:\s*58px;[\s\S]*?max-height:\s*112px;/,
   'The Canvas Agent prompt must be approximately half its previous height.');
 assert.match(
@@ -604,12 +642,82 @@ assert.match(
 );
 assert.match(
   workspaceSource,
-  /button\.addEventListener\('contextmenu',[\s\S]*?event\.preventDefault\(\);[\s\S]*?event\.stopPropagation\(\);[\s\S]*?Delete project[\s\S]*?promptDeleteCanvasProject\(project\.id\)[\s\S]*?canvas-project-context-menu/,
-  'Right-clicking a project must open its delete menu without triggering the project filter.'
+  /button\.addEventListener\('contextmenu',[\s\S]*?event\.preventDefault\(\);[\s\S]*?event\.stopPropagation\(\);[\s\S]*?Delete folder[\s\S]*?promptDeleteCanvasProject\(project\.id\)[\s\S]*?canvas-project-context-menu/,
+  'Right-clicking a folder must open its management menu without triggering the folder filter.'
 );
+assert.match(indexHtml, /id="canvas-project-new"[\s\S]*?New folder/,
+  'The canvas library must expose a new-folder entry point.');
+assert.match(
+  workspaceSource,
+  /function buildCanvasLibraryCreateCard\(\)[\s\S]*?canvas-library-create-card[\s\S]*?promptNewCanvas\(\)[\s\S]*?grid\.appendChild\(buildCanvasLibraryCreateCard\(\)\)/,
+  'The canvas library must expose a create-canvas action in the empty grid area.'
+);
+assert.match(
+  boardStyles,
+  /\.canvas-library-create-card \{[\s\S]*?border:\s*1px dashed[\s\S]*?\.canvas-library-create-card:hover/,
+  'The empty grid create-canvas action must have a clear, keyboard-visible affordance.'
+);
+assert.match(
+  workspaceSource,
+  /async function promptNewProject[\s\S]*?uniqueCanvasProjectName\(result\.name\)[\s\S]*?canvasWorkspaceSave\(\)[\s\S]*?Folder created/,
+  'Creating a folder must normalize its name and persist it without creating an unrelated canvas.'
+);
+assert.match(
+  workspaceSource,
+  /function showCanvasFolderDialog[\s\S]*?Destination folder[\s\S]*?canvas-folder-select[\s\S]*?canvas-folder-confirm/,
+  'Moving a canvas must present a destination-folder selector.'
+);
+assert.match(
+  workspaceSource,
+  /action: 'move-folder'[\s\S]*?promptMoveCanvasToFolder\(canvas\.id\)/,
+  'Canvas actions must expose moving a canvas into a folder.'
+);
+assert.match(
+  workspaceSource,
+  /async function promptMoveCanvasToFolder[\s\S]*?canvas\.projectId = projectId[\s\S]*?canvasWorkspaceSave\(\)/,
+  'Moving a canvas must update its folder and persist the change.'
+);
+assert.match(
+  workspaceSource,
+  /async function promptRenameCanvasProject[\s\S]*?uniqueCanvasProjectName\(result\.name, project\.id\)[\s\S]*?canvasWorkspaceSave\(\)/,
+  'Folders must support renaming with durable persistence.'
+);
+assert.match(
+  workspaceSource,
+  /function toggleCanvasPinned\(canvasId\)[\s\S]*?canvas\.pinned = pinned[\s\S]*?canvasWorkspaceSave\(\)/,
+  'Canvas pinning must toggle a durable canvas flag and save it.'
+);
+assert.match(
+  workspaceSource,
+  /function filteredCanvases\(\)[\s\S]*?Number\(b\.pinned === true\)[\s\S]*?canvas\.pinned === true[\s\S]*?Pin canvas/,
+  'Pinned canvases must remain visible and sort ahead of recent canvases.'
+);
+assert.match(
+  workspaceSource,
+  /card\.addEventListener\('contextmenu',[\s\S]*?buildAndShowSimpleMenu\([\s\S]*?toggleCanvasPinned\(canvas\.id\)/,
+  'Right-clicking a canvas card must expose the pin action.'
+);
+assert.match(mainSource, /lastOpenedAt: canvas\.lastOpenedAt \|\| null,[\s\S]*?pinned: canvas\.pinned === true/,
+  'Canvas pin state must survive the main-process canvas-state normalization.');
+assert.match(indexHtml, /id="canvas-import"[\s\S]*?Import \.Messs/,
+  'The canvas library must expose a .Messs import entry point.');
+assert.match(workspaceSource, /async function promptImportCanvas[\s\S]*?window\.messsAPI\.importCanvas\(projectId\)[\s\S]*?switchCanvas\(result\.canvas\.id/,
+  'Importing a .Messs package must merge its files and layout, then open the imported canvas.');
+assert.match(mainSource, /const CANVAS_PACKAGE_MAGIC = Buffer\.from\('MESSS-CANVAS-PKG'/,
+  'Canvas packages must use an application-specific binary signature.');
+assert.match(mainSource, /function prepareCanvasPackageExport[\s\S]*?file\.canvasId === canvas\.id \|\| fileIds\.has[\s\S]*?hashArchivedFile/,
+  'Canvas export must include every file assigned to the canvas and hash each payload.');
+assert.match(mainSource, /ipcMain\.handle\('canvas:export'[\s\S]*?extensions: \['Messs'\][\s\S]*?ensureCanvasPackagePath[\s\S]*?writeCanvasPackage/,
+  'Canvas export must write a .Messs package instead of a metadata-only JSON file.');
+assert.match(mainSource, /function readCanvasPackageManifest[\s\S]*?payloadOffset \+ payloadBytes !== stat\.size/,
+  'Canvas import must reject truncated or extra package data before touching application state.');
+assert.match(mainSource, /function extractCanvasPackageFile[\s\S]*?sha256\.toLowerCase\(\) !== String\(entry\.sha256\)\.toLowerCase\(\)/,
+  'Every imported canvas file must pass its SHA-256 integrity check.');
+assert.match(mainSource, /function replaceCanvasPackageAtomically[\s\S]*?backupPath[\s\S]*?rename\(temporaryPath, targetPath\)/,
+  'Export must replace an existing package atomically and restore it if replacement fails.');
 const projectDeleteSource = workspaceSource.slice(
   workspaceSource.indexOf('async function promptDeleteCanvasProject'),
-  workspaceSource.indexOf('async function promptRenameCanvas')
+  workspaceSource.indexOf('async function promptRenameCanvas(canvasId')
 );
 assert.match(projectDeleteSource, /AppState\.canvasProjects\.length <= 1/,
   'Deleting a project must preserve at least one project.');
@@ -771,6 +879,26 @@ assert.doesNotMatch(
 );
 assert.match(
   boardSource,
+  /function boardSelectionBounds\(items\)[\s\S]*?boardItemBounds\(item\)[\s\S]*?w: Math\.max\(1, right - left\)[\s\S]*?h: Math\.max\(1, bottom - top\)/,
+  'A multi-selection must derive one world-space bounds rectangle from every selected item.'
+);
+assert.match(
+  boardSource,
+  /function syncBoardSelectionGroup\(\)[\s\S]*?selected\.length >= 2[\s\S]*?group\.style\.left[\s\S]*?group\.style\.width[\s\S]*?group\.style\.height/,
+  'Multi-selection must render one shared selection box and hide it for smaller selections.'
+);
+assert.match(
+  boardSource,
+  /function startBoardSelectionResize\(event, corner, group\)[\s\S]*?anchorX[\s\S]*?anchorY[\s\S]*?const scale[\s\S]*?item\.x = Math\.round\(anchorX[\s\S]*?item\.width[\s\S]*?syncBoardSelectionGroup\(\)[\s\S]*?recordBoardResizeHistory\(startFrames\)[\s\S]*?persistBoardMoveHistory\(selectedItems\)/,
+  'The shared corner handles must scale positions and sizes together, then persist one resize history entry.'
+);
+assert.match(
+  boardSource,
+  /function applyBoardResizeHistory\(entry, direction\)[\s\S]*?item\.width = frame\.width[\s\S]*?item\.height = frame\.height[\s\S]*?syncMountedBoardItemGeometry[\s\S]*?persistBoardMoveHistory\(changedItems\)/,
+  'Grouped resize must be undoable and redoable with complete item frames.'
+);
+assert.match(
+  boardSource,
   /function prioritizeBoardOverviewImageQueue\(files\)[\s\S]*?overviewImageQueue\.length = 0;[\s\S]*?requestBoardOverviewImage\(file, true\)[\s\S]*?prioritizeBoardOverviewImageQueue\(prioritizedImages\.map/,
   'Dense-canvas thumbnail work must be reprioritized for the current viewport.'
 );
@@ -816,6 +944,11 @@ assert.match(
   'Canvas action capsules and their media gap must compensate for the parent canvas scale.'
 );
 assert.match(
+  boardSource,
+  /--board-label-scale',\s*'var\(--board-toolbar-scale\)'/,
+  'The edit hint and media labels must share the Butler capsule screen-scale compensation.'
+);
+assert.match(
   boardStyles,
   /\.board-image-toolbar \{[\s\S]*?--board-toolbar-effective-scale:\s*var\(--board-toolbar-scale, 1\)[\s\S]*?bottom:\s*calc\(100% \+ var\(--board-toolbar-gap, 7px\)\)[\s\S]*?scale\(var\(--board-toolbar-effective-scale\)\)/,
   'Image and video action capsules must consume the dedicated zoom-compensated toolbar variables.'
@@ -825,7 +958,27 @@ assert.match(
   /\.board-canvas\.is-transforming \.board-image-toolbar \{\s*transition:\s*none;/,
   'Action capsules must track active wheel zoom without a delayed size trail.'
 );
+assert.match(
+  boardStyles,
+  /\.board-edit-hint \{[\s\S]*?top:\s*calc\(100% \+ var\(--board-toolbar-gap, 7px\)\)[\s\S]*?scale\(var\(--board-label-scale, 1\)\)/,
+  'The edit hint must use the same zoom-compensated gap and label scale as the Butler capsule.'
+);
 assert.match(boardStyles, /\.board-item\.is-selected \{[\s\S]*?outline:\s*var\(--board-selection-width/);
+assert.match(
+  boardStyles,
+  /\.board-selection-group-box \{[\s\S]*?pointer-events: none[\s\S]*?\.board-selection-group-box \.board-resize-handle[\s\S]*?pointer-events: auto/,
+  'The shared selection box must not block canvas interaction while keeping its handles interactive.'
+);
+assert.match(
+  boardStyles,
+  /\.board-canvas\.is-multi-selection \.board-item\.is-selected:not\(\.is-single-selection\) \{[\s\S]*?outline: none/,
+  'Individual selection outlines must be suppressed while a shared multi-selection box is visible.'
+);
+assert.match(
+  boardStyles,
+  /\.board-canvas\.is-multi-selection \.board-item\.is-selected:not\(\.is-single-selection\) \.board-resize-handle \{[\s\S]*?display: none/,
+  'Individual resize handles must be suppressed while a shared multi-selection box is visible.'
+);
 assert.match(
   boardStyles,
   /\.board-item-image\.is-selected\.is-single-selection,[\s\S]*?\.board-item-video\.is-selected\.is-single-selection[\s\S]*?z-index:\s*100000\s*!important/,
@@ -948,8 +1101,8 @@ assert.match(
 assert.match(boardStyles, /\.fullscreen-stage > img \{[\s\S]*?max-width:\s*var\(--fullscreen-media-max-width\);[\s\S]*?max-height:\s*var\(--fullscreen-media-max-height\);/);
 assert.match(
   contextMenuSource,
-  /function arrangeItemsGrid[\s\S]*?isImageExt\(file\.ext\) \|\| isVideoExt\(file\.ext\)[\s\S]*?boardItemBounds\(item\)[\s\S]*?compactMediaGrid\(measuredItems,[\s\S]*?gap:\s*20[\s\S]*?upsertBoardItems\(mediaItems\)/,
-  'Compact arrangement must resize only selected media to the smallest displayed width, preserve aspect ratio, and persist one packed rectangle.'
+  /function arrangeItemsGrid[\s\S]*?isImageExt\(file\.ext\) \|\| isVideoExt\(file\.ext\)[\s\S]*?boardItemBounds\(item\)[\s\S]*?compactMediaGrid\(measuredItems,[\s\S]*?gap:\s*12[\s\S]*?upsertBoardItems\(mediaItems\)/,
+  'Compact arrangement must resize selected media to the smallest displayed width, preserve aspect ratio, use square-near columns, and persist one packed rectangle.'
 );
 assert.match(
   contextMenuSource,
@@ -968,8 +1121,8 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /function pasteBoardClipboard[\s\S]*?cloneBoardHistoryItem\(clipboardItem\)[\s\S]*?canvasId: activeCanvasId\(\)/,
-  'Canvas paste must clone copied items into the currently active canvas.'
+  /function pasteBoardClipboard[\s\S]*?targetCanvasId = activeCanvasId\(\)[\s\S]*?cloneBoardHistoryItem\(clipboardItem\)[\s\S]*?canvasId: targetCanvasId[\s\S]*?persistBoardItemMutation\(\{ upsert: newItems \}, targetCanvasId\)/,
+  'Canvas paste must clone copied items into the currently active canvas and persist them there.'
 );
 assert.match(
   workspaceSource,

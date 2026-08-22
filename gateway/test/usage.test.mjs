@@ -12,6 +12,7 @@ import {
   providerRequiresActivation,
   quoteUsage,
   quoteUsageForUser,
+  isFreeChatReservation,
   redeemUsageCode,
   reserveToolUsage,
   reserveUsage,
@@ -214,6 +215,13 @@ test('retail formula applies the safety buffer and current segmented gross margi
   assert.equal(quoteRetailCreditsFromCny(1.5), 27);
   assert.equal(quoteTopazRetailCredits(1), 20);
   assert.equal(quoteUsage('video', { providerId: 'video-3', resolution: '4K-ESR', duration: 6 }).credits, 3315);
+});
+
+test('free chat reservations never need a settlement row', () => {
+  assert.equal(isFreeChatReservation('chat', { reason: 'free', credits: 0 }), true);
+  assert.equal(isFreeChatReservation('chat', { reason: 'development-bypass', credits: 0 }), true);
+  assert.equal(isFreeChatReservation('image', { reason: 'free', credits: 0 }), false);
+  assert.equal(isFreeChatReservation('chat', { reason: 'reserved', credits: 1 }), false);
 });
 
 test('Legnext Midjourney uses its dedicated RPC and HD price', async () => {

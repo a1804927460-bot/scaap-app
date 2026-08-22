@@ -212,6 +212,21 @@ function canvasWorkspaceTouch(canvasId = activeCanvasId()) {
   if (canvas) canvas.updatedAt = new Date().toISOString();
 }
 
+function toggleCanvasPinned(canvasId) {
+  const canvas = AppState.canvases.find((entry) => entry.id === canvasId);
+  if (!canvas) return;
+  const pinned = canvas.pinned !== true;
+  canvas.pinned = pinned;
+  renderCanvasLibrary();
+  canvasWorkspaceSave().catch(() => {
+    // Keep the UI and durable state aligned if the save was rejected.
+    if (canvas.pinned === pinned) {
+      canvas.pinned = !pinned;
+      renderCanvasLibrary();
+    }
+  });
+}
+
 async function canvasWorkspaceSave() {
   const result = await window.messsAPI.saveCanvasState({
     projects: AppState.canvasProjects,
@@ -309,11 +324,13 @@ function filteredCanvases() {
     .filter((canvas) => !CanvasWorkspace.libraryProjectId || canvas.projectId === CanvasWorkspace.libraryProjectId)
     .filter((canvas) => {
     if (CanvasWorkspace.libraryFilter !== 'recent') return true;
+      if (canvas.pinned === true) return true;
       const updated = new Date(canvas.lastOpenedAt || canvas.updatedAt || canvas.createdAt || 0).getTime();
       return now - updated <= 1000 * 60 * 60 * 24 * 30;
     })
     .filter((canvas) => !query || canvas.name.toLowerCase().includes(query))
-    .sort((a, b) => new Date(b.lastOpenedAt || b.updatedAt || b.createdAt || 0) - new Date(a.lastOpenedAt || a.updatedAt || a.createdAt || 0));
+    .sort((a, b) => Number(b.pinned === true) - Number(a.pinned === true)
+      || new Date(b.lastOpenedAt || b.updatedAt || b.createdAt || 0) - new Date(a.lastOpenedAt || a.updatedAt || a.createdAt || 0));
 }
 
 function renderCanvasLibraryProjects() {
@@ -326,14 +343,19 @@ function renderCanvasLibraryProjects() {
     button.dataset.projectId = project.id;
     button.classList.toggle('is-active', CanvasWorkspace.libraryProjectId === project.id);
     const count = AppState.canvases.filter((canvas) => canvas.projectId === project.id).length;
-    button.textContent = `${project.name} (${count})`;
-    button.title = t('Right-click to manage this project', '右键管理此项目');
+    button.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg><span class="canvas-library-project-name">${escapeHtml(project.name)}</span><small class="canvas-library-project-count">${count}</small>`;
+    button.title = t('Right-click to manage this folder', '右键管理此文件夹');
     button.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       event.stopPropagation();
       buildAndShowSimpleMenu([
         {
-          label: t('Delete project', '删除项目'),
+          label: t('Rename folder', '重命名文件夹'),
+          icon: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
+          action: () => promptRenameCanvasProject(project.id)
+        },
+        {
+          label: t('Delete folder', '删除文件夹'),
           icon: 'M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13',
           danger: true,
           action: () => promptDeleteCanvasProject(project.id)
@@ -357,6 +379,17 @@ function closeCanvasCardMenus(exceptMenu = null) {
   });
 }
 
+function buildCanvasLibraryCreateCard() {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'canvas-library-create-card';
+  button.setAttribute('aria-label', t('New canvas', '新建画布'));
+  button.innerHTML = '<span class="canvas-library-create-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg></span><span class="canvas-library-create-label"></span>';
+  button.querySelector('.canvas-library-create-label').textContent = t('New canvas', '新建画布');
+  button.addEventListener('click', () => promptNewCanvas());
+  return button;
+}
+
 function renderCanvasLibrary() {
   const grid = document.getElementById('canvas-library-grid');
   if (!grid) return;
@@ -366,6 +399,7 @@ function renderCanvasLibrary() {
     const project = AppState.canvasProjects.find((entry) => entry.id === canvas.projectId);
     const card = document.createElement('article');
     card.className = 'canvas-library-card';
+    card.classList.toggle('is-pinned', canvas.pinned === true);
     card.dataset.canvasId = canvas.id;
     card.tabIndex = 0;
     card.setAttribute('role', 'button');
@@ -382,6 +416,13 @@ function renderCanvasLibrary() {
     updated.textContent = relativeCanvasTime(canvas.updatedAt || canvas.createdAt);
     meta.append(projectName, updated);
 
+    const pinBadge = document.createElement('span');
+    pinBadge.className = 'canvas-library-card-pin';
+    pinBadge.title = t('Pinned canvas', '已置顶画布');
+    pinBadge.setAttribute('aria-label', pinBadge.title);
+    pinBadge.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3h8l-1 5 3 4H6l3-4z"/><path d="M12 12v9"/></svg>';
+    pinBadge.hidden = canvas.pinned !== true;
+
     const menuTrigger = document.createElement('button');
     menuTrigger.type = 'button';
     menuTrigger.className = 'canvas-library-card-menu-trigger';
@@ -397,9 +438,19 @@ function renderCanvasLibrary() {
     menu.hidden = true;
     const actions = [
       {
+        action: 'toggle-pin',
+        label: canvas.pinned === true ? t('Unpin canvas', '取消置顶') : t('Pin canvas', '置顶画布'),
+        icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3h8l-1 5 3 4H6l3-4z"/><path d="M12 12v9"/></svg>'
+      },
+      {
         action: 'rename',
         label: t('Rename canvas', '重命名画布'),
         icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>'
+      },
+      {
+        action: 'move-folder',
+        label: t('Move to folder', '移动到文件夹'),
+        icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M8 13h8M13 10l3 3-3 3"/></svg>'
       },
       {
         action: 'export',
@@ -437,11 +488,30 @@ function renderCanvasLibrary() {
       if (!button) return;
       closeCanvasCardMenus();
       if (button.dataset.canvasAction === 'rename') promptRenameCanvas(canvas.id);
+      if (button.dataset.canvasAction === 'move-folder') promptMoveCanvasToFolder(canvas.id);
       if (button.dataset.canvasAction === 'export') exportCanvasFile(canvas.id);
       if (button.dataset.canvasAction === 'delete') promptDeleteCanvas(canvas.id);
+      if (button.dataset.canvasAction === 'toggle-pin') toggleCanvasPinned(canvas.id);
     });
 
-    card.append(title, meta, buildCanvasMosaic(canvas), menuTrigger, menu);
+    card.append(title, meta, buildCanvasMosaic(canvas), pinBadge, menuTrigger, menu);
+    card.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeCanvasCardMenus();
+      buildAndShowSimpleMenu([
+        {
+          label: canvas.pinned === true ? t('Unpin canvas', '取消置顶') : t('Pin canvas', '置顶画布'),
+          icon: 'M8 3h8l-1 5 3 4H6l3-4z;M12 12v9',
+          action: () => toggleCanvasPinned(canvas.id)
+        },
+        {
+          label: t('Move to folder', '移动到文件夹'),
+          icon: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z;M8 13h8M13 10l3 3-3 3',
+          action: () => promptMoveCanvasToFolder(canvas.id)
+        }
+      ], event.clientX, event.clientY, 'canvas-card-context-menu');
+    });
     card.addEventListener('click', () => switchCanvas(canvas.id, { enterWorkspace: true }));
     card.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' || event.key === ' ') {
@@ -451,8 +521,9 @@ function renderCanvasLibrary() {
     });
     grid.appendChild(card);
   });
+  if (!CanvasWorkspace.libraryQuery.trim()) grid.appendChild(buildCanvasLibraryCreateCard());
   const empty = document.getElementById('canvas-library-empty');
-  empty.hidden = canvases.length > 0;
+  empty.hidden = canvases.length > 0 || !CanvasWorkspace.libraryQuery.trim();
   renderCanvasLibraryProjects();
 }
 
@@ -541,7 +612,7 @@ function showCanvasTextDialog({ title, label, initialValue = '', projectId = nul
       <form class="canvas-name-dialog" aria-modal="true" role="dialog">
         <h3>${escapeHtml(title)}</h3>
         <label><span>${escapeHtml(label)}</span><input class="canvas-name-input" maxlength="80" /></label>
-        <label class="canvas-project-field"><span>${escapeHtml(t('Project', '项目'))}</span><select class="canvas-project-input"></select></label>
+        <label class="canvas-project-field"><span>${escapeHtml(t('Folder', '文件夹'))}</span><select class="canvas-project-input"></select></label>
         <div class="canvas-name-dialog-actions">
           <button type="button" class="pill-btn pill-btn-ghost canvas-name-cancel">${escapeHtml(t('Cancel', '取消'))}</button>
           <button type="submit" class="pill-btn canvas-name-confirm">${escapeHtml(t('Create', '创建'))}</button>
@@ -623,6 +694,57 @@ function showCanvasConfirmDialog({ title, message, confirmLabel }) {
   });
 }
 
+function showCanvasFolderDialog({
+  title,
+  projectId = null,
+  folderLabel = t('Destination folder', '目标文件夹'),
+  confirmLabel = t('Move', '移动')
+}) {
+  return new Promise((resolve) => {
+    const old = document.getElementById('canvas-folder-dialog');
+    if (old) old.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'canvas-folder-dialog';
+    overlay.className = 'canvas-name-dialog-overlay';
+    overlay.innerHTML = `
+      <form class="canvas-name-dialog canvas-folder-dialog" aria-modal="true" role="dialog">
+        <h3>${escapeHtml(title)}</h3>
+        <label><span>${escapeHtml(folderLabel)}</span><select class="canvas-folder-select"></select></label>
+        <div class="canvas-name-dialog-actions">
+          <button type="button" class="pill-btn pill-btn-ghost canvas-folder-cancel">${escapeHtml(t('Cancel', '取消'))}</button>
+          <button type="submit" class="pill-btn canvas-folder-confirm">${escapeHtml(confirmLabel)}</button>
+        </div>
+      </form>
+    `;
+    document.body.appendChild(overlay);
+    const form = overlay.querySelector('form');
+    const select = overlay.querySelector('.canvas-folder-select');
+    AppState.canvasProjects.forEach((project) => {
+      const option = document.createElement('option');
+      option.value = project.id;
+      option.textContent = project.name;
+      option.selected = project.id === projectId;
+      select.appendChild(option);
+    });
+    requestAnimationFrame(() => overlay.classList.add('is-visible'));
+
+    function close(value) {
+      overlay.classList.remove('is-visible');
+      setTimeout(() => overlay.remove(), 180);
+      resolve(value);
+    }
+    overlay.querySelector('.canvas-folder-cancel').addEventListener('click', () => close(null));
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) close(null);
+    });
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      close(select.value || null);
+    });
+    select.focus();
+  });
+}
+
 async function createCanvasForProject(projectId, name) {
   const project = AppState.canvasProjects.find((entry) => entry.id === projectId) || AppState.canvasProjects[0];
   if (!project) return;
@@ -656,25 +778,150 @@ async function promptNewCanvas() {
 
 async function promptNewProject() {
   const result = await showCanvasTextDialog({
-    title: t('New project', '新建项目'),
-    label: t('Project name', '项目名称'),
-    initialValue: t('New project', '新项目')
+    title: t('New folder', '新建文件夹'),
+    label: t('Folder name', '文件夹名称'),
+    initialValue: t('New folder', '新文件夹')
   });
   if (!result) return;
   const project = {
     id: `project-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    name: result.name,
+    name: uniqueCanvasProjectName(result.name),
     createdAt: new Date().toISOString()
   };
-  AppState.canvasProjects.push(project);
-  await createCanvasForProject(project.id, t('Untitled', '未命名'));
+  const previousProjects = AppState.canvasProjects;
+  AppState.canvasProjects = [...previousProjects, project];
+  try {
+    await canvasWorkspaceSave();
+    CanvasWorkspace.libraryProjectId = project.id;
+    CanvasWorkspace.libraryFilter = 'all';
+    renderCanvasWorkspaceControls();
+    showCanvasLibrary();
+    showToast(t('Folder created.', '文件夹已创建。'), 'Canvas');
+  } catch (err) {
+    AppState.canvasProjects = previousProjects;
+    renderCanvasWorkspaceControls();
+    showToast(err && err.message ? err.message : t('Folder creation failed.', '文件夹创建失败。'), 'Canvas');
+  }
+}
+
+function uniqueCanvasProjectName(value, exceptId = null) {
+  const base = String(value || t('New folder', '新文件夹')).trim() || t('New folder', '新文件夹');
+  const names = new Set(
+    AppState.canvasProjects
+      .filter((project) => project.id !== exceptId)
+      .map((project) => String(project.name || '').toLowerCase())
+  );
+  if (!names.has(base.toLowerCase())) return base;
+  let index = 2;
+  let candidate = `${base} ${index}`;
+  while (names.has(candidate.toLowerCase())) candidate = `${base} ${++index}`;
+  return candidate;
+}
+
+async function promptRenameCanvasProject(projectId) {
+  const project = AppState.canvasProjects.find((entry) => entry.id === projectId);
+  if (!project) return;
+  const result = await showCanvasTextDialog({
+    title: t('Rename folder', '重命名文件夹'),
+    label: t('Folder name', '文件夹名称'),
+    initialValue: project.name
+  });
+  if (!result) return;
+  const previousName = project.name;
+  project.name = uniqueCanvasProjectName(result.name, project.id);
+  try {
+    await canvasWorkspaceSave();
+    renderCanvasWorkspaceControls();
+    showToast(t('Folder renamed.', '文件夹已重命名。'), 'Canvas');
+  } catch (err) {
+    project.name = previousName;
+    renderCanvasWorkspaceControls();
+    showToast(err && err.message ? err.message : t('Folder rename failed.', '文件夹重命名失败。'), 'Canvas');
+  }
+}
+
+async function promptMoveCanvasToFolder(canvasId) {
+  const canvas = AppState.canvases.find((entry) => entry.id === canvasId);
+  if (!canvas) return;
+  if (AppState.canvasProjects.length <= 1) {
+    showToast(t('Create another folder before moving a canvas.', '请先新建一个文件夹，再移动画布。'), 'Canvas');
+    return;
+  }
+  const projectId = await showCanvasFolderDialog({
+    title: t('Move canvas to folder', '将画布移动到文件夹'),
+    projectId: canvas.projectId
+  });
+  if (!projectId || projectId === canvas.projectId) return;
+  const previousProjectId = canvas.projectId;
+  const previousUpdatedAt = canvas.updatedAt;
+  canvas.projectId = projectId;
+  canvas.updatedAt = new Date().toISOString();
+  try {
+    await canvasWorkspaceSave();
+    renderCanvasWorkspaceControls();
+    showToast(t('Canvas moved to folder.', '画布已移动到文件夹。'), 'Canvas');
+  } catch (err) {
+    canvas.projectId = previousProjectId;
+    canvas.updatedAt = previousUpdatedAt;
+    renderCanvasWorkspaceControls();
+    showToast(err && err.message ? err.message : t('Canvas move failed.', '画布移动失败。'), 'Canvas');
+  }
+}
+
+async function promptImportCanvas() {
+  if (!AppState.canvasProjects.length) {
+    showToast(t('Create a folder before importing a canvas.', '请先创建文件夹，再导入画布。'), 'Canvas');
+    return;
+  }
+  const active = activeCanvasRecord();
+  const projectId = await showCanvasFolderDialog({
+    title: t('Import .Messs canvas', '导入 .Messs 画布'),
+    projectId: CanvasWorkspace.libraryProjectId || (active && active.projectId) || AppState.canvasProjects[0].id,
+    folderLabel: t('Import into folder', '导入到文件夹'),
+    confirmLabel: t('Import', '导入')
+  });
+  if (!projectId) return;
+  try {
+    const result = await window.messsAPI.importCanvas(projectId);
+    if (!result || !result.ok) {
+      if (result && !result.canceled) {
+        showToast(result.message || t('Canvas import failed.', '画布导入失败。'), 'Canvas');
+      }
+      return;
+    }
+    AppState.canvasProjects = Array.isArray(result.projects) ? result.projects : AppState.canvasProjects;
+    AppState.canvases = Array.isArray(result.canvases) ? result.canvases : AppState.canvases;
+    const importedFiles = Array.isArray(result.files) ? result.files : [];
+    const importedItems = Array.isArray(result.boardItems) ? result.boardItems : [];
+    AppState.files = [
+      ...AppState.files.filter((file) => !importedFiles.some((entry) => entry.id === file.id)),
+      ...importedFiles
+    ];
+    AppState.allBoardItems = [
+      ...AppState.allBoardItems.filter((item) => !importedItems.some((entry) => entry.id === item.id)),
+      ...importedItems
+    ];
+    if (typeof renderFileList === 'function') renderFileList(currentFileListScope());
+    if (typeof renderFolderGridIfActive === 'function') renderFolderGridIfActive();
+    if (result.canvas && result.canvas.id) {
+      switchCanvas(result.canvas.id, { enterWorkspace: true });
+    } else {
+      renderCanvasWorkspaceControls();
+    }
+    showToast(
+      t(`Imported canvas with ${importedFiles.length} file${importedFiles.length === 1 ? '' : 's'}.`, `画布导入成功，共 ${importedFiles.length} 个文件。`),
+      'Canvas'
+    );
+  } catch (err) {
+    showToast(err && err.message ? err.message : t('Canvas import failed.', '画布导入失败。'), 'Canvas');
+  }
 }
 
 async function promptDeleteCanvasProject(projectId) {
   const project = AppState.canvasProjects.find((entry) => entry.id === projectId);
   if (!project) return;
   if (AppState.canvasProjects.length <= 1) {
-    showToast(t('Keep at least one project.', '至少需要保留一个项目。'), 'Canvas');
+    showToast(t('Keep at least one folder.', '至少需要保留一个文件夹。'), 'Canvas');
     return;
   }
 
@@ -683,7 +930,7 @@ async function promptDeleteCanvasProject(projectId) {
   if (!fallback) return;
   const canvasCount = AppState.canvases.filter((canvas) => canvas.projectId === projectId).length;
   const confirmed = await showCanvasConfirmDialog({
-    title: t('Delete project', '删除项目'),
+    title: t('Delete folder', '删除文件夹'),
     message: canvasCount
       ? t(
         `Delete "${project.name}"? Its ${canvasCount} canvas${canvasCount === 1 ? '' : 'es'} will move to "${fallback.name}". Source files will be kept.`,
@@ -711,7 +958,7 @@ async function promptDeleteCanvasProject(projectId) {
   try {
     await canvasWorkspaceSave();
     renderCanvasWorkspaceControls();
-    showToast(t('Project deleted. Canvases and source files were kept.', '项目已删除，画布和源文件仍然保留。'), 'Canvas');
+    showToast(t('Folder deleted. Canvases and source files were kept.', '文件夹已删除，画布和源文件仍然保留。'), 'Canvas');
   } catch (err) {
     AppState.canvasProjects = previousProjects;
     affectedCanvases.forEach(({ canvas, projectId: originalProjectId, updatedAt }) => {
@@ -720,7 +967,7 @@ async function promptDeleteCanvasProject(projectId) {
     });
     CanvasWorkspace.libraryProjectId = previousLibraryProjectId;
     renderCanvasWorkspaceControls();
-    showToast(err && err.message ? err.message : t('Project deletion failed.', '项目删除失败。'), 'Canvas');
+    showToast(err && err.message ? err.message : t('Folder deletion failed.', '文件夹删除失败。'), 'Canvas');
   }
 }
 
@@ -743,9 +990,12 @@ async function exportCanvasFile(canvasId) {
   try {
     const result = await window.messsAPI.exportCanvas(canvasId);
     if (result && result.ok) {
-      showToast(t('Canvas exported as one development file.', '画布已导出为单个开发文件。'), 'Canvas');
+      showToast(
+        t(`Canvas exported as .Messs with ${result.fileCount || 0} file${result.fileCount === 1 ? '' : 's'}.`, `画布已导出为 .Messs 文件，共 ${result.fileCount || 0} 个文件。`),
+        'Canvas'
+      );
     } else if (result && !result.canceled) {
-      showToast(t('Canvas export failed.', '画布导出失败。'), 'Canvas');
+      showToast(result.message || t('Canvas export failed.', '画布导出失败。'), 'Canvas');
     }
   } catch (err) {
     showToast(err && err.message ? err.message : t('Canvas export failed.', '画布导出失败。'), 'Canvas');
@@ -1070,7 +1320,7 @@ function renderCanvasAgentModels() {
       && entry.providerId === CanvasWorkspace.agentChatProviderId
       && entry.model === CanvasWorkspace.agentChatModel;
     button.type = 'button';
-    button.className = `board-agent-model-option${active ? ' is-active' : ''}`;
+    button.className = `board-agent-model-option is-chat-option${active ? ' is-active' : ''}`;
     button.dataset.agentChatProviderId = entry.providerId;
     button.dataset.agentChatModel = entry.model;
     button.setAttribute('role', 'option');
@@ -1482,10 +1732,11 @@ function refreshCanvasWorkspaceLanguage() {
     if (element) element.textContent = t(en, zh);
   };
   setText('#canvas-new span', 'New canvas', '新建画布');
-  setText('#canvas-project-new span', 'New project', '新建项目');
+  setText('#canvas-import span', 'Import .Messs', '导入 .Messs');
+  setText('#canvas-project-new span', 'New folder', '新建文件夹');
   setText('[data-canvas-filter="all"]', 'All canvases', '全部画布');
   setText('[data-canvas-filter="recent"]', 'Recent', '最近使用');
-  setText('.canvas-library-project-label', 'Projects', '项目');
+  setText('.canvas-library-project-label', 'Folders', '文件夹');
   setText('.canvas-library-topline h2', 'All Canvases', '全部画布');
   setText('.canvas-library-topline p', 'Browse and manage your canvases', '浏览和管理你的画布');
   setText('#canvas-library-empty', 'No canvases found', '没有找到画布');
@@ -1546,6 +1797,7 @@ async function initCanvasWorkspace(initial) {
 
   document.getElementById('canvas-new').addEventListener('click', promptNewCanvas);
   document.getElementById('canvas-header-new').addEventListener('click', promptNewCanvas);
+  document.getElementById('canvas-import').addEventListener('click', promptImportCanvas);
   document.getElementById('canvas-project-new').addEventListener('click', promptNewProject);
   document.getElementById('canvas-library-back').addEventListener('click', showCanvasLibrary);
   document.getElementById('canvas-library-search').addEventListener('input', (event) => {

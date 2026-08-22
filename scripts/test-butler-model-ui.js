@@ -133,7 +133,7 @@ assert.match(
 );
 assert.match(preload, /upscaleVideo:[\s\S]*butler:upscaleVideo/, 'The isolated preload must expose video enhancement.');
 assert.match(preload, /getVideoToolStatus:[\s\S]*downloadVideoToolResult:/, 'The isolated preload must expose video polling and download.');
-assert.match(main, /'ai302-invalid-response': 'The 302 video service returned an unsupported response/);
+assert.match(main, /'ai302-invalid-response': 'The AI service returned an unsupported response/);
 assert.match(main, /'tool-disabled': 'Video enhancement is not enabled on the server/);
 assert.match(main, /'credit-schema-missing': 'The points service is being upgraded/);
 assert.match(main, /function butlerFailure[\s\S]*?httpStatus[\s\S]*?httpStatus \}/, 'Renderer failures must retain HTTP status so terminal 4xx errors are not retried.');

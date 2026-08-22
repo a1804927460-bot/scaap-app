@@ -9,10 +9,13 @@ const {
 } = require('../lib/wechat-file-helper');
 const fs = require('fs');
 const path = require('path');
+const helperSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'wechat-file-helper.js'), 'utf8');
 
 (async () => {
   assert.strictEqual(WECHAT_URI, 'weixin://dl/chat?username=filehelper');
   assert.ok(encodedPowerShell('hello').length > 0);
+  assert.match(helperSource, /Recent Qt WeChat builds expose only the top-level window/);
+  assert.match(helperSource, /MainWindowHandle -ne 0[\s\S]*?MainWindowTitle -notmatch/);
   assert.strictEqual(isLoggedInWindow({ className: 'WeChatLoginWndForPC', title: '微信' }), false);
   assert.strictEqual(isLoggedInWindow({ className: 'WeChatMainWndForPC', title: '微信' }), true);
   assert.strictEqual(isLoggedInWindow({ className: 'Qt51514QWindowIcon', title: '微信' }), true);

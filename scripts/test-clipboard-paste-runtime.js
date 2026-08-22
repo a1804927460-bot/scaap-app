@@ -111,10 +111,86 @@ async function run() {
     }
     const file = AppState.files[0];
     const item = AppState.boardItems.find((entry) => entry.fileId === (file && file.id));
-    return { prevented: event.defaultPrevented, fileDelta: AppState.files.length - before, ext: file && file.ext, hasBoardItem: !!item };
+    if (!file || !item) {
+      return { prevented: event.defaultPrevented, fileDelta: AppState.files.length - before, ext: file && file.ext, hasBoardItem: false };
+    }
+
+    const sourceCanvasId = AppState.activeCanvasId;
+    const targetCanvasId = 'qa-cross-canvas';
+    if (!AppState.canvases.some((canvas) => canvas.id === targetCanvasId)) {
+      AppState.canvases.push({
+        id: targetCanvasId,
+        projectId: AppState.canvases[0].projectId,
+        name: 'QA Cross Canvas',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    }
+    const sourceItem = {
+      id: 'qa-source-' + Date.now(),
+      fileId: file.id,
+      x: 80,
+      y: 80,
+      width: 220,
+      height: 165,
+      zIndex: 1,
+      canvasId: sourceCanvasId,
+      selected: true
+    };
+    AppState.allBoardItems.push(sourceItem);
+    AppState.boardItems = AppState.allBoardItems.filter((entry) => entry.canvasId === sourceCanvasId);
+    await window.messsAPI.upsertBoardItem(sourceItem);
+    renderBoard();
+
+    const copyEvent = new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true, cancelable: true });
+    document.dispatchEvent(copyEvent);
+    // Switching through the canvas library can briefly blur the window. The
+    // in-app clipboard must still be available when the target opens.
+    window.dispatchEvent(new Event('blur'));
+    switchCanvas(targetCanvasId, { enterWorkspace: true });
+    const pasteEvent = new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true });
+    document.dispatchEvent(pasteEvent);
+    await (Board.historyPersistPromise || Promise.resolve());
+    const pastedItem = AppState.allBoardItems.find((entry) => entry.id !== sourceItem.id && entry.fileId === file.id && entry.canvasId === targetCanvasId);
+    switchCanvas(sourceCanvasId, { enterWorkspace: true });
+    switchCanvas(targetCanvasId, { enterWorkspace: true });
+    const visibleAfterSwitch = AppState.boardItems.some((entry) => entry.id === (pastedItem && pastedItem.id));
+    showCanvasLibrary();
+    const targetCard = document.querySelector('[data-canvas-id="' + targetCanvasId + '"]');
+    const contextEvent = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 120 });
+    targetCard.dispatchEvent(contextEvent);
+    const pinMenu = document.getElementById('canvas-card-context-menu');
+    const pinAction = pinMenu && pinMenu.querySelector('.context-menu-item');
+    if (pinAction) pinAction.click();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const pinnedCanvas = AppState.canvases.find((canvas) => canvas.id === targetCanvasId);
+    const pinnedCard = document.querySelector('[data-canvas-id="' + targetCanvasId + '"]');
+    const orderedCanvases = filteredCanvases();
+    const persisted = await window.messsAPI.getInitialState();
+    const persistedAfterReload = persisted.boardItems.some((entry) => entry.id === (pastedItem && pastedItem.id) && entry.canvasId === targetCanvasId);
+    const persistedPin = persisted.canvases.some((canvas) => canvas.id === targetCanvasId && canvas.pinned === true);
+    return {
+      prevented: event.defaultPrevented,
+      fileDelta: AppState.files.length - before,
+      ext: file && file.ext,
+      hasBoardItem: !!item,
+      crossCanvasCopyPrevented: copyEvent.defaultPrevented,
+      crossCanvasPastePrevented: pasteEvent.defaultPrevented,
+      crossCanvasPasted: !!pastedItem,
+      visibleAfterSwitch,
+      persistedAfterReload,
+      pinContextMenuOpened: !!pinMenu,
+      pinned: !!(pinnedCanvas && pinnedCanvas.pinned),
+      pinBadgeVisible: !!(pinnedCard && !pinnedCard.querySelector('.canvas-library-card-pin').hidden),
+      pinnedFirst: orderedCanvases[0] && orderedCanvases[0].id === targetCanvasId,
+      persistedPin
+    };
   })()`);
   socket.close();
-  if (!result || !result.prevented || result.fileDelta !== 1 || result.ext !== '.png' || !result.hasBoardItem) {
+  if (!result || !result.prevented || result.fileDelta !== 1 || result.ext !== '.png' || !result.hasBoardItem
+    || !result.crossCanvasCopyPrevented || !result.crossCanvasPastePrevented || !result.crossCanvasPasted
+    || !result.visibleAfterSwitch || !result.persistedAfterReload || !result.pinContextMenuOpened
+    || !result.pinned || !result.pinBadgeVisible || !result.pinnedFirst || !result.persistedPin) {
     throw new Error(`Clipboard IPC paste did not reach the canvas: ${JSON.stringify(result)}\n${diagnostics}`);
   }
   process.stdout.write(`CLIPBOARD_PASTE_RUNTIME_OK ${JSON.stringify(result)}\n`);

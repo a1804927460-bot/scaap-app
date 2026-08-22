@@ -420,7 +420,7 @@
     });
     const columns = Number.isFinite(options.columns)
       ? options.columns
-      : Math.ceil(Math.sqrt(normalized.length * 1.35));
+      : Math.ceil(Math.sqrt(normalized.length));
     return packRows(normalized, { ...options, columns });
   }
 

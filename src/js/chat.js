@@ -20,23 +20,6 @@ const ChatUiState = {
   ownAvatarLoadGeneration: 0
 };
 
-const CHAT_EMOJI = [
-  '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰',
-  '😘', '😗', '😙', '😚', '😋', '😛', '😝', '😜', '🤪', '🤨', '🧐', '🤓', '😎', '🤩', '🥳', '😏',
-  '😒', '😞', '😔', '😟', '😕', '🙁', '☹️', '😣', '😖', '😫', '😩', '🥺', '😢', '😭', '😤', '😠',
-  '😡', '🤬', '🤯', '😳', '🥵', '🥶', '😱', '😨', '😰', '😥', '😓', '🤗', '🤔', '🤭', '🤫', '🤥',
-  '😶', '😐', '😑', '😬', '🙄', '😮‍💨', '😴', '🤤', '😪', '😵', '🤐', '🥴', '🤢', '🤮', '🤧', '😷',
-  '🤒', '🤕', '🤑', '🤠', '😈', '👿', '👹', '👺', '🤡', '💩', '👻', '💀', '☠️', '👽', '👾', '🤖',
-  '🎃', '😺', '😸', '😹', '😻', '😼', '😽', '🙀', '😿', '😾', '🙈', '🙉', '🙊', '💋', '💌', '💘',
-  '💝', '💖', '💗', '💓', '💞', '💕', '💟', '❣️', '💔', '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤',
-  '🤍', '🤎', '💯', '💢', '💥', '💫', '💦', '💨', '💣', '👍', '👎', '👌', '✌️', '🤞', '🤟', '🤘',
-  '🤙', '👈', '👉', '👆', '👇', '☝️', '✋', '🤚', '🖐️', '🖖', '👋', '🤏', '💪', '🙏', '👏', '🙌',
-  '👐', '🤝', '💅', '🤳', '👀', '👁️', '🧠', '👄', '🔥', '✨', '🌟', '⭐', '🌈', '☀️', '🌤️', '☁️',
-  '❄️', '⚡', '💧', '🌊', '🎉', '🎊', '🎁', '🎈', '🎂', '🍻', '☕', '🍕', '🍔', '🍟', '🍎', '🍓',
-  '🍉', '🥑', '🌹', '🌸', '🌺', '🌻', '🌼', '🌷', '✅', '❌', '❗', '❓', '‼️', '⁉️', '💬', '💭',
-  '💤', '🚀', '🎯', '🏆', '🥇', '🥈', '🥉', '🎵', '🎶', '🔔', '🔒', '🔑', '📌', '📎', '🗂️', '🖼️', '✂️'
-];
-
 function chatEl(id) { return document.getElementById(id); }
 
 function chatNotice(message) {
@@ -1015,25 +998,53 @@ async function captureChatScreenshot() {
 
 function initializeEmojiPicker() {
   const picker = chatEl('chat-emoji-popover');
-  CHAT_EMOJI.forEach((emoji) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = emoji;
-    button.setAttribute('aria-label', emoji);
-    button.addEventListener('click', () => {
+  const bindPicker = () => {
+    if (!picker || picker.dataset.bound === 'true') return;
+    picker.dataset.bound = 'true';
+    applyChatEmojiPickerLanguage(picker);
+    picker.addEventListener('emoji-click', (event) => {
+      const emoji = event.detail && event.detail.unicode;
+      if (!emoji) return;
       const input = chatEl('chat-message-input');
       input.setRangeText(emoji, input.selectionStart, input.selectionEnd, 'end');
       picker.hidden = true;
+      chatEl('chat-emoji-btn').setAttribute('aria-expanded', 'false');
       input.focus();
       resizeChatComposer();
     });
-    picker.appendChild(button);
-  });
+  };
+  if (window.customElements && customElements.get('emoji-picker')) bindPicker();
+  else if (window.customElements) customElements.whenDefined('emoji-picker').then(bindPicker);
+  window.addEventListener('messs:emoji-picker-ready', bindPicker, { once: true });
+}
+
+function applyChatEmojiPickerLanguage(picker = chatEl('chat-emoji-popover')) {
+  const dictionaries = window.MesssEmojiPickerI18n;
+  const language = document.documentElement.dataset.language === 'zh' ? 'zh' : 'en';
+  if (!picker) return;
+  const dataSource = language === 'zh' ? 'assets/emoji-data.json' : 'assets/emoji-data-en.json';
+  const locale = language === 'zh' ? 'zh-CN' : 'en';
+  if (picker.getAttribute('data-source') !== dataSource) picker.setAttribute('data-source', dataSource);
+  if (picker.getAttribute('locale') !== locale) picker.setAttribute('locale', locale);
+  if (dictionaries && dictionaries[language]) picker.i18n = dictionaries[language];
+  if (picker.shadowRoot && !picker.shadowRoot.querySelector('[data-messs-emoji-style]')) {
+    const style = document.createElement('style');
+    style.dataset.messsEmojiStyle = 'true';
+    style.textContent = `
+      .tabpanel, .favorites { scrollbar-color: color-mix(in srgb, var(--indicator-color) 70%, transparent) transparent; scrollbar-width: thin; }
+      .tabpanel::-webkit-scrollbar, .favorites::-webkit-scrollbar { width: 8px; height: 8px; }
+      .tabpanel::-webkit-scrollbar-track, .favorites::-webkit-scrollbar-track { background: transparent; }
+      .tabpanel::-webkit-scrollbar-thumb, .favorites::-webkit-scrollbar-thumb { min-height: 42px; border: 2px solid transparent; border-radius: 999px; background: color-mix(in srgb, var(--indicator-color) 70%, var(--category-font-color)); background-clip: padding-box; }
+      .tabpanel::-webkit-scrollbar-thumb:hover, .favorites::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--indicator-color) 88%, var(--category-font-color)); background-clip: padding-box; }
+    `;
+    picker.shadowRoot.appendChild(style);
+  }
 }
 
 function toggleEmojiPicker() {
   const picker = chatEl('chat-emoji-popover');
   picker.hidden = !picker.hidden;
+  chatEl('chat-emoji-btn').setAttribute('aria-expanded', String(!picker.hidden));
 }
 
 function resizeChatComposer() {
@@ -1050,6 +1061,7 @@ function openChatSettings() {
 }
 
 function refreshChatLanguage() {
+  applyChatEmojiPickerLanguage();
   const setText = (selector, en, zh) => {
     const node = document.querySelector(selector);
     if (node) node.textContent = t(en, zh);
@@ -1165,7 +1177,10 @@ function initRealtimeChat() {
   });
   document.addEventListener('pointerdown', (event) => {
     const picker = chatEl('chat-emoji-popover');
-    if (!picker.hidden && !picker.contains(event.target) && event.target !== chatEl('chat-emoji-btn')) picker.hidden = true;
+    if (!picker.hidden && !picker.contains(event.target) && event.target !== chatEl('chat-emoji-btn')) {
+      picker.hidden = true;
+      chatEl('chat-emoji-btn').setAttribute('aria-expanded', 'false');
+    }
   });
   document.addEventListener('messs:language-changed', refreshChatLanguage);
   document.addEventListener('messs:profile-avatar-updated', (event) => {

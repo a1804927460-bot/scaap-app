@@ -669,10 +669,12 @@ function message(clientId, conversationId, createdAt, extra = {}) {
   assert.match(preloadSource, /createChatBoardAttachmentDrafts:[\s\S]*?chat:createBoardAttachmentDrafts/);
   const chatUiSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'chat.js'), 'utf8');
   const contextMenuSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'context-menu.js'), 'utf8');
-  const emojiStart = chatUiSource.indexOf('const CHAT_EMOJI = ');
-  const emojiEnd = chatUiSource.indexOf('];', emojiStart) + 2;
-  const emojiList = Function(`return ${chatUiSource.slice(emojiStart, emojiEnd).replace('const CHAT_EMOJI = ', '')}`)();
-  assert.ok(Array.isArray(emojiList) && emojiList.length >= 100, 'chat emoji picker should include a broad emoji set');
+  const emojiLoaderSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'emoji-picker-loader.js'), 'utf8');
+  assert.match(emojiLoaderSource, /emoji-picker-element\/index\.js/);
+  assert.match(chatUiSource, /addEventListener\('emoji-click'/,
+    'Chat emoji selection should come from the standard picker component.');
+  assert.doesNotMatch(chatUiSource, /const CHAT_EMOJI = /,
+    'Chat should not keep a manually curated emoji list.');
   assert.doesNotMatch(chatUiSource, /messsId/);
   assert.match(chatUiSource, /bubble\.textContent = t\('Message recalled', '消息已撤回'\)/);
   assert.match(chatUiSource, /window\.messsAPI\.recallChatMessage\(message\.clientId\)/);
@@ -681,6 +683,8 @@ function message(clientId, conversationId, createdAt, extra = {}) {
   const indexSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
   assert.match(indexSource, /data-chat-view="messages"/);
   assert.match(indexSource, /id="chat-emoji-btn"/);
+  assert.match(indexSource, /<emoji-picker[^>]+id="chat-emoji-popover"[^>]+data-source="assets\/emoji-data-en\.json"/,
+    'Chat should use the bundled standard emoji picker and data.');
   assert.match(indexSource, /id="chat-file-btn"/);
   assert.match(indexSource, /id="chat-screenshot-btn"/);
   assert.match(indexSource, /id="chat-new-group-btn"/);
@@ -716,8 +720,16 @@ function message(clientId, conversationId, createdAt, extra = {}) {
   assert.match(chatCssSource, /\.chat-thread \{[\s\S]*?grid-template-rows:\s*62px\s+minmax\(0, 1fr\)[\s\S]*?overflow:\s*hidden/,
     'Chat history must scroll without pushing the composer off screen.');
   assert.match(chatCssSource, /grid-template-rows:\s*62px\s+minmax\(0, 1fr\)\s+clamp\(230px, 30vh, 310px\)/);
-  assert.match(chatCssSource, /\.chat-composer-toolbar[\s\S]*?padding:\s*6px 12px/);
-  assert.match(chatCssSource, /\.chat-emoji-popover[\s\S]*?max-height:\s*min\(280px/);
+  assert.match(chatCssSource, /\.chat-composer-toolbar[\s\S]*?padding:\s*8px 12px 10px/);
+  assert.match(chatCssSource, /\.chat-emoji-popover[\s\S]*?max-height:\s*min\(400px/);
+  assert.match(chatCssSource, /\.chat-emoji-popover[\s\S]*?--num-columns:\s*10/,
+    'The emoji picker should use a larger desktop grid.');
+  assert.match(chatCssSource, /\.chat-emoji-popover[\s\S]*?--emoji-size:\s*30px/,
+    'Picker emoji should remain visually prominent.');
+  assert.match(chatCssSource, /\.chat-emoji-popover::\-webkit-scrollbar-thumb/,
+    'The emoji picker scrollbar should use the application theme.');
+  assert.match(chatCssSource, /\.chat-tool-button\[aria-expanded="true"\]/,
+    'The emoji trigger should expose a clear active state.');
   const chatMarkup = indexSource.match(/<div id="section-chat"[\s\S]*?<div id="section-market"/i)[0];
   assert.doesNotMatch(chatMarkup, /Messs ID|chat-own-id|chat-contacts-toggle|chat-contacts-close/i);
   assert.doesNotMatch(chatMarkup, /chat-account-head|chat-own-avatar|chat-sync-btn/i);

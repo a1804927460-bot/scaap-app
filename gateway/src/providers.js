@@ -1394,8 +1394,11 @@ async function createAtlasSeedanceVideoTask(provider, body, signal) {
     ...(capabilities.supportsSeed && Number.isInteger(Number(body.seed)) ? { seed: Number(body.seed) } : {}),
     ...(Array.isArray(capabilities.bitrateModes) && capabilities.bitrateModes.includes(String(body.bitrateMode || '').toLowerCase())
       ? { bitrate_mode: String(body.bitrateMode).toLowerCase() } : {}),
-    watermark: capabilities.supportsWatermark === true ? body.watermark === true : false,
-    return_last_frame: body.returnLastFrame === true
+    // Optional Atlas flags are omitted unless explicitly enabled. The 2.5
+    // reference endpoint rejects false-valued fields that belong to other
+    // generation modes.
+    ...(body.watermark === true && capabilities.supportsWatermark === true ? { watermark: true } : {}),
+    ...(body.returnLastFrame === true ? { return_last_frame: true } : {})
   };
   const requestBody = isI2v
     ? {
@@ -1415,14 +1418,33 @@ async function createAtlasSeedanceVideoTask(provider, body, signal) {
         ...(mode === 'video-edit' ? { omni_reference_task_type: 'edit' }
           : mode === 'video-extend' ? { omni_reference_task_type: 'extend' }
             : String(provider.model).includes('2.5') && ['omni', 'video-reference'].includes(mode)
-              ? { omni_reference_task_type: 'reference' } : {})
+              ? { omni_reference_task_type: 'auto' } : {})
       };
-  const created = await responseJson(await fetch(provider.endpoint, {
+  const requestOptions = (payload) => ({
     method: 'POST',
     headers: providerTaskHeaders(provider, body),
     signal: providerSignal(signal, Number(capabilities.createTimeoutMs) || 45_000),
-    body: JSON.stringify(requestBody)
-  }), provider.name);
+    body: JSON.stringify(payload)
+  });
+  let created;
+  try {
+    created = await responseJson(await fetch(provider.endpoint, requestOptions(requestBody)), provider.name);
+  } catch (error) {
+    // Some Atlas deployments still expose the Volcengine spelling for the
+    // generic 2.5 reference task. A 400 means no task was accepted, so this
+    // compatibility retry cannot create a second billable task.
+    const canRetryReferenceAlias = !isI2v
+      && String(provider.model || '').includes('2.5')
+      && ['omni', 'video-reference'].includes(mode)
+      && requestBody.omni_reference_task_type === 'auto'
+      && Number(error && error.status) === 400
+      && String(error && error.code || '') === 'provider-request-failed';
+    if (!canRetryReferenceAlias) throw error;
+    created = await responseJson(await fetch(provider.endpoint, requestOptions({
+      ...requestBody,
+      omni_reference_task_type: 'reference'
+    })), provider.name);
+  }
   const taskId = providerVideoTaskId(created);
   if (!taskId || taskId.length > 256) {
     throw Object.assign(new Error(`${provider.name} did not return a valid prediction ID.`), {

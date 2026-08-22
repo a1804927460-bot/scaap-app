@@ -11,6 +11,7 @@ create table if not exists public.workshop_posts (
   owner_id uuid not null references auth.users(id) on delete cascade,
   title text not null check (char_length(title) between 1 and 80),
   description text not null default '' check (char_length(description) <= 300),
+  prompt text not null default '' check (char_length(prompt) <= 12000),
   kind text not null check (kind in ('image', 'video')),
   media_path text not null unique,
   media_url text not null,

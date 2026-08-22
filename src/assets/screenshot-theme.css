@@ -1,0 +1,188 @@
+/* Messs screenshot editor theme. The editor is a separate BrowserView, so
+   this file is injected by the main process instead of the app stylesheet. */
+:root {
+  color-scheme: dark;
+  --messs-shot-panel: rgba(24, 27, 33, 0.96);
+  --messs-shot-panel-border: rgba(255, 255, 255, 0.14);
+  --messs-shot-icon: #d9e1ec;
+  --messs-shot-icon-muted: #7f8b9a;
+  --messs-shot-hover: rgba(255, 255, 255, 0.1);
+  --messs-shot-active: rgba(63, 147, 255, 0.22);
+  --messs-shot-accent: #4da3ff;
+}
+
+.screenshots-operations {
+  z-index: 20;
+  filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.32));
+}
+
+.screenshots-operations-buttons {
+  gap: 2px;
+  background: var(--messs-shot-panel);
+  border: 1px solid var(--messs-shot-panel-border);
+  border-radius: 10px;
+  padding: 5px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
+  backdrop-filter: blur(18px) saturate(1.15);
+}
+
+.screenshots-button {
+  color: var(--messs-shot-icon);
+  width: 31px;
+  height: 31px;
+  margin: 0;
+  border-radius: 7px;
+  font-size: 18px;
+  line-height: 31px;
+  transition: background-color 120ms ease, color 120ms ease, transform 120ms ease;
+}
+
+.screenshots-button:hover {
+  color: #ffffff;
+  background: var(--messs-shot-hover);
+  outline: none;
+}
+
+.screenshots-button:active {
+  transform: scale(0.94);
+}
+
+.screenshots-button-checked {
+  color: #f3f8ff;
+  background: var(--messs-shot-active);
+  outline: 1px solid rgba(77, 163, 255, 0.42);
+  box-shadow: inset 0 0 0 1px rgba(77, 163, 255, 0.08);
+}
+
+.screenshots-button-checked:hover {
+  background: rgba(63, 147, 255, 0.3);
+  outline-color: rgba(126, 190, 255, 0.62);
+}
+
+.screenshots-button-disabled,
+.screenshots-button-disabled:hover {
+  color: var(--messs-shot-icon-muted);
+  background: transparent;
+  outline: none;
+  opacity: 0.5;
+}
+
+.screenshots-button:has(.icon-ok) {
+  color: #ffffff;
+  background: var(--messs-shot-accent);
+  box-shadow: 0 3px 10px rgba(77, 163, 255, 0.26);
+}
+
+.screenshots-button:has(.icon-ok):hover {
+  background: #6ab2ff;
+}
+
+.screenshots-button:has(.icon-cancel):hover {
+  color: #ffffff;
+  background: rgba(255, 124, 134, 0.2);
+}
+
+.screenshots-operations-divider {
+  background: rgba(255, 255, 255, 0.15);
+  width: 1px;
+  height: 21px;
+  margin: 0 4px;
+}
+
+.screenshots-option-container {
+  height: 36px;
+  background: var(--messs-shot-panel);
+  border: 1px solid var(--messs-shot-panel-border);
+  border-radius: 8px;
+  padding: 5px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
+  backdrop-filter: blur(18px) saturate(1.15);
+}
+
+.screenshots-option-arrow {
+  border-width: 6px;
+}
+
+.screenshots-option[data-placement="top"] .screenshots-option-arrow {
+  border-top-color: var(--messs-shot-panel);
+}
+
+.screenshots-option[data-placement="bottom"] .screenshots-option-arrow {
+  border-bottom-color: var(--messs-shot-panel);
+}
+
+.screenshots-color-item,
+.screenshots-size-item {
+  border-radius: 5px;
+}
+
+.screenshots-color-item {
+  border-color: rgba(255, 255, 255, 0.34);
+}
+
+.screenshots-color-active {
+  outline: 2px solid var(--messs-shot-accent);
+  outline-offset: 1px;
+}
+
+.screenshots-size-pointer {
+  background: #aab6c5;
+}
+
+.screenshots-size-active > .screenshots-size-pointer {
+  background: var(--messs-shot-accent);
+  box-shadow: 0 0 0 2px rgba(77, 163, 255, 0.22);
+}
+
+.screenshots-canvas-size {
+  color: #f7fbff;
+  background: rgba(16, 19, 24, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  letter-spacing: 0.1px;
+  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.22);
+}
+
+.screenshots-canvas-border-top,
+.screenshots-canvas-border-right,
+.screenshots-canvas-border-bottom,
+.screenshots-canvas-border-left {
+  background: var(--messs-shot-accent);
+  box-shadow: 0 0 0 1px rgba(77, 163, 255, 0.08), 0 0 8px rgba(77, 163, 255, 0.28);
+}
+
+.screenshots-canvas-border-top,
+.screenshots-canvas-border-bottom {
+  height: 1px;
+}
+
+.screenshots-canvas-border-right,
+.screenshots-canvas-border-left {
+  width: 1px;
+}
+
+.screenshots-canvas-point-top,
+.screenshots-canvas-point-top-right,
+.screenshots-canvas-point-right,
+.screenshots-canvas-point-right-bottom,
+.screenshots-canvas-point-bottom,
+.screenshots-canvas-point-bottom-left,
+.screenshots-canvas-point-left,
+.screenshots-canvas-point-left-top {
+  width: 8px;
+  height: 8px;
+  background: #f6fbff;
+  border: 2px solid var(--messs-shot-accent);
+  box-shadow: 0 0 0 1px rgba(16, 19, 24, 0.6), 0 0 8px rgba(77, 163, 255, 0.36);
+}
+
+.screenshots-textarea {
+  border-color: var(--messs-shot-accent);
+  box-shadow: 0 0 0 1px rgba(77, 163, 255, 0.12);
+}

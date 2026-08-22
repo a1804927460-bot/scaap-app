@@ -42,13 +42,24 @@ const compactMediaLayout = engine.compactMediaGrid([
   { id: 'wide', x: 200, y: 0, width: 400, height: 200 },
   { id: 'portrait', x: 0, y: 300, width: 200, height: 500 },
   { id: 'square', x: 300, y: 300, width: 100, height: 100 }
-], { originX: 0, originY: 0, gap: 20, columns: 2 });
+], { originX: 0, originY: 0, gap: 12, columns: 2 });
 assert.deepStrictEqual(compactMediaLayout.map(({ id, x, y, width, height }) => ({ id, x, y, width, height })), [
   { id: 'small', x: 0, y: 0, width: 100, height: 200 },
-  { id: 'wide', x: 120, y: 75, width: 100, height: 50 },
-  { id: 'portrait', x: 0, y: 220, width: 100, height: 250 },
-  { id: 'square', x: 120, y: 295, width: 100, height: 100 }
+  { id: 'wide', x: 112, y: 75, width: 100, height: 50 },
+  { id: 'portrait', x: 0, y: 212, width: 100, height: 250 },
+  { id: 'square', x: 112, y: 287, width: 100, height: 100 }
 ]);
+assert.strictEqual(Math.min(...compactMediaLayout.map((item) => item.width)), 100);
+assert.ok(compactMediaLayout.every((item) => item.width === 100), 'compact media must use the smallest selected width');
+
+const compactRectangularLayout = engine.compactMediaGrid([
+  { id: 'one', x: 0, y: 0, width: 100, height: 100 },
+  { id: 'two', x: 100, y: 0, width: 100, height: 100 },
+  { id: 'three', x: 200, y: 0, width: 100, height: 100 },
+  { id: 'four', x: 300, y: 0, width: 100, height: 100 }
+], { originX: 0, originY: 0, gap: 12 });
+assert.strictEqual(new Set(compactRectangularLayout.map((item) => item.x)).size, 2);
+assert.strictEqual(new Set(compactRectangularLayout.map((item) => item.y)).size, 2);
 
 const shortLastRow = engine.packRows([
   { id: 'c', x: 0, y: 100, width: 80, height: 80 },

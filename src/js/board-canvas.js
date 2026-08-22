@@ -176,6 +176,20 @@ function recordBoardMoveHistory(startPositions) {
   return changes.length ? recordBoardHistoryEntry({ type: 'move', changes }) : false;
 }
 
+function recordBoardResizeHistory(startFrames) {
+  const changes = startFrames.map(({ item, x, y, width, height }) => ({
+    id: item.id,
+    before: { x, y, width, height },
+    after: { x: item.x, y: item.y, width: item.width, height: item.height }
+  })).filter((change) => (
+    change.before.x !== change.after.x ||
+    change.before.y !== change.after.y ||
+    change.before.width !== change.after.width ||
+    change.before.height !== change.after.height
+  ));
+  return changes.length ? recordBoardHistoryEntry({ type: 'resize', changes }) : false;
+}
+
 function recordBoardItemsHistory(type, items, canvasId = activeCanvasId()) {
   const snapshots = (items || []).filter(Boolean).map(cloneBoardHistoryItem);
   if (!snapshots.length || !['add', 'remove'].includes(type)) return false;
@@ -240,6 +254,29 @@ function applyBoardMoveHistory(entry, direction) {
   return true;
 }
 
+function applyBoardResizeHistory(entry, direction) {
+  const changedItems = [];
+  entry.changes.forEach((change) => {
+    const item = Board.itemsById.get(change.id) || AppState.boardItems.find((candidate) => candidate.id === change.id);
+    if (!item) return;
+    const frame = change[direction];
+    item.x = frame.x;
+    item.y = frame.y;
+    item.width = frame.width;
+    item.height = frame.height;
+    updateBoardItemIndex(item);
+    const element = Board.mounted.get(item.id) || document.querySelector(`.board-item[data-board-id="${item.id}"]`);
+    if (element) syncMountedBoardItemGeometry(element, item);
+    changedItems.push(item);
+  });
+  if (!changedItems.length) return false;
+  markBoardInteraction();
+  syncBoardSelectionClasses();
+  scheduleBoardReconcile();
+  persistBoardMoveHistory(changedItems);
+  return true;
+}
+
 function applyBoardItemsHistory(entry, direction) {
   const shouldAdd = (entry.type === 'add' && direction === 'after')
     || (entry.type === 'remove' && direction === 'before');
@@ -267,7 +304,9 @@ function applyBoardHistory(entry, direction) {
   if (!entry) return false;
   return entry.type === 'add' || entry.type === 'remove'
     ? applyBoardItemsHistory(entry, direction)
-    : applyBoardMoveHistory(entry, direction);
+    : entry.type === 'resize'
+      ? applyBoardResizeHistory(entry, direction)
+      : applyBoardMoveHistory(entry, direction);
 }
 
 function undoBoardMove() {
@@ -356,6 +395,7 @@ async function pasteBoardClipboardMedia() {
 
 function pasteBoardClipboard(atX, atY) {
   const offset = 28;
+  const targetCanvasId = activeCanvasId();
   const newItems = [];
   AppState.boardItems.forEach((item) => { item.selected = false; });
 
@@ -367,17 +407,20 @@ function pasteBoardClipboard(atX, atY) {
       x: (atX !== undefined ? atX : srcItem.x + offset) + i * 12,
       y: (atY !== undefined ? atY : srcItem.y + offset) + i * 12,
       zIndex: AppState.boardItems.length + i + 1,
-      canvasId: activeCanvasId(),
+      canvasId: targetCanvasId,
       selected: true
     };
     AppState.boardItems.push(newItem);
     canvasWorkspaceAddItem(newItem);
     newItems.push(newItem);
-    window.messsAPI.upsertBoardItem(newItem);
   });
 
   recordBoardItemsHistory('add', newItems);
   renderBoard();
+  // A cross-canvas paste must be written through the same ordered persistence
+  // path as imports and undo/redo. Otherwise the in-memory copy can disappear
+  // when the target canvas is reloaded before the single-item IPC call settles.
+  persistBoardItemMutation({ upsert: newItems }, targetCanvasId);
   return newItems;
 }
 
@@ -786,11 +829,13 @@ function applyBoardTransform() {
       }, BOARD_QUALITY_SETTLE_MS + 30);
       return;
     }
-    canvas.style.setProperty('--board-label-scale', String(Math.min(7, Math.max(1, 1 / Board.zoom))));
     canvas.style.setProperty(
       '--board-toolbar-scale',
       String(boardToolbarScreenScale(Board.zoom) / Math.max(Board.zoom, 0.001))
     );
+    // Keep the edit hint and media metadata at the same screen size as the
+    // Butler capsule instead of letting them grow with the zoomed canvas.
+    canvas.style.setProperty('--board-label-scale', 'var(--board-toolbar-scale)');
     canvas.style.setProperty(
       '--board-toolbar-gap',
       `${BOARD_TOOLBAR_SCREEN_GAP / Math.max(Board.zoom, 0.001)}px`
@@ -2258,8 +2303,89 @@ function renderBoard() {
   rebuildBoardSpatialIndex();
   reconcileMountedBoardItemsAfterDataChange();
   reconcileBoardViewport(true);
+  syncBoardSelectionGroup();
   if (typeof syncBoardButlerExpandEditorToSelection === 'function') syncBoardButlerExpandEditorToSelection();
   if (typeof syncCanvasNodeMode === 'function') syncCanvasNodeMode();
+}
+
+function boardSelectionBounds(items) {
+  if (!items || !items.length) return null;
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+  items.forEach((item) => {
+    const bounds = boardItemBounds(item);
+    left = Math.min(left, bounds.x);
+    top = Math.min(top, bounds.y);
+    right = Math.max(right, bounds.x + bounds.w);
+    bottom = Math.max(bottom, bounds.y + bounds.h);
+  });
+  if (![left, top, right, bottom].every(Number.isFinite)) return null;
+  return {
+    x: left,
+    y: top,
+    w: Math.max(1, right - left),
+    h: Math.max(1, bottom - top)
+  };
+}
+
+function boardSelectionResizeItems() {
+  return AppState.boardItems.filter((item) => item && item.selected);
+}
+
+function ensureBoardSelectionGroup() {
+  const canvas = document.getElementById('board-canvas');
+  if (!canvas) return null;
+  let group = canvas.querySelector('.board-selection-group-box');
+  if (group) return group;
+
+  group = document.createElement('div');
+  group.className = 'board-selection-group-box';
+  group.hidden = true;
+  group.dataset.boardUiLayer = 'true';
+  group.setAttribute('aria-hidden', 'true');
+  [
+    ['corner-se', 1, 1],
+    ['corner-sw', -1, 1],
+    ['corner-ne', 1, -1],
+    ['corner-nw', -1, -1]
+  ].forEach(([cls, signX, signY]) => {
+    const handle = document.createElement('div');
+    handle.className = `board-resize-handle ${cls}`;
+    handle.dataset.boardSelectionHandle = cls;
+    handle.addEventListener('mousedown', (event) => {
+      startBoardSelectionResize(event, { signX, signY }, group);
+    });
+    group.appendChild(handle);
+  });
+  canvas.appendChild(group);
+  return group;
+}
+
+function syncBoardSelectionGroup() {
+  const canvas = document.getElementById('board-canvas');
+  if (!canvas) return;
+  const selected = boardSelectionResizeItems();
+  const group = ensureBoardSelectionGroup();
+  if (!group) return;
+  const isMultiSelection = selected.length >= 2;
+  canvas.classList.toggle('is-multi-selection', isMultiSelection);
+  if (!isMultiSelection) {
+    group.hidden = true;
+    return;
+  }
+  const bounds = boardSelectionBounds(selected);
+  if (!bounds) {
+    group.hidden = true;
+    return;
+  }
+  group.hidden = false;
+  group.style.left = `${bounds.x}px`;
+  group.style.top = `${bounds.y}px`;
+  group.style.width = `${bounds.w}px`;
+  group.style.height = `${bounds.h}px`;
+  group.dataset.selectedCount = String(selected.length);
 }
 
 function syncBoardSelectionClasses() {
@@ -2271,6 +2397,7 @@ function syncBoardSelectionClasses() {
     element.classList.toggle('is-selected', selected);
     element.classList.toggle('is-single-selection', selected && hasSingleSelection);
   });
+  syncBoardSelectionGroup();
   if (typeof syncBoardButlerExpandEditorToSelection === 'function') syncBoardButlerExpandEditorToSelection();
   if (typeof syncCanvasAgentReferencesToSelection === 'function') syncCanvasAgentReferencesToSelection();
   scheduleMountedImageQuality(0);
@@ -2367,6 +2494,7 @@ function makeBoardItemDraggable(el, item) {
           gEl.style.top = gItem.y + 'px';
         }
       });
+      if (groupMates.length > 1) syncBoardSelectionGroup();
     });
     function onMove(ev) {
       if (Math.hypot(ev.clientX - startClientX, ev.clientY - startClientY) > 4) moved = true;
@@ -2385,6 +2513,7 @@ function makeBoardItemDraggable(el, item) {
       document.removeEventListener('mouseup', onUp);
       groupMates.forEach((gItem) => updateBoardItemIndex(gItem));
       if (moved) persistBoardMoveHistory(groupMates);
+      if (groupMates.length > 1) syncBoardSelectionGroup();
       scheduleBoardReconcile();
     }
     document.addEventListener('mousemove', onMove);
@@ -2397,6 +2526,96 @@ function makeBoardItemDraggable(el, item) {
 const DEFAULT_BOARD_ITEM_WIDTH = 220;
 const MIN_BOARD_ITEM_WIDTH = 90;
 const MAX_BOARD_ITEM_WIDTH = 900;
+
+function startBoardSelectionResize(event, corner, group) {
+  if (!event || event.button !== 0) return;
+  const selectedItems = boardSelectionResizeItems();
+  if (selectedItems.length < 2) return;
+  event.preventDefault();
+  event.stopPropagation();
+  markBoardInteraction();
+
+  const startFrames = selectedItems.map((item) => {
+    const bounds = boardItemBounds(item);
+    return {
+      item,
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.w,
+      height: bounds.h
+    };
+  });
+  const startBounds = boardSelectionBounds(selectedItems);
+  if (!startBounds) return;
+  const anchorX = corner.signX > 0 ? startBounds.x : startBounds.x + startBounds.w;
+  const anchorY = corner.signY > 0 ? startBounds.y : startBounds.y + startBounds.h;
+  const startClientX = event.clientX;
+  const startClientY = event.clientY;
+  const groupElements = new Map();
+
+  selectedItems.forEach((item) => {
+    const element = Board.mounted.get(item.id) || document.querySelector(`.board-item[data-board-id="${item.id}"]`);
+    if (!element) return;
+    groupElements.set(item.id, element);
+    element.classList.add('is-resizing');
+    pauseBoardElementMedia(element);
+  });
+  group.classList.add('is-resizing');
+
+  let minScale = 0;
+  let maxScale = Infinity;
+  startFrames.forEach(({ item, width }) => {
+    const minWidth = item.isDoodle ? 4 : MIN_BOARD_ITEM_WIDTH;
+    minScale = Math.max(minScale, minWidth / Math.max(1, width));
+    maxScale = Math.min(maxScale, MAX_BOARD_ITEM_WIDTH / Math.max(1, width));
+  });
+
+  const resizeRunner = createLatestFrameRunner((point) => {
+    const dx = (point.clientX - startClientX) / Math.max(Board.zoom, 0.001);
+    const dy = (point.clientY - startClientY) / Math.max(Board.zoom, 0.001);
+    const widthScale = (startBounds.w + dx * corner.signX) / startBounds.w;
+    const heightScale = (startBounds.h + dy * corner.signY) / startBounds.h;
+    const rawScale = Math.abs(widthScale - 1) >= Math.abs(heightScale - 1)
+      ? widthScale
+      : heightScale;
+    const scale = Math.max(minScale, Math.min(maxScale, rawScale));
+
+    startFrames.forEach(({ item, x, y, width, height }) => {
+      item.x = Math.round(anchorX + (x - anchorX) * scale);
+      item.y = Math.round(anchorY + (y - anchorY) * scale);
+      item.width = Math.max(item.isDoodle ? 4 : MIN_BOARD_ITEM_WIDTH, Math.round(width * scale));
+      item.height = Math.max(item.isDoodle ? 4 : 40, Math.round(height * scale));
+      const element = groupElements.get(item.id);
+      if (element) syncMountedBoardItemGeometry(element, item);
+      updateBoardItemIndex(item);
+    });
+    syncBoardSelectionGroup();
+  });
+
+  function onMove(moveEvent) {
+    markBoardInteraction();
+    resizeRunner.push({
+      clientX: moveEvent.clientX,
+      clientY: moveEvent.clientY
+    });
+  }
+
+  function onUp() {
+    resizeRunner.flush();
+    group.classList.remove('is-resizing');
+    groupElements.forEach((element) => element.classList.remove('is-resizing'));
+    markBoardInteraction();
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    selectedItems.forEach((item) => updateBoardItemIndex(item));
+    if (recordBoardResizeHistory(startFrames)) persistBoardMoveHistory(selectedItems);
+    syncBoardSelectionGroup();
+    scheduleBoardReconcile();
+  }
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
 
 function boardMediaResizeAspect(el, item) {
   const file = item && Board.filesById.get(item.fileId);
@@ -2639,11 +2858,8 @@ function initBoardCanvas() {
     if (document.hidden) pauseAllBoardMedia();
   });
   window.addEventListener('blur', () => {
-    BoardClipboard.items = [];
-    BoardClipboard.mediaFileIds = [];
-    BoardClipboard.sourceCanvasId = null;
-    BoardClipboard.sourceMode = '';
-    BoardClipboard.preferInternal = false;
+    // Keep the app clipboard alive while the user opens the canvas library or
+    // briefly leaves the window. A later Ctrl+C replaces it with fresh data.
     const composer = activeAiComposer();
     if (aiComposerHasDraft(composer)) composer.dataset.keepOpenAfterBlur = 'true';
   });
@@ -3908,6 +4124,8 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
   submitBtn.disabled = true;
   cancelBtn.disabled = true;
   controls.forEach((control) => { control.disabled = true; });
+  const generationRequest = { ...request, canvasId: activeCanvasId() };
+  const placeholders = createAiPlaceholders(generationRequest);
   const defaultButtonText = request.kind === 'video' ? '生成视频' : '生成图片';
   const startedAt = Date.now();
   submitBtn.textContent = '提交中…';
@@ -3920,7 +4138,6 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
     const folderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
       ? AppState.activeFolderId
       : null;
-    const center = boardViewportCenterCoords();
     const placements = placeholders.map((placeholder) => ({
       id: placeholder.id,
       canvasId: placeholder.canvasId,
@@ -3932,25 +4149,28 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
       zIndex: placeholder.zIndex
     }));
     const res = await window.messsAPI.generateAiMedia({
-      ...request,
+      ...generationRequest,
       folderId,
-      canvasId: activeCanvasId(),
       placements
     });
 
-    if (!res || !res.ok) {
+    const files = res && Array.isArray(res.files) ? res.files : (res && res.file ? [res.file] : []);
+    if (!res || !res.ok || !files.length) {
       const msg = res && res.reason === 'missing-api-key'
         ? '请先在设置中保存速创 API 密钥。'
         : (res && res.message) || 'AI 生成失败。';
+      removeAiPlaceholders(placeholders);
       showToast(msg, 'AI');
       return;
     }
 
-    AppState.files = [res.file, ...AppState.files.filter((f) => f.id !== res.file.id)];
+    AppState.files = [...files, ...AppState.files.filter((file) =>
+      !files.some((generated) => generated.id === file.id)
+    )];
     renderFileList(currentFileListScope());
     renderFolderGridIfActive();
-    selectFileForPreview(res.file.id);
-    await addFileToBoard(res.file.id, center.x, center.y);
+    await replaceAiPlaceholders(placeholders, files, generationRequest, res.boardItems || []);
+    selectFileForPreview(files[0].id);
 
     if (res.unlocked && res.unlocked.length) {
       await refreshAchievements();
@@ -3959,6 +4179,7 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
     showToast(request.kind === 'video' ? 'AI 视频已加入画布' : 'AI 图片已加入画布', 'AI');
     closeAiImagePopover();
   } catch (err) {
+    removeAiPlaceholders(placeholders);
     showToast(err && err.message ? err.message : 'AI 生成失败。', 'AI');
   } finally {
     clearInterval(progressTimer);

@@ -82,6 +82,51 @@ async function run() {
   const screenshotPath = path.join(screenshotDir, 'ai-assistant-layout.png');
   fs.writeFileSync(screenshotPath, (await window.webContents.capturePage()).toPNG());
 
+  const optionMetrics = await window.webContents.executeJavaScript(`(() => {
+    setAssistantKind('image');
+    const options = document.getElementById('ai-assistant-options');
+    const toggle = document.getElementById('ai-assistant-options-toggle');
+    options.hidden = false;
+    toggle.hidden = false;
+    toggle.classList.add('is-active');
+    initAssistantOptionPickers();
+    refreshAssistantOptionPickers();
+    const form = document.querySelector('.ai-assistant-form').getBoundingClientRect();
+    const panel = options.getBoundingClientRect();
+    const triggers = [...options.querySelectorAll('.ai-assistant-option-trigger')]
+      .filter((button) => !button.closest('[hidden]'))
+      .map((button) => ({ width: button.getBoundingClientRect().width, height: button.getBoundingClientRect().height }));
+    const ratioTrigger = options.querySelector('[data-option-picker="ai-assistant-ratio"] .ai-assistant-option-trigger');
+    ratioTrigger.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    const ratioMenu = options.querySelector('[data-option-picker="ai-assistant-ratio"] .ai-assistant-option-menu');
+    const menu = ratioMenu.getBoundingClientRect();
+    const ratioChoice = ratioMenu.querySelector('[data-option-value="16:9"]');
+    ratioChoice.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    refreshAssistantOptionPickers();
+    refreshAssistantOptionSummary();
+    return {
+      form: { left: form.left, right: form.right, top: form.top, bottom: form.bottom },
+      panel: { left: panel.left, right: panel.right, top: panel.top, bottom: panel.bottom, width: panel.width },
+      triggers,
+      menu: { left: menu.left, right: menu.right, top: menu.top, bottom: menu.bottom, hidden: ratioMenu.hidden, disabled: ratioTrigger.disabled, expanded: ratioTrigger.getAttribute('aria-expanded') },
+      selectedRatio: document.getElementById('ai-assistant-ratio').value,
+      summary: document.getElementById('ai-assistant-options-toggle').textContent
+    };
+  })()`);
+  if (optionMetrics.panel.width < 280
+    || optionMetrics.panel.left < optionMetrics.form.left - 1
+    || optionMetrics.panel.right > optionMetrics.form.right + 1
+    || optionMetrics.triggers.some((button) => button.width < 120 || button.height < 30)
+    || optionMetrics.menu.left < optionMetrics.panel.left - 1
+    || optionMetrics.menu.right > optionMetrics.panel.right + 1
+    || optionMetrics.selectedRatio !== '16:9'
+    || !optionMetrics.summary.includes('16:9')) {
+    throw new Error(`Canvas-style generation settings overflowed or collapsed: ${JSON.stringify(optionMetrics)}`);
+  }
+  await wait(180);
+  fs.writeFileSync(path.join(screenshotDir, 'ai-assistant-options.png'), (await window.webContents.capturePage()).toPNG());
+  await window.webContents.executeJavaScript('closeAssistantOptionMenus(); document.getElementById("ai-assistant-options").hidden = true;');
+
   window.setSize(900, 650);
   await wait(250);
   const compact = await window.webContents.executeJavaScript(`(() => {

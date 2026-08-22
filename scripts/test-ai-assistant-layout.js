@@ -27,6 +27,19 @@ assert.match(html, /data-assistant-kind="chat"[^>]*>Agent<\/button>/,
   'the chat mode should be labelled Agent');
 assert.match(html, /id="ai-assistant-upload"[\s\S]*?m21\.44 11\.05[\s\S]*?M18\.5 15\.5v5[\s\S]*?M16 18h5/,
   'the attachment action should use the Canvas Agent paperclip-plus icon');
+assert.match(css, /\.ai-assistant-upload-top\s*\{[\s\S]*?width: 38px;[\s\S]*?height: 38px;[\s\S]*?background: var\(--action-gradient\);/,
+  'the assistant attachment action should match the larger Canvas Agent action button');
+assert.match(css, /\.ai-assistant-upload-top svg \{ width: 20px; height: 20px; \}/,
+  'the assistant attachment icon should not be rendered at the old tiny size');
+assert.match(css, /\.ai-assistant-mode button\.ai-assistant-upload-top\s*\{[\s\S]*?height: 38px;[\s\S]*?padding: 0;[\s\S]*?color: #fff;/,
+  'the assistant attachment action should keep the Canvas Agent height and white icon after mode button rules');
+['ai-assistant-ratio', 'ai-assistant-size', 'ai-assistant-count', 'ai-assistant-duration'].forEach((id) => {
+  assert(html.includes(`data-option-picker="${id}"`), `missing canvas-style picker for ${id}`);
+});
+assert(css.includes('.ai-assistant-option-menu {') && css.includes('.ai-assistant-option-choice {'),
+  'assistant generation settings should use the canvas-style option menu');
+assert.match(assistantSource, /function refreshAssistantOptionPickers[\s\S]*?function initAssistantOptionPickers[\s\S]*?select.value = choice.dataset.optionValue/,
+  'assistant option pickers must stay synchronized with their existing select state');
 
 ['image', 'video'].forEach((kind) => {
   const pattern = new RegExp(`data-assistant-kind="${kind}"[\\s\\S]*?<svg[\\s\\S]*?<\\/svg>[\\s\\S]*?<\\/button>`);

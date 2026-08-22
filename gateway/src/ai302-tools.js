@@ -1915,19 +1915,35 @@ export async function getThreeDStatus({ taskToken, userId } = {}, options = {}) 
     fetchImpl: options.fetchImpl || fetch,
     signal: options.signal
   });
-  const status = handler.status(job);
+  let status = handler.status(job);
   const result = {
     status,
     retryAfterMs: ['queued', 'processing'].includes(status) ? 5_000 : 0
   };
   if (status === 'succeeded') {
-    const model = handler.result(job);
-    validateAssetUrl(model.url);
-    if (model.previewImageUrl) result.previewImageUrl = validateAssetUrl(model.previewImageUrl).toString();
+    try {
+      const model = handler.result(job);
+      validateAssetUrl(model.url);
+      if (model.previewImageUrl) {
+        try {
+          result.previewImageUrl = validateAssetUrl(model.previewImageUrl).toString();
+        } catch (error) {
+          // A bad optional preview must not turn a valid downloadable model
+          // into a failed generation.
+        }
+      }
+    } catch (error) {
+      // A provider success without a deliverable model is a failed delivery:
+      // do not leave the user's reservation pending forever.
+      status = 'failed';
+      result.status = status;
+      result.errorCode = 'three-d-result-invalid';
+      result.errorMessage = 'The 3D provider completed without a usable model.';
+    }
   }
   if (status === 'failed') {
-    result.errorCode = 'three-d-generation-failed';
-    result.errorMessage = '3D generation failed.';
+    result.errorCode ||= 'three-d-generation-failed';
+    result.errorMessage ||= '3D generation failed.';
   }
   const settlement = status === 'failed'
     ? await settleThreeDCredits(task, 'failed', options)
@@ -1968,8 +1984,15 @@ export async function downloadThreeDModel({ taskToken, userId } = {}, options = 
       409
     );
   }
-  const result = handler.result(job);
-  const url = validateAssetUrl(result.url).toString();
+  let result;
+  let url;
+  try {
+    result = handler.result(job);
+    url = validateAssetUrl(result.url).toString();
+  } catch (error) {
+    await settleThreeDCredits(task, 'failed', options);
+    throw error;
+  }
   let glb;
   try {
     glb = await fetchAsset(url, MAX_GLB_BYTES, {

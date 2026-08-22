@@ -507,6 +507,14 @@ export function quoteUsage(kind, request = {}) {
   throw Object.assign(new Error('The requested AI usage kind is not allowed.'), { code: 'provider-not-allowed', status: 400 });
 }
 
+// Free chat is deliberately not represented by an ai_credit_accounts
+// reservation. Do not send its request id to a settlement RPC that expects a
+// paid reservation row to exist.
+export function isFreeChatReservation(kind, reservation) {
+  return String(kind || '').trim().toLowerCase() === 'chat'
+    && Number(reservation && reservation.credits) === CHAT_CREDITS;
+}
+
 async function responsePayload(response) {
   const text = await response.text();
   if (!text) return null;

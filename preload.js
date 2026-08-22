@@ -239,6 +239,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   saveCanvasState: (state) => ipcRenderer.invoke('canvas:saveState', state),
   getCanvasCreditUsage: (canvasId) => ipcRenderer.invoke('canvas:getCreditUsage', canvasId),
   exportCanvas: (canvasId) => ipcRenderer.invoke('canvas:export', canvasId),
+  importCanvas: (projectId) => ipcRenderer.invoke('canvas:import', projectId),
   deleteCanvas: (canvasId) => ipcRenderer.invoke('canvas:delete', canvasId),
 
   renderPdfPage: (pdfPath, pageNumber, scale) => renderPdfPage(pdfPath, pageNumber, scale),
@@ -257,7 +258,9 @@ contextBridge.exposeInMainWorld('messsAPI', {
     list: () => ipcRenderer.invoke('workshop:list'),
     publish: (fileId, metadata) => ipcRenderer.invoke('workshop:publish', fileId, metadata),
     incrementClick: (postId) => ipcRenderer.invoke('workshop:incrementClick', postId),
-    toggleLike: (postId) => ipcRenderer.invoke('workshop:toggleLike', postId)
+    toggleLike: (postId) => ipcRenderer.invoke('workshop:toggleLike', postId),
+    importMedia: (postId, folderId, canvasId) => ipcRenderer.invoke('workshop:importMedia', postId, folderId, canvasId),
+    delete: (postId) => ipcRenderer.invoke('workshop:delete', postId)
   }),
   butler: Object.freeze({
     confirmDelivery: (deliveryToken) => ipcRenderer.invoke('butler:confirmDelivery', deliveryToken),

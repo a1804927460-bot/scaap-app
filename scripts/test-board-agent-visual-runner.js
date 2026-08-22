@@ -40,7 +40,7 @@ async function run() {
             <form class="board-agent-form">
               <div class="board-agent-references"><button class="board-agent-reference"><img src="${logoUrl}" alt="Reference"><span>&times;</span></button></div>
               <textarea rows="2" placeholder="Ask about this canvas..."></textarea>
-              <div class="board-agent-form-footer"><div class="board-agent-form-tools"><button class="board-agent-tool-btn">+</button><div class="board-agent-model-picker"><button class="board-agent-model-trigger" aria-expanded="true"><span>Nano Banana Pro</span></button><div class="board-agent-model-menu"><div class="board-agent-model-menu-title">生成时使用的模型</div><button class="board-agent-model-option"><span></span><span>Agent 对话</span><i>✓</i></button><div class="board-agent-kind-switch"><button class="is-active">图片</button><button>视频</button></div><div class="board-agent-model-options"><button class="board-agent-model-option is-active"><span class="ai-model-badge ai-model-badge-banana-pro">🍌</span><span>Nano Banana Pro</span><i>✓</i></button></div></div></div></div><button class="icon-btn-sm">&#8593;</button></div>
+              <div class="board-agent-form-footer"><div class="board-agent-form-tools"><button class="board-agent-tool-btn">+</button><div class="board-agent-model-picker"><button class="board-agent-model-trigger" aria-expanded="true"><span>Nano Banana Pro</span></button><div class="board-agent-model-menu"><div class="board-agent-model-menu-title">生成时使用的模型</div><button class="board-agent-model-option is-chat-option"><span>Agent 对话</span><i>✓</i></button><div class="board-agent-kind-switch"><button class="is-active">图片</button><button>视频</button></div><div class="board-agent-model-options"><button class="board-agent-model-option is-active"><span class="ai-model-badge ai-model-badge-banana-pro">🍌</span><span>Nano Banana Pro</span><i>✓</i></button></div></div></div></div><button class="icon-btn-sm">&#8593;</button></div>
             </form>
           </aside>
         </div>
@@ -97,9 +97,11 @@ async function run() {
     const agentForm = rect('.board-agent-form');
     const agentInput = rect('.board-agent-form textarea');
     const agentMenu = rect('.board-agent-model-menu');
+    const chatModel = document.querySelector('.board-agent-model-option.is-chat-option');
+    const chatModelLabel = chatModel.querySelector('span');
     const confirmedText = getComputedStyle(document.querySelector('.qa-text:not(.is-text-editing)'));
     const editingText = getComputedStyle(document.querySelector('.qa-text-edit'));
-    return { agent, logo, composer, composerPrompt, composerFooter, composerSubmit, viewport, bottomBar, agentForm, agentInput, agentMenu, radius:getComputedStyle(document.querySelector('.board-agent-panel')).borderRadius, toggle:getComputedStyle(document.getElementById('board-agent-toggle')).display, confirmedText:{background:confirmedText.backgroundColor,borderWidth:confirmedText.borderTopWidth,shadow:confirmedText.boxShadow}, editingText:{background:editingText.backgroundColor,borderWidth:editingText.borderTopWidth,shadow:editingText.boxShadow} };
+    return { agent, logo, composer, composerPrompt, composerFooter, composerSubmit, viewport, bottomBar, agentForm, agentInput, agentMenu, chatModel:{width:chatModel.getBoundingClientRect().width,labelWidth:chatModelLabel.getBoundingClientRect().width,scrollWidth:chatModelLabel.scrollWidth,text:chatModelLabel.textContent}, radius:getComputedStyle(document.querySelector('.board-agent-panel')).borderRadius, toggle:getComputedStyle(document.getElementById('board-agent-toggle')).display, confirmedText:{background:confirmedText.backgroundColor,borderWidth:confirmedText.borderTopWidth,shadow:confirmedText.boxShadow}, editingText:{background:editingText.backgroundColor,borderWidth:editingText.borderTopWidth,shadow:editingText.boxShadow} };
   })()`);
   if (full.agent.width < 300 || full.agent.right > 1440 || full.agent.bottom > full.viewport.bottom + 1) throw new Error(`Agent escaped workspace: ${JSON.stringify(full)}`);
   if (!/18px\s+0px\s+0px\s+18px/.test(full.radius)) throw new Error(`Agent outer shell does not have the restrained exposed-edge radius: ${full.radius}`);
@@ -110,6 +112,9 @@ async function run() {
   if (full.agentInput.height > 70) throw new Error(`Agent input was not shortened: ${JSON.stringify(full)}`);
   if (full.agentMenu.left < full.agent.left || full.agentMenu.right > full.agent.right || full.agentMenu.top >= full.agentForm.top || full.agentMenu.bottom > full.agent.bottom) {
     throw new Error(`Agent model menu escaped its panel: ${JSON.stringify(full)}`);
+  }
+  if (full.chatModel.text !== 'Agent 对话' || full.chatModel.width < 120 || full.chatModel.scrollWidth > full.chatModel.labelWidth + 1) {
+    throw new Error(`Agent chat model name was truncated or constrained by the media icon column: ${JSON.stringify(full.chatModel)}`);
   }
   if (full.composer.width < 740 || full.composer.width > 780 || full.composer.height < 168 || full.composer.height > 184) {
     throw new Error(`Composer size is outside the compact range: ${JSON.stringify(full.composer)}`);

@@ -941,6 +941,7 @@ function syncAssistantMediaOptions() {
   renderAssistantRatios({ syncReferenceAuto: false });
   if (!isVideo && !assistantImageReferenceAutoActive()) syncAssistantImageSizeRatio('size');
   if (!isVideo) syncAssistantReferenceAutoMode();
+  refreshAssistantOptionPickers();
   refreshAssistantOptionSummary();
   updateAssistantCreditEstimate();
 }
@@ -1125,6 +1126,7 @@ function renderAssistantRatios(options = {}) {
   select.value = ratios.includes(selected) ? selected : ratios[0];
   select.disabled = ratios.length < 2;
   if (options.syncReferenceAuto !== false) syncAssistantReferenceAutoMode();
+  refreshAssistantOptionPickers();
   refreshAssistantOptionSummary();
 }
 
@@ -1142,6 +1144,92 @@ function syncAssistantImageSizeRatio(source) {
   } else {
     ratioSelect.value = imageRatioForSize(sizeSelect.value, capabilities) || ratioSelect.value;
   }
+}
+
+function closeAssistantOptionMenus(except = null) {
+  document.querySelectorAll('.ai-assistant-option-menu:not([hidden])').forEach((menu) => {
+    if (menu === except) return;
+    menu.hidden = true;
+    const trigger = menu.parentElement && menu.parentElement.querySelector('.ai-assistant-option-trigger');
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+  });
+}
+
+function renderAssistantOptionPicker(picker) {
+  const select = document.getElementById(picker.dataset.optionPicker);
+  const trigger = picker.querySelector('.ai-assistant-option-trigger');
+  const label = trigger && trigger.querySelector('span');
+  const menu = picker.querySelector('.ai-assistant-option-menu');
+  if (!select || !trigger || !label || !menu) return;
+
+  const selected = select.options[select.selectedIndex];
+  label.textContent = selected ? selected.textContent : '';
+  trigger.disabled = select.disabled || select.options.length < 1;
+  trigger.setAttribute('aria-disabled', String(trigger.disabled));
+  menu.replaceChildren();
+
+  const appendOption = (option) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ai-assistant-option-choice';
+    button.dataset.optionValue = option.value;
+    button.setAttribute('role', 'option');
+    button.setAttribute('aria-selected', String(option.value === select.value));
+    button.disabled = option.disabled;
+    button.innerHTML = '<span></span><i aria-hidden="true">✓</i>';
+    button.querySelector('span').textContent = option.textContent;
+    button.querySelector('i').hidden = option.value !== select.value;
+    menu.appendChild(button);
+  };
+
+  [...select.children].forEach((child) => {
+    if (child.tagName === 'OPTGROUP') {
+      const heading = document.createElement('div');
+      heading.className = 'ai-assistant-option-group-label';
+      heading.textContent = child.label;
+      menu.appendChild(heading);
+      [...child.children].forEach(appendOption);
+      return;
+    }
+    if (child.tagName === 'OPTION') appendOption(child);
+  });
+}
+
+function refreshAssistantOptionPickers() {
+  document.querySelectorAll('.ai-assistant-option-picker').forEach(renderAssistantOptionPicker);
+}
+
+function initAssistantOptionPickers() {
+  const options = document.getElementById('ai-assistant-options');
+  if (!options) return;
+  if (options.dataset.optionPickersInitialized === 'true') return;
+  options.dataset.optionPickersInitialized = 'true';
+  options.addEventListener('click', (event) => {
+    const trigger = event.target.closest('.ai-assistant-option-trigger');
+    if (trigger) {
+      const picker = trigger.closest('.ai-assistant-option-picker');
+      const menu = picker && picker.querySelector('.ai-assistant-option-menu');
+      if (!menu || trigger.disabled) return;
+      const opening = menu.hidden;
+      closeAssistantOptionMenus(opening ? menu : null);
+      menu.hidden = !opening;
+      trigger.setAttribute('aria-expanded', String(opening));
+      return;
+    }
+
+    const choice = event.target.closest('.ai-assistant-option-choice');
+    if (!choice || choice.disabled) return;
+    const picker = choice.closest('.ai-assistant-option-picker');
+    const select = picker && document.getElementById(picker.dataset.optionPicker);
+    if (!select) return;
+    select.value = choice.dataset.optionValue;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    closeAssistantOptionMenus();
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (!event.target.closest('.ai-assistant-option-picker')) closeAssistantOptionMenus();
+  }, true);
+  refreshAssistantOptionPickers();
 }
 
 function refreshAssistantOptionSummary() {
@@ -1596,6 +1684,7 @@ function refreshAssistantLanguage() {
 function initAiAssistant() {
   const form = document.getElementById('ai-assistant-form');
   const panel = document.getElementById('ai-assistant-panel');
+  initAssistantOptionPickers();
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     submitAssistantMessage();
@@ -1670,6 +1759,7 @@ function initAiAssistant() {
     document.getElementById(id).addEventListener('change', () => {
       if (id === 'ai-assistant-ratio') syncAssistantImageSizeRatio('ratio');
       if (id === 'ai-assistant-size') syncAssistantImageSizeRatio('size');
+      refreshAssistantOptionPickers();
       refreshAssistantOptionSummary();
       updateAssistantCreditEstimate();
     });
