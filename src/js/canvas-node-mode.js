@@ -717,9 +717,9 @@ function bindCanvasNodeFileDrop(host) {
     if (!files.length) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    const paths = files.map((file) => {
-      try { return window.messsAPI.getPathForFile(file); } catch (error) { return ''; }
-    }).filter(Boolean);
+    const paths = files.map((file) => window.MesssFileDrop
+      ? window.MesssFileDrop.pathForFile(file)
+      : '').filter(Boolean);
     void importCanvasNodePaths(paths, null, canvasNodeWorldPoint(event.clientX, event.clientY));
   }, true);
 }

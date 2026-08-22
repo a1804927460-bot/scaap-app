@@ -1107,6 +1107,44 @@ function initViewModeToggle() {
 function initPreviewCanvas() {
   const canvas = document.getElementById('preview-canvas');
 
+  // The empty preview state explicitly invites external files. Keep this
+  // target live on macOS as well as Windows; Finder may provide only
+  // DataTransfer.files, which handleExternalDrop normalizes for us.
+  let previewDragDepth = 0;
+  const hasExternalFiles = (event) => {
+    const types = Array.from(event && event.dataTransfer && event.dataTransfer.types || []);
+    return types.includes('Files') || Boolean(
+      window.MesssFileDrop && window.MesssFileDrop.entries(event.dataTransfer).length
+    );
+  };
+  const clearPreviewDrop = () => {
+    previewDragDepth = 0;
+    canvas.classList.remove('is-drag-over');
+  };
+  canvas.addEventListener('dragenter', (event) => {
+    if (!hasExternalFiles(event)) return;
+    event.preventDefault();
+    previewDragDepth += 1;
+    canvas.classList.add('is-drag-over');
+  });
+  canvas.addEventListener('dragover', (event) => {
+    if (!hasExternalFiles(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    canvas.classList.add('is-drag-over');
+  });
+  canvas.addEventListener('dragleave', (event) => {
+    if (event.relatedTarget && canvas.contains(event.relatedTarget)) return;
+    previewDragDepth = Math.max(0, previewDragDepth - 1);
+    if (!previewDragDepth) clearPreviewDrop();
+  });
+  canvas.addEventListener('drop', async (event) => {
+    if (!hasExternalFiles(event)) return;
+    event.preventDefault();
+    clearPreviewDrop();
+    if (typeof handleExternalDrop === 'function') await handleExternalDrop(event.dataTransfer);
+  });
+
   // Clicking blank grid space no longer exits the folder (per spec: 鐐瑰嚮
   // 画布边缘不要退出文件夹) �?it just clears any multi-selection, the way
   // clicking empty space on the board canvas deselects rather than leaving.

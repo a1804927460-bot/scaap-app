@@ -458,8 +458,9 @@ async function addExternalAssistantFiles(files) {
   const paths = [];
   const inMemoryImages = [];
   [...files].filter(Boolean).forEach((file) => {
-    let filePath = '';
-    try { filePath = window.messsAPI.getPathForFile(file); } catch (error) {}
+    const filePath = window.MesssFileDrop
+      ? window.MesssFileDrop.pathForFile(file)
+      : '';
     if (filePath) paths.push(filePath);
     else if (/^image\//i.test(file.type || '')) inMemoryImages.push(file);
   });

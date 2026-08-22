@@ -1696,8 +1696,9 @@ async function importCanvasAgentPastedMedia(file, event) {
     });
     importedFile = result && result.ok ? result.file : null;
   } else {
-    let filePath = null;
-    try { filePath = window.messsAPI.getPathForFile(file); } catch (error) {}
+    const filePath = window.MesssFileDrop
+      ? window.MesssFileDrop.pathForFile(file)
+      : '';
     if (!filePath || typeof window.messsAPI.importFiles !== 'function') return false;
     const result = await window.messsAPI.importFiles([filePath], AppState.activeFolderId, activeCanvasId());
     importedFile = result && Array.isArray(result.imported) ? result.imported[0] : null;

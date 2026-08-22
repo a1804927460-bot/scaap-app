@@ -1205,21 +1205,14 @@ async function handleExternalDrop(dataTransfer, targetFolderId) {
     AppState.activeFolderId && AppState.activeFolderId !== 'default' ? AppState.activeFolderId : null
   );
 
-  const items = Array.from(dataTransfer.items || []);
+  const droppedFiles = window.MesssFileDrop
+    ? window.MesssFileDrop.entries(dataTransfer)
+    : [];
   const filePaths = [];
   const dirPaths = [];
 
-  for (const item of items) {
-    if (item.kind !== 'file') continue;
-    const entry = typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null;
-    const file = item.getAsFile();
-    if (!file) continue;
-    let resolvedPath = null;
-    try {
-      resolvedPath = window.messsAPI.getPathForFile(file);
-    } catch (err) {
-      resolvedPath = null;
-    }
+  for (const dropped of droppedFiles) {
+    const { entry, path: resolvedPath } = dropped;
     if (!resolvedPath) continue;
     if (entry && entry.isDirectory) dirPaths.push(resolvedPath);
     else filePaths.push(resolvedPath);
