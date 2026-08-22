@@ -16,6 +16,7 @@ function pngHeader(width, height) {
 
 (async () => {
   const providers = await import('../gateway/src/providers.js');
+  const relayAssets = await import('../gateway/src/ai302-tools.js');
   const config = providers.publicProviderConfig();
   const ids = config.providers.map((provider) => provider.id);
   for (const id of ['image-6', 'video-2', 'video-3']) {
@@ -29,8 +30,24 @@ function pngHeader(width, height) {
   const originalFetch = global.fetch;
   const requests = [];
   let atlasImage = pngHeader(1920, 1072);
+  let uploadedMediaCount = 0;
   global.fetch = async (url, options = {}) => {
     const endpoint = String(url);
+    if (endpoint.endsWith('/uploadMedia')) {
+      assert.ok(options.body instanceof FormData, 'Atlas media uploads must use multipart form data');
+      const file = options.body.get('file');
+      assert.ok(file instanceof Blob, 'Atlas media uploads must include a file blob');
+      uploadedMediaCount += 1;
+      const upload = {
+        endpoint,
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        url: `https://atlas-img.example.com/uploaded-${uploadedMediaCount}.png`
+      };
+      requests.push(upload);
+      return new Response(JSON.stringify({ code: 200, data: { download_url: upload.url } }), { status: 200 });
+    }
     if (endpoint.endsWith('/generateImage')) {
       requests.push({ endpoint, body: JSON.parse(options.body) });
       return new Response(JSON.stringify({ request_id: 'atlas-image-request' }), { status: 200 });
@@ -98,6 +115,38 @@ function pngHeader(width, height) {
       providerId: 'image-6', prompt: 'valid square 4K', size: '4K',
       aspectRatio: '1:1', quality: 'high', outputFormat: 'png', urls: []
     }), atlasImage);
+
+    const localReference = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    const screenshotFirstFrame = await providers.createVideoTask({
+      providerId: 'video-3', prompt: 'subtle natural portrait motion',
+      urls: [localReference], referenceMediaTypes: ['image'], videoMode: 'first-frame',
+      resolution: '1080P', aspectRatio: 'adaptive', duration: 6,
+      generateAudio: true, outputFormat: 'mp4'
+    });
+    assert.match(screenshotFirstFrame.taskId, /^messs-route:atlas-video-seedance25-i2v:atlas-video-request$/);
+
+    const screenshotOmni = await providers.createVideoTask({
+      providerId: 'video-3', prompt: 'cinematic portrait with controlled camera motion',
+      urls: [localReference], referenceMediaTypes: ['image'], videoMode: 'omni',
+      resolution: '1080P', aspectRatio: '3:4', duration: 6,
+      generateAudio: true, outputFormat: 'mp4'
+    });
+    assert.match(screenshotOmni.taskId, /^messs-route:atlas-video-seedance25-ref:atlas-video-request$/);
+
+    process.env.AI_GATEWAY_PUBLIC_URL = 'https://gateway.example.com';
+    const localVideo = relayAssets.storeAi302RelayAsset({
+      buffer: Buffer.from('0000000000000000'), mime: 'video/mp4', extension: 'mp4'
+    });
+    const localAudio = relayAssets.storeAi302RelayAsset({
+      buffer: Buffer.from('0000000000000000'), mime: 'audio/mpeg', extension: 'mp3'
+    });
+    const localMultimodal = await providers.createVideoTask({
+      providerId: 'video-3', prompt: 'use local video and audio references',
+      urls: [localVideo.url], referenceMediaTypes: ['video'], referenceAudioUrls: [localAudio.url],
+      videoMode: 'omni', resolution: '720P', aspectRatio: 'adaptive', duration: 6,
+      generateAudio: true, outputFormat: 'mp4'
+    });
+    assert.match(localMultimodal.taskId, /^messs-route:atlas-video-seedance25-ref:atlas-video-request$/);
 
     const firstLast = await providers.createVideoTask({
       providerId: 'video-3', prompt: 'first and last frame',
@@ -186,28 +235,52 @@ function pngHeader(width, height) {
     assert.equal(extendRequest.body.model, 'bytedance/seedance-2.5/reference-to-video');
     assert.equal(extendRequest.body.duration, 10);
     assert.equal(extendRequest.body.output_format, 'mov');
-    const inferredReferenceRequest = requests.find((entry) => entry.body.reference_videos && entry.body.reference_videos.includes('https://cdn.example.com/reference.mp4'));
+    const inferredReferenceRequest = requests.find((entry) => entry.body && entry.body.reference_videos && entry.body.reference_videos.includes('https://cdn.example.com/reference.mp4'));
     assert.equal(inferredReferenceRequest.body.model, 'bytedance/seedance-2.5/reference-to-video');
     assert.equal(inferredReferenceRequest.body.omni_reference_task_type, 'auto');
     assert.equal(Object.hasOwn(inferredReferenceRequest.body, 'watermark'), false);
     assert.equal(Object.hasOwn(inferredReferenceRequest.body, 'return_last_frame'), false);
-    const editRequest = requests.find((entry) => entry.body.omni_reference_task_type === 'edit');
+    const editRequest = requests.find((entry) => entry.body && entry.body.omni_reference_task_type === 'edit');
     assert.equal(editRequest.body.duration, -1);
-    const seedance20ReferenceRequest = requests.find((entry) => entry.body.model === 'bytedance/seedance-2.0/reference-to-video');
+    const seedance20ReferenceRequest = requests.find((entry) => entry.body && entry.body.model === 'bytedance/seedance-2.0/reference-to-video');
     assert.equal(seedance20ReferenceRequest.body.reference_audios.length, 1);
     assert.equal(seedance20ReferenceRequest.body.seed, 123);
     assert.equal(seedance20ReferenceRequest.body.bitrate_mode, 'high');
     assert.equal(seedance20ReferenceRequest.body.watermark, true);
-    const seedance20I2vRequest = requests.find((entry) => entry.body.model === 'bytedance/seedance-2.0/image-to-video' && entry.body.image);
+    const seedance20I2vRequest = requests.find((entry) => entry.body && entry.body.model === 'bytedance/seedance-2.0/image-to-video' && entry.body.image);
     assert.equal(seedance20I2vRequest.body.ratio, '9:16');
     assert.equal(seedance20I2vRequest.body.duration, -1);
-    const audioOnlyRequest = requests.find((entry) => entry.body.model === 'bytedance/seedance-2.5/reference-to-video' && entry.body.reference_audios && entry.body.reference_audios.length > 0);
-    const fullReferenceRequest = requests.find((entry) => entry.body.prompt.includes('full reference follows a 16:9 source'));
+    const audioOnlyRequest = requests.find((entry) => entry.body && entry.body.model === 'bytedance/seedance-2.5/reference-to-video' && entry.body.reference_audios && entry.body.reference_audios.length > 0);
+    const fullReferenceRequest = requests.find((entry) => entry.body && entry.body.prompt.includes('full reference follows a 16:9 source'));
     assert.equal(fullReferenceRequest.body.model, 'bytedance/seedance-2.5/reference-to-video');
     assert.equal(fullReferenceRequest.body.ratio, 'adaptive');
     assert.equal(fullReferenceRequest.body.resolution, '1080p-esr & 60fps');
     assert.equal(audioOnlyRequest.body.reference_images.length, 0);
     assert.equal(audioOnlyRequest.body.reference_audios.length, 1);
+
+    const mediaUploads = requests.filter((entry) => entry.endpoint.endsWith('/uploadMedia'));
+    assert.equal(mediaUploads.length, 4);
+    assert.deepEqual(mediaUploads.map((entry) => entry.name), [
+      'reference.png', 'reference.png', 'reference.mp4', 'reference.mp3'
+    ]);
+    assert.deepEqual(mediaUploads.map((entry) => entry.type), [
+      'image/png', 'image/png', 'video/mp4', 'audio/mpeg'
+    ]);
+    assert.ok(mediaUploads.every((entry) => entry.size > 0));
+    const screenshotFirstFrameRequest = requests.find((entry) => entry.body && entry.body.prompt === 'subtle natural portrait motion');
+    assert.equal(screenshotFirstFrameRequest.body.image, mediaUploads[0].url);
+    assert.equal(screenshotFirstFrameRequest.body.resolution, '1080p');
+    assert.equal(screenshotFirstFrameRequest.body.duration, 6);
+    assert.equal(screenshotFirstFrameRequest.body.ratio, 'adaptive');
+    const screenshotOmniRequest = requests.find((entry) => entry.body && entry.body.prompt.includes('cinematic portrait with controlled camera motion'));
+    assert.deepEqual(screenshotOmniRequest.body.reference_images, [mediaUploads[1].url]);
+    assert.equal(screenshotOmniRequest.body.resolution, '1080p');
+    assert.equal(screenshotOmniRequest.body.duration, 6);
+    assert.equal(screenshotOmniRequest.body.ratio, '3:4');
+    assert.equal(screenshotOmniRequest.body.omni_reference_task_type, 'auto');
+    const localMultimodalRequest = requests.find((entry) => entry.body && entry.body.prompt.includes('use local video and audio references'));
+    assert.deepEqual(localMultimodalRequest.body.reference_videos, [mediaUploads[2].url]);
+    assert.deepEqual(localMultimodalRequest.body.reference_audios, [mediaUploads[3].url]);
 
     // Atlas installations using the older Volcengine spelling may reject the
     // generic task type. A rejected request has no task id, so the adapter may
@@ -233,6 +306,30 @@ function pngHeader(width, height) {
     global.fetch = previousAliasFetch;
     assert.match(aliasTask.taskId, /^messs-route:atlas-video-seedance25-ref:atlas-alias-request$/);
     assert.deepEqual(aliasRequests.map((body) => body.omni_reference_task_type), ['auto', 'reference']);
+
+    const previousValidationFetch = global.fetch;
+    global.fetch = async (url) => {
+      const endpoint = String(url);
+      if (!endpoint.endsWith('/generateVideo')) throw new Error(`Unexpected validation test request: ${endpoint}`);
+      return new Response(JSON.stringify({
+        error: {
+          detail: [{ loc: ['body', 'resolution'], msg: 'resolution must be one of the supported native values' }],
+          message: 'reference URL https://private.example.com/input.png was rejected'
+        }
+      }), { status: 400 });
+    };
+    await assert.rejects(
+      providers.createVideoTask({
+        providerId: 'video-3', prompt: 'preserve provider validation detail',
+        urls: ['https://cdn.example.com/frame.png'], referenceMediaTypes: ['image'],
+        videoMode: 'first-frame', resolution: '1080P', aspectRatio: 'adaptive', duration: 6,
+        outputFormat: 'mp4'
+      }),
+      (error) => error && error.code === 'provider-request-failed'
+        && /resolution must be one of the supported native values/.test(error.message)
+        && !/private\.example\.com/.test(error.message)
+    );
+    global.fetch = previousValidationFetch;
 
     const polled = await providers.pollVideoTask('video-3', extended.taskId);
     assert.equal(polled.status, 'succeeded');
@@ -281,6 +378,7 @@ function pngHeader(width, height) {
     delete process.env.AI302_KEY;
   } finally {
     global.fetch = originalFetch;
+    delete process.env.AI_GATEWAY_PUBLIC_URL;
   }
   console.log('Atlas Cloud provider tests passed.');
 })().catch((error) => {

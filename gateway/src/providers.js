@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import {
   deleteAi302RelayAsset,
+  getAi302RelayAsset,
   parseImageDataUrl,
   storeAi302RelayAsset,
   stripImageMetadata
@@ -656,12 +657,8 @@ async function responseJson(response, providerName = 'Video provider') {
       || payload && payload.code
       || ''
     ).trim();
-    const rawMessage = String(
-      payload && payload.error && payload.error.message
-      || payload && payload.base_resp && payload.base_resp.status_msg
-      || payload && payload.message
-      || `${providerName} request failed (HTTP ${response.status}).`
-    );
+    const rawMessage = providerResponseErrorMessage(payload)
+      || `${providerName} request failed (HTTP ${response.status}).`;
     const channelUnavailable = providerChannelConfigurationUnavailable(rawMessage);
     const retryAfter = Number(response.headers && response.headers.get && response.headers.get('retry-after'));
     const retryable = channelUnavailable || response.status === 429 || response.status >= 500;
@@ -685,6 +682,41 @@ async function responseJson(response, providerName = 'Video provider') {
 function safeProviderText(value, fallback) {
   const text = String(value || '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
   return text || fallback;
+}
+
+function providerResponseErrorMessage(payload) {
+  const messages = [];
+  const add = (value) => {
+    if (typeof value === 'string' || typeof value === 'number') {
+      const sanitized = String(value)
+        .replace(/data:[^;,\s]+;base64,[A-Za-z0-9+/=]+/gi, '[data-url]')
+        .replace(/https:\/\/\S+/gi, '[url]')
+        .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 500);
+      if (sanitized && !messages.includes(sanitized)) messages.push(sanitized);
+    }
+  };
+  const visit = (value, depth = 0, seen = new Set()) => {
+    if (value === null || value === undefined || depth > 5) return;
+    if (typeof value !== 'object') return add(value);
+    if (seen.has(value)) return;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      value.slice(0, 8).forEach((entry) => visit(entry, depth + 1, seen));
+      return;
+    }
+    const preferred = ['message', 'msg', 'detail', 'reason', 'error', 'errors', 'status_msg'];
+    for (const key of preferred) {
+      if (Object.hasOwn(value, key)) visit(value[key], depth + 1, seen);
+    }
+    for (const key of ['base_resp', 'data', 'response']) {
+      if (Object.hasOwn(value, key)) visit(value[key], depth + 1, seen);
+    }
+  };
+  visit(payload);
+  return messages.join('; ').slice(0, 900);
 }
 
 function providerChannelConfigurationUnavailable(value) {
@@ -1231,17 +1263,70 @@ async function createSeedanceVideoTask(provider, body, signal) {
   return { providerId: provider.id, taskId };
 }
 
-function atlasRelayMediaUrl(rawUrl, mediaType = 'image') {
+function atlasLocalMediaAsset(rawUrl, mediaType = 'image') {
   const url = String(rawUrl || '').trim();
   if (mediaType === 'image' && /^data:image\//i.test(url)) {
-    const image = stripImageMetadata(parseImageDataUrl(url, { maxBytes: 30 * 1024 * 1024 }));
-    return storeAi302RelayAsset(image, { relayTtlMs: 2 * 60 * 60 * 1000 }).url;
+    return stripImageMetadata(parseImageDataUrl(url, { maxBytes: 30 * 1024 * 1024 }));
   }
-  if (/^https:\/\//i.test(url)) return url;
+  if (/^https:\/\//i.test(url)) {
+    let parsed;
+    let publicOrigin = '';
+    try {
+      parsed = new URL(url);
+      const configured = String(process.env.AI_GATEWAY_PUBLIC_URL || '').trim();
+      const railwayDomain = String(process.env.RAILWAY_PUBLIC_DOMAIN || '').trim();
+      publicOrigin = configured || (railwayDomain ? `https://${railwayDomain}` : '');
+      const match = /^\/v1\/tools\/assets\/([A-Za-z0-9_-]{43})(?:\.[a-z0-9]{2,8})?$/.exec(parsed.pathname);
+      if (publicOrigin && parsed.origin === new URL(publicOrigin).origin && match) {
+        return getAi302RelayAsset(match[1]);
+      }
+    } catch (error) {}
+    return null;
+  }
   throw Object.assign(new Error(`Atlas Cloud requires HTTPS ${mediaType} references or sanitized data URLs.`), {
     status: 400,
     code: 'invalid-reference-media'
   });
+}
+
+function atlasMediaExtension(mime, mediaType) {
+  const normalized = String(mime || '').trim().toLowerCase();
+  if (normalized === 'image/jpeg') return 'jpg';
+  if (normalized === 'audio/mpeg' || normalized === 'audio/mp3') return 'mp3';
+  if (normalized === 'audio/wav' || normalized === 'audio/x-wav') return 'wav';
+  if (normalized === 'video/quicktime') return 'mov';
+  const subtype = normalized.split('/')[1];
+  return /^[a-z0-9]{2,8}$/.test(subtype || '') ? subtype : mediaType === 'image' ? 'png' : mediaType === 'audio' ? 'mp3' : 'mp4';
+}
+
+function atlasUploadMediaEndpoint(provider) {
+  const endpoint = new URL(provider.endpoint);
+  endpoint.pathname = '/api/v1/model/uploadMedia';
+  endpoint.search = '';
+  endpoint.hash = '';
+  return endpoint;
+}
+
+async function atlasMediaReference(provider, rawUrl, mediaType, signal) {
+  const url = String(rawUrl || '').trim();
+  const localAsset = atlasLocalMediaAsset(url, mediaType);
+  if (!localAsset) return url;
+  const mime = String(localAsset.mime || '').trim().toLowerCase();
+  const form = new FormData();
+  form.append('file', new Blob([localAsset.buffer], { type: mime }), `reference.${atlasMediaExtension(mime, mediaType)}`);
+  const uploaded = await responseJson(await fetch(atlasUploadMediaEndpoint(provider), {
+    method: 'POST',
+    headers: providerHeaders(provider),
+    signal: providerSignal(signal, 180_000),
+    body: form
+  }), provider.name);
+  const uploadedUrl = String(nestedVideoTaskValue(uploaded, ['download_url', 'downloadUrl', 'url']) || '').trim();
+  if (!/^https:\/\/\S+$/i.test(uploadedUrl)) {
+    throw Object.assign(new Error(`${provider.name} did not return a valid uploaded media URL.`), {
+      status: 502, code: 'provider-invalid-response', retryable: false
+    });
+  }
+  return uploadedUrl;
 }
 
 function atlasResolution(value) {
@@ -1400,21 +1485,27 @@ async function createAtlasSeedanceVideoTask(provider, body, signal) {
     ...(body.watermark === true && capabilities.supportsWatermark === true ? { watermark: true } : {}),
     ...(body.returnLastFrame === true ? { return_last_frame: true } : {})
   };
+  const uploadedUrls = [];
+  for (let index = 0; index < urls.length; index += 1) {
+    uploadedUrls.push(await atlasMediaReference(provider, urls[index], mediaTypes[index] || 'image', signal));
+  }
+  const uploadedAudioUrls = [];
+  for (const url of audioUrls) uploadedAudioUrls.push(await atlasMediaReference(provider, url, 'audio', signal));
   const requestBody = isI2v
     ? {
         ...common,
-        image: atlasRelayMediaUrl(urls[0], 'image'),
-        ...(urls[1] ? { last_image: atlasRelayMediaUrl(urls[1], 'image') } : {})
+        image: uploadedUrls[0],
+        ...(uploadedUrls[1] ? { last_image: uploadedUrls[1] } : {})
       }
     : {
         ...common,
-        reference_images: urls
-          .map((url, index) => mediaTypes[index] === 'image' ? atlasRelayMediaUrl(url, 'image') : null)
+        reference_images: uploadedUrls
+          .map((url, index) => mediaTypes[index] === 'image' ? url : null)
           .filter(Boolean),
-        reference_videos: urls
-          .map((url, index) => mediaTypes[index] === 'video' ? atlasRelayMediaUrl(url, 'video') : null)
+        reference_videos: uploadedUrls
+          .map((url, index) => mediaTypes[index] === 'video' ? url : null)
           .filter(Boolean),
-        reference_audios: audioUrls.map((url) => atlasRelayMediaUrl(url, 'audio')),
+        reference_audios: uploadedAudioUrls,
         ...(mode === 'video-edit' ? { omni_reference_task_type: 'edit' }
           : mode === 'video-extend' ? { omni_reference_task_type: 'extend' }
             : String(provider.model).includes('2.5') && ['omni', 'video-reference'].includes(mode)
