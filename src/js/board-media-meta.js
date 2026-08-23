@@ -460,17 +460,23 @@ function boardButlerError(result, fallback) {
   const message = supplied ? supplied.trim() : fallback;
   const error = new Error(message);
   error.reason = result && (result.reason || result.errorCode || result.code);
+  error.status = Number(result && (result.httpStatus ?? result.statusCode)) || undefined;
+  error.retryAfterMs = Number(result && result.retryAfterMs) || undefined;
   return error;
 }
 
 function isTransientBoardButlerStatusFailure(result) {
   const httpStatus = Number(result && (result.httpStatus ?? result.statusCode));
-  if (Number.isInteger(httpStatus) && httpStatus >= 400 && httpStatus < 500 && httpStatus !== 429) return false;
   const reason = String(result && (result.reason || result.errorCode || result.code) || '').trim().toLowerCase();
+  if (httpStatus === 409 && [
+    'image-tool-task-not-ready', 'three-d-task-not-ready', 'video-tool-task-not-ready'
+  ].includes(reason)) return true;
+  if (Number.isInteger(httpStatus) && httpStatus >= 400 && httpStatus < 500 && httpStatus !== 429) return false;
   return [
     'ai302-invalid-response', 'ai302-upstream-error', 'ai302-timeout',
     'ai302-unavailable', 'ai302-rate-limited', 'gateway-request-failed',
-    'gateway-timeout', 'invalid-gateway-response', 'rate-limited'
+    'gateway-timeout', 'invalid-gateway-response', 'rate-limited',
+    'image-tool-task-not-ready', 'three-d-task-not-ready', 'video-tool-task-not-ready'
   ].includes(reason);
 }
 
@@ -730,6 +736,9 @@ async function resolveBoardButlerImageToolResult(api, hook, initialResult, state
         '이미지 처리 상태를 확인하지 못했습니다.'
       ));
     }
+    if (normalizeBoardButlerJobStatus(result.status) === 'failed') {
+      throw boardButlerError(result, t('Image processing failed.', '图片处理失败。', '이미지 처리에 실패했습니다.'));
+    }
     files = boardButlerResultFiles(result);
     if (files.length) return files;
     status = normalizeBoardButlerJobStatus(result.status);
@@ -756,7 +765,11 @@ async function resolveBoardButlerImageToolResult(api, hook, initialResult, state
   if (!downloaded || !downloaded.ok) {
     throw boardButlerError(downloaded, t('Could not save the processed image.', '无法保存处理后的图片。', '처리된 이미지를 저장하지 못했습니다.'));
   }
-  return boardButlerResultFiles(downloaded);
+  const downloadedFiles = boardButlerResultFiles(downloaded);
+  if (!downloadedFiles.length) {
+    throw new Error(t('The processed image is missing.', '处理后的图片缺失。', '처리된 이미지가 없습니다.'));
+  }
+  return downloadedFiles;
 }
 
 async function runBoardButlerImageTool(action, file, item, options) {
@@ -870,6 +883,9 @@ async function resolveBoardButlerVideoToolResult(api, hook, initialResult, state
         '비디오 고화질 처리 상태를 확인하지 못했습니다.'
       ));
     }
+    if (normalizeBoardButlerJobStatus(result.status) === 'failed') {
+      throw boardButlerError(result, t('Video enhancement failed.', '视频超清失败。', '비디오 고화질 처리에 실패했습니다.'));
+    }
     updateBoardButlerVideoState(state, result);
     files = boardButlerResultFiles(result);
     if (files.length) return files;
@@ -894,7 +910,11 @@ async function resolveBoardButlerVideoToolResult(api, hook, initialResult, state
   if (!downloaded || !downloaded.ok) {
     throw boardButlerError(downloaded, t('Could not save the enhanced video.', '无法保存超清视频。', '고화질 비디오를 저장하지 못했습니다.'));
   }
-  return boardButlerResultFiles(downloaded);
+  const downloadedFiles = boardButlerResultFiles(downloaded);
+  if (!downloadedFiles.length) {
+    throw new Error(t('The enhanced video is missing.', '超清视频缺失。', '고화질 비디오가 없습니다.'));
+  }
+  return downloadedFiles;
 }
 
 async function runBoardButlerVideoTool(action, file, item, options) {
@@ -2500,7 +2520,11 @@ async function runBoardButlerGenerate3d(file, item, providerId, options = {}) {
       state.phase = status === 'queued' ? 'queued' : 'processing';
       syncBoardButlerTaskUi(file.id);
       await waitForBoardButlerPoll(retryAfterMs);
-      lastResult = await api.get3dStatus(taskToken);
+      lastResult = await invokeBoardButlerWithTransientRetry(
+        () => api.get3dStatus(taskToken),
+        state,
+        file.id
+      );
       if (!lastResult || !lastResult.ok) {
         if (isTransientBoardButlerStatusFailure(lastResult) && transientStatusFailures < 6) {
           transientStatusFailures += 1;
@@ -2518,7 +2542,14 @@ async function runBoardButlerGenerate3d(file, item, providerId, options = {}) {
     }
     state.phase = 'downloading';
     syncBoardButlerTaskUi(file.id);
-    const downloaded = await api.download3d(taskToken);
+    const downloaded = await invokeBoardButlerWithTransientRetry(
+      () => api.download3d(taskToken),
+      state,
+      file.id
+    );
+    if (!downloaded || !downloaded.ok) {
+      throw boardButlerError(downloaded, t('Could not save the 3D model.', '无法保存 3D 模型。', '3D 모델을 저장하지 못했습니다.'));
+    }
     if (!downloaded || !downloaded.ok || !downloaded.file) {
       throw boardButlerError(downloaded, t('Could not save the 3D model.', '无法保存 3D 模型。', '3D 모델을 저장하지 못했습니다.'));
     }
@@ -2533,6 +2564,156 @@ async function runBoardButlerGenerate3d(file, item, providerId, options = {}) {
     syncBoardButlerTaskUi(file.id);
     showToast(state.message || t('3D generation failed.', '3D 生成失败。', '3D 생성에 실패했습니다.'));
   }
+}
+
+function boardButlerActionForPersistedTask(task) {
+  if (!task || !task.kind) return '';
+  if (task.kind === 'video') return 'videoUpscale';
+  if (task.kind === '3d') {
+    const provider = ['hunyuan3d', 'hyper3d', 'tripo3d'].includes(String(task.providerId || '').toLowerCase())
+      ? String(task.providerId).toLowerCase()
+      : 'hunyuan3d';
+    return `generate3d:${provider}`;
+  }
+  const modelId = String(task.modelId || '').toLowerCase();
+  return {
+    'background-remove': 'removeBackground',
+    'seededit-v3': 'imageEdit',
+    'clipdrop-uncrop': 'imageExpand',
+    'clipdrop-upscale': 'imageEnhance',
+    cleanup: 'eraseObject',
+    'topaz-image-sharpen': 'topazSharpen',
+    'topaz-image-sharpen-gen': 'topazSharpenGen',
+    'topaz-image-enhance': 'topazEnhance',
+    'topaz-image-enhance-gen': 'topazEnhanceGen',
+    'topaz-image-denoise': 'topazDenoise',
+    'topaz-image-restore': 'topazRestore',
+    'topaz-image-lighting': 'topazLighting',
+    'qwen-image-layered': 'imageLayer'
+  }[modelId] || '';
+}
+
+function boardButlerSourceItem(fileId) {
+  return (Array.isArray(AppState.boardItems) ? AppState.boardItems : [])
+    .find((item) => item && String(item.fileId) === String(fileId)) || null;
+}
+
+async function resumePersistedBoardButlerTask(task) {
+  const fileId = String(task && task.sourceFileId || '').trim();
+  const file = (Array.isArray(AppState.files) ? AppState.files : [])
+    .find((entry) => entry && String(entry.id) === fileId);
+  const action = boardButlerActionForPersistedTask(task);
+  const api = boardButlerApi();
+  if (!file || !action || !api) return;
+  const state = {
+    status: 'running',
+    phase: task.status === 'succeeded' ? 'downloading' : 'processing',
+    progress: Number(task.progress) || 0,
+    taskToken: task.taskToken,
+    ...(Number.isFinite(Number(task.credits)) ? { credits: Number(task.credits) } : {})
+  };
+  setBoardButlerTask(file.id, action, state);
+  try {
+    const item = boardButlerSourceItem(file.id);
+    const outputIds = [
+      task.downloadedFileId,
+      ...(Array.isArray(task.downloadedFileIds) ? task.downloadedFileIds : [])
+    ].map((id) => String(id || '').trim()).filter(Boolean);
+    const placedIds = new Set((Array.isArray(AppState.boardItems) ? AppState.boardItems : [])
+      .map((entry) => String(entry && entry.fileId || '').trim())
+      .filter(Boolean));
+    const existingOutputs = outputIds.length
+      ? (Array.isArray(AppState.files) ? AppState.files : [])
+        .filter((entry) => outputIds.includes(String(entry && entry.id || '').trim()) && !placedIds.has(String(entry.id)))
+      : [];
+    if (existingOutputs.length) {
+      await placeBoardButlerResults(existingOutputs, item, action);
+      state.status = 'success';
+      syncBoardButlerTaskUi(file.id);
+      clearCompletedBoardButlerTask(file.id, action, state);
+      return;
+    }
+    if (outputIds.length && outputIds.every((id) => placedIds.has(id))) {
+      setBoardButlerTask(file.id, action, null);
+      return;
+    }
+    if (task.kind === 'image') {
+      const hook = BOARD_BUTLER_IMAGE_TOOL_HOOKS[action];
+      if (!hook || typeof api.getImageToolStatus !== 'function') throw new Error(t('The image task bridge is unavailable.', '图片任务连接不可用。', '이미지 작업 연결을 사용할 수 없습니다.'));
+      const files = await resolveBoardButlerImageToolResult(api, hook, {
+        ok: true,
+        taskToken: task.taskToken,
+        status: task.status,
+        retryAfterMs: task.retryAfterMs,
+        resultCount: task.resultCount
+      }, state, file.id);
+      await placeBoardButlerResults(files, item, action);
+    } else if (task.kind === 'video') {
+      const hook = BOARD_BUTLER_VIDEO_TOOL_HOOKS.videoUpscale;
+      if (!hook || typeof api.getVideoToolStatus !== 'function') throw new Error(t('The video task bridge is unavailable.', '视频任务连接不可用。', '비디오 작업 연결을 사용할 수 없습니다.'));
+      const files = await resolveBoardButlerVideoToolResult(api, hook, {
+        ok: true,
+        taskToken: task.taskToken,
+        status: task.status,
+        retryAfterMs: task.retryAfterMs,
+        credits: task.credits,
+        creditsCharged: task.creditsCharged,
+        providerCost: task.providerCost
+      }, state, file.id);
+      await placeBoardButlerResults(files, item, action);
+    } else if (task.kind === '3d') {
+      if (typeof api.get3dStatus !== 'function' || typeof api.download3d !== 'function') throw new Error(t('The 3D task bridge is unavailable.', '3D 任务连接不可用。', '3D 작업 연결을 사용할 수 없습니다.'));
+      let status = normalizeBoardButlerJobStatus(task.status);
+      let retryAfterMs = boardButlerPollDelay(task.retryAfterMs);
+      let lastResult = { ok: true, status, retryAfterMs };
+      for (let attempt = 0; status !== 'succeeded' && attempt < BOARD_BUTLER_MAX_POLLS; attempt += 1) {
+        if (status === 'failed') throw boardButlerError(lastResult, t('3D generation failed.', '3D 生成失败。', '3D 생성에 실패했습니다.'));
+        state.phase = status === 'queued' ? 'queued' : 'processing';
+        syncBoardButlerTaskUi(file.id);
+        await waitForBoardButlerPoll(retryAfterMs);
+        lastResult = await invokeBoardButlerWithTransientRetry(
+          () => api.get3dStatus(task.taskToken, task.providerId),
+          state,
+          file.id
+        );
+        if (!lastResult || !lastResult.ok) {
+          throw boardButlerError(lastResult, t('Could not check 3D generation.', '无法查询 3D 生成进度。', '3D 생성 상태를 확인하지 못했습니다.'));
+        }
+        status = normalizeBoardButlerJobStatus(lastResult.status);
+        retryAfterMs = boardButlerPollDelay(lastResult.retryAfterMs);
+      }
+      if (status !== 'succeeded') throw new Error(t('3D generation timed out. Try again later.', '3D 生成等待超时，请稍后重试。', '3D 생성 대기 시간이 초과되었습니다.'));
+      state.phase = 'downloading';
+      syncBoardButlerTaskUi(file.id);
+      const downloaded = await invokeBoardButlerWithTransientRetry(
+        () => api.download3d(task.taskToken, task.providerId),
+        state,
+        file.id
+      );
+      if (!downloaded || !downloaded.ok || !downloaded.file) throw boardButlerError(downloaded, t('Could not save the 3D model.', '无法保存 3D 模型。', '3D 모델을 저장하지 못했습니다.'));
+      await placeBoardButlerResult(downloaded.file, item, action);
+    } else {
+      return;
+    }
+    state.status = 'success';
+    syncBoardButlerTaskUi(file.id);
+    clearCompletedBoardButlerTask(file.id, action, state);
+  } catch (error) {
+    state.status = 'error';
+    state.message = error && error.message;
+    syncBoardButlerTaskUi(file.id);
+    showToast(state.message || t('The Butler task could not be resumed.', 'Butler 任务恢复失败。', 'Butler 작업을 복구하지 못했습니다.'));
+  }
+}
+
+function restoreBoardButlerTasks(tasks) {
+  const pending = Array.isArray(tasks) ? tasks.filter((task) => (
+    task && ['queued', 'processing', 'succeeded'].includes(String(task.status || '').toLowerCase())
+  )) : [];
+  if (!pending.length) return;
+  window.setTimeout(() => pending.forEach((task) => {
+    void resumePersistedBoardButlerTask(task);
+  }), 0);
 }
 
 function createBoardButlerMenuButton(file, action, icon, label, onClick, options = {}) {

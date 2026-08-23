@@ -305,6 +305,8 @@ let previewTmpDir;
 let thumbCacheDir;
 let updateCheckInterval;
 let updateInstallStarted = false;
+let updateCheckPromise = null;
+let updateInstallFallbackTimer = null;
 let googleOAuthPromise;
 let updaterState = {
   enabled: true,
@@ -329,6 +331,94 @@ const butler3dDownloads = new Map();
 const butlerVideoTasks = new Map();
 const butlerVideoDownloads = new Map();
 const butlerDeliveries = new Map();
+const BUTLER_TASK_PERSIST_LIMIT = 256;
+const BUTLER_DELIVERY_PERSIST_LIMIT = 128;
+
+function persistButlerTask(kind, taskToken, entry) {
+  if (!store || !store.data || !taskToken || !entry) return;
+  const tasks = Array.isArray(store.data.butlerTasks) ? store.data.butlerTasks : [];
+  const safe = {
+    kind: String(kind || '').slice(0, 20),
+    taskToken: String(taskToken).slice(0, 4096),
+    ...entry,
+    updatedAt: Number(entry.updatedAt) || Date.now()
+  };
+  const index = tasks.findIndex((item) => item && item.kind === safe.kind && item.taskToken === safe.taskToken);
+  if (index === -1) tasks.push(safe);
+  else tasks[index] = safe;
+  tasks.sort((a, b) => (Number(a.updatedAt) || 0) - (Number(b.updatedAt) || 0));
+  store.data.butlerTasks = tasks.slice(-BUTLER_TASK_PERSIST_LIMIT);
+  store.scheduleSave();
+}
+
+function persistedButlerTask(kind, taskToken) {
+  const tasks = store && store.data && Array.isArray(store.data.butlerTasks) ? store.data.butlerTasks : [];
+  return tasks.find((item) => item && item.kind === kind && item.taskToken === taskToken) || null;
+}
+
+function persistedButlerTasksForRenderer() {
+  const tasks = store && store.data && Array.isArray(store.data.butlerTasks) ? store.data.butlerTasks : [];
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const placedFileIds = new Set((store && store.data && Array.isArray(store.data.boardItems)
+    ? store.data.boardItems : [])
+    .map((item) => String(item && item.fileId || '').trim())
+    .filter(Boolean));
+  const outputIds = (task) => [
+    task && task.downloadedFileId,
+    ...(Array.isArray(task && task.downloadedFileIds) ? task.downloadedFileIds : [])
+  ].map((id) => String(id || '').trim()).filter(Boolean);
+  return tasks
+    .filter((task) => {
+      if (!task || Number(task.updatedAt) < cutoff) return false;
+      const outputs = outputIds(task);
+      return !outputs.length || outputs.some((id) => !placedFileIds.has(id));
+    })
+    .slice(-128)
+    .map((task) => ({ ...task }));
+}
+
+function persistButlerDelivery(entry) {
+  if (!store || !store.data || !entry || !entry.token) return;
+  const deliveries = Array.isArray(store.data.butlerDeliveries) ? store.data.butlerDeliveries : [];
+  const safe = {
+    token: String(entry.token).slice(0, 256),
+    requestId: String(entry.requestId || '').slice(0, 128),
+    durationMs: Math.max(0, Math.round(Number(entry.durationMs) || 0)),
+    estimatedCredits: entry.estimatedCredits === null ? null : Math.max(0, Number(entry.estimatedCredits) || 0),
+    recordIds: Array.isArray(entry.recordIds) ? entry.recordIds.map((id) => String(id).slice(0, 128)).slice(0, 16) : [],
+    status: entry.status === 'confirmed' || entry.status === 'released' ? entry.status : 'pending',
+    confirmRequested: entry.confirmRequested === true,
+    createdAt: Number(entry.createdAt) || Date.now(),
+    result: entry.result && typeof entry.result === 'object' ? entry.result : null
+  };
+  const index = deliveries.findIndex((item) => item && item.token === safe.token);
+  if (index === -1) deliveries.push(safe);
+  else deliveries[index] = safe;
+  store.data.butlerDeliveries = deliveries.slice(-BUTLER_DELIVERY_PERSIST_LIMIT);
+  store.scheduleSave();
+}
+
+function removePersistedButlerDelivery(token) {
+  if (!store || !store.data || !Array.isArray(store.data.butlerDeliveries)) return;
+  store.data.butlerDeliveries = store.data.butlerDeliveries.filter((item) => item && item.token !== token);
+  store.scheduleSave();
+}
+
+function restoreButlerState() {
+  const tasks = Array.isArray(store && store.data && store.data.butlerTasks) ? store.data.butlerTasks : [];
+  for (const task of tasks) {
+    if (!task || !task.taskToken || !task.kind) continue;
+    if (task.kind === 'image') butlerImageTasks.set(task.taskToken, { ...task });
+    else if (task.kind === '3d') butler3dTasks.set(task.taskToken, { ...task });
+    else if (task.kind === 'video') butlerVideoTasks.set(task.taskToken, { ...task });
+  }
+  const deliveries = Array.isArray(store && store.data && store.data.butlerDeliveries) ? store.data.butlerDeliveries : [];
+  for (const delivery of deliveries) {
+    if (!delivery || !delivery.token || !delivery.requestId || delivery.status !== 'pending') continue;
+    butlerDeliveries.set(delivery.token, { ...delivery, timer: null, inFlight: null });
+    scheduleButlerDeliveryRecovery(delivery.token, Math.max(1_000, BUTLER_DELIVERY_TTL_MS - Math.max(0, Date.now() - Number(delivery.createdAt || Date.now()))));
+  }
+}
 const BUTLER_DELIVERY_TTL_MS = 30 * 60 * 1000;
 const MAX_BUTLER_IMAGE_BYTES = Math.floor(7.5 * 1024 * 1024);
 const MAX_BUTLER_VIDEO_BYTES = 48 * 1024 * 1024;
@@ -1071,7 +1161,7 @@ function notifyUpdateDownloaded(info) {
 }
 
 function publicUpdaterState() {
-  return { ...updaterState, packaged: app.isPackaged };
+  return { ...updaterState, packaged: app.isPackaged, platform: process.platform };
 }
 
 function setUpdaterState(patch) {
@@ -1085,14 +1175,32 @@ function setUpdaterState(patch) {
 async function checkForUpdates(manual = false) {
   if (!app.isPackaged) return setUpdaterState({ status: 'development', message: null });
   if (!manual && !updaterState.enabled) return publicUpdaterState();
-  setUpdaterState({ status: 'checking', progress: null, message: null });
-  try {
-    await autoUpdater.checkForUpdates();
-  } catch (err) {
-    console.error('checkForUpdates failed:', err.message);
-    setUpdaterState({ status: 'error', message: String(err.message || 'Update check failed.') });
-  }
-  return publicUpdaterState();
+  if (['downloading', 'downloaded', 'installing'].includes(updaterState.status)) return publicUpdaterState();
+  if (updateCheckPromise) return updateCheckPromise;
+  updateCheckPromise = (async () => {
+    setUpdaterState({ status: 'checking', progress: null, message: null });
+    let timeoutTimer;
+    const timeout = new Promise((_, reject) => {
+      timeoutTimer = setTimeout(() => {
+        const error = new Error('The update check timed out.');
+        error.code = 'updater-timeout';
+        reject(error);
+      }, 30_000);
+      timeoutTimer.unref?.();
+    });
+    try {
+      await Promise.race([autoUpdater.checkForUpdates(), timeout]);
+    } catch (err) {
+      console.error('checkForUpdates failed:', err.message);
+      setUpdaterState({ status: 'error', message: String(err.message || 'Update check failed.') });
+    } finally {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+    }
+    return publicUpdaterState();
+  })().finally(() => {
+    updateCheckPromise = null;
+  });
+  return updateCheckPromise;
 }
 
 function checkForUpdatesQuietly() {
@@ -1463,10 +1571,16 @@ async function installDownloadedUpdate() {
     ]);
   }
 
-  // Keep the assisted installer visible so elevation or installer failures
-  // cannot look like the app simply uninstalled itself. With a non-silent
-  // install electron-updater uses autoRunAppAfterInstall to restart Messs.
-  autoUpdater.quitAndInstall(false, false);
+  if (updateInstallFallbackTimer) clearTimeout(updateInstallFallbackTimer);
+  updateInstallFallbackTimer = setTimeout(() => {
+    updateInstallFallbackTimer = null;
+    if (updateInstallStarted) app.quit();
+  }, 15_000);
+  updateInstallFallbackTimer.unref?.();
+  // macOS needs the forced-run-after-install flag so the app does not remain
+  // hidden after the ZIP updater finishes. Windows keeps the visible NSIS
+  // installer flow and its existing elevation behavior.
+  autoUpdater.quitAndInstall(false, process.platform === 'darwin');
   return { ok: true, installing: true };
 }
 
@@ -5246,6 +5360,7 @@ async function registerButlerDelivery(buffers, records) {
     inFlight: null,
     result: null
   });
+  persistButlerDelivery(butlerDeliveries.get(token));
   scheduleButlerDeliveryRecovery(token);
   return token;
 }
@@ -5310,6 +5425,7 @@ async function settleButlerDeliveryToken(rawToken, delivered) {
       files: delivered === true ? records.map(fileToPayload) : [],
       removedFileIds: delivered === true ? [] : [...entry.recordIds]
     };
+    persistButlerDelivery(entry);
     const cleanup = setTimeout(() => butlerDeliveries.delete(token), 5 * 60 * 1000);
     cleanup.unref?.();
     return entry.result;
@@ -6231,8 +6347,10 @@ function normalizeButlerImageStatus(payload) {
 
 function rememberButlerImageTask(taskToken, patch = {}) {
   const previous = butlerImageTasks.get(taskToken) || {};
+  const next = { ...previous, ...patch, kind: 'image', taskToken, updatedAt: Date.now() };
   butlerImageTasks.delete(taskToken);
-  butlerImageTasks.set(taskToken, { ...previous, ...patch, updatedAt: Date.now() });
+  butlerImageTasks.set(taskToken, next);
+  persistButlerTask('image', taskToken, next);
   while (butlerImageTasks.size > 256) {
     butlerImageTasks.delete(butlerImageTasks.keys().next().value);
   }
@@ -6297,8 +6415,10 @@ function normalizeButler3dStatus(payload) {
 
 function rememberButler3dTask(taskToken, patch = {}) {
   const previous = butler3dTasks.get(taskToken) || {};
+  const next = { ...previous, ...patch, kind: '3d', taskToken, updatedAt: Date.now() };
   butler3dTasks.delete(taskToken);
-  butler3dTasks.set(taskToken, { ...previous, ...patch, updatedAt: Date.now() });
+  butler3dTasks.set(taskToken, next);
+  persistButlerTask('3d', taskToken, next);
   while (butler3dTasks.size > 128) {
     butler3dTasks.delete(butler3dTasks.keys().next().value);
   }
@@ -6357,8 +6477,10 @@ function normalizeButlerVideoStatus(payload) {
 
 function rememberButlerVideoTask(taskToken, patch = {}) {
   const previous = butlerVideoTasks.get(taskToken) || {};
+  const next = { ...previous, ...patch, kind: 'video', taskToken, updatedAt: Date.now() };
   butlerVideoTasks.delete(taskToken);
-  butlerVideoTasks.set(taskToken, { ...previous, ...patch, updatedAt: Date.now() });
+  butlerVideoTasks.set(taskToken, next);
+  persistButlerTask('video', taskToken, next);
   while (butlerVideoTasks.size > 128) {
     butlerVideoTasks.delete(butlerVideoTasks.keys().next().value);
   }
@@ -6817,6 +6939,7 @@ function registerIpcHandlers() {
       boardItems: store.data.boardItems,
       canvasProjects: store.data.canvasProjects,
       canvases: store.data.canvases,
+      butlerTasks: persistedButlerTasksForRenderer(),
       usage: store.data.usage,
       achievements: getAchievementsPayload()
     };
@@ -7897,7 +8020,7 @@ function registerIpcHandlers() {
       }
       const taskToken = normalizeButlerTaskToken(rawTaskToken);
       const modelId = normalizeButlerImageTool(requestedModelId);
-      const existing = butlerImageTasks.get(taskToken) || {};
+      const existing = butlerImageTasks.get(taskToken) || persistedButlerTask('image', taskToken) || {};
       if (existing.modelId && existing.modelId !== modelId) {
         const error = new Error('The image task model does not match.');
         error.code = 'invalid-image-tool';
@@ -7954,7 +8077,7 @@ function registerIpcHandlers() {
       const download = (async () => {
         const resultCount = Math.max(1, Math.min(8, Math.round(Number(task.resultCount) || 1)));
         const buffers = await aiGateway.downloadImageToolResult(taskToken, modelId, resultCount);
-        const currentTask = butlerImageTasks.get(taskToken) || task;
+        const currentTask = butlerImageTasks.get(taskToken) || persistedButlerTask('image', taskToken) || task;
         const sourceFile = store.getFile(currentTask.sourceFileId) || {
           id: null,
           name: 'Processed image',
@@ -8053,7 +8176,7 @@ function registerIpcHandlers() {
         throw error;
       }
       const taskToken = normalizeButlerTaskToken(rawTaskToken);
-      const existing = butler3dTasks.get(taskToken) || null;
+      const existing = butler3dTasks.get(taskToken) || persistedButlerTask('3d', taskToken) || null;
       if (requestedProviderId !== undefined && requestedProviderId !== null && String(requestedProviderId).trim()) {
         const providerId = normalizeButler3dProvider(requestedProviderId);
         if (existing && existing.providerId && existing.providerId !== providerId) {
@@ -8087,7 +8210,7 @@ function registerIpcHandlers() {
         throw error;
       }
       taskToken = normalizeButlerTaskToken(rawTaskToken);
-      const task = butler3dTasks.get(taskToken) || {};
+      const task = butler3dTasks.get(taskToken) || persistedButlerTask('3d', taskToken) || {};
       if (requestedProviderId !== undefined && requestedProviderId !== null && String(requestedProviderId).trim()) {
         const providerId = normalizeButler3dProvider(requestedProviderId);
         if (task.providerId && task.providerId !== providerId) {
@@ -8107,7 +8230,7 @@ function registerIpcHandlers() {
       const download = (async () => {
         const buffer = await aiGateway.download3d(taskToken);
         assertValidGlbBuffer(buffer);
-        const currentTask = butler3dTasks.get(taskToken) || task;
+        const currentTask = butler3dTasks.get(taskToken) || persistedButlerTask('3d', taskToken) || task;
         const sourceFile = store.getFile(currentTask.sourceFileId) || {
           id: null,
           name: 'Generated model',
@@ -8197,7 +8320,7 @@ function registerIpcHandlers() {
       }
       const taskToken = normalizeButlerVideoTaskToken(rawTaskToken);
       const modelId = normalizeButlerVideoModel(requestedModelId);
-      const existing = butlerVideoTasks.get(taskToken) || {};
+      const existing = butlerVideoTasks.get(taskToken) || persistedButlerTask('video', taskToken) || {};
       if (existing.modelId && existing.modelId !== modelId) {
         const error = new Error('The video task model does not match.');
         error.code = 'invalid-video-tool';
@@ -8233,7 +8356,7 @@ function registerIpcHandlers() {
       }
       taskToken = normalizeButlerVideoTaskToken(rawTaskToken);
       const modelId = normalizeButlerVideoModel(requestedModelId);
-      const task = butlerVideoTasks.get(taskToken) || {};
+      const task = butlerVideoTasks.get(taskToken) || persistedButlerTask('video', taskToken) || {};
       if (task.modelId && task.modelId !== modelId) {
         const error = new Error('The video task model does not match.');
         error.code = 'invalid-video-tool';
@@ -8249,7 +8372,7 @@ function registerIpcHandlers() {
 
       const download = (async () => {
         const buffer = await aiGateway.downloadVideoToolResult(taskToken, modelId);
-        const currentTask = butlerVideoTasks.get(taskToken) || task;
+        const currentTask = butlerVideoTasks.get(taskToken) || persistedButlerTask('video', taskToken) || task;
         const sourceFile = store.getFile(currentTask.sourceFileId) || {
           id: null,
           name: 'Enhanced video',
@@ -9457,6 +9580,12 @@ function registerIpcHandlers() {
       return await installDownloadedUpdate();
     } catch (err) {
       updateInstallStarted = false;
+      isQuitting = false;
+      if (updateInstallFallbackTimer) {
+        clearTimeout(updateInstallFallbackTimer);
+        updateInstallFallbackTimer = null;
+      }
+      setUpdaterState({ status: 'downloaded', progress: 100, message: String(err && err.message || 'Update installation failed.') });
       console.error('quitAndInstall failed:', err.message);
       return { ok: false, reason: 'install-failed' };
     }
@@ -9473,6 +9602,7 @@ function registerIpcHandlers() {
 app.whenReady().then(() => {
   writeStartupDiagnostic('ready');
   store = createStoreWithFallback();
+  restoreButlerState();
   const savedColorProfile = normalizeColorProfile(store.data.settings.colorProfile);
   if (startupColorProfileBootstrap.valid) {
     // The bootstrap file is the profile Chromium actually started with. Keep
@@ -9685,7 +9815,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (isQuitting && process.platform !== 'darwin') app.quit();
+  if (isQuitting) app.quit();
 });
 
 app.on('before-quit', () => {

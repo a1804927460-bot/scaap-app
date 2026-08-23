@@ -33,6 +33,7 @@ function bootstrapMainApp(initial) {
   initStatsDetail();
   initAiAssistant();
   initFullscreenOverlay();
+  if (typeof restoreBoardButlerTasks === 'function') restoreBoardButlerTasks(initial.butlerTasks);
 }
 
 document.addEventListener('DOMContentLoaded', async () => {

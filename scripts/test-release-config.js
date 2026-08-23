@@ -72,7 +72,7 @@ assert.ok(
 assert.match(main, /owner:\s*'a1804927460-bot'/);
 assert.match(main, /repo:\s*'messs-releases'/);
 assert.match(main, /autoUpdater\.autoInstallOnAppQuit\s*=\s*false/);
-assert.match(main, /autoUpdater\.quitAndInstall\(false,\s*false\)/);
+assert.match(main, /autoUpdater\.quitAndInstall\(false,\s*process\.platform\s*===\s*'darwin'\)/);
 assert.doesNotMatch(main, /quitAndInstall\([\s\S]{0,160}setTimeout\(\(\)\s*=>\s*app\.exit/);
 assert.match(updaterUi, /\['available',\s*'downloading',\s*'downloaded',\s*'installing'\]/);
 assert.match(updaterUi, /status\s*===\s*'installing'[\s\S]*?Opening installer/);

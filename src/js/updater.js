@@ -16,10 +16,15 @@ function showUpdateBanner(state = latestUpdaterState, force = false) {
   if (!isRelevant || (!force && dismissedUpdateVersion && dismissedUpdateVersion === version)) return;
 
   if (status === 'installing') {
-    text.textContent = t(
-      'The update installer is opening. Complete the installer and approve the Windows prompt if shown.',
-      '正在打开更新安装程序，请完成安装；如出现 Windows 提示，请允许本次更新。'
-    );
+    text.textContent = state.platform === 'darwin'
+      ? t(
+        'The macOS update is opening. Approve the update if macOS asks, then Messs will restart automatically.',
+        '正在打开 macOS 更新，请按系统提示允许更新，Messs 会自动重启。'
+      )
+      : t(
+        'The update installer is opening. Complete the installer and approve the Windows prompt if shown.',
+        '正在打开更新安装程序，请完成安装；如出现 Windows 提示，请允许本次更新。'
+      );
     installBtn.disabled = true;
     installBtn.textContent = t('Opening installer...', '正在打开安装程序...');
   } else if (status === 'downloaded') {
@@ -133,7 +138,9 @@ function initUpdater() {
   document.getElementById('update-install-btn').addEventListener('click', async (event) => {
     const button = event.currentTarget;
     button.disabled = true;
-    button.textContent = t('Opening installer...', '正在打开安装程序...');
+    button.textContent = latestUpdaterState && latestUpdaterState.platform === 'darwin'
+      ? t('Opening macOS update...', '正在打开 macOS 更新...')
+      : t('Opening installer...', '正在打开安装程序...');
     renderUpdaterState({ ...(latestUpdaterState || {}), status: 'installing', progress: 100 });
     try {
       const result = await window.messsAPI.installUpdateNow();
