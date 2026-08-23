@@ -1227,8 +1227,6 @@ export async function getCanvasUsage(userId, canvasId, fetchImpl = fetch) {
     canvasId: normalizedCanvasId,
     totals: {
       estimatedCredits: nonnegativeNumber(payload.totals && payload.totals.estimatedCredits),
-      creditsCharged: nonnegativeNumber(payload.totals && payload.totals.creditsCharged),
-      credits: nonnegativeNumber(payload.totals && payload.totals.credits),
       generations: nonnegativeNumber(payload.totals && payload.totals.generations)
     },
     // The database has already materialized this authenticated user's canvas
@@ -1242,11 +1240,6 @@ export async function getCanvasUsage(userId, canvasId, fetchImpl = fetch) {
       name: String(row.name || '').trim().slice(0, 240),
       estimatedCredits: row.estimatedCredits === null || row.estimatedCredits === undefined
         ? null : nonnegativeNumber(row.estimatedCredits),
-      historicalCreditsCharged: row.historicalCreditsCharged === null || row.historicalCreditsCharged === undefined
-        ? null : nonnegativeNumber(row.historicalCreditsCharged),
-      creditsCharged: row.creditsCharged === null || row.creditsCharged === undefined
-        ? null : nonnegativeNumber(row.creditsCharged),
-      credits: nonnegativeNumber(row.credits),
       status: ['reserved', 'succeeded', 'failed'].includes(row.status) ? row.status : 'succeeded',
       resolution: String(row.resolution || '').trim().slice(0, 32) || null,
       duration: nonnegativeNumber(row.duration),

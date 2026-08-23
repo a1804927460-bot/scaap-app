@@ -4041,6 +4041,7 @@ async function canvasCreditUsage(canvasId) {
     .map(backfillCanvasUsageEstimate)
     .map(preserveSettledCanvasUsage)
     .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
+  const publicDetails = details.map(({ historicalCreditsCharged, creditsCharged, credits, ...entry }) => entry);
   const recorded = details.filter((entry) => entry.historicalCreditsCharged !== null);
   const currentlyPriced = details.filter((entry) => entry.credits !== null || entry.estimatedCredits !== null);
   const breakdown = ['image', 'video', '3d'].reduce((result, kind) => {
@@ -4060,23 +4061,23 @@ async function canvasCreditUsage(canvasId) {
     };
     return result;
   }, {});
+  const publicBreakdown = Object.fromEntries(Object.entries(breakdown).map(([kind, entry]) => [kind, {
+    estimatedCredits: entry.estimatedCredits,
+    generations: entry.generations,
+    unrecorded: entry.unrecorded
+  }]));
   return {
     ok: true,
     canvas: { id: canvas.id, name: canvas.name },
     totals: {
       estimatedCredits: details.reduce((sum, entry) => sum + (Number(entry.estimatedCredits) || 0), 0),
-      historicalCreditsCharged: recorded.reduce((sum, entry) => sum + entry.historicalCreditsCharged, 0),
-      creditsCharged: details.reduce((sum, entry) => sum + (Number(entry.creditsCharged) || 0), 0),
-      credits: details.reduce((sum, entry) => sum + (
-        entry.status === 'succeeded' ? (Number(entry.credits) || 0) : (Number(entry.estimatedCredits) || 0)
-      ), 0),
       generations: details.length,
       recorded: recorded.length,
       unrecorded: details.length - currentlyPriced.length,
       estimated: details.filter((entry) => entry.estimated === true).length
     },
-    breakdown,
-    details,
+    breakdown: publicBreakdown,
+    details: publicDetails,
     cloudAvailable
   };
 }

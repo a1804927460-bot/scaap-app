@@ -40,6 +40,8 @@ begin
   for update;
 
   if not found
+     or usage_record.request_id is null
+     or job.request_id is null
      or lower(coalesce(job.status, '')) <> 'failed'
      or lower(coalesce(usage_record.status, '')) <> 'succeeded'
      or coalesce(usage_record.credits_charged, 0) <= 0 then

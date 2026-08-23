@@ -935,10 +935,11 @@ test('canvas accounting tags a paid request and exposes sanitized all-time detai
       if (url.endsWith('/set_ai_usage_canvas')) return jsonResponse(true);
       return jsonResponse({
         canvasId: 'canvas-1',
-        totals: { credits: 28, generations: 1, providerCost: 99 },
+        totals: { estimatedCredits: 31, credits: 28, generations: 1, providerCost: 99 },
         details: [{
           requestId: '00000000-0000-4000-8000-000000000099',
           kind: 'image', providerId: 'image-6', credits: 28,
+          estimatedCredits: 31,
           resolution: 'high', duration: null, createdAt: '2026-08-19T10:00:00.000Z',
           providerCost: 99
         }]
@@ -952,8 +953,12 @@ test('canvas accounting tags a paid request and exposes sanitized all-time detai
     );
     assert.equal(tagged.ok, true);
     const usage = await getCanvasUsage('00000000-0000-4000-8000-000000000041', 'canvas-1', fetchMock);
-    assert.equal(usage.totals.credits, 28);
+    assert.equal(usage.totals.estimatedCredits, 31);
+    assert.equal(usage.totals.credits, undefined);
     assert.equal(usage.details[0].requestId, '00000000-0000-4000-8000-000000000099');
+    assert.equal(usage.details[0].estimatedCredits, 31);
+    assert.equal(usage.details[0].credits, undefined);
+    assert.equal(usage.details[0].creditsCharged, undefined);
     assert.doesNotMatch(JSON.stringify(usage), /providerCost|provider_cost/i);
     assert.match(calls[0].url, /\/rpc\/set_ai_usage_canvas$/);
     assert.match(calls[1].url, /\/rpc\/get_canvas_ai_usage_summary$/);
@@ -1027,6 +1032,7 @@ test('historical failed video refunds are idempotent and require unambiguous fai
   assert.match(migration, /create or replace function public\.refund_failed_ai_video_delivery/i);
   assert.match(migration, /job\.status.*failed/i);
   assert.match(migration, /usage_record\.status.*succeeded/i);
+  assert.match(migration, /usage_record\.request_id is null/i);
   assert.match(migration, /coalesce\(usage_record\.credits_charged, 0\) <= 0/i);
   assert.match(migration, /coalesce\(usage_row\.credits_charged, 0\) > 0/i);
   assert.match(migration, /refund:failed-video-delivery:/i);
