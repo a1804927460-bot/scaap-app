@@ -3894,7 +3894,16 @@ async function importFilesDirectlyToBoard(paths, placement = boardViewportCenter
     : null;
   const result = await window.messsAPI.importFiles(paths, targetFolderId, activeCanvasId());
   const imported = Array.isArray(result && result.imported) ? result.imported : [];
-  if (!imported.length) return imported;
+  if (!imported.length) {
+    const failure = result && Array.isArray(result.failed) ? result.failed[0] : null;
+    showToast(
+      failure && failure.message
+        ? failure.message
+        : t('The selected files could not be imported.', '所选文件无法导入画布。'),
+      'AI'
+    );
+    return imported;
+  }
 
   AppState.files = [...imported, ...AppState.files.filter((file) => (
     !imported.some((next) => next.id === file.id)
@@ -3903,6 +3912,9 @@ async function importFilesDirectlyToBoard(paths, placement = boardViewportCenter
   renderFolderGridIfActive();
   await addFilesToBoard(imported.map((file) => file.id), placement.x, placement.y);
   if (result.unlocked && result.unlocked.length) await refreshAchievements();
+  if (result.failed && result.failed.length) {
+    showToast(t('Some files could not be imported.', '部分文件无法导入画布。'), 'AI');
+  }
   showToast(
     t(
       `Imported ${imported.length} file${imported.length === 1 ? '' : 's'} to the canvas`,

@@ -1878,6 +1878,58 @@ async function importOneFile(originalPath, folderId, unlockedKeys, today, canvas
   return record;
 }
 
+function fileImportFailure(originalPath, error, stage = 'import') {
+  const value = error || {};
+  const code = String(value.code || `${stage}-failed`).slice(0, 80);
+  let message = String(value.message || 'The selected file could not be imported.').trim();
+  if (code === 'ENOENT' || code === 'ENOTDIR') {
+    message = 'The selected file is no longer available.';
+  } else if (code === 'EACCES' || code === 'EPERM') {
+    message = process.platform === 'darwin'
+      ? 'macOS denied access to this file. Choose it again from Finder or allow Messs to access Files and Folders in System Settings.'
+      : 'Messs could not access this file.';
+  } else if (stage === 'prepare') {
+    message = 'The file was imported, but it could not be prepared as an AI attachment.';
+  } else if (code === 'not-a-file') {
+    message = 'The selected path is not a file.';
+  } else {
+    // Do not send native fs error strings back to the renderer: macOS often
+    // includes the complete local path in them.
+    message = 'The selected file could not be imported.';
+  }
+  return {
+    name: path.basename(String(originalPath || 'selected file')),
+    stage,
+    reason: code,
+    message: message.slice(0, 400)
+  };
+}
+
+async function importFilePaths(filePaths, folderId, canvasId) {
+  const importedNow = [];
+  const unlockedKeys = new Set();
+  const failed = [];
+  const paths = Array.isArray(filePaths)
+    ? [...new Set(filePaths.map((value) => String(value || '').trim()).filter(Boolean))]
+    : [];
+  const today = achievements.todayStr();
+
+  for (const originalPath of paths) {
+    try {
+      const record = await importOneFile(originalPath, folderId, unlockedKeys, today, canvasId);
+      if (record) importedNow.push(fileToPayload(record));
+      else failed.push(fileImportFailure(originalPath, Object.assign(new Error('The selected path is not a file.'), { code: 'not-a-file' })));
+    } catch (error) {
+      console.error('Failed to import selected file:', originalPath, error);
+      failed.push(fileImportFailure(originalPath, error));
+    }
+  }
+
+  store.scheduleSave();
+  if (unlockedKeys.size > 0) notifyAchievements();
+  return { imported: importedNow, unlocked: [...unlockedKeys], failed };
+}
+
 function normalizeDroppedFileName(value) {
   const name = String(value || '').normalize('NFC');
   if (!name || name === '.' || name === '..' || name.length > 240) {
@@ -7271,6 +7323,38 @@ function registerIpcHandlers() {
     return result.filePaths;
   });
 
+  ipcMain.handle('files:pickAndPrepareAiAttachments', async (_evt, folderId, canvasId) => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Add files to AI',
+      properties: ['openFile', 'multiSelections']
+    });
+    if (result.canceled) return { canceled: true, imported: [], attachments: [], failed: [] };
+
+    const importedResult = await importFilePaths(
+      result.filePaths,
+      folderId && folderId !== 'default' ? folderId : null,
+      canvasId || null
+    );
+    const attachments = [];
+    const failed = [...(importedResult.failed || [])];
+    for (const file of importedResult.imported || []) {
+      try {
+        const attachment = await fileToAiChatAttachment(file.id);
+        if (attachment) attachments.push(publicAiAttachment(attachment));
+        else failed.push(fileImportFailure(file.name, Object.assign(new Error('The attachment could not be read.'), { code: 'attachment-read-failed' }), 'prepare'));
+      } catch (error) {
+        failed.push(fileImportFailure(file.name, error, 'prepare'));
+      }
+    }
+    return {
+      canceled: false,
+      imported: importedResult.imported || [],
+      attachments,
+      unlocked: importedResult.unlocked || [],
+      failed
+    };
+  });
+
   ipcMain.handle('ai:preparePastedImage', async (_evt, request = {}) => {
     const match = /^data:image\/(?:png|jpeg|webp|gif);base64,([A-Za-z0-9+/=]+)$/i.exec(String(request.dataUrl || ''));
     if (!match) throw Object.assign(new Error('The pasted image format is not supported.'), { code: 'invalid-attachment' });
@@ -7470,23 +7554,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('files:import', async (_evt, filePaths, folderId, canvasId) => {
-    const importedNow = [];
-    const unlockedKeys = new Set();
-    const today = achievements.todayStr();
-
-    for (const originalPath of filePaths) {
-      try {
-        const record = await importOneFile(originalPath, folderId, unlockedKeys, today, canvasId);
-        if (record) importedNow.push(fileToPayload(record));
-      } catch (err) {
-        console.error('Failed to import', originalPath, err);
-      }
-    }
-
-    store.scheduleSave();
-    if (unlockedKeys.size > 0) notifyAchievements();
-
-    return { imported: importedNow, unlocked: Array.from(unlockedKeys) };
+    return importFilePaths(filePaths, folderId, canvasId);
   });
 
   ipcMain.handle('files:beginDroppedImport', beginDroppedFileImport);

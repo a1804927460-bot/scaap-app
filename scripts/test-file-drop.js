@@ -35,6 +35,15 @@ async function run() {
   let abortCount = 0;
   const context = {
     Uint8Array,
+    URL,
+    FileReader: class {
+      readAsArrayBuffer(blob) {
+        Promise.resolve().then(() => {
+          this.result = blob.bytes.buffer.slice(blob.bytes.byteOffset, blob.bytes.byteOffset + blob.bytes.byteLength);
+          if (this.onload) this.onload();
+        });
+      }
+    },
     window: {
       messsAPI: {
         getPathForFile: (file) => file.nativePath || '',
@@ -92,6 +101,40 @@ async function run() {
   assert.deepStrictEqual([...Buffer.concat(upload.chunks)], [1, 2, 3, 4, 5, 6, 7]);
   assert.strictEqual(upload.chunks.length, 3, 'pathless Finder files must use bounded chunks');
 
+  const uriTransfer = {
+    types: ['public.file-url'],
+    items: [],
+    files: [],
+    getData(type) {
+      return type === 'public.file-url' ? 'file:///Users/test/参考%20图.png' : '';
+    }
+  };
+  assert.strictEqual(drop.hasFiles(uriTransfer), true, 'macOS file-url-only transfers must be accepted');
+  const uriEntries = drop.entries(uriTransfer);
+  assert.strictEqual(uriEntries.length, 1);
+  assert.strictEqual(uriEntries[0].path, '/Users/test/参考 图.png');
+  const uriResult = await drop.importEntries(uriEntries, null, 'canvas-1');
+  assert.strictEqual(uriResult.imported[0].id, '/Users/test/参考 图.png');
+
+  const mixedFile = finderFile('参考 图.png', [1], { type: 'image/png' });
+  const mixedTransfer = { ...uriTransfer, files: [mixedFile] };
+  const mixedEntries = drop.entries(mixedTransfer);
+  assert.strictEqual(mixedEntries.length, 1, 'macOS path and URI metadata must not duplicate one file');
+  assert.strictEqual(mixedEntries[0].path, '/Users/test/参考 图.png');
+
+  const legacyFile = {
+    name: 'legacy.png',
+    size: 4,
+    lastModified: 9,
+    type: 'image/png',
+    slice(start, end) {
+      return { bytes: Uint8Array.from([11, 12, 13, 14].slice(start, end)) };
+    }
+  };
+  const legacyResult = await drop.importEntries(drop.entriesFromFiles([legacyFile]), null, 'canvas-1');
+  assert.strictEqual(legacyResult.imported.length, 1, 'FileReader fallback must import older macOS Blob objects');
+  assert.deepStrictEqual([...Buffer.concat(uploads.get('upload-2').chunks)], [11, 12, 13, 14]);
+
   const second = finderFile('video.mp4', [8, 9], { type: 'video/mp4' });
   second.nativePath = '/Users/test/Movies/video.mp4';
   const item = {
@@ -118,6 +161,8 @@ async function run() {
   }
   assert(mainSource.includes('session.received !== session.size'), 'main process must reject incomplete files');
   assert(mainSource.includes('normalizeDroppedFileName'), 'main process must validate dropped filenames');
+  assert(mainSource.includes("files:pickAndPrepareAiAttachments"), 'AI picker must prepare attachments in the main process');
+  assert(preloadSource.includes('pickAndPrepareAiAttachments'), 'preload must expose the native AI picker');
   assert.strictEqual(
     (previewSource.match(/canvas\.addEventListener\('drop'/g) || []).length,
     1,

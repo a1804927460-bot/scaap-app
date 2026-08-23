@@ -22,16 +22,55 @@
     return typeof file.path === 'string' ? file.path : '';
   }
 
+  function pathFromFileUrl(value) {
+    const source = String(value || '').trim();
+    if (!/^file:\/\//i.test(source)) return '';
+    try {
+      const parsed = new URL(source);
+      if (parsed.protocol !== 'file:') return '';
+      let pathname = decodeURIComponent(parsed.pathname || '');
+      if (!pathname) return '';
+      if (parsed.hostname && parsed.hostname !== 'localhost') {
+        pathname = `//${parsed.hostname}${pathname}`;
+      } else if (/^\/[A-Za-z]:\//.test(pathname)) {
+        pathname = pathname.slice(1);
+      }
+      return pathname;
+    } catch (error) {
+      return '';
+    }
+  }
+
+  function pathsFromDataTransfer(dataTransfer) {
+    if (!dataTransfer || typeof dataTransfer.getData !== 'function') return [];
+    const values = [];
+    for (const type of ['text/uri-list', 'public.file-url']) {
+      try { values.push(String(dataTransfer.getData(type) || '')); } catch (error) {}
+    }
+    const paths = [];
+    const seen = new Set();
+    values.join('\n').split(/\r?\n/).forEach((value) => {
+      if (!value || /^\s*#/.test(value)) return;
+      const filePath = pathFromFileUrl(value);
+      if (filePath && !seen.has(filePath)) {
+        seen.add(filePath);
+        paths.push(filePath);
+      }
+    });
+    return paths;
+  }
+
   function entries(dataTransfer) {
     if (!dataTransfer) return [];
     const result = [];
     const seen = new Set();
-    const add = (file, entry = null) => {
+    const add = (file, entry = null, explicitPath = '') => {
       if (!file) return;
-      const key = fileKey(file);
+      const resolvedPath = explicitPath || pathForFile(file);
+      const key = resolvedPath ? `path:${resolvedPath}` : fileKey(file);
       if (seen.has(key)) return;
       seen.add(key);
-      result.push({ file, entry, path: pathForFile(file) });
+      result.push({ file, entry, path: resolvedPath });
     };
 
     for (const item of Array.from(dataTransfer.items || [])) {
@@ -44,6 +83,20 @@
     }
     // Finder drops may expose no items even though files is populated.
     for (const file of Array.from(dataTransfer.files || [])) add(file);
+    // Some macOS Finder/Electron combinations expose only file:// URIs and
+    // leave both DataTransfer.files and DataTransfer.items empty.
+    for (const filePath of pathsFromDataTransfer(dataTransfer)) {
+      const name = filePath.split(/[\\/]/).pop() || 'Dropped file';
+      const pathlessMatch = result.find((entry) =>
+        !entry.path && entry.file && String(entry.file.name || '') === name
+      );
+      if (pathlessMatch) {
+        pathlessMatch.path = filePath;
+        seen.add(`path:${filePath}`);
+        continue;
+      }
+      add({ name, size: 0, lastModified: 0, type: 'application/octet-stream' }, null, filePath);
+    }
     return result;
   }
 
@@ -59,7 +112,8 @@
     if (!dataTransfer) return false;
     if (Array.from(dataTransfer.types || []).includes('Files')) return true;
     if (Array.from(dataTransfer.items || []).some((item) => item && item.kind === 'file')) return true;
-    return Boolean(dataTransfer.files && dataTransfer.files.length);
+    if (dataTransfer.files && dataTransfer.files.length) return true;
+    return pathsFromDataTransfer(dataTransfer).length > 0;
   }
 
   async function importFileBytes(file, folderId, canvasId) {
@@ -76,12 +130,22 @@
     const uploadId = started && started.uploadId;
     const chunkSize = Math.max(1, Number(started && started.chunkSize) || 8 * 1024 * 1024);
     if (!uploadId) throw new Error('The dropped file import could not be started.');
+    const readBlob = async (blob) => {
+      if (blob && typeof blob.arrayBuffer === 'function') return blob.arrayBuffer();
+      if (typeof FileReader === 'undefined') throw new Error('The dropped file could not be read by this macOS build.');
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error || new Error('The dropped file could not be read.'));
+        reader.readAsArrayBuffer(blob);
+      });
+    };
     try {
       for (let offset = 0; offset < file.size; offset += chunkSize) {
         const blob = typeof file.slice === 'function'
           ? file.slice(offset, Math.min(file.size, offset + chunkSize))
           : file;
-        const buffer = await blob.arrayBuffer();
+        const buffer = await readBlob(blob);
         await api.appendDroppedFileImport(uploadId, new Uint8Array(buffer));
         if (typeof file.slice !== 'function') break;
       }
@@ -98,6 +162,7 @@
     if (!result) return;
     if (Array.isArray(result.imported)) target.imported.push(...result.imported);
     if (Array.isArray(result.unlocked)) result.unlocked.forEach((key) => target.unlocked.add(key));
+    if (Array.isArray(result.failed)) target.failed.push(...result.failed);
   }
 
   async function importEntries(droppedEntries, folderId, canvasId) {

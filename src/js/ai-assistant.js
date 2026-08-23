@@ -422,11 +422,15 @@ async function prepareAssistantImportedFiles(imported) {
     : imported.filter((file) => AiAssistant.kind === 'image'
       ? assistantFileKind(file) === 'image'
       : ['image', 'video'].includes(assistantFileKind(file)));
-  const prepared = await Promise.all(accepted.slice(0, remaining).map(async (file) => {
+  const preparedResults = await Promise.allSettled(accepted.slice(0, remaining).map(async (file) => {
     const result = await window.messsAPI.prepareAiAttachment(file.id);
     if (!result || !result.ok || !result.attachment) return null;
     return { ...file, ...result.attachment, id: file.id };
   }));
+  const prepared = preparedResults
+    .filter((result) => result.status === 'fulfilled')
+    .map((result) => result.value)
+    .filter(Boolean);
   const attachments = prepared.filter(Boolean);
   AiAssistant.attachments = [
     ...AiAssistant.attachments,
@@ -437,6 +441,15 @@ async function prepareAssistantImportedFiles(imported) {
   return attachments;
 }
 
+function mergeAssistantImportedFiles(imported) {
+  if (!Array.isArray(imported) || !imported.length) return;
+  AppState.files = [...imported, ...AppState.files.filter((file) =>
+    !imported.some((next) => next.id === file.id)
+  )];
+  renderFileList(currentFileListScope());
+  renderFolderGridIfActive();
+}
+
 async function importAssistantFilePaths(paths) {
   if (!paths.length) return [];
   const folderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
@@ -444,11 +457,7 @@ async function importAssistantFilePaths(paths) {
     : null;
   const result = await window.messsAPI.importFiles(paths, folderId, activeCanvasId());
   const imported = result && Array.isArray(result.imported) ? result.imported : [];
-  AppState.files = [...imported, ...AppState.files.filter((file) =>
-    !imported.some((next) => next.id === file.id)
-  )];
-  renderFileList(currentFileListScope());
-  renderFolderGridIfActive();
+  mergeAssistantImportedFiles(imported);
   await prepareAssistantImportedFiles(imported);
   if (result && result.unlocked && result.unlocked.length) await refreshAchievements();
   return imported;
@@ -1083,16 +1092,67 @@ function appendAssistantOutputFiles(row, files) {
 }
 
 async function uploadAssistantFiles() {
-  const paths = await window.messsAPI.pickFiles();
-  if (!paths || !paths.length) return;
+  const folderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
+    ? AppState.activeFolderId
+    : null;
+  const result = typeof window.messsAPI.pickAndPrepareAiAttachments === 'function'
+    ? await window.messsAPI.pickAndPrepareAiAttachments(folderId, activeCanvasId())
+    : null;
+  if (result && result.canceled) return;
+  if (!result) {
+    const paths = await window.messsAPI.pickFiles();
+    if (!paths || !paths.length) return;
+    const before = AiAssistant.attachments.length;
+    const imported = await importAssistantFilePaths(paths);
+    if (!imported.length) {
+      showToast(t('The file could not be uploaded.', '文件上传失败。'), 'AI');
+      return;
+    }
+    const limit = assistantAttachmentLimit();
+    if (AiAssistant.attachments.length - before < imported.length) {
+      const message = AiAssistant.kind === 'chat'
+        ? t(`Up to ${limit} files can be attached at once.`, `一次最多可附加 ${limit} 个文件。`)
+        : t('This generation mode only accepts supported image or video references.', '当前生成模式只接受支持的图片或视频参考。');
+      showToast(message, 'AI');
+    }
+    return;
+  }
+
+  const imported = Array.isArray(result.imported) ? result.imported : [];
+  mergeAssistantImportedFiles(imported);
   const before = AiAssistant.attachments.length;
-  const imported = await importAssistantFilePaths(paths);
-  if (!imported.length) {
+  const accepted = (Array.isArray(result.attachments) ? result.attachments : []).filter((attachment) =>
+    AiAssistant.kind === 'chat'
+      ? true
+      : AiAssistant.kind === 'image'
+        ? assistantFileKind(attachment) === 'image'
+        : ['image', 'video'].includes(assistantFileKind(attachment))
+  );
+  const limit = assistantAttachmentLimit();
+  const available = Math.max(0, limit - AiAssistant.attachments.length);
+  AiAssistant.attachments = [
+    ...AiAssistant.attachments,
+    ...accepted.slice(0, available).filter((attachment) =>
+      !AiAssistant.attachments.some((entry) => entry.id === attachment.id)
+    )
+  ];
+  renderAssistantAttachments();
+  syncAssistantMediaOptions();
+
+  if (result.failed && result.failed.length) {
+    const preparationFailure = result.failed.some((failure) => failure.stage === 'prepare');
+    showToast(
+      preparationFailure
+        ? t('The file was imported, but could not be attached to AI.', '文件已导入，但无法作为 AI 附件读取。')
+        : t('Some files could not be uploaded.', '部分文件上传失败。'),
+      'AI'
+    );
+  }
+  if (!imported.length && !accepted.length) {
     showToast(t('The file could not be uploaded.', '文件上传失败。'), 'AI');
     return;
   }
-  const limit = assistantAttachmentLimit();
-  if (AiAssistant.attachments.length - before < imported.length) {
+  if (AiAssistant.attachments.length - before < accepted.length) {
     const message = AiAssistant.kind === 'chat'
       ? t(`Up to ${limit} files can be attached at once.`, `一次最多可附加 ${limit} 个文件。`)
       : t('This generation mode only accepts supported image or video references.', '当前生成模式只接受支持的图片或视频参考。');
