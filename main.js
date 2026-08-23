@@ -317,6 +317,10 @@ let updaterState = {
 const transientAiAttachments = new Map();
 const chatAttachmentDrafts = new Map();
 const CHAT_DRAFT_TTL_MS = 30 * 60 * 1000;
+const droppedFileImports = new Map();
+const DROPPED_FILE_CHUNK_BYTES = 8 * 1024 * 1024;
+const MAX_DROPPED_FILE_BYTES = 128 * 1024 * 1024 * 1024;
+const DROPPED_FILE_IMPORT_TTL_MS = 30 * 60 * 1000;
 const transientAiOutputFiles = new Map();
 const butlerImageTasks = new Map();
 const butlerImageDownloads = new Map();
@@ -1818,12 +1822,12 @@ async function makeFileFingerprint(filePath, stat) {
 
 /** Imports one real file on disk into the library. Returns the new file
     record, or null if it's not actually a file (e.g. a broken symlink). */
-async function importOneFile(originalPath, folderId, unlockedKeys, today, canvasId) {
+async function importOneFile(originalPath, folderId, unlockedKeys, today, canvasId, options = {}) {
   const stat = await fs.promises.stat(originalPath);
   if (!stat.isFile()) return null;
 
   const id = crypto.randomUUID();
-  const name = path.basename(originalPath);
+  const name = options.name || path.basename(originalPath);
   const ext = path.extname(name);
   const canvas = store.data.canvases.find((entry) => entry.id === canvasId) || store.data.canvases[0];
   const archiveDir = canvasStorageDir(canvas);
@@ -1842,13 +1846,15 @@ async function importOneFile(originalPath, folderId, unlockedKeys, today, canvas
     throw err;
   }
 
-  const sourceFolder = path.basename(path.dirname(originalPath));
+  const sourceFolder = options.sourceFolder || path.basename(path.dirname(originalPath));
   const classification = classifyArchiveFile(name);
   const sourceDimensions = await readSourceMediaMetadata(storedPath, ext);
   const record = {
     id,
     name,
-    originalPath,
+    originalPath: Object.prototype.hasOwnProperty.call(options, 'originalPath')
+      ? options.originalPath
+      : originalPath,
     storedPath,
     importedAt: new Date().toISOString(),
     sourceFolder,
@@ -1870,6 +1876,136 @@ async function importOneFile(originalPath, folderId, unlockedKeys, today, canvas
   if (achievements.checkLostFolder(store, record)) unlockedKeys.add('lost_folder');
 
   return record;
+}
+
+function normalizeDroppedFileName(value) {
+  const name = String(value || '').normalize('NFC');
+  if (!name || name === '.' || name === '..' || name.length > 240) {
+    throw new Error('The dropped file name is invalid.');
+  }
+  if (/[\\/\0-\x1f\x7f]/.test(name)) {
+    throw new Error('The dropped file name contains unsafe characters.');
+  }
+  return name;
+}
+
+function droppedFileChunk(value) {
+  if (Buffer.isBuffer(value)) return value;
+  if (ArrayBuffer.isView(value)) {
+    return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  }
+  if (value instanceof ArrayBuffer) return Buffer.from(value);
+  throw new Error('The dropped file chunk is invalid.');
+}
+
+async function disposeDroppedFileImport(session) {
+  if (!session) return;
+  try { await session.handle.close(); } catch (error) {}
+  await fs.promises.rm(session.directory, { recursive: true, force: true }).catch(() => {});
+}
+
+function ownedDroppedFileImport(event, uploadId) {
+  const session = droppedFileImports.get(String(uploadId || ''));
+  if (!session || session.senderId !== event.sender.id) {
+    throw new Error('The dropped file import session is no longer available.');
+  }
+  return session;
+}
+
+async function beginDroppedFileImport(event, metadata = {}, folderId, canvasId) {
+  const size = Number(metadata.size);
+  if (!Number.isSafeInteger(size) || size < 0 || size > MAX_DROPPED_FILE_BYTES) {
+    throw new Error('The dropped file is too large or has an invalid size.');
+  }
+  const activeForSender = [...droppedFileImports.values()]
+    .filter((session) => session.senderId === event.sender.id).length;
+  if (activeForSender >= 8) throw new Error('Too many dropped files are being imported at once.');
+
+  const name = normalizeDroppedFileName(metadata.name);
+  const uploadId = crypto.randomUUID();
+  const directory = path.join(app.getPath('temp'), 'messs-file-drop', uploadId);
+  const temporaryPath = path.join(directory, name);
+  let handle;
+  try {
+    await fs.promises.mkdir(directory, { recursive: true });
+    handle = await fs.promises.open(temporaryPath, 'wx', 0o600);
+  } catch (error) {
+    await fs.promises.rm(directory, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  droppedFileImports.set(uploadId, {
+    uploadId,
+    senderId: event.sender.id,
+    name,
+    size,
+    received: 0,
+    folderId: folderId || null,
+    canvasId: canvasId || null,
+    directory,
+    temporaryPath,
+    handle,
+    finalizing: false,
+    touchedAt: Date.now()
+  });
+  return { uploadId, chunkSize: DROPPED_FILE_CHUNK_BYTES };
+}
+
+async function appendDroppedFileChunk(event, uploadId, value) {
+  const session = ownedDroppedFileImport(event, uploadId);
+  if (session.finalizing) throw new Error('The dropped file import is already finishing.');
+  const chunk = droppedFileChunk(value);
+  if (!chunk.length || chunk.length > DROPPED_FILE_CHUNK_BYTES) {
+    throw new Error('The dropped file chunk has an invalid size.');
+  }
+  if (session.received + chunk.length > session.size) {
+    throw new Error('The dropped file contains more data than expected.');
+  }
+  const result = await session.handle.write(chunk, 0, chunk.length, session.received);
+  if (result.bytesWritten !== chunk.length) throw new Error('The dropped file could not be written completely.');
+  session.received += result.bytesWritten;
+  session.touchedAt = Date.now();
+  return { received: session.received };
+}
+
+async function finishDroppedFileImport(event, uploadId) {
+  const session = ownedDroppedFileImport(event, uploadId);
+  if (session.finalizing) throw new Error('The dropped file import is already finishing.');
+  session.finalizing = true;
+  droppedFileImports.delete(session.uploadId);
+  const importedNow = [];
+  const unlockedKeys = new Set();
+  try {
+    if (session.received !== session.size) {
+      throw new Error(`The dropped file is incomplete (${session.received}/${session.size} bytes).`);
+    }
+    await session.handle.sync();
+    await session.handle.close();
+    const written = await fs.promises.stat(session.temporaryPath);
+    if (!written.isFile() || written.size !== session.size) {
+      throw new Error('The dropped file failed its size verification.');
+    }
+    const record = await importOneFile(
+      session.temporaryPath,
+      session.folderId,
+      unlockedKeys,
+      achievements.todayStr(),
+      session.canvasId,
+      { name: session.name, originalPath: null, sourceFolder: 'Finder' }
+    );
+    if (record) importedNow.push(fileToPayload(record));
+    store.scheduleSave();
+    if (unlockedKeys.size > 0) notifyAchievements();
+    return { imported: importedNow, unlocked: [...unlockedKeys] };
+  } finally {
+    await disposeDroppedFileImport(session);
+  }
+}
+
+async function abortDroppedFileImport(event, uploadId) {
+  const session = ownedDroppedFileImport(event, uploadId);
+  droppedFileImports.delete(session.uploadId);
+  await disposeDroppedFileImport(session);
+  return { ok: true };
 }
 
 function appFetch(url, options) {
@@ -7353,6 +7489,11 @@ function registerIpcHandlers() {
     return { imported: importedNow, unlocked: Array.from(unlockedKeys) };
   });
 
+  ipcMain.handle('files:beginDroppedImport', beginDroppedFileImport);
+  ipcMain.handle('files:appendDroppedImport', appendDroppedFileChunk);
+  ipcMain.handle('files:finishDroppedImport', finishDroppedFileImport);
+  ipcMain.handle('files:abortDroppedImport', abortDroppedFileImport);
+
   ipcMain.handle('butler:confirmDelivery', async (_evt, deliveryToken) => {
     try {
       return await settleButlerDeliveryToken(deliveryToken, true);
@@ -8293,8 +8434,11 @@ function registerIpcHandlers() {
       const messages = [];
       for (let index = 0; index < sourceMessages.length; index += 1) {
         const message = sourceMessages[index] || {};
-        const resolved = message.role === 'user'
-          ? await resolveAiChatMessageAttachments(message, index === lastUserIndex ? request : null)
+        // Historical thumbnails stay in the local transcript, but only the
+        // newest user turn sends binary attachments upstream. Re-sending every
+        // earlier image quickly exceeds provider conversation limits.
+        const resolved = message.role === 'user' && index === lastUserIndex
+          ? await resolveAiChatMessageAttachments(message, request)
           : [];
         messages.push({
           role: message.role,
@@ -9380,6 +9524,8 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  for (const session of droppedFileImports.values()) void disposeDroppedFileImport(session);
+  droppedFileImports.clear();
   if (chatScreenshotTool) void chatScreenshotTool.endCapture().catch(() => {});
   for (const draft of [...chatAttachmentDrafts.values()]) discardChatAttachmentDraft(draft.token).catch(() => {});
   preview.shutdownProcesses();
@@ -9391,6 +9537,12 @@ app.on('before-quit', () => {
 
 setInterval(() => {
   const now = Date.now();
+  for (const [uploadId, session] of droppedFileImports) {
+    if (session.touchedAt + DROPPED_FILE_IMPORT_TTL_MS <= now) {
+      droppedFileImports.delete(uploadId);
+      void disposeDroppedFileImport(session);
+    }
+  }
   for (const [token, record] of transientAiAttachments) {
     if (record.expiresAt <= now) transientAiAttachments.delete(token);
   }

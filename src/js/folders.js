@@ -343,9 +343,15 @@ function buildFolderItem(folder, isChildRow) {
       return;
     }
 
-    const fileId = e.dataTransfer.getData('application/x-messs-file-id');
-    if (!fileId) return;
     const destId = folder.isDefault ? null : folder.id;
+    const fileId = e.dataTransfer.getData('application/x-messs-file-id');
+    if (!fileId) {
+      if (window.MesssFileDrop && window.MesssFileDrop.hasFiles(e.dataTransfer)
+          && typeof handleExternalDrop === 'function') {
+        await handleExternalDrop(e.dataTransfer, destId);
+      }
+      return;
+    }
     await window.messsAPI.moveFileToFolder(fileId, destId);
     const f = AppState.files.find((x) => x.id === fileId);
     if (f) f.folderId = destId;

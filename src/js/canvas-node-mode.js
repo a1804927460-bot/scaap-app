@@ -695,6 +695,38 @@ async function importCanvasNodePaths(paths, requestedKind = null, positionOverri
   return imported;
 }
 
+async function importCanvasNodeEntries(entries, requestedKind = null, positionOverride = null) {
+  const accepted = (entries || []).filter((entry) => {
+    const detectedKind = canvasNodePathKind(entry.path || (entry.file && entry.file.name) || '');
+    return detectedKind && (!requestedKind || detectedKind === requestedKind);
+  });
+  if (!accepted.length) {
+    showToast(t('Choose a supported image, video, audio, or 3D file.', '请选择支持的图片、视频、音频或 3D 文件。', '지원되는 미디어 파일을 선택하세요.'));
+    return [];
+  }
+  const folderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
+    ? AppState.activeFolderId
+    : null;
+  const result = await window.MesssFileDrop.importEntries(accepted, folderId, activeCanvasId());
+  const imported = result && Array.isArray(result.imported) ? result.imported : [];
+  if (!imported.length) {
+    if (result.failed && result.failed.length) {
+      showToast(t('The dropped files could not be imported.', '拖入文件导入失败。'));
+    }
+    return [];
+  }
+  AppState.files = [...imported, ...AppState.files.filter((file) => !imported.some((entry) => entry.id === file.id))];
+  if (typeof renderFileList === 'function' && typeof currentFileListScope === 'function') renderFileList(currentFileListScope());
+  if (typeof renderFolderGridIfActive === 'function') renderFolderGridIfActive();
+  if (result.unlocked && result.unlocked.length && typeof refreshAchievements === 'function') await refreshAchievements();
+  const origin = positionOverride || canvasNodeCenterPosition();
+  imported.forEach((file, index) => addCanvasMediaNode(file, {
+    x: origin.x + index * 34,
+    y: origin.y + index * 34
+  }));
+  return imported;
+}
+
 async function importCanvasNodeMedia(kind, positionOverride = null) {
   const paths = await window.messsAPI.pickFiles();
   if (!paths || !paths.length) return;
@@ -703,7 +735,7 @@ async function importCanvasNodeMedia(kind, positionOverride = null) {
 
 function bindCanvasNodeFileDrop(host) {
   host.addEventListener('dragover', (event) => {
-    if (!event.dataTransfer || !Array.from(event.dataTransfer.types || []).includes('Files')) return;
+    if (!window.MesssFileDrop || !window.MesssFileDrop.hasFiles(event.dataTransfer)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'copy';
     host.classList.add('is-file-drag-over');
@@ -713,14 +745,11 @@ function bindCanvasNodeFileDrop(host) {
   });
   host.addEventListener('drop', (event) => {
     host.classList.remove('is-file-drag-over');
-    const files = Array.from(event.dataTransfer && event.dataTransfer.files || []);
-    if (!files.length) return;
+    const entries = window.MesssFileDrop ? window.MesssFileDrop.entries(event.dataTransfer) : [];
+    if (!entries.length) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    const paths = files.map((file) => window.MesssFileDrop
-      ? window.MesssFileDrop.pathForFile(file)
-      : '').filter(Boolean);
-    void importCanvasNodePaths(paths, null, canvasNodeWorldPoint(event.clientX, event.clientY));
+    void importCanvasNodeEntries(entries, null, canvasNodeWorldPoint(event.clientX, event.clientY));
   }, true);
 }
 

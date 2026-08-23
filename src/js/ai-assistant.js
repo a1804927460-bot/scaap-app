@@ -455,20 +455,27 @@ async function importAssistantFilePaths(paths) {
 }
 
 async function addExternalAssistantFiles(files) {
-  const paths = [];
-  const inMemoryImages = [];
-  [...files].filter(Boolean).forEach((file) => {
-    const filePath = window.MesssFileDrop
-      ? window.MesssFileDrop.pathForFile(file)
-      : '';
-    if (filePath) paths.push(filePath);
-    else if (/^image\//i.test(file.type || '')) inMemoryImages.push(file);
-  });
-  if (paths.length) await importAssistantFilePaths(paths);
-  for (const file of inMemoryImages) {
-    if (AiAssistant.attachments.length >= assistantAttachmentLimit()) break;
-    await addPastedAssistantImage(file);
+  if (!window.MesssFileDrop) return [];
+  const folderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
+    ? AppState.activeFolderId
+    : null;
+  const result = await window.MesssFileDrop.importEntries(
+    window.MesssFileDrop.entriesFromFiles(files),
+    folderId,
+    activeCanvasId()
+  );
+  const imported = result && Array.isArray(result.imported) ? result.imported : [];
+  AppState.files = [...imported, ...AppState.files.filter((file) =>
+    !imported.some((next) => next.id === file.id)
+  )];
+  renderFileList(currentFileListScope());
+  renderFolderGridIfActive();
+  await prepareAssistantImportedFiles(imported);
+  if (result.unlocked && result.unlocked.length) await refreshAchievements();
+  if (result.failed && result.failed.length) {
+    showToast(t('Some files could not be added.', '部分文件添加失败。'), 'AI');
   }
+  return imported;
 }
 
 function configuredAssistantProviders(kind) {
@@ -1729,13 +1736,13 @@ function initAiAssistant() {
   });
   let assistantDragDepth = 0;
   form.addEventListener('dragenter', (event) => {
-    if (![...(event.dataTransfer && event.dataTransfer.items || [])].some((item) => item.kind === 'file')) return;
+    if (!window.MesssFileDrop || !window.MesssFileDrop.hasFiles(event.dataTransfer)) return;
     event.preventDefault();
     assistantDragDepth += 1;
     form.classList.add('is-image-dragover');
   });
   form.addEventListener('dragover', (event) => {
-    if (![...(event.dataTransfer && event.dataTransfer.items || [])].some((item) => item.kind === 'file')) return;
+    if (!window.MesssFileDrop || !window.MesssFileDrop.hasFiles(event.dataTransfer)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'copy';
   });

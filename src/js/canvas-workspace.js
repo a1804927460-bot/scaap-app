@@ -1667,42 +1667,17 @@ async function submitCanvasAgentMessage() {
   }
 }
 
-function readCanvasAgentClipboardFile(file) {
-  return new Promise((resolve) => {
-    if (!file || !/^image\//i.test(file.type || '') || Number(file.size) > 64 * 1024 * 1024) {
-      resolve('');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => resolve('');
-    reader.readAsDataURL(file);
-  });
-}
-
 async function importCanvasAgentPastedMedia(file, event) {
-  if (!file) return false;
-  const isImage = /^image\//i.test(file.type || '');
-  let importedFile = null;
-  if (isImage) {
-    const dataUrl = await readCanvasAgentClipboardFile(file);
-    if (!dataUrl) return false;
-    const result = await window.messsAPI.importClipboardImage({
-      canvasId: activeCanvasId(),
-      folderId: AppState.activeFolderId,
-      dataUrl,
-      html: '',
-      text: ''
-    });
-    importedFile = result && result.ok ? result.file : null;
-  } else {
-    const filePath = window.MesssFileDrop
-      ? window.MesssFileDrop.pathForFile(file)
-      : '';
-    if (!filePath || typeof window.messsAPI.importFiles !== 'function') return false;
-    const result = await window.messsAPI.importFiles([filePath], AppState.activeFolderId, activeCanvasId());
-    importedFile = result && Array.isArray(result.imported) ? result.imported[0] : null;
-  }
+  if (!file || !window.MesssFileDrop) return false;
+  const folderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
+    ? AppState.activeFolderId
+    : null;
+  const result = await window.MesssFileDrop.importEntries(
+    window.MesssFileDrop.entriesFromFiles([file]),
+    folderId,
+    activeCanvasId()
+  );
+  const importedFile = result && Array.isArray(result.imported) ? result.imported[0] : null;
   if (!importedFile) return false;
   AppState.files = [importedFile, ...AppState.files.filter((entry) => entry.id !== importedFile.id)];
   if (typeof renderFileList === 'function') renderFileList(currentFileListScope());
@@ -1932,7 +1907,7 @@ async function initCanvasWorkspace(initial) {
   document.getElementById('board-agent-input').addEventListener('paste', handleCanvasAgentPaste);
   const agentForm = document.getElementById('board-agent-form');
   agentForm.addEventListener('dragover', (event) => {
-    if (![...(event.dataTransfer && event.dataTransfer.items || [])].some((item) => item.kind === 'file')) return;
+    if (!window.MesssFileDrop || !window.MesssFileDrop.hasFiles(event.dataTransfer)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'copy';
     agentForm.classList.add('is-file-dragover');

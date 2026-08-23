@@ -3185,16 +3185,18 @@ function initBoardCanvas() {
     const droppedFiles = window.MesssFileDrop
       ? window.MesssFileDrop.entries(e.dataTransfer)
       : [];
-    const filePaths = [];
+    const fileEntries = [];
     const dirPaths = [];
     for (const dropped of droppedFiles) {
       const { entry, path: resolvedPath } = dropped;
-      if (!resolvedPath) continue;
-      if (entry && entry.isDirectory) dirPaths.push(resolvedPath);
-      else filePaths.push(resolvedPath);
+      if (entry && entry.isDirectory) {
+        if (resolvedPath) dirPaths.push(resolvedPath);
+      } else {
+        fileEntries.push(dropped);
+      }
     }
 
-    if (!filePaths.length && !dirPaths.length) {
+    if (!fileEntries.length && !dirPaths.length) {
       const request = await clipboardImageRequest(e.dataTransfer);
       if (request.dataUrl || request.html || request.text) {
         await pasteExternalImageWithFeedback({ x, y }, request);
@@ -3205,12 +3207,17 @@ function initBoardCanvas() {
     const targetFolderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
       ? AppState.activeFolderId : null;
 
-    if (filePaths.length) {
-      const { imported } = await window.messsAPI.importFiles(filePaths, targetFolderId, activeCanvasId());
+    if (fileEntries.length) {
+      const result = await window.MesssFileDrop.importEntries(fileEntries, targetFolderId, activeCanvasId());
+      const imported = result && Array.isArray(result.imported) ? result.imported : [];
       AppState.files = [...imported, ...AppState.files];
       renderFileList(currentFileListScope());
       await addFilesToBoard(imported.map((file) => file.id), x, y);
       if (imported.length) showToast(t('Imported and added to the board', '已导入并放入整合画布'), '🧩');
+      if (result.failed && result.failed.length) {
+        showToast(t('Some dropped files could not be imported.', '部分拖入文件导入失败。'));
+      }
+      if (result.unlocked && result.unlocked.length) await refreshAchievements();
     }
     for (const dirPath of dirPaths) {
       const res = await window.messsAPI.importDirectory(dirPath, targetFolderId, activeCanvasId());

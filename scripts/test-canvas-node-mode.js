@@ -56,7 +56,8 @@ assert.match(importPaths, /window\.messsAPI\.importFiles\(accepted, folderId, ac
 assert.match(importPaths, /addCanvasMediaNode\(file/);
 assert.doesNotMatch(importPaths, /importFilesDirectlyToBoard|addFilesToBoard|AppState\.boardItems/,
   'Node imports must archive files without placing them on the ordinary canvas.');
-assert.match(source, /bindCanvasNodeFileDrop[\s\S]*?(?:getPathForFile|pathForFile)[\s\S]*?importCanvasNodePaths/);
+assert.match(source, /function importCanvasNodeEntries[\s\S]*?MesssFileDrop\.importEntries/);
+assert.match(source, /bindCanvasNodeFileDrop[\s\S]*?MesssFileDrop\.entries\(event\.dataTransfer\)[\s\S]*?importCanvasNodeEntries/);
 
 ['text', 'image', 'video', 'audio', 'model'].forEach((action) => {
   assert.match(html, new RegExp(`data-add-node="${action}"`), `Missing ${action} node action.`);

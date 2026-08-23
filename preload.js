@@ -246,6 +246,10 @@ contextBridge.exposeInMainWorld('messsAPI', {
 
   pickFiles: () => ipcRenderer.invoke('dialog:pickFiles'),
   importFiles: (filePaths, folderId, canvasId) => ipcRenderer.invoke('files:import', filePaths, folderId, canvasId),
+  beginDroppedFileImport: (metadata, folderId, canvasId) => ipcRenderer.invoke('files:beginDroppedImport', metadata, folderId, canvasId),
+  appendDroppedFileImport: (uploadId, chunk) => ipcRenderer.invoke('files:appendDroppedImport', uploadId, chunk),
+  finishDroppedFileImport: (uploadId) => ipcRenderer.invoke('files:finishDroppedImport', uploadId),
+  abortDroppedFileImport: (uploadId) => ipcRenderer.invoke('files:abortDroppedImport', uploadId),
   generateAiMedia: (request) => ipcRenderer.invoke('ai:generateMedia', request),
   chatWithAi: (request) => ipcRenderer.invoke('ai:chat', request),
   saveGeneratedAiFile: (token) => ipcRenderer.invoke('ai:saveGeneratedFile', token),

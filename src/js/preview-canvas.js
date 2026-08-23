@@ -1112,10 +1112,7 @@ function initPreviewCanvas() {
   // DataTransfer.files, which handleExternalDrop normalizes for us.
   let previewDragDepth = 0;
   const hasExternalFiles = (event) => {
-    const types = Array.from(event && event.dataTransfer && event.dataTransfer.types || []);
-    return types.includes('Files') || Boolean(
-      window.MesssFileDrop && window.MesssFileDrop.entries(event.dataTransfer).length
-    );
+    return Boolean(window.MesssFileDrop && window.MesssFileDrop.hasFiles(event && event.dataTransfer));
   };
   const clearPreviewDrop = () => {
     previewDragDepth = 0;
@@ -1202,21 +1199,6 @@ function initPreviewCanvas() {
       updatePreviewZoomUI();
     }
   }, { passive: false });
-
-  ['dragenter', 'dragover'].forEach((evt) => {
-    canvas.addEventListener(evt, (e) => {
-      e.preventDefault();
-      canvas.classList.add('is-drag-over');
-    });
-  });
-  ['dragleave', 'drop'].forEach((evt) => {
-    canvas.addEventListener(evt, () => canvas.classList.remove('is-drag-over'));
-  });
-
-  canvas.addEventListener('drop', async (e) => {
-    e.preventDefault();
-    await handleExternalDrop(e.dataTransfer);
-  });
 
   document.getElementById('preview-zoom-in').addEventListener('click', () => {
     previewZoom = Math.min(4, previewZoom + 0.25);

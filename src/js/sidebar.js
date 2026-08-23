@@ -1178,7 +1178,13 @@ async function importFilePaths(paths) {
 }
 
 async function importFilePathsCore(paths, targetFolderId) {
-  const { imported, unlocked } = await window.messsAPI.importFiles(paths, targetFolderId, activeCanvasId());
+  const result = await window.messsAPI.importFiles(paths, targetFolderId, activeCanvasId());
+  await mergeImportedFilesResult(result);
+}
+
+async function mergeImportedFilesResult(result) {
+  const imported = result && Array.isArray(result.imported) ? result.imported : [];
+  const unlocked = result && Array.isArray(result.unlocked) ? result.unlocked : [];
   if (imported.length) {
     AppState.files = [...imported, ...AppState.files];
     renderFileList(currentFileListScope());
@@ -1208,25 +1214,38 @@ async function handleExternalDrop(dataTransfer, targetFolderId) {
   const droppedFiles = window.MesssFileDrop
     ? window.MesssFileDrop.entries(dataTransfer)
     : [];
-  const filePaths = [];
+  const fileEntries = [];
   const dirPaths = [];
+  let unreadableDirectory = false;
 
   for (const dropped of droppedFiles) {
     const { entry, path: resolvedPath } = dropped;
-    if (!resolvedPath) continue;
-    if (entry && entry.isDirectory) dirPaths.push(resolvedPath);
-    else filePaths.push(resolvedPath);
+    if (entry && entry.isDirectory) {
+      if (resolvedPath) dirPaths.push(resolvedPath);
+      else unreadableDirectory = true;
+    } else {
+      fileEntries.push(dropped);
+    }
   }
 
-  if (!filePaths.length && !dirPaths.length) {
+  if (!fileEntries.length && !dirPaths.length) {
     showToast(t('Could not read the dropped path. Use the import buttons instead.', '无法读取拖入的路径，请改用导入按钮。'));
     return;
   }
 
-  if (filePaths.length) await importFilePathsCore(filePaths, resolvedTarget);
+  if (fileEntries.length) {
+    const result = await window.MesssFileDrop.importEntries(fileEntries, resolvedTarget, activeCanvasId());
+    await mergeImportedFilesResult(result);
+    if (result.failed && result.failed.length) {
+      showToast(t('Some dropped files could not be imported.', '部分拖入文件导入失败。'));
+    }
+  }
   for (const dirPath of dirPaths) {
     const res = await window.messsAPI.importDirectory(dirPath, resolvedTarget, activeCanvasId());
     mergeImportedDirectoryResult(res);
+  }
+  if (unreadableDirectory) {
+    showToast(t('Use Import Folder when Finder does not provide a directory path.', 'Finder 未提供文件夹路径，请使用“导入文件夹”。'));
   }
 }
 
