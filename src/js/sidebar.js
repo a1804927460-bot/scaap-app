@@ -1180,6 +1180,12 @@ async function importFilePaths(paths) {
 async function importFilePathsCore(paths, targetFolderId) {
   const result = await window.messsAPI.importFiles(paths, targetFolderId, activeCanvasId());
   await mergeImportedFilesResult(result);
+  if (result && result.failed && result.failed.length) {
+    const failure = result.failed[0] || {};
+    showToast(failure.reason === 'EACCES' || failure.reason === 'EPERM'
+      ? t('macOS blocked access to this file. Choose it again from Finder or allow Messs access in System Settings.', 'macOS 阻止了这个文件的访问，请从 Finder 重新选择，或在系统设置中允许 Messs 访问文件和文件夹。')
+      : t('Some files could not be imported.', `部分文件导入失败${failure.name ? `：${failure.name}` : ''}。`));
+  }
 }
 
 async function mergeImportedFilesResult(result) {
@@ -1237,7 +1243,11 @@ async function handleExternalDrop(dataTransfer, targetFolderId) {
     const result = await window.MesssFileDrop.importEntries(fileEntries, resolvedTarget, activeCanvasId());
     await mergeImportedFilesResult(result);
     if (result.failed && result.failed.length) {
-      showToast(t('Some dropped files could not be imported.', '部分拖入文件导入失败。'));
+      const failure = result.failed[0] || {};
+      const message = failure.reason === 'EACCES' || failure.reason === 'EPERM'
+        ? t('macOS blocked access to this file. Choose it again from Finder or allow Messs access in System Settings.', 'macOS 阻止了这个文件的访问，请从 Finder 重新选择，或在系统设置中允许 Messs 访问文件和文件夹。')
+        : t('Some dropped files could not be imported.', `部分拖入文件导入失败${failure.name ? `：${failure.name}` : ''}。`);
+      showToast(message);
     }
   }
   for (const dirPath of dirPaths) {

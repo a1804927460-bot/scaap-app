@@ -650,6 +650,23 @@ async function replaceCanvasPackageAtomically(temporaryPath, targetPath) {
   }
 }
 
+async function copyFileAtomically(sourcePath, targetPath) {
+  const temporaryPath = `${targetPath}.tmp-${crypto.randomUUID()}`;
+  let handle = null;
+  try {
+    await fs.promises.copyFile(sourcePath, temporaryPath, fs.constants.COPYFILE_EXCL);
+    handle = await fs.promises.open(temporaryPath, 'r+');
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await replaceCanvasPackageAtomically(temporaryPath, targetPath);
+  } catch (error) {
+    if (handle) await handle.close().catch(() => {});
+    await fs.promises.rm(temporaryPath, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
 async function writeCanvasPackage(targetPath, prepared) {
   const { header, manifestBuffer } = canvasPackageHeader(prepared.manifest);
   const temporaryPath = `${targetPath}.tmp-${crypto.randomUUID()}`;
@@ -923,7 +940,7 @@ async function importCanvasPackage(packagePath, targetProjectId) {
 function ensureCanvasPackagePath(filePath) {
   const normalized = String(filePath || '').trim();
   if (!normalized.toLowerCase().endsWith('.messs')) return `${normalized}.Messs`;
-  return normalized;
+  return `${normalized.slice(0, -'.messs'.length)}.Messs`;
 }
 
 function canvasFolderName(name) {
@@ -1456,7 +1473,10 @@ async function installDownloadedUpdate() {
 async function readSourceMediaMetadata(filePath, ext) {
   const normalizedExt = String(ext || '').toLowerCase();
   if (preview.isVideoExt(normalizedExt)) {
-    return probeVideoMetadata(filePath);
+    // Metadata is optional. A packaged macOS build can be denied access to a
+    // temporary codec helper even after the file itself was copied. That
+    // must never turn a valid import into a failed import.
+    try { return await probeVideoMetadata(filePath, { timeoutMs: 5_000 }); } catch (error) { return null; }
   }
   if (sharp && preview.isImageExt(normalizedExt)) {
     try {
@@ -1475,6 +1495,25 @@ async function readSourceMediaMetadata(filePath, ext) {
     }
   }
   return null;
+}
+
+function normalizeExternalFilePath(value) {
+  let source = String(value || '').trim().normalize('NFC');
+  if (!source) return '';
+  if (/^file:\/\//i.test(source)) {
+    try {
+      const parsed = new URL(source);
+      if (parsed.protocol !== 'file:') return '';
+      let pathname = decodeURIComponent(parsed.pathname || '');
+      if (!pathname) return '';
+      if (parsed.hostname && parsed.hostname !== 'localhost') pathname = `//${parsed.hostname}${pathname}`;
+      else if (/^\/[A-Za-z]:\//.test(pathname)) pathname = pathname.slice(1);
+      source = pathname;
+    } catch (error) {
+      return '';
+    }
+  }
+  return path.normalize(source);
 }
 
 async function hydrateMissingMediaMetadata() {
@@ -1823,59 +1862,65 @@ async function makeFileFingerprint(filePath, stat) {
 /** Imports one real file on disk into the library. Returns the new file
     record, or null if it's not actually a file (e.g. a broken symlink). */
 async function importOneFile(originalPath, folderId, unlockedKeys, today, canvasId, options = {}) {
-  const stat = await fs.promises.stat(originalPath);
+  const sourcePath = normalizeExternalFilePath(originalPath);
+  if (!sourcePath) {
+    throw Object.assign(new Error('The selected file path is invalid.'), { code: 'invalid-file-path' });
+  }
+  const stat = await fs.promises.stat(sourcePath);
   if (!stat.isFile()) return null;
 
   const id = crypto.randomUUID();
-  const name = options.name || path.basename(originalPath);
+  const name = options.name || path.basename(sourcePath);
   const ext = path.extname(name);
   const canvas = store.data.canvases.find((entry) => entry.id === canvasId) || store.data.canvases[0];
   const archiveDir = canvasStorageDir(canvas);
   await fs.promises.mkdir(archiveDir, { recursive: true });
   const storedPath = path.join(archiveDir, id + ext);
-  const sourceFingerprint = await makeFileFingerprint(originalPath, stat);
+  let record = null;
+  let addedToStore = false;
   try {
-    await fs.promises.copyFile(originalPath, storedPath);
+    const sourceFingerprint = await makeFileFingerprint(sourcePath, stat);
+    await fs.promises.copyFile(sourcePath, storedPath);
     const copiedStat = await fs.promises.stat(storedPath);
     const copiedFingerprint = await makeFileFingerprint(storedPath, copiedStat);
     if (copiedStat.size !== stat.size || copiedFingerprint !== sourceFingerprint) {
-      throw new Error('Archived copy integrity verification failed');
+      throw Object.assign(new Error('Archived copy integrity verification failed'), { code: 'archive-integrity-failed' });
     }
-  } catch (err) {
-    try { await fs.promises.rm(storedPath, { force: true }); } catch (cleanupErr) {}
-    throw err;
+    const sourceFolder = options.sourceFolder || path.basename(path.dirname(sourcePath));
+    const classification = classifyArchiveFile(name);
+    const sourceDimensions = await readSourceMediaMetadata(storedPath, ext);
+    record = {
+      id,
+      name,
+      originalPath: Object.prototype.hasOwnProperty.call(options, 'originalPath')
+        ? options.originalPath
+        : sourcePath,
+      storedPath,
+      importedAt: new Date().toISOString(),
+      sourceFolder,
+      sizeBytes: stat.size,
+      ...(sourceDimensions || {}),
+      ...(sourceDimensions && preview.isVideoExt(String(ext).toLowerCase()) ? { mediaMetadataVersion: 1 } : {}),
+      ...classification,
+      fingerprint: sourceFingerprint,
+      folderId: folderId || null,
+      canvasId: canvas ? canvas.id : null
+    };
+    store.addFile(record);
+    addedToStore = true;
+    // Mirroring is a convenience copy. Keep the canonical library record even
+    // when an external mirror is unavailable on a protected macOS volume.
+    await store.mirrorFileToCustomPathAsync(record);
+    if (!store.data.usage.importDays.includes(today)) store.data.usage.importDays.push(today);
+
+    if (achievements.checkFirstImport(store)) unlockedKeys.add('first_import');
+    if (achievements.checkLostFolder(store, record)) unlockedKeys.add('lost_folder');
+    return record;
+  } catch (error) {
+    if (addedToStore && record) store.removeFileById(record.id);
+    await fs.promises.rm(storedPath, { force: true }).catch(() => {});
+    throw error;
   }
-
-  const sourceFolder = options.sourceFolder || path.basename(path.dirname(originalPath));
-  const classification = classifyArchiveFile(name);
-  const sourceDimensions = await readSourceMediaMetadata(storedPath, ext);
-  const record = {
-    id,
-    name,
-    originalPath: Object.prototype.hasOwnProperty.call(options, 'originalPath')
-      ? options.originalPath
-      : originalPath,
-    storedPath,
-    importedAt: new Date().toISOString(),
-    sourceFolder,
-    sizeBytes: stat.size,
-    ...sourceDimensions,
-    ...(sourceDimensions && preview.isVideoExt(String(ext).toLowerCase()) ? { mediaMetadataVersion: 1 } : {}),
-    ...classification,
-    fingerprint: sourceFingerprint,
-    folderId: folderId || null,
-    canvasId: canvas ? canvas.id : null
-  };
-  store.addFile(record);
-  await store.mirrorFileToCustomPathAsync(record);
-  if (!store.data.usage.importDays.includes(today)) {
-    store.data.usage.importDays.push(today);
-  }
-
-  if (achievements.checkFirstImport(store)) unlockedKeys.add('first_import');
-  if (achievements.checkLostFolder(store, record)) unlockedKeys.add('lost_folder');
-
-  return record;
 }
 
 function fileImportFailure(originalPath, error, stage = 'import') {
@@ -1905,12 +1950,12 @@ function fileImportFailure(originalPath, error, stage = 'import') {
   };
 }
 
-async function importFilePaths(filePaths, folderId, canvasId) {
+async function importFilePaths(filePaths, folderId, canvasId, options = {}) {
   const importedNow = [];
   const unlockedKeys = new Set();
   const failed = [];
   const paths = Array.isArray(filePaths)
-    ? [...new Set(filePaths.map((value) => String(value || '').trim()).filter(Boolean))]
+    ? [...new Set(filePaths.map(normalizeExternalFilePath).filter(Boolean))]
     : [];
   const today = achievements.todayStr();
 
@@ -1927,6 +1972,32 @@ async function importFilePaths(filePaths, folderId, canvasId) {
 
   store.scheduleSave();
   if (unlockedKeys.size > 0) notifyAchievements();
+
+  // A drag from Finder can expose a valid path before macOS has granted the
+  // app a TCC read scope. A native open panel is the reliable recovery path:
+  // selecting the file there grants the user-selected read scope, after which
+  // the same import succeeds. The drag-byte fallback disables this panel so a
+  // normal Finder drop remains non-blocking.
+  if (process.platform === 'darwin' && options.recoverAccess !== false &&
+      failed.some((entry) => entry && ['EACCES', 'EPERM'].includes(entry.reason))) {
+    try {
+      const recovery = await dialog.showOpenDialog(mainWindow, {
+        title: 'Allow Messs to import the selected file',
+        defaultPath: paths[0],
+        properties: ['openFile', 'multiSelections']
+      });
+      if (!recovery.canceled && Array.isArray(recovery.filePaths) && recovery.filePaths.length) {
+        const recovered = await importFilePaths(recovery.filePaths, folderId, canvasId, { recoverAccess: false });
+        return {
+          imported: [...importedNow, ...(recovered.imported || [])],
+          unlocked: [...new Set([...unlockedKeys, ...(recovered.unlocked || [])])],
+          failed: recovered.failed || []
+        };
+      }
+    } catch (error) {
+      console.error('macOS file access recovery failed:', error && error.message || error);
+    }
+  }
   return { imported: importedNow, unlocked: [...unlockedKeys], failed };
 }
 
@@ -1947,6 +2018,15 @@ function droppedFileChunk(value) {
     return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
   }
   if (value instanceof ArrayBuffer) return Buffer.from(value);
+  // Electron's structured-clone bridge can represent a typed array as a
+  // plain object on some macOS/Electron combinations. Accept the common
+  // Buffer JSON shape and numeric-array shape without trusting arbitrary data.
+  if (value && value.type === 'Buffer' && Array.isArray(value.data)) return Buffer.from(value.data);
+  if (Array.isArray(value)) return Buffer.from(value);
+  if (value && Array.isArray(value.data)) return Buffer.from(value.data);
+  if (value && Number.isSafeInteger(value.length) && value.length >= 0 && value.length <= DROPPED_FILE_CHUNK_BYTES) {
+    try { return Buffer.from(Array.from({ length: value.length }, (_item, index) => value[index])); } catch (error) {}
+  }
   throw new Error('The dropped file chunk is invalid.');
 }
 
@@ -7553,8 +7633,17 @@ function registerIpcHandlers() {
     return importDirectoryPathAndNotify(dirPath, parentFolderId || null, canvasId);
   });
 
-  ipcMain.handle('files:import', async (_evt, filePaths, folderId, canvasId) => {
-    return importFilePaths(filePaths, folderId, canvasId);
+  ipcMain.handle('files:import', async (_evt, filePaths, folderId, canvasId, options = {}) => {
+    return importFilePaths(filePaths, folderId, canvasId, options);
+  });
+
+  ipcMain.handle('files:recoverDroppedImport', async (_evt, folderId, canvasId) => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Allow Messs to import the selected file',
+      properties: ['openFile', 'multiSelections']
+    });
+    if (result.canceled || !result.filePaths.length) return { canceled: true, imported: [], unlocked: [], failed: [] };
+    return importFilePaths(result.filePaths, folderId, canvasId, { recoverAccess: false });
   });
 
   ipcMain.handle('files:beginDroppedImport', beginDroppedFileImport);
@@ -9220,10 +9309,19 @@ function registerIpcHandlers() {
     const result = await dialog.showSaveDialog(mainWindow, { defaultPath: f.name });
     if (result.canceled || !result.filePath) return { ok: false };
     try {
-      fs.copyFileSync(f.storedPath, result.filePath);
+      await copyFileAtomically(f.storedPath, result.filePath);
       return { ok: true, path: result.filePath };
     } catch (err) {
-      return { ok: false, error: err.message };
+      const reason = String(err && err.code || 'file-export-failed');
+      return {
+        ok: false,
+        reason,
+        error: ['EACCES', 'EPERM'].includes(reason)
+          ? (process.platform === 'darwin'
+            ? 'macOS denied access to the selected export location.'
+            : 'Messs could not write to the selected export location.')
+          : 'The file could not be exported safely.'
+      };
     }
   });
 

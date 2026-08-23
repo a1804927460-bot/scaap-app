@@ -33,6 +33,7 @@ function finderFile(name, bytes, options = {}) {
 async function run() {
   const uploads = new Map();
   let abortCount = 0;
+  let blockNativePathImport = false;
   const context = {
     Uint8Array,
     URL,
@@ -47,10 +48,20 @@ async function run() {
     window: {
       messsAPI: {
         getPathForFile: (file) => file.nativePath || '',
-        importFiles: async (paths) => ({
-          imported: paths.map((filePath) => ({ id: filePath, name: path.basename(filePath) })),
-          unlocked: ['path-import']
-        }),
+        importFiles: async (paths) => blockNativePathImport
+          ? {
+            imported: [],
+            unlocked: [],
+            failed: paths.map((filePath) => ({
+              name: path.basename(filePath),
+              reason: 'EACCES',
+              message: 'macOS denied access'
+            }))
+          }
+          : {
+            imported: paths.map((filePath) => ({ id: filePath, name: path.basename(filePath) })),
+            unlocked: ['path-import']
+          },
         beginDroppedFileImport: async (metadata) => {
           const uploadId = `upload-${uploads.size + 1}`;
           uploads.set(uploadId, { metadata, chunks: [] });
@@ -150,6 +161,18 @@ async function run() {
   assert.strictEqual(pathResult.imported[0].id, '/Users/test/Movies/video.mp4');
   assert.strictEqual(abortCount, 0);
 
+  blockNativePathImport = true;
+  const protectedFile = finderFile('受保护的照片.png', [21, 22, 23, 24], { type: 'image/png' });
+  protectedFile.nativePath = '/Users/test/受保护的照片.png';
+  const protectedResult = await drop.importEntries(
+    drop.entries({ types: ['Files'], items: [], files: [protectedFile] }),
+    null,
+    'canvas-1'
+  );
+  assert.strictEqual(protectedResult.imported.length, 1, 'native macOS access failures must fall back to File bytes');
+  assert.deepStrictEqual([...Buffer.concat(uploads.get('upload-3').chunks)], [21, 22, 23, 24]);
+  assert.strictEqual(protectedResult.failed.length, 0);
+
   for (const channel of [
     'files:beginDroppedImport',
     'files:appendDroppedImport',
@@ -161,6 +184,12 @@ async function run() {
   }
   assert(mainSource.includes('session.received !== session.size'), 'main process must reject incomplete files');
   assert(mainSource.includes('normalizeDroppedFileName'), 'main process must validate dropped filenames');
+  assert(mainSource.includes('normalizeExternalFilePath'), 'main process must normalize macOS file paths');
+  assert(mainSource.includes('store.removeFileById(record.id)'), 'failed post-copy imports must roll back their file record');
+  assert(mainSource.includes('recoverAccess'), 'macOS access recovery must be explicit and testable');
+  assert(mainSource.includes("files:recoverDroppedImport"), 'native macOS drop permission recovery must be available');
+  assert(preloadSource.includes('recoverDroppedFileImport'), 'preload must expose native drop permission recovery');
+  assert(preloadSource.includes('transferableDroppedChunk'), 'preload must normalize dropped chunks before IPC');
   assert(mainSource.includes("files:pickAndPrepareAiAttachments"), 'AI picker must prepare attachments in the main process');
   assert(preloadSource.includes('pickAndPrepareAiAttachments'), 'preload must expose the native AI picker');
   assert.strictEqual(

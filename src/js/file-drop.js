@@ -35,7 +35,7 @@
       } else if (/^\/[A-Za-z]:\//.test(pathname)) {
         pathname = pathname.slice(1);
       }
-      return pathname;
+      return pathname.normalize('NFC');
     } catch (error) {
       return '';
     }
@@ -87,8 +87,9 @@
     // leave both DataTransfer.files and DataTransfer.items empty.
     for (const filePath of pathsFromDataTransfer(dataTransfer)) {
       const name = filePath.split(/[\\/]/).pop() || 'Dropped file';
+      const normalizedName = name.normalize('NFC');
       const pathlessMatch = result.find((entry) =>
-        !entry.path && entry.file && String(entry.file.name || '') === name
+        !entry.path && entry.file && String(entry.file.name || '').normalize('NFC') === normalizedName
       );
       if (pathlessMatch) {
         pathlessMatch.path = filePath;
@@ -146,7 +147,9 @@
           ? file.slice(offset, Math.min(file.size, offset + chunkSize))
           : file;
         const buffer = await readBlob(blob);
-        await api.appendDroppedFileImport(uploadId, new Uint8Array(buffer));
+        // Pass an exact ArrayBuffer. Electron's macOS contextBridge has
+        // historically cloned Uint8Array instances into plain objects.
+        await api.appendDroppedFileImport(uploadId, buffer);
         if (typeof file.slice !== 'function') break;
       }
       return await api.finishDroppedFileImport(uploadId);
@@ -165,21 +168,88 @@
     if (Array.isArray(result.failed)) target.failed.push(...result.failed);
   }
 
+  function failurePayload(name, error, stage = 'import') {
+    const value = error || {};
+    const reason = String(value.reason || value.code || `${stage}-failed`).slice(0, 80);
+    let message = String(value.message || 'The selected file could not be imported.').trim();
+    if (reason === 'EACCES' || reason === 'EPERM') {
+      message = 'macOS denied access to this file. Choose it again from Finder or allow Messs to access Files and Folders in System Settings.';
+    } else if (message.includes('/') || message.includes('\\')) {
+      message = 'The selected file could not be imported.';
+    }
+    return { name: String(name || 'selected file'), stage, reason, message: message.slice(0, 400) };
+  }
+
+  function canReadFileBytes(file) {
+    return Boolean(file && (
+      typeof file.arrayBuffer === 'function' ||
+      typeof file.slice === 'function'
+    ));
+  }
+
   async function importEntries(droppedEntries, folderId, canvasId) {
     const normalized = Array.from(droppedEntries || []).filter((entry) => entry && entry.file);
     const result = { imported: [], unlocked: new Set(), failed: [] };
-    const paths = normalized
-      .filter((entry) => !(entry.entry && entry.entry.isDirectory) && entry.path)
-      .map((entry) => entry.path);
-    if (paths.length) {
-      mergeImportResult(result, await window.messsAPI.importFiles(paths, folderId, canvasId));
-    }
+    let permissionRecoveryNeeded = false;
     for (const entry of normalized) {
-      if ((entry.entry && entry.entry.isDirectory) || entry.path) continue;
+      if (entry.entry && entry.entry.isDirectory) continue;
+      if (entry.path) {
+        let nativeResult = null;
+        let nativeError = null;
+        try {
+          // Keep dropped-path imports free of an unexpected second native
+          // picker. If access is denied, the byte fallback below can still
+          // use the Finder File object without needing a filesystem path.
+          nativeResult = await window.messsAPI.importFiles(
+            [entry.path], folderId, canvasId, { recoverAccess: false }
+          );
+        } catch (error) {
+          nativeError = error;
+        }
+        const nativeImported = nativeResult && Array.isArray(nativeResult.imported)
+          ? nativeResult.imported : [];
+        const nativeFailed = nativeResult && Array.isArray(nativeResult.failed)
+          ? nativeResult.failed : [];
+        const nativePermissionFailure = nativeFailed.some((failure) => failure && ['EACCES', 'EPERM'].includes(failure.reason)) ||
+          Boolean(nativeError && ['EACCES', 'EPERM'].includes(nativeError.code));
+        if (nativeImported.length && !nativeFailed.length) {
+          mergeImportResult(result, nativeResult);
+          continue;
+        }
+
+        if (canReadFileBytes(entry.file)) {
+          try {
+            const byteResult = await importFileBytes(entry.file, folderId, canvasId);
+            if (byteResult && Array.isArray(byteResult.imported) && byteResult.imported.length) {
+              mergeImportResult(result, byteResult);
+              continue;
+            }
+          } catch (error) {
+            result.failed.push(failurePayload(entry.file.name, error, 'byte-fallback'));
+          }
+        }
+        if (nativePermissionFailure) permissionRecoveryNeeded = true;
+        if (nativeFailed.length) mergeImportResult(result, nativeResult);
+        else if (nativeError) result.failed.push(failurePayload(entry.file.name, nativeError, 'path-import'));
+        continue;
+      }
       try {
         mergeImportResult(result, await importFileBytes(entry.file, folderId, canvasId));
       } catch (error) {
-        result.failed.push({ name: entry.file.name || '', error });
+        result.failed.push(failurePayload(entry.file.name, error));
+      }
+    }
+    if (permissionRecoveryNeeded && window.messsAPI &&
+        typeof window.messsAPI.recoverDroppedFileImport === 'function') {
+      try {
+        const recovered = await window.messsAPI.recoverDroppedFileImport(folderId, canvasId);
+        const recoveredNames = new Set((recovered && recovered.imported || []).map((file) => String(file.name || '')));
+        if (recoveredNames.size) {
+          result.failed = result.failed.filter((failure) => !recoveredNames.has(String(failure.name || '')));
+        }
+        mergeImportResult(result, recovered);
+      } catch (error) {
+        result.failed.push(failurePayload('selected file', error, 'permission-recovery'));
       }
     }
     return { imported: result.imported, unlocked: [...result.unlocked], failed: result.failed };

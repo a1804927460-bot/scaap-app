@@ -77,5 +77,6 @@ function initDetailPanel() {
     if (!id) return;
     const res = await window.messsAPI.exportFile(id);
     if (res.ok) showToast(t('File exported', '文件已导出'), 'OK');
+    else if (res && !res.canceled) showToast(res.error || t('File export failed.', '文件导出失败。'));
   });
 }

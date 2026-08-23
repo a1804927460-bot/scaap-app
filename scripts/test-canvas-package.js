@@ -21,7 +21,7 @@ const sandbox = {
   path,
   store: { libraryDir: os.tmpdir(), data: { canvases: [] } }
 };
-vm.runInNewContext(`${mainSource.slice(start, end)}\nthis.canvasPackageApi = { writeCanvasPackage, readCanvasPackageManifest, extractCanvasPackageFile };`, sandbox);
+vm.runInNewContext(`${mainSource.slice(start, end)}\nthis.canvasPackageApi = { writeCanvasPackage, readCanvasPackageManifest, extractCanvasPackageFile, copyFileAtomically, ensureCanvasPackagePath };`, sandbox);
 
 function sha256(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex');
@@ -46,6 +46,11 @@ function sha256(buffer) {
       sources: [{ sourcePath, name: 'source.bin', sizeBytes: sourceBytes.length, sha256: sha256(sourceBytes) }]
     };
     await sandbox.canvasPackageApi.writeCanvasPackage(packagePath, prepared);
+    const exportTarget = path.join(directory, 'exported.bin');
+    fs.writeFileSync(exportTarget, Buffer.from('old export'));
+    await sandbox.canvasPackageApi.copyFileAtomically(sourcePath, exportTarget);
+    assert.deepEqual(fs.readFileSync(exportTarget), sourceBytes, 'ordinary exports must replace atomically');
+    assert.strictEqual(sandbox.canvasPackageApi.ensureCanvasPackagePath(path.join(directory, 'Canvas.MESSS')).endsWith('Canvas.Messs'), true);
     const parsed = await sandbox.canvasPackageApi.readCanvasPackageManifest(packagePath);
     assert.equal(parsed.manifest.files.length, 1);
     const packageHandle = await fs.promises.open(packagePath, 'r');

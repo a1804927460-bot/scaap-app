@@ -3215,7 +3215,10 @@ function initBoardCanvas() {
       await addFilesToBoard(imported.map((file) => file.id), x, y);
       if (imported.length) showToast(t('Imported and added to the board', '已导入并放入整合画布'), '🧩');
       if (result.failed && result.failed.length) {
-        showToast(t('Some dropped files could not be imported.', '部分拖入文件导入失败。'));
+        const failure = result.failed[0] || {};
+        showToast(failure.reason === 'EACCES' || failure.reason === 'EPERM'
+          ? t('macOS blocked access to this file. Choose it again from Finder or allow Messs access in System Settings.', 'macOS 阻止了这个文件的访问，请从 Finder 重新选择，或在系统设置中允许 Messs 访问文件和文件夹。')
+          : t('Some dropped files could not be imported.', `部分拖入文件导入失败${failure.name ? `：${failure.name}` : ''}。`));
       }
       if (result.unlocked && result.unlocked.length) await refreshAchievements();
     }

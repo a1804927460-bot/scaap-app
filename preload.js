@@ -3,6 +3,15 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
+function transferableDroppedChunk(value) {
+  if (value instanceof ArrayBuffer) return value;
+  if (ArrayBuffer.isView(value)) {
+    return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+  }
+  if (Array.isArray(value)) return Uint8Array.from(value).buffer;
+  return value;
+}
+
 /**
  * PDF rendering, done right here in the preload script rather than in the
  * page itself. Why: pdfjs-dist's build is an ES module, and loading ES
@@ -245,10 +254,11 @@ contextBridge.exposeInMainWorld('messsAPI', {
   renderPdfPage: (pdfPath, pageNumber, scale) => renderPdfPage(pdfPath, pageNumber, scale),
 
   pickFiles: () => ipcRenderer.invoke('dialog:pickFiles'),
-  importFiles: (filePaths, folderId, canvasId) => ipcRenderer.invoke('files:import', filePaths, folderId, canvasId),
+  importFiles: (filePaths, folderId, canvasId, options) => ipcRenderer.invoke('files:import', filePaths, folderId, canvasId, options),
+  recoverDroppedFileImport: (folderId, canvasId) => ipcRenderer.invoke('files:recoverDroppedImport', folderId, canvasId),
   pickAndPrepareAiAttachments: (folderId, canvasId) => ipcRenderer.invoke('files:pickAndPrepareAiAttachments', folderId, canvasId),
   beginDroppedFileImport: (metadata, folderId, canvasId) => ipcRenderer.invoke('files:beginDroppedImport', metadata, folderId, canvasId),
-  appendDroppedFileImport: (uploadId, chunk) => ipcRenderer.invoke('files:appendDroppedImport', uploadId, chunk),
+  appendDroppedFileImport: (uploadId, chunk) => ipcRenderer.invoke('files:appendDroppedImport', uploadId, transferableDroppedChunk(chunk)),
   finishDroppedFileImport: (uploadId) => ipcRenderer.invoke('files:finishDroppedImport', uploadId),
   abortDroppedFileImport: (uploadId) => ipcRenderer.invoke('files:abortDroppedImport', uploadId),
   generateAiMedia: (request) => ipcRenderer.invoke('ai:generateMedia', request),
