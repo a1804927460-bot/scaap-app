@@ -14,6 +14,11 @@ on:
         required: false
         type: boolean
         default: false
+      replace_existing:
+        description: "Allow a manually dispatched build to replace assets in an existing public release"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -154,7 +159,10 @@ jobs:
           $assets = @($env:MESSS_INSTALLER_PATH, $env:MESSS_BLOCKMAP_PATH, (Resolve-Path release/latest.yml).Path)
           $draftState = & gh release view $env:MESSS_RELEASE_TAG --repo $repo --json isDraft --jq '.isDraft' 2>$null
           if ($LASTEXITCODE -eq 0) {
-            if ($draftState -ne 'true') { throw 'This release tag is already public; refusing to replace its assets.' }
+            $replaceExisting = '${{ inputs.replace_existing }}' -eq 'true'
+            if ($draftState -ne 'true' -and -not $replaceExisting) {
+              throw 'This release tag is already public; use a manually dispatched build with replace_existing=true to replace its assets.'
+            }
           } else {
             & gh release create $env:MESSS_RELEASE_TAG --repo $repo --target main --draft `
               --title "Messs $env:MESSS_RELEASE_TAG" `
