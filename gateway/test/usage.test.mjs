@@ -1007,3 +1007,30 @@ test('usage summary HTTP route remains behind authentication', () => {
   assert.match(server.slice(usageRouteAt, usageRouteAt + 700), /getUsageSummary\(user\.id, range\)/);
   assert.match(server.slice(canvasUsageRouteAt, canvasUsageRouteAt + 250), /getCanvasUsage\(user\.id, canvasId\)/);
 });
+
+test('video delivery confirmation fails closed and releases invalid local deliveries', () => {
+  const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  const confirmAt = server.indexOf("url.pathname === '/v1/media/video/tasks/confirm'");
+  const releaseAt = server.indexOf("url.pathname === '/v1/media/video/tasks/release'");
+  assert.ok(confirmAt >= 0);
+  assert.ok(releaseAt > confirmAt);
+  const route = server.slice(confirmAt, releaseAt);
+  assert.ok(route.includes("!/^video\\/[a-z0-9.+-]+$/i.test(contentType)"));
+  assert.match(route, /Number\.isSafeInteger\(bytes\)/);
+  assert.match(route, /bytes > MAX_GENERATED_VIDEO_BYTES/);
+  assert.match(route, /failVideoDownload\(user\.id, taskToken/);
+  assert.match(route, /status: String\(released && released\.status \|\| 'failed'\)/);
+});
+
+test('historical failed video refunds are idempotent and require unambiguous failed evidence', () => {
+  const migration = fs.readFileSync(new URL('../../supabase/migrations/202608230001_failed_delivery_refunds.sql', import.meta.url), 'utf8');
+  assert.match(migration, /create or replace function public\.refund_failed_ai_video_delivery/i);
+  assert.match(migration, /job\.status.*failed/i);
+  assert.match(migration, /usage_record\.status.*succeeded/i);
+  assert.match(migration, /coalesce\(usage_record\.credits_charged, 0\) <= 0/i);
+  assert.match(migration, /coalesce\(usage_row\.credits_charged, 0\) > 0/i);
+  assert.match(migration, /refund:failed-video-delivery:/i);
+  assert.match(migration, /on conflict|already-refunded/i);
+  assert.match(migration, /event_type, balance_delta, reserved_delta/i);
+  assert.match(migration, /grant execute on function public\.refund_failed_ai_video_delivery[\s\S]*to service_role/i);
+});

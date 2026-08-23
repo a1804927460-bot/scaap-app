@@ -331,8 +331,215 @@ const butler3dDownloads = new Map();
 const butlerVideoTasks = new Map();
 const butlerVideoDownloads = new Map();
 const butlerDeliveries = new Map();
+const aiMediaDeliveries = new Map();
+const aiMediaDeliveryGroups = new Map();
 const BUTLER_TASK_PERSIST_LIMIT = 256;
 const BUTLER_DELIVERY_PERSIST_LIMIT = 128;
+const AI_MEDIA_DELIVERY_PERSIST_LIMIT = 128;
+const AI_MEDIA_DELIVERY_GROUP_PERSIST_LIMIT = 128;
+const AI_MEDIA_DELIVERY_TTL_MS = 30 * 60 * 1000;
+
+function persistAiMediaDeliveryGroup(group) {
+  if (!store || !store.data || !group || !group.groupId) return;
+  const groups = Array.isArray(store.data.aiMediaDeliveryGroups)
+    ? store.data.aiMediaDeliveryGroups : [];
+  const safe = {
+    groupId: String(group.groupId).slice(0, 160),
+    usageId: String(group.usageId || '').slice(0, 160),
+    pendingTokens: Array.isArray(group.pendingTokens)
+      ? group.pendingTokens.map((token) => String(token).slice(0, 256)).slice(-16) : [],
+    settledTokens: Array.isArray(group.settledTokens)
+      ? group.settledTokens.map((token) => String(token).slice(0, 256)).slice(-16) : [],
+    resultUnits: Math.max(0, Math.round(Number(group.resultUnits) || 0)),
+    failedUnits: Math.max(0, Math.round(Number(group.failedUnits) || 0)),
+    settledCredits: Math.max(0, Math.round(Number(group.settledCredits) || 0)),
+    updatedAt: Date.now()
+  };
+  const index = groups.findIndex((item) => item && item.groupId === safe.groupId);
+  if (index === -1) groups.push(safe);
+  else groups[index] = safe;
+  store.data.aiMediaDeliveryGroups = groups.slice(-AI_MEDIA_DELIVERY_GROUP_PERSIST_LIMIT);
+  store.scheduleSave();
+}
+
+function removeAiMediaDeliveryGroup(groupId) {
+  if (!store || !store.data) return;
+  const normalized = String(groupId || '');
+  store.data.aiMediaDeliveryGroups = (Array.isArray(store.data.aiMediaDeliveryGroups)
+    ? store.data.aiMediaDeliveryGroups : []).filter((group) => group && group.groupId !== normalized);
+  store.scheduleSave();
+}
+
+function persistAiMediaDelivery(entry) {
+  if (!store || !store.data || !entry || !entry.token) return;
+  const deliveries = Array.isArray(store.data.aiMediaDeliveries) ? store.data.aiMediaDeliveries : [];
+  const safe = {
+    token: String(entry.token).slice(0, 256),
+    kind: entry.kind === 'video' ? 'video' : 'image',
+    requestId: String(entry.requestId || '').slice(0, 128),
+    taskToken: String(entry.taskToken || '').slice(0, 512),
+    durationMs: Math.max(0, Math.round(Number(entry.durationMs) || 0)),
+    estimatedCredits: entry.estimatedCredits === null
+      ? null : Math.max(0, Number(entry.estimatedCredits) || 0),
+    recordIds: Array.isArray(entry.recordIds)
+      ? entry.recordIds.map((id) => String(id).slice(0, 128)).slice(0, 8) : [],
+    requiresBoardItem: entry.requiresBoardItem !== false,
+    usageId: String(entry.usageId || '').slice(0, 160),
+    groupId: String(entry.groupId || '').slice(0, 160),
+    status: entry.status === 'confirmed' || entry.status === 'released' ? entry.status : 'pending',
+    createdAt: Number(entry.createdAt) || Date.now(),
+    result: entry.result && typeof entry.result === 'object' ? entry.result : null
+  };
+  const index = deliveries.findIndex((item) => item && item.token === safe.token);
+  if (index === -1) deliveries.push(safe);
+  else deliveries[index] = safe;
+  store.data.aiMediaDeliveries = deliveries.slice(-AI_MEDIA_DELIVERY_PERSIST_LIMIT);
+  store.scheduleSave();
+}
+
+function generatedMediaDeliveryRequest(kind, generated) {
+  const buffer = generated && generated.buffer;
+  if (!buffer || buffer.deliveryPending !== true) return null;
+  if (kind === 'video') {
+    const taskToken = String(buffer.deliveryTaskToken || '').trim();
+    return taskToken ? { taskToken } : null;
+  }
+  const requestId = String(buffer.deliveryRequestId || generated.accountingRequestId || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(requestId)) return null;
+  return {
+    requestId,
+    durationMs: Math.max(0, Math.round(Number(buffer.deliveryDurationMs) || 0))
+  };
+}
+
+function registerAiMediaDelivery(kind, generated, records, boardItems, usageGroup, requiresBoardItem) {
+  const request = generatedMediaDeliveryRequest(kind, generated);
+  if (!request) return null;
+  const token = `ad_${crypto.randomBytes(24).toString('base64url')}`;
+  const entry = {
+    token,
+    kind,
+    ...request,
+    estimatedCredits: Number.isFinite(Number(generated.buffer && generated.buffer.estimatedCredits))
+      ? Math.max(0, Number(generated.buffer.estimatedCredits)) : null,
+    recordIds: records.map((record) => record.id),
+    boardItemIds: (Array.isArray(boardItems) ? boardItems : []).map((item) => item && item.id).filter(Boolean),
+    requiresBoardItem: requiresBoardItem !== false,
+    usageId: usageGroup.usageId,
+    groupId: usageGroup.groupId,
+    status: 'pending',
+    createdAt: Date.now(),
+    timer: null,
+    inFlight: null,
+    result: null
+  };
+  aiMediaDeliveries.set(token, entry);
+  usageGroup.pendingTokens.push(token);
+  persistAiMediaDelivery(entry);
+  persistAiMediaDeliveryGroup(usageGroup);
+  scheduleAiMediaDeliveryRecovery(token);
+  return token;
+}
+
+function aiMediaDeliveryHasCanvasItem(entry) {
+  const ids = new Set((entry.recordIds || []).map(String));
+  const filesExist = ids.size > 0 && ids.size === new Set(
+    (store.data.files || [])
+      .filter((file) => ids.has(String(file && file.id || '')))
+      .map((file) => String(file.id))
+  ).size;
+  if (!filesExist) return false;
+  if (entry.requiresBoardItem !== true) return true;
+  return ids.size === new Set(
+    (store.data.boardItems || [])
+      .filter((item) => ids.has(String(item && item.fileId || '')))
+      .map((item) => String(item.fileId))
+  ).size;
+}
+
+function scheduleAiMediaDeliveryRecovery(token, delayMs = AI_MEDIA_DELIVERY_TTL_MS) {
+  const entry = aiMediaDeliveries.get(token);
+  if (!entry || entry.status !== 'pending') return;
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.timer = setTimeout(async () => {
+    const current = aiMediaDeliveries.get(token);
+    if (!current || current.status !== 'pending') return;
+    try {
+      // A persisted canvas item is proof that the result survived a renderer
+      // restart. Otherwise release the reservation and remove the orphan.
+      await settleAiMediaDeliveryToken(token, aiMediaDeliveryHasCanvasItem(current));
+    } catch (error) {
+      console.error('Could not recover a pending AI media delivery:', error && error.code || error);
+      scheduleAiMediaDeliveryRecovery(token, 15 * 1000);
+    }
+  }, Math.max(1_000, Number(delayMs) || AI_MEDIA_DELIVERY_TTL_MS));
+  entry.timer.unref?.();
+}
+
+function restoreAiMediaDeliveries() {
+  const deliveries = Array.isArray(store && store.data && store.data.aiMediaDeliveries)
+    ? store.data.aiMediaDeliveries : [];
+  for (const delivery of deliveries) {
+    if (!delivery || !delivery.token || delivery.status !== 'pending') continue;
+    if (delivery.kind === 'video' && !delivery.taskToken || delivery.kind !== 'video' && !delivery.requestId) continue;
+    aiMediaDeliveries.set(delivery.token, { ...delivery, timer: null, inFlight: null });
+    scheduleAiMediaDeliveryRecovery(
+      delivery.token,
+      Math.max(1_000, AI_MEDIA_DELIVERY_TTL_MS - Math.max(0, Date.now() - Number(delivery.createdAt || Date.now())))
+    );
+  }
+}
+
+function restoreAiMediaDeliveryGroups() {
+  const groups = Array.isArray(store && store.data && store.data.aiMediaDeliveryGroups)
+    ? store.data.aiMediaDeliveryGroups : [];
+  for (const group of groups) {
+    if (!group || !group.groupId || !group.usageId) continue;
+    aiMediaDeliveryGroups.set(group.groupId, {
+      groupId: String(group.groupId),
+      usageId: String(group.usageId),
+      pendingTokens: Array.isArray(group.pendingTokens) ? group.pendingTokens.map(String) : [],
+      settledTokens: Array.isArray(group.settledTokens) ? group.settledTokens.map(String) : [],
+      resultUnits: Math.max(0, Math.round(Number(group.resultUnits) || 0)),
+      failedUnits: Math.max(0, Math.round(Number(group.failedUnits) || 0)),
+      settledCredits: Math.max(0, Math.round(Number(group.settledCredits) || 0))
+    });
+  }
+}
+
+function reconcileRestoredAiMediaDeliveryGroups() {
+  const persistedDeliveries = Array.isArray(store && store.data && store.data.aiMediaDeliveries)
+    ? store.data.aiMediaDeliveries : [];
+  for (const group of aiMediaDeliveryGroups.values()) {
+    const groupDeliveries = persistedDeliveries.filter((entry) => entry && entry.groupId === group.groupId);
+    const settled = new Set(group.settledTokens || []);
+    for (const entry of groupDeliveries) {
+      if (!entry || entry.status === 'pending' || settled.has(entry.token)) continue;
+      settled.add(entry.token);
+      if (entry.status === 'confirmed') {
+        group.resultUnits += Array.isArray(entry.recordIds) ? entry.recordIds.length : 0;
+        group.settledCredits += Math.max(0, Number(entry.result && entry.result.settlement && entry.result.settlement.creditsCharged) || 0);
+      } else if (entry.status === 'released') {
+        group.failedUnits += Array.isArray(entry.recordIds) ? entry.recordIds.length : 0;
+      }
+    }
+    group.settledTokens = [...settled];
+    group.pendingTokens = group.pendingTokens.filter((token) => (
+      persistedDeliveries.some((entry) => entry && entry.token === token && entry.status === 'pending')
+    ));
+    if (group.pendingTokens.length) persistAiMediaDeliveryGroup(group);
+    else {
+      membershipService.finishUsage(group.usageId, {
+        status: group.failedUnits ? 'partial' : 'succeeded',
+        resultUnits: group.resultUnits,
+        failedUnits: group.failedUnits,
+        settledCredits: group.settledCredits
+      });
+      aiMediaDeliveryGroups.delete(group.groupId);
+      removeAiMediaDeliveryGroup(group.groupId);
+    }
+  }
+}
 
 function persistButlerTask(kind, taskToken, entry) {
   if (!store || !store.data || !taskToken || !entry) return;
@@ -1460,7 +1667,7 @@ function pruneMissingFiles() {
   }
 }
 
-function fileToPayload(f) {
+function fileToPayload(f, aiDeliveryToken = null) {
   const ext = path.extname(f.name).toLowerCase();
   return {
     id: f.id,
@@ -1505,18 +1712,6 @@ function fileToPayload(f) {
         && Number.isFinite(Number(f.aiGeneration.estimatedCredits))
         ? Math.max(0, Number(f.aiGeneration.estimatedCredits))
         : null,
-      creditsCharged: f.aiGeneration.creditsCharged !== null
-        && f.aiGeneration.creditsCharged !== undefined
-        && Number.isFinite(Number(f.aiGeneration.creditsCharged))
-        ? Math.max(0, Number(f.aiGeneration.creditsCharged))
-        : (f.aiGeneration.credits !== null && f.aiGeneration.credits !== undefined
-          && Number.isFinite(Number(f.aiGeneration.credits))
-          ? Math.max(0, Number(f.aiGeneration.credits))
-          : null),
-      credits: f.aiGeneration.credits !== null && f.aiGeneration.credits !== undefined
-        && Number.isFinite(Number(f.aiGeneration.credits))
-        ? Math.max(0, Number(f.aiGeneration.credits))
-        : null,
       accountingRequestId: String(f.aiGeneration.accountingRequestId || '').trim() || null,
       createdAt: f.aiGeneration.createdAt
     } : null,
@@ -1526,14 +1721,6 @@ function fileToPayload(f) {
       sourceFileId: String(f.butlerOperation.sourceFileId || '').slice(0, 120) || null,
       estimatedCredits: Number.isFinite(Number(f.butlerOperation.estimatedCredits))
         ? Math.max(0, Number(f.butlerOperation.estimatedCredits)) : null,
-      creditsCharged: Number.isFinite(Number(f.butlerOperation.creditsCharged))
-        ? Math.max(0, Number(f.butlerOperation.creditsCharged))
-        : (Number.isFinite(Number(f.butlerOperation.credits))
-          ? Math.max(0, Number(f.butlerOperation.credits)) : null),
-      credits: Number.isFinite(Number(f.butlerOperation.credits))
-        ? Math.max(0, Number(f.butlerOperation.credits)) : null,
-      providerCost: Number.isFinite(Number(f.butlerOperation.providerCost))
-        ? Math.max(0, Number(f.butlerOperation.providerCost)) : null,
       accountingRequestId: String(f.butlerOperation.accountingRequestId || '').trim().slice(0, 80) || null,
       pricingVersion: String(f.butlerOperation.pricingVersion || '').slice(0, 32) || null,
       createdAt: f.butlerOperation.createdAt || null
@@ -1546,7 +1733,8 @@ function fileToPayload(f) {
     // side too), but it's harmless to always include the URL since the
     // renderer only ever uses it where it already checks isImageExt.
     thumbUrl: 'messs-thumb://' + f.id,
-    ...(MODEL_FILE_EXTENSIONS.has(ext) ? { modelPreviewUrl: `messs-preview://${f.id}/model` } : {})
+    ...(MODEL_FILE_EXTENSIONS.has(ext) ? { modelPreviewUrl: `messs-preview://${f.id}/model` } : {}),
+    ...(aiDeliveryToken ? { aiDeliveryToken: String(aiDeliveryToken).slice(0, 256) } : {})
   };
 }
 
@@ -3739,23 +3927,18 @@ function backfillCanvasUsageEstimate(entry) {
   }
 }
 
-// Usage reports are repriced for display only. The persisted ledger remains
-// an immutable record of what was originally charged, while report totals use
-// the higher of that amount and the active pricing policy.
-function repriceSettledCanvasUsage(entry) {
+// Usage reports keep the immutable settled debit as the billed value. The
+// active pricing policy is used only for the separate protected estimate, so
+// a quote update can never make the UI claim that more points were charged.
+function preserveSettledCanvasUsage(entry) {
   if (!entry || entry.status !== 'succeeded') return entry;
   const historical = Number(entry.historicalCreditsCharged ?? entry.creditsCharged ?? entry.credits);
-  const current = Number(entry.estimatedCredits);
-  const hasHistorical = Number.isFinite(historical) && historical >= 0;
-  const hasCurrent = Number.isFinite(current) && current >= 0;
-  if (!hasHistorical && !hasCurrent) return entry;
-  const settledCredits = Math.max(hasHistorical ? historical : 0, hasCurrent ? current : 0);
+  if (!Number.isFinite(historical) || historical < 0) return entry;
   return {
     ...entry,
-    historicalCreditsCharged: hasHistorical ? Math.max(0, historical) : null,
-    creditsCharged: settledCredits,
-    credits: settledCredits,
-    repriced: hasCurrent && (!hasHistorical || current > historical)
+    historicalCreditsCharged: Math.max(0, historical),
+    creditsCharged: Math.max(0, historical),
+    credits: Math.max(0, historical)
   };
 }
 
@@ -3856,7 +4039,7 @@ async function canvasCreditUsage(canvasId) {
   });
   const details = [...detailsByKey.values()]
     .map(backfillCanvasUsageEstimate)
-    .map(repriceSettledCanvasUsage)
+    .map(preserveSettledCanvasUsage)
     .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
   const recorded = details.filter((entry) => entry.historicalCreditsCharged !== null);
   const currentlyPriced = details.filter((entry) => entry.credits !== null || entry.estimatedCredits !== null);
@@ -5471,6 +5654,121 @@ async function releaseGeneratedMediaDelivery(kind, generated) {
     );
   } catch (error) {
     console.error('Could not release undelivered AI media reservation:', error && error.code || error);
+  }
+}
+
+function settleAiMediaDeliveryGroup(entry, delivered, charged) {
+  const group = aiMediaDeliveryGroups.get(entry.groupId);
+  if (!group) {
+    // Older builds persisted delivery tokens before the aggregate group.
+    // Finish the local event conservatively after the gateway has settled it.
+    if (membershipService && entry.usageId) {
+      membershipService.finishUsage(entry.usageId, {
+        status: delivered ? 'succeeded' : 'failed',
+        resultUnits: delivered ? entry.recordIds.length : 0,
+        failedUnits: delivered ? 0 : entry.recordIds.length,
+        settledCredits: delivered ? Math.max(0, Number(charged) || 0) : 0
+      });
+    }
+    return;
+  }
+  group.pendingTokens = group.pendingTokens.filter((token) => token !== entry.token);
+  group.settledTokens = [...new Set([...(group.settledTokens || []), entry.token])];
+  if (delivered) {
+    group.resultUnits += entry.recordIds.length;
+    group.settledCredits += Math.max(0, Number(charged) || 0);
+  } else {
+    group.failedUnits += entry.recordIds.length;
+  }
+  persistAiMediaDeliveryGroup(group);
+  if (group.pendingTokens.length) return;
+  membershipService.finishUsage(group.usageId, {
+    status: group.failedUnits ? 'partial' : 'succeeded',
+    resultUnits: group.resultUnits,
+    failedUnits: group.failedUnits,
+    settledCredits: group.settledCredits
+  });
+  aiMediaDeliveryGroups.delete(entry.groupId);
+  removeAiMediaDeliveryGroup(entry.groupId);
+  if (runtimeConfig.gatewayConfigured) void syncGatewayAccount({ force: true });
+}
+
+async function settleAiMediaDeliveryToken(rawToken, delivered) {
+  const token = String(rawToken || '').trim();
+  const entry = aiMediaDeliveries.get(token);
+  if (!entry) {
+    const error = new Error('The AI media delivery token is invalid or has expired.');
+    error.code = 'invalid-ai-delivery-token';
+    throw error;
+  }
+  const expectedStatus = delivered === true ? 'confirmed' : 'released';
+  if (entry.status !== 'pending') {
+    if (entry.status === expectedStatus) return entry.result;
+    const error = new Error('The AI media delivery was already settled differently.');
+    error.code = 'ai-delivery-status-conflict';
+    throw error;
+  }
+  if (delivered === true && !aiMediaDeliveryHasCanvasItem(entry)) {
+    const error = new Error('The generated result has not been persisted to the canvas.');
+    error.code = 'ai-delivery-not-placed';
+    throw error;
+  }
+  if (entry.inFlight) return entry.inFlight;
+  entry.inFlight = (async () => {
+    const records = entry.recordIds.map((id) => store.getFile(id)).filter(Boolean);
+    const representative = records[0];
+    const settlement = deliverySettlement(delivered === true
+      ? entry.kind === 'video'
+        ? await aiGateway.confirmVideoDelivery(entry.taskToken, {
+          contentType: representative && representative.mimeType,
+          bytes: representative && representative.sizeBytes
+        })
+        : await aiGateway.confirmMediaDelivery(entry.requestId, entry.durationMs)
+      : entry.kind === 'video'
+        ? await aiGateway.releaseVideoDelivery(entry.taskToken)
+        : await aiGateway.releaseMediaDelivery(entry.requestId, entry.durationMs));
+    const expectedGatewayStatus = delivered === true ? 'succeeded' : 'failed';
+    if (!settlement || settlement.ok !== true || String(settlement.status || '') !== expectedGatewayStatus) {
+      const error = new Error('The generated media charge could not be settled safely.');
+      error.code = 'ai-delivery-settlement-failed';
+      throw error;
+    }
+    let charged = 0;
+    if (delivered === true) {
+      charged = Math.max(0, Number(settlement.creditsCharged) || 0);
+      for (const record of records) {
+        if (!record.aiGeneration) continue;
+        record.aiGeneration.creditsCharged = charged;
+        record.aiGeneration.credits = charged;
+        recordCanvasUsageFile(record);
+      }
+      store.scheduleSave();
+    } else {
+      await Promise.all(records.map((record) => rollbackGeneratedMediaFile(record)));
+    }
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.timer = null;
+    entry.status = expectedStatus;
+    entry.result = {
+      ok: true,
+      status: entry.status,
+      settlement,
+      files: delivered === true ? records.map(fileToPayload) : [],
+      removedFileIds: delivered === true ? [] : [...entry.recordIds]
+    };
+    persistAiMediaDelivery(entry);
+    settleAiMediaDeliveryGroup(entry, delivered === true, charged);
+    const cleanup = setTimeout(() => aiMediaDeliveries.delete(token), 5 * 60 * 1000);
+    cleanup.unref?.();
+    return entry.result;
+  })();
+  try {
+    return await entry.inFlight;
+  } catch (error) {
+    if (entry.status === 'pending') scheduleAiMediaDeliveryRecovery(token, 15 * 1000);
+    throw error;
+  } finally {
+    entry.inFlight = null;
   }
 }
 
@@ -7794,6 +8092,30 @@ function registerIpcHandlers() {
     }
   });
 
+  ipcMain.handle('ai:confirmMediaDelivery', async (_evt, deliveryToken) => {
+    try {
+      return await settleAiMediaDeliveryToken(deliveryToken, true);
+    } catch (error) {
+      return {
+        ok: false,
+        reason: error.code || 'ai-delivery-confirmation-failed',
+        message: error.message || 'The generated media could not be confirmed safely.'
+      };
+    }
+  });
+
+  ipcMain.handle('ai:releaseMediaDelivery', async (_evt, deliveryToken) => {
+    try {
+      return await settleAiMediaDeliveryToken(deliveryToken, false);
+    } catch (error) {
+      return {
+        ok: false,
+        reason: error.code || 'ai-delivery-release-failed',
+        message: error.message || 'The generated media reservation could not be released safely.'
+      };
+    }
+  });
+
   ipcMain.handle('butler:removeBackground', async (_evt, fileId, requestedOptions = {}) => {
     let responseBuffer = null;
     let record = null;
@@ -8556,6 +8878,16 @@ function registerIpcHandlers() {
       let authoritativeVideoCharge = null;
       let creditsCharged = 0;
       const deliveryFailures = [];
+      const deliveryGroup = {
+        groupId: `ag_${crypto.randomBytes(16).toString('hex')}`,
+        usageId: usage.usageId,
+        pendingTokens: [],
+        settledCredits: 0,
+        resultUnits: 0,
+        failedUnits: 0
+      };
+      aiMediaDeliveryGroups.set(deliveryGroup.groupId, deliveryGroup);
+      persistAiMediaDeliveryGroup(deliveryGroup);
       for (let index = 0; index < settled.length; index += 1) {
         const result = settled[index];
         if (result.status !== 'fulfilled') continue;
@@ -8576,21 +8908,12 @@ function registerIpcHandlers() {
               ...request,
               imageProviderId: generated.providerId,
               accountingRequestId: generated.accountingRequestId,
-              estimatedCredits: kind === 'image' ? reservationQuote.unitCredits : (authoritativeVideoEstimate ?? reservationQuote.totalCredits),
-              creditsCharged: fallbackProvider && fallbackProvider.quote
-                ? fallbackProvider.quote.unitCredits : creditQuote.unitCredits,
-              credits: fallbackProvider && fallbackProvider.quote ? fallbackProvider.quote.unitCredits : creditQuote.unitCredits
+              estimatedCredits: kind === 'image' ? reservationQuote.unitCredits : (authoritativeVideoEstimate ?? reservationQuote.totalCredits)
             }
           : {
               ...request,
               accountingRequestId: generated.accountingRequestId,
               estimatedCredits: kind === 'image' ? reservationQuote.unitCredits : (authoritativeVideoEstimate ?? reservationQuote.totalCredits),
-              creditsCharged: kind === 'image'
-                ? creditQuote.unitCredits
-                : (authoritativeVideoCharge ?? creditQuote.totalCredits),
-              credits: kind === 'image'
-                ? creditQuote.unitCredits
-                : (authoritativeVideoCharge ?? creditQuote.totalCredits)
             };
         let added = null;
         try {
@@ -8610,16 +8933,28 @@ function registerIpcHandlers() {
               Array.isArray(request.placements) ? request.placements[index] : null,
               index
             );
-          const delivery = await confirmGeneratedMediaDelivery(kind, generated);
-          const confirmedCharge = delivery && delivery.creditsCharged !== null && delivery.creditsCharged !== undefined
-            ? Number(delivery.creditsCharged)
-            : NaN;
-          const resultCharge = Number.isFinite(confirmedCharge) && confirmedCharge >= 0
-            ? confirmedCharge
+          const aiDeliveryToken = registerAiMediaDelivery(
+            kind,
+            generated,
+            [added.record],
+            boardItem ? [boardItem] : [],
+            deliveryGroup,
+            request.placeOnBoard !== false
+          );
+          if (generated.buffer && generated.buffer.deliveryPending === true && !aiDeliveryToken) {
+            const error = new Error('The generated media delivery token is missing.');
+            error.code = 'invalid-ai-delivery-confirmation';
+            throw error;
+          }
+          const isPendingDelivery = !!aiDeliveryToken;
+          const resultCharge = isPendingDelivery
+            ? 0
             : (Number.isFinite(providerCharge) && providerCharge >= 0 ? providerCharge : quotedResultCredits);
           creditsCharged += resultCharge;
-          if (kind === 'video') authoritativeVideoCharge = resultCharge;
-          if (added.record.aiGeneration) {
+          deliveryGroup.settledCredits += resultCharge;
+          if (!isPendingDelivery) deliveryGroup.resultUnits += 1;
+          if (kind === 'video' && resultCharge > 0) authoritativeVideoCharge = resultCharge;
+          if (added.record.aiGeneration && !isPendingDelivery) {
             added.record.aiGeneration.creditsCharged = resultCharge;
             added.record.aiGeneration.credits = resultCharge;
           }
@@ -8629,7 +8964,8 @@ function registerIpcHandlers() {
           } else {
             primaryCount += 1;
           }
-          files.push(fileToPayload(added.record));
+          persistAiMediaDeliveryGroup(deliveryGroup);
+          files.push(fileToPayload(added.record, aiDeliveryToken));
           if (boardItem) boardItems.push(boardItem);
           added.unlocked.forEach((key) => unlockedKeys.add(key));
         } catch (error) {
@@ -8642,13 +8978,23 @@ function registerIpcHandlers() {
         ...settled.filter((result) => result.status === 'rejected').map((result) => result.reason),
         ...deliveryFailures
       ];
-      if (!files.length) throw failures[0] || new Error('AI generation failed.');
-      membershipService.finishUsage(usage.usageId, {
-        status: failures.length ? 'partial' : 'succeeded',
-        resultUnits: files.length,
-        failedUnits: failures.length,
-        settledCredits: creditsCharged
-      });
+      deliveryGroup.failedUnits = failures.length;
+      persistAiMediaDeliveryGroup(deliveryGroup);
+      if (!files.length) {
+        aiMediaDeliveryGroups.delete(deliveryGroup.groupId);
+        removeAiMediaDeliveryGroup(deliveryGroup.groupId);
+        throw failures[0] || new Error('AI generation failed.');
+      }
+      if (!deliveryGroup.pendingTokens.length) {
+        membershipService.finishUsage(usage.usageId, {
+          status: failures.length ? 'partial' : 'succeeded',
+          resultUnits: files.length,
+          failedUnits: failures.length,
+          settledCredits: creditsCharged
+        });
+        aiMediaDeliveryGroups.delete(deliveryGroup.groupId);
+        removeAiMediaDeliveryGroup(deliveryGroup.groupId);
+      }
       if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
       store.scheduleSave();
       return {
@@ -8661,7 +9007,6 @@ function registerIpcHandlers() {
         estimatedCredits: kind === 'video'
           ? (authoritativeVideoEstimate ?? reservationQuote.totalCredits)
           : reservationQuote.totalCredits,
-        creditsCharged,
         ...(fallbackCount > 0 ? {
           fallback: {
             providerId: fallbackProvider.provider.id,
@@ -9603,6 +9948,8 @@ app.whenReady().then(() => {
   writeStartupDiagnostic('ready');
   store = createStoreWithFallback();
   restoreButlerState();
+  restoreAiMediaDeliveryGroups();
+  restoreAiMediaDeliveries();
   const savedColorProfile = normalizeColorProfile(store.data.settings.colorProfile);
   if (startupColorProfileBootstrap.valid) {
     // The bootstrap file is the profile Chromium actually started with. Keep
@@ -9619,6 +9966,7 @@ app.whenReady().then(() => {
   if (store.data.settings.colorProfile !== savedColorProfile) store.scheduleSave();
   writeStartupDiagnostic('store-ready');
   membershipService = createMembershipService(store);
+  reconcileRestoredAiMediaDeliveryGroups();
   runtimeConfig = loadRuntimeConfig(__dirname, { packaged: app.isPackaged });
   writeStartupDiagnostic('runtime-ready');
   supabaseAuth = new SupabaseAuth({

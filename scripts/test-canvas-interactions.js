@@ -92,8 +92,8 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /AppState\.boardItems = AppState\.allBoardItems\.filter[\s\S]*?renderBoard\(\);[\s\S]*?upsertBoardItems\(updates\)/,
-  'Generated media must render at the placeholder position before persistence completes.'
+  /upsertBoardItems\(updates\)[\s\S]*?AppState\.allBoardItems = workingBoardItems[\s\S]*?renderBoard\(\);/,
+  'Generated media must persist the final board item before confirming delivery.'
 );
 assert.match(
   boardSource,
@@ -1184,7 +1184,7 @@ assert.doesNotMatch(
 );
 assert.match(
   boardSource,
-  /function replaceAiPlaceholders[\s\S]*?const livePlaceholder = itemIndex >= 0 \? AppState\.allBoardItems\[itemIndex\] : placeholder;[\s\S]*?\.\.\.\(persistedItem \|\| \{\}\)[\s\S]*?x: livePlaceholder\.x,[\s\S]*?y: livePlaceholder\.y,[\s\S]*?width: livePlaceholder\.width,[\s\S]*?zIndex: livePlaceholder\.zIndex/,
+  /function replaceAiPlaceholders[\s\S]*?const livePlaceholder = itemIndex >= 0 \? workingBoardItems\[itemIndex\] : placeholder;[\s\S]*?\.\.\.\(persistedItem \|\| \{\}\)[\s\S]*?x: livePlaceholder\.x,[\s\S]*?y: livePlaceholder\.y,[\s\S]*?width: livePlaceholder\.width,[\s\S]*?zIndex: livePlaceholder\.zIndex/,
   'Generated media must replace the live placeholder in place, even when it moved while the request was running.'
 );
 assert.match(
@@ -1267,7 +1267,7 @@ const ledgerSandbox = {
   BUTLER_IMAGE_TOOL_CREDITS: {}
 };
 vm.runInNewContext(
-  `${ledgerSource}\nthis.canvasLedgerApi = { ensureCanvasUsageLedger, recordCanvasUsageFile, repriceSettledCanvasUsage };`,
+  `${ledgerSource}\nthis.canvasLedgerApi = { ensureCanvasUsageLedger, recordCanvasUsageFile, preserveSettledCanvasUsage };`,
   ledgerSandbox
 );
 const billedFile = {
@@ -1320,13 +1320,13 @@ assert.equal(
   151,
   'Canvas history must retain the old settled charge as an audit record.'
 );
-const repricedVideo = ledgerSandbox.canvasLedgerApi.repriceSettledCanvasUsage({
+const preservedVideo = ledgerSandbox.canvasLedgerApi.preserveSettledCanvasUsage({
   ...ledgerSandbox.store.data.canvasUsageLedger.find((entry) => entry.sourceFileId === staleVideo.id),
   status: 'succeeded'
 });
-assert.equal(repricedVideo.historicalCreditsCharged, 151);
-assert.equal(repricedVideo.creditsCharged, 1216);
-assert.equal(repricedVideo.credits, 1216, 'Settled canvas reports must use the higher current-policy price.');
+assert.equal(preservedVideo.historicalCreditsCharged, 151);
+assert.equal(preservedVideo.creditsCharged, 151);
+assert.equal(preservedVideo.credits, 151, 'Settled canvas reports must use the immutable settled charge.');
 assert.equal(
   ledgerSandbox.store.data.canvasUsageLedger.find((entry) => entry.sourceFileId === staleVideo.id).creditsCharged,
   151,

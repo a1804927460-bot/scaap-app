@@ -205,12 +205,7 @@ function boardButlerStatusText(action, task) {
   if (!task) return '';
   if (action === 'videoUpscale') {
     if (task.status === 'error') return t('Retry', '重试', '다시 시도');
-    const credits = Math.max(0, Math.round(Number(task.creditsCharged ?? task.credits) || 0));
-    const points = credits > 0 ? t(`${credits} pts`, `${credits} 积分`, `${credits}포인트`) : '';
-    if (task.status === 'success') {
-      const done = t('Done', '完成', '완료');
-      return points ? `${done} · ${points}` : done;
-    }
+    if (task.status === 'success') return t('Done', '完成', '완료');
     const progress = Math.max(0, Math.min(100, Math.round(Number(task.progress) || 0)));
     let phase;
     if (task.phase === 'queued') phase = t('Queued', '排队中', '대기 중');
@@ -220,7 +215,7 @@ function boardButlerStatusText(action, task) {
     else phase = progress > 0
       ? t(`Enhancing ${progress}%`, `超清处理中 ${progress}%`, `고화질 처리 중 ${progress}%`)
       : t('Enhancing...', '超清处理中...', '고화질 처리 중...');
-    return points ? `${phase} · ${points}` : phase;
+    return phase;
   }
   if (task.status === 'error') return t('Retry', '重试', '다시 시도');
   if (task.status === 'success') return t('Done', '完成', '완료');
@@ -3216,12 +3211,6 @@ function showGeneratedMediaDetails(file, anchorElement) {
     && Number.isFinite(Number(rawEstimatedCredits))
     ? Math.max(0, Math.round(Number(rawEstimatedCredits)))
     : null;
-  const rawChargedCredits = billingOperation.creditsCharged ?? billingOperation.credits;
-  const chargedCredits = rawChargedCredits !== null && rawChargedCredits !== undefined
-    && Number.isFinite(Number(rawChargedCredits))
-    ? Math.max(0, Math.round(Number(rawChargedCredits)))
-    : null;
-
   const overlay = document.createElement('div');
   overlay.id = 'generated-media-detail-overlay';
   overlay.className = 'generated-media-detail-overlay';
@@ -3304,11 +3293,6 @@ function showGeneratedMediaDetails(file, anchorElement) {
       ? `${t('Estimated points', '预估积分', '예상 포인트')} ${t('Not recorded', '未记录', '기록 없음')}`
       : `${t('Estimated points', '预估积分', '예상 포인트')} ${estimatedCredits}`;
     chips.appendChild(estimate);
-    const actual = document.createElement('span');
-    actual.textContent = chargedCredits === null
-      ? `${t('Actual points', '实际积分', '실제 포인트')} ${t('Pending', '待结算', '정산 대기')}`
-      : `${t('Actual points', '实际积分', '실제 포인트')} ${chargedCredits}`;
-    chips.appendChild(actual);
   }
   if (Number.isFinite(Number(file.sizeBytes)) && Number(file.sizeBytes) >= 0) {
     const fileSize = document.createElement('span');

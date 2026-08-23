@@ -452,10 +452,10 @@ function renderCanvasUsageDetails(result) {
     ? result.canvas.name
     : t('Usage details', '\u4f7f\u7528\u660e\u7ec6');
   const tableHeaders = document.querySelectorAll('.canvas-usage-table th');
-  [t('Date', '\u65e5\u671f'), t('Type', '\u7c7b\u578b'), t('Model', '\u6a21\u578b'), t('Output', '\u751f\u6210\u7ed3\u679c'), t('Current price', '\u5f53\u524d\u4ef7\u683c'), t('Current settlement', '\u91cd\u7b97\u7ed3\u7b97')]
+  [t('Date', '\u65e5\u671f'), t('Type', '\u7c7b\u578b'), t('Model', '\u6a21\u578b'), t('Output', '\u751f\u6210\u7ed3\u679c'), t('Estimated', '\u9884\u4f30')]
     .forEach((label, index) => { if (tableHeaders[index]) tableHeaders[index].textContent = label; });
   const metrics = [
-    [t('Current settlement total', '\u5f53\u524d\u7ed3\u7b97\u603b\u989d'), formatCanvasUsagePoints(totals.credits)],
+    [t('Estimated total', '\u9884\u4f30\u603b\u989d'), formatCanvasUsagePoints(totals.estimatedCredits ?? totals.credits)],
     [t('AI results', 'AI \u7ed3\u679c'), String(Math.max(0, Number(totals.generations) || 0))],
     [t('Images', '\u56fe\u7247'), `${formatCanvasUsagePoints(breakdown.image && (breakdown.image.estimatedCredits ?? breakdown.image.credits))} / ${Number(breakdown.image && breakdown.image.generations) || 0}`],
     [t('Videos', '\u89c6\u9891'), `${formatCanvasUsagePoints(breakdown.video && (breakdown.video.estimatedCredits ?? breakdown.video.credits))} / ${Number(breakdown.video && breakdown.video.generations) || 0}`],
@@ -495,15 +495,13 @@ function renderCanvasUsageDetails(result) {
       labels[entry.kind] || entry.kind || '-',
       entry.modelName || entry.providerId || '-',
       entry.name || '-',
-      formatCanvasUsagePoints(entry.estimatedCredits),
       entry.status === 'pending'
         ? t('Pending', '\u5f85\u7ed3\u7b97')
-        : formatCanvasUsagePoints(entry.creditsCharged ?? entry.credits)
+        : formatCanvasUsagePoints(entry.estimatedCredits)
     ].forEach((value, index) => {
       const cell = document.createElement('td');
       cell.textContent = value;
-      if (index === 4 && entry.estimatedCredits === null) cell.className = 'is-unrecorded';
-      if (index === 5 && entry.status === 'pending') cell.className = 'is-unrecorded';
+      if (index === 4 && (entry.estimatedCredits === null || entry.status === 'pending')) cell.className = 'is-unrecorded';
       row.appendChild(cell);
     });
     return row;

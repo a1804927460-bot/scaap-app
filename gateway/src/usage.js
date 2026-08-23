@@ -1242,6 +1242,8 @@ export async function getCanvasUsage(userId, canvasId, fetchImpl = fetch) {
       name: String(row.name || '').trim().slice(0, 240),
       estimatedCredits: row.estimatedCredits === null || row.estimatedCredits === undefined
         ? null : nonnegativeNumber(row.estimatedCredits),
+      historicalCreditsCharged: row.historicalCreditsCharged === null || row.historicalCreditsCharged === undefined
+        ? null : nonnegativeNumber(row.historicalCreditsCharged),
       creditsCharged: row.creditsCharged === null || row.creditsCharged === undefined
         ? null : nonnegativeNumber(row.creditsCharged),
       credits: nonnegativeNumber(row.credits),

@@ -4296,8 +4296,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .canvas-usage-table th:nth-child(1) { width: 150px; }
 .canvas-usage-table th:nth-child(2) { width: 70px; }
 .canvas-usage-table th:nth-child(3) { width: 190px; }
-.canvas-usage-table th:nth-child(5),
-.canvas-usage-table th:nth-child(6) { width: 92px; text-align: right; }
+.canvas-usage-table th:nth-child(5) { width: 110px; text-align: right; }
 .canvas-usage-table td:nth-child(5) { text-align: right; }
 .canvas-usage-table td:last-child { color: var(--text-primary); font-weight: 700; text-align: right; }
 .canvas-usage-table td.is-unrecorded { color: var(--text-tertiary); font-weight: 500; }

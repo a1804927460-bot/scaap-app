@@ -4678,8 +4678,86 @@ function createAiPlaceholders(request) {
   return items;
 }
 
+function aiMediaDeliveryTokens(files) {
+  return [...new Set((Array.isArray(files) ? files : [])
+    .map((file) => String(file && file.aiDeliveryToken || '').trim())
+    .filter(Boolean))];
+}
+
+async function confirmAiMediaDeliveries(files) {
+  const tokens = aiMediaDeliveryTokens(files);
+  if (!tokens.length) return Array.isArray(files) ? files : [];
+  if (!window.messsAPI || typeof window.messsAPI.confirmAiMediaDelivery !== 'function') {
+    throw new Error(t('The desktop service cannot confirm this AI result.', '桌面服务无法确认这个 AI 结果。'));
+  }
+  const confirmedFiles = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    const result = await window.messsAPI.confirmAiMediaDelivery(token);
+    if (!result || result.ok !== true) {
+      // If a multi-image request fails halfway through, release only the
+      // tokens that have not already been confirmed. The caller will remove
+      // the persisted files returned by the release path.
+      const remaining = new Set(tokens.slice(index));
+      try {
+        await releaseAiMediaDeliveries((Array.isArray(files) ? files : [])
+          .filter((file) => remaining.has(String(file && file.aiDeliveryToken || '').trim())));
+      } catch (releaseError) {
+        console.error('Could not release remaining AI media deliveries:', releaseError);
+      }
+      const error = new Error(result && result.message || t(
+        'The AI result could not be confirmed safely.',
+        'AI 结果无法安全确认。'
+      ));
+      error.code = result && result.reason || 'ai-delivery-confirmation-failed';
+      throw error;
+    }
+    if (Array.isArray(result.files)) confirmedFiles.push(...result.files);
+  }
+  const confirmedById = new Map(confirmedFiles.map((file) => [file.id, file]));
+  AppState.files = AppState.files.map((file) => confirmedById.get(file.id) || file);
+  renderFileList(currentFileListScope());
+  renderFolderGridIfActive();
+  return Array.isArray(files) ? files.map((file) => confirmedById.get(file.id) || file) : [];
+}
+
+async function releaseAiMediaDeliveries(files) {
+  const tokens = aiMediaDeliveryTokens(files);
+  if (!tokens.length) return [];
+  if (!window.messsAPI || typeof window.messsAPI.releaseAiMediaDelivery !== 'function') {
+    throw new Error(t('The desktop service cannot release this AI result.', '桌面服务无法释放这个 AI 结果。'));
+  }
+  const removedFileIds = new Set();
+  for (const token of tokens) {
+    const result = await window.messsAPI.releaseAiMediaDelivery(token);
+    if (!result || result.ok !== true) {
+      const error = new Error(result && result.message || t(
+        'The failed AI result could not be released safely.',
+        '失败的 AI 结果无法安全释放积分。'
+      ));
+      error.code = result && result.reason || 'ai-delivery-release-failed';
+      throw error;
+    }
+    (result.removedFileIds || []).forEach((id) => removedFileIds.add(String(id)));
+  }
+  if (removedFileIds.size) {
+    const removedBoardItemIds = AppState.allBoardItems
+      .filter((item) => removedFileIds.has(String(item && item.fileId || '')))
+      .map((item) => item.id);
+    AppState.allBoardItems = AppState.allBoardItems.filter((item) => !removedFileIds.has(String(item && item.fileId || '')));
+    AppState.boardItems = AppState.boardItems.filter((item) => !removedFileIds.has(String(item && item.fileId || '')));
+    canvasWorkspaceRemoveItems(removedBoardItemIds);
+    AppState.files = AppState.files.filter((file) => !removedFileIds.has(String(file && file.id || '')));
+    renderBoard();
+    renderFileList(currentFileListScope());
+    renderFolderGridIfActive();
+  }
+  return [...removedFileIds];
+}
+
 async function replaceAiPlaceholders(placeholders, files, request, persistedItems = []) {
   const updates = [];
+  const workingBoardItems = AppState.allBoardItems.slice();
   files.forEach((file) => invalidateBoardPreview(file.id));
   const placeholderIds = new Set(placeholders.map((placeholder) => placeholder.id));
   const replacedIds = new Set();
@@ -4690,8 +4768,8 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
   const fallbackFiles = files.filter((file) => !persistedFileIds.has(file.id));
   let fallbackFileIndex = 0;
   placeholders.forEach((placeholder, index) => {
-    const itemIndex = AppState.allBoardItems.findIndex((item) => item.id === placeholder.id);
-    const livePlaceholder = itemIndex >= 0 ? AppState.allBoardItems[itemIndex] : placeholder;
+    const itemIndex = workingBoardItems.findIndex((item) => item.id === placeholder.id);
+    const livePlaceholder = itemIndex >= 0 ? workingBoardItems[itemIndex] : placeholder;
     const persistedItem = persistedById.get(placeholder.id);
     const file = persistedItem
       ? files.find((entry) => entry.id === persistedItem.fileId)
@@ -4731,8 +4809,8 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
     }
     delete item.isAiPlaceholder;
     item.selected = index === 0;
-    if (itemIndex < 0) AppState.allBoardItems.push(item);
-    else AppState.allBoardItems[itemIndex] = item;
+    if (itemIndex < 0) workingBoardItems.push(item);
+    else workingBoardItems[itemIndex] = item;
     replacedIds.add(item.id);
     updates.push(item);
   });
@@ -4763,29 +4841,35 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
         aspectRatio: sourceWidth > 0 && sourceHeight > 0
           ? `${Math.round(sourceWidth)}:${Math.round(sourceHeight)}`
           : request.aspectRatio,
-        zIndex: AppState.allBoardItems.length + index + 1,
+        zIndex: workingBoardItems.length + index + 1,
         selected: updates.length === 0 && index === 0
       };
-      AppState.allBoardItems.push(item);
+      workingBoardItems.push(item);
       updates.push(item);
     });
   }
-  AppState.allBoardItems = AppState.allBoardItems.filter((item) =>
-    !placeholderIds.has(item.id) || replacedIds.has(item.id)
-  );
-  AppState.boardItems = AppState.allBoardItems.filter((item) => (item.canvasId || 'canvas-1') === activeCanvasId());
-  // The generated file and the replacement geometry are already available in
-  // memory. Render them before persistence so the result lands in the exact
-  // placeholder position without waiting for the storage round trip.
-  renderBoard();
-  if (typeof renderCanvasLibrary === 'function') renderCanvasLibrary();
+  // Persist the final board items before replacing the in-memory placeholders.
+  // A failed IPC write must leave the placeholder visible so the caller can
+  // release the gateway reservation instead of charging a vanished result.
   if (typeof window.messsAPI.upsertBoardItems === 'function') {
     await window.messsAPI.upsertBoardItems(updates);
   } else {
     await Promise.all(updates.map((item) => window.messsAPI.upsertBoardItem(item)));
   }
+  AppState.allBoardItems = workingBoardItems.filter((item) =>
+    !placeholderIds.has(item.id) || replacedIds.has(item.id)
+  );
+  AppState.boardItems = AppState.allBoardItems.filter((item) => (item.canvasId || 'canvas-1') === activeCanvasId());
+  renderBoard();
+  if (typeof renderCanvasLibrary === 'function') renderCanvasLibrary();
   canvasWorkspaceTouch(request.canvasId || activeCanvasId());
-  await canvasWorkspaceSave();
+  try {
+    await canvasWorkspaceSave();
+  } catch (error) {
+    // Board item persistence already succeeded. A canvas metadata write must
+    // not make the renderer report a failed generation after it is visible.
+    console.warn('AI result was placed, but canvas metadata sync is pending:', error && error.message || error);
+  }
 }
 
 function removeAiPlaceholders(placeholders) {
@@ -4796,6 +4880,7 @@ function removeAiPlaceholders(placeholders) {
     })
     .map((item) => item.id));
   if (!ids.size) return;
+  AppState.allBoardItems = AppState.allBoardItems.filter((item) => !ids.has(item.id));
   AppState.boardItems = AppState.boardItems.filter((item) => !ids.has(item.id));
   canvasWorkspaceRemoveItems([...ids]);
   ids.forEach((id) => {
@@ -6508,6 +6593,7 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
   const controls = [...pop.querySelectorAll('button, textarea, select, input')];
   controls.forEach((control) => { control.disabled = true; });
   const placeholders = createAiPlaceholders(request);
+  let generatedFiles = [];
   const startedAt = Date.now();
   status.textContent = '已提交';
   const progressTimer = setInterval(() => {
@@ -6521,6 +6607,7 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
       : null;
     const res = await window.messsAPI.generateAiMedia({ ...request, folderId, canvasId: activeCanvasId() });
     const files = res && Array.isArray(res.files) ? res.files : (res && res.file ? [res.file] : []);
+    generatedFiles = files;
     if (!res || !res.ok || !files.length) {
       const message = res && res.reason === 'missing-api-key'
         ? '请先在设置的 AI 接口管理中保存接口密钥。'
@@ -6534,6 +6621,7 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
     renderFileList(currentFileListScope());
     renderFolderGridIfActive();
     await replaceAiPlaceholders(placeholders, files, request, res.boardItems || []);
+    generatedFiles = await confirmAiMediaDeliveries(files);
     selectFileForPreview(files[0].id);
     if (res.unlocked && res.unlocked.length) await refreshAchievements();
     const fallbackNotice = res.fallback && res.fallback.notice ? res.fallback.notice : '';
@@ -6546,6 +6634,11 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
     if (fallbackNotice) showToast(fallbackNotice, 'AI');
     closeAiImagePopover();
   } catch (err) {
+    if (generatedFiles.length) {
+      try { await releaseAiMediaDeliveries(generatedFiles); } catch (releaseError) {
+        console.error('Could not release a failed AI media result:', releaseError);
+      }
+    }
     removeAiPlaceholders(placeholders);
     showToast(err && err.message ? err.message : 'AI 生成失败。', 'AI');
   } finally {
@@ -6563,6 +6656,7 @@ async function generateAiMediaForBoardV3(request) {
   const generationRequest = { ...request, canvasId: targetCanvasId };
   const placeOnBoard = request.placeOnBoard !== false;
   const placeholders = placeOnBoard ? createAiPlaceholders(generationRequest) : [];
+  let generatedFiles = [];
 
   try {
     // Give the user an immediate, correctly positioned pending card while the
@@ -6589,6 +6683,7 @@ async function generateAiMediaForBoardV3(request) {
     const res = await window.messsAPI.generateAiMedia({ ...generationRequest, folderId, placements });
     if (res && res.membership) window.MesssCredits.publish(res.membership);
     const files = res && Array.isArray(res.files) ? res.files : (res && res.file ? [res.file] : []);
+    generatedFiles = files;
     if (!res || !res.ok || !files.length) {
       const message = res && res.reason === 'missing-api-key'
         ? t(
@@ -6608,6 +6703,7 @@ async function generateAiMediaForBoardV3(request) {
       await replaceAiPlaceholders(placeholders, files, generationRequest, res.boardItems || []);
       selectFileForPreview(files[0].id);
     }
+    generatedFiles = await confirmAiMediaDeliveries(files);
     if (res.unlocked && res.unlocked.length) await refreshAchievements();
     const fallbackNotice = res.fallback && res.fallback.notice ? res.fallback.notice : '';
 
@@ -6624,20 +6720,15 @@ async function generateAiMediaForBoardV3(request) {
             `${files.length} AI image${files.length === 1 ? '' : 's'} added to the canvas`,
             `${files.length} 张 AI 图片已加入画布`
           );
-    const settledCharge = res.creditsCharged !== null
-      && res.creditsCharged !== undefined
-      && Number.isFinite(Number(res.creditsCharged))
-      ? Math.max(0, Math.round(Number(res.creditsCharged)))
-      : null;
-    showToast(
-      settledCharge === null
-        ? successMessage
-        : `${successMessage} · ${t(`Actual charge: ${settledCharge} points`, `实际扣除 ${settledCharge} 积分`)}`,
-      'AI'
-    );
+    showToast(successMessage, 'AI');
     if (fallbackNotice) showToast(fallbackNotice, 'AI');
-    return files;
+    return generatedFiles;
   } catch (err) {
+    if (generatedFiles.length) {
+      try { await releaseAiMediaDeliveries(generatedFiles); } catch (releaseError) {
+        console.error('Could not release a failed AI media result:', releaseError);
+      }
+    }
     removeAiPlaceholders(placeholders);
     showToast(err && err.message ? err.message : t('AI generation failed.', 'AI 生成失败。'), 'AI');
     return [];

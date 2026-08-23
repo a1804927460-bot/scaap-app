@@ -105,7 +105,7 @@ assert.match(boardMedia, /topaz-video-upscale/, 'Video enhancement must use the 
 assert.doesNotMatch(boardMedia, /aion-1/, 'Video enhancement must expose only models documented by the 302 Topaz endpoint.');
 assert.match(boardMedia, /board-butler-cost-estimate/, 'Video enhancement must show a parameter-sensitive points estimate.');
 assert.match(boardMedia, /function updateBoardButlerVideoState[\s\S]*?'credits'[\s\S]*?'creditsCharged'[\s\S]*?result/, 'The accepted Topaz quote must update the visible task cost.');
-assert.match(boardMedia, /task\.creditsCharged \?\? task\.credits[\s\S]*?const points[\s\S]*?task\.status === 'success'[\s\S]*?\$\{done\}[^\n]*\$\{points\}/, 'The completed Topaz task must show the actual charged points.');
+assert.match(boardMedia, /if \(task\.status === 'success'\) return t\('Done', '完成', '완료'\)/, 'The completed Topaz task must show completion without exposing the settled charge.');
 assert.match(boardMedia, /phase === 'queued'[\s\S]*?phase === 'downloading'[\s\S]*?phase === 'saving'/, 'Video enhancement must expose its queue, download, and canvas-save phases.');
 assert.match(
   boardMedia,
@@ -118,7 +118,8 @@ assert.match(
   'Every Topaz status and result bridge must share the transient retry policy.'
 );
 assert.match(boardMedia, /BOARD_BUTLER_VIDEO_EXTENSIONS[\s\S]*?\.mp4[\s\S]*?\.mkv[\s\S]*?appendBoardVideoButlerToolbar/, 'The Butler video entry must use the same supported container list as the desktop bridge.');
-assert.match(boardMedia, /const billingOperation = file\.aiGeneration \|\| file\.butlerOperation[\s\S]*?rawEstimatedCredits[\s\S]*?rawChargedCredits[\s\S]*?creditsCharged/, 'Generated-media details must preserve both estimated and charged points.');
+assert.match(boardMedia, /const billingOperation = file\.aiGeneration \|\| file\.butlerOperation[\s\S]*?rawEstimatedCredits[\s\S]*?estimatedCredits/, 'Generated-media details must preserve the protected estimate.');
+assert.doesNotMatch(boardMedia, /Generated-media details[\s\S]{0,160}rawChargedCredits/, 'Generated-media details must not expose the settled charge in the renderer.');
 assert.match(boardMedia, /butler-video-model[\s\S]*filters:\s*\[\{[\s\S]*videoType:[\s\S]*audioTransfer: 'Copy'/, 'Video enhancement must send the selected documented filter/output shape.');
 assert.match(boardCanvas, /appendBoardVideoButlerToolbar\(el, f, item\)/, 'Selected videos must expose the Butler capsule.');
 assert.match(

@@ -1783,9 +1783,29 @@ async function handle(request, response) {
     if (!validTaskToken(taskToken) || !taskToken.startsWith('d_')) {
       return send(response, 404, { code: 'video-task-not-found', message: 'Video task not found.' });
     }
+    const contentType = String(body && body.contentType || '').trim().toLowerCase().split(';', 1)[0];
+    const bytes = Number(body && body.bytes);
+    if (!/^video\/[a-z0-9.+-]+$/i.test(contentType)
+      || !Number.isSafeInteger(bytes)
+      || bytes <= 0
+      || bytes > MAX_GENERATED_VIDEO_BYTES) {
+      // A confirmation is proof of a durable local delivery. Invalid metadata
+      // is therefore a failed delivery and must release the reservation.
+      const released = await failVideoDownload(user.id, taskToken, {
+        code: 'invalid-delivery-confirmation',
+        message: 'The generated video delivery could not be verified.'
+      });
+      return send(response, 200, {
+        settlement: {
+          ...released,
+          status: String(released && released.status || 'failed'),
+          creditsCharged: 0
+        }
+      });
+    }
     const settlement = await settleVideoDownload(user.id, taskToken, {
-      contentType: body && body.contentType,
-      bytes: Math.min(MAX_GENERATED_VIDEO_BYTES, Math.max(0, Math.round(Number(body && body.bytes) || 0)))
+      contentType,
+      bytes
     });
     if (!settlement || settlement.ok !== true) {
       const insufficient = settlement && settlement.reason === 'insufficient-credits';
@@ -1809,7 +1829,13 @@ async function handle(request, response) {
       code: 'local-delivery-failed',
       message: 'The generated video could not be saved to the local canvas.'
     });
-    return send(response, 200, { settlement: released });
+    return send(response, 200, {
+      settlement: {
+        ...released,
+        status: String(released && released.status || 'failed'),
+        creditsCharged: 0
+      }
+    });
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/media/video/tasks/download') {

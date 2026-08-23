@@ -394,6 +394,7 @@ const rebuiltPricingMigration = fs.readFileSync(path.join(__dirname, '..', 'supa
 const proportionalPricingMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608200003_percentage_markup_credit_pricing.sql'), 'utf8');
 const approvedPricingMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608220002_approved_retail_pricing.sql'), 'utf8');
 const settledUsageReportMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608220007_reprice_settled_usage_reporting.sql'), 'utf8');
+const authoritativeUsageReportMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608230002_authoritative_settled_usage_reporting.sql'), 'utf8');
 const legnextMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608180005_legnext_midjourney_credits.sql'), 'utf8');
 const redemptionMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608180002_three_666_credit_codes.sql'), 'utf8');
 const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
@@ -467,30 +468,37 @@ assert.match(settledUsageReportMigration, /historicalCreditsCharged/i);
 assert.match(settledUsageReportMigration, /greatest\(\s*0, coalesce\(usage_row\.credits_charged, 0\), coalesce\(/i);
 assert.match(settledUsageReportMigration, /quote_retail_credits_from_upstream_points/i);
 assert.match(settledUsageReportMigration, /quote_video_retail_credits_from_upstream_points/i);
+assert.match(authoritativeUsageReportMigration, /immutable ai_usage\.credits_charged value/i);
+assert.match(authoritativeUsageReportMigration, /create or replace function public\.authoritative_ai_usage_summary/i);
+assert.match(authoritativeUsageReportMigration, /greatest\(0, coalesce\(usage_row\.credits_charged, 0\)\)/i);
+assert.match(authoritativeUsageReportMigration, /get_canvas_ai_usage_summary_legacy_repriced/i);
+assert.doesNotMatch(authoritativeUsageReportMigration, /current_policy_ai_usage_credits/i);
 assert.doesNotMatch(unifiedPricingMigration, /Chaser0713|staff15/);
 assert.strictEqual((redemptionMigration.match(/, 666, false, 1, null, true\)/g) || []).length, 3);
 assert.strictEqual((redemptionMigration.match(/'[0-9a-f]{64}'/g) || []).length, 3);
 assert.doesNotMatch(redemptionMigration, /MESSS-666-/);
 assert.match(
   mainSource,
-  /let creditsCharged = 0;[\s\S]*?const confirmedCharge = delivery[\s\S]*?const resultCharge = Number\.isFinite\(confirmedCharge\)[\s\S]*?creditsCharged \+= resultCharge/,
-  'Successful outputs must accumulate the delivery-confirmed charge.'
+  /const isPendingDelivery = !!aiDeliveryToken[\s\S]*?const resultCharge = isPendingDelivery[\s\S]*?deliveryGroup\.settledCredits \+= resultCharge/,
+  'Successful outputs must defer settlement until the opaque delivery token is confirmed.'
 );
 assert.match(
   mainSource,
-  /settledCredits: creditsCharged[\s\S]*?estimatedCredits: kind === 'video'[\s\S]*?authoritativeVideoEstimate[\s\S]*?creditsCharged,[\s\S]*?pricing:/,
-  'Successful generation must return the estimate, normalized pricing and the charge for successful outputs only.'
+  /estimatedCredits: kind === 'video'[\s\S]*?authoritativeVideoEstimate[\s\S]*?pricing:/,
+  'Successful generation must return the retail estimate and normalized pricing.'
 );
 assert.match(
   assistantSource,
-  /appendAssistantMedia\(files, submittedKind, response\.creditsCharged\)[\s\S]*?Actual charge:[\s\S]*?实际扣除/,
-  'The assistant must show the settled charge returned by the main process.'
+  /function appendAssistantMedia\(files, kind\)[\s\S]*?body\.textContent = completionText;/,
+  'The assistant must show completion without exposing the settled charge.'
 );
+assert.doesNotMatch(assistantSource, /Actual charge:|实际扣除/);
 assert.match(
   boardSource,
-  /const settledCharge = res\.creditsCharged[\s\S]*?Actual charge:[\s\S]*?实际扣除/,
-  'The canvas must show the settled charge returned by the main process.'
+  /await confirmAiMediaDeliveries\(files\)/,
+  'The canvas must confirm delivery only after the persisted board placement.'
 );
+assert.doesNotMatch(boardSource, /Actual charge:|实际扣除/);
 
 async function assertGatewayPricingParity() {
   const { quoteUsage } = await import(pathToFileURL(path.join(__dirname, '..', 'gateway', 'src', 'usage.js')).href);

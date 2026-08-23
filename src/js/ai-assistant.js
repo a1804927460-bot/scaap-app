@@ -1406,7 +1406,7 @@ function appendAssistantText(role, text, className = '') {
   return row;
 }
 
-function appendAssistantMedia(files, kind, creditsCharged) {
+function appendAssistantMedia(files, kind) {
   const messages = document.getElementById('ai-assistant-messages');
   const row = document.createElement('div');
   row.className = 'ai-assistant-message is-assistant';
@@ -1415,12 +1415,7 @@ function appendAssistantMedia(files, kind, creditsCharged) {
   const completionText = kind === 'video'
     ? t('Video generated and saved to the library.', '视频已生成并保存到资料库。')
     : t(`${files.length} image${files.length === 1 ? '' : 's'} generated and saved to the library.`, `${files.length} 张图片已生成并保存到资料库。`);
-  const hasSettledCharge = creditsCharged !== null
-    && creditsCharged !== undefined
-    && Number.isFinite(Number(creditsCharged));
-  body.textContent = hasSettledCharge
-    ? `${completionText} ${t(`Actual charge: ${Math.max(0, Math.round(Number(creditsCharged)))} points.`, `实际扣除 ${Math.max(0, Math.round(Number(creditsCharged)))} 积分。`)}`
-    : completionText;
+  body.textContent = completionText;
   const grid = document.createElement('div');
   grid.className = 'ai-assistant-media-grid';
 
@@ -1568,6 +1563,7 @@ async function submitAssistantMessage() {
         : t(`Using ${modelName} for ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`, `正在使用 ${modelNameZh} 生成 ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`);
   }, 1000);
   let mediaPlaceholders = [];
+  let generatedMediaFiles = [];
 
   try {
     if (submittedKind === 'chat') {
@@ -1632,6 +1628,7 @@ async function submitAssistantMessage() {
       const files = response && Array.isArray(response.files)
         ? response.files
         : (response && response.file ? [response.file] : []);
+      generatedMediaFiles = files;
       if (!response || !response.ok || !files.length) {
         throw new Error((response && response.message) || t('AI generation failed.', 'AI 生成失败。'));
       }
@@ -1645,26 +1642,27 @@ async function submitAssistantMessage() {
         const center = boardViewportCenterCoords();
         await addFilesToBoard(files.map((file) => file.id), center.x, center.y);
       }
+      generatedMediaFiles = await confirmAiMediaDeliveries(files);
       renderFileList(currentFileListScope());
       renderFolderGridIfActive();
       if (response.unlocked && response.unlocked.length) await refreshAchievements();
       pending.remove();
-      appendAssistantMedia(files, submittedKind, response.creditsCharged);
+      appendAssistantMedia(generatedMediaFiles, submittedKind);
       if (response.fallback && response.fallback.notice) showToast(response.fallback.notice, 'AI');
-      const settledCharge = Number.isFinite(Number(response.creditsCharged))
-        ? Math.max(0, Math.round(Number(response.creditsCharged)))
-        : null;
       AiAssistant.messages.push({
         role: 'assistant',
         content: `${submittedKind === 'video'
           ? t('Video generated and saved to the library.', '视频已生成并保存到资料库。')
-          : t(`${files.length} image${files.length === 1 ? '' : 's'} generated and saved to the library.`, `${files.length} 张图片已生成并保存到资料库。`)}${settledCharge === null
-          ? ''
-          : ` ${t(`Actual charge: ${settledCharge} points.`, `实际扣除 ${settledCharge} 积分。`)}`}`
+          : t(`${generatedMediaFiles.length} image${generatedMediaFiles.length === 1 ? '' : 's'} generated and saved to the library.`, `${generatedMediaFiles.length} 张图片已生成并保存到资料库。`)}`
       });
       persistActiveAiChatSession();
     }
   } catch (err) {
+    if (generatedMediaFiles.length) {
+      try { await releaseAiMediaDeliveries(generatedMediaFiles); } catch (releaseError) {
+        console.error('Could not release a failed AI media result:', releaseError);
+      }
+    }
     if (mediaPlaceholders.length && typeof removeAiPlaceholders === 'function') {
       removeAiPlaceholders(mediaPlaceholders);
       mediaPlaceholders = [];
