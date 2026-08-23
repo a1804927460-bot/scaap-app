@@ -276,7 +276,9 @@ function showToast(message, emoji) {
     toast.appendChild(e);
   }
   const span = document.createElement('span');
-  span.textContent = message;
+  span.textContent = typeof window.publicAiErrorMessage === 'function'
+    ? window.publicAiErrorMessage(message)
+    : String(message || '');
   toast.appendChild(span);
   toast.hidden = false;
   requestAnimationFrame(() => toast.classList.add('is-visible'));

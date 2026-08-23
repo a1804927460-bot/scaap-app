@@ -6,6 +6,7 @@ import {
   storeAi302RelayAsset,
   stripImageMetadata
 } from './ai302-tools.js';
+import { normalizeVideoResolution } from './video-resolution.js';
 
 const require = createRequire(import.meta.url);
 const {
@@ -41,7 +42,10 @@ function shouldTryProviderFallback(error) {
   const code = String(error.code || '').trim().toLowerCase();
   if (['provider-invalid-response', 'provider-result-missing', 'provider-download-failed'].includes(code)) return true;
   const status = Number(error.status);
-  return [408, 425, 429].includes(status) || status >= 500;
+  // A preferred routed credential can be rotated or temporarily rejected
+  // while the same logical model still has a configured secondary route.
+  // Let the route list decide whether a safe fallback exists.
+  return [401, 403, 408, 425, 429].includes(status) || status >= 500;
 }
 
 function safeServerEndpoint(value) {
@@ -811,12 +815,16 @@ function nestedVideoTaskObject(value, keys, seen = new Set(), depth = 0) {
 }
 
 function providerVideoTaskId(payload) {
-  return String(nestedVideoTaskValue(payload, ['request_id', 'requestId', 'task_id', 'taskId', 'id']) || '').trim();
+  return String(nestedVideoTaskValue(payload, [
+    'request_id', 'requestId', 'prediction_id', 'predictionId',
+    'generation_id', 'generationId', 'task_id', 'taskId', 'id'
+  ]) || '').trim();
 }
 
 function providerVideoTaskStatus(payload) {
   return normalizeVideoTaskStatus(nestedVideoTaskValue(payload, [
-    'task_status', 'taskStatus', 'status', 'state'
+    'task_status', 'taskStatus', 'prediction_status', 'predictionStatus',
+    'task_state', 'taskState', 'status', 'state'
   ]));
 }
 
@@ -1030,7 +1038,7 @@ function validatedVideoTaskInput(provider, body) {
   if (mode.id === 'text' && textRatios.length && ratio === 'adaptive' && textRatios.includes('16:9')) {
     ratio = '16:9';
   }
-  const resolution = String(body.resolution || '').toUpperCase();
+  const resolution = normalizeVideoResolution(body.resolution || body.size, provider.id, provider.model);
   const duration = Number(body.duration);
   const configuredRatios = mode.id === 'text' && Array.isArray(capabilities.textRatios)
     ? capabilities.textRatios
@@ -1419,7 +1427,7 @@ function atlasVideoTaskInput(provider, body) {
       });
     }
   }
-  const resolution = String(body.resolution || '').trim().toUpperCase();
+  const resolution = normalizeVideoResolution(body.resolution || body.size, provider.id, provider.model);
   const validResolutions = new Set((Array.isArray(capabilities.resolutions) ? capabilities.resolutions : [])
     .map((value) => String(value).toUpperCase()));
   if (!validResolutions.has(resolution)) {
@@ -2003,19 +2011,51 @@ export async function pollVideoTask(providerId, taskId, signal) {
 }
 
 export async function chat(body, signal) {
-  const provider = providerFor('chat', String(body.providerId || ''));
+  const requestedProviderId = String(body.providerId || '').trim().toLowerCase();
   const requestedModel = String(body.model || '').trim();
-  const logicalModel = provider.models.includes(requestedModel) ? requestedModel : provider.models[0];
-  const model = provider.upstreamModels && provider.upstreamModels[logicalModel]
-    ? provider.upstreamModels[logicalModel]
-    : logicalModel;
-  return requestChat(fetch, {
+  const configured = configuredProviders().filter((entry) => entry.kind === 'chat');
+  const requestedProvider = configured.find((entry) => entry.id === requestedProviderId);
+  const modelMatches = (provider) => provider && provider.models.some((entry) => (
+    String(entry).trim().toLowerCase() === requestedModel.toLowerCase()
+  ));
+  // Older desktop builds could send chat-1 together with the model selected
+  // from chat-2. Correct that mismatch server-side so a stale local setting
+  // cannot make Luna appear unavailable.
+  const selected = requestedProvider && requestedModel && !modelMatches(requestedProvider)
+    ? configured.find(modelMatches) || requestedProvider
+    : requestedProvider || configured.find(modelMatches) || configured[0];
+  if (!selected) {
+    throw Object.assign(new Error('No chat provider is configured.'), { code: 'provider-not-configured' });
+  }
+  const provider = providerFor('chat', selected.id);
+  const logicalModel = provider.models.find((entry) => (
+    String(entry).trim().toLowerCase() === requestedModel.toLowerCase()
+  )) || provider.models[0] || requestedModel;
+  const upstreamModel = provider.upstreamModels && Object.entries(provider.upstreamModels).find(([logical]) => (
+    String(logical).trim().toLowerCase() === String(logicalModel).trim().toLowerCase()
+  ));
+  const model = upstreamModel ? upstreamModel[1] : logicalModel;
+  const request = { prompt: body.prompt, messages: body.messages };
+  const requestWithModel = (chatModel) => requestChat(fetch, {
     apiKey: provider.apiKey,
     chatEndpoint: provider.endpoint,
     chatProviderName: provider.name,
-    chatModel: model || requestedModel,
+    chatModel,
     returnUsage: true
-  }, { prompt: body.prompt, messages: body.messages }, signal);
+  }, request, signal);
+  try {
+    return await requestWithModel(model || requestedModel);
+  } catch (error) {
+    const status = Number(error && error.status);
+    const message = String(error && error.message || '');
+    const modelRejected = [400, 404].includes(status)
+      && /model|not found|unsupported|does not exist|invalid/i.test(message);
+    // QuickRouter may expose either the upstream model name or the logical
+    // catalog alias during a rollout. Retry only that narrow mismatch; never
+    // replay transport failures or arbitrary provider errors.
+    if (!modelRejected || !logicalModel || String(model).trim() === String(logicalModel).trim()) throw error;
+    return requestWithModel(logicalModel);
+  }
 }
 
 export async function models(providerId) {

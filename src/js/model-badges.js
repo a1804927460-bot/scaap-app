@@ -31,7 +31,9 @@ function appendAiModelLabel(container, provider, options = {}) {
   if (kind && options.icon !== false) container.appendChild(createAiModelBadge(kind));
   const label = document.createElement('span');
   label.className = 'ai-model-label-text';
-  label.textContent = String(provider && (provider.name || provider.model) || '');
+  label.textContent = typeof publicModelLabel === 'function'
+    ? publicModelLabel(provider && (provider.name || provider.model) || '')
+    : String(provider && (provider.name || provider.model) || '');
   container.appendChild(label);
   if (kind === 'banana-pro' && options.sparkle !== false) {
     const sparkle = document.createElement('span');

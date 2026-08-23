@@ -547,7 +547,7 @@ function renderAssistantModels() {
   providers.forEach((provider) => {
     const option = document.createElement('option');
     option.value = provider.id;
-    option.textContent = provider.name;
+    option.textContent = typeof publicModelLabel === 'function' ? publicModelLabel(provider.name) : provider.name;
     if (provider.providerId) option.dataset.providerId = provider.providerId;
     if (provider.model) option.dataset.model = provider.model;
     select.appendChild(option);
@@ -588,7 +588,9 @@ function renderAssistantModels() {
   menu.hidden = true;
   const selected = providers.find((provider) => provider.id === select.value) || providers[0];
   picker.hidden = !selected;
-  label.textContent = selected ? selected.name : t('No provider configured', '未配置服务商');
+  label.textContent = selected
+    ? (typeof publicModelLabel === 'function' ? publicModelLabel(selected.name) : selected.name)
+    : t('No provider configured', '未配置服务商');
   if (selected) appendAiModelLabel(label, selected);
   document.getElementById('ai-assistant-submit').disabled = !selected;
   menu.querySelectorAll('.ai-model-picker-option').forEach((option) => {
@@ -1545,8 +1547,12 @@ async function submitAssistantMessage() {
   }
 
   setAssistantBusy(true);
-  const modelName = submittedProvider ? submittedProvider.name : 'OpenAI Compatible';
-  const modelNameZh = submittedProvider ? submittedProvider.name : t('OpenAI Compatible', 'OpenAI 兼容');
+  const modelName = submittedProvider
+    ? (typeof publicModelLabel === 'function' ? publicModelLabel(submittedProvider.name) : submittedProvider.name)
+    : 'AI model';
+  const modelNameZh = submittedProvider
+    ? (typeof publicModelLabel === 'function' ? publicModelLabel(submittedProvider.name) : submittedProvider.name)
+    : t('AI model', 'AI 模型');
   const pending = appendAssistantText(
     'assistant',
     submittedKind === 'chat'
@@ -1670,7 +1676,9 @@ async function submitAssistantMessage() {
     pending.classList.remove('is-pending');
     pending.classList.add('is-error');
     pending.querySelector('.ai-assistant-message-body').textContent =
-      err && err.message ? err.message : t('Request failed. Please try again.', '请求失败，请重试。');
+      typeof publicAiErrorMessage === 'function'
+        ? publicAiErrorMessage(err && err.message, t('Request failed. Please try again.', '请求失败，请重试。'))
+        : (err && err.message ? err.message : t('Request failed. Please try again.', '请求失败，请重试。'));
   } finally {
     clearInterval(progress);
     setAssistantBusy(false);
@@ -1781,7 +1789,9 @@ function initAiAssistant() {
   });
   document.getElementById('ai-assistant-upload').addEventListener('click', () => {
     uploadAssistantFiles().catch((err) => {
-      showToast(err && err.message ? err.message : t('The file could not be uploaded.', '文件上传失败。'), 'AI');
+      showToast(typeof publicAiErrorMessage === 'function'
+        ? publicAiErrorMessage(err && err.message, t('The file could not be uploaded.', '文件上传失败。'))
+        : (err && err.message ? err.message : t('The file could not be uploaded.', '文件上传失败。')), 'AI');
     });
   });
   document.getElementById('ai-assistant-model-trigger').addEventListener('click', (event) => {

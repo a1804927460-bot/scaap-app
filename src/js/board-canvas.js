@@ -5503,7 +5503,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
 
   function firstLastFrameUnsupportedMessage() {
     const provider = selectedVideoProvider();
-    const modelName = provider && provider.name ? provider.name : t('This model', '当前模型');
+    const modelName = provider && provider.name
+      ? (typeof publicModelLabel === 'function' ? publicModelLabel(provider.name) : provider.name)
+      : t('This model', '当前模型');
     return t(
       `${modelName} does not support first and last frames. Choose a compatible model or remove the last frame.`,
       `${modelName} 不支持首尾帧，请更换支持首尾帧的模型或移除尾帧。`
@@ -5757,7 +5759,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     options.forEach((provider) => {
       const option = document.createElement('option');
       option.value = provider.id;
-      option.textContent = provider.name;
+      option.textContent = typeof publicModelLabel === 'function' ? publicModelLabel(provider.name) : provider.name;
       modelSelect.appendChild(option);
     });
     if (kind === 'image' && providers.some((provider) => provider.id === aiConfig.activeImageProviderId)) {
@@ -5798,7 +5800,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       modelPickerMenu.appendChild(option);
     });
     const selected = options.find((provider) => provider.id === modelSelect.value) || options[0];
-    modelPickerLabel.textContent = selected ? selected.name : t('No model configured', '未配置模型');
+    modelPickerLabel.textContent = selected
+      ? (typeof publicModelLabel === 'function' ? publicModelLabel(selected.name) : selected.name)
+      : t('No model configured', '未配置模型');
     if (selected) appendAiModelLabel(modelPickerLabel, selected, { sparkle: false });
     // A running request must not disable a newly opened composer. Each
     // submission owns its own request and placeholder state.
@@ -6513,7 +6517,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       videoMode: kind === 'video' ? selectedMode.id : null,
       imageProviderId: kind === 'image' && selectedProvider ? selectedProvider.id : null,
       videoProviderId: kind === 'video' && selectedProvider ? selectedProvider.id : null,
-      modelName: selectedProvider ? selectedProvider.name : (aiConfig.videoProviderName || '视频生成'),
+      modelName: selectedProvider
+        ? (typeof publicModelLabel === 'function' ? publicModelLabel(selectedProvider.name) : selectedProvider.name)
+        : (typeof publicModelLabel === 'function' ? publicModelLabel(aiConfig.videoProviderName || '视频生成', '视频生成') : (aiConfig.videoProviderName || '视频生成')),
       enhancePrompt,
       seed,
       styleId,
@@ -6899,7 +6905,9 @@ async function submitBoardQuickGeneration(kind, promptText, options = {}) {
       sourceHeight: original.sourceHeight,
       imageProviderId: kind === 'image' && provider ? provider.id : null,
       videoProviderId: kind === 'video' && provider ? provider.id : null,
-      modelName: provider ? provider.name : t('Auto-detected API', '自动识别接口'),
+      modelName: provider
+        ? (typeof publicModelLabel === 'function' ? publicModelLabel(provider.name) : provider.name)
+        : t('Auto-detected API', '自动识别接口'),
       referenceFileIds,
       referenceMediaTypes: referenceData.referenceMediaTypes || referenceFileIds.map(() => 'image'),
       urls,

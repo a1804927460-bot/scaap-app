@@ -46,16 +46,16 @@ const USAGE_MODEL_NAMES = Object.freeze({
   'video-7': 'Seedance 1.0 Lite',
   'video-8': 'Jimeng Video 3.0',
   'video-9': 'Jimeng Video 3.0 Pro',
-  'topaz-image-sharpen': 'Topaz Image Sharpen',
-  'topaz-image-sharpen-gen': 'Topaz Generative Sharpen',
-  'topaz-image-enhance': 'Topaz Image Enhance',
-  'topaz-image-enhance-gen': 'Topaz Generative Enhance',
-  'topaz-image-denoise': 'Topaz Image Denoise',
-  'topaz-image-restore': 'Topaz Image Restore',
-  'topaz-image-lighting': 'Topaz Image Relight',
+  'topaz-image-sharpen': '图片超分',
+  'topaz-image-sharpen-gen': '增强超分',
+  'topaz-image-enhance': '图片增强',
+  'topaz-image-enhance-gen': '增强生成',
+  'topaz-image-denoise': '图片降噪',
+  'topaz-image-restore': '图片修复',
+  'topaz-image-lighting': '图片补光',
   'chat-1': 'Messs AI',
   'chat-2': 'AI Chat',
-  'topaz-video-upscale': 'Topaz Video AI',
+  'topaz-video-upscale': '视频超分',
   hunyuan3d: 'Hunyuan3D',
   hyper3d: 'Hyper3D',
   tripo3d: 'Tripo3D'
@@ -371,7 +371,10 @@ function renderUsageTypes(summary) {
 }
 
 function usageModelName(providerId) {
-  return USAGE_MODEL_NAMES[providerId] || providerId;
+  const label = USAGE_MODEL_NAMES[providerId] || providerId;
+  return typeof publicModelLabel === 'function'
+    ? publicModelLabel(label, usageText('AI model', 'AI 模型', 'AI 모델'))
+    : label;
 }
 
 function renderUsageModels(summary) {

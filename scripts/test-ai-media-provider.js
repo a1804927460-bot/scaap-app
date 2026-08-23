@@ -410,6 +410,46 @@ async function testGptImage2FlowAndReferenceLimits() {
   );
 }
 
+async function testGptImage2AsyncRelayFlow() {
+  const calls = [];
+  const generatedPng = pngHeader(1024, 1024);
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (options.method === 'POST') {
+      return jsonResponse({
+        id: 'gpt-image-async-task',
+        status: 'queued',
+        poll_url: 'https://api.302.ai/v1/images/tasks/gpt-image-async-task'
+      });
+    }
+    if (String(url) === 'https://api.302.ai/v1/images/tasks/gpt-image-async-task') {
+      return jsonResponse({
+        status: 'completed',
+        output: { url: 'https://cdn.test/gpt-image-async.png' }
+      });
+    }
+    if (String(url) === 'https://cdn.test/gpt-image-async.png') {
+      return { ok: true, status: 200, arrayBuffer: async () => generatedPng };
+    }
+    throw new Error(`Unexpected GPT Image 2 async URL: ${url}`);
+  };
+  const result = await generateMediaBuffer(fetchImpl, normalizeConfig({
+    apiKey: 'server-only-secret',
+    imageEndpoint: 'https://api.302.ai/v1/images/generations',
+    imageModel: 'gpt-image-2',
+    pollIntervalMs: 800,
+    timeoutMs: 10_000
+  }), 'image', {
+    prompt: 'async GPT Image 2 response',
+    size: '1K',
+    quality: 'medium',
+    aspectRatio: '1:1'
+  }, null, async () => {});
+  assert.deepStrictEqual(result, generatedPng);
+  assert.strictEqual(calls[1].url, 'https://api.302.ai/v1/images/tasks/gpt-image-async-task');
+  assert.strictEqual(calls[1].options.headers.Authorization, 'Bearer server-only-secret');
+}
+
 function testGeminiImageBody() {
   const body = buildGeminiImageBody({
     prompt: 'restyle this image',
@@ -440,8 +480,15 @@ async function testQuickRouterNativeGeminiImageFlow() {
   const calls = [];
   const pngBuffer = pngHeader(4096, 2304);
   const pngBase64 = pngBuffer.toString('base64');
+  const provider = catalogProvider('image-1');
+  assert.ok(provider);
+  assert.strictEqual(provider.name, 'Nano Banana Pro');
+  assert.strictEqual(provider.endpoint, 'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent');
+  let attempts = 0;
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url, options });
+    attempts += 1;
+    if (attempts === 1) return jsonResponse({ message: 'temporary upstream outage' }, 503);
     return jsonResponse({
       candidates: [{
         content: {
@@ -458,23 +505,25 @@ async function testQuickRouterNativeGeminiImageFlow() {
   };
   const config = normalizeConfig({
     apiKey: 'secret',
-    imageEndpoint: 'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image:generateContent'
+    imageEndpoint: provider.endpoint
   });
   const buffer = await generateMediaBuffer(fetchImpl, config, 'image', {
     prompt: 'blue glass city',
     size: '4K',
-    aspectRatio: '16:9'
-  });
+    aspectRatio: '16:9',
+    operationId: 'gemini-pro-operation-1'
+  }, null, async () => {});
 
   assert.deepStrictEqual(buffer, pngBuffer);
-  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls.length, 2);
   assert.strictEqual(
     calls[0].url,
-    'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image:generateContent'
+    provider.endpoint
   );
-  assert.strictEqual(calls[0].options.headers.Authorization, 'Bearer secret');
-  assert.strictEqual(calls[0].options.headers['x-goog-api-key'], undefined);
-  assert.deepStrictEqual(JSON.parse(calls[0].options.body).generationConfig.imageConfig, {
+  assert.strictEqual(calls[1].options.headers.Authorization, 'Bearer secret');
+  assert.strictEqual(calls[1].options.headers['x-goog-api-key'], undefined);
+  assert.strictEqual(calls[1].options.headers['Idempotency-Key'], 'gemini-pro-operation-1');
+  assert.deepStrictEqual(JSON.parse(calls[1].options.body).generationConfig.imageConfig, {
     aspectRatio: '16:9',
     imageSize: '4K'
   });
@@ -1102,6 +1151,7 @@ async function main() {
   await testQuickRouterFailureMessage();
   await testOpenAiImageFlow();
   await testGptImage2FlowAndReferenceLimits();
+  await testGptImage2AsyncRelayFlow();
   testSeedreamSizeAndRatioMapping();
   test302ImageModelBodies();
   await test302KlingMultiImageFlow();

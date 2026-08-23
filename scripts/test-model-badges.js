@@ -21,3 +21,4 @@ assert.equal(context.aiModelBadgeKind({ id: 'custom', model: 'doubao-seedream-5-
 assert.equal(context.aiModelBadgeKind({ id: 'video-1', name: 'MiniMax H3' }), null);
 
 console.log('Model badge tests passed.');
+require('./test-public-model-label');

@@ -7,6 +7,7 @@ import {
   quoteThreeDProviderCostPtcCents,
   quoteThreeDRetailCredits
 } from './tool-pricing.js';
+import { normalizeVideoResolution } from './video-resolution.js';
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
 export const CREDIT_PRICING_VERSION = '202608220007';
@@ -376,7 +377,11 @@ export function videoBillingProviderId(providerId, request = {}) {
   const requestedTier = String(request.serviceTier || '').trim().toLowerCase();
   if (Object.hasOwn(tierProviders, requestedTier)) return tierProviders[requestedTier];
 
-  const requestedResolution = String(request.resolution || '').trim().toUpperCase();
+  const requestedResolution = normalizeVideoResolution(
+    request.resolution || request.size,
+    normalizedProviderId,
+    request.model
+  );
   const resolutionProvider = Object.values(tierProviders).find((candidateId) => (
     Object.hasOwn(VIDEO_CREDITS_PER_SECOND[candidateId] || {}, requestedResolution)
   ));
@@ -458,7 +463,11 @@ export function quoteUsage(kind, request = {}) {
     if (!rates) {
       throw Object.assign(new Error('The selected video provider is not allowed.'), { code: 'provider-not-allowed', status: 400 });
     }
-    const requestedResolution = String(request.resolution || '').trim().toUpperCase();
+    const requestedResolution = normalizeVideoResolution(
+      request.resolution || request.size,
+      requestedProviderId,
+      request.model
+    );
     const defaultResolution = VIDEO_DEFAULT_RESOLUTIONS[providerId];
     const resolution = Object.hasOwn(rates, requestedResolution) ? requestedResolution : defaultResolution;
     const durationLimits = VIDEO_DURATION_LIMITS[providerId] || VIDEO_DURATION_LIMITS['video-1'];

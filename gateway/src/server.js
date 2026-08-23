@@ -83,6 +83,7 @@ import {
   startVideoJob,
   startVideoJobWorker
 } from './video-jobs.js';
+import { normalizeVideoResolution } from './video-resolution.js';
 
 const port = Math.max(1, Number(process.env.PORT) || 3000);
 const maxBodyBytes = 70 * 1024 * 1024;
@@ -585,7 +586,9 @@ function validateBody(body, kind) {
   }
   if (encodedBytes > 50 * 1024 * 1024) throw Object.assign(new Error('Reference images exceed the upstream request limit.'), { status: 413, code: 'attachments-too-large' });
   let requestedSize = normalizeImageSize(body.size);
-  const requestedResolution = String(body.resolution || '').trim().toUpperCase();
+  const requestedResolution = kind === 'video'
+    ? normalizeVideoResolution(body.resolution || body.size, providerId, capabilities.model || body.model)
+    : String(body.resolution || '').trim().toUpperCase();
   let requestedRatio = String(body.aspectRatio || '').trim();
   let requestedQuality = String(body.quality || 'auto').trim().toLowerCase();
   const configuredServiceTiers = Array.isArray(capabilities.serviceTiers)
@@ -2058,30 +2061,31 @@ const server = http.createServer((request, response) => {
       'redemption-service-failed': 'Code redemption is temporarily unavailable.',
       'provider-not-configured': 'The selected AI model is not configured on the server.',
       'provider-secret-missing': 'The selected AI model is missing its server credential.',
-      'provider-auth-failed': 'The selected AI provider rejected its server credential.',
+      'provider-auth-failed': 'The selected AI service rejected its server credential.',
+      'api-error': 'The AI generation request was rejected. Please check the model settings and try again.',
       'provider-request-failed': 'The generation request was not accepted. Check the reference files and settings, then try again.',
       'reference-policy-rejected': 'The reference image may contain copyrighted or restricted content. Choose another reference image. No points were charged.',
       'provider-invalid-response': 'The generation service returned an invalid result. Please try again.',
       'provider-rate-limited': 'The generation service is busy. Please try again shortly.',
-      'provider-timeout': 'The selected AI provider timed out while accepting the task. No points were charged; please retry shortly.',
-      'provider-channel-unavailable': 'The video provider channel is temporarily unavailable. No points were charged; please retry shortly.',
-      'provider-temporarily-unavailable': 'The selected AI provider is temporarily unavailable. Please retry shortly.',
+      'provider-timeout': 'The selected AI service timed out while accepting the task. No points were charged; please retry shortly.',
+      'provider-channel-unavailable': 'The video generation channel is temporarily unavailable. No points were charged; please retry shortly.',
+      'provider-temporarily-unavailable': 'The selected AI service is temporarily unavailable. Please retry shortly.',
       'video-job-service-not-configured': 'Background video generation is not configured.',
       'video-job-schema-missing': 'Background video generation is being upgraded. Please try again shortly.',
       'video-job-service-failed': 'Background video generation is temporarily unavailable.',
       'video-job-finalization-failed': 'The video task could not be completed safely.',
       'gateway-queue-full': 'The AI generation queue is full. Please retry shortly.',
       'gateway-queue-timeout': 'The AI generation queue took too long. Please retry shortly.',
-      'ai302-not-configured': 'The 302 tool gateway is not configured.',
-      'ai302-unavailable': 'The 302 tool service is temporarily unavailable.',
-      'ai302-upstream-error': 'The 302 tool service rejected the request.',
-      'ai302-invalid-response': 'The 302 tool service returned an invalid response.',
+      'ai302-not-configured': 'The AI tool service is not configured.',
+      'ai302-unavailable': 'The AI tool service is temporarily unavailable.',
+      'ai302-upstream-error': 'The AI tool service rejected the request.',
+      'ai302-invalid-response': 'The AI tool service returned an invalid response.',
       'unsafe-tool-result-url': 'The tool provider returned an unsafe download address.',
       'tool-download-failed': 'The tool result could not be downloaded.',
       'tool-result-too-large': 'The tool result exceeds the supported size.',
       'invalid-video-result': 'The enhanced video result is invalid.',
       'video-upscale-failed': 'Video enhancement failed.',
-      'video-upscale-request-rejected': 'Topaz rejected the source video or output settings. Choose a compatible model and format.',
+      'video-upscale-request-rejected': 'The video enhancement service rejected the source video or output settings. Choose a compatible model and format.',
       'video-upload-not-found': 'The video upload expired. Start the enhancement again.',
       'video-upload-incomplete': 'The video upload is incomplete. Start the enhancement again.',
       'invalid-video-upload-chunk': 'A video upload chunk is invalid.',

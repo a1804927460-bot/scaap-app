@@ -1467,7 +1467,7 @@ function hyper3dModelUrl(job) {
       let score = 0;
       if (/\.glb(?:[?#]|$)/i.test(url)) score += 100;
       if (/(?:^|\.)(?:glb|glb_url|glburl)(?:\.|$)/.test(context)) score += 80;
-      if (/(?:model_mesh|modelmesh|model_url|modelurl|model_urls|modelurls|mesh)/.test(context)) score += 60;
+      if (/(?:pbr[_-]?model|model_mesh|modelmesh|model_url|modelurl|model_urls|modelurls|mesh|asset)/.test(context)) score += 60;
       if (/(?:download_url|downloadurl)/.test(context)) score += 40;
       if (/(?:output|result)/.test(context) && /(?:^|\.)url$/.test(context)) score += 20;
       if (score > 0) candidates.push({ url, score, order: candidates.length });
@@ -1546,45 +1546,81 @@ async function createHyper3dJob(image, prompt, dependencies, toolOptions) {
 }
 
 function tripoResponseObject(payload, requiredFields, { terminalOnBusinessError = false } = {}) {
-  if (payload && Object.hasOwn(payload, 'code') && Number(payload.code) !== 0) {
-    if (terminalOnBusinessError) return { status: 'failed', code: payload.code };
+  const candidates = tripoObjectCandidates(payload);
+  const errorEntry = candidates.find((value) => {
+    if (!Object.hasOwn(value, 'code') && !Object.hasOwn(value, 'error_code') && !Object.hasOwn(value, 'errorCode')) return false;
+    const code = value.code ?? value.error_code ?? value.errorCode;
+    return String(code ?? '').trim() && !['0', '200'].includes(String(code).trim());
+  });
+  if (errorEntry) {
+    const code = errorEntry.code ?? errorEntry.error_code ?? errorEntry.errorCode;
+    if (terminalOnBusinessError) return { status: 'failed', code };
     throw toolError('ai302-upstream-error', 'The Tripo3D service rejected the request.', 502);
   }
   const fields = Array.isArray(requiredFields) && requiredFields.length
     ? requiredFields
-    : ['task_id', 'status', 'output', 'result', 'image_token'];
-  return nestedResponseObject(
-    payload,
-    (value) => fields.some((key) => Object.hasOwn(value, key)),
-    'The Tripo3D service returned an invalid response.'
-  );
+    : ['task_id', 'taskId', 'job_id', 'jobId', 'status', 'state', 'output', 'result', 'image_token', 'imageToken'];
+  const response = candidates.find((value) => fields.some((key) => Object.hasOwn(value, key)));
+  if (!response) throw toolError('ai302-invalid-response', 'The Tripo3D service returned an invalid response.', 502);
+  return response;
+}
+
+function tripoObjectCandidates(payload, maximumDepth = 7) {
+  const candidates = [];
+  const queue = [{ value: payload, depth: 0 }];
+  const seen = new Set();
+  while (queue.length && candidates.length < 256) {
+    const { value, depth } = queue.shift();
+    if (!value || typeof value !== 'object' || seen.has(value)) continue;
+    seen.add(value);
+    candidates.push(value);
+    if (depth >= maximumDepth) continue;
+    const entries = Array.isArray(value) ? value : Object.values(value);
+    for (const nested of entries) {
+      if (nested && typeof nested === 'object' && !seen.has(nested)) queue.push({ value: nested, depth: depth + 1 });
+    }
+  }
+  return candidates;
+}
+
+function tripoField(payload, names) {
+  for (const value of tripoObjectCandidates(payload)) {
+    for (const name of names) {
+      if (value[name] !== undefined && value[name] !== null && value[name] !== '') return value[name];
+    }
+  }
+  return undefined;
 }
 
 function tripoResultUrl(value) {
   if (typeof value === 'string') return value.trim();
-  if (value && typeof value === 'object' && typeof value.url === 'string') return value.url.trim();
+  if (value && typeof value === 'object') {
+    for (const key of ['url', 'href', 'download_url', 'downloadUrl', 'model_url', 'modelUrl', 'glb', 'glb_url', 'glbUrl']) {
+      if (typeof value[key] === 'string' && value[key].trim()) return value[key].trim();
+    }
+  }
   return '';
 }
 
 function tripoStatus(job) {
-  if (tripoResultUrl(job && job.result && job.result.pbr_model)
-      || tripoResultUrl(job && job.output && job.output.pbr_model)) return 'succeeded';
-  return normalizeThreeDStatus(job && job.status);
+  if (hyper3dModelUrl(job)) return 'succeeded';
+  const rawStatus = tripoField(job, ['status', 'state', 'task_status', 'taskStatus', 'stage']);
+  if (rawStatus !== undefined && rawStatus !== null && String(rawStatus).trim()) return normalizeThreeDStatus(rawStatus);
+  const progress = Number(tripoField(job, ['progress', 'progress_percent', 'progressPercent', 'percentage']));
+  if (Number.isFinite(progress) && progress > 0) return 'processing';
+  if (tripoField(job, ['task_id', 'taskId', 'job_id', 'jobId', 'uuid'])) return 'queued';
+  throw toolError('ai302-invalid-response', 'The Tripo3D service returned an unsupported task status.', 502);
 }
 
 function findTripoGlb(job) {
-  const modelUrl = tripoResultUrl(job && job.result && job.result.pbr_model)
-    || tripoResultUrl(job && job.output && job.output.pbr_model);
+  const modelUrl = hyper3dModelUrl(job);
   if (!modelUrl) {
     throw toolError('three-d-result-invalid', 'The completed Tripo3D task did not contain a GLB model.', 502);
   }
-  const previewImageUrl = String(
-    job && job.thumbnail
-    || tripoResultUrl(job && job.result && job.result.rendered_image)
-    || tripoResultUrl(job && job.output && job.output.rendered_image)
-    || tripoResultUrl(job && job.output && job.output.generated_image)
-    || ''
-  ).trim();
+  const previewImageUrl = tripoResultUrl(tripoField(job, [
+    'thumbnail', 'thumbnail_url', 'thumbnailUrl', 'preview', 'preview_url', 'previewUrl',
+    'rendered_image', 'renderedImage', 'generated_image', 'generatedImage'
+  ])) || '';
   return { url: modelUrl, ...(previewImageUrl ? { previewImageUrl } : {}) };
 }
 
@@ -1593,8 +1629,12 @@ async function uploadTripoImage(image, dependencies) {
   const extension = image.extension === 'jpeg' ? 'jpg' : image.extension;
   form.append('file', new Blob([image.buffer], { type: image.mime }), `input.${extension}`);
   const payload = await fetch302Json(TRIPO3D_UPLOAD_PATH, { method: 'POST', body: form }, dependencies);
-  const response = tripoResponseObject(payload, ['image_token']);
-  const imageToken = String(response.image_token || '').trim();
+  const response = tripoResponseObject(payload, [
+    'image_token', 'imageToken', 'file_token', 'fileToken', 'image_id', 'imageId', 'token'
+  ]);
+  const imageToken = String(tripoField(response, [
+    'image_token', 'imageToken', 'file_token', 'fileToken', 'image_id', 'imageId', 'token'
+  ]) || '').trim();
   if (!imageToken || imageToken.length > 512 || /[\u0000-\u001f\u007f]/.test(imageToken)) {
     throw toolError('ai302-invalid-response', 'The Tripo3D upload did not return a valid image token.', 502);
   }
@@ -1627,8 +1667,14 @@ async function createTripoJob(image, prompt, dependencies, toolOptions) {
       ...(toolOptions.faceLimit !== undefined ? { face_limit: toolOptions.faceLimit } : {})
     })
   }, dependencies);
-  const response = tripoResponseObject(payload, ['task_id']);
-  const jobId = String(response.task_id || '').trim();
+  let response;
+  try {
+    response = tripoResponseObject(payload, ['task_id', 'taskId', 'job_id', 'jobId', 'uuid']);
+  } catch (error) {
+    if (!error || error.code !== 'ai302-invalid-response') throw error;
+    response = tripoResponseObject(payload, ['id']);
+  }
+  const jobId = String(tripoField(response, ['task_id', 'taskId', 'job_id', 'jobId', 'uuid', 'id']) || '').trim();
   if (!jobId || jobId.length > 512 || /[\u0000-\u001f\u007f]/.test(jobId)) {
     throw toolError('ai302-invalid-response', 'The Tripo3D service did not return a valid task.', 502);
   }
@@ -1641,7 +1687,10 @@ async function queryTripoJob(jobId, dependencies) {
   }, {
     ...dependencies,
     timeoutMs: STATUS_TIMEOUT_MS
-  }), ['task_id', 'status', 'output', 'result'], { terminalOnBusinessError: true });
+  }), [
+    'task_id', 'taskId', 'job_id', 'jobId', 'uuid', 'status', 'state', 'task_status', 'taskStatus',
+    'output', 'result', 'assets', 'files', 'progress', 'error', 'message'
+  ], { terminalOnBusinessError: true });
 }
 
 const threeDProviderHandlers = Object.freeze({

@@ -452,7 +452,9 @@ function boardButlerError(result, fallback) {
     ? [result.message, result.errorMessage, result.error && result.error.message]
     : [];
   const supplied = candidates.find((value) => typeof value === 'string' && value.trim());
-  const message = supplied ? supplied.trim() : fallback;
+  const message = typeof publicAiErrorMessage === 'function'
+    ? publicAiErrorMessage(supplied ? supplied.trim() : fallback, fallback)
+    : (supplied ? supplied.trim() : fallback);
   const error = new Error(message);
   error.reason = result && (result.reason || result.errorCode || result.code);
   error.status = Number(result && (result.httpStatus ?? result.statusCode)) || undefined;
@@ -1882,7 +1884,7 @@ function openBoardButlerVideoUpscalePanel(anchor, file, item) {
     anchor,
     BOARD_BUTLER_ICONS.videoUpscale,
     t('Enhance video', '视频超清', '비디오 고화질'),
-    'Topaz Video AI'
+    t('Video enhancement', '视频增强', '비디오 향상')
   );
   const form = document.createElement('form');
   form.className = 'board-butler-config-form';
@@ -2867,7 +2869,7 @@ function openBoardButlerMenu(trigger, file, item) {
     file,
     'topazImage',
     BOARD_BUTLER_ICONS.topazImage,
-    t('Topaz image', 'Topaz 图片', 'Topaz 이미지'),
+    t('Image enhancement', '图片增强', '이미지 향상'),
     null,
     { popup: 'menu', hasSubmenu: true }
   );
@@ -3168,12 +3170,13 @@ function formatBoardAspectRatio(file, generation) {
 
 function boardGenerationModelLabel(generation) {
   const model = String(generation && generation.modelName || '').trim();
-  const provider = String(
-    generation && (generation.providerName || generation.providerId) || ''
-  ).trim();
-  const safeProvider = /quick\s*router/i.test(provider) ? '' : provider;
-  if (model && safeProvider && safeProvider !== model) return `${model} · ${safeProvider}`;
-  return model || safeProvider;
+  const provider = String(generation && generation.providerName || '').trim();
+  const safeProvider = typeof publicModelLabel === 'function'
+    ? publicModelLabel(provider, '')
+    : (/quick\s*router/i.test(provider) ? '' : provider);
+  const safeModel = typeof publicModelLabel === 'function' ? publicModelLabel(model, '') : model;
+  if (safeModel && safeProvider && safeProvider !== safeModel) return `${safeModel} · ${safeProvider}`;
+  return safeModel || safeProvider;
 }
 
 function showGeneratedMediaDetails(file, anchorElement) {
@@ -3198,7 +3201,7 @@ function showGeneratedMediaDetails(file, anchorElement) {
     : '';
   const aspectRatio = formatBoardAspectRatio(file, generation);
   const modelLabel = boardGenerationModelLabel(generation) ||
-    (butlerOperation.kind === 'video-upscale' ? 'Topaz Video AI' : '');
+    (butlerOperation.kind === 'video-upscale' ? t('Video enhancement', '视频增强', '비디오 향상') : '');
   const isGenerated = !!(file.aiGeneration || file.sourceFolder === 'AI Generated');
   const isVideoDetail = isVideoExt(file && file.ext) ||
     generation.kind === 'video' || butlerOperation.kind === 'video-upscale';

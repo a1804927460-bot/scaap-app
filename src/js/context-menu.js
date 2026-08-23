@@ -493,7 +493,9 @@ function renderCanvasUsageDetails(result) {
     [
       formatCanvasUsageDate(entry.createdAt),
       labels[entry.kind] || entry.kind || '-',
-      entry.modelName || entry.providerId || '-',
+      typeof publicModelLabel === 'function'
+        ? publicModelLabel(entry.modelName || (typeof usageModelName === 'function' ? usageModelName(entry.providerId) : ''), '-')
+        : (entry.modelName || entry.providerId || '-'),
       entry.name || '-',
       entry.status === 'pending'
         ? t('Pending', '\u5f85\u7ed3\u7b97')

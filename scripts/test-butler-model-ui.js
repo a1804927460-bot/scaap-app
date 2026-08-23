@@ -44,6 +44,7 @@ assert.match(boardMedia, /window\.messsAPI && window\.messsAPI\.butler/, 'Butler
 assert.match(boardMedia, /api\.removeBackground\(file\.id, options\)/, 'Background removal must send only documented settings with the file id.');
 assert.match(boardMedia, /api\.create3d\(file\.id, safeProviderId, options\)/, '3D creation must send the selected provider and validated settings.');
 assert.match(boardMedia, /function openBoardButlerThreeDPanel[\s\S]*butler-3d-quality[\s\S]*butler-3d-geometry-quality/, 'Every 3D provider must expose its own documented quality controls.');
+assert.match(boardMedia, /butler-3d-prompt[\s\S]*prompt: String\(data\.get\('butler-3d-prompt'\)/, 'Hyper3D must submit the prompt currently edited by the user.');
 assert.match(boardMedia, /generate3d:hunyuan3d[\s\S]*generate3d:hyper3d[\s\S]*generate3d:tripo3d/, 'Hunyuan, Hyper3D and Tripo3D must keep independent task state.');
 assert.match(boardMedia, /api\.get3dStatus\(taskToken\)[\s\S]*api\.download3d\(taskToken\)/, '3D jobs must poll with short requests before downloading.');
 assert.match(boardMedia, /isTransientBoardButlerStatusFailure[\s\S]*transientStatusFailures < 6[\s\S]*continue;/, '3D polling must survive bounded transient gateway and provider failures.');
@@ -165,6 +166,7 @@ assert.match(main, /addButlerVideoOutputFile[\s\S]*butlerOperation:[\s\S]*kind: 
 assert.match(main, /creditsCharged !== undefined \? currentTask\.creditsCharged : currentTask\.credits/, 'Enhanced videos must archive the settled charge when available.');
 assert.match(main, /function butlerRetailCreditsFromPtc[\s\S]*?retailCreditsFromUpstreamCny[\s\S]*?const BUTLER_IMAGE_TOOL_CREDITS/, 'Main-process Butler history must derive current prices from the shared retail formula.');
 assert.match(main, /function butlerThreeDRetailCredits[\s\S]*?butlerThreeDPricingOptions[\s\S]*?pricingOptions: currentTask\.options/, '3D usage repricing must preserve the options that affect current retail points.');
+assert.match(main, /const taskOptions = \{ \.\.\.options, prompt: effectivePrompt \}[\s\S]*?options: taskOptions/, '3D task persistence must retain the effective Hyper3D prompt for recovery.');
 assert.match(preload, /confirmDelivery:[^\n]+butler:confirmDelivery[\s\S]*releaseDelivery:[^\n]+butler:releaseDelivery/,
   'The isolated Butler bridge must expose only opaque delivery confirmation tokens.');
 assert.match(main, /function registerButlerDelivery[\s\S]*accountingRequestId = requestId[\s\S]*delete record\.butlerOperation\.creditsCharged/,

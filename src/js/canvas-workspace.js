@@ -1347,7 +1347,7 @@ function renderCanvasAgentModels() {
     const badgeKind = typeof aiModelBadgeKind === 'function' ? aiModelBadgeKind(provider) : null;
     if (badgeKind && typeof createAiModelBadge === 'function') icon.appendChild(createAiModelBadge(badgeKind));
     const label = document.createElement('span');
-    label.textContent = provider.name;
+    label.textContent = typeof publicModelLabel === 'function' ? publicModelLabel(provider.name) : provider.name;
     const check = document.createElement('i');
     check.textContent = '✓';
     button.append(icon, label, check);
@@ -1357,7 +1357,9 @@ function renderCanvasAgentModels() {
   const selectedChat = activeCanvasAgentProvider();
   triggerLabel.textContent = CanvasWorkspace.agentMode === 'chat'
     ? selectedChat.name
-    : (selected ? selected.name : t('No model', '无可用模型'));
+    : (selected
+      ? (typeof publicModelLabel === 'function' ? publicModelLabel(selected.name) : selected.name)
+      : t('No model', '无可用模型'));
   document.querySelectorAll('[data-agent-kind]').forEach((button) => {
     const active = button.dataset.agentKind === CanvasWorkspace.agentGenerationKind;
     button.classList.toggle('is-active', active);
@@ -1586,7 +1588,7 @@ async function submitCanvasAgentGeneration(prompt) {
     sourceHeight: original.sourceHeight,
     imageProviderId: kind === 'image' ? provider.id : null,
     videoProviderId: kind === 'video' ? provider.id : null,
-    modelName: provider.name,
+    modelName: typeof publicModelLabel === 'function' ? publicModelLabel(provider.name) : provider.name,
     referenceFileIds: references.referenceFileIds,
     urls: references.urls
   });
@@ -1657,7 +1659,9 @@ async function submitCanvasAgentMessage() {
     if (typeof appendAssistantOutputFiles === 'function') appendAssistantOutputFiles(pending, response.files);
   } catch (err) {
     pending.remove();
-    appendCanvasAgentMessage('error', err && err.message ? err.message : t('Canvas Agent request failed.', '画布 Agent 请求失败。'));
+    appendCanvasAgentMessage('error', typeof publicAiErrorMessage === 'function'
+      ? publicAiErrorMessage(err && err.message, t('Canvas Agent request failed.', '画布 Agent 请求失败。'))
+      : (err && err.message ? err.message : t('Canvas Agent request failed.', '画布 Agent 请求失败。')));
   } finally {
     window.clearInterval(thinkingTimer);
     CanvasWorkspace.agentBusy = false;

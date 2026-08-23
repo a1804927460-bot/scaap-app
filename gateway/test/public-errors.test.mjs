@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { publicGatewayError } from '../src/public-errors.js';
+import { publicGatewayError, sanitizePublicGatewayMessage } from '../src/public-errors.js';
 
 test('provider authentication errors are isolated from user sessions', () => {
   const error = Object.assign(new Error('Invalid token (request id: secret-upstream-id)'), {
@@ -10,7 +10,7 @@ test('provider authentication errors are isolated from user sessions', () => {
   assert.deepEqual(publicGatewayError(error), {
     status: 502,
     code: 'provider-auth-failed',
-    message: 'The selected AI provider rejected its server credential.'
+    message: 'The selected AI service rejected its server credential.'
   });
 });
 
@@ -44,7 +44,7 @@ test('provider timeouts never leak numeric DOMException codes', () => {
   assert.deepEqual(publicGatewayError(error), {
     status: 504,
     code: 'provider-timeout',
-    message: 'The selected AI provider timed out while accepting the task.'
+    message: 'The selected AI service timed out while accepting the task.'
   });
 });
 
@@ -53,7 +53,7 @@ test('unexpected aborts are exposed as retryable provider interruptions', () => 
   assert.deepEqual(publicGatewayError(error), {
     status: 503,
     code: 'provider-temporarily-unavailable',
-    message: 'The selected AI provider connection was interrupted. Please retry shortly.'
+    message: 'The selected AI service connection was interrupted. Please retry shortly.'
   });
 });
 
@@ -67,4 +67,10 @@ test('reference policy rejections preserve their dedicated safe code', () => {
     code: 'reference-policy-rejected',
     message: 'The reference image may contain copyrighted or restricted content.'
   });
+});
+
+test('supplier and relay names are removed from public gateway messages', () => {
+  const message = sanitizePublicGatewayMessage('QuickRouter forwarded a Gemini error from Atlas Cloud (HTTP 502).');
+  assert.doesNotMatch(message, /quickrouter|gemini|atlas|502/i);
+  assert.equal(message, 'AI service forwarded an AI service error from AI service.');
 });

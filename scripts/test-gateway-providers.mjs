@@ -461,6 +461,26 @@ advancedChatCalls.forEach((call) => {
   assert.equal(body.stream, false);
 });
 
+const chatModelFallbackCalls = [];
+globalThis.fetch = async (url, options = {}) => {
+  chatModelFallbackCalls.push({ url: String(url), options });
+  const body = JSON.parse(options.body);
+  if (body.model === 'gpt-5.6') {
+    return new Response(JSON.stringify({ error: { message: 'model gpt-5.6 is not found' } }), { status: 404 });
+  }
+  return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'Luna compatibility reply' } }] });
+};
+const staleProviderReply = await chat({
+  providerId: 'chat-1',
+  model: 'GPT-5.6-LUNA',
+  prompt: 'Use Luna after a stale provider selection.',
+  messages: [{ role: 'user', content: 'Use Luna after a stale provider selection.' }]
+});
+assert.deepEqual(staleProviderReply, { text: 'Luna compatibility reply', usage: null });
+assert.equal(chatModelFallbackCalls.length, 2);
+assert.equal(JSON.parse(chatModelFallbackCalls[0].options.body).model, 'gpt-5.6');
+assert.equal(JSON.parse(chatModelFallbackCalls[1].options.body).model, 'gpt-5.6-luna');
+
 const miniMaxCalls = [];
 globalThis.fetch = async (url, options = {}) => {
   const value = String(url);

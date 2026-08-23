@@ -65,6 +65,7 @@ const { loadRuntimeConfig } = require('./lib/runtime-config');
 const { SupabaseAuth, createPkcePair } = require('./lib/supabase-auth');
 const { AiGatewayClient, assertValidGlbBuffer } = require('./lib/ai-gateway-client');
 const { normalizeGatewayCatalog, assertGatewayProvider } = require('./lib/gateway-catalog');
+const { sanitizePublicAiError, sanitizePublicModelLabel } = require('./lib/public-model-label');
 const { assertSafeLocalFile, assertPromptHasNoSecrets, sanitizeAiRequest } = require('./lib/privacy-guard');
 const { activate: activateApp, getActivationStatus } = require('./lib/activation');
 const {
@@ -94,6 +95,7 @@ const {
 const { authenticatedUserId, profileAvatarPath } = require('./lib/profile-avatar');
 const { normalizeLanguage, translate: translateLanguage } = require('./lib/i18n');
 const { createLocalFileResponse } = require('./lib/local-file-response');
+const { normalizeVideoResolution } = require('./lib/video-resolution');
 
 const DEFAULT_CATALOG_IMAGE = providerCatalog('image')[0];
 const DEFAULT_CATALOG_VIDEO = providerCatalog('video')[0];
@@ -3606,7 +3608,7 @@ async function resolveAiVideoReferences(request) {
       const audioBuffer = await fs.promises.readFile(sourcePath);
       const mime = MIME_BY_EXTENSION[ext];
       if (!/^audio\/(?:wav|mpeg|mp3)$/i.test(String(mime || ''))) {
-        const error = new Error('Atlas Cloud reference audio must be WAV or MP3.');
+        const error = new Error('The selected video model only accepts WAV or MP3 reference audio.');
         error.code = 'invalid-reference-audio';
         throw error;
       }
@@ -4366,7 +4368,18 @@ function clearGatewayAccount() {
 
 async function getPublicAiMediaConfig() {
   const config = getAiMediaConfig();
-  const { apiKey, ...publicConfig } = config;
+  const publicProvider = (provider) => ({
+    ...provider,
+    name: sanitizePublicModelLabel(provider && provider.name, '')
+  });
+  const { apiKey, ...publicConfig } = {
+    ...config,
+    imageProviders: config.imageProviders.map(publicProvider),
+    videoProviders: config.videoProviders.map(publicProvider),
+    chatProviders: config.chatProviders.map(publicProvider),
+    videoProviderName: sanitizePublicModelLabel(config.videoProviderName, 'AI video'),
+    chatProviderName: sanitizePublicModelLabel(config.chatProviderName, 'Messs AI')
+  };
   const savedKeys = readSavedAiApiKeys();
   const fallbackKey = savedKeys.default || getEnvironmentAiApiKey();
   const hasOwnKey = (id) => !!savedKeys[id];
@@ -4411,7 +4424,7 @@ async function getPublicAiMediaConfig() {
       .slice(0, 100)
       .map((provider) => ({
         id: provider.id,
-        name: provider.name,
+        name: sanitizePublicModelLabel(provider.name, provider.id),
         endpoint: gatewayEndpoint,
         models: provider.models,
         upstreamModels: provider.upstreamModels,
@@ -4731,12 +4744,7 @@ async function generateAiChatReply(prompt, messages, providerId, model) {
 }
 
 function sanitizeAiErrorText(value) {
-  return String(value || '')
-    .replace(/\s+/g, ' ')
-    .replace(/\b(?:api\.atlascloud\.ai|Atlas\s*Cloud|AtlasCloud|AI302|302\.ai|QuickRouter|Topaz(?:\s+Labs)?|Higgsfield|MiniMax|Kling|Jimeng|Dreamina)\b/gi, 'AI service')
-    .replace(/\s*\(?\s*HTTP\s+\d{3}\s*\)?/gi, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
+  return sanitizePublicAiError(value, 'The AI service could not complete this request.');
 }
 
 function conciseAiErrorMessage(error, context = {}) {
@@ -6192,7 +6200,11 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   const capabilities = provider.capabilities && typeof provider.capabilities === 'object'
     ? provider.capabilities
     : {};
-  const resolution = String(request.resolution || '').trim().toUpperCase();
+  const resolution = normalizeVideoResolution(
+    request.resolution || request.size,
+    providerId,
+    provider.model
+  );
   const serviceTiers = Array.isArray(capabilities.serviceTiers)
     ? capabilities.serviceTiers.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
     : [];
@@ -6564,8 +6576,16 @@ function normalizeButler3dOptions(providerId, requested = {}) {
     };
   }
   if (providerId === 'hyper3d') {
+    const prompt = String(source.prompt ?? '').trim();
+    if (Array.from(prompt).length > 1024 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(prompt)) {
+      const error = new Error('The 3D prompt is invalid.');
+      error.code = 'invalid-prompt';
+      throw error;
+    }
+    if (prompt) assertPromptHasNoSecrets(prompt);
     const seed = source.seed === '' || source.seed === undefined ? undefined : Math.max(0, Math.min(2_147_483_647, Math.round(Number(source.seed) || 0)));
     return {
+      prompt,
       quality: enumValue(source.quality, 'medium', ['high', 'medium', 'low', 'extra-low']),
       material: enumValue(source.material, 'PBR', ['PBR', 'Shaded']),
       tier: enumValue(source.tier, 'Regular', ['Regular', 'Sketch']),
@@ -8292,7 +8312,7 @@ function registerIpcHandlers() {
       });
       return { ok: true, taskToken, ...status };
     } catch (error) {
-      const failure = butlerFailure(error, 'The Topaz image task could not be started.');
+      const failure = butlerFailure(error, 'The image enhancement task could not be started.');
       console.error('Butler Topaz image task failed:', failure.reason);
       return failure;
     }
@@ -8468,18 +8488,17 @@ function registerIpcHandlers() {
       const source = await butlerSourceImage(fileId, { requireModelDimensions: true });
       const fallbackPrompt = 'Create a detailed 3D model matching the reference image.';
       const storedPrompt = String(source.file.aiGeneration && source.file.aiGeneration.prompt || '').trim();
-      const prompt = storedPrompt ? storedPrompt.slice(0, 1024) : fallbackPrompt;
-      assertPromptHasNoSecrets(prompt);
-      const requestedPrompt = String(requestedOptions && requestedOptions.prompt || '').trim();
-      const effectivePrompt = requestedPrompt || prompt;
+      const sourcePrompt = storedPrompt ? storedPrompt.slice(0, 1024) : fallbackPrompt;
+      const effectivePrompt = options.prompt || sourcePrompt;
       assertPromptHasNoSecrets(effectivePrompt);
-      const payload = await aiGateway.create3d(providerId, source.imageDataUrl, effectivePrompt, options);
+      const taskOptions = { ...options, prompt: effectivePrompt };
+      const payload = await aiGateway.create3d(providerId, source.imageDataUrl, effectivePrompt, taskOptions);
       const taskToken = normalizeButlerTaskToken(payload && payload.taskToken);
       const status = normalizeButler3dStatus({ status: 'queued', ...(payload || {}) });
       rememberButler3dTask(taskToken, {
         sourceFileId: source.file.id,
         providerId,
-        options,
+        options: taskOptions,
         previewUrl: status.previewUrl || '',
         credits: status.credits
       });
@@ -9011,12 +9030,11 @@ function registerIpcHandlers() {
         ...(fallbackCount > 0 ? {
           fallback: {
             providerId: fallbackProvider.provider.id,
-            providerName: fallbackProviderName || fallbackProvider.provider.name,
             count: fallbackCount,
             notice: localizedMessage(
-              `The selected image model was temporarily unavailable. Switched to ${fallbackProviderName || fallbackProvider.provider.name} and retried once.`,
-              `当前生图模型暂时不可用，已切换到${fallbackProviderName || fallbackProvider.provider.name}并自动重试一次。`,
-              `The selected image model was temporarily unavailable. Switched to ${fallbackProviderName || fallbackProvider.provider.name} and retried once.`
+              'The selected image model was temporarily unavailable. A compatible retry route was used.',
+              '当前生图模型暂时不可用，已使用兼容通道重试。',
+              'The selected image model was temporarily unavailable. A compatible retry route was used.'
             )
           }
         } : {}),

@@ -545,6 +545,54 @@ test('Tripo3D uploads the image, creates a PBR task, polls, settles credits, and
   assert.deepEqual(downloaded, output);
 });
 
+test('Tripo3D accepts nested response envelopes and camel-case model assets', async () => {
+  const output = glbFixture();
+  let call = 0;
+  const created = await createThreeDTask({
+    providerId: 'tripo3d',
+    imageDataUrl: imageDataUrl(rgbaPng()),
+    prompt: 'Nested model response',
+    userId: 'tripo-alias-owner'
+  }, {
+    apiKey: 'test-key',
+    taskSecret: 'tripo-alias-secret',
+    now: 1_800_000_000_000,
+    fetchImpl: async () => {
+      call += 1;
+      if (call === 1) return jsonResponse({ envelope: { payload: { file: { token: 'nested-image-token' } } } });
+      return jsonResponse({ envelope: { payload: { task: { id: 'nested-tripo-task' } } } });
+    }
+  });
+  assert.equal(created.status, 'queued');
+
+  const downloaded = await downloadThreeDModel({
+    taskToken: created.taskToken,
+    userId: 'tripo-alias-owner'
+  }, {
+    apiKey: 'test-key',
+    taskSecret: 'tripo-alias-secret',
+    now: 1_800_000_002_000,
+    fetchImpl: async (url) => {
+      call += 1;
+      if (call === 3) {
+        assert.equal(String(url), 'https://api.302.ai/tripo3d/v2/openapi/task/nested-tripo-task');
+        return jsonResponse({
+          data: {
+            task: {
+              state: 'done',
+              assets: { model: { downloadUrl: 'https://tripo-data.rg1.data.tripo3d.com/task/nested-model' } },
+              thumbnail: { href: 'https://tripo-data.rg1.data.tripo3d.com/task/nested-preview.webp' }
+            }
+          }
+        });
+      }
+      assert.equal(String(url), 'https://tripo-data.rg1.data.tripo3d.com/task/nested-model');
+      return new Response(output, { status: 200, headers: { 'Content-Type': 'model/gltf-binary' } });
+    }
+  });
+  assert.deepEqual(downloaded, output);
+});
+
 test('3D accounting is validated before any paid upstream request', async () => {
   let upstreamCalls = 0;
   await assert.rejects(

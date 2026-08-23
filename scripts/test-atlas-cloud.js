@@ -116,6 +116,34 @@ function pngHeader(width, height) {
       aspectRatio: '1:1', quality: 'high', outputFormat: 'png', urls: []
     }), atlasImage);
 
+    // GPT Image 2 keeps the same logical provider when Atlas rejects a
+    // rotated credential; the configured 302 route may safely complete it.
+    process.env.AI302_KEY = 'gpt-image-fallback-test-key';
+    const fallbackImage = pngHeader(1024, 1024);
+    const imageFallbackCalls = [];
+    const atlasFetch = global.fetch;
+    global.fetch = async (url, options = {}) => {
+      const endpoint = String(url);
+      imageFallbackCalls.push(endpoint);
+      if (endpoint.endsWith('/generateImage')) {
+        return new Response(JSON.stringify({ message: 'Atlas credential rejected.' }), { status: 401 });
+      }
+      if (endpoint === 'https://api.302.ai/v1/images/generations') {
+        return new Response(JSON.stringify({
+          data: [{ b64_json: fallbackImage.toString('base64') }]
+        }), { status: 200 });
+      }
+      throw new Error(`Unexpected GPT Image 2 fallback request: ${endpoint}`);
+    };
+    assert.deepEqual(await providers.generateMedia('image', {
+      providerId: 'image-6', prompt: 'use the same GPT Image 2 route', size: '1K',
+      aspectRatio: '1:1', quality: 'medium', outputFormat: 'png', urls: []
+    }), fallbackImage);
+    assert.equal(imageFallbackCalls.some((endpoint) => endpoint.endsWith('/generateImage')), true);
+    assert.equal(imageFallbackCalls.includes('https://api.302.ai/v1/images/generations'), true);
+    delete process.env.AI302_KEY;
+    global.fetch = atlasFetch;
+
     const localReference = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
     const screenshotFirstFrame = await providers.createVideoTask({
       providerId: 'video-3', prompt: 'subtle natural portrait motion',
