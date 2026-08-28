@@ -96,6 +96,7 @@ const { authenticatedUserId, profileAvatarPath } = require('./lib/profile-avatar
 const { normalizeLanguage, translate: translateLanguage } = require('./lib/i18n');
 const { createLocalFileResponse } = require('./lib/local-file-response');
 const { normalizeVideoResolution } = require('./lib/video-resolution');
+const { normalizeFirstLastFrameDataUrls } = require('./lib/ai-frame-reference');
 
 const DEFAULT_CATALOG_IMAGE = providerCatalog('image')[0];
 const DEFAULT_CATALOG_VIDEO = providerCatalog('video')[0];
@@ -1679,7 +1680,7 @@ function pruneMissingFiles() {
   });
   if (store.data.files.length !== before) {
     const survivingIds = new Set(store.data.files.map((f) => f.id));
-    store.data.boardItems = store.data.boardItems.filter((b) => survivingIds.has(b.fileId) || b.isNote || b.isDoodle);
+    store.data.boardItems = store.data.boardItems.filter((b) => survivingIds.has(b.fileId) || b.isNote || b.isDoodle || b.isMoodboard);
     store.reindexFiles();
     store.scheduleSave();
   }
@@ -3651,6 +3652,18 @@ async function resolveAiVideoReferences(request) {
     if (!dataUrl) continue;
     urls.push(dataUrl);
     mediaTypes.push('image');
+  }
+  const requestedMode = String(request && request.videoMode || '').trim().toLowerCase();
+  const isMiniMaxH3 = requestedProviderId === 'video-1'
+    || String(requestedProvider && requestedProvider.protocol || '').trim().toLowerCase() === 'minimax-video-v2'
+    || /^minimax-h3$/i.test(String(requestedProvider && requestedProvider.model || '').trim());
+  if (isMiniMaxH3
+      && (requestedMode === 'first-last-frame' || (!requestedMode && mediaTypes.length === 2))
+      && mediaTypes.length === 2
+      && mediaTypes.every((mediaType) => mediaType === 'image')
+      && urls.length === 2) {
+    const normalizedFrames = await normalizeFirstLastFrameDataUrls(urls);
+    urls.splice(0, urls.length, ...normalizedFrames.dataUrls);
   }
   return { urls, mediaTypes, uploadIds, audioUploadIds };
 }

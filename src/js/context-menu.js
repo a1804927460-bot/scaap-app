@@ -301,6 +301,190 @@ async function pastePlainTextIntoInput(input) {
   }
 }
 
+const PromptOptimizerState = {
+  input: null,
+  originalValue: '',
+  sourceText: '',
+  selectionStart: 0,
+  selectionEnd: 0,
+  revision: 0
+};
+
+function normalizeAgentPromptSuggestion(value) {
+  let text = String(value || '').trim();
+  const fenced = text.match(/^```(?:text|markdown|prompt)?\s*\n?([\s\S]*?)\n?```$/i);
+  if (fenced) text = fenced[1].trim();
+  return text.slice(0, 20000);
+}
+
+function closePromptOptimizerDialog(options = {}) {
+  const overlay = document.getElementById('prompt-optimizer-overlay');
+  if (!overlay) return;
+  PromptOptimizerState.revision += 1;
+  const input = PromptOptimizerState.input;
+  overlay.classList.remove('is-open');
+  window.setTimeout(() => overlay.remove(), 180);
+  if (options.restoreFocus !== false && input && input.isConnected) {
+    window.setTimeout(() => input.focus({ preventScroll: true }), 0);
+  }
+}
+
+function promptOptimizerInstruction(sourceText, kind, selectedOnly) {
+  return [
+    `You are optimizing an AI ${kind === 'video' ? 'video' : 'image'} generation prompt.`,
+    'Keep the source prompt language. Do not translate it, and keep necessary model terms unchanged.',
+    selectedOnly
+      ? 'Optimize only the selected fragment so it can replace the original fragment cleanly.'
+      : 'Optimize the complete prompt.',
+    'Remove repetition, improve clarity and structure, and make the instruction directly executable by a generation model.',
+    'Preserve every concrete requirement, count, position, direction, subject, and negative constraint.',
+    'Preserve reference labels such as image 1, image 2, first frame, and last frame, including their order and roles.',
+    'Do not invent requirements. Do not mention this task, Agent, pricing, or model providers.',
+    'Return only the optimized prompt without commentary, headings, quotation marks, or Markdown fences.',
+    'Prompt to optimize:',
+    sourceText
+  ].join('\n\n');
+}
+
+function replacePromptWithAgentSuggestion() {
+  const overlay = document.getElementById('prompt-optimizer-overlay');
+  const input = PromptOptimizerState.input;
+  const suggestion = overlay && overlay.querySelector('.prompt-optimizer-result');
+  const nextText = normalizeAgentPromptSuggestion(suggestion && suggestion.value);
+  if (!overlay || !input || !input.isConnected || !nextText) return false;
+  if (input.value !== PromptOptimizerState.originalValue) {
+    const status = overlay.querySelector('.prompt-optimizer-status');
+    status.textContent = t(
+      'The prompt changed while Agent was working. Start optimization again to avoid overwriting it.',
+      'Agent 优化期间提示词已经被修改，请重新优化，避免覆盖新内容。',
+      'Agent가 작업하는 동안 프롬프트가 변경되었습니다. 새 내용을 덮어쓰지 않도록 다시 최적화하세요.'
+    );
+    status.dataset.state = 'error';
+    return false;
+  }
+  input.setRangeText(
+    nextText,
+    PromptOptimizerState.selectionStart,
+    PromptOptimizerState.selectionEnd,
+    'end'
+  );
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  closePromptOptimizerDialog();
+  showToast(t('Prompt replaced', '提示词已替换', '프롬프트를 교체했습니다'), 'AI');
+  return true;
+}
+
+function createPromptOptimizerDialog(selectedOnly) {
+  document.getElementById('prompt-optimizer-overlay')?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'prompt-optimizer-overlay';
+  overlay.className = 'prompt-optimizer-overlay';
+  overlay.dataset.boardUiLayer = 'true';
+  overlay.innerHTML = `
+    <button class="prompt-optimizer-backdrop" type="button" aria-label="${t('Keep original prompt', '保留原提示词', '원래 프롬프트 유지')}"></button>
+    <section class="prompt-optimizer-dialog" role="dialog" aria-modal="true" aria-labelledby="prompt-optimizer-title">
+      <header class="prompt-optimizer-header">
+        <span class="prompt-optimizer-mark" aria-hidden="true">${buildIconSvg('M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z;M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16z')}</span>
+        <div><h2 id="prompt-optimizer-title">${t('Optimize prompt with Agent', '使用 Agent 优化提示词', 'Agent로 프롬프트 최적화')}</h2><p>${selectedOnly ? t('Review the selected-text revision before replacing it.', '查看选中文字的优化结果，再决定是否替换。', '선택한 텍스트의 수정 결과를 확인한 후 교체 여부를 결정하세요.') : t('Compare both versions before replacing the current prompt.', '对比优化前后的提示词，再决定是否替换。', '현재 프롬프트를 교체하기 전에 두 버전을 비교하세요.')}</p></div>
+        <button class="prompt-optimizer-close" type="button" title="${t('Keep original', '保留原文', '원문 유지')}" aria-label="${t('Keep original', '保留原文', '원문 유지')}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </header>
+      <div class="prompt-optimizer-compare">
+        <label><span>${t('Original prompt', '原提示词', '원래 프롬프트')}</span><textarea class="prompt-optimizer-original" readonly spellcheck="false"></textarea></label>
+        <label><span>${t('Agent revision', 'Agent 优化结果', 'Agent 수정 결과')}</span><textarea class="prompt-optimizer-result" readonly spellcheck="true" placeholder="${t('Agent is optimizing...', 'Agent 正在优化...', 'Agent가 최적화하고 있습니다...')}"></textarea></label>
+      </div>
+      <footer class="prompt-optimizer-footer">
+        <span class="prompt-optimizer-status" role="status">${t('Agent is optimizing...', 'Agent 正在优化...', 'Agent가 최적화하고 있습니다...')}</span>
+        <div class="prompt-optimizer-actions">
+          <button class="prompt-optimizer-keep" type="button">${t('Keep original', '保留原文', '원문 유지')}</button>
+          <button class="prompt-optimizer-replace" type="button" disabled>${selectedOnly ? t('Replace selection', '替换选中文字', '선택 영역 교체') : t('Replace prompt', '替换提示词', '프롬프트 교체')}</button>
+        </div>
+      </footer>
+    </section>
+  `;
+  const close = () => closePromptOptimizerDialog();
+  overlay.querySelector('.prompt-optimizer-backdrop').addEventListener('click', close);
+  overlay.querySelector('.prompt-optimizer-close').addEventListener('click', close);
+  overlay.querySelector('.prompt-optimizer-keep').addEventListener('click', close);
+  overlay.querySelector('.prompt-optimizer-replace').addEventListener('click', replacePromptWithAgentSuggestion);
+  overlay.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    close();
+  });
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add('is-open'));
+  return overlay;
+}
+
+async function openPromptOptimizerDialog(input, selection = {}) {
+  const originalValue = String(input && input.value || '');
+  const start = Math.max(0, Math.min(originalValue.length, Number(selection.start) || 0));
+  const end = Math.max(start, Math.min(originalValue.length, Number(selection.end) || originalValue.length));
+  const sourceText = originalValue.slice(start, end).trim();
+  if (!input || !sourceText) {
+    showToast(t('Enter a prompt before asking Agent to optimize it.', '请先输入提示词，再交给 Agent 优化。', '먼저 프롬프트를 입력한 후 Agent에게 최적화를 요청하세요.'), 'AI');
+    return null;
+  }
+  if (typeof requestCanvasAgentText !== 'function') {
+    showToast(t('Agent is unavailable.', 'Agent 当前不可用。', 'Agent를 사용할 수 없습니다.'), 'AI');
+    return null;
+  }
+  const selectedOnly = start > 0 || end < originalValue.length;
+  const composer = input.closest('.ai-composer');
+  if (composer) composer.dataset.keepOpenAfterBlur = 'true';
+  PromptOptimizerState.input = input;
+  PromptOptimizerState.originalValue = originalValue;
+  PromptOptimizerState.sourceText = sourceText;
+  PromptOptimizerState.selectionStart = start;
+  PromptOptimizerState.selectionEnd = end;
+  PromptOptimizerState.revision += 1;
+  const revision = PromptOptimizerState.revision;
+  const overlay = createPromptOptimizerDialog(selectedOnly);
+  overlay.querySelector('.prompt-optimizer-original').value = sourceText;
+  overlay.querySelector('.prompt-optimizer-result').focus({ preventScroll: true });
+  const status = overlay.querySelector('.prompt-optimizer-status');
+  const resultField = overlay.querySelector('.prompt-optimizer-result');
+  const replaceButton = overlay.querySelector('.prompt-optimizer-replace');
+  const kind = composer && composer.dataset.kind === 'video' ? 'video' : 'image';
+  let requestFailed = false;
+  const response = await requestCanvasAgentText({
+    displayPrompt: selectedOnly
+      ? t('Optimize the selected prompt text', '优化选中的提示词', '선택한 프롬프트 텍스트 최적화')
+      : t(`Optimize the current ${kind} prompt`, `优化当前${kind === 'video' ? '视频' : '生图'}提示词`, `현재 ${kind === 'video' ? '비디오' : '이미지'} 프롬프트 최적화`),
+    contextualPrompt: promptOptimizerInstruction(sourceText, kind, selectedOnly),
+    referenceFiles: [],
+    focusInput: false,
+    isolated: true,
+    onResponse: (responseText) => {
+      if (revision !== PromptOptimizerState.revision || !overlay.isConnected) return;
+      const optimized = normalizeAgentPromptSuggestion(responseText);
+      if (!optimized) return;
+      resultField.value = optimized;
+      resultField.readOnly = false;
+      replaceButton.disabled = false;
+      status.textContent = t('Review the result, edit it if needed, then choose whether to replace.', '请查看优化结果；可以继续修改，再选择是否替换。', '결과를 확인하고 필요하면 수정한 뒤 교체 여부를 선택하세요.');
+      status.dataset.state = 'ready';
+      resultField.focus({ preventScroll: true });
+      resultField.setSelectionRange(0, 0);
+    },
+    onError: () => { requestFailed = true; }
+  });
+  if (revision === PromptOptimizerState.revision && overlay.isConnected && (!response || !resultField.value)) {
+    status.textContent = requestFailed
+      ? t('Agent could not optimize this prompt. Please try again.', 'Agent 未能完成优化，请重试。', 'Agent가 프롬프트를 최적화하지 못했습니다. 다시 시도하세요.')
+      : t('Agent is busy. Please try again shortly.', 'Agent 正在处理其他任务，请稍后重试。', 'Agent가 다른 작업을 처리 중입니다. 잠시 후 다시 시도하세요.');
+    status.dataset.state = 'error';
+  }
+  return response;
+}
+
+function promptTextSelection(editable) {
+  const start = Number.isInteger(editable.selectionStart) ? editable.selectionStart : 0;
+  const end = Number.isInteger(editable.selectionEnd) ? editable.selectionEnd : start;
+  return { start, end, text: editable.value.slice(start, end) };
+}
+
 function showAgentTextContextMenu(event) {
   const editable = event.target.closest('textarea, input[type="text"], input:not([type])');
   const message = event.target.closest('.board-agent-message, .ai-assistant-message-body');
@@ -309,7 +493,8 @@ function showAgentTextContextMenu(event) {
   event.stopPropagation();
 
   if (editable) {
-    const selectedText = editable.value.slice(editable.selectionStart, editable.selectionEnd);
+    const selection = promptTextSelection(editable);
+    const selectedText = selection.text;
     const items = [];
     if (selectedText) {
       items.push({
@@ -342,10 +527,61 @@ function showAgentTextContextMenu(event) {
   }
 
   const text = textSelectionInside(message) || message.innerText || message.textContent;
-  buildAndShowSimpleMenu([{
+  const items = [{
     label: t('Copy', '\u590d\u5236'),
+    icon: 'M8 8h11v11H8z;M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1',
     action: () => writePlainTextToClipboard(text)
-  }], event.clientX, event.clientY, 'agent-text-context-menu');
+  }];
+  if (text && typeof openMoodboardTargetPicker === 'function') {
+    items.push({
+      label: t('Send to moodboard', '发送到情绪板'),
+      icon: 'M4 4h6a3 3 0 0 1 3 3v13a3 3 0 0 0-3-3H4z;M20 4h-6a3 3 0 0 0-3 3v13a3 3 0 0 1 3-3h6z',
+      action: () => openMoodboardTargetPicker(text)
+    });
+  }
+  buildAndShowSimpleMenu(items, event.clientX, event.clientY, 'agent-text-context-menu');
+  return true;
+}
+
+function showPromptTextContextMenu(event) {
+  const editable = event.target.closest('.ai-composer-prompt');
+  if (!editable) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  const selection = promptTextSelection(editable);
+  const optimizeSelection = !!selection.text.trim();
+  const optimizeRange = optimizeSelection
+    ? { start: selection.start, end: selection.end }
+    : { start: 0, end: editable.value.length };
+  const items = [{
+    label: optimizeSelection
+      ? t('Optimize selected text with Agent', '使用 Agent 优化选中文字', 'Agent로 선택한 텍스트 최적화')
+      : t('Optimize prompt with Agent', '使用 Agent 优化提示词', 'Agent로 프롬프트 최적화'),
+    icon: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z;M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16z',
+    action: () => void openPromptOptimizerDialog(editable, optimizeRange)
+  }, { divider: true, dividerOnly: true }];
+  if (selection.text) {
+    items.push({
+      label: t('Cut', '剪切', '잘라내기'),
+      action: async () => {
+        if (!await writePlainTextToClipboard(selection.text)) return;
+        editable.setRangeText('', selection.start, selection.end, 'end');
+        editable.dispatchEvent(new Event('input', { bubbles: true }));
+        editable.focus();
+      }
+    }, {
+      label: t('Copy', '复制', '복사'),
+      action: () => writePlainTextToClipboard(selection.text)
+    });
+  }
+  items.push({
+    label: t('Paste', '粘贴', '붙여넣기'),
+    action: () => pastePlainTextIntoInput(editable)
+  }, {
+    label: t('Select all', '全选', '전체 선택'),
+    action: () => { editable.focus(); editable.select(); }
+  });
+  buildAndShowSimpleMenu(items, event.clientX, event.clientY, 'prompt-text-context-menu');
   return true;
 }
 
@@ -586,6 +822,28 @@ async function removeBoardItemFromCanvas(item) {
 }
 
 function showBoardItemContextMenu(item, x, y) {
+  if (item.isMoodboard) {
+    buildAndShowSimpleMenu([
+      {
+        label: t('Open text moodboard', '打开文字情绪板'),
+        icon: 'M15 3h6v6;M21 3l-8 8;M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6',
+        action: () => openMoodboardEditor(item)
+      },
+      {
+        label: t('Create duplicate', '创建副本'),
+        icon: 'M8 8h11v11H8z;M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1',
+        action: () => duplicateBoardItem(item)
+      },
+      {
+        label: t('Delete', '删除'),
+        icon: 'M3 6h18;M8 6V4h8v2;M7 6l1 15h8l1-15;M10 10v7;M14 10v7',
+        divider: true,
+        danger: true,
+        action: () => removeBoardItemFromCanvas(item)
+      }
+    ], x, y, 'board-moodboard-context-menu');
+    return;
+  }
   if (item.fileId) {
     const file = AppState.files.find((entry) => entry.id === item.fileId);
     const isImage = !!(file && isImageExt(file.ext));

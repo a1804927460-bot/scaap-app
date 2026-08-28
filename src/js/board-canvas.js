@@ -341,6 +341,9 @@ function removeBoardItemsWithHistory(items) {
   const liveIds = new Set((items || []).map((item) => item && item.id).filter(Boolean));
   const liveItems = AppState.boardItems.filter((item) => liveIds.has(item.id));
   if (!liveItems.length) return false;
+  if (liveItems.some((item) => item.isMoodboard) && typeof closeMoodboardEditor === 'function') {
+    closeMoodboardEditor();
+  }
   recordBoardItemsHistory('remove', liveItems);
   AppState.boardItems = AppState.boardItems.filter((item) => !liveIds.has(item.id));
   canvasWorkspaceRemoveItems([...liveIds]);
@@ -407,7 +410,7 @@ function pasteBoardClipboard(atX, atY) {
     const srcItem = cloneBoardHistoryItem(clipboardItem);
     const newItem = {
       ...srcItem,
-      id: (srcItem.isNote ? 'note_' : 'b_') + Math.random().toString(36).slice(2, 10),
+      id: (clipboardItem.isMoodboard ? 'moodboard_' : (srcItem.isNote ? 'note_' : 'b_')) + Math.random().toString(36).slice(2, 10),
       x: (atX !== undefined ? atX : srcItem.x + offset) + i * 12,
       y: (atY !== undefined ? atY : srcItem.y + offset) + i * 12,
       zIndex: AppState.boardItems.length + i + 1,
@@ -1541,6 +1544,12 @@ function boardRenderMetadata(value) {
 
 function boardItemRenderSignature(item, file) {
   if (item.isAiPlaceholder) return `pending:${item.id}`;
+  if (item.isMoodboard) {
+    return [
+      'moodboard', item.moodboardTitle || '', item.moodboardText || '',
+      boardRenderMetadata(item.moodboardDelta), boardRenderMetadata(item.moodboardSuggestion)
+    ].join('\u001f');
+  }
   if (item.isNote) {
     return [
       'note', item.text, item.fontFamily, item.fontSize, item.fontWeight,
@@ -1604,7 +1613,7 @@ function reconcileMountedBoardItemsAfterDataChange() {
 function isMountableBoardItem(id) {
   const item = Board.itemsById.get(id);
   if (!item) return false;
-  return !!(item.isAiPlaceholder || item.isNote || item.isDoodle || Board.filesById.has(item.fileId));
+  return !!(item.isAiPlaceholder || item.isMoodboard || item.isNote || item.isDoodle || Board.filesById.has(item.fileId));
 }
 
 function isBoardElementPaintReady(element) {
@@ -2042,6 +2051,7 @@ function buildAiPlaceholderElementLocalized(item) {
 
 function createBoardItemElement(item) {
   if (item.isAiPlaceholder) return buildAiPlaceholderElementLocalized(item);
+  if (item.isMoodboard) return buildBoardMoodboardElement(item);
   if (item.isNote) return buildTextNoteEl(item);
   if (item.isDoodle) return buildDoodleItemEl(item);
   const f = Board.filesById.get(item.fileId);
@@ -2716,15 +2726,17 @@ function addResizeHandles(el, item) {
         const widthFromY = startWidth + dy / aspectRatio;
         const proportionalWidth = Math.abs(dx) >= Math.abs(dy / aspectRatio) ? widthFromX : widthFromY;
         const freeResize = !locksMediaAspect && point.shiftKey;
-        const newWidth = Math.max(minWidth, Math.min(MAX_BOARD_ITEM_WIDTH, freeResize ? widthFromX : proportionalWidth));
-        const newHeight = freeResize
+        const freeMoodboardResize = !locksMediaAspect && item.isMoodboard;
+        const usesFreeResize = freeResize || freeMoodboardResize;
+        const newWidth = Math.max(minWidth, Math.min(MAX_BOARD_ITEM_WIDTH, usesFreeResize ? widthFromX : proportionalWidth));
+        const newHeight = usesFreeResize
           ? Math.max(minHeight, Math.min(MAX_BOARD_ITEM_WIDTH, startHeight + dy))
           : locksMediaAspect
             ? Math.max(1, Math.round(newWidth * aspectRatio))
             : Math.max(minHeight, Math.round(newWidth * aspectRatio));
         item.width = Math.round(newWidth);
         el.style.width = item.width + 'px';
-        if (locksMediaAspect || item.isDoodle || freeResize) {
+        if (locksMediaAspect || item.isDoodle || usesFreeResize) {
           item.height = Math.round(newHeight);
           el.style.height = item.height + 'px';
         }
@@ -6476,6 +6488,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       form.requestSubmit();
     }
   });
+  prompt.addEventListener('contextmenu', showPromptTextContextMenu);
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -7352,6 +7365,8 @@ function initBoardBottomBar() {
   document.getElementById('board-tool-text').addEventListener('click', () => {
     armTextPlacement();
   });
+
+  if (typeof initBoardMoodboards === 'function') initBoardMoodboards();
 
   document.getElementById('board-tool-doodle').addEventListener('click', () => toggleDoodleMode());
 

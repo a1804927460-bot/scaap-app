@@ -25,8 +25,10 @@ assert.match(themeCss, /body\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?inset:\s*0;/)
 assert.match(mainCss, /\.app-section\s*\{[\s\S]*?top:\s*var\(--titlebar-h\);[\s\S]*?bottom:\s*0;/);
 assert.match(indexHtml, /data-section="assistant"[^>]*>[\s\S]*?Messs<\/button>[\s\S]*?data-section="messs"[^>]*>[\s\S]*?Workspace<\/button>/,
   'The title bar must expose Messs before the renamed Workspace entry.');
-assert.match(mainCss, /\.titlebar-drag-region\s*\{\s*flex:\s*0\s+0\s+14px;/,
-  'The section tabs must stay anchored at the upper-left.');
+assert.match(mainCss, /\.titlebar-drag-region\s*\{\s*flex:\s*1\s*;/,
+  'The title bar drag region must leave the navigation centered independently of the window controls.');
+assert.match(mainCss, /\.section-tabs\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?left:\s*50%;[\s\S]*?top:\s*50%;[\s\S]*?transform:\s*translate\(-50%,\s*-50%\);/,
+  'The section tabs must stay centered in the title bar.');
 assert.match(titlebarJs, /const isAssistantSection = section === 'assistant';[\s\S]*?setAssistantFullscreen\(true\)[\s\S]*?section-' \+ \(isAssistantSection \? 'messs' : section\)/,
   'The Messs entry must open the existing AI panel without changing the internal workspace section id.');
 assert.match(sidebarJs, /section-tab\[data-section="messs"\][\s\S]*?Workspace[\s\S]*?section-tab\[data-section="assistant"\][\s\S]*?Messs/,
