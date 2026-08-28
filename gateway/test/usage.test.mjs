@@ -527,6 +527,41 @@ test('failed generation settles as a release request', async () => {
   });
 });
 
+test('recovery-pending settlement responses are preserved for media and tools', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
+    const recovery = {
+      ok: false,
+      reason: 'provider-task-recovery-pending',
+      status: 'reserved',
+      creditsHeld: 37
+    };
+    await assert.rejects(
+      () => settleUsage('00000000-0000-4000-8000-000000000041', 'failed', 0, async () => jsonResponse(recovery)),
+      (error) => error && error.code === 'provider-task-recovery-pending' && error.status === 503
+    );
+    await assert.rejects(
+      () => confirmUsageDelivery(
+        '00000000-0000-4000-8000-000000000042',
+        '00000000-0000-4000-8000-000000000043',
+        false,
+        0,
+        async () => jsonResponse(recovery)
+      ),
+      (error) => error && error.code === 'provider-task-recovery-pending' && error.status === 503
+    );
+    await assert.rejects(
+      () => settleToolUsage(
+        '00000000-0000-4000-8000-000000000044',
+        '00000000-0000-4000-8000-000000000045',
+        'failed',
+        0,
+        async () => jsonResponse(recovery)
+      ),
+      (error) => error && error.code === 'provider-task-recovery-pending' && error.status === 503
+    );
+  });
+});
+
 test('settlement retries once without risking a duplicate charge', async () => {
   await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
     let attempts = 0;
@@ -1013,7 +1048,7 @@ test('usage summary HTTP route remains behind authentication', () => {
   assert.match(server.slice(canvasUsageRouteAt, canvasUsageRouteAt + 250), /getCanvasUsage\(user\.id, canvasId\)/);
 });
 
-test('video delivery confirmation fails closed and releases invalid local deliveries', () => {
+test('video delivery confirmation preserves accepted tasks when local metadata is invalid', () => {
   const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
   const confirmAt = server.indexOf("url.pathname === '/v1/media/video/tasks/confirm'");
   const releaseAt = server.indexOf("url.pathname === '/v1/media/video/tasks/release'");
@@ -1023,8 +1058,23 @@ test('video delivery confirmation fails closed and releases invalid local delive
   assert.ok(route.includes("!/^video\\/[a-z0-9.+-]+$/i.test(contentType)"));
   assert.match(route, /Number\.isSafeInteger\(bytes\)/);
   assert.match(route, /bytes > MAX_GENERATED_VIDEO_BYTES/);
-  assert.match(route, /failVideoDownload\(user\.id, taskToken/);
-  assert.match(route, /status: String\(released && released\.status \|\| 'failed'\)/);
+  assert.match(route, /getVideoJob\(user\.id, taskToken\)/);
+  assert.match(route, /videoDeliveryRecoveryPendingError\(\)/);
+  assert.doesNotMatch(route, /failVideoDownload\(user\.id, taskToken/);
+  assert.doesNotMatch(route, /released && released\.status/);
+});
+
+test('latest settlement migration holds live image and video recovery reservations', () => {
+  const migration = fs.readFileSync(
+    new URL('../../supabase/migrations/202608280005_guard_settle_ai_credits_recovery.sql', import.meta.url),
+    'utf8'
+  );
+  assert.match(migration, /create or replace function public\.settle_ai_credits/i);
+  assert.match(migration, /image_job\.status in \('starting', 'submitted', 'ready'\)[\s\S]*?image_job\.deadline_at > now\(\)/i);
+  assert.match(migration, /video_job\.status in \('starting', 'submitted', 'polling', 'ready'\)[\s\S]*?video_job\.deadline_at > now\(\)/i);
+  assert.match(migration, /'provider-task-recovery-pending'/i);
+  assert.match(migration, /'status', 'reserved'/i);
+  assert.match(migration, /revoke all on function public\.settle_ai_credits[\s\S]*?grant execute on function public\.settle_ai_credits[\s\S]*?to service_role/i);
 });
 
 test('historical failed video refunds are idempotent and require unambiguous failed evidence', () => {

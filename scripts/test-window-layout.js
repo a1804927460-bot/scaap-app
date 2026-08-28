@@ -14,6 +14,7 @@ const startupThemeJs = read('src/js/startup-theme.js');
 const themeJs = read('src/js/theme.js');
 const startScreenJs = read('src/js/start-screen.js');
 const sidebarJs = read('src/js/sidebar.js');
+const titlebarJs = read('src/js/titlebar.js');
 const appJs = read('src/js/app.js');
 const themeCss = read('src/styles/theme.css');
 const mainCss = read('src/styles/main.css');
@@ -22,6 +23,14 @@ const startCss = read('src/styles/start.css');
 assert.match(themeCss, /--titlebar-h:\s*38px/);
 assert.match(themeCss, /body\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?inset:\s*0;/);
 assert.match(mainCss, /\.app-section\s*\{[\s\S]*?top:\s*var\(--titlebar-h\);[\s\S]*?bottom:\s*0;/);
+assert.match(indexHtml, /data-section="assistant"[^>]*>[\s\S]*?Messs<\/button>[\s\S]*?data-section="messs"[^>]*>[\s\S]*?Workspace<\/button>/,
+  'The title bar must expose Messs before the renamed Workspace entry.');
+assert.match(mainCss, /\.titlebar-drag-region\s*\{\s*flex:\s*0\s+0\s+14px;/,
+  'The section tabs must stay anchored at the upper-left.');
+assert.match(titlebarJs, /const isAssistantSection = section === 'assistant';[\s\S]*?setAssistantFullscreen\(true\)[\s\S]*?section-' \+ \(isAssistantSection \? 'messs' : section\)/,
+  'The Messs entry must open the existing AI panel without changing the internal workspace section id.');
+assert.match(sidebarJs, /section-tab\[data-section="messs"\][\s\S]*?Workspace[\s\S]*?section-tab\[data-section="assistant"\][\s\S]*?Messs/,
+  'Navigation labels must localize the assistant and workspace entries.');
 assert.match(mainCss, /\.main-app\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0;/);
 assert.match(mainCss, /#search-input\s*\{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-width:\s*0;/);
 assert.doesNotMatch(sidebarJs, /file-list-storage-badge|badge\.textContent\s*=\s*t\('Library',\s*'资料库'\)/, 'The redundant Library badge must stay removed.');

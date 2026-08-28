@@ -1,7 +1,5 @@
 'use strict';
-/* Custom title bar: window controls (minimize/maximize/close) and the
-   Messs / Chat / Market / 创意工坊 section switcher. Sections other than
-   "messs" (the actual app) are just placeholders for now. */
+/* Custom title bar: window controls and the top-level section switcher. */
 
 function initTitlebar() {
   initWindowControls();
@@ -54,11 +52,17 @@ function initSectionTabs() {
     tab.addEventListener('click', () => {
       const section = tab.dataset.section;
       const assistant = document.getElementById('ai-assistant-panel');
-      if (assistant && assistant.classList.contains('is-fullscreen') && typeof setAssistantFullscreen === 'function') {
+      const isAssistantSection = section === 'assistant';
+      if (assistant && assistant.classList.contains('is-fullscreen') && !isAssistantSection && typeof setAssistantFullscreen === 'function') {
         setAssistantFullscreen(false);
       }
       if (typeof isBoardFullscreen === 'function' && isBoardFullscreen() && typeof exitBoardFullscreen === 'function') {
         exitBoardFullscreen();
+      }
+      if (isAssistantSection) {
+        const fileDetail = document.getElementById('file-detail-panel');
+        if (fileDetail && !fileDetail.hidden && typeof hideFileDetailPanel === 'function') hideFileDetailPanel();
+        if (assistant && typeof setAssistantFullscreen === 'function') setAssistantFullscreen(true);
       }
       document.querySelectorAll('.section-tab').forEach((t) => {
         const isActive = t === tab;
@@ -66,7 +70,7 @@ function initSectionTabs() {
         t.setAttribute('aria-selected', String(isActive));
       });
       document.querySelectorAll('.app-section').forEach((el) => {
-        el.classList.toggle('is-active', el.id === 'section-' + section);
+        el.classList.toggle('is-active', el.id === 'section-' + (isAssistantSection ? 'messs' : section));
       });
     });
   });

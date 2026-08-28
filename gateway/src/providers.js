@@ -7,6 +7,7 @@ import {
   stripImageMetadata
 } from './ai302-tools.js';
 import { normalizeVideoResolution } from './video-resolution.js';
+import { AI302_PRIMARY_BASE_URL, getAi302BackupRoutes } from './tool-routes.js';
 
 const require = createRequire(import.meta.url);
 const {
@@ -14,10 +15,12 @@ const {
   generateMediaBuffer,
   generatedImageDimensions,
   gptImage2Size,
+  recoverMediaBuffer,
   validateGeneratedMediaBuffer
 } = require('../../lib/ai-media-provider');
 const { requestChat, discoverChatModels } = require('../../lib/ai-chat-provider');
 const { PROVIDER_CATALOG_VERSION, providerCatalog } = require('../../lib/provider-catalog');
+const { sanitizePublicModelLabel } = require('../../lib/public-model-label');
 
 const QUICKROUTER_BASE_URL = 'https://api.quickrouter.ai';
 const DEFAULT_RESULT_ENDPOINT = `${QUICKROUTER_BASE_URL}/v1/videos`;
@@ -35,17 +38,76 @@ const ASYNC_VIDEO_PROTOCOLS = new Set([
 ]);
 const TERMINAL_VIDEO_FAILURES = new Set(['failed', 'cancelled', 'expired']);
 const ROUTED_TASK_PREFIX = 'messs-route:';
+const PUBLIC_CAPABILITY_KEYS = new Set([
+  'arbitraryRatios', 'arbitrarySizes', 'bitrateModes', 'counts', 'createTimeoutMs',
+  'defaultServiceTier', 'durations', 'enhancePrompt', 'frameReferenceEncoding',
+  'frameReferenceRatios', 'generateAudio', 'maxReferenceAudios', 'maxReferenceImageBytes',
+  'maxReferenceImages', 'maxReferenceImagesWithVideo', 'maxReferenceVideos', 'maxReferences',
+  'maxSizeEdge', 'maxSizePixels', 'maxTotalReferences', 'maximumAspectRatio', 'minimumAspectRatio',
+  'mediaTypes', 'minReferenceImages', 'minReferenceVideos', 'minReferences',
+  'multiReferenceSizes', 'outputFormats', 'promptMaxCharacters', 'qualities', 'ratios',
+  'referenceAudioMimeTypes', 'referenceDataUrlsOnly', 'referenceImageBytes',
+  'referenceMimeTypes', 'referencePromptMaxCharacters', 'referenceRatios',
+  'referenceResolutions', 'referenceRoles', 'referenceSizes', 'resolutionPresets', 'resolutions',
+  'seedMaximum', 'seedMinimum', 'serviceTier', 'serviceTiers', 'sizeMultiple', 'sizes',
+  'sizeRatios', 'styles', 'supportsEdit', 'supportsHd', 'supportsResolution', 'supportsSeed',
+  'supportsWatermark', 'textRatios', 'tierResolutions', 'videoModes'
+]);
+const PUBLIC_CAPABILITY_NESTED_KEYS = new Set([
+  'id', 'minReferences', 'maxReferences', 'minReferenceImages', 'maxReferenceImages',
+  'minReferenceVideos', 'maxReferenceVideos', 'maxReferenceAudios', 'roles', 'mediaTypes',
+  'ratios', 'durations', 'hidden'
+]);
+
+function sanitizePublicCapabilityValue(value, nested = false) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizePublicCapabilityValue(entry, true));
+  }
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => (nested ? PUBLIC_CAPABILITY_NESTED_KEYS : PUBLIC_CAPABILITY_KEYS).has(key))
+    .map(([key, entry]) => [key, sanitizePublicCapabilityValue(entry, true)]));
+}
+
+function publicCapabilities(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const result = sanitizePublicCapabilityValue(value);
+  // Service tier names are safe product configuration, but their provider
+  // mapping is intentionally never sent to the client.
+  if (value.tierResolutions && typeof value.tierResolutions === 'object') {
+    result.tierResolutions = Object.fromEntries(Object.entries(value.tierResolutions)
+      .filter(([, resolutions]) => Array.isArray(resolutions))
+      .map(([tier, resolutions]) => [String(tier).slice(0, 32), resolutions.slice(0, 32).map(String)]));
+  }
+  if (value.sizeRatios && typeof value.sizeRatios === 'object') {
+    result.sizeRatios = Object.fromEntries(Object.entries(value.sizeRatios)
+      .filter(([, ratio]) => typeof ratio === 'string' || typeof ratio === 'number')
+      .map(([size, ratio]) => [String(size).slice(0, 32), String(ratio).slice(0, 32)]));
+  }
+  return result;
+}
+
+function publicProvider(provider) {
+  return {
+    id: provider.id,
+    kind: provider.kind,
+    name: sanitizePublicModelLabel(provider.name, provider.id),
+    models: Array.isArray(provider.models)
+      ? provider.models.map((model) => sanitizePublicModelLabel(model, 'AI model')).slice(0, 30)
+      : [],
+    capabilities: publicCapabilities(provider.capabilities)
+  };
+}
 
 function shouldTryProviderFallback(error) {
   if (!error || error.name === 'AbortError') return false;
-  if (error.retryable === true) return true;
-  const code = String(error.code || '').trim().toLowerCase();
-  if (['provider-invalid-response', 'provider-result-missing', 'provider-download-failed'].includes(code)) return true;
-  const status = Number(error.status);
-  // A preferred routed credential can be rotated or temporarily rejected
-  // while the same logical model still has a configured secondary route.
-  // Let the route list decide whether a safe fallback exists.
-  return [401, 403, 408, 425, 429].includes(status) || status >= 500;
+  // Once an upstream has returned a task ID or a generated asset, the
+  // request may already be billable. Never replay it on another route.
+  if (error.taskId || error.providerTaskId || error.providerTaskAccepted === true
+      || error.submissionAmbiguous === true) return false;
+  // `retryable` also covers polling and downloads. A paid creation may only
+  // move to another route when the adapter can prove that no task was accepted.
+  return error.safeToFallback === true;
 }
 
 function safeServerEndpoint(value) {
@@ -60,6 +122,40 @@ function safeServerEndpoint(value) {
     return url.toString();
   } catch (error) {
     return '';
+  }
+}
+
+function stableRouteAliasId(providerId, routeId) {
+  const input = `${providerId}:${routeId}`;
+  let hash = 2166136261;
+  for (const character of input) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  const digest = (hash >>> 0).toString(36).padStart(7, '0');
+  return `r-${String(routeId).slice(0, 20)}-${String(providerId).slice(0, 27)}-${digest}`
+    .replace(/[^a-z0-9-]/gi, '-').slice(0, 63).toLowerCase();
+}
+
+function replaceRouteOrigin(endpoint, routeBaseUrl) {
+  try {
+    const source = new URL(endpoint);
+    const target = new URL(routeBaseUrl);
+    source.protocol = target.protocol;
+    source.host = target.host;
+    source.username = '';
+    source.password = '';
+    return source.toString();
+  } catch (error) {
+    return '';
+  }
+}
+
+function isAi302Endpoint(endpoint) {
+  try {
+    return new URL(endpoint).origin === AI302_PRIMARY_BASE_URL;
+  } catch (error) {
+    return false;
   }
 }
 
@@ -81,38 +177,84 @@ function configuredProviders() {
   const byId = new Map();
   for (const raw of [...builtinProviders(), ...extra].slice(0, MAX_PROVIDERS)) {
     const id = String(raw.id || '').trim().toLowerCase();
-    const kind = ['chat', 'image', 'video'].includes(raw.kind) ? raw.kind : '';
-    const endpoint = safeServerEndpoint(raw.endpoint);
-    const keyEnv = String(raw.keyEnv || '').trim();
-    if (!PROVIDER_ID.test(id) || !kind || !endpoint || !PROVIDER_KEY_ENV.test(keyEnv)) continue;
     const builtin = byId.get(id);
+    const kind = ['chat', 'image', 'video'].includes(raw.kind)
+      ? raw.kind
+      : (builtin && builtin.kind) || '';
+    const endpoint = safeServerEndpoint(raw.endpoint || (builtin && builtin.endpoint));
+    const keyEnv = String(raw.keyEnv || (builtin && builtin.keyEnv) || '').trim();
+    if (!PROVIDER_ID.test(id) || !kind || !endpoint || !PROVIDER_KEY_ENV.test(keyEnv)) continue;
+    const models = Array.isArray(raw.models)
+      ? raw.models.map(String).map((v) => v.trim()).filter(Boolean).slice(0, 30)
+      : (builtin && builtin.models) || [];
+    const upstreamModels = raw.upstreamModels && typeof raw.upstreamModels === 'object' && !Array.isArray(raw.upstreamModels)
+      ? Object.fromEntries(Object.entries(raw.upstreamModels).slice(0, 30).map(([logical, upstream]) => [
+        String(logical).trim().slice(0, 120), String(upstream).trim().slice(0, 120)
+      ]).filter(([logical, upstream]) => logical && upstream))
+      : (builtin && builtin.upstreamModels) || {};
     byId.set(id, {
       id, kind,
-      name: String(raw.name || id).trim().slice(0, 80),
+      name: String(raw.name || (builtin && builtin.name) || id).trim().slice(0, 80),
       endpoint,
-      resultEndpoint: safeServerEndpoint(raw.resultEndpoint) || DEFAULT_RESULT_ENDPOINT,
-      models: Array.isArray(raw.models) ? raw.models.map(String).map((v) => v.trim()).filter(Boolean).slice(0, 30) : [],
-      upstreamModels: raw.upstreamModels && typeof raw.upstreamModels === 'object' && !Array.isArray(raw.upstreamModels)
-        ? Object.fromEntries(Object.entries(raw.upstreamModels).slice(0, 30).map(([logical, upstream]) => [
-          String(logical).trim().slice(0, 120), String(upstream).trim().slice(0, 120)
-        ]).filter(([logical, upstream]) => logical && upstream))
-        : {},
-      model: String(raw.model || '').trim().slice(0, 120),
-      protocol: String(raw.protocol || '').trim().slice(0, 40),
+      resultEndpoint: safeServerEndpoint(raw.resultEndpoint || (builtin && builtin.resultEndpoint)) || DEFAULT_RESULT_ENDPOINT,
+      models,
+      upstreamModels,
+      // This is an internal routing hint. It is deliberately removed from
+      // publicProviderConfig so the renderer only sees product model labels.
+      logicalModel: String(raw.logicalModel || (builtin && builtin.logicalModel) || '').trim().slice(0, 120),
+      fallbackProviderIds: Array.isArray(raw.fallbackProviderIds)
+        ? raw.fallbackProviderIds.map((value) => String(value || '').trim().toLowerCase())
+          .filter((value) => PROVIDER_ID.test(value)).slice(0, 20)
+        : (builtin && builtin.fallbackProviderIds) || [],
+      model: String(raw.model || (builtin && builtin.model) || '').trim().slice(0, 120),
+      protocol: String(raw.protocol || (builtin && builtin.protocol) || '').trim().slice(0, 40),
       // Capabilities for catalog models are versioned with the application.
       // Deployment overrides may replace endpoints or credentials, but must
       // not revive a stale resolution/mode matrix for a built-in model.
       capabilities: builtin && builtin.capabilities
         ? builtin.capabilities
         : (raw.capabilities && typeof raw.capabilities === 'object' ? raw.capabilities : null),
-      hidden: raw.hidden === true,
+      hidden: raw.hidden === true || Boolean(builtin && builtin.hidden),
       keyEnv
     });
+  }
+  const originals = [...byId.values()];
+  const backupRoutes = getAi302BackupRoutes();
+  for (const provider of originals) {
+    if (!isAi302Endpoint(provider.endpoint)) continue;
+    const aliases = [];
+    for (const route of backupRoutes) {
+      const aliasId = stableRouteAliasId(provider.id, route.id);
+      if (byId.has(aliasId)) continue;
+      const endpoint = replaceRouteOrigin(provider.endpoint, route.baseUrl);
+      const resultEndpoint = replaceRouteOrigin(provider.resultEndpoint, route.baseUrl);
+      if (!endpoint || !resultEndpoint) continue;
+      byId.set(aliasId, {
+        ...provider,
+        id: aliasId,
+        endpoint,
+        resultEndpoint,
+        name: `${provider.name} route`.slice(0, 80),
+        hidden: true,
+        keyEnv: 'AI302_KEY',
+        routeId: route.id,
+        routeApiKey: route.apiKey,
+        routeAliasOf: provider.id,
+        fallbackProviderIds: []
+      });
+      aliases.push(aliasId);
+    }
+    if (aliases.length) {
+      provider.fallbackProviderIds = [
+        ...new Set([...(provider.fallbackProviderIds || []), ...aliases])
+      ].slice(0, 20);
+    }
   }
   return [...byId.values()];
 }
 
 function providerApiKey(provider) {
+  if (provider && provider.routeApiKey) return provider.routeApiKey;
   const direct = String(process.env[provider.keyEnv] || '').trim();
   if (direct) return direct;
   if (provider.keyEnv === 'QUICKROUTER_API_KEY') {
@@ -135,6 +277,9 @@ function providerRouteIds(provider) {
   if (capabilities.tierProviderIds && typeof capabilities.tierProviderIds === 'object') {
     routeIds.push(...Object.values(capabilities.tierProviderIds));
   }
+  if (Array.isArray(provider && provider.fallbackProviderIds)) {
+    routeIds.push(...provider.fallbackProviderIds);
+  }
   return [...new Set(routeIds.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))];
 }
 
@@ -142,7 +287,7 @@ function providerHasUsableRoute(provider, providers = configuredProviders()) {
   const byId = new Map(providers.map((entry) => [entry.id, entry]));
   return providerRouteIds(provider).some((id) => {
     const candidate = byId.get(id);
-    return candidate && Boolean(providerApiKey(candidate));
+    return candidate && Boolean(providerApiKey(candidate)) && isCompatibleFallbackRoute(provider, candidate);
   });
 }
 
@@ -151,7 +296,7 @@ export function publicProviderConfig() {
   const providers = configured.filter((provider) => !provider.hidden && providerHasUsableRoute(provider, configured));
   return {
     catalogVersion: PROVIDER_CATALOG_VERSION,
-    providers: providers.map(({ keyEnv, endpoint, resultEndpoint, hidden, ...provider }) => provider)
+    providers: providers.map(publicProvider)
   };
 }
 
@@ -198,12 +343,22 @@ function requestRouteIds(provider, body = {}) {
     ? provider.capabilities
     : {};
   if (provider.kind === 'image' && Array.isArray(capabilities.upstreamPriority)) {
-    return capabilities.upstreamPriority;
+    return [...new Set([
+      provider.id,
+      ...capabilities.upstreamPriority,
+      ...(provider.fallbackProviderIds || [])
+    ])];
   }
   if (provider.kind === 'video') {
     const serviceTier = String(body.serviceTier || capabilities.defaultServiceTier || 'standard').trim().toLowerCase();
     const tierProviderId = capabilities.tierProviderIds && capabilities.tierProviderIds[serviceTier];
-    if (tierProviderId) return [tierProviderId];
+    if (tierProviderId) {
+      return [...new Set([
+        tierProviderId,
+        ...(Array.isArray(capabilities.fallbackProviderIds) ? capabilities.fallbackProviderIds : []),
+        ...(Array.isArray(provider.fallbackProviderIds) ? provider.fallbackProviderIds : [])
+      ])];
+    }
     // Older clients may omit videoMode. Infer the same mode used by the
     // validators so logical Seedance requests still try Atlas first.
     let videoMode = String(body.videoMode || '').trim().toLowerCase();
@@ -219,9 +374,63 @@ function requestRouteIds(provider, body = {}) {
       else if (urlCount === 1) videoMode = 'first-frame';
     }
     const route = capabilities.upstreamRoutes && capabilities.upstreamRoutes[videoMode];
-    if (Array.isArray(route) && route.length) return route;
+    if (Array.isArray(route) && route.length) {
+      return [...new Set([
+        ...route,
+        ...(Array.isArray(capabilities.fallbackProviderIds) ? capabilities.fallbackProviderIds : []),
+        ...(Array.isArray(provider.fallbackProviderIds) ? provider.fallbackProviderIds : [])
+      ])];
+    }
   }
-  return [provider.id];
+  return [...new Set([provider.id, ...(provider.fallbackProviderIds || [])])];
+}
+
+function compactProviderIdentity(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function providerLogicalFamily(provider) {
+  const kind = String(provider && provider.kind || '').trim().toLowerCase();
+  const explicit = compactProviderIdentity(provider && provider.logicalModel);
+  if (explicit) return `${kind}:logical:${explicit}`;
+
+  const source = [
+    provider && provider.model,
+    provider && provider.name,
+    provider && provider.id,
+    provider && provider.endpoint
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (kind === 'video') {
+    const seedance = /seedance[^0-9]*([0-9]+)(?:[.-]([0-9]+))?/.exec(source);
+    if (seedance) return `video:logical:seedance-${seedance[1]}-${seedance[2] || '0'}`;
+    if (/kling[^0-9]*(?:v)?3(?:[.-]0)?/.test(source)) return 'video:logical:kling-v3';
+    if (/kling[^0-9]*(?:o)?3/.test(source)) return 'video:logical:kling-o3';
+  }
+
+  if (kind === 'image') {
+    if (/gpt[^a-z0-9]*image[^a-z0-9]*2/.test(source)) return 'image:logical:gpt-image-2';
+    if (/nano[^a-z0-9]*banana[^a-z0-9]*2[^a-z0-9]*lite/.test(source)) return 'image:logical:nano-banana-2-lite';
+    if (/nano[^a-z0-9]*banana[^a-z0-9]*2/.test(source)) return 'image:logical:nano-banana-2';
+    if (/nano[^a-z0-9]*banana[^a-z0-9]*pro/.test(source)) return 'image:logical:nano-banana-pro';
+    if (/seedream[^a-z0-9]*5[^a-z0-9]*0[^a-z0-9]*pro/.test(source)) return 'image:logical:seedream-5-0-pro';
+  }
+
+  const protocol = compactProviderIdentity(provider && provider.protocol);
+  let pathname = '';
+  try { pathname = compactProviderIdentity(new URL(String(provider && provider.endpoint || '')).pathname); } catch {}
+  return `${kind}:${protocol}:${pathname}`;
+}
+
+function isCompatibleFallbackRoute(requested, candidate) {
+  if (!requested || !candidate || requested.kind !== candidate.kind) return false;
+  if (requested.id === candidate.id) return true;
+  if (candidate.routeAliasOf === requested.id) return true;
+  return providerLogicalFamily(requested) === providerLogicalFamily(candidate);
 }
 
 function routedCandidateForRequest(requested, candidate) {
@@ -256,6 +465,10 @@ function providersForRequest(kind, id, body = {}) {
   for (const routeId of routeIds) {
     const candidate = byId.get(String(routeId || '').trim().toLowerCase());
     if (!candidate || !providerApiKey(candidate) || candidates.some((entry) => entry.id === candidate.id)) continue;
+    // A fallback route is an implementation detail, not permission to swap
+    // products. Require an explicit same-family relationship so a missing
+    // route cannot silently turn (for example) one image model into another.
+    if (!isCompatibleFallbackRoute(requested, candidate)) continue;
     const routed = routedCandidateForRequest(requested, candidate);
     if (!routed) continue;
     candidates.push({ ...routed, apiKey: providerApiKey(candidate) });
@@ -381,10 +594,12 @@ function validateAtlasGptImageOutput(buffer, body) {
   return validated;
 }
 
-async function generateAtlasGptImage(provider, body, signal) {
+async function generateAtlasGptImage(provider, body, signal, hooks = {}) {
   const relayTokens = [];
   try {
-    const urls = Array.isArray(body.urls) ? body.urls.slice(0, 10).map((value) => {
+    const acceptedTask = body && body._acceptedTask && typeof body._acceptedTask === 'object'
+      ? body._acceptedTask : null;
+    const urls = acceptedTask ? [] : Array.isArray(body.urls) ? body.urls.slice(0, 10).map((value) => {
       const source = String(value || '').trim();
       if (!/^data:image\//i.test(source)) return source;
       const image = stripImageMetadata(parseImageDataUrl(source, { maxBytes: 30 * 1024 * 1024 }));
@@ -404,64 +619,96 @@ async function generateAtlasGptImage(provider, body, signal) {
       enable_sync_mode: false,
       enable_base64_output: false
     };
-    const created = await responseJson(await fetch(provider.endpoint, {
-      method: 'POST',
-      headers: providerTaskHeaders(provider, body),
-      signal: providerSignal(signal, 45_000),
-      body: JSON.stringify(requestBody)
-    }), provider.name);
-    const taskId = providerVideoTaskId(created);
-    if (!taskId || taskId.length > 256) {
-      throw Object.assign(new Error(`${provider.name} did not return a valid prediction ID.`), {
-        status: 502, code: 'provider-invalid-response', retryable: false
-      });
-    }
-    const deadline = Date.now() + 20 * 60_000;
-    while (Date.now() < deadline) {
-      let result;
-      try {
-        result = await responseJson(await fetch(
-          `${provider.resultEndpoint}/${encodeURIComponent(taskId)}`,
-          { headers: providerHeaders(provider), signal: providerSignal(signal, 30_000) }
-        ), provider.name);
-      } catch (error) {
-        if (Number(error && error.status) !== 404) throw error;
-        const fallbackEndpoint = String(provider.resultEndpoint).replace(/\/prediction$/i, '/result');
-        result = await responseJson(await fetch(
-          `${fallbackEndpoint}/${encodeURIComponent(taskId)}`,
-          { headers: providerHeaders(provider), signal: providerSignal(signal, 30_000) }
-        ), provider.name);
+    if (acceptedTask && acceptedTask.mediaUrl) {
+      const mediaUrl = String(acceptedTask.mediaUrl).trim();
+      const buffer = validateAtlasGptImageOutput(
+        await downloadGeneratedImage(mediaUrl, signal),
+        body
+      );
+      if (typeof hooks.onReady === 'function') {
+        await hooks.onReady({ providerId: provider.id, taskId: acceptedTask.taskId || '', mediaUrl, buffer });
       }
-      const status = providerVideoTaskStatus(result);
-      if (status === 'succeeded') {
-        const outputUrl = deepAtlasOutputUrl(result);
-        if (!outputUrl) throw Object.assign(new Error(`${provider.name} completed without an image output.`), {
-          status: 502, code: 'provider-result-missing'
+      return buffer;
+    }
+    let taskId = String(acceptedTask && (acceptedTask.taskId || acceptedTask.providerTaskId) || '').trim();
+    let pollUrl = String(acceptedTask && acceptedTask.pollUrl || '').trim();
+    if (!taskId) {
+      const created = await responseJson(await fetch(provider.endpoint, {
+        method: 'POST',
+        headers: providerTaskHeaders(provider, body),
+        signal: providerSignal(signal, 45_000),
+        body: JSON.stringify(requestBody)
+      }), provider.name);
+      taskId = providerVideoTaskId(created);
+      if (!taskId || taskId.length > 256) {
+        throw Object.assign(new Error(`${provider.name} did not return a valid prediction ID.`), {
+          status: 502,
+          code: 'provider-invalid-response',
+          retryable: false,
+          submissionAmbiguous: true
         });
-        return validateAtlasGptImageOutput(
-          await downloadGeneratedImage(outputUrl, signal),
-          body
-        );
       }
-      if (TERMINAL_VIDEO_FAILURES.has(status)) {
-        throw Object.assign(new Error(safeProviderText(
-          nestedVideoTaskValue(result, ['error', 'message', 'msg']),
-          `${provider.name} image generation ${status}.`
-        )), { status: 502, code: `provider-${status}` });
+      pollUrl = `${provider.resultEndpoint.replace(/\/$/, '')}/${encodeURIComponent(taskId)}`;
+      if (typeof hooks.onAccepted === 'function') {
+        await hooks.onAccepted({ providerId: provider.id, taskId, pollUrl });
       }
-      await delayWithSignal(2_000, signal);
     }
-    throw Object.assign(new Error(`${provider.name} image generation timed out.`), {
-      status: 504, code: 'provider-timeout'
-    });
+    try {
+      const deadline = Date.now() + 20 * 60_000;
+      while (Date.now() < deadline) {
+        let result;
+        try {
+          result = await responseJson(await fetch(
+            pollUrl || `${provider.resultEndpoint}/${encodeURIComponent(taskId)}`,
+            { headers: providerHeaders(provider), signal: providerSignal(signal, 30_000) }
+          ), provider.name);
+        } catch (error) {
+          if (Number(error && error.status) !== 404) throw error;
+          const fallbackEndpoint = String(provider.resultEndpoint).replace(/\/prediction$/i, '/result');
+          result = await responseJson(await fetch(
+            `${fallbackEndpoint}/${encodeURIComponent(taskId)}`,
+            { headers: providerHeaders(provider), signal: providerSignal(signal, 30_000) }
+          ), provider.name);
+        }
+        const status = providerVideoTaskStatus(result);
+        if (status === 'succeeded') {
+          const outputUrl = deepAtlasOutputUrl(result);
+          if (!outputUrl) throw Object.assign(new Error(`${provider.name} completed without an image output.`), {
+            status: 502, code: 'provider-result-missing', providerTaskTerminalFailure: true
+          });
+          const buffer = validateAtlasGptImageOutput(
+            await downloadGeneratedImage(outputUrl, signal),
+            body
+          );
+          if (typeof hooks.onReady === 'function') {
+            await hooks.onReady({ providerId: provider.id, taskId, mediaUrl: outputUrl, buffer });
+          }
+          return buffer;
+        }
+        if (TERMINAL_VIDEO_FAILURES.has(status)) {
+          throw Object.assign(new Error(safeProviderText(
+            nestedVideoTaskValue(result, ['error', 'message', 'msg']),
+            `${provider.name} image generation ${status}.`
+          )), { status: 502, code: `provider-${status}`, providerTaskTerminalFailure: true });
+        }
+        await delayWithSignal(2_000, signal);
+      }
+      throw Object.assign(new Error(`${provider.name} image generation timed out.`), {
+        status: 504, code: 'provider-timeout'
+      });
+    } catch (error) {
+      if (!error.taskId) error.taskId = taskId;
+      error.providerTaskAccepted = true;
+      throw error;
+    }
   } finally {
     relayTokens.forEach((token) => deleteAi302RelayAsset(token));
   }
 }
 
-async function generateMediaWithProvider(kind, provider, body, signal) {
+async function generateMediaWithProvider(kind, provider, body, signal, hooks = {}) {
   if (kind === 'image' && provider.protocol === 'atlas-gpt-image-2') {
-    return generateAtlasGptImage(provider, body, signal);
+    return generateAtlasGptImage(provider, body, signal, hooks);
   }
   if (kind === 'video' && ASYNC_VIDEO_PROTOCOLS.has(provider.protocol)) {
     throw Object.assign(new Error('The selected video provider must use the asynchronous task API.'), {
@@ -498,7 +745,19 @@ async function generateMediaWithProvider(kind, provider, body, signal) {
     }
   }
   try {
-    return await generateMediaBuffer(fetch, config, kind, requestBody, signal);
+    const task = requestBody && requestBody._acceptedTask;
+    const taskHooks = {
+      ...hooks,
+      onAccepted: typeof hooks.onAccepted === 'function'
+        ? (accepted) => hooks.onAccepted({ ...accepted, providerId: provider.id })
+        : undefined,
+      onReady: typeof hooks.onReady === 'function'
+        ? (ready) => hooks.onReady({ ...ready, providerId: provider.id })
+        : undefined
+    };
+    return task
+      ? await recoverMediaBuffer(fetch, config, kind, requestBody, task, signal, undefined, taskHooks)
+      : await generateMediaBuffer(fetch, config, kind, requestBody, signal, undefined, taskHooks);
   } finally {
     relayTokens.forEach((token) => deleteAi302RelayAsset(token));
   }
@@ -535,13 +794,13 @@ function preferredFallbackError(firstError, lastError) {
   return firstError;
 }
 
-export async function generateMedia(kind, body, signal) {
+export async function generateMedia(kind, body, signal, hooks = {}) {
   const providers = providersForRequest(kind, String(body.providerId || ''), body);
   let firstError;
   let lastError;
   for (const provider of providers) {
     try {
-      return await generateMediaWithProvider(kind, provider, body, signal);
+      return await generateMediaWithProvider(kind, provider, body, signal, hooks);
     } catch (error) {
       if (!firstError) firstError = error;
       lastError = error;
@@ -556,6 +815,40 @@ export async function generateMedia(kind, body, signal) {
     }
   }
   throw preferredFallbackError(firstError, lastError);
+}
+
+export async function recoverMedia(kind, body, task, signal, hooks = {}) {
+  const taskProviderId = String(task && (task.providerId || task.provider_id) || '').trim().toLowerCase();
+  const provider = configuredProviders().find((entry) => entry.kind === kind && entry.id === taskProviderId);
+  if (!provider || !providerApiKey(provider)) {
+    throw Object.assign(new Error('The accepted image task cannot be recovered on this server.'), {
+      code: 'provider-task-recovery-pending',
+      status: 503,
+      submissionAmbiguous: true,
+      providerTaskAccepted: true
+    });
+  }
+  const taskId = String(task.providerTaskId || task.provider_task_id || '').trim();
+  const resultUrl = String(task.resultUrl || task.result_url || '').trim();
+  // Synchronous providers are recorded with an internal marker when their
+  // response contained inline data. There is no provider task to poll in
+  // that case, so do not accidentally submit the request again.
+  if (/^inline:[0-9a-f-]{36}$/i.test(taskId) && !resultUrl) {
+    throw Object.assign(new Error('The accepted image result is still being recovered.'), {
+      code: 'provider-task-recovery-pending',
+      status: 503,
+      submissionAmbiguous: true,
+      providerTaskAccepted: true
+    });
+  }
+  return generateMediaWithProvider(kind, { ...provider, apiKey: providerApiKey(provider) }, {
+    ...body,
+    _acceptedTask: {
+      taskId,
+      pollUrl: task.pollUrl || task.poll_url,
+      mediaUrl: resultUrl
+    }
+  }, signal, hooks);
 }
 
 const imageStyleCache = new Map();
@@ -613,46 +906,55 @@ function delayWithSignal(ms, signal) {
 
 export async function generateLegacyVideo(body, signal) {
   const task = await createVideoTask(body, signal);
-  const deadline = Date.now() + 20 * 60_000;
-  while (Date.now() < deadline) {
-    const result = await pollVideoTask(task.providerId, task.taskId, signal);
-    if (result.status === 'succeeded') {
-      const resultUrl = safeServerEndpoint(result.resultUrl);
-      if (!resultUrl) {
-        throw Object.assign(new Error('The video provider returned an unsafe video URL.'), {
+  try {
+    const deadline = Date.now() + 20 * 60_000;
+    while (Date.now() < deadline) {
+      const result = await pollVideoTask(task.providerId, task.taskId, signal);
+      if (result.status === 'succeeded') {
+        const resultUrl = safeServerEndpoint(result.resultUrl);
+        if (!resultUrl) {
+          throw Object.assign(new Error('The video provider returned an unsafe video URL.'), {
+            status: 502,
+            code: 'unsafe-media-url'
+          });
+        }
+        const download = await fetch(resultUrl, { signal: providerSignal(signal, 120_000) });
+        if (!download.ok) {
+          throw Object.assign(new Error(`Could not download the generated video (HTTP ${download.status}).`), {
+            status: download.status,
+            code: 'provider-download-failed'
+          });
+        }
+        const advertisedBytes = Number(download.headers.get('content-length')) || 0;
+        if (advertisedBytes > 256 * 1024 * 1024) {
+          throw Object.assign(new Error('The generated video is too large.'), { status: 413, code: 'media-too-large' });
+        }
+        const video = Buffer.from(await download.arrayBuffer());
+        if (video.length > 256 * 1024 * 1024) {
+          throw Object.assign(new Error('The generated video is too large.'), { status: 413, code: 'media-too-large' });
+        }
+        return validateGeneratedMediaBuffer('video', video);
+      }
+      if (TERMINAL_VIDEO_FAILURES.has(result.status)) {
+        throw Object.assign(new Error(result.errorMessage || 'Video generation failed.'), {
           status: 502,
-          code: 'unsafe-media-url'
+          code: result.errorCode || 'video-generation-failed',
+          providerTaskTerminalFailure: true
         });
       }
-      const download = await fetch(resultUrl, { signal: providerSignal(signal, 120_000) });
-      if (!download.ok) {
-        throw Object.assign(new Error(`Could not download the generated video (HTTP ${download.status}).`), {
-          status: download.status,
-          code: 'provider-download-failed'
-        });
-      }
-      const advertisedBytes = Number(download.headers.get('content-length')) || 0;
-      if (advertisedBytes > 256 * 1024 * 1024) {
-        throw Object.assign(new Error('The generated video is too large.'), { status: 413, code: 'media-too-large' });
-      }
-      const video = Buffer.from(await download.arrayBuffer());
-      if (video.length > 256 * 1024 * 1024) {
-        throw Object.assign(new Error('The generated video is too large.'), { status: 413, code: 'media-too-large' });
-      }
-      return validateGeneratedMediaBuffer('video', video);
+      await delayWithSignal(2_000, signal);
     }
-    if (TERMINAL_VIDEO_FAILURES.has(result.status)) {
-      throw Object.assign(new Error(result.errorMessage || 'Video generation failed.'), {
-        status: 502,
-        code: result.errorCode || 'video-generation-failed'
-      });
-    }
-    await delayWithSignal(2_000, signal);
+    throw Object.assign(new Error('Video generation timed out.'), {
+      status: 504,
+      code: 'video-generation-timeout'
+    });
+  } catch (error) {
+    // A task identity exists at this point. Never release the user's
+    // reservation merely because polling or result delivery lost its reply.
+    error.taskId ||= task.taskId;
+    error.providerTaskAccepted = true;
+    throw error;
   }
-  throw Object.assign(new Error('Video generation timed out.'), {
-    status: 504,
-    code: 'video-generation-timeout'
-  });
 }
 
 async function responseJson(response, providerName = 'Video provider') {
@@ -672,7 +974,10 @@ async function responseJson(response, providerName = 'Video provider') {
     const referencePolicyRejected = /\bInputImageSensitiveContentDetected\b|input image may be related to copyright restrictions/i
       .test(`${upstreamCode} ${rawMessage}`);
     const retryAfter = Number(response.headers && response.headers.get && response.headers.get('retry-after'));
-    const retryable = channelUnavailable || response.status === 429 || response.status >= 500;
+    const retryable = channelUnavailable || [402, 425, 429].includes(response.status) || response.status >= 500;
+    // A fallback is safe only when the HTTP response explicitly proves that
+    // the provider rejected the request before creating a billable task.
+    const safeToFallback = channelUnavailable || [402, 425, 429].includes(response.status);
     throw Object.assign(new Error(referencePolicyRejected
       ? 'The reference image may contain copyrighted or restricted content. Choose another reference image.'
       : channelUnavailable
@@ -686,9 +991,11 @@ async function responseJson(response, providerName = 'Video provider') {
           : response.status === 429 ? 'provider-rate-limited' : (retryable ? 'provider-temporarily-unavailable' : 'provider-request-failed'),
       upstreamCode: safeProviderText(upstreamCode, ''),
       retryable,
+      safeToFallback,
       retryAfterMs: Number.isFinite(retryAfter) && retryAfter > 0
         ? Math.min(120_000, retryAfter * 1000)
-        : channelUnavailable ? 500 : 0
+        : channelUnavailable ? 500 : 0,
+      submissionAmbiguous: !safeToFallback && response.status >= 500
     });
   }
   return payload;
@@ -1789,18 +2096,28 @@ async function createJimengVideoTask(provider, body, signal) {
 }
 
 async function createVideoTaskWithProvider(provider, body, signal) {
-  if (provider.protocol === 'minimax-video-v2') return createMiniMaxVideoTask(provider, body, signal);
-  if (provider.protocol === 'seedance-video-v3') return createSeedanceVideoTask(provider, body, signal);
-  if (provider.protocol === 'atlas-seedance-video') return createAtlasSeedanceVideoTask(provider, body, signal);
-  if (['jimeng-video-v30', 'jimeng-video-v30-pro'].includes(provider.protocol)) {
-    return createJimengVideoTask(provider, body, signal);
+  try {
+    if (provider.protocol === 'minimax-video-v2') return await createMiniMaxVideoTask(provider, body, signal);
+    if (provider.protocol === 'seedance-video-v3') return await createSeedanceVideoTask(provider, body, signal);
+    if (provider.protocol === 'atlas-seedance-video') return await createAtlasSeedanceVideoTask(provider, body, signal);
+    if (['jimeng-video-v30', 'jimeng-video-v30-pro'].includes(provider.protocol)) {
+      return await createJimengVideoTask(provider, body, signal);
+    }
+    if (provider.protocol === 'kling-v3-image-to-video') return await createKlingV3VideoTask(provider, body, signal);
+    if (provider.protocol === 'kling-o3-omni') return await createKlingO3VideoTask(provider, body, signal);
+    throw Object.assign(new Error('The selected video provider does not support asynchronous tasks.'), {
+      status: 400,
+      code: 'async-video-not-supported'
+    });
+  } catch (error) {
+    if (String(error && error.code || '') === 'provider-invalid-response') {
+      error.submissionAmbiguous = true;
+    }
+    if (isTimeoutError(error) || String(error && error.name || '') === 'TypeError') {
+      error.submissionAmbiguous = true;
+    }
+    throw error;
   }
-  if (provider.protocol === 'kling-v3-image-to-video') return createKlingV3VideoTask(provider, body, signal);
-  if (provider.protocol === 'kling-o3-omni') return createKlingO3VideoTask(provider, body, signal);
-  throw Object.assign(new Error('The selected video provider does not support asynchronous tasks.'), {
-    status: 400,
-    code: 'async-video-not-supported'
-  });
 }
 
 export async function createVideoTask(body, signal) {
@@ -2015,47 +2332,73 @@ export async function chat(body, signal) {
   const requestedModel = String(body.model || '').trim();
   const configured = configuredProviders().filter((entry) => entry.kind === 'chat');
   const requestedProvider = configured.find((entry) => entry.id === requestedProviderId);
-  const modelMatches = (provider) => provider && provider.models.some((entry) => (
-    String(entry).trim().toLowerCase() === requestedModel.toLowerCase()
-  ));
+  const modelMatches = (provider, model = requestedModel) => {
+    const normalizedModel = String(model || '').trim().toLowerCase();
+    // A missing model is an older-client request, not a reason to remove the
+    // selected route. Once a logical model is resolved, fallbacks still need
+    // to advertise that same model explicitly.
+    return provider && (!normalizedModel || provider.models.some((entry) => (
+      String(entry).trim().toLowerCase() === normalizedModel
+    )));
+  };
   // Older desktop builds could send chat-1 together with the model selected
   // from chat-2. Correct that mismatch server-side so a stale local setting
   // cannot make Luna appear unavailable.
   const selected = requestedProvider && requestedModel && !modelMatches(requestedProvider)
-    ? configured.find(modelMatches) || requestedProvider
-    : requestedProvider || configured.find(modelMatches) || configured[0];
+    ? configured.find((entry) => modelMatches(entry)) || requestedProvider
+    : requestedProvider || configured.find((entry) => modelMatches(entry)) || configured[0];
   if (!selected) {
     throw Object.assign(new Error('No chat provider is configured.'), { code: 'provider-not-configured' });
   }
-  const provider = providerFor('chat', selected.id);
-  const logicalModel = provider.models.find((entry) => (
+  const logicalModel = selected.models.find((entry) => (
     String(entry).trim().toLowerCase() === requestedModel.toLowerCase()
-  )) || provider.models[0] || requestedModel;
-  const upstreamModel = provider.upstreamModels && Object.entries(provider.upstreamModels).find(([logical]) => (
-    String(logical).trim().toLowerCase() === String(logicalModel).trim().toLowerCase()
-  ));
-  const model = upstreamModel ? upstreamModel[1] : logicalModel;
-  const request = { prompt: body.prompt, messages: body.messages };
-  const requestWithModel = (chatModel) => requestChat(fetch, {
-    apiKey: provider.apiKey,
-    chatEndpoint: provider.endpoint,
-    chatProviderName: provider.name,
-    chatModel,
-    returnUsage: true
-  }, request, signal);
-  try {
-    return await requestWithModel(model || requestedModel);
-  } catch (error) {
-    const status = Number(error && error.status);
-    const message = String(error && error.message || '');
-    const modelRejected = [400, 404].includes(status)
-      && /model|not found|unsupported|does not exist|invalid/i.test(message);
-    // QuickRouter may expose either the upstream model name or the logical
-    // catalog alias during a rollout. Retry only that narrow mismatch; never
-    // replay transport failures or arbitrary provider errors.
-    if (!modelRejected || !logicalModel || String(model).trim() === String(logicalModel).trim()) throw error;
-    return requestWithModel(logicalModel);
+  )) || selected.models[0] || requestedModel;
+  const request = {
+    prompt: body.prompt,
+    messages: body.messages,
+    operationId: String(body.operationId || '').trim().slice(0, 160)
+  };
+  const byId = new Map(configured.map((entry) => [entry.id, entry]));
+  const candidates = [selected.id, ...(selected.fallbackProviderIds || [])]
+    .map((id) => byId.get(id))
+    .filter((entry, index, list) => entry && providerApiKey(entry)
+      && (entry.id === selected.id || modelMatches(entry, logicalModel))
+      && list.findIndex((candidate) => candidate && candidate.id === entry.id) === index);
+  let lastError;
+  for (const candidate of candidates) {
+    const provider = { ...candidate, apiKey: providerApiKey(candidate) };
+    const upstreamModel = provider.upstreamModels && Object.entries(provider.upstreamModels).find(([logical]) => (
+      String(logical).trim().toLowerCase() === String(logicalModel).trim().toLowerCase()
+    ));
+    const model = upstreamModel ? upstreamModel[1] : logicalModel;
+    const requestWithModel = (chatModel) => requestChat(fetch, {
+      apiKey: provider.apiKey,
+      chatEndpoint: provider.endpoint,
+      chatProviderName: provider.name,
+      chatModel,
+      operationId: request.operationId,
+      returnUsage: true
+    }, request, signal);
+    try {
+      try {
+        return await requestWithModel(model || requestedModel);
+      } catch (error) {
+        const status = Number(error && error.status);
+        const message = String(error && error.message || '');
+        const modelRejected = [400, 404].includes(status)
+          && /model|not found|unsupported|does not exist|invalid/i.test(message);
+        // A logical/upstream alias mismatch is an explicit pre-accept rejection.
+        if (!modelRejected || !logicalModel || String(model).trim() === String(logicalModel).trim()) throw error;
+        return await requestWithModel(logicalModel);
+      }
+    } catch (error) {
+      lastError = error;
+      if (signal && signal.aborted || !shouldTryProviderFallback(error)) throw error;
+    }
   }
+  throw lastError || Object.assign(new Error('No chat route is available for the selected model.'), {
+    code: 'provider-not-configured'
+  });
 }
 
 export async function models(providerId) {

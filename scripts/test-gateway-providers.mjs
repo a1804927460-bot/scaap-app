@@ -38,6 +38,7 @@ const {
   providerPromptLimit,
   publicProviderConfig
 } = await import('../gateway/src/providers.js');
+const { getAi302BackupRoutes } = await import('../gateway/src/tool-routes.js');
 const config = publicProviderConfig();
 const ids = config.providers.map((provider) => provider.id);
 
@@ -56,14 +57,10 @@ assert.deepEqual(
   ['model-a', 'model-b']
 );
 assert.equal(config.providers.find((provider) => provider.id === 'image-1').name, 'Nano Banana Pro');
-assert.equal(config.providers.find((provider) => provider.id === 'image-1').protocol, 'gemini-native');
 assert.equal(config.providers.find((provider) => provider.id === 'image-3').name, 'Chaser Pro');
-assert.equal(config.providers.find((provider) => provider.id === 'image-3').model, 'doubao-seedream-5-0-pro-260628');
 for (const [id, model] of [['image-17', '8.1'], ['image-18', '8.2']]) {
   const provider = config.providers.find((entry) => entry.id === id);
   assert.equal(provider.name, `Midjourney V${model}`);
-  assert.equal(provider.model, model);
-  assert.equal(provider.protocol, 'legnext-midjourney');
   assert.equal(provider.capabilities.maxReferenceImages, 0);
 }
 for (const id of ['image-2', 'image-4', 'image-5', 'image-7', 'image-8', 'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16']) {
@@ -74,8 +71,6 @@ for (const id of ['video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-
 }
 const gptImage2Provider = config.providers.find((provider) => provider.id === 'image-6');
 assert.equal(gptImage2Provider.name, 'GPT Image 2');
-assert.equal(gptImage2Provider.model, 'gpt-image-2');
-assert.equal(gptImage2Provider.protocol, 'openai-image');
 assert.deepEqual(gptImage2Provider.capabilities.sizes, ['1K', '2K', '4K']);
 assert.deepEqual(gptImage2Provider.capabilities.resolutionPresets, ['1K', '2K', '4K']);
 assert.deepEqual(gptImage2Provider.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
@@ -124,15 +119,11 @@ assert.deepEqual(
   ['768P', '2K']
 );
 assert.equal(config.providers.find((provider) => provider.id === 'video-1').name, 'MiniMax H3');
-assert.equal(config.providers.find((provider) => provider.id === 'video-1').model, 'MiniMax-H3');
 const seedance20Provider = config.providers.find((provider) => provider.id === 'video-2');
 const seedance25Provider = config.providers.find((provider) => provider.id === 'video-3');
 assert.equal(seedance20Provider.name, 'Seedance 2.0');
-assert.equal(seedance20Provider.model, 'doubao-seedance-2-0-260128');
-assert.equal(seedance20Provider.protocol, 'seedance-video-v3');
 assert.deepEqual(seedance20Provider.capabilities.resolutions, ['480P', '720P', '720P-SR', '1080P', '1080P-SR', '1440P-SR', '4K']);
 assert.deepEqual(seedance20Provider.capabilities.durations, [-1, ...Array.from({ length: 12 }, (_value, index) => index + 4)]);
-assert.deepEqual(seedance20Provider.capabilities.fallbackCapabilities.durations, Array.from({ length: 12 }, (_value, index) => index + 4));
 assert.equal(seedance20Provider.capabilities.maxReferenceImages, 9);
 assert.deepEqual(seedance20Provider.capabilities.videoModes.map((mode) => mode.id), [
   'first-frame', 'first-last-frame', 'omni'
@@ -142,13 +133,9 @@ assert.deepEqual(seedance20Provider.capabilities.videoModes[2].roles, ['referenc
 assert.deepEqual(seedance20Provider.capabilities.videoModes[2].mediaTypes, ['image', 'video', 'audio']);
 assert.equal(seedance20Provider.capabilities.videoModes[2].maxReferenceVideos, 3);
 assert.deepEqual(seedance20Provider.capabilities.videoModes[0].ratios, ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9', 'adaptive']);
-assert.deepEqual(seedance20Provider.capabilities.fallbackCapabilities.videoModes[0].ratios, ['adaptive']);
 assert.equal(seedance25Provider.name, 'Seedance 2.5');
-assert.equal(seedance25Provider.model, 'doubao-seedance-2-5-260628');
-assert.equal(seedance25Provider.protocol, 'seedance-video-v3');
 assert.deepEqual(seedance25Provider.capabilities.resolutions, ['480P', '720P', '720P-SR', '720P-ESR', '1080P', '1080P-SR', '1080P-ESR', '1080P-ESR & 60FPS', '1440P-SR', '1440P-ESR', '4K-ESR']);
 assert.deepEqual(seedance25Provider.capabilities.durations, [-1, ...Array.from({ length: 27 }, (_value, index) => index + 4)]);
-assert.deepEqual(seedance25Provider.capabilities.fallbackCapabilities.durations, Array.from({ length: 27 }, (_value, index) => index + 4));
 assert.deepEqual(seedance25Provider.capabilities.textRatios, ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9']);
 assert.equal(seedance25Provider.capabilities.supportsResolution, undefined);
 assert.equal(seedance25Provider.capabilities.createTimeoutMs, 45_000);
@@ -184,13 +171,18 @@ assert.equal(config.providers.find((provider) => provider.id === 'chat-1').name,
 assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-1').models, [
   'gemini-3.7-flash'
 ]);
-assert.equal(config.providers.find((provider) => provider.id === 'chat-1').protocol, 'openai-chat');
 assert.equal(config.providers.find((provider) => provider.id === 'chat-2').name, 'AI Chat');
-assert.equal(config.providers.find((provider) => provider.id === 'chat-2').protocol, 'openai-chat');
 assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-2').models, ['gpt-5.6-luna']);
-assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-2').upstreamModels, {
-  'gpt-5.6-luna': 'gpt-5.6'
-});
+
+for (const provider of config.providers) {
+  assert.equal(Object.hasOwn(provider, 'protocol'), false);
+  assert.equal(Object.hasOwn(provider, 'model'), false);
+  assert.equal(Object.hasOwn(provider, 'upstreamModels'), false);
+  assert.equal(Object.hasOwn(provider.capabilities || {}, 'upstreamPriority'), false);
+  assert.equal(Object.hasOwn(provider.capabilities || {}, 'upstreamRoutes'), false);
+  assert.equal(Object.hasOwn(provider.capabilities || {}, 'fallbackCapabilities'), false);
+  assert.equal(Object.hasOwn(provider.capabilities || {}, 'tierProviderIds'), false);
+}
 
 const publicText = JSON.stringify(config);
 assert.equal(publicText.includes('quickrouter-secret'), false);
@@ -205,6 +197,165 @@ assert.equal(publicText.includes('quickrouter.ai'), false);
 assert.equal(publicText.includes('minimaxi.com'), false);
 assert.equal(publicText.includes('api.302.ai'), false);
 assert.equal(publicText.includes('legnext.ai'), false);
+assert.equal(publicText.includes('doubao'), false);
+assert.equal(publicText.includes('seedream'), false);
+assert.equal(publicText.includes('upstreamRoutes'), false);
+assert.equal(publicText.includes('tierProviderIds'), false);
+
+// The same configured backup route must cover image, video, and chat catalog
+// entries without exposing its address or credential to the renderer.
+const previousBackupRoutes = process.env.AI302_BACKUP_ROUTES_JSON;
+const previousBackupKey = process.env.AI302_BACKUP_A_KEY;
+const previousFetch = globalThis.fetch;
+process.env.AI302_BACKUP_A_KEY = 'backup-route-secret';
+process.env.AI302_BACKUP_ROUTES_JSON = JSON.stringify([
+  { id: 'bad-http', baseUrl: 'http://backup.example.com', keyEnv: 'AI302_BACKUP_A_KEY' },
+  { id: 'bad-private', baseUrl: 'https://127.0.0.1', keyEnv: 'AI302_BACKUP_A_KEY' },
+  { id: 'backup-a', baseUrl: 'https://backup.example.com', keyEnv: 'AI302_BACKUP_A_KEY' },
+  { id: 'backup-a', baseUrl: 'https://duplicate.example.com', keyEnv: 'AI302_BACKUP_A_KEY' }
+]);
+assert.deepEqual(getAi302BackupRoutes(), [{
+  id: 'backup-a',
+  baseUrl: 'https://backup.example.com',
+  apiKey: 'backup-route-secret'
+}]);
+const publicWithBackup = publicProviderConfig();
+const publicWithBackupText = JSON.stringify(publicWithBackup);
+assert.equal(publicWithBackupText.includes('backup.example.com'), false);
+assert.equal(publicWithBackupText.includes('backup-route-secret'), false);
+assert.equal(publicWithBackupText.includes('AI302_BACKUP_A_KEY'), false);
+assert.equal(publicWithBackup.providers.some((provider) => provider.id.startsWith('r-')), false);
+
+const backupImageCalls = [];
+globalThis.fetch = async (url, options = {}) => {
+  const value = String(url);
+  backupImageCalls.push({ url: value, options });
+  if (value === 'https://api.302.ai/v1/images/generations') {
+    return jsonResponse({ error: { message: 'too many requests' } }, 429);
+  }
+  if (value === 'https://backup.example.com/v1/images/generations') {
+    return jsonResponse({ data: [{ b64_json: pngHeader(1536, 1024).toString('base64') }] });
+  }
+  throw new Error(`Unexpected image backup URL: ${value}`);
+};
+assert.deepEqual(await generateMedia('image', {
+  providerId: 'image-6',
+  prompt: 'backup image route',
+  size: '1536x1024',
+  quality: 'high',
+  aspectRatio: '3:2',
+  operationId: 'backup-image-operation'
+}), pngHeader(1536, 1024));
+assert.deepEqual(backupImageCalls.map((call) => call.url), [
+  'https://api.302.ai/v1/images/generations',
+  'https://backup.example.com/v1/images/generations'
+]);
+assert.equal(backupImageCalls[1].options.headers.Authorization, 'Bearer backup-route-secret');
+assert.equal(backupImageCalls[1].options.headers['Idempotency-Key'], 'backup-image-operation');
+
+const backupChatCalls = [];
+globalThis.fetch = async (url, options = {}) => {
+  const value = String(url);
+  backupChatCalls.push({ url: value, options });
+  if (value === 'https://api.302.ai/v1/chat/completions') {
+    return jsonResponse({ error: { message: 'too many requests' } }, 429);
+  }
+  if (value === 'https://backup.example.com/v1/chat/completions') {
+    return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'backup chat reply' } }] });
+  }
+  throw new Error(`Unexpected chat backup URL: ${value}`);
+};
+assert.deepEqual(await chat({
+  providerId: 'chat-1',
+  model: 'gemini-3.7-flash',
+  prompt: 'backup chat route',
+  messages: [{ role: 'user', content: 'backup chat route' }],
+  operationId: 'backup-chat-operation'
+}), { text: 'backup chat reply', usage: null });
+assert.deepEqual(backupChatCalls.map((call) => call.url), [
+  'https://api.302.ai/v1/chat/completions',
+  'https://backup.example.com/v1/chat/completions'
+]);
+assert.equal(backupChatCalls[1].options.headers.Authorization, 'Bearer backup-route-secret');
+assert.equal(backupChatCalls[1].options.headers['Idempotency-Key'], 'backup-chat-operation');
+
+const backupVideoCalls = [];
+globalThis.fetch = async (url, options = {}) => {
+  const value = String(url);
+  backupVideoCalls.push({ url: value, options });
+  if (value === 'https://api.302.ai/volcengine/api/v3/contents/generations/tasks') {
+    return jsonResponse({ error: { message: 'too many requests' } }, 429);
+  }
+  if (value === 'https://backup.example.com/volcengine/api/v3/contents/generations/tasks') {
+    return jsonResponse({ id: 'backup-video-task' });
+  }
+  throw new Error(`Unexpected video backup URL: ${value}`);
+};
+const backupVideoTask = await createVideoTask({
+  providerId: 'video-2',
+  prompt: 'backup video route',
+  resolution: '720P',
+  duration: 4,
+  aspectRatio: 'adaptive',
+  videoMode: 'first-frame',
+  urls: ['https://cdn.example/backup-video-reference.png'],
+  referenceMediaTypes: ['image'],
+  operationId: 'backup-video-operation'
+});
+assert.equal(backupVideoTask.providerId.startsWith('r-'), true);
+assert.match(backupVideoTask.taskId, /^messs-route:r-[^:]+:backup-video-task$/);
+assert.deepEqual(backupVideoCalls.map((call) => call.url), [
+  'https://api.302.ai/volcengine/api/v3/contents/generations/tasks',
+  'https://backup.example.com/volcengine/api/v3/contents/generations/tasks'
+]);
+assert.equal(backupVideoCalls[1].options.headers.Authorization, 'Bearer backup-route-secret');
+assert.equal(backupVideoCalls[1].options.headers['Idempotency-Key'], 'backup-video-operation');
+
+const ambiguousImageCalls = [];
+globalThis.fetch = async (url, options = {}) => {
+  ambiguousImageCalls.push({ url: String(url), options });
+  return jsonResponse({ error: { message: 'temporary upstream outage' } }, 503);
+};
+await assert.rejects(() => generateMedia('image', {
+  providerId: 'image-6',
+  prompt: 'ambiguous image route',
+  size: '1536x1024',
+  quality: 'high',
+  aspectRatio: '3:2',
+  operationId: 'ambiguous-image-operation'
+}), (error) => error && error.submissionAmbiguous === true);
+assert.equal(ambiguousImageCalls.length, 1);
+
+const acceptedImageCalls = [];
+globalThis.fetch = async (url, options = {}) => {
+  const value = String(url);
+  acceptedImageCalls.push({ url: value, options });
+  if (value === 'https://api.302.ai/v1/images/generations') {
+    return jsonResponse({ data: [{ url: 'https://cdn.example/accepted-image.png' }] });
+  }
+  if (value === 'https://cdn.example/accepted-image.png') {
+    return jsonResponse({ error: { message: 'download failed' } }, 503);
+  }
+  if (value === 'https://backup.example.com/v1/images/generations') {
+    throw new Error('An accepted task must not be replayed on the backup route.');
+  }
+  throw new Error(`Unexpected accepted image URL: ${value}`);
+};
+await assert.rejects(() => generateMedia('image', {
+  providerId: 'image-6',
+  prompt: 'accepted image must stay pinned',
+  size: '1536x1024',
+  quality: 'high',
+  aspectRatio: '3:2',
+  operationId: 'accepted-image-operation'
+}), (error) => error && error.providerTaskAccepted === true);
+assert.equal(acceptedImageCalls.some((call) => call.url === 'https://backup.example.com/v1/images/generations'), false);
+
+globalThis.fetch = previousFetch;
+if (previousBackupRoutes === undefined) delete process.env.AI302_BACKUP_ROUTES_JSON;
+else process.env.AI302_BACKUP_ROUTES_JSON = previousBackupRoutes;
+if (previousBackupKey === undefined) delete process.env.AI302_BACKUP_A_KEY;
+else process.env.AI302_BACKUP_A_KEY = previousBackupKey;
 
 const configuredAi302Key = process.env.AI302_KEY;
 delete process.env.AI302_KEY;

@@ -298,6 +298,57 @@ test('image tools distinguish a provider timeout from a transport outage', async
   );
 });
 
+test('image tool classifies provider body errors and only falls back for rejected capacity errors', async () => {
+  const source = rgbaPng();
+  const previousRoutes = process.env.AI302_BACKUP_ROUTES_JSON;
+  const previousKey = process.env.AI302_IMAGE_BACKUP_KEY;
+  process.env.AI302_IMAGE_BACKUP_KEY = 'image-backup-key';
+  process.env.AI302_BACKUP_ROUTES_JSON = JSON.stringify([
+    { id: 'image-backup', baseUrl: 'https://image-backup.example.com', keyEnv: 'AI302_IMAGE_BACKUP_KEY' }
+  ]);
+  try {
+    const calls = [];
+    const completed = await superUpscaleImage({ imageDataUrl: imageDataUrl(source) }, {
+      apiKey: 'image-primary-key',
+      publicBaseUrl: 'https://gateway.example.com',
+      fetchImpl: async (url) => {
+        calls.push(String(url));
+        if (String(url).includes('api.302.ai')) {
+          return jsonResponse({ message: 'current capacity is full; too many users' }, 400);
+        }
+        return jsonResponse({ image: { url: 'https://file.302.ai/recovered.png' } });
+      }
+    });
+    assert.deepEqual(completed, {
+      status: 'succeeded', retryAfterMs: 0, urls: ['https://file.302.ai/recovered.png']
+    });
+    assert.deepEqual(calls, [
+      'https://api.302.ai/302/submit/super-upscale-v2',
+      'https://image-backup.example.com/302/submit/super-upscale-v2'
+    ]);
+
+    calls.length = 0;
+    await assert.rejects(
+      () => superUpscaleImage({ imageDataUrl: imageDataUrl(source) }, {
+        apiKey: 'image-primary-key',
+        publicBaseUrl: 'https://gateway.example.com',
+        fetchImpl: async (url) => {
+          calls.push(String(url));
+          return jsonResponse({ error: { message: 'copyright restricted content' } }, 400);
+        }
+      }),
+      (error) => error && error.code === 'reference-policy-rejected'
+        && error.status === 400 && error.safeToFallback === false
+    );
+    assert.equal(calls.length, 1);
+  } finally {
+    if (previousRoutes === undefined) delete process.env.AI302_BACKUP_ROUTES_JSON;
+    else process.env.AI302_BACKUP_ROUTES_JSON = previousRoutes;
+    if (previousKey === undefined) delete process.env.AI302_IMAGE_BACKUP_KEY;
+    else process.env.AI302_IMAGE_BACKUP_KEY = previousKey;
+  }
+});
+
 test('image tools accept wrapped 302 task and synchronous result payloads', async () => {
   const source = rgbaPng();
   const created = await submitQwenImageEdit({

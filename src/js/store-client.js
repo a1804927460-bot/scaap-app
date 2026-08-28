@@ -7,7 +7,7 @@ const AppState = {
   defaultFolderName: 'Library',
   boardItems: [],
   allBoardItems: [],
-  canvasProjects: [],
+  canvasProjects: [],   // [{id,name,scope:'personal'|'team',createdAt}]
   canvases: [],
   activeCanvasId: 'canvas-1',
   usage: { totalSeconds: 0, firstRunAt: null, lastRunAt: null },
@@ -266,7 +266,7 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-function showToast(message, emoji) {
+function showToast(message, emoji, options = {}) {
   const toast = document.getElementById('toast');
   toast.innerHTML = '';
   if (emoji) {
@@ -283,8 +283,14 @@ function showToast(message, emoji) {
   toast.hidden = false;
   requestAnimationFrame(() => toast.classList.add('is-visible'));
   clearTimeout(showToast._t);
+  const rawDuration = Number(options && options.durationMs);
+  const aiFailure = emoji === 'AI' && /(?:fail|error|unavailable|busy|timeout|rejected|restricted|失败|错误|不可用|繁忙|超时|拒绝|受限|版权)/i
+    .test(String(message || ''));
+  const durationMs = Number.isFinite(rawDuration) && rawDuration > 0
+    ? Math.max(1_000, Math.min(30_000, Math.round(rawDuration)))
+    : aiFailure ? 10_000 : 3_200;
   showToast._t = setTimeout(() => {
     toast.classList.remove('is-visible');
     setTimeout(() => { toast.hidden = true; }, 320);
-  }, 3200);
+  }, durationMs);
 }

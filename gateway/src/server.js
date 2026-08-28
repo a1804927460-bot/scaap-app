@@ -45,6 +45,7 @@ import {
   createVideoTask,
   generateLegacyVideo,
   generateMedia,
+  recoverMedia,
   imageStyles,
   models,
   pollVideoTask,
@@ -84,12 +85,28 @@ import {
   startVideoJobWorker
 } from './video-jobs.js';
 import { normalizeVideoResolution } from './video-resolution.js';
+import { createIdempotentOperationRunner } from './idempotent-operation.js';
+import {
+  claimImageJob,
+  failImageJob,
+  getImageJob,
+  hashImageRequest,
+  recordImageProviderResult,
+  recordImageProviderTask
+} from './image-jobs.js';
+import {
+  isStoredImageResult,
+  readStoredImageResult,
+  storeImageResult
+} from './image-result-storage.js';
 
 const port = Math.max(1, Number(process.env.PORT) || 3000);
 const maxBodyBytes = 70 * 1024 * 1024;
 const rateBuckets = new Map();
 const MAX_RATE_BUCKETS = Math.max(1_000, Math.min(100_000, Number(process.env.GATEWAY_RATE_BUCKET_LIMIT) || 20_000));
-const imageOperationCache = new Map();
+const runIdempotentOperation = createIdempotentOperationRunner();
+const pendingVideoTaskAttachments = new Map();
+const pendingImageTaskAttachments = new Map();
 const referenceVideoRelays = new Map();
 const referenceAudioRelays = new Map();
 const TOPAZ_IMAGE_TOOL_IDS = new Set([
@@ -888,7 +905,17 @@ async function settleReservedTool(userId, usage, status = 'succeeded') {
   if (!usage || usage.free) {
     return { ok: true, reason: 'free-tool', status, creditsCharged: 0, creditsReleased: 0 };
   }
-  return settleToolUsage(userId, usage.requestId, status, Date.now() - usage.startedAt);
+  try {
+    return await settleToolUsage(userId, usage.requestId, status, Date.now() - usage.startedAt);
+  } catch (error) {
+    if (status === 'succeeded') {
+      // A valid result has already been produced. A settlement timeout may
+      // have committed remotely, so never release or replay this request.
+      error.providerTaskAccepted = true;
+      error.submissionAmbiguous = true;
+    }
+    throw error;
+  }
 }
 
 function setBufferMetadata(buffer, key, value) {
@@ -985,20 +1012,226 @@ function validTaskToken(value) {
 }
 
 function runIdempotentImageOperation(userId, operationId, factory) {
-  const now = Date.now();
-  for (const [key, entry] of imageOperationCache) {
-    if (entry.expiresAt <= now) imageOperationCache.delete(key);
+  return runIdempotentOperation(`${userId}:${operationId}`, factory);
+}
+
+function imageRecoveryPendingError() {
+  return Object.assign(new Error(
+    'The accepted image task is being recovered safely. Points are temporarily held until the result is confirmed; please retry shortly.'
+  ), {
+    code: 'provider-task-recovery-pending',
+    status: 503,
+    providerTaskAccepted: true,
+    submissionAmbiguous: true
+  });
+}
+
+function videoDeliveryRecoveryPendingError() {
+  return Object.assign(new Error(
+    'The generated video is being recovered safely. Points are temporarily held until delivery is confirmed; please retry shortly.'
+  ), {
+    code: 'provider-task-recovery-pending',
+    status: 503,
+    providerTaskAccepted: true,
+    submissionAmbiguous: true
+  });
+}
+
+function settledVideoDelivery(job) {
+  const status = String(job && job.status || '').trim().toLowerCase();
+  if (status === 'succeeded') {
+    return {
+      ok: true,
+      reason: 'already-settled',
+      status: 'succeeded',
+      creditsEstimated: Math.max(0, Number(job && (job.credits ?? job.creditsReserved)) || 0),
+      creditsCharged: Math.max(0, Number(job && job.creditsCharged) || 0)
+    };
   }
-  const cacheKey = `${userId}:${operationId}`;
-  const existing = imageOperationCache.get(cacheKey);
-  if (existing) return existing.promise;
+  if (status === 'failed') {
+    return {
+      ok: true,
+      reason: 'already-failed',
+      status: 'failed',
+      creditsCharged: 0
+    };
+  }
+  return null;
+}
+
+function imageJobFailureError(job) {
+  const error = new Error(String(job && job.errorMessage || 'Image generation failed.'));
+  error.code = String(job && job.errorCode || 'image-generation-failed').trim().toLowerCase()
+    .replace(/[^a-z0-9-]/g, '').slice(0, 64) || 'image-generation-failed';
+  error.status = 502;
+  error.providerTaskTerminalFailure = true;
+  return error;
+}
+
+async function attachImageTaskWithRetry(details) {
+  let lastError;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      const recorded = await recordImageProviderTask(details);
+      if (recorded && recorded.ok === true) return recorded;
+      throw Object.assign(new Error('The accepted image task could not be persisted.'), {
+        code: String(recorded && recorded.reason || 'image-job-record-failed'),
+        status: 503
+      });
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 250 * (2 ** attempt)));
+    }
+  }
+  throw lastError;
+}
+
+function queuePendingImageTaskAttachment(details) {
+  const requestId = String(details && details.requestId || '').trim().toLowerCase();
+  if (!validUuid(requestId)) return null;
+  const existing = pendingImageTaskAttachments.get(requestId);
+  if (existing && existing.providerTaskId === details.providerTaskId) return existing;
   const entry = {
-    expiresAt: now + 30 * 60_000,
-    promise: Promise.resolve().then(factory)
+    ...details,
+    providerTaskId: String(details.providerTaskId || '').trim(),
+    expiresAt: Date.now() + 25 * 60_000,
+    attempt: 0,
+    running: null,
+    timer: null
   };
-  imageOperationCache.set(cacheKey, entry);
-  while (imageOperationCache.size > 200) imageOperationCache.delete(imageOperationCache.keys().next().value);
-  return entry.promise;
+  pendingImageTaskAttachments.set(requestId, entry);
+  while (pendingImageTaskAttachments.size > 500) {
+    const oldestKey = pendingImageTaskAttachments.keys().next().value;
+    const oldest = pendingImageTaskAttachments.get(oldestKey);
+    if (oldest && oldest.timer) clearTimeout(oldest.timer);
+    pendingImageTaskAttachments.delete(oldestKey);
+  }
+
+  const retry = async () => {
+    if (entry.running || pendingImageTaskAttachments.get(requestId) !== entry) return entry.running;
+    entry.running = attachImageTaskWithRetry(entry)
+      .then((recorded) => {
+        pendingImageTaskAttachments.delete(requestId);
+        return recorded;
+      })
+      .catch((error) => {
+        entry.attempt += 1;
+        if (Date.now() < entry.expiresAt && pendingImageTaskAttachments.get(requestId) === entry) {
+          const delay = Math.min(30_000, 1_000 * (2 ** Math.min(4, entry.attempt)));
+          entry.timer = setTimeout(() => { retry().catch(() => {}); }, delay);
+          entry.timer.unref?.();
+        } else {
+          pendingImageTaskAttachments.delete(requestId);
+        }
+        console.error(JSON.stringify({
+          level: 'error',
+          event: 'image-task-attachment-retry-failed',
+          requestId,
+          code: String(error && error.code || 'image-job-record-failed'),
+          status: Number(error && error.status) || 503
+        }));
+        return null;
+      })
+      .finally(() => { entry.running = null; });
+    return entry.running;
+  };
+  entry.timer = setTimeout(() => { retry().catch(() => {}); }, 1_000);
+  entry.timer.unref?.();
+  return entry;
+}
+
+function createImageJobTracker(userId, requestId, body, existingJob = null) {
+  const state = {
+    accepted: Boolean(existingJob),
+    // A production gateway must be able to resume a paid request before it
+    // contacts an upstream. Local development without a service key keeps the
+    // previous non-durable behavior.
+    durable: true,
+    trackingRequired: Boolean(String(process.env.SUPABASE_SECRET_KEY || '').trim()),
+    taskId: String(existingJob && existingJob.providerTaskId || '').trim(),
+    providerId: String(existingJob && existingJob.providerId || '').trim().toLowerCase(),
+    requestHash: hashImageRequest(body),
+    resultReference: '',
+    resultRecorded: false
+  };
+  const hooks = {
+    onAccepted: async ({ providerId, taskId, pollUrl }) => {
+      state.accepted = true;
+      state.providerId = String(providerId || '').trim().toLowerCase();
+      state.taskId = String(taskId || '').trim() || `inline:${requestId}`;
+      if (!state.trackingRequired) {
+        state.durable = false;
+        return;
+      }
+      const attachment = {
+        userId,
+        requestId,
+        requestHash: state.requestHash,
+        providerId: state.providerId,
+        providerTaskId: state.taskId,
+        pollUrl,
+        deadlineAt: new Date(Date.now() + 25 * 60_000).toISOString()
+      };
+      try {
+        const recorded = await attachImageTaskWithRetry(attachment);
+        state.durable = Boolean(recorded);
+      } catch (error) {
+        // The upstream task is already accepted. Keep retrying this exact
+        // task identity in the background; never submit a replacement task.
+        queuePendingImageTaskAttachment(attachment);
+        state.durable = true;
+        throw imageRecoveryPendingError();
+      }
+    },
+    onReady: async ({ mediaUrl, buffer }) => {
+      state.accepted = true;
+      if (!state.durable || !Buffer.isBuffer(buffer) || buffer.length === 0) return;
+      const reference = await storeImageResult(userId, requestId, buffer);
+      await recordImageProviderResult(userId, requestId, reference);
+      state.resultReference = reference;
+      state.resultRecorded = true;
+    }
+  };
+  return { state, hooks };
+}
+
+async function persistImageResult(userId, requestId, image, tracker) {
+  if (!tracker.state.trackingRequired) return null;
+  if (tracker.state.resultRecorded && tracker.state.resultReference) {
+    return tracker.state.resultReference;
+  }
+  const reference = await storeImageResult(userId, requestId, image);
+  await recordImageProviderResult(userId, requestId, reference);
+  tracker.state.resultReference = reference;
+  tracker.state.resultRecorded = true;
+  return reference;
+}
+
+async function recoverStoredImageResult(userId, requestId, job) {
+  const reference = String(job && job.resultUrl || '').trim();
+  if (!isStoredImageResult(reference, userId, requestId)
+      && !['starting', 'submitted', 'ready'].includes(String(job && job.status || '').toLowerCase())
+      && !/^inline:/i.test(String(job && job.providerTaskId || ''))) {
+    return null;
+  }
+  try {
+    return await readStoredImageResult(userId, requestId, reference);
+  } catch (error) {
+    if (String(error && error.code || '') === 'image-result-storage-missing') return null;
+    throw error;
+  }
+}
+
+async function loadImageJob(userId, requestId) {
+  try {
+    return await getImageJob(userId, requestId);
+  } catch (error) {
+    // Local development and pre-migration gateways do not have the durable
+    // image table. Production RPC outages must still fail closed before a
+    // new paid submission is attempted.
+    if (String(error && error.code || '') === 'image-job-service-not-configured') return null;
+    throw error;
+  }
 }
 
 function publicDownloadUrl(value) {
@@ -1100,19 +1333,24 @@ function publicVideoJob(job) {
         : rawStatus === 'ready'
           ? 'succeeded'
           : rawStatus;
+  const publicFailure = job && job.errorCode
+    ? publicGatewayError(Object.assign(new Error(String(job.errorMessage || 'Video generation failed.')), {
+        code: String(job.errorCode),
+        status: 502
+      }))
+    : null;
   return {
     requestId: String(job && job.requestId || ''),
     status,
     retryAfterMs: ['creating', 'queued', 'running'].includes(status) ? 5_000 : 0,
     creditsReserved: Math.max(0, Number(job && (job.credits ?? job.creditsReserved)) || 0),
-    ...(job && job.errorCode ? { errorCode: String(job.errorCode) } : {}),
-    ...(job && job.errorMessage ? { errorMessage: String(job.errorMessage) } : {})
+    ...(publicFailure ? { errorCode: publicFailure.code, errorMessage: publicFailure.message } : {})
   };
 }
 
 async function attachVideoTaskWithRetry(requestId, providerTaskId) {
   let lastError;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
       const attached = await attachVideoTask(requestId, providerTaskId);
       if (attached && attached.ok === true) return attached;
@@ -1122,9 +1360,70 @@ async function attachVideoTaskWithRetry(requestId, providerTaskId) {
       });
     } catch (error) {
       lastError = error;
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 250 * (2 ** attempt)));
     }
   }
   throw lastError;
+}
+
+function queuePendingVideoTaskAttachment(requestId, providerTaskId) {
+  const existing = pendingVideoTaskAttachments.get(requestId);
+  if (existing && existing.providerTaskId === providerTaskId) return existing;
+  const entry = {
+    providerTaskId,
+    expiresAt: Date.now() + 20 * 60_000,
+    attempt: 0,
+    running: null,
+    timer: null
+  };
+  pendingVideoTaskAttachments.set(requestId, entry);
+  while (pendingVideoTaskAttachments.size > 500) {
+    const oldestKey = pendingVideoTaskAttachments.keys().next().value;
+    const oldest = pendingVideoTaskAttachments.get(oldestKey);
+    if (oldest && oldest.timer) clearTimeout(oldest.timer);
+    pendingVideoTaskAttachments.delete(oldestKey);
+  }
+
+  const retry = async () => {
+    if (entry.running || pendingVideoTaskAttachments.get(requestId) !== entry) return entry.running;
+    entry.running = attachVideoTaskWithRetry(requestId, providerTaskId)
+      .then((attached) => {
+        pendingVideoTaskAttachments.delete(requestId);
+        return attached;
+      })
+      .catch((error) => {
+        entry.attempt += 1;
+        console.error(JSON.stringify({
+          level: 'error',
+          event: 'video-task-attach-pending',
+          requestId,
+          code: String(error && error.code || 'video-task-attach-failed'),
+          status: Number(error && error.status) || 503
+        }));
+        if (Date.now() < entry.expiresAt && pendingVideoTaskAttachments.get(requestId) === entry) {
+          const delayMs = Math.min(60_000, 2_000 * (2 ** Math.min(5, entry.attempt)));
+          entry.timer = setTimeout(retry, delayMs);
+          entry.timer.unref?.();
+        } else {
+          pendingVideoTaskAttachments.delete(requestId);
+        }
+        return null;
+      })
+      .finally(() => { entry.running = null; });
+    return entry.running;
+  };
+  entry.retry = retry;
+  entry.timer = setTimeout(retry, 1_000);
+  entry.timer.unref?.();
+  return entry;
+}
+
+async function resumePendingVideoTaskAttachment(requestId) {
+  const entry = pendingVideoTaskAttachments.get(requestId);
+  if (!entry) return null;
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.timer = null;
+  return entry.retry();
 }
 
 async function handle(request, response) {
@@ -1283,7 +1582,7 @@ async function handle(request, response) {
         const result = await removeBackground({
           imageDataUrl: body && body.imageDataUrl,
           toolOptions: body && body.options
-        });
+        }, { accountingRequestId: usage.requestId });
         const settlement = deferredDelivery ? null : await settleReservedTool(user.id, usage);
         return annotateToolDelivery(result, {
           requestId: usage.requestId,
@@ -1293,7 +1592,9 @@ async function handle(request, response) {
           durationMs: Date.now() - usage.startedAt
         });
       } catch (error) {
-        await releaseFailedToolReservation(user.id, usage);
+        if (error && error.submissionAmbiguous !== true && error.providerTaskAccepted !== true) {
+          await releaseFailedToolReservation(user.id, usage);
+        }
         throw error;
       }
     });
@@ -1326,7 +1627,9 @@ async function handle(request, response) {
           availableCredits: usage.reservation.availableCredits ?? usage.reservation.available_credits
         };
       } catch (error) {
-        await releaseFailedToolReservation(user.id, usage);
+        if (error && error.submissionAmbiguous !== true && error.providerTaskAccepted !== true) {
+          await releaseFailedToolReservation(user.id, usage);
+        }
         throw error;
       }
     });
@@ -1348,7 +1651,7 @@ async function handle(request, response) {
         const output = await uncropImage({
           imageDataUrl: body && body.imageDataUrl,
           toolOptions: body && body.options
-        });
+        }, { accountingRequestId: usage.requestId });
         const settlement = deferredDelivery ? null : await settleReservedTool(user.id, usage);
         return annotateToolDelivery(output, {
           requestId: usage.requestId,
@@ -1358,7 +1661,9 @@ async function handle(request, response) {
           durationMs: Date.now() - usage.startedAt
         });
       } catch (error) {
-        await releaseFailedToolReservation(user.id, usage);
+        if (error && error.submissionAmbiguous !== true && error.providerTaskAccepted !== true) {
+          await releaseFailedToolReservation(user.id, usage);
+        }
         throw error;
       }
     });
@@ -1392,7 +1697,9 @@ async function handle(request, response) {
           availableCredits: usage.reservation.availableCredits ?? usage.reservation.available_credits
         };
       } catch (error) {
-        await releaseFailedToolReservation(user.id, usage);
+        if (error && error.submissionAmbiguous !== true && error.providerTaskAccepted !== true) {
+          await releaseFailedToolReservation(user.id, usage);
+        }
         throw error;
       }
     });
@@ -1412,6 +1719,7 @@ async function handle(request, response) {
       toolOptions: body && body.options,
       userId: user.id
     }, {
+      accountingRequestId: requestId,
       reserveCredits: ({ requestId: accountingRequestId, providerId, providerCost }) => reserveToolUsage(
         user.id,
         accountingRequestId,
@@ -1442,8 +1750,13 @@ async function handle(request, response) {
       retryAfterMs: result.retryAfterMs,
       resultCount: Array.isArray(result.urls) ? result.urls.length : 0,
       ...(result.providerCost !== undefined ? { providerCost: result.providerCost } : {}),
-      ...(result.errorCode ? { errorCode: String(result.errorCode) } : {}),
-      ...(result.errorMessage ? { errorMessage: String(result.errorMessage) } : {}),
+      ...(result.errorCode ? (() => {
+        const publicFailure = publicGatewayError(Object.assign(new Error(String(result.errorMessage || '')), {
+          code: String(result.errorCode),
+          status: 502
+        }));
+        return { errorCode: publicFailure.code, errorMessage: publicFailure.message };
+      })() : {}),
       ...(result.creditsCharged !== undefined ? { creditsCharged: result.creditsCharged } : {}),
       ...(result.creditsReleased !== undefined ? { creditsReleased: result.creditsReleased } : {})
     });
@@ -1506,9 +1819,9 @@ async function handle(request, response) {
         durationMs: result.accountingDurationMs
       });
     } catch (error) {
-      try {
-        await settleToolUsage(user.id, result.accountingRequestId, 'failed', result.accountingDurationMs);
-      } catch {}
+      // The task has already reached a terminal success state. A delivery or
+      // credit-service error must not release the reservation and let a retry
+      // create a second billable task; the same task can be downloaded again.
       throw error;
     }
     return send(response, 200, png, {
@@ -1530,7 +1843,10 @@ async function handle(request, response) {
     const png = await runIdempotentImageOperation(user.id, requestId, async () => {
       const usage = await reserveFixedTool(user.id, providerId, requestId);
       try {
-        const output = await generativeUpscaleImage({ imageDataUrl: body && body.imageDataUrl });
+        const output = await generativeUpscaleImage(
+          { imageDataUrl: body && body.imageDataUrl },
+          { accountingRequestId: usage.requestId }
+        );
         const settlement = deferredDelivery ? null : await settleReservedTool(user.id, usage);
         return annotateToolDelivery(output, {
           requestId: usage.requestId,
@@ -1540,7 +1856,9 @@ async function handle(request, response) {
           durationMs: Date.now() - usage.startedAt
         });
       } catch (error) {
-        await releaseFailedToolReservation(user.id, usage);
+        if (error && error.submissionAmbiguous !== true && error.providerTaskAccepted !== true) {
+          await releaseFailedToolReservation(user.id, usage);
+        }
         throw error;
       }
     });
@@ -1562,7 +1880,10 @@ async function handle(request, response) {
     const png = await runIdempotentImageOperation(user.id, requestId, async () => {
       const usage = await reserveFixedTool(user.id, modelId, requestId);
       try {
-        const output = await cleanupImageObjects({ imageDataUrl: body && body.imageDataUrl, maskImageDataUrl: body && body.maskDataUrl });
+        const output = await cleanupImageObjects(
+          { imageDataUrl: body && body.imageDataUrl, maskImageDataUrl: body && body.maskDataUrl },
+          { accountingRequestId: usage.requestId }
+        );
         const settlement = deferredDelivery ? null : await settleReservedTool(user.id, usage);
         return annotateToolDelivery(output, {
           requestId: usage.requestId,
@@ -1572,7 +1893,9 @@ async function handle(request, response) {
           durationMs: Date.now() - usage.startedAt
         });
       } catch (error) {
-        await releaseFailedToolReservation(user.id, usage);
+        if (error && error.submissionAmbiguous !== true && error.providerTaskAccepted !== true) {
+          await releaseFailedToolReservation(user.id, usage);
+        }
         throw error;
       }
     });
@@ -1603,14 +1926,17 @@ async function handle(request, response) {
           // Hyper3D fetches the source image from a short-lived gateway relay.
           // Pass the resolved public origin explicitly so a Railway deployment
           // without AI_GATEWAY_PUBLIC_URL still uses its public domain.
-          publicBaseUrl: configuredGatewayPublicUrl()
+          publicBaseUrl: configuredGatewayPublicUrl(),
+          requestId: usage.requestId
         });
         return {
           ...created,
           availableCredits: usage.reservation.availableCredits ?? usage.reservation.available_credits
         };
       } catch (error) {
-        await releaseFailedToolReservation(user.id, usage);
+        if (error && error.submissionAmbiguous !== true && error.providerTaskAccepted !== true) {
+          await releaseFailedToolReservation(user.id, usage);
+        }
         throw error;
       }
     });
@@ -1668,6 +1994,7 @@ async function handle(request, response) {
         toolOptions: body && body.options,
         userId: user.id
       }, {
+        accountingRequestId: requestId,
         reserveCredits: ({ requestId: accountingRequestId, providerId, credits, providerCost, resolution, duration }) => reserveToolUsage(
           user.id, accountingRequestId, { providerId, credits, providerCost, resolution, duration }
         ),
@@ -1721,7 +2048,12 @@ async function handle(request, response) {
     const job = await startVideoJob({ userId: user.id, operationId, taskToken, body });
     if (job.ok !== true) return deniedReservation(response, job);
     if (body.canvasId) await tagUsageCanvas(user.id, operationId, body.canvasId);
-    if (!job.created) return send(response, 202, publicVideoJob(job));
+    if (!job.created) {
+      if (String(job.status || '').toLowerCase() === 'starting') {
+        await resumePendingVideoTaskAttachment(operationId);
+      }
+      return send(response, 202, publicVideoJob(job));
+    }
 
     const startedAt = Date.now();
     const controller = new AbortController();
@@ -1739,7 +2071,21 @@ async function handle(request, response) {
         () => createVideoTask({ ...body, operationId }, controller.signal),
         { signal: controller.signal }
       );
-      await attachVideoTaskWithRetry(operationId, providerTask.taskId);
+      try {
+        await attachVideoTaskWithRetry(operationId, providerTask.taskId);
+      } catch (attachError) {
+        // The paid task already exists. Keep its identity in the gateway and
+        // continue binding it in the background instead of releasing credits
+        // or submitting another task to a fallback route.
+        queuePendingVideoTaskAttachment(operationId, providerTask.taskId);
+        clearTimeout(timeout);
+        return send(response, 202, {
+          requestId: operationId,
+          status: 'creating',
+          retryAfterMs: 5_000,
+          creditsReserved: Math.max(0, Number(job.credits) || 0)
+        });
+      }
       clearTimeout(timeout);
       return send(response, 202, {
         requestId: operationId,
@@ -1749,6 +2095,20 @@ async function handle(request, response) {
       });
     } catch (error) {
       clearTimeout(timeout);
+      // A timeout, transport reset, or malformed success response can happen
+      // after the upstream accepted and billed the task. The provider adapter
+      // marks that state explicitly. Keep the durable reservation in
+      // `starting` and let the worker expire it once the submission window is
+      // over; releasing here would allow a client retry to create a duplicate
+      // paid task.
+      if (error && error.submissionAmbiguous === true) {
+        return send(response, 202, {
+          requestId: operationId,
+          status: 'creating',
+          retryAfterMs: 10_000,
+          creditsReserved: Math.max(0, Number(job.credits) || 0)
+        });
+      }
       try {
         await finalizeVideoJob({
           requestId: operationId,
@@ -1792,19 +2152,16 @@ async function handle(request, response) {
       || !Number.isSafeInteger(bytes)
       || bytes <= 0
       || bytes > MAX_GENERATED_VIDEO_BYTES) {
-      // A confirmation is proof of a durable local delivery. Invalid metadata
-      // is therefore a failed delivery and must release the reservation.
-      const released = await failVideoDownload(user.id, taskToken, {
-        code: 'invalid-delivery-confirmation',
-        message: 'The generated video delivery could not be verified.'
-      });
-      return send(response, 200, {
-        settlement: {
-          ...released,
-          status: String(released && released.status || 'failed'),
-          creditsCharged: 0
-        }
-      });
+      // Invalid local metadata is not proof that the accepted result failed.
+      // Keep the provider result and reservation so the client can retry with
+      // the real file metadata instead of turning a delivery bug into a refund.
+      const job = await getVideoJob(user.id, taskToken);
+      if (!job || job.ok !== true) {
+        return send(response, 404, { code: 'video-task-not-found', message: 'Video task not found.' });
+      }
+      const settled = settledVideoDelivery(job);
+      if (settled) return send(response, 200, { settlement: settled });
+      throw videoDeliveryRecoveryPendingError();
     }
     const settlement = await settleVideoDownload(user.id, taskToken, {
       contentType,
@@ -1828,17 +2185,15 @@ async function handle(request, response) {
     if (!validTaskToken(taskToken) || !taskToken.startsWith('d_')) {
       return send(response, 404, { code: 'video-task-not-found', message: 'Video task not found.' });
     }
-    const released = await failVideoDownload(user.id, taskToken, {
-      code: 'local-delivery-failed',
-      message: 'The generated video could not be saved to the local canvas.'
-    });
-    return send(response, 200, {
-      settlement: {
-        ...released,
-        status: String(released && released.status || 'failed'),
-        creditsCharged: 0
-      }
-    });
+    const job = await getVideoJob(user.id, taskToken);
+    if (!job || job.ok !== true) {
+      return send(response, 404, { code: 'video-task-not-found', message: 'Video task not found.' });
+    }
+    const settled = settledVideoDelivery(job);
+    if (settled) return send(response, 200, { settlement: settled });
+    // A task that has been accepted or has a ready result must remain
+    // recoverable. Releasing it here would discard a billable provider result.
+    throw videoDeliveryRecoveryPendingError();
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/media/video/tasks/download') {
@@ -1875,12 +2230,10 @@ async function handle(request, response) {
       }
     }
     if (!downloaded) {
-      await failVideoDownload(user.id, body.taskToken, lastDownloadError || {
-        code: 'video-download-failed', message: 'The generated video could not be downloaded.'
-      });
-      throw lastDownloadError || Object.assign(new Error('The generated video could not be downloaded.'), {
-        code: 'video-download-failed', status: 502
-      });
+      // The job is already ready at this point. Keep its URL, status, and
+      // reservation intact; a later request can retry the same task without
+      // creating a second provider job or losing a paid result.
+      throw videoDeliveryRecoveryPendingError();
     }
     const deferredDelivery = String(body.taskToken).startsWith('d_');
     const settlement = deferredDelivery ? null : await settleVideoDownload(user.id, body.taskToken, {
@@ -1951,14 +2304,94 @@ async function handle(request, response) {
   const body = validateBody(await readJson(request), kind);
   if (kind === 'image') {
     const media = await runIdempotentImageOperation(user.id, requestId, async () => {
-      const reservation = await reserveUsage(user.id, kind, requestId, body);
-      if (!reservation.ok) {
-        const error = new Error(String(reservation.reason || 'The image request was not accepted.'));
-        error.code = String(reservation.reason || 'credit-service-failed');
-        error.status = error.code === 'insufficient-credits' ? 402 : 400;
-        throw error;
+      const requestHash = hashImageRequest(body);
+      const existingJob = await loadImageJob(user.id, requestId);
+      if (existingJob && existingJob.requestHash && existingJob.requestHash !== requestHash) {
+        throw Object.assign(new Error('The request identifier conflicts with an earlier image task.'), {
+          code: 'request-id-conflict',
+          status: 409
+        });
+      }
+      if (existingJob && existingJob.status === 'failed') throw imageJobFailureError(existingJob);
+      if (existingJob && !['submitted', 'ready'].includes(existingJob.status)) {
+        throw imageRecoveryPendingError();
+      }
+
+      let reservation = null;
+      let claimedJob = null;
+      if (!existingJob) {
+        reservation = await reserveUsage(user.id, kind, requestId, body);
+        if (!reservation.ok) {
+          const error = new Error(String(reservation.reason || 'The image request was not accepted.'));
+          error.code = String(reservation.reason || 'credit-service-failed');
+          error.status = error.code === 'insufficient-credits' ? 402 : 400;
+          throw error;
+        }
+        try {
+          claimedJob = await claimImageJob({
+            userId: user.id,
+            requestId,
+            requestHash,
+            providerId: body.providerId,
+            deadlineAt: new Date(Date.now() + 25 * 60_000).toISOString()
+          });
+        } catch (error) {
+          // Development and pre-durable gateways have no image-job service.
+          // Preserve their existing local flow; production failures must first
+          // check whether the claim actually committed before releasing points.
+          if (String(error && error.code || '') === 'image-job-service-not-configured') {
+            claimedJob = null;
+          } else {
+            let recoveryJob = null;
+            let lookupError = null;
+            try {
+              recoveryJob = await getImageJob(user.id, requestId);
+            } catch (lookupFailure) {
+              lookupError = lookupFailure;
+            }
+            if (recoveryJob) {
+              if (String(recoveryJob.status || '').toLowerCase() === 'failed') {
+                throw imageJobFailureError(recoveryJob);
+              }
+              throw imageRecoveryPendingError();
+            }
+            if (lookupError) {
+              // A failed lookup cannot prove that the reservation was never
+              // claimed. Fail closed and let a later retry recover it.
+              console.error(JSON.stringify({
+                level: 'error',
+                event: 'image-claim-lookup-failed',
+                requestId,
+                code: String(lookupError.code || 'image-job-service-failed'),
+                status: Number(lookupError.status) || 503
+              }));
+              throw imageRecoveryPendingError();
+            }
+            try { await settleUsage(requestId, 'failed', 0); } catch (settlementError) {
+              console.error(JSON.stringify({
+                level: 'error',
+                event: 'image-claim-release-pending',
+                requestId,
+                code: String(settlementError && settlementError.code || 'credit-settlement-failed'),
+                status: Number(settlementError && settlementError.status) || 503
+              }));
+            }
+            throw error;
+          }
+        }
+      }
+      const recoverJob = existingJob || (
+        claimedJob && ['submitted', 'ready'].includes(claimedJob.status) ? claimedJob : null
+      );
+      if (claimedJob && String(claimedJob.status || '').toLowerCase() === 'failed') {
+        throw imageJobFailureError(claimedJob);
+      }
+      if (claimedJob && claimedJob.reason !== 'claimed' && claimedJob.status === 'starting') {
+        throw imageRecoveryPendingError();
       }
       if (body.canvasId) await tagUsageCanvas(user.id, requestId, body.canvasId);
+      const tracker = createImageJobTracker(user.id, requestId, body, recoverJob);
+      tracker.state.requestHash = requestHash;
       const startedAt = Date.now();
       try {
         const controller = new AbortController();
@@ -1971,15 +2404,45 @@ async function handle(request, response) {
         // not cancel the paid upstream task merely because the response edge
         // closes; the desktop can reconnect with the same operation ID.
         try {
-          const result = await imageGenerationGate.run(user.id, () => generateMedia(
-            kind,
-            { ...body, operationId: requestId },
-            controller.signal
-          ), { signal: controller.signal });
+          const result = await imageGenerationGate.run(user.id, async () => {
+            if (recoverJob) {
+              const stored = await recoverStoredImageResult(user.id, requestId, recoverJob);
+              if (stored) return stored;
+              return recoverMedia(
+                kind,
+                { ...body, operationId: requestId },
+                recoverJob,
+                controller.signal,
+                tracker.hooks
+              );
+            }
+            return generateMedia(
+              kind,
+              { ...body, operationId: requestId },
+              controller.signal,
+              tracker.hooks
+            );
+          }, { signal: controller.signal });
+          if (!Buffer.isBuffer(result) || result.length === 0) {
+            throw Object.assign(new Error('The generated image was empty.'), {
+              code: 'invalid-media',
+              status: 502,
+              providerTaskAccepted: tracker.state.accepted,
+              providerTaskTerminalFailure: true
+            });
+          }
+          // Confirm only after the final bytes are in private durable storage.
+          // This makes a retry a read of the same result, never a second paid
+          // upstream submission.
+          await persistImageResult(user.id, requestId, result, tracker);
           const settlement = body.deliveryConfirmation
             ? null
             : await settleUsage(requestId, 'succeeded', Date.now() - startedAt);
-          result.estimatedCredits = Math.max(0, Number(reservation.credits) || 0);
+          result.estimatedCredits = Math.max(0, Number(
+            reservation && reservation.credits !== undefined
+              ? reservation.credits
+              : existingJob && existingJob.creditsReserved
+          ) || 0);
           result.deliveryPending = body.deliveryConfirmation === true;
           if (settlement && Number.isFinite(Number(settlement.creditsCharged))) {
             result.creditsCharged = Math.max(0, Number(settlement.creditsCharged));
@@ -1989,7 +2452,48 @@ async function handle(request, response) {
           clearTimeout(timeout);
         }
       } catch (error) {
-        try { await settleUsage(requestId, 'failed', Date.now() - startedAt); } catch (settlementError) {}
+        const accepted = tracker.state.accepted
+          || error && (error.providerTaskAccepted === true || error.submissionAmbiguous === true);
+        const terminalFailure = error && error.providerTaskTerminalFailure === true;
+        if (accepted && tracker.state.trackingRequired && !terminalFailure) {
+          // The provider may already have billed this task. Keep the
+          // reservation and let a retry resume the durable task; releasing it
+          // here would create the exact "charged upstream, no image" mismatch
+          // this route is designed to prevent.
+          console.error(JSON.stringify({
+            level: 'warn',
+            event: 'image-task-recovery-pending',
+            requestId,
+            code: String(error && error.code || 'provider-task-recovery-pending')
+          }));
+          throw imageRecoveryPendingError();
+        }
+        if (tracker.state.trackingRequired && (!accepted || terminalFailure)) {
+          try {
+            await failImageJob(user.id, requestId, error);
+          } catch (recordError) {
+            console.error(JSON.stringify({
+              level: 'error',
+              event: 'image-task-failure-record-pending',
+              requestId,
+              code: String(recordError && recordError.code || 'image-job-record-failed'),
+              status: Number(recordError && recordError.status) || 503
+            }));
+          }
+        }
+        if (!accepted || terminalFailure) {
+          try {
+            await settleUsage(requestId, 'failed', Date.now() - startedAt);
+          } catch (settlementError) {
+            console.error(JSON.stringify({
+              level: 'error',
+              event: 'image-credit-release-pending',
+              requestId,
+              code: String(settlementError && settlementError.code || 'credit-settlement-failed'),
+              status: Number(settlementError && settlementError.status) || 503
+            }));
+          }
+        }
         throw error;
       }
     });
@@ -2013,7 +2517,11 @@ async function handle(request, response) {
   });
   try {
     if (kind === 'chat') {
-      const result = await chatGenerationGate.run(user.id, () => chat(body, controller.signal), { signal: controller.signal });
+      const result = await chatGenerationGate.run(
+        user.id,
+        () => chat({ ...body, operationId: requestId }, controller.signal),
+        { signal: controller.signal }
+      );
       const text = typeof result === 'string' ? result : String(result && result.text || '');
       if (!freeChat) await settleUsage(requestId, 'succeeded', Date.now() - startedAt);
       return send(response, 200, {
@@ -2027,7 +2535,12 @@ async function handle(request, response) {
       'Content-Type': kind === 'video' ? 'video/mp4' : 'application/octet-stream'
     });
   } catch (error) {
-    if (!freeChat) {
+    const providerAccepted = error && (
+      error.providerTaskAccepted === true
+      || error.submissionAmbiguous === true
+    );
+    const terminalProviderFailure = error && error.providerTaskTerminalFailure === true;
+    if (!freeChat && (!providerAccepted || terminalProviderFailure)) {
       try {
         await settleUsage(requestId, 'failed', Date.now() - startedAt);
       } catch (settlementError) {
@@ -2041,6 +2554,17 @@ async function handle(request, response) {
           status: Number(settlementError.status) || 503
         }));
       }
+    } else if (!freeChat && providerAccepted) {
+      // Once the provider has accepted a task, retain the reservation until
+      // the result is delivered or the durable task reconciler resolves it.
+      // Refunding here could leave a paid upstream task with no corresponding
+      // user charge.
+      console.error(JSON.stringify({
+        level: 'warn',
+        event: 'legacy-video-recovery-pending',
+        requestId,
+        code: String(error && error.code || 'provider-task-recovery-pending')
+      }));
     }
     throw error;
   }
@@ -2066,8 +2590,15 @@ const server = http.createServer((request, response) => {
       'provider-request-failed': 'The generation request was not accepted. Check the reference files and settings, then try again.',
       'reference-policy-rejected': 'The reference image may contain copyrighted or restricted content. Choose another reference image. No points were charged.',
       'provider-invalid-response': 'The generation service returned an invalid result. Please try again.',
+      'provider-result-missing': 'Generation completed without a usable result. No points were charged; please retry.',
+      'provider-download-failed': 'The result could not be downloaded safely. Please retry shortly.',
+      'media-download-failed': 'The result could not be downloaded safely. Please retry shortly.',
+      'invalid-media': 'The generated file could not be verified. Please retry shortly.',
+      'provider-task-recovery-pending': 'The generated result is being recovered safely. Points are temporarily held until delivery is confirmed; please retry shortly.',
+      'image-job-schema-missing': 'Image recovery is being prepared on the service. Points were not released or charged; please retry shortly.',
+      'image-job-record-failed': 'The generated result could not be recorded safely. Points are temporarily held; please retry shortly.',
       'provider-rate-limited': 'The generation service is busy. Please try again shortly.',
-      'provider-timeout': 'The selected AI service timed out while accepting the task. No points were charged; please retry shortly.',
+      'provider-timeout': 'The selected AI service timed out while accepting the task. Points are temporarily held while we verify the task; please retry shortly.',
       'provider-channel-unavailable': 'The video generation channel is temporarily unavailable. No points were charged; please retry shortly.',
       'provider-temporarily-unavailable': 'The selected AI service is temporarily unavailable. Please retry shortly.',
       'video-job-service-not-configured': 'Background video generation is not configured.',
@@ -2078,13 +2609,19 @@ const server = http.createServer((request, response) => {
       'gateway-queue-timeout': 'The AI generation queue took too long. Please retry shortly.',
       'ai302-not-configured': 'The AI tool service is not configured.',
       'ai302-unavailable': 'The AI tool service is temporarily unavailable.',
-      'ai302-upstream-error': 'The AI tool service rejected the request.',
-      'ai302-invalid-response': 'The AI tool service returned an invalid response.',
+      'ai302-timeout': 'The AI tool service took too long to respond. Points are temporarily held while we verify the task; please retry shortly.',
+      'ai302-invalid-response': 'The AI tool service returned an incomplete response. Points are temporarily held while we verify the task; please retry shortly.',
+      'ai302-unauthorized': 'The generation service credential was rejected. No points were charged; please try again later.',
+      'ai302-balance-exhausted': 'The generation service is temporarily unavailable. No points were charged; please try again later.',
+      'ai302-rate-limited': 'Too many users are generating right now. No points were charged; please retry shortly.',
+      'ai302-route-unavailable': 'The generation service is temporarily unavailable. No points were charged; please retry shortly.',
+      'ai302-upstream-error': 'The generation request was not accepted. No points were charged; please check the settings and retry.',
+      'image-tool-failed': 'Image processing failed. No points were charged; please try again.',
       'unsafe-tool-result-url': 'The tool provider returned an unsafe download address.',
       'tool-download-failed': 'The tool result could not be downloaded.',
       'tool-result-too-large': 'The tool result exceeds the supported size.',
       'invalid-video-result': 'The enhanced video result is invalid.',
-      'video-upscale-failed': 'Video enhancement failed.',
+      'video-upscale-failed': 'Video enhancement failed. No points were charged; please try again.',
       'video-upscale-request-rejected': 'The video enhancement service rejected the source video or output settings. Choose a compatible model and format.',
       'video-upload-not-found': 'The video upload expired. Start the enhancement again.',
       'video-upload-incomplete': 'The video upload is incomplete. Start the enhancement again.',
@@ -2108,7 +2645,7 @@ const server = http.createServer((request, response) => {
       'image-tool-task-not-ready': 'The processed image is not ready yet.',
       'three-d-task-not-found': 'The 3D task was not found.',
       'three-d-task-not-ready': 'The 3D model is not ready to download.',
-      'three-d-generation-failed': '3D generation failed.'
+      'three-d-generation-failed': '3D generation failed. No points were charged; please try again.'
     };
     // Do not log prompts, attachments, authorization headers, or upstream bodies.
     const upstreamStatus = Number(error.upstreamStatus);

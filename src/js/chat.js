@@ -40,6 +40,29 @@ function chatInitials(profile) {
   return Array.from(name)[0] ? Array.from(name)[0].toUpperCase() : 'M';
 }
 
+function chatAccountLabel(profile) {
+  if (!profile || typeof profile !== 'object') return '';
+  const nestedProfile = profile.profile && typeof profile.profile === 'object' ? profile.profile : {};
+  const nestedAccount = profile.account && typeof profile.account === 'object' ? profile.account : {};
+  const nestedUser = profile.user && typeof profile.user === 'object' ? profile.user : {};
+  const candidates = [
+    profile.email,
+    profile.user_email,
+    profile.userEmail,
+    profile.account_email,
+    profile.accountEmail,
+    profile.profile_email,
+    profile.profileEmail,
+    nestedProfile.email,
+    nestedProfile.user_email,
+    nestedProfile.userEmail,
+    nestedUser.email,
+    nestedAccount.email
+  ];
+  const account = candidates.find((value) => String(value || '').trim());
+  return account ? String(account).trim() : '';
+}
+
 function chatAvatar(profile, className = 'chat-avatar') {
   const avatar = document.createElement('span');
   avatar.className = className;
@@ -199,12 +222,13 @@ function chatProfileCopy(profile) {
   const copy = document.createElement('span');
   copy.className = 'chat-person-copy';
   const strong = document.createElement('strong');
-  strong.textContent = profile.displayName || t('Messs user', 'Messs 用户');
+  strong.textContent = profile && profile.displayName || t('Messs user', 'Messs 用户');
   copy.appendChild(strong);
-  const email = String(profile.email || '').trim();
-  if (email) {
+  const account = chatAccountLabel(profile);
+  if (account) {
     const small = document.createElement('small');
-    small.textContent = email;
+    small.className = 'chat-account-label';
+    small.textContent = account;
     copy.appendChild(small);
   }
   return copy;
@@ -212,12 +236,17 @@ function chatProfileCopy(profile) {
 
 function chatPublicProfile(profile) {
   if (!profile) return null;
+  const source = profile.profile && typeof profile.profile === 'object'
+    ? { ...profile.profile, ...profile }
+    : profile;
+  const nestedUser = source.user && typeof source.user === 'object' ? source.user : {};
+  const email = chatAccountLabel(source);
   return {
-    id: profile.id,
-    email: profile.email || '',
-    displayName: profile.displayName || t('Messs user', 'Messs 用户'),
-    avatarUrl: profile.avatarUrl || null,
-    relationshipStatus: profile.relationshipStatus || null
+    id: source.id || nestedUser.id || null,
+    email: email || String(source.email || nestedUser.email || '').trim(),
+    displayName: source.displayName || source.display_name || nestedUser.displayName || nestedUser.display_name || t('Messs user', 'Messs 用户'),
+    avatarUrl: source.avatarUrl || source.avatar_url || nestedUser.avatarUrl || nestedUser.avatar_url || null,
+    relationshipStatus: source.relationshipStatus || source.relationship_status || null
   };
 }
 
@@ -240,15 +269,28 @@ function chatTime(value) {
 
 function setChatState(next) {
   if (!next) return;
+  const safeFriends = (next.friends || []).map(chatPublicProfile).filter(Boolean);
+  const knownProfiles = new Map(safeFriends.map((profile) => [String(profile.id), profile]));
+  const mergeKnownProfile = (profile) => {
+    const current = chatPublicProfile(profile);
+    if (!current) return null;
+    const known = knownProfiles.get(String(current.id));
+    if (!known) return current;
+    return {
+      ...known,
+      ...current,
+      email: current.email || known.email || ''
+    };
+  };
   const safeState = {
     ...next,
     profile: chatPublicProfile(next.profile),
-    friends: (next.friends || []).map(chatPublicProfile),
+    friends: safeFriends,
     requests: (next.requests || []).map((request) => ({ ...request, profile: chatPublicProfile(request.profile) })),
     conversations: (next.conversations || []).map((conversation) => ({
       ...conversation,
       type: conversation.type === 'group' ? 'group' : 'direct',
-      other: chatPublicProfile(conversation.other),
+      other: mergeKnownProfile(conversation.other),
       members: (conversation.members || []).map(chatPublicProfile).filter(Boolean)
     }))
   };
@@ -370,13 +412,14 @@ function renderChatConversations(conversations) {
     const copy = document.createElement('span');
     copy.className = 'chat-conversation-copy';
     const name = document.createElement('strong');
-    name.textContent = conversation.other && conversation.other.displayName || t('Messs user', 'Messs 用户');
+    name.textContent = profile.displayName || t('Messs user', 'Messs 用户');
     if (conversation.type === 'group') name.textContent = profile.displayName;
     copy.appendChild(name);
-    const email = conversation.other && String(conversation.other.email || '').trim();
-    if (email) {
+    const account = conversation.type === 'direct' ? chatAccountLabel(profile) : '';
+    if (account) {
       const secondary = document.createElement('small');
-      secondary.textContent = email;
+      secondary.className = 'chat-account-label';
+      secondary.textContent = account;
       copy.appendChild(secondary);
     }
     if (conversation.type === 'group') {
@@ -408,8 +451,8 @@ function renderChatThreadHeader() {
   }
   chatEl('chat-add-group-members-btn').hidden = true;
   renderChatAvatarElement(chatEl('chat-thread-avatar'), conversation.other);
-  chatEl('chat-thread-name').textContent = conversation.other.displayName || t('Messs user', 'Messs 用户');
-  chatEl('chat-thread-id').textContent = conversation.other.email || '';
+  chatEl('chat-thread-name').textContent = conversation.other && conversation.other.displayName || t('Messs user', 'Messs 用户');
+  chatEl('chat-thread-id').textContent = chatAccountLabel(conversation.other) || t('Account unavailable', '账号暂不可用');
 }
 
 async function ensureChatInitialized(force = false) {

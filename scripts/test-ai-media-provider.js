@@ -478,8 +478,6 @@ function testGeminiImageBody() {
 
 async function testQuickRouterNativeGeminiImageFlow() {
   const calls = [];
-  const pngBuffer = pngHeader(4096, 2304);
-  const pngBase64 = pngBuffer.toString('base64');
   const provider = catalogProvider('image-1');
   assert.ok(provider);
   assert.strictEqual(provider.name, 'Nano Banana Pro');
@@ -488,42 +486,28 @@ async function testQuickRouterNativeGeminiImageFlow() {
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url, options });
     attempts += 1;
-    if (attempts === 1) return jsonResponse({ message: 'temporary upstream outage' }, 503);
-    return jsonResponse({
-      candidates: [{
-        content: {
-          role: 'model',
-          parts: [
-            { text: 'Generated image' },
-            { inlineData: { mimeType: 'image/png', data: pngBase64 } }
-          ]
-        },
-        finishReason: 'STOP'
-      }],
-      modelVersion: 'gemini-3-pro-image-preview'
-    });
+    return jsonResponse({ message: 'temporary upstream outage' }, 503);
   };
   const config = normalizeConfig({
     apiKey: 'secret',
     imageEndpoint: provider.endpoint
   });
-  const buffer = await generateMediaBuffer(fetchImpl, config, 'image', {
+  await assert.rejects(() => generateMediaBuffer(fetchImpl, config, 'image', {
     prompt: 'blue glass city',
     size: '4K',
     aspectRatio: '16:9',
     operationId: 'gemini-pro-operation-1'
-  }, null, async () => {});
+  }, null, async () => {}), (error) => error && error.submissionAmbiguous === true);
 
-  assert.deepStrictEqual(buffer, pngBuffer);
-  assert.strictEqual(calls.length, 2);
+  assert.strictEqual(calls.length, 1);
   assert.strictEqual(
     calls[0].url,
     provider.endpoint
   );
-  assert.strictEqual(calls[1].options.headers.Authorization, 'Bearer secret');
-  assert.strictEqual(calls[1].options.headers['x-goog-api-key'], undefined);
-  assert.strictEqual(calls[1].options.headers['Idempotency-Key'], 'gemini-pro-operation-1');
-  assert.deepStrictEqual(JSON.parse(calls[1].options.body).generationConfig.imageConfig, {
+  assert.strictEqual(calls[0].options.headers.Authorization, 'Bearer secret');
+  assert.strictEqual(calls[0].options.headers['x-goog-api-key'], undefined);
+  assert.strictEqual(calls[0].options.headers['Idempotency-Key'], 'gemini-pro-operation-1');
+  assert.deepStrictEqual(JSON.parse(calls[0].options.body).generationConfig.imageConfig, {
     aspectRatio: '16:9',
     imageSize: '4K'
   });

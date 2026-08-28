@@ -99,6 +99,8 @@ const Board = {
   reconcileFrame: 0,
   reconcilePending: false,
   mountFrame: 0,
+  measureFrame: 0,
+  measureQueue: new Map(),
   qualityTimer: 0,
   qualityIdle: 0,
   interactingUntil: 0,
@@ -125,6 +127,8 @@ const Board = {
   overviewImageActive: 0,
   overviewImagePixels: 0,
   overviewRedrawFrame: 0,
+  overviewFallbackFrame: 0,
+  overviewFallbackRect: null,
   overviewHideFrame: 0,
   overviewImageFailed: new Set(),
   fullImageCache: new Map(),
@@ -1325,7 +1329,7 @@ function renderBoardItemContent(content, f, item) {
       }
       img.dataset.paintFailed = 'true';
       preview.classList.add('is-thumbnail-failed');
-      syncBoardOverviewFallback();
+      scheduleBoardOverviewFallback();
     });
     preview.append(img, createBoardVideoDurationBadge(f));
     content.appendChild(preview);
@@ -1507,6 +1511,7 @@ function cleanupBoardElement(element) {
 }
 
 function destroyMountedBoardItem(id) {
+  Board.measureQueue.delete(id);
   const element = Board.mounted.get(id);
   if (!element) return;
   cleanupBoardElement(element);
@@ -1516,6 +1521,16 @@ function destroyMountedBoardItem(id) {
 
 function clearMountedBoardItems() {
   Board.mountQueue.clear();
+  Board.measureQueue.clear();
+  if (Board.measureFrame) {
+    cancelAnimationFrame(Board.measureFrame);
+    Board.measureFrame = 0;
+  }
+  if (Board.overviewFallbackFrame) {
+    cancelAnimationFrame(Board.overviewFallbackFrame);
+    Board.overviewFallbackFrame = 0;
+  }
+  Board.overviewFallbackRect = null;
   for (const id of [...Board.mounted.keys()]) destroyMountedBoardItem(id);
 }
 
@@ -1652,10 +1667,21 @@ function syncBoardOverviewFallback(viewportRect) {
   if (rect && rect.width && rect.height) drawBoardOverview(unpaintedIds, rect);
 }
 
+function scheduleBoardOverviewFallback(viewportRect) {
+  Board.overviewFallbackRect = viewportRect || Board.overviewFallbackRect || null;
+  if (Board.overviewFallbackFrame) return;
+  Board.overviewFallbackFrame = requestAnimationFrame(() => {
+    Board.overviewFallbackFrame = 0;
+    const rect = Board.overviewFallbackRect;
+    Board.overviewFallbackRect = null;
+    syncBoardOverviewFallback(rect);
+  });
+}
+
 function observeBoardElementPaintReady(element) {
   element.querySelectorAll('img').forEach((image) => {
     if (image.complete) return;
-    const settle = () => syncBoardOverviewFallback();
+    const settle = () => scheduleBoardOverviewFallback();
     image.addEventListener('load', settle, { once: true });
     image.addEventListener('error', settle, { once: true });
   });
@@ -1702,11 +1728,38 @@ function boardOverviewColor(item) {
 
 function boardOverviewThumbnailSource(file) {
   if (!file) return '';
-  const thumbnail = String(file.thumbUrl || file.modelPreviewUrl || '').trim();
+  const thumbnail = isModelFile(file)
+    ? String(file.modelPreviewUrl || file.previewUrl || file.thumbUrl || '').trim()
+    : String(file.thumbUrl || file.previewUrl || '').trim();
   if (thumbnail) return thumbnail;
   if (isImageExt(file.ext)) return String(file.previewUrl || file.url || '').trim();
-  if (isModelFile(file)) return String(file.previewUrl || '').trim();
+  if (isModelFile(file)) return String(file.modelPreviewUrl || file.previewUrl || '').trim();
   return '';
+}
+
+// A mount burst can add several nodes in one frame. Measure them together so
+// the browser performs one layout pass instead of scheduling one callback per
+// node.
+function scheduleBoardItemMeasurement(id, element, item) {
+  Board.measureQueue.set(id, { element, item });
+  if (Board.measureFrame) return;
+  Board.measureFrame = requestAnimationFrame(() => {
+    Board.measureFrame = 0;
+    const pending = [...Board.measureQueue];
+    Board.measureQueue.clear();
+    let indexChanged = false;
+    pending.forEach(([measureId, entry]) => {
+      if (!entry || Board.mounted.get(measureId) !== entry.element) return;
+      const measured = { w: entry.element.offsetWidth, h: entry.element.offsetHeight };
+      const previous = Board.metrics.get(measureId);
+      if (!previous || Math.abs(previous.w - measured.w) > 2 || Math.abs(previous.h - measured.h) > 2) {
+        Board.metrics.set(measureId, measured);
+        updateBoardItemIndex(entry.item);
+        indexChanged = true;
+      }
+    });
+    if (indexChanged) scheduleBoardReconcile();
+  });
 }
 
 function boardOverviewImageRequestKey(fileId, source) {
@@ -2139,16 +2192,7 @@ function processBoardMountQueue() {
     mountedThisFrame += 1;
     if (isMedia) mountedMediaThisFrame += 1;
 
-    requestAnimationFrame(() => {
-      if (Board.mounted.get(id) !== element) return;
-      const measured = { w: element.offsetWidth, h: element.offsetHeight };
-      const previous = Board.metrics.get(id);
-      if (!previous || Math.abs(previous.w - measured.w) > 2 || Math.abs(previous.h - measured.h) > 2) {
-        Board.metrics.set(id, measured);
-        updateBoardItemIndex(item);
-        scheduleBoardReconcile();
-      }
-    });
+    scheduleBoardItemMeasurement(id, element, item);
   }
 
   if (Board.mountQueue.size) {
@@ -2162,8 +2206,8 @@ function processBoardMountQueue() {
     // while the user is still scrolling.
     scheduleBoardFullImagePrewarm(Board.zoom);
     scheduleMountedImageQuality();
+    scheduleBoardOverviewFallback();
   }
-  syncBoardOverviewFallback();
 }
 
 function queueBoardMounts(ids, visibleRect, prioritize = false) {
@@ -2280,7 +2324,7 @@ function reconcileBoardViewport(force = false) {
     }
   }
   queueBoardMounts(mountIds, regions.visible);
-  syncBoardOverviewFallback(rect);
+  scheduleBoardOverviewFallback(rect);
 }
 
 function scheduleBoardReconcile() {
@@ -2587,7 +2631,6 @@ function startBoardSelectionResize(event, corner, group) {
       item.height = Math.max(item.isDoodle ? 4 : 40, Math.round(height * scale));
       const element = groupElements.get(item.id);
       if (element) syncMountedBoardItemGeometry(element, item);
-      updateBoardItemIndex(item);
     });
     syncBoardSelectionGroup();
   });
@@ -3317,10 +3360,10 @@ function buildMiniVideoPlayer(result, f) {
   poster.alt = '';
   poster.loading = 'eager';
   poster.draggable = false;
-  poster.addEventListener('load', () => syncBoardOverviewFallback(), { once: true });
+  poster.addEventListener('load', () => scheduleBoardOverviewFallback(), { once: true });
   poster.addEventListener('error', () => {
     poster.dataset.paintFailed = 'true';
-    syncBoardOverviewFallback();
+    scheduleBoardOverviewFallback();
   }, { once: true });
 
   const video = document.createElement('video');

@@ -647,6 +647,20 @@ assert.match(
 );
 assert.match(indexHtml, /id="canvas-project-new"[\s\S]*?New folder/,
   'The canvas library must expose a new-folder entry point.');
+assert.match(indexHtml, /id="canvas-scope-picker"[\s\S]*?value="personal"[\s\S]*?Independent projects[\s\S]*?value="team"[\s\S]*?Team projects/,
+  'The canvas library must expose independent and team project choices.');
+assert.match(
+  workspaceSource,
+  /libraryScope:\s*'personal'[\s\S]*?function normalizeCanvasProjectScope[\s\S]*?function filteredCanvases[\s\S]*?const project = projectsById\.get\(canvas\.projectId\)[\s\S]*?canvasProjectScope\(project\)/,
+  'Canvas library filtering must keep independent and team projects separate.');
+assert.match(
+  workspaceSource,
+  /document\.getElementById\('canvas-scope-picker'\)\.addEventListener\('change'[\s\S]*?selectCanvasLibraryScope\(event\.target\.value\)/,
+  'Changing the project type must update the active canvas-library scope.');
+assert.match(
+  mainSource,
+  /store\.data\.canvasProjects = projects\.map\([\s\S]*?scope:\s*normalizeCanvasProjectScope\(project\.scope\)/,
+  'Canvas project scope must be normalized before it is persisted.');
 assert.match(
   workspaceSource,
   /function buildCanvasLibraryCreateCard\(\)[\s\S]*?canvas-library-create-card[\s\S]*?promptNewCanvas\(\)[\s\S]*?grid\.appendChild\(buildCanvasLibraryCreateCard\(\)\)/,
@@ -830,7 +844,7 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /function boardOverviewThumbnailSource\(file\)[\s\S]*?file\.thumbUrl[\s\S]*?file\.modelPreviewUrl[\s\S]*?function processBoardOverviewImageQueue/,
+  /function boardOverviewThumbnailSource\(file\)[\s\S]*?isModelFile\(file\)[\s\S]*?file\.modelPreviewUrl[\s\S]*?file\.thumbUrl[\s\S]*?function processBoardOverviewImageQueue/,
   'Overview rendering must include video posters and model previews in addition to images.'
 );
 assert.match(
@@ -1079,6 +1093,17 @@ assert.match(
   /lastClickedSidebarId = f\.id;[\s\S]*?selectFileForPreview\(f\.id\)/,
   'A plain sidebar click must establish the range-selection anchor.'
 );
+const sidebarThumbnailSource = sidebarSource.slice(
+  sidebarSource.indexOf('function appendFileThumbnail'),
+  sidebarSource.indexOf('function createSidebarDragGhost')
+);
+assert.ok(
+  sidebarThumbnailSource.includes('isModelFile(file)') &&
+  sidebarThumbnailSource.includes('fileIconLabel(file.ext)') &&
+  sidebarThumbnailSource.includes('file.modelPreviewUrl') &&
+  sidebarThumbnailSource.includes('requestModelPreview'),
+  'Sidebar and folder thumbnails must render 3D previews with a stable fallback.'
+);
 assert.match(
   sidebarSource,
   /stopImmediatePropagation\(\);[\s\S]*?selectAllSidebarFiles\(\);[\s\S]*?\}, true\);/,
@@ -1174,7 +1199,7 @@ assert.match(
 assert.match(themeSource, /\[data-theme="dark"\][\s\S]*?--bg-base:\s*#111111;[\s\S]*?--bg-surface-2:\s*#282828;/);
 assert.match(
   themeSource,
-  /\[data-theme="light"\][\s\S]*?--bg-base:\s*#fafafa;[\s\S]*?--bg-surface:\s*#f5f5f7;[\s\S]*?--bg-frame:\s*#e3e3e8;[\s\S]*?--board-workspace-bg:\s*#eeeeec;/,
+  /\[data-theme="light"\][\s\S]*?--bg-base:\s*#f1f2f4;[\s\S]*?--bg-surface:\s*#e9ebef;[\s\S]*?--bg-surface-2:\s*#dfe3e8;[\s\S]*?--bg-frame:\s*#e0e3e8;[\s\S]*?--board-workspace-bg:\s*#e6e9ed;/,
   'Light mode must use the neutral gray-white hierarchy from the supplied reference.'
 );
 assert.doesNotMatch(
@@ -1340,5 +1365,15 @@ assert.match(
 assert.match(workspaceSource, /saveCanvasAgentHistory/);
 assert.match(workspaceSource, /agentHistoryFavoritesOnly/);
 assert.match(workspaceSource, /canvasAgentHistoryDate/);
+assert.match(workspaceSource, /function canvasAgentSessionsFor\(canvasId = activeCanvasId\(\)\)/,
+  'Canvas Agent history must be scoped to the active canvas.');
+assert.match(workspaceSource, /migrateLegacyCanvasAgentSessions\([\s\S]*?activeCanvasId\(\)/,
+  'Legacy Agent sessions without a canvas id must be migrated instead of duplicated across canvases.');
+assert.match(workspaceSource, /previousCanvasId !== next\.id[\s\S]*?persistActiveCanvasAgentSession\(\)[\s\S]*?restoreCanvasAgentSessionForCanvas\(next\.id\)/,
+  'Switching canvases must save the old Agent session and restore the new canvas session.');
+assert.match(workspaceSource, /filter\(\(session\) => canvasAgentSessionCanvasId\(session\) === activeCanvasId\(\)\)/,
+  'The Agent history drawer must only list conversations from the current canvas.');
+assert.match(workspaceSource, /if \(!session \|\| canvasAgentSessionCanvasId\(session\) !== activeCanvasId\(\)\) return;/,
+  'A conversation from another canvas must not be loadable into the current canvas.');
 
 process.stdout.write('Canvas interaction tests passed.\n');

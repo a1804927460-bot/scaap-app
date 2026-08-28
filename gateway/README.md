@@ -78,6 +78,17 @@ it is omitted, the gateway derives the token key from `AI302_KEY`; a later 302
 key rotation would then invalidate outstanding 3D tasks, so the separate secret
 is recommended in production.
 
+The 302-compatible tools also support optional server-only failover routes. Set
+`AI302_BACKUP_ROUTES_JSON` to a JSON array of `{ "id", "baseUrl", "keyEnv" }`
+entries and provide each named key as a sealed Railway variable. The gateway
+accepts only HTTPS routes and ignores routes without a valid key. Failover is
+limited to an explicit 402, 425, or 429 response before a task is accepted; a
+timeout, network error, 5xx response, malformed success, or download failure
+never submits the same paid request to another route. After a task is accepted,
+its encrypted task token pins status and download requests to the route that
+created it. These routes must expose the same 302-compatible paths and billing
+semantics as the primary route; do not use a different product as a fallback.
+
 All Butler routes require a valid Supabase session:
 
 ```text
@@ -146,6 +157,38 @@ desktop app. The registry supports up to 100 chat, image, and video entries. It
 contains only public endpoint metadata and the name of a Railway environment
 variable, never the secret value itself. Each relay key must be stored as a
 separate sealed Railway variable.
+
+Built-in providers can receive a backup by adding a small override entry with
+the same `id` and a `fallbackProviderIds` array. The override inherits the
+built-in endpoint, protocol, model, and capability matrix, so it does not need
+to duplicate those fields. Each backup entry must be a separate hidden entry
+with its own HTTPS endpoint, `keyEnv`, protocol, and matching `logicalModel`.
+Only same-kind, same-capability-family entries are eligible. For example:
+
+```json
+[
+  { "id": "image-1", "fallbackProviderIds": ["image-1-backup"] },
+  {
+    "id": "image-1-backup",
+    "kind": "image",
+    "name": "Nano Banana Pro backup",
+    "endpoint": "https://backup.example.com/v1beta/models/gemini-3-pro-image-preview:generateContent",
+    "keyEnv": "IMAGE_1_BACKUP_KEY",
+    "protocol": "gemini-native",
+    "logicalModel": "nano-banana-pro",
+    "hidden": true
+  }
+]
+```
+
+The same structure applies to every configured image, video, or chat provider.
+Failover occurs only when the first route explicitly proves that it rejected
+the request before accepting it (`402`, `425`, `429`, or a declared channel
+configuration outage). A timeout, network error, `5xx`, malformed success,
+accepted task id, or result download failure is state-ambiguous and is never
+replayed to another route. Accepted tasks stay pinned to their original route
+for polling and recovery. The desktop receives only the public product labels;
+provider names, endpoints, keys, route ids, and task ids remain server-side.
 
 ```json
 [

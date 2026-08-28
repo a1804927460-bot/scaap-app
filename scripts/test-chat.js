@@ -86,6 +86,12 @@ function message(clientId, conversationId, createdAt, extra = {}) {
     }
   );
   assert.strictEqual(normalizeBootstrap({ friends: [{ id: FRIEND_ID, relationship_status: 'friend' }] }).friends[0].relationshipStatus, 'friend');
+  const accountBootstrap = normalizeBootstrap({
+    friends: [{ id: FRIEND_ID, display_name: 'Bob', user_email: 'bob@example.com' }],
+    conversations: [{ id: CONVERSATION_A, other: { id: FRIEND_ID, display_name: 'Bob', account_email: 'bob@example.com' } }]
+  });
+  assert.strictEqual(accountBootstrap.friends[0].email, 'bob@example.com');
+  assert.strictEqual(accountBootstrap.conversations[0].other.email, 'bob@example.com');
   const groupBootstrap = normalizeBootstrap({ conversations: [{
     id: CONVERSATION_A,
     type: 'group',
@@ -675,6 +681,10 @@ function message(clientId, conversationId, createdAt, extra = {}) {
     'Chat emoji selection should come from the standard picker component.');
   assert.doesNotMatch(chatUiSource, /const CHAT_EMOJI = /,
     'Chat should not keep a manually curated emoji list.');
+  assert.match(chatUiSource, /function chatAccountLabel\(profile\)/,
+    'Chat should have one shared account-label resolver for lists and the thread header.');
+  assert.match(chatUiSource, /chatAccountLabel\(profile\)/,
+    'Conversation rows should render the resolved account label.');
   assert.doesNotMatch(chatUiSource, /messsId/);
   assert.match(chatUiSource, /bubble\.textContent = t\('Message recalled', '消息已撤回'\)/);
   assert.match(chatUiSource, /window\.messsAPI\.recallChatMessage\(message\.clientId\)/);

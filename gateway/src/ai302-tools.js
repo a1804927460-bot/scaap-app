@@ -1,6 +1,13 @@
 import crypto from 'node:crypto';
 import net from 'node:net';
 import { quoteTopazRetailCredits } from './tool-pricing.js';
+import {
+  AI302_PRIMARY_ROUTE_ID,
+  ai302RouteUrl,
+  getAi302BackupRoutes,
+  getAi302Routes,
+  hasSafeFallbackStatus
+} from './tool-routes.js';
 
 const API_ORIGIN = 'https://api.302.ai';
 // Clipdrop is the higher-priced, quality-first background-removal tool the
@@ -17,6 +24,7 @@ const LONG_RUNNING_REQUEST_TIMEOUT_MS = 10 * 60_000;
 const STATUS_TIMEOUT_MS = 20_000;
 const ASSET_TIMEOUT_MS = 90_000;
 const MAX_JSON_BYTES = 1024 * 1024;
+const MAX_UPSTREAM_ERROR_BYTES = 64 * 1024;
 const MAX_BACKGROUND_INPUT_BYTES = 24 * 1024 * 1024;
 const MAX_3D_INPUT_BYTES = 8 * 1024 * 1024;
 const MAX_VIDEO_INPUT_BYTES = 48 * 1024 * 1024;
@@ -30,6 +38,7 @@ const VIDEO_TASK_TOKEN_AAD = Buffer.from('messs:ai302-video-task:v1', 'utf8');
 const RELAY_ASSET_TTL_MS = 15 * 60 * 1000;
 const VIDEO_RELAY_ASSET_TTL_MS = 2 * 60 * 60 * 1000;
 const VIDEO_UPLOAD_TTL_MS = 30 * 60 * 1000;
+const ROUTE_ID_PATTERN = /^[a-z][a-z0-9-]{0,47}$/;
 // Smaller chunks finish reliably on slower connections while staying below
 // the gateway body limit. Chunk writes are idempotent by upload id + index.
 export const VIDEO_UPLOAD_CHUNK_BYTES = 2 * 1024 * 1024;
@@ -128,7 +137,7 @@ function invalidTaskToken() {
   return toolError('three-d-task-not-found', '3D task not found.', 404);
 }
 
-function createTaskToken(providerId, jobId, userId, key, now = Date.now(), accounting = {}) {
+function createTaskToken(providerId, jobId, userId, key, now = Date.now(), accounting = {}, routeId = AI302_PRIMARY_ROUTE_ID) {
   const issuedAt = Math.floor(Number(now) / 1000);
   const payload = Buffer.from(JSON.stringify({
     p: providerId,
@@ -136,6 +145,7 @@ function createTaskToken(providerId, jobId, userId, key, now = Date.now(), accou
     u: userId,
     ...(accounting.requestId ? { q: accounting.requestId } : {}),
     ...(Number.isInteger(accounting.credits) ? { a: accounting.credits } : {}),
+    ...(routeId && routeId !== AI302_PRIMARY_ROUTE_ID ? { h: routeId } : {}),
     i: issuedAt,
     e: issuedAt + Math.floor(TASK_TOKEN_TTL_MS / 1000)
   }), 'utf8');
@@ -169,6 +179,7 @@ function readTaskToken(taskToken, userId, key, now = Date.now()) {
     const providerId = String(payload && payload.p || '');
     const jobId = String(payload && payload.j || '');
     const ownerId = String(payload && payload.u || '');
+    const routeId = String(payload && payload.h || AI302_PRIMARY_ROUTE_ID).trim().toLowerCase();
     const requestId = String(payload && payload.q || '').toLowerCase();
     const credits = Number(payload && payload.a);
     const issuedAt = Number(payload && payload.i);
@@ -177,6 +188,7 @@ function readTaskToken(taskToken, userId, key, now = Date.now()) {
       !THREE_D_PROVIDERS.has(providerId)
       || !jobId || jobId.length > 512 || /[\u0000-\u001f\u007f]/.test(jobId)
       || !ownerId || ownerId !== String(userId || '')
+      || !ROUTE_ID_PATTERN.test(routeId)
       || (requestId && !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(requestId))
       || (payload && payload.a !== undefined && (!Number.isInteger(credits) || credits < 0 || credits > 3_000_000))
       || !Number.isInteger(issuedAt) || !Number.isInteger(expiresAt)
@@ -190,7 +202,8 @@ function readTaskToken(taskToken, userId, key, now = Date.now()) {
       jobId,
       issuedAt,
       ...(requestId ? { requestId } : {}),
-      ...(Number.isInteger(credits) ? { credits } : {})
+      ...(Number.isInteger(credits) ? { credits } : {}),
+      routeId
     };
   } catch (error) {
     if (error && error.code === 'three-d-task-not-found') throw error;
@@ -202,7 +215,17 @@ function invalidVideoTaskToken() {
   return toolError('video-tool-task-not-found', 'Video tool task not found.', 404);
 }
 
-function createVideoTaskToken(providerJobId, requestId, relayToken, userId, providerCost, credits, key, now = Date.now()) {
+function createVideoTaskToken(
+  providerJobId,
+  requestId,
+  relayToken,
+  userId,
+  providerCost,
+  credits,
+  key,
+  now = Date.now(),
+  routeId = AI302_PRIMARY_ROUTE_ID
+) {
   const issuedAt = Math.floor(Number(now) / 1000);
   const payload = Buffer.from(JSON.stringify({
     p: TOPAZ_VIDEO_PROVIDER,
@@ -212,6 +235,7 @@ function createVideoTaskToken(providerJobId, requestId, relayToken, userId, prov
     u: userId,
     c: providerCost,
     a: credits,
+    ...(routeId && routeId !== AI302_PRIMARY_ROUTE_ID ? { h: routeId } : {}),
     i: issuedAt,
     e: issuedAt + Math.floor(TASK_TOKEN_TTL_MS / 1000)
   }), 'utf8');
@@ -248,6 +272,7 @@ function readVideoTaskToken(taskToken, userId, key, now = Date.now()) {
     const ownerId = String(payload && payload.u || '');
     const providerCost = Number(payload && payload.c);
     const credits = Number(payload && payload.a);
+    const routeId = String(payload && payload.h || AI302_PRIMARY_ROUTE_ID).trim().toLowerCase();
     const issuedAt = Number(payload && payload.i);
     const expiresAt = Number(payload && payload.e);
     if (
@@ -258,6 +283,7 @@ function readVideoTaskToken(taskToken, userId, key, now = Date.now()) {
       || !ownerId || ownerId !== String(userId || '')
       || !Number.isInteger(providerCost) || providerCost < 0 || providerCost > 1_000_000
       || !Number.isInteger(credits) || credits < 0 || credits > 3_000_000
+      || !ROUTE_ID_PATTERN.test(routeId)
       || credits !== quoteTopazRetailCredits(providerCost)
       || !Number.isInteger(issuedAt) || !Number.isInteger(expiresAt)
       || issuedAt > currentTime + 300 || expiresAt <= currentTime
@@ -265,7 +291,7 @@ function readVideoTaskToken(taskToken, userId, key, now = Date.now()) {
     ) {
       throw invalidVideoTaskToken();
     }
-    return { providerJobId, requestId, relayToken, providerCost, credits, issuedAt };
+    return { providerJobId, requestId, relayToken, providerCost, credits, routeId, issuedAt };
   } catch (error) {
     if (error && error.code === 'video-tool-task-not-found') throw error;
     throw invalidVideoTaskToken();
@@ -766,7 +792,15 @@ relayCleanupTimer.unref();
 
 function safeAssetHost(hostname) {
   const host = hostname.toLowerCase();
-  return host === 'file.302.ai'
+  const configuredBackupHost = getAi302BackupRoutes().some((route) => {
+    try {
+      return new URL(route.baseUrl).hostname.toLowerCase() === host;
+    } catch {
+      return false;
+    }
+  });
+  return configuredBackupHost
+    || host === 'file.302.ai'
     || host.endsWith('.file.302.ai')
     || host === 'fal.media'
     || host.endsWith('.fal.media')
@@ -823,15 +857,51 @@ async function limitedBuffer(response, maximum) {
   return Buffer.concat(chunks, total);
 }
 
-function upstreamFailure(response) {
-  const error = response.status === 401
-    ? toolError('ai302-unauthorized', 'The 302 API key was rejected. Update AI302_KEY on the gateway.', 503)
-    : response.status === 402
-      ? toolError('ai302-balance-exhausted', 'The 302 tool balance is insufficient.', 402)
-    : response.status === 429
-      ? toolError('ai302-rate-limited', 'The 302 tool service is busy. Try again shortly.', 429)
-      : toolError('ai302-upstream-error', 'The 302 tool service rejected the request.', 502);
+async function readUpstreamErrorHint(response) {
+  try {
+    const bytes = await limitedBuffer(response, MAX_UPSTREAM_ERROR_BYTES);
+    return bytes.toString('utf8').slice(0, MAX_UPSTREAM_ERROR_BYTES);
+  } catch {
+    return '';
+  }
+}
+
+function classifyUpstreamFailure(status, body) {
+  const text = String(body || '');
+  if (/copyright|copyrighted|restricted|sensitive|safety|moderation|content\s+filter|prohibited|policy/i.test(text)) {
+    return { code: 'reference-policy-rejected', status: 400, safeToFallback: false };
+  }
+  if (status === 401 || status === 403 || /invalid\s+(?:api\s*)?key|unauthorized|forbidden|authentication/i.test(text)) {
+    return { code: 'ai302-unauthorized', status: 503, safeToFallback: false };
+  }
+  if (status === 402 || /insufficient\s+(?:balance|credit)|balance\s+(?:is\s+)?(?:insufficient|exhausted)|payment\s+required|quota\s+exhausted/i.test(text)) {
+    return { code: 'ai302-balance-exhausted', status: 402, safeToFallback: true };
+  }
+  if (status === 429 || /rate.?limit|too\s+many\s+(?:requests|users)|capacity|overloaded|queue\s+full|saturated/i.test(text)) {
+    return { code: 'ai302-rate-limited', status: 429, safeToFallback: true };
+  }
+  if (/channel|route|service|model/.test(text.toLowerCase())
+      && /unavailable|not\s+available|configuration|disabled|temporarily\s+busy|no\s+available/i.test(text)) {
+    return { code: 'provider-channel-unavailable', status: 503, safeToFallback: true };
+  }
+  return { code: 'ai302-upstream-error', status: 502, safeToFallback: false };
+}
+
+async function upstreamFailure(response) {
+  const classification = classifyUpstreamFailure(response.status, await readUpstreamErrorHint(response));
+  const error = toolError(classification.code, classification.code === 'reference-policy-rejected'
+    ? 'The reference media may contain copyrighted or restricted content.'
+    : classification.code === 'ai302-rate-limited'
+      ? 'The generation service is busy. Try again shortly.'
+      : classification.code === 'provider-channel-unavailable'
+        ? 'The generation channel is temporarily unavailable.'
+        : classification.code === 'ai302-balance-exhausted'
+          ? 'The generation service is temporarily unavailable.'
+          : classification.code === 'ai302-unauthorized'
+            ? 'The generation service credential was rejected.'
+            : 'The generation service rejected the request.', classification.status);
   error.upstreamStatus = response.status;
+  error.safeToFallback = hasSafeFallbackStatus(response.status) || classification.safeToFallback;
   return error;
 }
 
@@ -850,34 +920,75 @@ function providerTransportFailure(error) {
     : toolError('ai302-unavailable', 'The 302 tool service is temporarily unavailable.', 503);
 }
 
-async function fetch302Json(path, init, { apiKey, fetchImpl, timeoutMs = REQUEST_TIMEOUT_MS, signal } = {}) {
-  let response;
-  try {
-    response = await fetchImpl(`${API_ORIGIN}${path}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        Accept: 'application/json',
-        ...(init.headers || {})
-      },
-      redirect: 'error',
-      signal: composedSignal(timeoutMs, signal)
-    });
-  } catch (error) {
-    throw providerTransportFailure(error);
+function markSubmissionAmbiguous(error, dependencies) {
+  if (dependencies && dependencies.submission === true && error && typeof error === 'object') {
+    error.submissionAmbiguous = true;
   }
-  if (!response.ok) {
-    if (response.body) await response.body.cancel().catch(() => {});
-    throw upstreamFailure(response);
+  return error;
+}
+
+async function fetch302Json(path, init, dependencies = {}) {
+  const {
+    apiKey,
+    fetchImpl,
+    timeoutMs = REQUEST_TIMEOUT_MS,
+    signal,
+    submission = false,
+    requestId = '',
+    routeId = ''
+  } = dependencies;
+  const routes = Array.isArray(dependencies.routes) && dependencies.routes.length
+    ? dependencies.routes
+    : getAi302Routes({ apiKey, routeId });
+  let lastError;
+  for (let index = 0; index < routes.length; index += 1) {
+    const route = routes[index];
+    let response;
+    try {
+      response = await fetchImpl(ai302RouteUrl(route, path), {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${route.apiKey}`,
+          Accept: 'application/json',
+          ...(submission && requestId
+            ? { 'Idempotency-Key': requestId, 'X-Request-Id': requestId }
+            : {}),
+          ...(init.headers || {})
+        },
+        redirect: 'error',
+        signal: composedSignal(timeoutMs, signal)
+      });
+    } catch (error) {
+      throw markSubmissionAmbiguous(providerTransportFailure(error), dependencies);
+    }
+    if (!response.ok) {
+      const error = await upstreamFailure(response);
+      if (submission && error.safeToFallback === true && index < routes.length - 1) {
+        lastError = error;
+        continue;
+      }
+      if (submission && Number(response.status) >= 500) error.submissionAmbiguous = true;
+      throw error;
+    }
+    let bytes;
+    try {
+      bytes = await limitedBuffer(response, MAX_JSON_BYTES);
+    } catch (error) {
+      throw markSubmissionAmbiguous(error, dependencies);
+    }
+    try {
+      const payload = JSON.parse(bytes.toString('utf8'));
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('invalid object');
+      dependencies.routeId = route.id;
+      return payload;
+    } catch (error) {
+      throw markSubmissionAmbiguous(
+        toolError('ai302-invalid-response', 'The 302 tool service returned an invalid response.', 502),
+        dependencies
+      );
+    }
   }
-  const bytes = await limitedBuffer(response, MAX_JSON_BYTES);
-  try {
-    const payload = JSON.parse(bytes.toString('utf8'));
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('invalid object');
-    return payload;
-  } catch (error) {
-    throw toolError('ai302-invalid-response', 'The 302 tool service returned an invalid response.', 502);
-  }
+  throw lastError || toolError('ai302-unavailable', 'The 302 tool service is temporarily unavailable.', 503);
 }
 
 async function fetchAsset(urlValue, maximum, { fetchImpl, signal } = {}) {
@@ -1414,14 +1525,22 @@ async function createHunyuanJob(image, dependencies, toolOptions) {
       ...(toolOptions.polygonType ? { PolygonType: toolOptions.polygonType } : {})
     })
   }, dependencies);
-  const response = responseObject(payload);
+  let response;
+  try {
+    response = responseObject(payload);
+  } catch (error) {
+    throw markSubmissionAmbiguous(error, dependencies);
+  }
   const errorCode = String(response.ErrorCode ?? response.errorCode ?? '').trim();
   if (errorCode && errorCode !== '0') {
     throw toolError('ai302-upstream-error', 'The Hunyuan3D service rejected the generation request.', 502);
   }
   const jobId = String(response.JobId ?? response.jobId ?? response.job_id ?? '').trim();
   if (!jobId || jobId.length > 512 || /[\u0000-\u001f\u007f]/.test(jobId)) {
-    throw toolError('ai302-invalid-response', 'The 3D service did not return a valid task.', 502);
+    throw markSubmissionAmbiguous(
+      toolError('ai302-invalid-response', 'The 3D service did not return a valid task.', 502),
+      dependencies
+    );
   }
   return { jobId, status: 'queued' };
 }
@@ -1529,13 +1648,22 @@ async function createHyper3dJob(image, prompt, dependencies, toolOptions) {
         ...(toolOptions.seed !== undefined ? { seed: toolOptions.seed } : {})
       })
     }, dependencies);
-    const response = hyper3dResponseObject(payload);
+    let response;
+    try {
+      response = hyper3dResponseObject(payload);
+    } catch (error) {
+      if (error && error.code === 'ai302-upstream-error') throw error;
+      throw markSubmissionAmbiguous(error, dependencies);
+    }
     const jobId = String(
       response.request_id || response.requestId || response.task_id || response.taskId
       || response.job_id || response.jobId || response.uuid || ''
     ).trim();
     if (!jobId || jobId.length > 512 || /[\u0000-\u001f\u007f]/.test(jobId)) {
-      throw toolError('ai302-invalid-response', 'The 3D service did not return a valid task.', 502);
+      throw markSubmissionAmbiguous(
+        toolError('ai302-invalid-response', 'The 3D service did not return a valid task.', 502),
+        dependencies
+      );
     }
     const status = response.status ? normalizeThreeDStatus(response.status) : 'queued';
     return { jobId, status };
@@ -1629,14 +1757,23 @@ async function uploadTripoImage(image, dependencies) {
   const extension = image.extension === 'jpeg' ? 'jpg' : image.extension;
   form.append('file', new Blob([image.buffer], { type: image.mime }), `input.${extension}`);
   const payload = await fetch302Json(TRIPO3D_UPLOAD_PATH, { method: 'POST', body: form }, dependencies);
-  const response = tripoResponseObject(payload, [
-    'image_token', 'imageToken', 'file_token', 'fileToken', 'image_id', 'imageId', 'token'
-  ]);
+  let response;
+  try {
+    response = tripoResponseObject(payload, [
+      'image_token', 'imageToken', 'file_token', 'fileToken', 'image_id', 'imageId', 'token'
+    ]);
+  } catch (error) {
+    if (error && error.code === 'ai302-upstream-error') throw error;
+    throw markSubmissionAmbiguous(error, dependencies);
+  }
   const imageToken = String(tripoField(response, [
     'image_token', 'imageToken', 'file_token', 'fileToken', 'image_id', 'imageId', 'token'
   ]) || '').trim();
   if (!imageToken || imageToken.length > 512 || /[\u0000-\u001f\u007f]/.test(imageToken)) {
-    throw toolError('ai302-invalid-response', 'The Tripo3D upload did not return a valid image token.', 502);
+    throw markSubmissionAmbiguous(
+      toolError('ai302-invalid-response', 'The Tripo3D upload did not return a valid image token.', 502),
+      dependencies
+    );
   }
   return { imageToken, extension };
 }
@@ -1672,11 +1809,18 @@ async function createTripoJob(image, prompt, dependencies, toolOptions) {
     response = tripoResponseObject(payload, ['task_id', 'taskId', 'job_id', 'jobId', 'uuid']);
   } catch (error) {
     if (!error || error.code !== 'ai302-invalid-response') throw error;
-    response = tripoResponseObject(payload, ['id']);
+    try {
+      response = tripoResponseObject(payload, ['id']);
+    } catch (fallbackError) {
+      throw markSubmissionAmbiguous(fallbackError, dependencies);
+    }
   }
   const jobId = String(tripoField(response, ['task_id', 'taskId', 'job_id', 'jobId', 'uuid', 'id']) || '').trim();
   if (!jobId || jobId.length > 512 || /[\u0000-\u001f\u007f]/.test(jobId)) {
-    throw toolError('ai302-invalid-response', 'The Tripo3D service did not return a valid task.', 502);
+    throw markSubmissionAmbiguous(
+      toolError('ai302-invalid-response', 'The Tripo3D service did not return a valid task.', 502),
+      dependencies
+    );
   }
   return { jobId, status: 'queued' };
 }
@@ -1837,45 +1981,89 @@ export async function removeBackground({ imageDataUrl, toolOptions } = {}, optio
   form.append('image_file', new Blob([image.buffer], { type: image.mime }), `input.${image.extension}`);
   void normalizedOptions;
   const fetchImpl = options.fetchImpl || fetch;
+  const requestId = String(options.accountingRequestId || '').trim().toLowerCase();
+  const submissionDependencies = {
+    apiKey,
+    routes: getAi302Routes({ apiKey, routeId: options.routeId }),
+    routeId: String(options.routeId || '').trim().toLowerCase(),
+    fetchImpl,
+    submission: true,
+    requestId
+  };
   let response;
-  try {
-    response = await fetchImpl(`${API_ORIGIN}${BACKGROUND_PATH}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        Accept: 'image/png,application/json'
-      },
-      body: form,
-      redirect: 'error',
-      signal: composedSignal(LONG_RUNNING_REQUEST_TIMEOUT_MS, options.signal)
-    });
-  } catch (error) {
-    throw providerTransportFailure(error);
+  let lastError;
+  for (let index = 0; index < submissionDependencies.routes.length; index += 1) {
+    const route = submissionDependencies.routes[index];
+    try {
+      response = await fetchImpl(ai302RouteUrl(route, BACKGROUND_PATH), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${route.apiKey}`,
+          Accept: 'image/png,application/json',
+          ...(requestId
+            ? { 'Idempotency-Key': requestId, 'X-Request-Id': requestId }
+            : {})
+        },
+        body: form,
+        redirect: 'error',
+        signal: composedSignal(LONG_RUNNING_REQUEST_TIMEOUT_MS, options.signal)
+      });
+    } catch (error) {
+      throw markSubmissionAmbiguous(providerTransportFailure(error), submissionDependencies);
+    }
+    if (!response.ok) {
+      const error = await upstreamFailure(response);
+      if (error.safeToFallback === true && index < submissionDependencies.routes.length - 1) {
+        lastError = error;
+        continue;
+      }
+      if (Number(response.status) >= 500) error.submissionAmbiguous = true;
+      throw error;
+    }
+    submissionDependencies.routeId = route.id;
+    break;
   }
-  if (!response.ok) {
-    if (response.body) await response.body.cancel().catch(() => {});
-    throw upstreamFailure(response);
-  }
+  if (!response) throw lastError || toolError('ai302-unavailable', 'The 302 tool service is temporarily unavailable.', 503);
   const contentType = String(response.headers && response.headers.get('content-type') || '').toLowerCase();
-  const bytes = await limitedBuffer(response, MAX_BACKGROUND_OUTPUT_BYTES);
+  let bytes;
+  try {
+    bytes = await limitedBuffer(response, MAX_BACKGROUND_OUTPUT_BYTES);
+  } catch (error) {
+    throw markSubmissionAmbiguous(error, submissionDependencies);
+  }
   let png = bytes;
   if (contentType.includes('application/json') || !bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
     if (bytes.length > MAX_JSON_BYTES) {
-      throw toolError('ai302-invalid-response', 'The background-removal service returned an invalid response.', 502);
+      throw markSubmissionAmbiguous(
+        toolError('ai302-invalid-response', 'The background-removal service returned an invalid response.', 502),
+        submissionDependencies
+      );
     }
     let payload;
     try {
       payload = JSON.parse(bytes.toString('utf8'));
     } catch (error) {
-      throw toolError('ai302-invalid-response', 'The background-removal service returned an invalid response.', 502);
+      throw markSubmissionAmbiguous(
+        toolError('ai302-invalid-response', 'The background-removal service returned an invalid response.', 502),
+        submissionDependencies
+      );
     }
-    const resultUrl = validateAssetUrl(backgroundResultUrl(payload)).toString();
-    png = await fetchAsset(resultUrl, MAX_BACKGROUND_OUTPUT_BYTES, {
-      fetchImpl,
-      signal: options.signal
-    });
+    let resultUrl;
+    try {
+      resultUrl = validateAssetUrl(backgroundResultUrl(payload)).toString();
+      png = await fetchAsset(resultUrl, MAX_BACKGROUND_OUTPUT_BYTES, {
+        fetchImpl,
+        signal: options.signal
+      });
+    } catch (error) {
+      throw markSubmissionAmbiguous(error, submissionDependencies);
+    }
   }
-  validatePng(png, { requireTransparency: true });
+  try {
+    validatePng(png, { requireTransparency: true });
+  } catch (error) {
+    throw markSubmissionAmbiguous(error, submissionDependencies);
+  }
   return png;
 }
 
@@ -1900,13 +2088,6 @@ export async function createThreeDTask({ providerId, imageDataUrl, prompt, toolO
   const image = stripImageMetadata(parseImageDataUrl(imageDataUrl, { maxBytes: MAX_3D_INPUT_BYTES }));
   // Hunyuan image-to-3D forbids Prompt and ImageBase64 in the same request, so
   // its handler intentionally ignores the optional local prompt.
-  const dependencies = {
-    apiKey,
-    fetchImpl: options.fetchImpl || fetch,
-    signal: options.signal,
-    publicBaseUrl: options.publicBaseUrl,
-    now: options.now
-  };
   const accountingRequestId = String(options.accountingRequestId || '').trim().toLowerCase();
   const credits = Number(options.credits);
   if (accountingRequestId && !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(accountingRequestId)) {
@@ -1915,6 +2096,17 @@ export async function createThreeDTask({ providerId, imageDataUrl, prompt, toolO
   if (accountingRequestId && (typeof options.credits !== 'number' || !Number.isInteger(credits) || credits < 0 || credits > 3_000_000)) {
     throw toolError('credit-service-failed', 'The 3D accounting credits are invalid.', 503);
   }
+  const dependencies = {
+    apiKey,
+    fetchImpl: options.fetchImpl || fetch,
+    signal: options.signal,
+    publicBaseUrl: options.publicBaseUrl,
+    now: options.now,
+    submission: true,
+    requestId: accountingRequestId,
+    routes: getAi302Routes({ apiKey, routeId: options.routeId }),
+    routeId: String(options.routeId || '').trim().toLowerCase()
+  };
   const job = await handler.create(image, normalizedPrompt, dependencies, normalizedToolOptions);
   return {
     taskToken: createTaskToken(
@@ -1926,7 +2118,8 @@ export async function createThreeDTask({ providerId, imageDataUrl, prompt, toolO
       {
         ...(accountingRequestId ? { requestId: accountingRequestId } : {}),
         ...(Number.isInteger(credits) ? { credits } : {})
-      }
+      },
+      dependencies.routeId
     ),
     status: job.status,
     retryAfterMs: ['queued', 'processing'].includes(job.status) ? 5_000 : 0,
@@ -1952,6 +2145,7 @@ export async function getThreeDStatus({ taskToken, userId } = {}, options = {}) 
   const taskKey = configuredTaskSecret(apiKey, options.taskSecret);
   const task = readTaskToken(taskToken, userId, taskKey, options.now ?? Date.now());
   const { providerId, jobId } = task;
+  const taskRoute = getAi302Routes({ apiKey, routeId: task.routeId });
   if (task.requestId && typeof options.touchCredits === 'function') {
     const touched = await options.touchCredits({ requestId: task.requestId, userId: String(userId || '') });
     if (!touched || touched.ok !== true) {
@@ -1962,7 +2156,9 @@ export async function getThreeDStatus({ taskToken, userId } = {}, options = {}) 
   const job = await handler.query(jobId, {
     apiKey,
     fetchImpl: options.fetchImpl || fetch,
-    signal: options.signal
+    signal: options.signal,
+    routes: taskRoute,
+    routeId: task.routeId
   });
   let status = handler.status(job);
   const result = {
@@ -2012,6 +2208,7 @@ export async function downloadThreeDModel({ taskToken, userId } = {}, options = 
   const taskKey = configuredTaskSecret(apiKey, options.taskSecret);
   const task = readTaskToken(taskToken, userId, taskKey, options.now ?? Date.now());
   const { providerId, jobId } = task;
+  const taskRoute = getAi302Routes({ apiKey, routeId: task.routeId });
   if (task.requestId && typeof options.touchCredits === 'function') {
     const touched = await options.touchCredits({ requestId: task.requestId, userId: String(userId || '') });
     if (!touched || touched.ok !== true) {
@@ -2022,7 +2219,9 @@ export async function downloadThreeDModel({ taskToken, userId } = {}, options = 
   const job = await handler.query(jobId, {
     apiKey,
     fetchImpl: options.fetchImpl || fetch,
-    signal: options.signal
+    signal: options.signal,
+    routes: taskRoute,
+    routeId: task.routeId
   });
   const status = handler.status(job);
   if (status !== 'succeeded') {
@@ -2050,7 +2249,11 @@ export async function downloadThreeDModel({ taskToken, userId } = {}, options = 
     });
     validateGlb(glb);
   } catch (error) {
-    await settleThreeDCredits(task, 'failed', options);
+    // The model task succeeded and the provider may already have billed it.
+    // Keep the reservation pending so a retry can download the same model;
+    // releasing here would create a provider-charge/user-refund mismatch.
+    error.providerTaskAccepted = true;
+    error.submissionAmbiguous = true;
     throw error;
   }
   if (options.deferSuccessfulSettlement === true) {
@@ -2092,7 +2295,9 @@ export async function createVideoUpscaleTask({ videoDataUrl, videoAsset, toolOpt
   }
   const normalized = normalizeVideoUpscaleOptions(toolOptions);
   const providerCreditReserve = quoteTopazVideoProviderCreditReserve(normalized);
-  const localRequestId = crypto.randomUUID();
+  const localRequestId = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(String(options.accountingRequestId || '').trim())
+    ? String(options.accountingRequestId).trim().toLowerCase()
+    : crypto.randomUUID();
   if (typeof options.reserveCredits !== 'function') {
     throw toolError('credit-service-failed', 'Topaz credit enforcement is unavailable.', 503);
   }
@@ -2111,11 +2316,22 @@ export async function createVideoUpscaleTask({ videoDataUrl, videoAsset, toolOpt
     throw toolError(reason, 'The video enhancement credits could not be reserved.', status);
   }
   let relay = null;
+  let providerAccepted = false;
   try {
     relay = storeRelayAsset(video, {
       ...options,
       relayTtlMs: VIDEO_RELAY_ASSET_TTL_MS
     });
+    const requestDependencies = {
+      apiKey,
+      fetchImpl: options.fetchImpl || fetch,
+      signal: options.signal,
+      timeoutMs: LONG_RUNNING_REQUEST_TIMEOUT_MS,
+      submission: true,
+      requestId: localRequestId,
+      routes: getAi302Routes({ apiKey, routeId: options.routeId }),
+      routeId: String(options.routeId || '').trim().toLowerCase()
+    };
     const payload = await fetch302Json(TOPAZ_VIDEO_UPLOAD_PATH, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2124,33 +2340,34 @@ export async function createVideoUpscaleTask({ videoDataUrl, videoAsset, toolOpt
         filters: normalized.filters,
         output: normalized.output
       })
-    }, {
-      apiKey,
-      fetchImpl: options.fetchImpl || fetch,
-      signal: options.signal,
-      timeoutMs: LONG_RUNNING_REQUEST_TIMEOUT_MS
-    });
+    }, requestDependencies);
     const result = topazResponseObject(payload);
     const providerJobId = String(topazField(result, [
       'requestId', 'request_id', 'taskId', 'task_id', 'jobId', 'job_id', 'processId', 'process_id'
     ]) || '').trim();
     const providerCost = Number(topazField(result, ['cost', 'credits', 'providerCost', 'provider_cost']));
-    if (!providerJobId || providerJobId.length > 512 || /[\u0000-\u001f\u007f]/.test(providerJobId)
-        || !Number.isInteger(providerCost) || providerCost < 0 || providerCost > 1_000_000) {
-      throw toolError('ai302-invalid-response', 'The video enhancement service did not return a valid task.', 502);
+    if (!providerJobId || providerJobId.length > 512 || /[\u0000-\u001f\u007f]/.test(providerJobId)) {
+      throw markSubmissionAmbiguous(
+        toolError('ai302-invalid-response', 'The video enhancement service did not return a valid task.', 502),
+        { submission: true }
+      );
     }
+    const reportedProviderCost = Number.isInteger(providerCost) && providerCost >= 0 && providerCost <= 1_000_000
+      ? providerCost
+      : providerCreditReserve;
+    providerAccepted = true;
     let settledProviderReserve = providerCreditReserve;
     let billedCredits = reservation && Number.isFinite(Number(reservation.credits))
       ? Number(reservation.credits)
       : quoteTopazRetailCredits(providerCreditReserve);
-    if (providerCost > providerCreditReserve) {
+    if (reportedProviderCost > providerCreditReserve) {
       if (typeof options.topUpCredits !== 'function') {
         throw toolError('credit-service-failed', 'Topaz credit adjustment is unavailable.', 503);
       }
       const adjustment = await options.topUpCredits({
         requestId: localRequestId,
         providerId: TOPAZ_VIDEO_PROVIDER,
-        providerCost
+        providerCost: reportedProviderCost
       });
       if (!adjustment || adjustment.ok !== true) {
         const reason = String(adjustment && adjustment.reason || 'credit-service-failed');
@@ -2160,8 +2377,8 @@ export async function createVideoUpscaleTask({ videoDataUrl, videoAsset, toolOpt
           reason === 'insufficient-credits' ? 402 : 503
         );
       }
-      settledProviderReserve = providerCost;
-      billedCredits = Number(adjustment.credits) || quoteTopazRetailCredits(providerCost);
+      settledProviderReserve = reportedProviderCost;
+      billedCredits = Number(adjustment.credits) || quoteTopazRetailCredits(reportedProviderCost);
     }
     return {
       taskToken: createVideoTaskToken(
@@ -2172,19 +2389,23 @@ export async function createVideoUpscaleTask({ videoDataUrl, videoAsset, toolOpt
         settledProviderReserve,
         billedCredits,
         taskKey,
-        options.now ?? Date.now()
+        options.now ?? Date.now(),
+        requestDependencies.routeId
       ),
       status: 'queued',
       retryAfterMs: 5_000,
       credits: billedCredits,
-      providerCost,
+      providerCost: reportedProviderCost,
       ...(reservation && Number.isFinite(Number(reservation.availableCredits))
         ? { availableCredits: Number(reservation.availableCredits) }
         : {})
     };
   } catch (error) {
     if (relay) deleteRelayAsset(relay.token);
-    if (typeof options.releaseCredits === 'function') {
+    if (providerAccepted) {
+      error.providerTaskAccepted = true;
+    }
+    if (!providerAccepted && error && error.submissionAmbiguous !== true && typeof options.releaseCredits === 'function') {
       try {
         await options.releaseCredits({ requestId: localRequestId, status: 'failed', durationMs: 0 });
       } catch {}
@@ -2204,6 +2425,7 @@ export async function getVideoUpscaleStatus({ taskToken, userId } = {}, options 
   const apiKey = configuredApiKey(options.apiKey);
   const taskKey = configuredTaskSecret(apiKey, options.taskSecret);
   const task = readVideoTaskToken(taskToken, userId, taskKey, options.now ?? Date.now());
+  const taskRoute = getAi302Routes({ apiKey, routeId: task.routeId });
   if (typeof options.touchCredits === 'function') {
     const touched = await options.touchCredits({ requestId: task.requestId, userId: String(userId || '') });
     if (!touched || touched.ok !== true) {
@@ -2213,7 +2435,9 @@ export async function getVideoUpscaleStatus({ taskToken, userId } = {}, options 
   const job = await queryTopazVideoJob(task.providerJobId, {
     apiKey,
     fetchImpl: options.fetchImpl || fetch,
-    signal: options.signal
+    signal: options.signal,
+    routes: taskRoute,
+    routeId: task.routeId
   });
   const status = normalizeTopazVideoStatus(job);
   if (status === 'succeeded') validateAssetUrl(topazDownloadUrl(job));
@@ -2244,6 +2468,7 @@ export async function downloadVideoUpscaleResult({ taskToken, userId } = {}, opt
   const apiKey = configuredApiKey(options.apiKey);
   const taskKey = configuredTaskSecret(apiKey, options.taskSecret);
   const task = readVideoTaskToken(taskToken, userId, taskKey, options.now ?? Date.now());
+  const taskRoute = getAi302Routes({ apiKey, routeId: task.routeId });
   if (typeof options.touchCredits === 'function') {
     const touched = await options.touchCredits({ requestId: task.requestId, userId: String(userId || '') });
     if (!touched || touched.ok !== true) {
@@ -2253,7 +2478,9 @@ export async function downloadVideoUpscaleResult({ taskToken, userId } = {}, opt
   const job = await queryTopazVideoJob(task.providerJobId, {
     apiKey,
     fetchImpl: options.fetchImpl || fetch,
-    signal: options.signal
+    signal: options.signal,
+    routes: taskRoute,
+    routeId: task.routeId
   });
   const status = normalizeTopazVideoStatus(job);
   if (status !== 'succeeded') {
@@ -2274,8 +2501,15 @@ export async function downloadVideoUpscaleResult({ taskToken, userId } = {}, opt
     });
     validateVideo(video);
   } catch (error) {
-    await settleVideoUpscaleCredits(task, 'failed', options);
-    throw toolError('invalid-video-result', 'The enhanced video result is invalid.', 502);
+    const deliveryError = toolError(
+      'provider-download-failed',
+      'The enhanced video could not be downloaded safely. The same task can be retried.',
+      502
+    );
+    deliveryError.providerTaskAccepted = true;
+    deliveryError.submissionAmbiguous = true;
+    deliveryError.cause = error;
+    throw deliveryError;
   }
   const reportedProviderCost = Number(topazField(job, ['cost', 'credits', 'providerCost', 'provider_cost']));
   let finalCredits = task.credits;

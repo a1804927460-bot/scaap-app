@@ -1251,14 +1251,25 @@ function canvasFolderName(name) {
   return cleaned || 'Untitled';
 }
 
+function normalizeCanvasProjectScope(value) {
+  return String(value || '').trim().toLowerCase() === 'team' ? 'team' : 'personal';
+}
+
 function canvasStorageDir(canvas) {
   return path.join(store.libraryDir, canvasFolderName(canvas && canvas.name));
 }
 
 function ensureCanvasState() {
   if (!Array.isArray(store.data.canvasProjects) || !store.data.canvasProjects.length) {
-    store.data.canvasProjects = [{ id: 'project-1', name: 'General', createdAt: Date.now() }];
+    store.data.canvasProjects = [{ id: 'project-1', name: 'General', scope: 'personal', createdAt: Date.now() }];
   }
+  store.data.canvasProjects = store.data.canvasProjects.map((project, index) => ({
+    ...project,
+    id: String(project && project.id || `project-${index + 1}`),
+    name: String(project && project.name || 'General').trim().slice(0, 80) || 'General',
+    scope: normalizeCanvasProjectScope(project && project.scope),
+    createdAt: project && project.createdAt || Date.now()
+  }));
   if (!Array.isArray(store.data.canvases) || !store.data.canvases.length) {
     store.data.canvases = [{
       id: 'canvas-1',
@@ -1268,6 +1279,11 @@ function ensureCanvasState() {
       updatedAt: Date.now()
     }];
   }
+  const validProjectIds = new Set(store.data.canvasProjects.map((project) => project.id));
+  const fallbackProjectId = store.data.canvasProjects[0].id;
+  store.data.canvases.forEach((canvas) => {
+    if (!validProjectIds.has(canvas.projectId)) canvas.projectId = fallbackProjectId;
+  });
   const validCanvasIds = new Set(store.data.canvases.map((canvas) => canvas.id));
   const fallbackCanvasId = store.data.canvases[0].id;
   const fileCanvasIds = new Map();
@@ -4427,9 +4443,7 @@ async function getPublicAiMediaConfig() {
         name: sanitizePublicModelLabel(provider.name, provider.id),
         endpoint: gatewayEndpoint,
         models: provider.models,
-        upstreamModels: provider.upstreamModels,
         capabilities: provider.capabilities,
-        protocol: provider.protocol,
         hasOwnApiKey: false,
         hasApiKey: true,
         cloudManaged: true
@@ -4667,6 +4681,10 @@ async function generateAiMediaWithFallback(kind, prompt, options, fallbackProvid
       fallbackUsed: false
     };
   } catch (primaryError) {
+    // The secure gateway owns the complete fallback chain under one operation
+    // ID and one credit reservation. A second desktop request would be a new
+    // paid operation and could duplicate an already accepted generation.
+    if (runtimeConfig && runtimeConfig.gatewayConfigured) throw primaryError;
     if (kind !== 'image' || !fallbackProvider || !isRetryableMediaError(primaryError)) throw primaryError;
     const fallbackProviderId = String(fallbackProvider.provider && fallbackProvider.provider.id || '').trim().toLowerCase();
     if (!fallbackProviderId || fallbackProviderId === String(primaryProviderId || '').trim().toLowerCase()) throw primaryError;
@@ -4778,7 +4796,7 @@ function conciseAiErrorMessage(error, context = {}) {
       'The AI gateway is synchronizing its model list. Please retry in a moment.'
     );
   }
-  if (['provider-temporarily-unavailable', 'provider-channel-unavailable'].includes(code)) {
+  if (['provider-temporarily-unavailable', 'provider-channel-unavailable', 'provider-rate-limited', 'ai302-rate-limited', 'ai302-route-unavailable'].includes(code)) {
     return localizedMessage(
       'The AI service is temporarily busy. No points were charged; please retry shortly.',
       '当前 AI 服务暂时繁忙，本次未扣积分，请稍后重试。',
@@ -4792,18 +4810,74 @@ function conciseAiErrorMessage(error, context = {}) {
       '참조 이미지에 저작권 또는 제한된 콘텐츠가 포함되었을 수 있습니다. 다른 이미지를 선택해 다시 시도하세요. 포인트는 차감되지 않았습니다.'
     );
   }
-  if (code === 'provider-request-failed') {
+  if (['ai302-unauthorized', 'ai302-balance-exhausted'].includes(code)) {
     return localizedMessage(
-      'The generation request was not accepted. Check the reference files and settings, then try again.',
-      '本次生成请求未被接受，请检查参考素材和参数后重试。',
-      'The generation request was not accepted. Check the reference files and settings, then try again.'
+      'The generation service is temporarily unavailable. No points were charged; please try again later.',
+      '当前生成服务暂时不可用，本次未扣积分，请稍后重试。',
+      'The generation service is temporarily unavailable. No points were charged; please try again later.'
     );
   }
-  if (['provider-invalid-response', 'provider-result-missing', 'video-generation-failed'].includes(code)) {
+  if (['ai302-upstream-error', 'image-tool-failed', 'three-d-generation-failed', 'video-upscale-failed'].includes(code)) {
     return localizedMessage(
-      'The AI service returned an invalid result. Please try again.',
-      'AI 服务返回的结果无效，请重试。',
-      'The AI service returned an invalid result. Please try again.'
+      'The generation request was not accepted. No points were charged; please check the settings and try again.',
+      '本次生成请求未被接受，未扣积分。请检查设置后重试。',
+      'The generation request was not accepted. No points were charged; please check the settings and try again.'
+    );
+  }
+  if (['provider-timeout', 'gateway-timeout', 'timeout', 'video-generation-timeout'].includes(code)) {
+    return localizedMessage(
+      'Generation took too long to respond. Points are temporarily held while the task is verified; please retry shortly.',
+      '本次生成响应超时，积分暂时保留，系统正在核对任务，请稍后重试。',
+      '생성 응답 시간이 초과되었습니다. 작업을 확인하는 동안 포인트가 임시 보류됩니다. 잠시 후 다시 시도하세요.'
+    );
+  }
+  if (code === 'provider-request-failed') {
+    return localizedMessage(
+      'The generation request was not accepted. No points were charged; check the reference files and settings, then try again.',
+      '本次生成请求未被接受，未扣积分。请检查参考素材和参数后重试。',
+      '생성 요청이 승인되지 않았습니다. 포인트는 차감되지 않았습니다. 참조 파일과 설정을 확인한 뒤 다시 시도하세요.'
+    );
+  }
+  if (['provider-invalid-response', 'provider-result-missing', 'video-generation-failed', 'video-provider-result-invalid'].includes(code)) {
+    return localizedMessage(
+      'The AI service returned no usable result. Points are temporarily held while delivery is verified; please retry shortly.',
+      'AI 服务没有返回可用结果，积分暂时保留，系统正在核对结果，请稍后重试。',
+      'AI 서비스가 사용 가능한 결과를 반환하지 않았습니다. 전달을 확인하는 동안 포인트가 임시 보류됩니다. 잠시 후 다시 시도하세요.'
+    );
+  }
+  if (['provider-download-failed', 'media-download-failed', 'video-download-failed'].includes(code)) {
+    return localizedMessage(
+      'The result was generated but could not be downloaded safely. Points are temporarily held while delivery is recovered; please retry shortly.',
+      '结果可能已经生成，但未能安全下载到软件，积分暂时保留，系统正在恢复结果，请稍后重试。',
+      '결과가 생성되었지만 안전하게 다운로드하지 못했습니다. 전달을 복구하는 동안 포인트가 임시 보류됩니다. 잠시 후 다시 시도하세요.'
+    );
+  }
+  if (['provider-task-recovery-pending', 'image-job-record-failed'].includes(code)) {
+    return localizedMessage(
+      'The generated result is being recovered safely. Points are temporarily held until delivery is confirmed; please retry shortly.',
+      '生成结果正在安全恢复中，积分暂时保留，确认结果后才会结算，请稍后重试。',
+      '생성 결과를 안전하게 복구하고 있습니다. 전달이 확인될 때까지 포인트가 임시 보류됩니다. 잠시 후 다시 시도하세요.'
+    );
+  }
+  if (code === 'image-job-schema-missing') {
+    return localizedMessage(
+      'Image recovery is being prepared on the service. Please retry shortly.',
+      '图片恢复服务正在准备中，请稍后重试。',
+      '이미지 복구 서비스를 준비 중입니다. 잠시 후 다시 시도하세요.'
+    );
+  }
+  if (['invalid-media', 'local-delivery-failed', 'invalid-ai-delivery-confirmation'].includes(code)) {
+    return localizedMessage(
+      'The generated file could not be verified or added to the canvas. Points are temporarily held while the result is checked.',
+      '生成文件无法验证或未能加入画布，积分暂时保留，系统正在核对结果。',
+      '생성 파일을 확인하거나 캔버스에 추가하지 못했습니다. 결과를 확인하는 동안 포인트가 임시 보류됩니다.'
+    );
+  }
+  if (['credit-settlement-failed', 'video-job-finalization-failed'].includes(code)) {
+    return localizedMessage(
+      'The points service is confirming this result. Please keep the app open and retry shortly.',
+      '积分服务正在核对本次结果，请保持软件打开并稍后重试。',
+      '포인트 서비스가 결과를 확인 중입니다. 앱을 열어 둔 채 잠시 후 다시 시도하세요.'
     );
   }
   if (code === 'gateway-request-failed') {
@@ -4879,15 +4953,10 @@ function conciseAiErrorMessage(error, context = {}) {
       '이 주소는 API가 아니라 웹사이트 페이지입니다. 공급자 콘솔의 Base URL 또는 요청 URL을 입력하세요.'
     );
   }
-  const taskId = error && error.taskId ? localizedMessage(
-    ` (Task ID: ${error.taskId})`,
-    `（任务 ID：${error.taskId}）`,
-    ` (작업 ID: ${error.taskId})`
-  ) : '';
   const message = raw || (context.kind === 'chat'
     ? localizedMessage('AI chat failed. Please try again.', 'AI 对话失败，请稍后重试。', 'AI 채팅에 실패했습니다. 다시 시도하세요.')
     : localizedMessage('AI generation failed. Please try again.', 'AI 生成失败，请稍后重试。', 'AI 생성에 실패했습니다. 다시 시도하세요.'));
-  return `${message.slice(0, 360)}${taskId}`;
+  return message.slice(0, 360);
 }
 
 function makeGeneratedMediaName(prompt, kind, extension) {
@@ -6859,13 +6928,17 @@ function butlerFailure(error, fallbackMessage) {
     'reference-policy-rejected': 'The reference image may contain copyrighted or restricted content. Choose another reference image. No points were charged.',
     'provider-invalid-response': 'The AI service returned an invalid result. Please try again.',
     'ai302-unauthorized': 'The AI service credential is invalid. Ask the administrator to update it.',
-    'ai302-balance-exhausted': 'The AI service balance is insufficient.',
-    'ai302-rate-limited': 'The AI service is busy. Please try again shortly.',
+    'ai302-balance-exhausted': 'The generation service is temporarily unavailable. No points were charged; please try again later.',
+    'ai302-rate-limited': 'Too many users are generating right now. No points were charged; please retry shortly.',
+    'ai302-route-unavailable': 'The generation service is temporarily unavailable. No points were charged; please retry shortly.',
     'ai302-timeout': 'The AI service did not finish in time. This request was not submitted again automatically.',
     'ai302-unavailable': 'The AI service is temporarily unavailable. Please try again later.',
-    'ai302-upstream-error': 'The AI service rejected this request.',
+    'ai302-upstream-error': 'The generation request was not accepted. No points were charged; please check the settings and try again.',
     'ai302-invalid-response': 'The AI service returned an unsupported response. Please try again.',
     'ai302-not-configured': 'The AI service is not configured on the server.',
+    'image-tool-failed': 'Image processing failed. No points were charged; please try again.',
+    'three-d-generation-failed': '3D generation failed. No points were charged; please try again.',
+    'video-upscale-failed': 'Video enhancement failed. No points were charged; please try again.',
     'tool-disabled': 'This AI tool is temporarily unavailable. Please try again later.',
     'tool-public-url-not-configured': 'The gateway public URL is required for this tool.',
     'tool-asset-capacity-exceeded': 'The video upload relay is busy. Please try again shortly.',
@@ -9451,11 +9524,24 @@ function registerIpcHandlers() {
     store.data.canvasProjects = projects.map((project, index) => ({
       id: String(project.id || `project-${index + 1}`),
       name: String(project.name || 'General').trim().slice(0, 80) || 'General',
+      scope: normalizeCanvasProjectScope(project.scope),
       createdAt: project.createdAt || new Date().toISOString()
     }));
+    if (!store.data.canvasProjects.length) {
+      store.data.canvasProjects = [{
+        id: 'project-1',
+        name: 'General',
+        scope: 'personal',
+        createdAt: new Date().toISOString()
+      }];
+    }
+    const validProjectIds = new Set(store.data.canvasProjects.map((project) => project.id));
+    const fallbackProjectId = store.data.canvasProjects[0].id;
     store.data.canvases = canvases.map((canvas, index) => ({
       id: String(canvas.id || `canvas-${index + 1}`),
-      projectId: String(canvas.projectId || store.data.canvasProjects[0].id),
+      projectId: validProjectIds.has(String(canvas.projectId || ''))
+        ? String(canvas.projectId)
+        : fallbackProjectId,
       name: String(canvas.name || 'Untitled').trim().slice(0, 80) || 'Untitled',
       createdAt: canvas.createdAt || new Date().toISOString(),
       updatedAt: canvas.updatedAt || canvas.createdAt || new Date().toISOString(),

@@ -7,6 +7,12 @@ import {
   validateAssetUrl,
   validatePng
 } from './ai302-tools.js';
+import {
+  AI302_PRIMARY_ROUTE_ID,
+  ai302RouteUrl,
+  getAi302Routes,
+  hasSafeFallbackStatus
+} from './tool-routes.js';
 
 const API_ORIGIN = 'https://api.302.ai';
 const QWEN_EDIT_PATH = '/302/submit/qwen-image-edit-plus';
@@ -38,6 +44,7 @@ const LONG_RUNNING_REQUEST_TIMEOUT_MS = 10 * 60_000;
 const STATUS_TIMEOUT_MS = 20_000;
 const DOWNLOAD_TIMEOUT_MS = 90_000;
 const MAX_JSON_BYTES = 1024 * 1024;
+const MAX_UPSTREAM_ERROR_BYTES = 64 * 1024;
 const MAX_INPUT_IMAGE_BYTES = 24 * 1024 * 1024;
 const MAX_TOTAL_EDIT_BYTES = 64 * 1024 * 1024;
 const MAX_OUTPUT_IMAGE_BYTES = 128 * 1024 * 1024;
@@ -45,6 +52,7 @@ const MAX_EDIT_IMAGES = 4;
 const MAX_RESULT_IMAGES = 8;
 const TASK_TOKEN_TTL_MS = 72 * 60 * 60 * 1000;
 const TASK_TOKEN_AAD = Buffer.from('messs:ai302-image-task:v1', 'utf8');
+const ROUTE_ID_PATTERN = /^[a-z][a-z0-9-]{0,47}$/;
 const ASYNC_PROVIDERS = new Set([
   'seededit-v3',
   'kling-image-expand',
@@ -115,15 +123,51 @@ async function limitedBuffer(response, maximum) {
   return Buffer.concat(chunks, total);
 }
 
-function upstreamFailure(response) {
-  const error = response.status === 401
-    ? imageToolError('ai302-unauthorized', 'The 302 API key was rejected. Update AI302_KEY on the gateway.', 503)
-    : response.status === 402
-      ? imageToolError('ai302-balance-exhausted', 'The 302 tool balance is insufficient.', 402)
-    : response.status === 429
-      ? imageToolError('ai302-rate-limited', 'The 302 tool service is busy. Try again shortly.', 429)
-      : imageToolError('ai302-upstream-error', 'The 302 tool service rejected the request.', 502);
+async function readUpstreamErrorHint(response) {
+  try {
+    const bytes = await limitedBuffer(response, MAX_UPSTREAM_ERROR_BYTES);
+    return bytes.toString('utf8').slice(0, MAX_UPSTREAM_ERROR_BYTES);
+  } catch {
+    return '';
+  }
+}
+
+function classifyUpstreamFailure(status, body) {
+  const text = String(body || '');
+  if (/copyright|copyrighted|restricted|sensitive|safety|moderation|content\s+filter|prohibited|policy/i.test(text)) {
+    return { code: 'reference-policy-rejected', status: 400, safeToFallback: false };
+  }
+  if (status === 401 || status === 403 || /invalid\s+(?:api\s*)?key|unauthorized|forbidden|authentication/i.test(text)) {
+    return { code: 'ai302-unauthorized', status: 503, safeToFallback: false };
+  }
+  if (status === 402 || /insufficient\s+(?:balance|credit)|balance\s+(?:is\s+)?(?:insufficient|exhausted)|payment\s+required|quota\s+exhausted/i.test(text)) {
+    return { code: 'ai302-balance-exhausted', status: 402, safeToFallback: true };
+  }
+  if (status === 429 || /rate.?limit|too\s+many\s+(?:requests|users)|capacity|overloaded|queue\s+full|saturated/i.test(text)) {
+    return { code: 'ai302-rate-limited', status: 429, safeToFallback: true };
+  }
+  if (/channel|route|service|model/.test(text.toLowerCase())
+      && /unavailable|not\s+available|configuration|disabled|temporarily\s+busy|no\s+available/i.test(text)) {
+    return { code: 'provider-channel-unavailable', status: 503, safeToFallback: true };
+  }
+  return { code: 'ai302-upstream-error', status: 502, safeToFallback: false };
+}
+
+async function upstreamFailure(response) {
+  const classification = classifyUpstreamFailure(response.status, await readUpstreamErrorHint(response));
+  const error = imageToolError(classification.code, classification.code === 'reference-policy-rejected'
+    ? 'The reference media may contain copyrighted or restricted content.'
+    : classification.code === 'ai302-rate-limited'
+      ? 'The generation service is busy. Try again shortly.'
+      : classification.code === 'provider-channel-unavailable'
+        ? 'The generation channel is temporarily unavailable.'
+        : classification.code === 'ai302-balance-exhausted'
+          ? 'The generation service is temporarily unavailable.'
+          : classification.code === 'ai302-unauthorized'
+            ? 'The generation service credential was rejected.'
+            : 'The generation service rejected the request.', classification.status);
   error.upstreamStatus = response.status;
+  error.safeToFallback = hasSafeFallbackStatus(response.status) || classification.safeToFallback;
   return error;
 }
 
@@ -142,34 +186,69 @@ function providerTransportFailure(error) {
     : imageToolError('ai302-unavailable', 'The 302 tool service is temporarily unavailable.', 503);
 }
 
+function markSubmissionAmbiguous(error, dependencies) {
+  if (dependencies && dependencies.submission === true && error && typeof error === 'object') {
+    error.submissionAmbiguous = true;
+  }
+  return error;
+}
+
 async function fetch302Json(path, init, dependencies) {
-  let response;
-  try {
-    response = await dependencies.fetchImpl(`${API_ORIGIN}${path}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${dependencies.apiKey}`,
-        Accept: 'application/json',
-        ...(init.headers || {})
-      },
-      redirect: 'error',
-      signal: composedSignal(dependencies.timeoutMs || REQUEST_TIMEOUT_MS, dependencies.signal)
-    });
-  } catch (error) {
-    throw providerTransportFailure(error);
+  const routes = Array.isArray(dependencies.routes) && dependencies.routes.length
+    ? dependencies.routes
+    : getAi302Routes({ apiKey: dependencies.apiKey, routeId: dependencies.routeId });
+  let lastError;
+  for (let index = 0; index < routes.length; index += 1) {
+    const route = routes[index];
+    let response;
+    try {
+      response = await dependencies.fetchImpl(ai302RouteUrl(route, path), {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${route.apiKey}`,
+          Accept: 'application/json',
+          ...(dependencies.submission === true && dependencies.requestId
+            ? {
+                'Idempotency-Key': dependencies.requestId,
+                'X-Request-Id': dependencies.requestId
+              }
+            : {}),
+          ...(init.headers || {})
+        },
+        redirect: 'error',
+        signal: composedSignal(dependencies.timeoutMs || REQUEST_TIMEOUT_MS, dependencies.signal)
+      });
+    } catch (error) {
+      throw markSubmissionAmbiguous(providerTransportFailure(error), dependencies);
+    }
+    if (!response.ok) {
+      const error = await upstreamFailure(response);
+      if (dependencies.submission === true && error.safeToFallback === true && index < routes.length - 1) {
+        lastError = error;
+        continue;
+      }
+      if (dependencies.submission === true && Number(response.status) >= 500) error.submissionAmbiguous = true;
+      throw error;
+    }
+    let bytes;
+    try {
+      bytes = await limitedBuffer(response, MAX_JSON_BYTES);
+    } catch (error) {
+      throw markSubmissionAmbiguous(error, dependencies);
+    }
+    try {
+      const payload = JSON.parse(bytes.toString('utf8'));
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('invalid object');
+      dependencies.routeId = route.id;
+      return payload;
+    } catch (error) {
+      throw markSubmissionAmbiguous(
+        imageToolError('ai302-invalid-response', 'The 302 tool service returned an invalid response.', 502),
+        dependencies
+      );
+    }
   }
-  if (!response.ok) {
-    if (response.body) await response.body.cancel().catch(() => {});
-    throw upstreamFailure(response);
-  }
-  const bytes = await limitedBuffer(response, MAX_JSON_BYTES);
-  try {
-    const payload = JSON.parse(bytes.toString('utf8'));
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('invalid object');
-    return payload;
-  } catch (error) {
-    throw imageToolError('ai302-invalid-response', 'The 302 tool service returned an invalid response.', 502);
-  }
+  throw lastError || imageToolError('ai302-unavailable', 'The 302 tool service is temporarily unavailable.', 503);
 }
 
 function normalizeText(value, name, { required = false, maximum = 4000 } = {}) {
@@ -204,13 +283,22 @@ function validUuid(value) {
   return /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(String(value || '').trim());
 }
 
-function createTaskToken(providerId, requestId, accountingRequestId, userId, key, now = Date.now()) {
+function createTaskToken(
+  providerId,
+  requestId,
+  accountingRequestId,
+  userId,
+  key,
+  now = Date.now(),
+  routeId = AI302_PRIMARY_ROUTE_ID
+) {
   const issuedAt = Math.floor(Number(now) / 1000);
   const payload = Buffer.from(JSON.stringify({
     p: providerId,
     j: requestId,
     r: accountingRequestId,
     u: String(userId || ''),
+    ...(routeId && routeId !== AI302_PRIMARY_ROUTE_ID ? { h: routeId } : {}),
     i: issuedAt,
     e: issuedAt + Math.floor(TASK_TOKEN_TTL_MS / 1000)
   }), 'utf8');
@@ -249,12 +337,14 @@ function readTaskToken(taskToken, userId, key, now = Date.now()) {
     const requestId = String(payload && payload.j || '');
     const accountingRequestId = String(payload && payload.r || '');
     const ownerId = String(payload && payload.u || '');
+    const routeId = String(payload && payload.h || AI302_PRIMARY_ROUTE_ID).trim().toLowerCase();
     const issuedAt = Number(payload && payload.i);
     const expiresAt = Number(payload && payload.e);
     if (
       !ASYNC_PROVIDERS.has(providerId)
       || !requestId || requestId.length > 512 || /[\u0000-\u001f\u007f]/.test(requestId)
       || !validUuid(accountingRequestId)
+      || !ROUTE_ID_PATTERN.test(routeId)
       || !ownerId || ownerId !== String(userId || '')
       || !Number.isInteger(issuedAt) || !Number.isInteger(expiresAt)
       || issuedAt > currentTime + 300 || expiresAt <= currentTime
@@ -262,7 +352,7 @@ function readTaskToken(taskToken, userId, key, now = Date.now()) {
     ) {
       throw invalidTaskToken();
     }
-    return { providerId, requestId, accountingRequestId, issuedAt };
+    return { providerId, requestId, accountingRequestId, routeId, issuedAt };
   } catch (error) {
     if (error && error.code === 'image-tool-task-not-found') throw error;
     throw invalidTaskToken();
@@ -303,7 +393,7 @@ function synchronousResult(payload) {
   };
 }
 
-function dependencies(options = {}, { status = false, longRunning = false } = {}) {
+function dependencies(options = {}, { status = false, longRunning = false, submission = false } = {}) {
   const apiKey = configuredApiKey(options.apiKey);
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   if (typeof fetchImpl !== 'function') {
@@ -313,12 +403,24 @@ function dependencies(options = {}, { status = false, longRunning = false } = {}
     apiKey,
     fetchImpl,
     signal: options.signal,
+    submission,
+    routeId: String(options.routeId || '').trim().toLowerCase(),
+    routes: getAi302Routes({ apiKey, routeId: options.routeId }),
+    requestId: validUuid(options.accountingRequestId)
+      ? String(options.accountingRequestId).trim().toLowerCase()
+      : '',
     timeoutMs: status
       ? STATUS_TIMEOUT_MS
       : longRunning
         ? LONG_RUNNING_REQUEST_TIMEOUT_MS
         : REQUEST_TIMEOUT_MS
   };
+}
+
+function bindTaskRoute(requestDependencies, routeId) {
+  const routes = getAi302Routes({ apiKey: requestDependencies.apiKey, routeId });
+  requestDependencies.routes = routes;
+  requestDependencies.routeId = routes[0].id;
 }
 
 function validateRequestId(value) {
@@ -445,6 +547,7 @@ async function readDocumentedTask(providerId, taskToken, userId, options = {}) {
     taskTokenKey(requestDependencies.apiKey, options.taskSecret),
     options.now
   );
+  bindTaskRoute(requestDependencies, task.routeId);
   if (task.providerId !== providerId) throw invalidTaskToken();
   if (typeof options.touchCredits === 'function') {
     const touched = await options.touchCredits({ requestId: task.accountingRequestId, userId: String(userId || '') });
@@ -502,10 +605,10 @@ export async function submitQwenImageEdit({ imageDataUrl, imageDataUrls, prompt,
   }
   const userPrompt = normalizeText(prompt, 'prompt', { required: true, maximum: 4000 });
   if (!String(userId || '').trim()) throw imageToolError('invalid-user', 'An authenticated user is required.', 401);
-  const requestDependencies = dependencies(options);
   const accountingRequestId = validUuid(options.accountingRequestId)
     ? String(options.accountingRequestId).trim().toLowerCase()
     : crypto.randomUUID();
+  const requestDependencies = dependencies({ ...options, accountingRequestId }, { submission: true });
   const relays = createRelays(sourceUrls, options);
   try {
     const payload = await fetch302Json(QWEN_EDIT_PATH, {
@@ -517,9 +620,16 @@ export async function submitQwenImageEdit({ imageDataUrl, imageDataUrls, prompt,
         ...normalizeEditOptions(toolOptions)
       })
     }, requestDependencies);
-    const response = imageToolResponseObject(payload);
-    const requestId = responseRequestId(response);
-    const status = response.status ? normalizedStatus(response) : 'queued';
+    let response;
+    let requestId;
+    let status;
+    try {
+      response = imageToolResponseObject(payload);
+      requestId = responseRequestId(response);
+      status = response.status ? normalizedStatus(response) : 'queued';
+    } catch (error) {
+      throw markSubmissionAmbiguous(error, requestDependencies);
+    }
     return {
       taskToken: createTaskToken(
         'qwen-image-edit-plus',
@@ -527,7 +637,8 @@ export async function submitQwenImageEdit({ imageDataUrl, imageDataUrls, prompt,
         accountingRequestId,
         userId,
         taskTokenKey(requestDependencies.apiKey, options.taskSecret),
-        options.now
+        options.now,
+        requestDependencies.routeId
       ),
       status,
       retryAfterMs: status === 'queued' || status === 'processing' ? 5000 : 0,
@@ -541,10 +652,10 @@ export async function submitQwenImageEdit({ imageDataUrl, imageDataUrls, prompt,
 
 export async function submitQwenImageLayered({ imageDataUrl, prompt, numLayers, toolOptions, userId } = {}, options = {}) {
   if (!String(userId || '').trim()) throw imageToolError('invalid-user', 'An authenticated user is required.', 401);
-  const requestDependencies = dependencies(options);
   const accountingRequestId = validUuid(options.accountingRequestId)
     ? String(options.accountingRequestId).trim().toLowerCase()
     : crypto.randomUUID();
+  const requestDependencies = dependencies({ ...options, accountingRequestId }, { submission: true });
   const relays = createRelays([imageDataUrl], options);
   try {
     const payload = await fetch302Json(QWEN_LAYERED_PATH, {
@@ -558,9 +669,16 @@ export async function submitQwenImageLayered({ imageDataUrl, prompt, numLayers, 
         output_format: 'png'
       })
     }, requestDependencies);
-    const response = imageToolResponseObject(payload);
-    const requestId = responseRequestId(response);
-    const status = response.status ? normalizedStatus(response) : 'queued';
+    let response;
+    let requestId;
+    let status;
+    try {
+      response = imageToolResponseObject(payload);
+      requestId = responseRequestId(response);
+      status = response.status ? normalizedStatus(response) : 'queued';
+    } catch (error) {
+      throw markSubmissionAmbiguous(error, requestDependencies);
+    }
     return {
       taskToken: createTaskToken(
         'qwen-image-layered',
@@ -568,7 +686,8 @@ export async function submitQwenImageLayered({ imageDataUrl, prompt, numLayers, 
         accountingRequestId,
         userId,
         taskTokenKey(requestDependencies.apiKey, options.taskSecret),
-        options.now
+        options.now,
+        requestDependencies.routeId
       ),
       status,
       retryAfterMs: status === 'queued' || status === 'processing' ? 5000 : 0,
@@ -588,6 +707,7 @@ async function pollAsyncImageTask(expectedProviderId, path, { taskToken, userId 
     taskTokenKey(requestDependencies.apiKey, options.taskSecret),
     options.now
   );
+  bindTaskRoute(requestDependencies, task.routeId);
   if (task.providerId !== expectedProviderId) throw invalidTaskToken();
   if (typeof options.touchCredits === 'function') {
     const touched = await options.touchCredits({
@@ -642,10 +762,10 @@ export function pollQwenImageLayered(input, options = {}) {
 
 export async function submitSeedEditImage({ imageDataUrl, prompt, toolOptions, userId } = {}, options = {}) {
   if (!String(userId || '').trim()) throw imageToolError('invalid-user', 'An authenticated user is required.', 401);
-  const requestDependencies = dependencies(options);
   const accountingRequestId = validUuid(options.accountingRequestId)
     ? String(options.accountingRequestId).trim().toLowerCase()
     : crypto.randomUUID();
+  const requestDependencies = dependencies({ ...options, accountingRequestId }, { submission: true });
   const image = parseSanitizedImage(imageDataUrl);
   const form = new FormData();
   form.append('image_urls', new Blob([image.buffer], { type: image.mime }), `image.${image.extension}`);
@@ -656,11 +776,16 @@ export async function submitSeedEditImage({ imageDataUrl, prompt, toolOptions, u
   }
   form.append('scale', String(boundedNumber(source.scale, 5, 1, 10, 'scale')));
   const payload = await fetch302Json(SEED_EDIT_PATH, { method: 'POST', body: form }, requestDependencies);
-  const requestId = responseRequestId(payload);
+  let requestId;
+  try {
+    requestId = responseRequestId(payload);
+  } catch (error) {
+    throw markSubmissionAmbiguous(error, requestDependencies);
+  }
   return {
     taskToken: createTaskToken(
       'seededit-v3', requestId, accountingRequestId, userId,
-      taskTokenKey(requestDependencies.apiKey, options.taskSecret), options.now
+      taskTokenKey(requestDependencies.apiKey, options.taskSecret), options.now, requestDependencies.routeId
     ),
     status: 'queued',
     retryAfterMs: 5000,
@@ -697,21 +822,26 @@ function normalizeExpansionOptions(value = {}) {
 
 export async function submitKlingImageExpand({ imageDataUrl, toolOptions, userId } = {}, options = {}) {
   if (!String(userId || '').trim()) throw imageToolError('invalid-user', 'An authenticated user is required.', 401);
-  const requestDependencies = dependencies(options);
   const accountingRequestId = validUuid(options.accountingRequestId)
     ? String(options.accountingRequestId).trim().toLowerCase()
     : crypto.randomUUID();
+  const requestDependencies = dependencies({ ...options, accountingRequestId }, { submission: true });
   const image = parseSanitizedImage(imageDataUrl);
   const payload = await fetch302Json(KLING_EXPAND_PATH, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ image: image.buffer.toString('base64'), ...normalizeExpansionOptions(toolOptions) })
   }, requestDependencies);
-  const requestId = responseRequestId(payload);
+  let requestId;
+  try {
+    requestId = responseRequestId(payload);
+  } catch (error) {
+    throw markSubmissionAmbiguous(error, requestDependencies);
+  }
   return {
     taskToken: createTaskToken(
       'kling-image-expand', requestId, accountingRequestId, userId,
-      taskTokenKey(requestDependencies.apiKey, options.taskSecret), options.now
+      taskTokenKey(requestDependencies.apiKey, options.taskSecret), options.now, requestDependencies.routeId
     ),
     status: 'queued',
     retryAfterMs: 5000,
@@ -855,10 +985,10 @@ export async function submitTopazImageTool({ modelId, imageDataUrl, toolOptions,
   if (typeof options.reserveCredits !== 'function') {
     throw imageToolError('credit-service-failed', 'Topaz credit enforcement is unavailable.', 503);
   }
-  const requestDependencies = dependencies(options);
   const accountingRequestId = validUuid(options.accountingRequestId)
     ? String(options.accountingRequestId).trim().toLowerCase()
     : crypto.randomUUID();
+  const requestDependencies = dependencies({ ...options, accountingRequestId }, { submission: true });
   const relays = createRelays([imageDataUrl], options);
   let reservation = null;
   try {
@@ -875,10 +1005,16 @@ export async function submitTopazImageTool({ modelId, imageDataUrl, toolOptions,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody)
     }, requestDependencies);
-    const processId = topazProcessId(payload);
-    const providerCost = Number(topazField(payload, ['credits', 'cost', 'provider_cost', 'providerCost'], 'create'));
-    if (!Number.isInteger(providerCost) || providerCost < 0 || providerCost > 1_000_000) {
-      throw imageToolError('ai302-invalid-response', 'Topaz did not return a valid credit cost.', 502);
+    let processId;
+    let providerCost;
+    try {
+      processId = topazProcessId(payload);
+      providerCost = Number(topazField(payload, ['credits', 'cost', 'provider_cost', 'providerCost'], 'create'));
+      if (!Number.isInteger(providerCost) || providerCost < 0 || providerCost > 1_000_000) {
+        providerCost = TOPAZ_IMAGE_PROVIDER_CREDIT_RESERVE;
+      }
+    } catch (error) {
+      throw markSubmissionAmbiguous(error, requestDependencies);
     }
     let billedCredits = Number(reservation.credits) || 0;
     if (providerCost > TOPAZ_IMAGE_PROVIDER_CREDIT_RESERVE) {
@@ -900,7 +1036,8 @@ export async function submitTopazImageTool({ modelId, imageDataUrl, toolOptions,
         accountingRequestId,
         userId,
         taskTokenKey(requestDependencies.apiKey, options.taskSecret),
-        options.now
+        options.now,
+        requestDependencies.routeId
       ),
       status: 'queued',
       retryAfterMs: 5000,
@@ -911,7 +1048,10 @@ export async function submitTopazImageTool({ modelId, imageDataUrl, toolOptions,
     };
   } catch (error) {
     for (const relay of relays) deleteAi302RelayAsset(relay.token);
-    if (reservation && reservation.ok === true && typeof options.releaseCredits === 'function') {
+    if (reservation && reservation.ok === true
+        && error && error.submissionAmbiguous !== true
+        && error.providerTaskAccepted !== true
+        && typeof options.releaseCredits === 'function') {
       try {
         await options.releaseCredits({ requestId: accountingRequestId, status: 'failed', durationMs: 0 });
       } catch {}
@@ -936,6 +1076,7 @@ export async function pollTopazImageTool({ taskToken, userId } = {}, options = {
     taskTokenKey(requestDependencies.apiKey, options.taskSecret),
     options.now
   );
+  bindTaskRoute(requestDependencies, task.routeId);
   if (!Object.hasOwn(TOPAZ_IMAGE_PATHS, task.providerId)) throw invalidTaskToken();
   if (typeof options.touchCredits === 'function') {
     const touched = await options.touchCredits({ requestId: task.accountingRequestId, userId: String(userId || '') });
@@ -1037,37 +1178,87 @@ function validateRasterImage(bytes) {
 }
 
 async function fetch302BinaryImage(path, form, options = {}) {
-  const requestDependencies = dependencies(options, { longRunning: true });
+  const accountingRequestId = validUuid(options.accountingRequestId)
+    ? String(options.accountingRequestId).trim().toLowerCase()
+    : crypto.randomUUID();
+  const requestDependencies = dependencies({ ...options, accountingRequestId }, {
+    longRunning: true,
+    submission: true
+  });
+  const routes = requestDependencies.routes;
   let response;
-  try {
-    response = await requestDependencies.fetchImpl(`${API_ORIGIN}${path}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${requestDependencies.apiKey}`,
-        Accept: 'image/png,image/jpeg,image/webp,application/json'
-      },
-      body: form,
-      redirect: 'error',
-      signal: composedSignal(requestDependencies.timeoutMs, requestDependencies.signal)
-    });
-  } catch (error) {
-    throw providerTransportFailure(error);
+  let lastError;
+  for (let index = 0; index < routes.length; index += 1) {
+    const route = routes[index];
+    try {
+      response = await requestDependencies.fetchImpl(ai302RouteUrl(route, path), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${route.apiKey}`,
+          Accept: 'image/png,image/jpeg,image/webp,application/json',
+          ...(requestDependencies.requestId
+            ? {
+                'Idempotency-Key': requestDependencies.requestId,
+                'X-Request-Id': requestDependencies.requestId
+              }
+            : {})
+        },
+        body: form,
+        redirect: 'error',
+        signal: composedSignal(requestDependencies.timeoutMs, requestDependencies.signal)
+      });
+    } catch (error) {
+      throw markSubmissionAmbiguous(providerTransportFailure(error), requestDependencies);
+    }
+    if (!response.ok) {
+      const error = await upstreamFailure(response);
+      if (requestDependencies.submission === true && error.safeToFallback === true && index < routes.length - 1) {
+        lastError = error;
+        continue;
+      }
+      if (requestDependencies.submission === true && Number(response.status) >= 500) {
+        error.submissionAmbiguous = true;
+      }
+      throw error;
+    }
+    requestDependencies.routeId = route.id;
+    break;
   }
-  if (!response.ok) {
-    if (response.body) await response.body.cancel().catch(() => {});
-    throw upstreamFailure(response);
-  }
+  if (!response) throw lastError || imageToolError('ai302-unavailable', 'The 302 tool service is temporarily unavailable.', 503);
   const contentType = String(response.headers && response.headers.get('content-type') || '').toLowerCase();
-  const bytes = await limitedBuffer(response, MAX_OUTPUT_IMAGE_BYTES);
+  let bytes;
+  try {
+    bytes = await limitedBuffer(response, MAX_OUTPUT_IMAGE_BYTES);
+  } catch (error) {
+    throw markSubmissionAmbiguous(error, requestDependencies);
+  }
   if (contentType.includes('application/json')) {
     let payload;
     try { payload = JSON.parse(bytes.toString('utf8')); }
-    catch (error) { throw imageToolError('ai302-invalid-response', 'The image tool returned an invalid response.', 502); }
+    catch (error) {
+      throw markSubmissionAmbiguous(
+        imageToolError('ai302-invalid-response', 'The image tool returned an invalid response.', 502),
+        requestDependencies
+      );
+    }
     const [resultUrl] = nestedResultUrls(payload);
-    if (!resultUrl) throw imageToolError('ai302-invalid-response', 'The image tool did not return an image.', 502);
-    return downloadAi302ImageResult(resultUrl, options);
+    if (!resultUrl) {
+      throw markSubmissionAmbiguous(
+        imageToolError('ai302-invalid-response', 'The image tool did not return an image.', 502),
+        requestDependencies
+      );
+    }
+    try {
+      return await downloadAi302ImageResult(resultUrl, options);
+    } catch (error) {
+      throw markSubmissionAmbiguous(error, requestDependencies);
+    }
   }
-  return validateRasterImage(bytes);
+  try {
+    return validateRasterImage(bytes);
+  } catch (error) {
+    throw markSubmissionAmbiguous(error, requestDependencies);
+  }
 }
 
 export async function generativeUpscaleImage({ imageDataUrl } = {}, options = {}) {
@@ -1112,7 +1303,13 @@ export async function cleanupImageObjects({ imageDataUrl, maskImageDataUrl } = {
 }
 
 export async function superUpscaleImage({ imageDataUrl, toolOptions } = {}, options = {}) {
-  const requestDependencies = dependencies(options, { longRunning: true });
+  const accountingRequestId = validUuid(options.accountingRequestId)
+    ? String(options.accountingRequestId).trim().toLowerCase()
+    : crypto.randomUUID();
+  const requestDependencies = dependencies({ ...options, accountingRequestId }, {
+    longRunning: true,
+    submission: true
+  });
   const relays = createRelays([imageDataUrl], options);
   try {
     const payload = await fetch302Json(SUPER_UPSCALE_PATH, {
@@ -1123,7 +1320,11 @@ export async function superUpscaleImage({ imageDataUrl, toolOptions } = {}, opti
         image_url: relays[0].url
       })
     }, requestDependencies);
-    return synchronousResult(payload);
+    try {
+      return synchronousResult(payload);
+    } catch (error) {
+      throw markSubmissionAmbiguous(error, requestDependencies);
+    }
   } finally {
     for (const relay of relays) deleteAi302RelayAsset(relay.token);
   }
@@ -1135,7 +1336,13 @@ export async function eraseImageObjects({ imageDataUrl, maskImageDataUrl } = {},
   if (mask.mime !== 'image/png') {
     throw imageToolError('invalid-mask-image', 'The object-removal mask must be a PNG image.', 400);
   }
-  const requestDependencies = dependencies(options, { longRunning: true });
+  const accountingRequestId = validUuid(options.accountingRequestId)
+    ? String(options.accountingRequestId).trim().toLowerCase()
+    : crypto.randomUUID();
+  const requestDependencies = dependencies({ ...options, accountingRequestId }, {
+    longRunning: true,
+    submission: true
+  });
   const form = new FormData();
   form.append('image_url', new Blob([image.buffer], { type: image.mime }), `image.${image.extension}`);
   form.append('mask_image_url', new Blob([mask.buffer], { type: mask.mime }), 'mask.png');
@@ -1144,7 +1351,11 @@ export async function eraseImageObjects({ imageDataUrl, maskImageDataUrl } = {},
     headers: { Accept: 'image/*' },
     body: form
   }, requestDependencies);
-  return synchronousResult(payload);
+  try {
+    return synchronousResult(payload);
+  } catch (error) {
+    throw markSubmissionAmbiguous(error, requestDependencies);
+  }
 }
 
 export async function downloadAi302ImageResult(urlValue, options = {}) {

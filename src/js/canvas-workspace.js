@@ -17,9 +17,64 @@ const CanvasWorkspace = {
   agentSelectionFileIds: new Set(),
   config: null,
   libraryFilter: 'all',
+  libraryScope: 'personal',
   libraryProjectId: null,
   libraryQuery: ''
 };
+
+function normalizeCanvasProjectScope(value) {
+  return String(value || '').trim().toLowerCase() === 'team' ? 'team' : 'personal';
+}
+
+function normalizeCanvasProject(project, index = 0) {
+  if (!project || typeof project !== 'object') return null;
+  return {
+    ...project,
+    id: String(project.id || `project-${index + 1}`),
+    name: String(project.name || t('General', '常规', '일반')).trim().slice(0, 80) || t('General', '常规', '일반'),
+    scope: normalizeCanvasProjectScope(project.scope),
+    createdAt: project.createdAt || new Date().toISOString()
+  };
+}
+
+function canvasProjectScope(project) {
+  return normalizeCanvasProjectScope(project && project.scope);
+}
+
+function canvasProjectsForScope(scope = CanvasWorkspace.libraryScope) {
+  const targetScope = normalizeCanvasProjectScope(scope);
+  return AppState.canvasProjects.filter((project) => canvasProjectScope(project) === targetScope);
+}
+
+function canvasLibraryScopeLabel(scope = CanvasWorkspace.libraryScope) {
+  return normalizeCanvasProjectScope(scope) === 'team'
+    ? t('Team projects', '团队项目', '팀 프로젝트')
+    : t('Independent projects', '独立项目', '독립 프로젝트');
+}
+
+function canvasLibraryScopeDescription(scope = CanvasWorkspace.libraryScope) {
+  return normalizeCanvasProjectScope(scope) === 'team'
+    ? t('Browse and manage your team projects', '浏览和管理你的团队项目', '팀 프로젝트를 둘러보고 관리하세요')
+    : t('Browse and manage your independent projects', '浏览和管理你的独立项目', '독립 프로젝트를 둘러보고 관리하세요');
+}
+
+function appendCanvasProjectOptions(select, projects, selectedId = null) {
+  const groups = ['personal', 'team'];
+  groups.forEach((scope) => {
+    const scopedProjects = projects.filter((project) => canvasProjectScope(project) === scope);
+    if (!scopedProjects.length) return;
+    const group = document.createElement('optgroup');
+    group.label = canvasLibraryScopeLabel(scope);
+    scopedProjects.forEach((project) => {
+      const option = document.createElement('option');
+      option.value = project.id;
+      option.textContent = project.name;
+      option.selected = project.id === selectedId;
+      group.appendChild(option);
+    });
+    select.appendChild(group);
+  });
+}
 
 const CANVAS_AGENT_HISTORY_KEY = 'messs.canvas-agent-history.v1';
 const CANVAS_AGENT_HISTORY_LIMIT = 100;
@@ -33,7 +88,7 @@ function canvasAgentHistoryDate(value) {
   return `${year}-${month}-${day}`;
 }
 
-function normalizeCanvasAgentSession(session) {
+function normalizeCanvasAgentSession(session, fallbackCanvasId = null) {
   if (!session || !session.id) return null;
   const messages = Array.isArray(session.messages) ? session.messages.slice(-100).map((message) => ({
     role: message && message.role === 'assistant' ? 'assistant' : 'user',
@@ -53,7 +108,7 @@ function normalizeCanvasAgentSession(session) {
   return {
     id: String(session.id).slice(0, 120),
     title: String(session.title || t('New conversation', '\u65b0\u5bf9\u8bdd')).slice(0, 120),
-    canvasId: String(session.canvasId || '').slice(0, 120) || null,
+    canvasId: String(session.canvasId || fallbackCanvasId || '').slice(0, 120) || null,
     createdAt: session.createdAt || new Date().toISOString(),
     updatedAt: session.updatedAt || session.createdAt || new Date().toISOString(),
     favorite: session.favorite === true || session.pinned === true,
@@ -61,11 +116,38 @@ function normalizeCanvasAgentSession(session) {
   };
 }
 
-function normalizedCanvasAgentSessions(value) {
+function normalizedCanvasAgentSessions(value, fallbackCanvasId = null) {
   return (Array.isArray(value) ? value : [])
-    .map(normalizeCanvasAgentSession)
+    .map((session) => normalizeCanvasAgentSession(session, fallbackCanvasId))
     .filter(Boolean)
     .slice(0, CANVAS_AGENT_HISTORY_LIMIT);
+}
+
+function canvasAgentSessionCanvasId(session, fallbackCanvasId = activeCanvasId()) {
+  return String(session && session.canvasId || fallbackCanvasId || '').trim();
+}
+
+function migrateLegacyCanvasAgentSessions(sessions, canvasId = activeCanvasId()) {
+  const fallbackCanvasId = String(canvasId || '').trim();
+  if (!fallbackCanvasId) return sessions;
+  return sessions.map((session) => (
+    session.canvasId
+      ? session
+      : { ...session, canvasId: fallbackCanvasId }
+  ));
+}
+
+function canvasAgentSessionsFor(canvasId = activeCanvasId()) {
+  const targetCanvasId = String(canvasId || '').trim();
+  return CanvasWorkspace.agentSessions.filter((session) => (
+    canvasAgentSessionCanvasId(session, targetCanvasId) === targetCanvasId
+  ));
+}
+
+function latestCanvasAgentSession(canvasId = activeCanvasId()) {
+  return canvasAgentSessionsFor(canvasId)
+    .slice()
+    .sort((a, b) => Number(b.favorite) - Number(a.favorite) || new Date(b.updatedAt) - new Date(a.updatedAt))[0] || null;
 }
 
 function mergeCanvasAgentSessions(...sources) {
@@ -80,7 +162,10 @@ function mergeCanvasAgentSessions(...sources) {
 }
 
 function persistCanvasAgentHistory() {
-  const sessions = mergeCanvasAgentSessions(CanvasWorkspace.agentSessions);
+  const sessions = migrateLegacyCanvasAgentSessions(
+    mergeCanvasAgentSessions(CanvasWorkspace.agentSessions),
+    activeCanvasId()
+  );
   CanvasWorkspace.agentSessions = sessions;
   try { localStorage.setItem(CANVAS_AGENT_HISTORY_KEY, JSON.stringify(sessions)); } catch (error) {}
   if (window.messsAPI && typeof window.messsAPI.saveCanvasAgentHistory === 'function') {
@@ -105,21 +190,30 @@ async function loadCanvasAgentHistory() {
       durable = normalizedCanvasAgentSessions(result && result.sessions);
     }
   } catch (error) {}
-  CanvasWorkspace.agentSessions = mergeCanvasAgentSessions(durable, local, CanvasWorkspace.agentSessions);
+  CanvasWorkspace.agentSessions = migrateLegacyCanvasAgentSessions(
+    mergeCanvasAgentSessions(durable, local, CanvasWorkspace.agentSessions),
+    activeCanvasId()
+  );
   CanvasWorkspace.agentHistoryLoaded = true;
   persistCanvasAgentHistory();
-  const active = CanvasWorkspace.agentSessions.find((session) => session.id === CanvasWorkspace.activeAgentSessionId);
+  const active = latestCanvasAgentSession(activeCanvasId());
   if (active) loadCanvasAgentSession(active.id);
+  else startNewCanvasAgentChat();
   renderCanvasAgentHistory();
 }
 
 function activeCanvasAgentSession() {
-  return CanvasWorkspace.agentSessions.find((session) => session.id === CanvasWorkspace.activeAgentSessionId) || null;
+  const canvasId = activeCanvasId();
+  return CanvasWorkspace.agentSessions.find((session) => (
+    session.id === CanvasWorkspace.activeAgentSessionId
+      && canvasAgentSessionCanvasId(session, canvasId) === canvasId
+  )) || null;
 }
 
 function ensureCanvasAgentSession(title = '') {
   const active = activeCanvasAgentSession();
   if (active) return active;
+  CanvasWorkspace.activeAgentSessionId = null;
   const now = new Date().toISOString();
   const session = {
     id: `agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -159,7 +253,7 @@ function persistActiveCanvasAgentSession() {
   renderCanvasAgentHistory();
 }
 
-function startNewCanvasAgentChat() {
+function clearCanvasAgentMessages() {
   CanvasWorkspace.activeAgentSessionId = null;
   CanvasWorkspace.agentMessages = [];
   const list = document.getElementById('board-agent-messages');
@@ -172,7 +266,22 @@ function startNewCanvasAgentChat() {
     welcome.querySelector('span').textContent = t('Solve your problem.', '\u89e3\u51b3\u4f60\u7684\u95ee\u9898\u3002');
     list.appendChild(welcome);
   }
+}
+
+function startNewCanvasAgentChat() {
+  clearCanvasAgentMessages();
   renderCanvasAgentHistory();
+}
+
+function restoreCanvasAgentSessionForCanvas(canvasId = activeCanvasId()) {
+  const session = latestCanvasAgentSession(canvasId);
+  if (session) {
+    loadCanvasAgentSession(session.id);
+    return session;
+  }
+  clearCanvasAgentMessages();
+  renderCanvasAgentHistory();
+  return null;
 }
 
 function activeCanvasRecord() {
@@ -320,7 +429,12 @@ function buildCanvasMosaic(canvas) {
 function filteredCanvases() {
   const query = CanvasWorkspace.libraryQuery.trim().toLowerCase();
   const now = Date.now();
+  const projectsById = new Map(AppState.canvasProjects.map((project) => [project.id, project]));
   return AppState.canvases
+    .filter((canvas) => {
+      const project = projectsById.get(canvas.projectId);
+      return project && canvasProjectScope(project) === normalizeCanvasProjectScope(CanvasWorkspace.libraryScope);
+    })
     .filter((canvas) => !CanvasWorkspace.libraryProjectId || canvas.projectId === CanvasWorkspace.libraryProjectId)
     .filter((canvas) => {
     if (CanvasWorkspace.libraryFilter !== 'recent') return true;
@@ -337,7 +451,7 @@ function renderCanvasLibraryProjects() {
   const list = document.getElementById('canvas-library-projects');
   if (!list) return;
   list.innerHTML = '';
-  AppState.canvasProjects.forEach((project) => {
+  canvasProjectsForScope().forEach((project) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.dataset.projectId = project.id;
@@ -393,6 +507,9 @@ function buildCanvasLibraryCreateCard() {
 function renderCanvasLibrary() {
   const grid = document.getElementById('canvas-library-grid');
   if (!grid) return;
+  document.querySelectorAll('[data-canvas-filter]').forEach((entry) => {
+    entry.classList.toggle('is-active', !CanvasWorkspace.libraryProjectId && entry.dataset.canvasFilter === CanvasWorkspace.libraryFilter);
+  });
   const canvases = filteredCanvases();
   grid.innerHTML = '';
   canvases.forEach((canvas) => {
@@ -523,7 +640,14 @@ function renderCanvasLibrary() {
   });
   if (!CanvasWorkspace.libraryQuery.trim()) grid.appendChild(buildCanvasLibraryCreateCard());
   const empty = document.getElementById('canvas-library-empty');
-  empty.hidden = canvases.length > 0 || !CanvasWorkspace.libraryQuery.trim();
+  if (empty) {
+    empty.hidden = canvases.length > 0 || Boolean(CanvasWorkspace.libraryQuery.trim());
+    if (!empty.hidden) {
+      empty.textContent = canvasProjectsForScope().length
+        ? t('No canvases in this project type yet.', '这个项目类型里还没有画布。', '이 프로젝트 유형에는 아직 캔버스가 없습니다.')
+        : t('No projects here yet. Create a project to get started.', '这里还没有项目。创建一个项目即可开始。', '아직 프로젝트가 없습니다. 프로젝트를 만들어 시작하세요.');
+    }
+  }
   renderCanvasLibraryProjects();
 }
 
@@ -536,6 +660,30 @@ function renderCanvasWorkspaceControls() {
   if (title && panel && !panel.classList.contains('is-canvas-library')) {
     title.textContent = active ? active.name : t('Integrated Canvas', '整合画布');
   }
+}
+
+function syncCanvasLibraryScopePicker() {
+  const picker = document.getElementById('canvas-scope-picker');
+  const scope = normalizeCanvasProjectScope(CanvasWorkspace.libraryScope);
+  if (picker) {
+    picker.value = scope;
+    picker.setAttribute('aria-label', t('Project type', '项目类型', '프로젝트 유형'));
+  }
+  const heading = document.getElementById('canvas-library-heading');
+  if (heading) heading.textContent = t('All Canvases', '全部画布', '모든 캔버스');
+  const subtitle = document.querySelector('.canvas-library-topline p');
+  if (subtitle) subtitle.textContent = canvasLibraryScopeDescription(scope);
+}
+
+function selectCanvasLibraryScope(scope, { render = true } = {}) {
+  CanvasWorkspace.libraryScope = normalizeCanvasProjectScope(scope);
+  CanvasWorkspace.libraryProjectId = null;
+  CanvasWorkspace.libraryFilter = 'all';
+  document.querySelectorAll('[data-canvas-filter]').forEach((entry) => {
+    entry.classList.toggle('is-active', entry.dataset.canvasFilter === 'all');
+  });
+  syncCanvasLibraryScopePicker();
+  if (render) renderCanvasLibrary();
 }
 
 function showCanvasLibrary() {
@@ -555,7 +703,7 @@ function showCanvasLibrary() {
   document.getElementById('canvas-library-back').hidden = true;
   document.getElementById('board-bottom-bar').hidden = true;
   setCanvasAgentOpen(false);
-  document.getElementById('board-panel-title').textContent = t('All Canvases', '全部画布');
+  syncCanvasLibraryScopePicker();
   if (typeof closeAiImagePopover === 'function') closeAiImagePopover();
   renderCanvasLibrary();
 }
@@ -582,6 +730,17 @@ function showCanvasWorkspace() {
 function switchCanvas(canvasId, options = {}) {
   const next = AppState.canvases.find((canvas) => canvas.id === canvasId);
   if (!next) return;
+  const previousCanvasId = activeCanvasId();
+  if (previousCanvasId !== next.id && CanvasWorkspace.agentBusy) {
+    showToast(
+      t('Finish the current Agent request before switching canvases.', '\u8bf7\u7b49 Agent \u8bf7\u6c42\u5b8c\u6210\u540e\u518d\u5207\u6362\u753b\u5e03\u3002'),
+      'AI'
+    );
+    return;
+  }
+  if (previousCanvasId !== next.id && (CanvasWorkspace.activeAgentSessionId || CanvasWorkspace.agentMessages.length)) {
+    persistActiveCanvasAgentSession();
+  }
   if (typeof pauseAllBoardMedia === 'function') pauseAllBoardMedia();
   const panel = document.getElementById('board-panel');
   if (
@@ -593,15 +752,27 @@ function switchCanvas(canvasId, options = {}) {
   }
   AppState.activeCanvasId = next.id;
   AppState.boardItems = AppState.allBoardItems.filter((item) => (item.canvasId || 'canvas-1') === next.id);
+  CanvasWorkspace.agentReferenceFileIds.clear();
+  CanvasWorkspace.agentSelectionFileIds.clear();
   next.lastOpenedAt = new Date().toISOString();
   canvasWorkspaceSave().catch(() => {});
   if (options.enterWorkspace) showCanvasWorkspace();
   renderCanvasWorkspaceControls();
   if (typeof renderBoard === 'function') renderBoard();
+  restoreCanvasAgentSessionForCanvas(next.id);
+  renderCanvasAgentReferences();
   renderCanvasAgentContext();
 }
 
-function showCanvasTextDialog({ title, label, initialValue = '', projectId = null, includeProject = false }) {
+function showCanvasTextDialog({
+  title,
+  label,
+  initialValue = '',
+  projectId = null,
+  includeProject = false,
+  includeScope = false,
+  scope = CanvasWorkspace.libraryScope
+}) {
   return new Promise((resolve) => {
     const old = document.getElementById('canvas-name-dialog');
     if (old) old.remove();
@@ -613,6 +784,10 @@ function showCanvasTextDialog({ title, label, initialValue = '', projectId = nul
         <h3>${escapeHtml(title)}</h3>
         <label><span>${escapeHtml(label)}</span><input class="canvas-name-input" maxlength="80" /></label>
         <label class="canvas-project-field"><span>${escapeHtml(t('Folder', '文件夹'))}</span><select class="canvas-project-input"></select></label>
+        <label class="canvas-scope-field"><span>${escapeHtml(t('Project type', '项目类型', '프로젝트 유형'))}</span><select class="canvas-scope-input">
+          <option value="personal">${escapeHtml(t('Independent projects', '独立项目', '독립 프로젝트'))}</option>
+          <option value="team">${escapeHtml(t('Team projects', '团队项目', '팀 프로젝트'))}</option>
+        </select></label>
         <div class="canvas-name-dialog-actions">
           <button type="button" class="pill-btn pill-btn-ghost canvas-name-cancel">${escapeHtml(t('Cancel', '取消'))}</button>
           <button type="submit" class="pill-btn canvas-name-confirm">${escapeHtml(t('Create', '创建'))}</button>
@@ -624,17 +799,17 @@ function showCanvasTextDialog({ title, label, initialValue = '', projectId = nul
     const input = overlay.querySelector('.canvas-name-input');
     const projectField = overlay.querySelector('.canvas-project-field');
     const projectSelect = overlay.querySelector('.canvas-project-input');
+    const scopeField = overlay.querySelector('.canvas-scope-field');
+    const scopeSelect = overlay.querySelector('.canvas-scope-input');
     input.value = initialValue;
     projectField.hidden = !includeProject;
+    scopeField.hidden = !includeScope;
     if (includeProject) {
-      AppState.canvasProjects.forEach((project) => {
-        const option = document.createElement('option');
-        option.value = project.id;
-        option.textContent = project.name;
-        projectSelect.appendChild(option);
-      });
-      projectSelect.value = projectId || (AppState.canvasProjects[0] && AppState.canvasProjects[0].id) || '';
+      const projectOptions = canvasProjectsForScope();
+      appendCanvasProjectOptions(projectSelect, projectOptions, projectId || null);
+      projectSelect.value = projectId || (projectOptions[0] && projectOptions[0].id) || '';
     }
+    scopeSelect.value = normalizeCanvasProjectScope(scope);
     requestAnimationFrame(() => overlay.classList.add('is-visible'));
 
     function close(value) {
@@ -653,7 +828,11 @@ function showCanvasTextDialog({ title, label, initialValue = '', projectId = nul
         input.focus();
         return;
       }
-      close({ name: value, projectId: projectSelect.value || projectId });
+      close({
+        name: value,
+        projectId: projectSelect.value || projectId,
+        scope: normalizeCanvasProjectScope(scopeSelect.value)
+      });
     });
     input.focus();
     input.select();
@@ -719,13 +898,7 @@ function showCanvasFolderDialog({
     document.body.appendChild(overlay);
     const form = overlay.querySelector('form');
     const select = overlay.querySelector('.canvas-folder-select');
-    AppState.canvasProjects.forEach((project) => {
-      const option = document.createElement('option');
-      option.value = project.id;
-      option.textContent = project.name;
-      option.selected = project.id === projectId;
-      select.appendChild(option);
-    });
+    appendCanvasProjectOptions(select, AppState.canvasProjects, projectId || null);
     requestAnimationFrame(() => overlay.classList.add('is-visible'));
 
     function close(value) {
@@ -764,8 +937,21 @@ async function createCanvasForProject(projectId, name) {
 
 async function promptNewCanvas() {
   const active = activeCanvasRecord();
-  const selectedProject = CanvasWorkspace.libraryProjectId || (active && active.projectId) ||
-    (AppState.canvasProjects[0] && AppState.canvasProjects[0].id);
+  const selectedProjectRecord = AppState.canvasProjects.find((project) => project.id === CanvasWorkspace.libraryProjectId);
+  const activeProject = AppState.canvasProjects.find((project) => active && project.id === active.projectId);
+  const scopedProject = canvasProjectsForScope()[0];
+  const selectedProject = selectedProjectRecord && canvasProjectScope(selectedProjectRecord) === CanvasWorkspace.libraryScope
+    ? selectedProjectRecord.id
+    : (activeProject && canvasProjectScope(activeProject) === CanvasWorkspace.libraryScope
+      ? activeProject.id
+      : (scopedProject && scopedProject.id));
+  if (!selectedProject) {
+    showToast(
+      t('Create a team project first, then create a canvas.', '请先创建团队项目，再新建画布。', '먼저 팀 프로젝트를 만든 다음 캔버스를 만드세요.'),
+      'Canvas'
+    );
+    return;
+  }
   const result = await showCanvasTextDialog({
     title: t('New canvas', '新建画布'),
     label: t('Canvas name', '画布名称'),
@@ -780,18 +966,22 @@ async function promptNewProject() {
   const result = await showCanvasTextDialog({
     title: t('New folder', '新建文件夹'),
     label: t('Folder name', '文件夹名称'),
-    initialValue: t('New folder', '新文件夹')
+    initialValue: t('New folder', '新文件夹'),
+    includeScope: true,
+    scope: CanvasWorkspace.libraryScope
   });
   if (!result) return;
   const project = {
     id: `project-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     name: uniqueCanvasProjectName(result.name),
+    scope: normalizeCanvasProjectScope(result.scope || CanvasWorkspace.libraryScope),
     createdAt: new Date().toISOString()
   };
   const previousProjects = AppState.canvasProjects;
   AppState.canvasProjects = [...previousProjects, project];
   try {
     await canvasWorkspaceSave();
+    CanvasWorkspace.libraryScope = project.scope;
     CanvasWorkspace.libraryProjectId = project.id;
     CanvasWorkspace.libraryFilter = 'all';
     renderCanvasWorkspaceControls();
@@ -869,14 +1059,25 @@ async function promptMoveCanvasToFolder(canvasId) {
 }
 
 async function promptImportCanvas() {
-  if (!AppState.canvasProjects.length) {
-    showToast(t('Create a folder before importing a canvas.', '请先创建文件夹，再导入画布。'), 'Canvas');
+  const scopedProjects = canvasProjectsForScope();
+  if (!scopedProjects.length) {
+    showToast(
+      t('Create a project in this type before importing a canvas.', '请先在这个项目类型下创建项目，再导入画布。', '이 유형에 프로젝트를 만든 다음 캔버스를 가져오세요.'),
+      'Canvas'
+    );
     return;
   }
   const active = activeCanvasRecord();
+  const activeProject = AppState.canvasProjects.find((project) => active && project.id === active.projectId);
+  const selectedProject = AppState.canvasProjects.find((project) => project.id === CanvasWorkspace.libraryProjectId);
+  const targetProjectId = selectedProject && canvasProjectScope(selectedProject) === CanvasWorkspace.libraryScope
+    ? selectedProject.id
+    : (activeProject && canvasProjectScope(activeProject) === CanvasWorkspace.libraryScope
+      ? activeProject.id
+      : scopedProjects[0].id);
   const projectId = await showCanvasFolderDialog({
     title: t('Import .Messs canvas', '导入 .Messs 画布'),
-    projectId: CanvasWorkspace.libraryProjectId || (active && active.projectId) || AppState.canvasProjects[0].id,
+    projectId: targetProjectId,
     folderLabel: t('Import into folder', '导入到文件夹'),
     confirmLabel: t('Import', '导入')
   });
@@ -984,6 +1185,9 @@ async function promptRenameCanvas(canvasId = activeCanvasId()) {
   canvas.updatedAt = new Date().toISOString();
   await canvasWorkspaceSave();
   renderCanvasWorkspaceControls();
+  if (typeof renderFileList === 'function' && typeof currentFileListScope === 'function') {
+    renderFileList(currentFileListScope());
+  }
 }
 
 async function exportCanvasFile(canvasId) {
@@ -1136,6 +1340,7 @@ function renderCanvasAgentHistory() {
   const sessions = CanvasWorkspace.agentSessions
     .slice()
     .sort((a, b) => Number(b.favorite) - Number(a.favorite) || new Date(b.updatedAt) - new Date(a.updatedAt))
+    .filter((session) => canvasAgentSessionCanvasId(session) === activeCanvasId())
     .filter(canvasAgentSessionMatchesFilter);
   list.replaceChildren();
   empty.hidden = sessions.length > 0;
@@ -1169,7 +1374,7 @@ function renderCanvasAgentHistory() {
 
 function loadCanvasAgentSession(sessionId) {
   const session = CanvasWorkspace.agentSessions.find((entry) => entry.id === sessionId);
-  if (!session) return;
+  if (!session || canvasAgentSessionCanvasId(session) !== activeCanvasId()) return;
   CanvasWorkspace.activeAgentSessionId = session.id;
   CanvasWorkspace.agentMessages = session.messages.map((message) => ({ ...message }));
   const list = document.getElementById('board-agent-messages');
@@ -1716,15 +1921,26 @@ function refreshCanvasWorkspaceLanguage() {
   setText('#canvas-project-new span', 'New folder', '新建文件夹');
   setText('[data-canvas-filter="all"]', 'All canvases', '全部画布');
   setText('[data-canvas-filter="recent"]', 'Recent', '最近使用');
-  setText('.canvas-library-project-label', 'Folders', '文件夹');
+  setText('.canvas-library-project-label', 'Projects', '项目');
   setText('.canvas-library-topline h2', 'All Canvases', '全部画布');
-  setText('.canvas-library-topline p', 'Browse and manage your canvases', '浏览和管理你的画布');
+  const scopePicker = document.getElementById('canvas-scope-picker');
+  if (scopePicker) {
+    scopePicker.querySelector('option[value="personal"]').textContent = t('Independent projects', '独立项目', '독립 프로젝트');
+    scopePicker.querySelector('option[value="team"]').textContent = t('Team projects', '团队项目', '팀 프로젝트');
+  }
+  const scope = normalizeCanvasProjectScope(CanvasWorkspace.libraryScope);
+  const scopeSubtitle = document.querySelector('.canvas-library-topline p');
+  if (scopeSubtitle) scopeSubtitle.textContent = canvasLibraryScopeDescription(scope);
+  if (scopePicker) {
+    scopePicker.value = scope;
+    scopePicker.setAttribute('aria-label', t('Project type', '项目类型', '프로젝트 유형'));
+  }
   setText('#canvas-library-empty', 'No canvases found', '没有找到画布');
   const search = document.getElementById('canvas-library-search');
   if (search) search.placeholder = t('Search canvases...', '搜索画布...');
   const panel = document.getElementById('board-panel');
   if (panel && panel.classList.contains('is-canvas-library')) {
-    document.getElementById('board-panel-title').textContent = t('All Canvases', '全部画布');
+    syncCanvasLibraryScopePicker();
   }
   const agentTitle = document.querySelector('.board-agent-welcome strong');
   const toggle = document.getElementById('board-agent-toggle');
@@ -1750,9 +1966,14 @@ function refreshCanvasWorkspaceLanguage() {
 }
 
 async function initCanvasWorkspace(initial) {
-  AppState.canvasProjects = Array.isArray(initial.canvasProjects) && initial.canvasProjects.length
+  AppState.canvasProjects = (Array.isArray(initial.canvasProjects) && initial.canvasProjects.length
     ? initial.canvasProjects
-    : [{ id: 'project-1', name: 'General', createdAt: new Date().toISOString() }];
+    : [{ id: 'project-1', name: 'General', scope: 'personal', createdAt: new Date().toISOString() }])
+    .map(normalizeCanvasProject)
+    .filter(Boolean);
+  if (!AppState.canvasProjects.length) {
+    AppState.canvasProjects = [normalizeCanvasProject({ id: 'project-1', name: 'General', scope: 'personal' })];
+  }
   AppState.canvases = Array.isArray(initial.canvases) && initial.canvases.length
     ? initial.canvases
     : [{
@@ -1774,6 +1995,8 @@ async function initCanvasWorkspace(initial) {
     .sort((a, b) => new Date(b.lastOpenedAt) - new Date(a.lastOpenedAt))[0];
   AppState.activeCanvasId = (lastOpenedCanvas || AppState.canvases[0]).id;
   AppState.boardItems = AppState.allBoardItems.filter((item) => item.canvasId === AppState.activeCanvasId);
+  const activeProject = AppState.canvasProjects.find((project) => project.id === (lastOpenedCanvas || AppState.canvases[0]).projectId);
+  CanvasWorkspace.libraryScope = canvasProjectScope(activeProject);
 
   document.getElementById('canvas-new').addEventListener('click', promptNewCanvas);
   document.getElementById('canvas-header-new').addEventListener('click', promptNewCanvas);
@@ -1783,6 +2006,9 @@ async function initCanvasWorkspace(initial) {
   document.getElementById('canvas-library-search').addEventListener('input', (event) => {
     CanvasWorkspace.libraryQuery = event.target.value;
     renderCanvasLibrary();
+  });
+  document.getElementById('canvas-scope-picker').addEventListener('change', (event) => {
+    selectCanvasLibraryScope(event.target.value);
   });
   document.querySelector('.canvas-library-nav').addEventListener('click', (event) => {
     const button = event.target.closest('[data-canvas-filter]');

@@ -31,7 +31,7 @@ async function run() {
       <main class="fixture"><aside class="fixture-panel"><h1>Messs.</h1><i></i><i></i><i></i><i></i></aside><section class="fixture-main"><header class="fixture-header">Integrated canvas</header><div class="fixture-canvas"><div class="fixture-media"></div></div></section><aside class="fixture-panel fixture-detail"><strong>File details</strong><i></i><i></i><i></i></aside></main>
     </body></html>`, 'utf8');
 
-  const window = new BrowserWindow({ width: 1280, height: 760, show: false, backgroundColor: '#fafafa' });
+  const window = new BrowserWindow({ width: 1280, height: 760, show: false, backgroundColor: '#f1f2f4' });
   try {
     await window.loadFile(fixturePath);
     await new Promise((resolve) => setTimeout(resolve, 180));
@@ -39,15 +39,21 @@ async function run() {
       base: getComputedStyle(document.documentElement).getPropertyValue('--bg-base').trim(),
       frame: getComputedStyle(document.documentElement).getPropertyValue('--bg-frame').trim(),
       surface: getComputedStyle(document.documentElement).getPropertyValue('--bg-surface').trim(),
+      surface2: getComputedStyle(document.documentElement).getPropertyValue('--bg-surface-2').trim(),
+      toolbar: getComputedStyle(document.documentElement).getPropertyValue('--canvas-toolbar-bg').trim(),
+      controlPanel: getComputedStyle(document.documentElement).getPropertyValue('--canvas-control-panel').trim(),
       titlebar: getComputedStyle(document.querySelector('.app-titlebar')).backgroundColor,
       canvas: getComputedStyle(document.querySelector('.fixture-canvas')).backgroundColor
     })`);
     assert.deepStrictEqual(colors, {
-      base: '#fafafa',
-      frame: '#e3e3e8',
-      surface: '#f5f5f7',
-      titlebar: 'rgb(227, 227, 232)',
-      canvas: 'rgb(238, 238, 236)'
+      base: '#f1f2f4',
+      frame: '#e0e3e8',
+      surface: '#e9ebef',
+      surface2: '#dfe3e8',
+      toolbar: 'rgba(248, 249, 251, .98)',
+      controlPanel: '#f2f4f6',
+      titlebar: 'rgb(224, 227, 232)',
+      canvas: 'rgb(230, 233, 237)'
     });
     fs.mkdirSync(outputDir, { recursive: true });
     fs.writeFileSync(path.join(outputDir, 'light-theme.png'), (await window.webContents.capturePage()).toPNG());

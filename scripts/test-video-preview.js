@@ -67,8 +67,8 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /poster\.addEventListener\('load',[\s\S]*?syncBoardOverviewFallback[\s\S]*?video\.addEventListener\('loadeddata',[\s\S]*?classList\.add\('has-frame'\)/,
-  'The video poster must remain until a decodable frame is ready and resync the canvas fallback after loading.'
+  /poster\.addEventListener\('load',[\s\S]*?scheduleBoardOverviewFallback[\s\S]*?video\.addEventListener\('loadeddata',[\s\S]*?classList\.add\('has-frame'\)/,
+  'The video poster must remain until a decodable frame is ready and schedule a coalesced canvas fallback after loading.'
 );
 assert.match(
   boardSource,

@@ -14,8 +14,11 @@ assert.deepEqual(imageFallbackProviderIds('image-6'), []);
 assert.deepEqual(imageFallbackProviderIds('image-1'), []);
 
 assert.equal(isRetryableMediaError(Object.assign(new Error('upstream busy'), {
-  code: 'provider-temporarily-unavailable', status: 502
+  code: 'provider-rate-limited', status: 429, safeToFallback: true
 })), true);
+assert.equal(isRetryableMediaError(Object.assign(new Error('upstream busy'), {
+  code: 'provider-temporarily-unavailable', status: 503
+})), false);
 assert.equal(isRetryableMediaError(Object.assign(new Error('bad prompt'), {
   code: 'provider-request-failed', status: 400
 })), false);
@@ -25,13 +28,19 @@ assert.equal(isRetryableMediaError(Object.assign(new Error('not enough points'),
 assert.equal(isRetryableMediaError(Object.assign(new Error('invalid token'), {
   code: 'provider-auth-failed', status: 401
 })), false);
-assert.equal(isRetryableMediaError(new TypeError('fetch failed')), true);
+assert.equal(isRetryableMediaError(Object.assign(new TypeError('fetch failed'), {
+  safeToFallback: true
+})), false);
 assert.equal(isRetryableMediaError(Object.assign(new Error('provider returned a low-resolution image'), {
-  code: 'image-resolution-mismatch', status: 502
-})), true);
+  code: 'image-resolution-mismatch', status: 502, safeToFallback: true
+})), false);
 assert.equal(isRetryableMediaError(Object.assign(new Error('provider returned an unverifiable image'), {
-  code: 'image-resolution-unverified', status: 502
-})), true);
+  code: 'image-resolution-unverified', status: 502, safeToFallback: true
+})), false);
+assert.equal(isRetryableMediaError(Object.assign(new Error('accepted task'), {
+  code: 'provider-rate-limited', status: 429, safeToFallback: true,
+  providerTaskAccepted: true
+})), false);
 
 const compatible = {
   id: 'image-10',

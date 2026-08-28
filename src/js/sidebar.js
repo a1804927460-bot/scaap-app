@@ -17,8 +17,11 @@ let colorManagementState = { profile: 'auto', activeProfile: 'auto', restartRequ
 let displayP3MediaQuery = null;
 const expandedDateYears = new Set();
 const expandedDateMonths = new Set();
+const expandedDateCanvasGroups = new Map();
 const initializedDateFolderContexts = new Set();
 let pendingDateFolderFocusKey = null;
+let dateFolderRegionSequence = 0;
+let previousDateLibraryViewKey = null;
 
 function todayDateFolderKey() {
   return fileDayKey(new Date());
@@ -61,14 +64,66 @@ function focusPendingDateFolder(list) {
 
 function appendFileThumbnail(container, file, alt = '') {
   const image = document.createElement('img');
-  image.src = file.thumbUrl || file.url;
   image.loading = 'lazy';
   image.alt = alt;
-  image.addEventListener('error', () => {
+  const isModel = typeof isModelFile === 'function' && isModelFile(file);
+
+  if (isModel) {
+    const fallback = document.createElement('span');
+    fallback.className = 'file-thumbnail-fallback';
+    fallback.textContent = fileIconLabel(file.ext);
+    image.hidden = true;
+    container.classList.add('is-model-fallback');
+
+    let modelPreviewRequested = false;
+    const requestModelPreview = () => {
+      if (modelPreviewRequested || typeof window.requestBoardModelPreview !== 'function') return;
+      modelPreviewRequested = true;
+      Promise.resolve(window.requestBoardModelPreview(file)).then((source) => {
+        if (!source) return;
+        // Keep the generated URL on the shared file object so a later list or
+        // folder render can use the cached preview without another render.
+        file.modelPreviewUrl = String(source);
+        image.src = file.modelPreviewUrl;
+      }).catch(() => {});
+    };
+
+    image.addEventListener('load', () => {
+      if (!image.naturalWidth) return;
+      image.hidden = false;
+      fallback.remove();
+      container.classList.remove('is-model-fallback');
+    });
+    image.addEventListener('error', () => {
+      image.hidden = true;
+      requestModelPreview();
+    });
+    container.append(fallback, image);
+
+    const initialSource = String(file.modelPreviewUrl || file.previewUrl || '').trim();
+    if (initialSource) image.src = initialSource;
+    else requestModelPreview();
+    return image;
+  }
+
+  const sources = [file.thumbUrl, file.previewUrl, file.url]
+    .map((source) => String(source || '').trim()).filter(Boolean);
+  let sourceIndex = 0;
+  const showFallback = () => {
     image.remove();
     container.textContent = fileIconLabel(file.ext);
-  }, { once: true });
+  };
+  image.addEventListener('error', () => {
+    sourceIndex += 1;
+    if (sources[sourceIndex]) {
+      image.src = sources[sourceIndex];
+      return;
+    }
+    showFallback();
+  });
   container.appendChild(image);
+  if (sources.length) image.src = sources[0];
+  else showFallback();
   return image;
 }
 
@@ -132,11 +187,19 @@ function buildDateFolderLabel(dayKey, count, active = false) {
   label.className = 'file-group-label file-date-folder' + (active ? ' is-active' : '');
   label.classList.toggle('is-today', dayKey === todayDateFolderKey());
   label.dataset.dateFolderKey = dayKey;
-  label.setAttribute('role', active ? 'heading' : 'button');
-  if (!active) {
-    label.tabIndex = 0;
-    label.title = t('Open date folder', '\u6253\u5f00\u65e5\u671f\u6587\u4ef6\u5939');
-    label.setAttribute('aria-label', `${t('Open date folder', '\u6253\u5f00\u65e5\u671f\u6587\u4ef6\u5939')}: ${formatFileDayLabel(dayKey)}`);
+  label.setAttribute('role', 'button');
+  label.tabIndex = 0;
+  label.title = active
+    ? t('Back to dates', '\u8fd4\u56de\u65e5\u671f\u5217\u8868')
+    : t('Open date folder', '\u6253\u5f00\u65e5\u671f\u6587\u4ef6\u5939');
+  label.setAttribute('aria-label', `${label.title}: ${formatFileDayLabel(dayKey)}`);
+
+  if (active) {
+    const back = document.createElement('span');
+    back.className = 'file-date-back-caret';
+    back.setAttribute('aria-hidden', 'true');
+    back.innerHTML = '<svg viewBox="0 0 12 12" width="11" height="11"><path d="m7.5 2.5-4 3.5 4 3.5"/></svg>';
+    label.appendChild(back);
   }
 
   const icon = document.createElement('span');
@@ -145,21 +208,22 @@ function buildDateFolderLabel(dayKey, count, active = false) {
   icon.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3.2l2 2H18a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5z"/></svg>';
   const name = document.createElement('span');
   name.className = 'file-date-folder-name';
-  name.textContent = formatFileDayLabel(dayKey);
+  name.textContent = active ? formatFileDayLabel(dayKey) : dateTreeDayLabel(dayKey);
   const countLabel = document.createElement('small');
   countLabel.className = 'file-date-folder-count';
   countLabel.textContent = String(count);
   label.append(icon, name, countLabel);
 
+  const open = () => active ? exitDateFolder() : selectDateFolder(dayKey);
+  label.addEventListener('click', open);
+  label.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      open();
+    }
+  });
+
   if (!active) {
-    const open = () => selectDateFolder(dayKey);
-    label.addEventListener('click', open);
-    label.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        open();
-      }
-    });
     if (dayKey === todayDateFolderKey()) {
       label.addEventListener('dragover', (event) => {
         if (!Array.from(event.dataTransfer && event.dataTransfer.types || []).includes('Files')) return;
@@ -181,13 +245,18 @@ function buildDateFolderLabel(dayKey, count, active = false) {
 }
 
 function buildDateTreeFolder({ key, label, count, level, expanded, onToggle }) {
-  const row = document.createElement('li');
+  const branch = document.createElement('li');
+  branch.className = 'file-date-tree-branch';
+  branch.dataset.dateTreeLevel = level;
+
+  const row = document.createElement('button');
+  row.type = 'button';
   row.className = 'file-group-label file-date-folder file-date-tree-folder';
   row.dataset.dateTreeKey = key;
   row.dataset.dateTreeLevel = level;
-  row.tabIndex = 0;
-  row.setAttribute('role', 'button');
   row.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  const contentId = `date-tree-region-${++dateFolderRegionSequence}`;
+  row.setAttribute('aria-controls', contentId);
   row.innerHTML = `
     <span class="file-date-tree-caret" aria-hidden="true">
       <svg viewBox="0 0 12 12" width="11" height="11"><path d="m4 2.5 4 3.5-4 3.5"/></svg>
@@ -199,14 +268,28 @@ function buildDateTreeFolder({ key, label, count, level, expanded, onToggle }) {
     <small class="file-date-folder-count">${count}</small>
   `;
   row.querySelector('.file-date-folder-name').textContent = label;
-  const toggle = () => onToggle(!expanded);
-  row.addEventListener('click', toggle);
-  row.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    event.preventDefault();
-    toggle();
-  });
-  return row;
+
+  const content = document.createElement('div');
+  content.id = contentId;
+  content.className = 'file-date-tree-content';
+  const children = document.createElement('ul');
+  children.className = 'file-date-tree-list';
+  content.appendChild(children);
+
+  const setExpanded = (open) => {
+    expanded = open;
+    row.setAttribute('aria-expanded', open ? 'true' : 'false');
+    content.classList.toggle('is-collapsed', !open);
+    content.setAttribute('aria-hidden', open ? 'false' : 'true');
+    content.inert = !open;
+    onToggle(open);
+  };
+  content.classList.toggle('is-collapsed', !expanded);
+  content.setAttribute('aria-hidden', expanded ? 'false' : 'true');
+  content.inert = !expanded;
+  row.addEventListener('click', () => setExpanded(!expanded));
+  branch.append(row, content);
+  return { element: branch, children };
 }
 
 function dateFolderHierarchy(files) {
@@ -227,25 +310,34 @@ function monthFolderLabel(year, month) {
   });
 }
 
+function dateTreeDayLabel(dayKey) {
+  const [year, month, day] = String(dayKey || '').split('-').map(Number);
+  const date = new Date(year, month - 1, day, 12);
+  if (!year || !month || !day || Number.isNaN(date.getTime())) return String(dayKey || '');
+  const compact = date.toLocaleDateString(appLocale(), { day: 'numeric', weekday: 'short' });
+  return dayKey === todayDateFolderKey() ? `${t('Today', '\u4eca\u5929')} \u00b7 ${compact}` : compact;
+}
+
 function renderDateFolderTree(list, files) {
   initializeDateFolderBranch(files);
   const hierarchy = dateFolderHierarchy(files);
+  let rowIndex = 0;
   for (const [year, months] of hierarchy) {
     const yearCount = Array.from(months.values()).flat().reduce((sum, group) => sum + group.items.length, 0);
     const yearExpanded = expandedDateYears.has(year);
-    list.appendChild(buildDateTreeFolder({
+    const yearBranch = buildDateTreeFolder({
       key: year, label: year, count: yearCount, level: 'year', expanded: yearExpanded,
       onToggle: (open) => {
         if (open) expandedDateYears.add(year); else expandedDateYears.delete(year);
-        renderFileList(currentFileListScope());
       }
-    }));
-    if (!yearExpanded) continue;
+    });
+    yearBranch.element.style.setProperty('--date-row-index', rowIndex++);
+    list.appendChild(yearBranch.element);
     for (const [month, days] of months) {
       const monthKey = `${year}-${month}`;
       const monthCount = days.reduce((sum, group) => sum + group.items.length, 0);
       const monthExpanded = expandedDateMonths.has(monthKey);
-      list.appendChild(buildDateTreeFolder({
+      const monthBranch = buildDateTreeFolder({
         key: monthKey,
         label: monthFolderLabel(year, month),
         count: monthCount,
@@ -253,14 +345,129 @@ function renderDateFolderTree(list, files) {
         expanded: monthExpanded,
         onToggle: (open) => {
           if (open) expandedDateMonths.add(monthKey); else expandedDateMonths.delete(monthKey);
-          renderFileList(currentFileListScope());
         }
-      }));
-      if (!monthExpanded) continue;
-      days.forEach(({ dayKey, items }) => list.appendChild(buildDateFolderLabel(dayKey, items.length)));
+      });
+      monthBranch.element.style.setProperty('--date-row-index', rowIndex++);
+      yearBranch.children.appendChild(monthBranch.element);
+      days.forEach(({ dayKey, items }) => {
+        const dayRow = buildDateFolderLabel(dayKey, items.length);
+        dayRow.style.setProperty('--date-row-index', rowIndex++);
+        monthBranch.children.appendChild(dayRow);
+      });
     }
   }
   focusPendingDateFolder(list);
+}
+
+function dateCanvasGroupId(file, validCanvasIds = null) {
+  const canvasId = String(file && file.canvasId || '').trim();
+  const knownIds = validCanvasIds || new Set(AppState.canvases.map((canvas) => canvas.id));
+  return knownIds.has(canvasId) ? canvasId : '__unassigned__';
+}
+
+function dateCanvasGroupLabel(canvasId) {
+  if (canvasId === '__unassigned__') return t('Unassigned', '\u672a\u5f52\u7c7b');
+  const canvas = AppState.canvases.find((entry) => entry.id === canvasId);
+  return canvas && String(canvas.name || '').trim()
+    ? String(canvas.name).trim()
+    : t('Untitled canvas', '\u672a\u547d\u540d\u753b\u5e03');
+}
+
+function dateCanvasGroups(files) {
+  const groups = new Map();
+  const validCanvasIds = new Set(AppState.canvases.map((canvas) => canvas.id));
+  for (const file of files) {
+    const id = dateCanvasGroupId(file, validCanvasIds);
+    if (!groups.has(id)) groups.set(id, { id, label: dateCanvasGroupLabel(id), files: [] });
+    groups.get(id).files.push(file);
+  }
+  const collator = new Intl.Collator(appLocale(), { numeric: true, sensitivity: 'base' });
+  return [...groups.values()].sort((left, right) => {
+    if (left.id === '__unassigned__') return 1;
+    if (right.id === '__unassigned__') return -1;
+    return collator.compare(left.label, right.label);
+  });
+}
+
+function dateCanvasGroupStateKey(dayKey, canvasId) {
+  return `${dateFolderContextKey()}::${dayKey || ''}::${canvasId}`;
+}
+
+function ensureDateCanvasGroupExpansion(dayKey, groups) {
+  const selectedGroup = groups.find((group) => group.files.some((file) => file.id === AppState.activeFileId));
+  const activeGroup = groups.find((group) => group.id === activeCanvasId());
+  const preferredId = (selectedGroup || activeGroup || groups[0] || {}).id;
+  groups.forEach((group) => {
+    const stateKey = dateCanvasGroupStateKey(dayKey, group.id);
+    if (selectedGroup && group.id === selectedGroup.id) {
+      expandedDateCanvasGroups.set(stateKey, true);
+      return;
+    }
+    if (!expandedDateCanvasGroups.has(stateKey)) {
+      expandedDateCanvasGroups.set(stateKey, groups.length <= 2 || group.id === preferredId);
+    }
+  });
+}
+
+function buildDateCanvasGroup(group, stateKey, rowIndex = 0) {
+  const item = document.createElement('li');
+  item.className = 'file-canvas-group';
+  item.dataset.canvasId = group.id === '__unassigned__' ? '' : group.id;
+  item.style.setProperty('--date-row-index', rowIndex);
+
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'file-canvas-group-trigger';
+  const contentId = `date-canvas-region-${++dateFolderRegionSequence}`;
+  trigger.setAttribute('aria-controls', contentId);
+  trigger.innerHTML = `
+    <span class="file-canvas-group-caret" aria-hidden="true">
+      <svg viewBox="0 0 12 12" width="11" height="11"><path d="m4 2.5 4 3.5-4 3.5"/></svg>
+    </span>
+    <span class="file-canvas-group-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M7 8h10M7 12h6"/></svg>
+    </span>
+    <span class="file-canvas-group-name"></span>
+    <small class="file-canvas-group-count"></small>
+  `;
+  trigger.querySelector('.file-canvas-group-name').textContent = group.label;
+  trigger.querySelector('.file-canvas-group-count').textContent = String(group.files.length);
+
+  const content = document.createElement('div');
+  content.id = contentId;
+  content.className = 'file-canvas-group-content';
+  const fileList = document.createElement('ul');
+  fileList.className = 'file-canvas-group-files';
+  group.files.forEach((file) => fileList.appendChild(buildFileItem(file)));
+  content.appendChild(fileList);
+
+  let expanded = expandedDateCanvasGroups.get(stateKey) !== false;
+  const setExpanded = (open) => {
+    expanded = open;
+    expandedDateCanvasGroups.set(stateKey, open);
+    trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    content.classList.toggle('is-collapsed', !open);
+    content.setAttribute('aria-hidden', open ? 'false' : 'true');
+    content.inert = !open;
+  };
+  setExpanded(expanded);
+  trigger.addEventListener('click', () => setExpanded(!expanded));
+  item.append(trigger, content);
+  return item;
+}
+
+function renderDateCanvasGroups(list, dayKey, files) {
+  const groups = dateCanvasGroups(files);
+  ensureDateCanvasGroupExpansion(dayKey, groups);
+  const fragment = document.createDocumentFragment();
+  groups.forEach((group, index) => {
+    fragment.appendChild(buildDateCanvasGroup(
+      group,
+      dateCanvasGroupStateKey(dayKey, group.id),
+      index
+    ));
+  });
+  list.appendChild(fragment);
 }
 
 function renderFileList(files) {
@@ -269,6 +476,11 @@ function renderFileList(files) {
   list.innerHTML = '';
   const nested = currentFolderContextId() !== null;
   const activeDate = activeDateFolderMatchesContext();
+  const viewKey = activeDate
+    ? `date::${dateFolderContextKey()}::${AppState.activeDateFolderKey}`
+    : `tree::${dateFolderContextKey()}`;
+  list.classList.toggle('is-date-library-entering', previousDateLibraryViewKey !== viewKey);
+  previousDateLibraryViewKey = viewKey;
   list.classList.toggle('is-folder-contents', nested);
   list.classList.toggle('is-date-folder-contents', activeDate);
   empty.classList.toggle('is-folder-contents', nested);
@@ -289,7 +501,7 @@ function renderFileList(files) {
 
   if (activeDate) {
     list.appendChild(buildDateFolderLabel(AppState.activeDateFolderKey, files.length, true));
-    for (const file of files) list.appendChild(buildFileItem(file));
+    renderDateCanvasGroups(list, AppState.activeDateFolderKey, files);
     return;
   }
   renderDateFolderTree(list, files);
@@ -663,6 +875,8 @@ function refreshStaticLanguage() {
   setChatProviderColumnLabels();
   document.title = t('Messs. - Resolve your confusion', 'Messs. - 解决你的混乱');
   setAttr('#section-tabs', 'aria-label', 'Sections', '分区');
+  setText('.section-tab[data-section="messs"]', 'Workspace', '工作区');
+  setText('.section-tab[data-section="assistant"]', 'Messs', 'Messs');
   setText('.section-tab[data-section="chat"]', 'Chat', '聊天');
   setText('.section-tab[data-section="market"]', 'Market', '市场');
   setText('.section-tab[data-section="workshop"]', 'Workshop', '创意工坊');

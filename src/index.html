@@ -16,7 +16,8 @@
   <div id="app-titlebar" class="app-titlebar">
     <div class="titlebar-drag-region"></div>
     <nav id="section-tabs" class="section-tabs" role="tablist" aria-label="Sections">
-      <button class="section-tab is-active" data-section="messs" role="tab" aria-selected="true">Messs</button>
+      <button class="section-tab" data-section="assistant" role="tab" aria-selected="false">Messs</button>
+      <button class="section-tab is-active" data-section="messs" role="tab" aria-selected="true">Workspace</button>
       <button class="section-tab" data-section="chat" role="tab" aria-selected="false">Chat</button>
       <button class="section-tab" data-section="market" role="tab" aria-selected="false">Market</button>
       <button class="section-tab" data-section="workshop" role="tab" aria-selected="false">Workshop</button>
@@ -380,6 +381,13 @@
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
             </button>
             <span id="board-panel-title" class="panel-title">All Canvases</span>
+            <label class="canvas-scope-picker-wrap canvas-library-only">
+              <span class="sr-only">Project type</span>
+              <select id="canvas-scope-picker" class="canvas-scope-picker" aria-label="Project type">
+                <option value="personal">Independent projects</option>
+                <option value="team">Team projects</option>
+              </select>
+            </label>
           </div>
           <div class="panel-tools">
             <button id="canvas-header-new" class="icon-btn-sm canvas-library-only" type="button" title="New canvas" aria-label="New canvas">
@@ -424,7 +432,7 @@
           <div class="canvas-library-content">
             <div class="canvas-library-topline">
               <div>
-                <h2>All Canvases</h2>
+                <h2 id="canvas-library-heading">All Canvases</h2>
                 <p>Browse and manage your canvases</p>
               </div>
               <label class="canvas-library-search">

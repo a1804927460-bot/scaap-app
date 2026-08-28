@@ -539,6 +539,18 @@ function serviceError(code, message, status = 503) {
   return Object.assign(new Error(message), { code, status });
 }
 
+function throwRecoveryPending(payload, fallbackMessage) {
+  const reason = String(payload && payload.reason || '').trim();
+  if (reason === 'provider-task-recovery-pending') {
+    throw serviceError(
+      'provider-task-recovery-pending',
+      'The generated result is still being recovered safely.',
+      503
+    );
+  }
+  throw serviceError('credit-settlement-failed', fallbackMessage);
+}
+
 async function legacyReserve(headers, userId, kind, requestId, fetchImpl) {
   const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/reserve_ai_request`, {
     method: 'POST',
@@ -731,13 +743,18 @@ export async function settleUsage(requestId, status, durationMs, fetchImpl = fet
   }
   if (!response) throw serviceError('credit-settlement-failed', transportError && transportError.message || 'Could not settle AI credits.');
   if (!response.ok) {
+    if (payload && payload.reason === 'provider-task-recovery-pending') {
+      throwRecoveryPending(payload, 'Could not settle AI credits.');
+    }
     if (isMissingCreditRpc(response, payload) && !durableRequired()) {
       return legacySettle(headers, requestId, normalizedStatus, durationMs, fetchImpl);
     }
     const code = isMissingCreditRpc(response, payload) ? 'credit-schema-missing' : 'credit-settlement-failed';
     throw serviceError(code, 'Could not settle AI credits.');
   }
-  if (!payload || payload.ok !== true) throw serviceError('credit-settlement-failed', 'The credit service rejected settlement.');
+  if (!payload || payload.ok !== true) {
+    throwRecoveryPending(payload, 'The credit service rejected settlement.');
+  }
   if (String(payload.status || '') !== normalizedStatus) {
     throw serviceError(
       'credit-settlement-conflict',
@@ -757,7 +774,7 @@ export async function confirmUsageDelivery(userId, requestId, delivered = true, 
       || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(normalizedRequestId)) {
     throw serviceError('invalid-delivery-confirmation', 'The media delivery confirmation is invalid.', 400);
   }
-  const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/confirm_ai_media_delivery`, {
+  const requestOptions = {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -765,16 +782,35 @@ export async function confirmUsageDelivery(userId, requestId, delivered = true, 
       p_request_id: normalizedRequestId,
       p_delivered: delivered === true,
       p_duration_ms: Math.max(0, Math.round(Number(durationMs) || 0))
-    }),
-    signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
-  });
-  const payload = await responsePayload(response);
+    })
+  };
+  let response;
+  let payload;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/confirm_ai_media_delivery`, {
+        ...requestOptions,
+        signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
+      });
+      payload = await responsePayload(response);
+      if (response.ok || response.status < 500 || attempt === 1) break;
+    } catch (error) {
+      if (attempt === 1) throw serviceError('credit-settlement-failed', 'Could not confirm AI media delivery.');
+    }
+  }
+  if (!response) throw serviceError('credit-settlement-failed', 'Could not confirm AI media delivery.');
   if (!response.ok) {
+    if (payload && payload.reason === 'provider-task-recovery-pending') {
+      throwRecoveryPending(payload, 'Could not confirm AI media delivery.');
+    }
     const code = isMissingCreditRpc(response, payload) ? 'credit-schema-missing' : 'credit-settlement-failed';
     throw serviceError(code, 'Could not confirm AI media delivery.');
   }
   if (!payload || payload.ok !== true) {
     const reason = String(payload && payload.reason || 'credit-settlement-failed');
+    if (reason === 'provider-task-recovery-pending') {
+      throwRecoveryPending(payload, 'The credit service rejected media delivery confirmation.');
+    }
     throw serviceError(reason, 'The credit service rejected media delivery confirmation.', reason === 'not-found' ? 404 : 409);
   }
   const expectedStatus = delivered === true ? 'succeeded' : 'failed';
@@ -1006,7 +1042,7 @@ export async function settleToolUsage(userId, requestId, status, durationMs, fet
   const headers = serviceHeaders();
   if (!headers) return { ok: !durableRequired(), reason: 'not-configured', status };
   const normalizedStatus = status === 'succeeded' ? 'succeeded' : 'failed';
-  const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/settle_ai_tool_credits`, {
+  const requestOptions = {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1014,15 +1050,40 @@ export async function settleToolUsage(userId, requestId, status, durationMs, fet
       p_user_id: userId,
       p_status: normalizedStatus,
       p_duration_ms: Math.max(0, Math.round(Number(durationMs) || 0))
-    }),
-    signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
-  });
-  const payload = await responsePayload(response);
+    })
+  };
+  let response;
+  let payload;
+  let transportError;
+  // The RPC is request-id idempotent. Retry once when the response was lost or
+  // Supabase returned a transient 5xx, while never retrying business conflicts.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/settle_ai_tool_credits`, {
+        ...requestOptions,
+        signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS)
+      });
+      payload = await responsePayload(response);
+      if (response.ok || response.status < 500 || attempt === 1) break;
+    } catch (error) {
+      transportError = error;
+      if (attempt === 1) {
+        throw serviceError('credit-settlement-failed', 'Could not settle Butler tool credits.');
+      }
+    }
+  }
+  if (!response) throw serviceError('credit-settlement-failed', transportError && transportError.message || 'Could not settle Butler tool credits.');
   if (!response.ok) {
+    if (payload && payload.reason === 'provider-task-recovery-pending') {
+      throwRecoveryPending(payload, 'Could not settle Butler tool credits.');
+    }
     const code = isMissingCreditRpc(response, payload) ? 'credit-schema-missing' : 'credit-settlement-failed';
     throw serviceError(code, 'Could not settle Butler tool credits.');
   }
-  if (!payload || payload.ok !== true || String(payload.status || '') !== normalizedStatus) {
+  if (!payload || payload.ok !== true) {
+    throwRecoveryPending(payload, 'The credit service rejected Butler settlement.');
+  }
+  if (String(payload.status || '') !== normalizedStatus) {
     throw serviceError('credit-settlement-failed', 'The credit service rejected Butler settlement.');
   }
   return payload;

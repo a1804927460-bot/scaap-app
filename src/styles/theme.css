@@ -56,6 +56,18 @@
   --bg-surface: #1d1d1d;
   --bg-surface-2: #282828;
   --board-workspace-bg: color-mix(in srgb, var(--bg-deep) 94%, #090b10 6%);
+  --canvas-toolbar-bg: rgba(29, 29, 29, .97);
+  --canvas-toolbar-border: rgba(255, 255, 255, .13);
+  --canvas-toolbar-text: var(--text-secondary);
+  --canvas-toolbar-hover: var(--bg-surface-2);
+  --canvas-control-bg: var(--bg-surface);
+  --canvas-control-bg-muted: var(--bg-base);
+  --canvas-control-border: var(--border-hairline);
+  --canvas-control-text: var(--text-secondary);
+  --canvas-control-strong: var(--text-primary);
+  --canvas-control-muted: var(--text-tertiary);
+  --canvas-control-panel: var(--bg-elevated);
+  --canvas-control-panel-border: var(--border-hairline);
   --border-hairline: rgba(255, 255, 255, 0.09);
   --border-strong: rgba(255, 255, 255, 0.17);
 
@@ -94,14 +106,27 @@
 
 /* -------- Light theme -------- */
 [data-theme="light"] {
-  --bg-base: #fafafa;
-  --bg-elevated: #fafafa;
-  --bg-surface: #f5f5f7;
-  --bg-surface-2: #ececef;
-  --bg-frame: #e3e3e8;
-  --board-workspace-bg: #eeeeec;
-  --border-hairline: rgba(0, 0, 0, 0.08);
-  --border-strong: rgba(0, 0, 0, 0.16);
+  --bg-deep: #e2e5e9;
+  --bg-base: #f1f2f4;
+  --bg-elevated: #f8f9fb;
+  --bg-surface: #e9ebef;
+  --bg-surface-2: #dfe3e8;
+  --bg-frame: #e0e3e8;
+  --board-workspace-bg: #e6e9ed;
+  --canvas-toolbar-bg: rgba(248, 249, 251, .98);
+  --canvas-toolbar-border: rgba(92, 103, 116, .22);
+  --canvas-toolbar-text: #4e5661;
+  --canvas-toolbar-hover: #dfe3e8;
+  --canvas-control-bg: #eef0f3;
+  --canvas-control-bg-muted: #e4e7eb;
+  --canvas-control-border: #cbd2da;
+  --canvas-control-text: #4d5662;
+  --canvas-control-strong: #20262e;
+  --canvas-control-muted: #737d89;
+  --canvas-control-panel: #f2f4f6;
+  --canvas-control-panel-border: #cbd2da;
+  --border-hairline: rgba(30, 41, 59, 0.12);
+  --border-strong: rgba(30, 41, 59, 0.20);
 
   --text-primary: #0a0a0a;
   --text-secondary: #5b5f66;

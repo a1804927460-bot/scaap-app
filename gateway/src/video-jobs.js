@@ -138,9 +138,13 @@ export async function startVideoJob({ userId, operationId, taskToken, body = {},
 }
 
 export async function attachVideoTask(requestId, providerTaskId, fetchImpl = fetch) {
+  const normalizedTaskId = String(providerTaskId || '').trim();
+  if (!normalizedTaskId || normalizedTaskId.length > 512) {
+    throw serviceError('video-job-service-failed', 'The accepted video task could not be recorded safely.');
+  }
   return requireObject(await rpc('attach_ai_video_provider_task', {
     p_request_id: requestId,
-    p_provider_task_id: String(providerTaskId || '').trim()
+    p_provider_task_id: normalizedTaskId
   }, fetchImpl));
 }
 

@@ -213,6 +213,97 @@ test('asset URLs reject non-provider hosts, credentials, ports, fragments, and I
   }
 });
 
+test('asset URLs allow only configured backup route hosts', () => {
+  const previousRoutes = process.env.AI302_BACKUP_ROUTES_JSON;
+  const previousKey = process.env.AI302_ASSET_BACKUP_KEY;
+  process.env.AI302_ASSET_BACKUP_KEY = 'asset-backup-key';
+  process.env.AI302_BACKUP_ROUTES_JSON = JSON.stringify([
+    { id: 'asset-backup', baseUrl: 'https://asset-backup.example.com', keyEnv: 'AI302_ASSET_BACKUP_KEY' }
+  ]);
+  try {
+    assert.equal(
+      validateAssetUrl('https://asset-backup.example.com/generated/model.glb').hostname,
+      'asset-backup.example.com'
+    );
+    assert.throws(
+      () => validateAssetUrl('https://cdn.asset-backup.example.com/generated/model.glb'),
+      { code: 'unsafe-tool-result-url' }
+    );
+  } finally {
+    if (previousRoutes === undefined) delete process.env.AI302_BACKUP_ROUTES_JSON;
+    else process.env.AI302_BACKUP_ROUTES_JSON = previousRoutes;
+    if (previousKey === undefined) delete process.env.AI302_ASSET_BACKUP_KEY;
+    else process.env.AI302_ASSET_BACKUP_KEY = previousKey;
+  }
+
+  assert.throws(
+    () => validateAssetUrl('https://asset-backup.example.com/generated/model.glb'),
+    { code: 'unsafe-tool-result-url' }
+  );
+});
+
+test('3D fallback stays on the accepted backup route through status and model delivery', async () => {
+  const previousRoutes = process.env.AI302_BACKUP_ROUTES_JSON;
+  const previousKey = process.env.AI302_3D_BACKUP_KEY;
+  process.env.AI302_3D_BACKUP_KEY = '3d-backup-key';
+  process.env.AI302_BACKUP_ROUTES_JSON = JSON.stringify([
+    { id: 'three-d-backup', baseUrl: 'https://3d-backup.example.com', keyEnv: 'AI302_3D_BACKUP_KEY' }
+  ]);
+  const output = glbFixture();
+  try {
+    const calls = [];
+    const created = await createThreeDTask({
+      providerId: 'hyper3d',
+      imageDataUrl: imageDataUrl(rgbaPng()),
+      prompt: 'Backup route model',
+      userId: '3d-backup-owner'
+    }, {
+      apiKey: '3d-primary-key',
+      taskSecret: '3d-backup-secret',
+      publicBaseUrl: 'https://gateway.example.com',
+      now: 1_800_000_000_000,
+      fetchImpl: async (url, options) => {
+        calls.push({ url: String(url), options });
+        if (String(url).startsWith('https://api.302.ai/')) return jsonResponse({ message: 'current capacity is full' }, 429);
+        assert.equal(options.headers.Authorization, 'Bearer 3d-backup-key');
+        return jsonResponse({ request_id: 'backup-hyper-task', status: 'IN_QUEUE' });
+      }
+    });
+    assert.equal(calls.length, 2);
+    assert.equal(created.taskToken.includes('backup-hyper-task'), false);
+
+    let modelDownloadCalls = 0;
+    const downloaded = await downloadThreeDModel({
+      taskToken: created.taskToken,
+      userId: '3d-backup-owner'
+    }, {
+      apiKey: '3d-primary-key',
+      taskSecret: '3d-backup-secret',
+      now: 1_800_000_001_000,
+      fetchImpl: async (url, options) => {
+        modelDownloadCalls += 1;
+        if (modelDownloadCalls === 1) {
+          assert.equal(String(url), 'https://3d-backup.example.com/302/submit/hyper3d-rodin?request_id=backup-hyper-task');
+          assert.equal(options.headers.Authorization, 'Bearer 3d-backup-key');
+          return jsonResponse({
+            status: 'COMPLETED',
+            output: { model_urls: { glb: 'https://3d-backup.example.com/models/backup.glb' } }
+          });
+        }
+        assert.equal(String(url), 'https://3d-backup.example.com/models/backup.glb');
+        assert.equal(options.headers.Authorization, undefined);
+        return new Response(output, { status: 200, headers: { 'Content-Type': 'model/gltf-binary' } });
+      }
+    });
+    assert.deepEqual(downloaded, output);
+  } finally {
+    if (previousRoutes === undefined) delete process.env.AI302_BACKUP_ROUTES_JSON;
+    else process.env.AI302_BACKUP_ROUTES_JSON = previousRoutes;
+    if (previousKey === undefined) delete process.env.AI302_3D_BACKUP_KEY;
+    else process.env.AI302_3D_BACKUP_KEY = previousKey;
+  }
+});
+
 test('HUNYUAN3D task tokens hide the job, bind the user and provider, and normalize status', async () => {
   const input = rgbaPng({ metadata: true });
   let createBody;
