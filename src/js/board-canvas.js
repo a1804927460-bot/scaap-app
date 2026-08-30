@@ -362,8 +362,42 @@ const BoardClipboard = {
   mediaFileIds: [],
   sourceCanvasId: null,
   sourceMode: '',
-  preferInternal: false
+  preferInternal: false,
+  systemSignature: ''
 };
+
+async function captureBoardClipboardSignature() {
+  if (!window.messsAPI || typeof window.messsAPI.getClipboardSignature !== 'function') return '';
+  try {
+    const signature = String(await window.messsAPI.getClipboardSignature() || '');
+    BoardClipboard.systemSignature = signature;
+    return signature;
+  } catch (error) {
+    return '';
+  }
+}
+
+async function boardClipboardIsCurrent() {
+  if (!BoardClipboard.preferInternal) return false;
+  if (!BoardClipboard.systemSignature) return true;
+  try {
+    return BoardClipboard.systemSignature === String(await window.messsAPI.getClipboardSignature() || '');
+  } catch (error) {
+    return true;
+  }
+}
+
+async function pasteBoardClipboardOrExternal() {
+  if (await boardClipboardIsCurrent()) {
+    if (BoardClipboard.items.length) pasteBoardClipboard();
+    else if (BoardClipboard.mediaFileIds.length) {
+      await pasteBoardClipboardMedia();
+    }
+    return;
+  }
+  BoardClipboard.preferInternal = false;
+  await pasteExternalImageWithFeedback();
+}
 
 function setBoardClipboardItems(items) {
   BoardClipboard.items = (items || []).filter(Boolean).map(cloneBoardHistoryItem);
@@ -2957,27 +2991,17 @@ function initBoardCanvas() {
       setBoardClipboardItems(selected);
       const mediaFileIds = BoardClipboard.mediaFileIds;
       if (mediaFileIds.length && window.messsAPI.copyBoardMediaToClipboard) {
-        window.messsAPI.copyBoardMediaToClipboard(mediaFileIds).catch(() => {});
+        void window.messsAPI.copyBoardMediaToClipboard(mediaFileIds)
+          .catch(() => {})
+          .then(() => captureBoardClipboardSignature());
+      } else {
+        void captureBoardClipboardSignature();
       }
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
-      if (BoardClipboard.preferInternal && BoardClipboard.items.length) {
-        e.preventDefault();
-        pasteBoardClipboard();
-      } else if (BoardClipboard.preferInternal && BoardClipboard.mediaFileIds.length) {
-        e.preventDefault();
-        void pasteBoardClipboardMedia().catch((error) => {
-          showToast(error && error.message ? error.message : t('Could not paste media', '无法粘贴媒体'));
-        });
-      } else {
-        // Let Chromium dispatch the real paste event first. Its DataTransfer
-        // often contains a browser/chat image that Electron's clipboard API
-        // does not expose as a native bitmap.
-        clearTimeout(Board.clipboardPasteTimer);
-        Board.clipboardPasteTimer = setTimeout(() => {
-          Board.clipboardPasteTimer = 0;
-          pasteExternalImageWithFeedback();
-        }, 120);
-      }
+      e.preventDefault();
+      void pasteBoardClipboardOrExternal().catch((error) => {
+        showToast(error && error.message ? error.message : t('Could not paste the image', '无法粘贴图片'));
+      });
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
       e.preventDefault();
       AppState.boardItems.forEach((item) => { item.selected = false; });
@@ -3141,15 +3165,25 @@ function initBoardCanvas() {
   });
 
   document.addEventListener('paste', (event) => {
-    if (!isBoardWorkspaceActive() || BoardClipboard.preferInternal) return;
+    if (!isBoardWorkspaceActive()) return;
     if (typeof CanvasNodeMode !== 'undefined' && CanvasNodeMode.mode === 'node') return;
     const target = event.target;
     if (target && (target.matches('input, textarea') || target.isContentEditable)) return;
     clearTimeout(Board.clipboardPasteTimer);
     Board.clipboardPasteTimer = 0;
     event.preventDefault();
-    clipboardImageRequest(event.clipboardData)
-      .then((request) => pasteExternalImageWithFeedback(boardViewportCenterCoords(), request));
+    void boardClipboardIsCurrent().then((internal) => {
+      if (internal) {
+        if (BoardClipboard.items.length) pasteBoardClipboard();
+        else if (BoardClipboard.mediaFileIds.length) return pasteBoardClipboardMedia();
+        return null;
+      }
+      BoardClipboard.preferInternal = false;
+      return clipboardImageRequest(event.clipboardData)
+        .then((request) => pasteExternalImageWithFeedback(boardViewportCenterCoords(), request));
+    }).catch((error) => {
+      showToast(error && error.message ? error.message : t('Could not paste the image', '无法粘贴图片'));
+    });
   });
 
   document.getElementById('board-zoom-in').addEventListener('click', () => {
@@ -3984,7 +4018,9 @@ async function importFilesDirectlyToBoard(paths, placement = boardViewportCenter
 
 function clipboardFileDataUrl(file) {
   return new Promise((resolve) => {
-    if (!file || !/^image\//i.test(file.type || '') || Number(file.size) > 64 * 1024 * 1024) return resolve('');
+    const fileName = String(file && (file.name || file.path || '') || '');
+    const imageFile = file && (/^image\//i.test(file.type || '') || /\.(?:avif|bmp|gif|jpe?g|png|tiff?|webp)$/i.test(fileName));
+    if (!imageFile || Number(file.size) > 64 * 1024 * 1024) return resolve('');
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ''));
     reader.onerror = () => resolve('');
@@ -4004,10 +4040,29 @@ async function clipboardImageRequest(dataTransfer) {
       ''
     );
   } catch (error) {}
-  const imageItem = [...(transfer.items || [])]
-    .find((item) => item.kind === 'file' && /^image\//i.test(item.type || ''));
-  const file = imageItem && imageItem.getAsFile ? imageItem.getAsFile() : null;
-  request.dataUrl = await clipboardFileDataUrl(file);
+  const files = [
+    ...(transfer.files ? [...transfer.files] : []),
+    ...[...(transfer.items || [])]
+      .filter((item) => item.kind === 'file' && (/^image\//i.test(item.type || '') || !item.type))
+      .map((item) => {
+        try { return item.getAsFile ? item.getAsFile() : null; } catch (error) { return null; }
+      })
+  ].filter(Boolean);
+  for (const file of files) {
+    request.dataUrl = await clipboardFileDataUrl(file);
+    if (request.dataUrl) break;
+  }
+  if (!request.dataUrl && transfer.types) {
+    for (const type of [...transfer.types].filter((entry) => /^image\//i.test(entry || ''))) {
+      try {
+        const value = String(transfer.getData(type) || '');
+        if (/^data:image\//i.test(value)) {
+          request.dataUrl = value;
+          break;
+        }
+      } catch (error) {}
+    }
+  }
   return request;
 }
 

@@ -30,15 +30,17 @@ Authorization: Bearer <short-lived-supabase-access-token>
 QuickRouter is the built-in relay. Store its key as the sealed Railway variable
 `QUICKROUTER_API_KEY`. The temporary aliases `QUICK_API_KEY` and `Quick_API_KEY`
 are accepted during migration, but the canonical name is recommended.
-MiniMax H3 uses its own sealed Railway variable, `MINIMAX_API_KEY`. It is never
+MiniMax H3 uses the Atlas Cloud sealed Railway variable `ATLASCLOUD_API_KEY`.
+The public product name remains MiniMax H3; the upstream credential is never
 written to `runtime.json`, GitHub, the desktop settings, or gateway responses.
 Legnext Midjourney V8.1 and V8.2 use the sealed Railway variable
 `LEGNEXT_API_KEY`. The key is sent only in the gateway's `x-api-key` request
 header; task polling is performed server-side against the private job URL and
 the key is never returned to the desktop.
 
-AtlasCloud is the preferred provider for GPT Image 2 and Seedance 2.0/2.5.
-Store its credential as the sealed Railway variable `ATLASCLOUD_API_KEY`.
+AtlasCloud is the preferred provider for GPT Image 2, MiniMax H3, Seedance 2.0/2.5,
+and Butler 3D generation. Store its credential as the sealed Railway variable
+`ATLASCLOUD_API_KEY`.
 The catalog includes GPT Image 2 text-to-image and edit, Seedance image-to-video,
 reference-to-video, first/last-frame, audio references, Seedance 2.5 video edit
 and extension, and 30-second generation where the upstream model supports it.
@@ -49,9 +51,10 @@ bundle, `runtime.json`, provider catalog, or client-visible responses.
 
 ## Butler tools
 
-Butler uses the 302 tool gateway for background removal, 3D generation, and
-Topaz video enhancement. Store the
-shared credential as the sealed Railway variable `AI302_KEY`. The compatibility
+Butler uses the 302 tool gateway for background removal and Topaz video
+enhancement. 3D generation uses Atlas Cloud when `ATLASCLOUD_API_KEY` is
+configured, while existing 302 task tokens remain readable during migration.
+Store the legacy shared credential as the sealed Railway variable `AI302_KEY`. The compatibility
 alias `AI_302_API_KEY` is accepted during migration. The gateway applies the
 upstream authorization header internally; the credential is never sent to the
 desktop, returned by an API response, or written to logs.

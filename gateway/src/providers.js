@@ -29,6 +29,7 @@ const PROVIDER_KEY_ENV = /^[A-Z][A-Z0-9_]{1,80}$/;
 const MAX_PROVIDERS = 100;
 const ASYNC_VIDEO_PROTOCOLS = new Set([
   'minimax-video-v2',
+  'atlas-minimax-h3-video',
   'seedance-video-v3',
   'atlas-seedance-video',
   'jimeng-video-v30',
@@ -344,8 +345,8 @@ function requestRouteIds(provider, body = {}) {
     : {};
   if (provider.kind === 'image' && Array.isArray(capabilities.upstreamPriority)) {
     return [...new Set([
-      provider.id,
       ...capabilities.upstreamPriority,
+      provider.id,
       ...(provider.fallbackProviderIds || [])
     ])];
   }
@@ -372,6 +373,7 @@ function requestRouteIds(provider, body = {}) {
       if (mediaTypes.includes('video') || audioCount > 0 || urlCount > 2) videoMode = 'omni';
       else if (urlCount === 2) videoMode = 'first-last-frame';
       else if (urlCount === 1) videoMode = 'first-frame';
+      else videoMode = 'text';
     }
     const route = capabilities.upstreamRoutes && capabilities.upstreamRoutes[videoMode];
     if (Array.isArray(route) && route.length) {
@@ -430,6 +432,9 @@ function isCompatibleFallbackRoute(requested, candidate) {
   if (!requested || !candidate || requested.kind !== candidate.kind) return false;
   if (requested.id === candidate.id) return true;
   if (candidate.routeAliasOf === requested.id) return true;
+  const requestedProtocol = compactProviderIdentity(requested.protocol);
+  const candidateProtocol = compactProviderIdentity(candidate.protocol);
+  if (requestedProtocol && requestedProtocol === candidateProtocol) return true;
   return providerLogicalFamily(requested) === providerLogicalFamily(candidate);
 }
 
@@ -974,10 +979,10 @@ async function responseJson(response, providerName = 'Video provider') {
     const referencePolicyRejected = /\bInputImageSensitiveContentDetected\b|input image may be related to copyright restrictions/i
       .test(`${upstreamCode} ${rawMessage}`);
     const retryAfter = Number(response.headers && response.headers.get && response.headers.get('retry-after'));
-    const retryable = channelUnavailable || [402, 425, 429].includes(response.status) || response.status >= 500;
+    const retryable = channelUnavailable || [401, 402, 425, 429].includes(response.status) || response.status >= 500;
     // A fallback is safe only when the HTTP response explicitly proves that
     // the provider rejected the request before creating a billable task.
-    const safeToFallback = channelUnavailable || [402, 425, 429].includes(response.status);
+    const safeToFallback = channelUnavailable || [401, 402, 425, 429].includes(response.status);
     throw Object.assign(new Error(referencePolicyRejected
       ? 'The reference image may contain copyrighted or restricted content. Choose another reference image.'
       : channelUnavailable
@@ -1455,6 +1460,64 @@ async function createMiniMaxVideoTask(provider, body, signal) {
   return { providerId: provider.id, taskId };
 }
 
+async function createAtlasMiniMaxH3VideoTask(provider, body, signal) {
+  const input = atlasVideoTaskInput(provider, body);
+  const {
+    capabilities, isI2v, urls, mediaTypes, audioUrls, mode,
+    resolution, duration, ratio, outputFormat
+  } = input;
+  const atlasKind = String(capabilities.atlasKind || 'text-to-video').trim().toLowerCase();
+  const prompt = atlasKind === 'reference-to-video'
+    ? seedanceReferencePrompt(body.prompt, mode, mediaTypes, audioUrls.length)
+    : String(body.prompt || '').trim();
+  const common = {
+    model: provider.model,
+    prompt,
+    duration,
+    resolution: atlasResolution(resolution),
+    ratio,
+    output_format: outputFormat,
+    generate_audio: body.generateAudio !== false
+  };
+  const uploadedUrls = [];
+  for (let index = 0; index < urls.length; index += 1) {
+    uploadedUrls.push(await atlasMediaReference(provider, urls[index], mediaTypes[index] || 'image', signal));
+  }
+  const uploadedAudioUrls = [];
+  for (const url of audioUrls) uploadedAudioUrls.push(await atlasMediaReference(provider, url, 'audio', signal));
+  const requestBody = atlasKind === 'text-to-video'
+    ? common
+    : isI2v
+      ? {
+          ...common,
+          image: uploadedUrls[0],
+          ...(uploadedUrls[1] ? { last_image: uploadedUrls[1] } : {})
+        }
+      : {
+          ...common,
+          reference_images: uploadedUrls
+            .map((url, index) => mediaTypes[index] === 'image' ? url : null)
+            .filter(Boolean),
+          reference_videos: uploadedUrls
+            .map((url, index) => mediaTypes[index] === 'video' ? url : null)
+            .filter(Boolean),
+          reference_audios: uploadedAudioUrls
+        };
+  const created = await responseJson(await fetch(provider.endpoint, {
+    method: 'POST',
+    headers: providerTaskHeaders(provider, body),
+    signal: providerSignal(signal, Number(capabilities.createTimeoutMs) || 45_000),
+    body: JSON.stringify(requestBody)
+  }), provider.name);
+  const taskId = providerVideoTaskId(created);
+  if (!taskId || taskId.length > 256) {
+    throw Object.assign(new Error(`${provider.name} did not return a valid prediction ID.`), {
+      status: 502, code: 'provider-invalid-response', retryable: false
+    });
+  }
+  return { providerId: provider.id, taskId };
+}
+
 function seedanceRelayMediaUrl(rawUrl, mediaType) {
   const url = String(rawUrl || '').trim();
   if (mediaType === 'image' && /^data:image\//i.test(url)) {
@@ -1665,6 +1728,7 @@ function atlasVideoTaskInput(provider, body) {
   const capabilities = provider.capabilities && typeof provider.capabilities === 'object'
     ? provider.capabilities
     : {};
+  const atlasKind = String(capabilities.atlasKind || '').trim().toLowerCase();
   const isI2v = String(capabilities.atlasKind || '') === 'image-to-video';
   const urls = Array.isArray(body.urls) ? body.urls.filter(Boolean) : [];
   const mediaTypes = Array.isArray(body.referenceMediaTypes)
@@ -1681,7 +1745,17 @@ function atlasVideoTaskInput(provider, body) {
   const videoCount = mediaTypes.filter((type) => type === 'video').length;
   let mode = String(body.videoMode || '').trim().toLowerCase();
   let modeDefinition = {};
-  if (isI2v) {
+  if (atlasKind === 'text-to-video') {
+    if (urls.length || audioUrls.length) {
+      throw Object.assign(new Error(`${provider.name} text-to-video mode does not accept reference files.`), {
+        status: 400, code: 'invalid-reference-media'
+      });
+    }
+    mode = 'text';
+    modeDefinition = Array.isArray(capabilities.videoModes)
+      ? capabilities.videoModes.find((entry) => entry && entry.id === mode) || {}
+      : {};
+  } else if (isI2v) {
     if (!urls.length || urls.length > 2 || audioUrls.length || mediaTypes.some((type) => type !== 'image')) {
       throw Object.assign(new Error(`${provider.name} requires one first-frame image and an optional last-frame image.`), {
         status: 400, code: 'reference-required'
@@ -2098,6 +2172,7 @@ async function createJimengVideoTask(provider, body, signal) {
 async function createVideoTaskWithProvider(provider, body, signal) {
   try {
     if (provider.protocol === 'minimax-video-v2') return await createMiniMaxVideoTask(provider, body, signal);
+    if (provider.protocol === 'atlas-minimax-h3-video') return await createAtlasMiniMaxH3VideoTask(provider, body, signal);
     if (provider.protocol === 'seedance-video-v3') return await createSeedanceVideoTask(provider, body, signal);
     if (provider.protocol === 'atlas-seedance-video') return await createAtlasSeedanceVideoTask(provider, body, signal);
     if (['jimeng-video-v30', 'jimeng-video-v30-pro'].includes(provider.protocol)) {
@@ -2184,6 +2259,26 @@ async function pollMiniMaxVideoTask(provider, taskId, signal) {
       return { status: 'running' };
     }
     return { status, resultUrl, usage: miniMaxVideoUsage(result) };
+  }
+  if (TERMINAL_VIDEO_FAILURES.has(status)) {
+    return {
+      status,
+      ...providerVideoTaskError(result, `provider-${status}`, `${provider.name} video generation ${status}.`)
+    };
+  }
+  return { status };
+}
+
+async function pollAtlasMiniMaxH3VideoTask(provider, taskId, signal) {
+  const normalizedTaskId = validVideoTaskId(taskId);
+  const result = await responseJson(await fetch(
+    `${provider.resultEndpoint}/${encodeURIComponent(normalizedTaskId)}`,
+    { headers: providerHeaders(provider), signal: providerSignal(signal, 30_000) }
+  ), provider.name);
+  const status = providerVideoTaskStatus(result);
+  if (status === 'succeeded') {
+    const resultUrl = providerVideoResultUrl(result);
+    return resultUrl ? { status, resultUrl } : { status: 'running' };
   }
   if (TERMINAL_VIDEO_FAILURES.has(status)) {
     return {
@@ -2314,6 +2409,7 @@ export async function pollVideoTask(providerId, taskId, signal) {
   const routed = parseRoutedProviderTaskId(String(providerId || ''), taskId);
   const provider = providerFor('video', routed.providerId);
   if (provider.protocol === 'minimax-video-v2') return pollMiniMaxVideoTask(provider, routed.taskId, signal);
+  if (provider.protocol === 'atlas-minimax-h3-video') return pollAtlasMiniMaxH3VideoTask(provider, routed.taskId, signal);
   if (provider.protocol === 'seedance-video-v3') return pollSeedanceVideoTask(provider, routed.taskId, signal);
   if (provider.protocol === 'atlas-seedance-video') return pollAtlasSeedanceVideoTask(provider, routed.taskId, signal);
   if (['jimeng-video-v30', 'jimeng-video-v30-pro'].includes(provider.protocol)) {

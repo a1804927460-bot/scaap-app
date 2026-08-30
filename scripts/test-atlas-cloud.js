@@ -14,6 +14,19 @@ function pngHeader(width, height) {
   return buffer;
 }
 
+function glbFixture() {
+  const json = Buffer.from('{"asset":{"version":"2.0"}}');
+  const paddedLength = Math.ceil(json.length / 4) * 4;
+  const buffer = Buffer.alloc(12 + 8 + paddedLength, 0x20);
+  buffer.write('glTF', 0, 'ascii');
+  buffer.writeUInt32LE(2, 4);
+  buffer.writeUInt32LE(buffer.length, 8);
+  buffer.writeUInt32LE(paddedLength, 12);
+  buffer.writeUInt32LE(0x4e4f534a, 16);
+  json.copy(buffer, 20);
+  return buffer;
+}
+
 (async () => {
   const providers = await import('../gateway/src/providers.js');
   const relayAssets = await import('../gateway/src/ai302-tools.js');
@@ -31,6 +44,8 @@ function pngHeader(width, height) {
   const requests = [];
   let atlasImage = pngHeader(1920, 1072);
   let uploadedMediaCount = 0;
+  let atlasThreeDTaskCount = 0;
+  const atlasGlb = glbFixture();
   global.fetch = async (url, options = {}) => {
     const endpoint = String(url);
     if (endpoint.endsWith('/uploadMedia')) {
@@ -49,7 +64,12 @@ function pngHeader(width, height) {
       return new Response(JSON.stringify({ code: 200, data: { download_url: upload.url } }), { status: 200 });
     }
     if (endpoint.endsWith('/generateImage')) {
-      requests.push({ endpoint, body: JSON.parse(options.body) });
+      const body = JSON.parse(options.body);
+      requests.push({ endpoint, body });
+      if (/image-to-3d$/i.test(String(body.model || ''))) {
+        atlasThreeDTaskCount += 1;
+        return new Response(JSON.stringify({ request_id: `atlas-3d-request-${atlasThreeDTaskCount}` }), { status: 200 });
+      }
       return new Response(JSON.stringify({ request_id: 'atlas-image-request' }), { status: 200 });
     }
     if (endpoint.endsWith('/generateVideo')) {
@@ -62,8 +82,24 @@ function pngHeader(width, height) {
     if (endpoint.includes('/prediction/atlas-video-request') || endpoint.includes('/prediction?id=atlas-video-request')) {
       return new Response(JSON.stringify({ data: { status: 'completed', video_url: 'https://cdn.atlascloud.ai/video.mp4' } }), { status: 200 });
     }
+    if (/\/prediction\/atlas-3d-request-\d+$/i.test(endpoint)) {
+      return new Response(JSON.stringify({
+        data: {
+          status: 'completed',
+          output: {
+            files: [
+              { type: 'GLB', url: 'https://storage.atlascloud.ai/models/result.glb' },
+              { type: 'PNG', url: 'https://storage.atlascloud.ai/models/preview.png' }
+            ]
+          }
+        }
+      }), { status: 200 });
+    }
     if (endpoint === 'https://cdn.atlascloud.ai/image.png') {
       return new Response(atlasImage, { status: 200, headers: { 'content-type': 'image/png' } });
+    }
+    if (endpoint === 'https://storage.atlascloud.ai/models/result.glb') {
+      return new Response(atlasGlb, { status: 200, headers: { 'content-type': 'model/gltf-binary' } });
     }
     throw new Error(`Unexpected Atlas test request: ${endpoint}`);
   };
@@ -145,6 +181,55 @@ function pngHeader(width, height) {
     global.fetch = atlasFetch;
 
     const localReference = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    const h3Text = await providers.createVideoTask({
+      providerId: 'video-1', prompt: 'H3 text generation',
+      resolution: '768P', aspectRatio: '16:9', duration: 6, videoMode: 'text',
+      urls: [], outputFormat: 'mp4'
+    });
+    assert.match(h3Text.taskId, /^messs-route:atlas-video-minimax-h3-t2v:atlas-video-request$/);
+    const h3FirstFrame = await providers.createVideoTask({
+      providerId: 'video-1', prompt: 'H3 first frame generation',
+      resolution: '2K', aspectRatio: '9:16', duration: 6, videoMode: 'first-frame',
+      urls: [localReference], referenceMediaTypes: ['image'], outputFormat: 'mp4'
+    });
+    assert.match(h3FirstFrame.taskId, /^messs-route:atlas-video-minimax-h3-i2v:atlas-video-request$/);
+    const h3FirstLast = await providers.createVideoTask({
+      providerId: 'video-1', prompt: 'H3 first and last frame generation',
+      resolution: '768P', aspectRatio: '16:9', duration: 6, videoMode: 'first-last-frame',
+      urls: ['https://cdn.example.com/h3-first.png', 'https://cdn.example.com/h3-last.png'],
+      referenceMediaTypes: ['image', 'image'], outputFormat: 'mp4'
+    });
+    assert.match(h3FirstLast.taskId, /^messs-route:atlas-video-minimax-h3-i2v:atlas-video-request$/);
+    const h3Reference = await providers.createVideoTask({
+      providerId: 'video-1', prompt: 'H3 reference generation',
+      resolution: '768P', aspectRatio: 'adaptive', duration: 6, videoMode: 'omni',
+      urls: ['https://cdn.example.com/h3-reference.png'], referenceMediaTypes: ['image'],
+      outputFormat: 'mp4'
+    });
+    assert.match(h3Reference.taskId, /^messs-route:atlas-video-minimax-h3-ref:atlas-video-request$/);
+    assert.equal((await providers.pollVideoTask('video-1', h3Text.taskId)).status, 'succeeded');
+
+    for (const providerId of ['hunyuan3d', 'hyper3d', 'tripo3d']) {
+      const task = await relayAssets.createThreeDTask({
+        providerId,
+        imageDataUrl: localReference,
+        prompt: 'Atlas 3D model',
+        userId: `atlas-${providerId}-owner`
+      }, { now: 1_800_000_000_000 });
+      assert.equal(task.status, 'queued');
+      const status = await relayAssets.getThreeDStatus({
+        taskToken: task.taskToken,
+        userId: `atlas-${providerId}-owner`
+      }, { now: 1_800_000_001_000 });
+      assert.equal(status.status, 'succeeded');
+      assert.equal(status.previewImageUrl, 'https://storage.atlascloud.ai/models/preview.png');
+      const model = await relayAssets.downloadThreeDModel({
+        taskToken: task.taskToken,
+        userId: `atlas-${providerId}-owner`
+      }, { now: 1_800_000_002_000 });
+      assert.deepEqual(model, atlasGlb);
+    }
+
     const screenshotFirstFrame = await providers.createVideoTask({
       providerId: 'video-3', prompt: 'subtle natural portrait motion',
       urls: [localReference], referenceMediaTypes: ['image'], videoMode: 'first-frame',
@@ -253,7 +338,8 @@ function pngHeader(width, height) {
     assert.equal(imageRequest.body.output_format, 'png');
     const automaticQualityRequest = requests.find((entry) => entry.endpoint.endsWith('/generateImage') && entry.body.prompt === 'automatic quality');
     assert.equal(automaticQualityRequest.body.quality, 'medium');
-    const frameRequest = requests.find((entry) => entry.endpoint.endsWith('/generateVideo') && entry.body.last_image);
+    const frameRequest = requests.find((entry) => entry.endpoint.endsWith('/generateVideo')
+      && entry.body.model === 'bytedance/seedance-2.5/image-to-video' && entry.body.last_image);
     assert.equal(frameRequest.body.model, 'bytedance/seedance-2.5/image-to-video');
     assert.equal(frameRequest.body.generate_audio, false);
     assert.equal(frameRequest.body.resolution, '1080p-esr');
@@ -279,14 +365,25 @@ function pngHeader(width, height) {
     assert.equal(seedance20I2vRequest.body.ratio, '9:16');
     assert.equal(seedance20I2vRequest.body.duration, -1);
     const audioOnlyRequest = requests.find((entry) => entry.body && entry.body.model === 'bytedance/seedance-2.5/reference-to-video' && entry.body.reference_audios && entry.body.reference_audios.length > 0);
-    const fullReferenceRequest = requests.find((entry) => entry.body && entry.body.prompt.includes('full reference follows a 16:9 source'));
+    const fullReferenceRequest = requests.find((entry) => entry.body
+      && typeof entry.body.prompt === 'string'
+      && entry.body.prompt.includes('full reference follows a 16:9 source'));
+    const h3TextRequest = requests.find((entry) => entry.body && entry.body.model === 'minimax/h3/text-to-video');
+    const h3ImageRequest = requests.find((entry) => entry.body && entry.body.model === 'minimax/h3/image-to-video' && entry.body.image);
+    const h3FirstLastRequest = requests.find((entry) => entry.body && entry.body.model === 'minimax/h3/image-to-video' && entry.body.last_image);
+    const h3ReferenceRequest = requests.find((entry) => entry.body && entry.body.model === 'minimax/h3/reference-to-video');
+    assert.equal(h3TextRequest.body.prompt, 'H3 text generation');
+    assert.equal(h3TextRequest.body.ratio, '16:9');
+    assert.match(h3ImageRequest.body.image, /^https:\/\/atlas-img\.example\.com\/uploaded-/);
+    assert.equal(h3FirstLastRequest.body.last_image, 'https://cdn.example.com/h3-last.png');
+    assert.deepEqual(h3ReferenceRequest.body.reference_images, ['https://cdn.example.com/h3-reference.png']);
     assert.equal(fullReferenceRequest.body.model, 'bytedance/seedance-2.5/reference-to-video');
     assert.equal(fullReferenceRequest.body.ratio, 'adaptive');
     assert.equal(fullReferenceRequest.body.resolution, '1080p-esr & 60fps');
     assert.equal(audioOnlyRequest.body.reference_images.length, 0);
     assert.equal(audioOnlyRequest.body.reference_audios.length, 1);
 
-    const mediaUploads = requests.filter((entry) => entry.endpoint.endsWith('/uploadMedia'));
+    const mediaUploads = requests.filter((entry) => entry.endpoint.endsWith('/uploadMedia')).slice(-4);
     assert.equal(mediaUploads.length, 4);
     assert.deepEqual(mediaUploads.map((entry) => entry.name), [
       'reference.png', 'reference.png', 'reference.mp4', 'reference.mp3'
@@ -300,13 +397,17 @@ function pngHeader(width, height) {
     assert.equal(screenshotFirstFrameRequest.body.resolution, '1080p');
     assert.equal(screenshotFirstFrameRequest.body.duration, 6);
     assert.equal(screenshotFirstFrameRequest.body.ratio, 'adaptive');
-    const screenshotOmniRequest = requests.find((entry) => entry.body && entry.body.prompt.includes('cinematic portrait with controlled camera motion'));
+    const screenshotOmniRequest = requests.find((entry) => entry.body
+      && typeof entry.body.prompt === 'string'
+      && entry.body.prompt.includes('cinematic portrait with controlled camera motion'));
     assert.deepEqual(screenshotOmniRequest.body.reference_images, [mediaUploads[1].url]);
     assert.equal(screenshotOmniRequest.body.resolution, '1080p');
     assert.equal(screenshotOmniRequest.body.duration, 6);
     assert.equal(screenshotOmniRequest.body.ratio, '3:4');
     assert.equal(screenshotOmniRequest.body.omni_reference_task_type, 'auto');
-    const localMultimodalRequest = requests.find((entry) => entry.body && entry.body.prompt.includes('use local video and audio references'));
+    const localMultimodalRequest = requests.find((entry) => entry.body
+      && typeof entry.body.prompt === 'string'
+      && entry.body.prompt.includes('use local video and audio references'));
     assert.deepEqual(localMultimodalRequest.body.reference_videos, [mediaUploads[2].url]);
     assert.deepEqual(localMultimodalRequest.body.reference_audios, [mediaUploads[3].url]);
 

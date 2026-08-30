@@ -1,5 +1,5 @@
 {
-  "version": 45,
+  "version": 46,
   "providers": [
     {
       "id": "atlas-image-gpt2",
@@ -10,6 +10,7 @@
       "resultEndpoint": "https://api.atlascloud.ai/api/v1/model/prediction",
       "model": "openai/gpt-image-2/text-to-image",
       "protocol": "atlas-gpt-image-2",
+      "logicalModel": "gpt-image-2",
       "requiresActivation": false,
       "capabilities": {
         "resolutionPresets": [
@@ -460,9 +461,90 @@
       "keyEnv": "AI302_KEY"
     },
     {
+      "id": "atlas-video-minimax-h3-t2v",
+      "kind": "video",
+      "name": "MiniMax H3 Atlas text route",
+      "hidden": true,
+      "endpoint": "https://api.atlascloud.ai/api/v1/model/generateVideo",
+      "resultEndpoint": "https://api.atlascloud.ai/api/v1/model/prediction",
+      "model": "minimax/h3/text-to-video",
+      "protocol": "atlas-minimax-h3-video",
+      "logicalModel": "minimax-h3",
+      "requiresActivation": false,
+      "capabilities": {
+        "atlasKind": "text-to-video",
+        "createTimeoutMs": 45000,
+        "resolutions": ["768P", "2K"],
+        "durations": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "ratios": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "textRatios": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "videoModes": [{ "id": "text", "minReferences": 0, "maxReferences": 0 }],
+        "generateAudio": true,
+        "outputFormats": ["mp4", "mov"]
+      },
+      "keyEnv": "ATLASCLOUD_API_KEY"
+    },
+    {
+      "id": "atlas-video-minimax-h3-i2v",
+      "kind": "video",
+      "name": "MiniMax H3 Atlas image route",
+      "hidden": true,
+      "endpoint": "https://api.atlascloud.ai/api/v1/model/generateVideo",
+      "resultEndpoint": "https://api.atlascloud.ai/api/v1/model/prediction",
+      "model": "minimax/h3/image-to-video",
+      "protocol": "atlas-minimax-h3-video",
+      "logicalModel": "minimax-h3",
+      "requiresActivation": false,
+      "capabilities": {
+        "atlasKind": "image-to-video",
+        "createTimeoutMs": 45000,
+        "resolutions": ["768P", "2K"],
+        "durations": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "ratios": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "frameReferenceRatios": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "maxReferenceImages": 2,
+        "videoModes": [
+          { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["first_frame"], "mediaTypes": ["image"], "ratios": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] },
+          { "id": "first-last-frame", "minReferences": 2, "maxReferences": 2, "roles": ["first_frame", "last_frame"], "mediaTypes": ["image"], "ratios": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] }
+        ],
+        "generateAudio": true,
+        "outputFormats": ["mp4", "mov"]
+      },
+      "keyEnv": "ATLASCLOUD_API_KEY"
+    },
+    {
+      "id": "atlas-video-minimax-h3-ref",
+      "kind": "video",
+      "name": "MiniMax H3 Atlas reference route",
+      "hidden": true,
+      "endpoint": "https://api.atlascloud.ai/api/v1/model/generateVideo",
+      "resultEndpoint": "https://api.atlascloud.ai/api/v1/model/prediction",
+      "model": "minimax/h3/reference-to-video",
+      "protocol": "atlas-minimax-h3-video",
+      "logicalModel": "minimax-h3",
+      "requiresActivation": false,
+      "capabilities": {
+        "atlasKind": "reference-to-video",
+        "createTimeoutMs": 45000,
+        "resolutions": ["768P", "2K"],
+        "durations": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "ratios": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "frameReferenceRatios": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "maxReferenceImages": 9,
+        "maxReferenceVideos": 3,
+        "maxReferenceAudios": 3,
+        "maxTotalReferences": 15,
+        "videoModes": [{ "id": "omni", "minReferences": 1, "maxReferences": 15, "maxReferenceImages": 9, "maxReferenceVideos": 3, "maxReferenceAudios": 3, "roles": ["reference_image"], "mediaTypes": ["image", "video", "audio"] }],
+        "generateAudio": true,
+        "outputFormats": ["mp4", "mov"]
+      },
+      "keyEnv": "ATLASCLOUD_API_KEY"
+    },
+    {
       "id": "video-1",
       "kind": "video",
       "name": "MiniMax H3",
+      "logicalModel": "minimax-h3",
       "endpoint": "https://api.minimaxi.com/v2/video_generation",
       "resultEndpoint": "https://api.minimaxi.com/v2/query/video_generation",
       "model": "MiniMax-H3",
@@ -472,7 +554,7 @@
         "resolutions": ["768P", "2K"],
         "durations": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
         "ratios": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
-        "frameReferenceRatios": ["adaptive"],
+        "frameReferenceRatios": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
         "maxReferenceImages": 9,
         "maxReferenceVideos": 3,
         "maxReferenceAudios": 3,
@@ -480,10 +562,17 @@
         "referenceAudioMimeTypes": ["audio/wav", "audio/mpeg", "audio/mp3"],
         "videoModes": [
           { "id": "text", "minReferences": 0, "maxReferences": 0 },
-          { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["first_frame"], "mediaTypes": ["image"] },
-          { "id": "first-last-frame", "minReferences": 2, "maxReferences": 2, "roles": ["first_frame", "last_frame"], "mediaTypes": ["image"] },
+          { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["first_frame"], "mediaTypes": ["image"], "ratios": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] },
+          { "id": "first-last-frame", "minReferences": 2, "maxReferences": 2, "roles": ["first_frame", "last_frame"], "mediaTypes": ["image"], "ratios": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] },
           { "id": "omni", "minReferences": 1, "maxReferences": 15, "maxReferenceImages": 9, "maxReferenceVideos": 3, "maxReferenceAudios": 3, "roles": ["reference_image"], "mediaTypes": ["image", "video", "audio"] }
-        ]
+        ],
+        "atlasRouted": true,
+        "upstreamRoutes": {
+          "text": ["atlas-video-minimax-h3-t2v", "video-1"],
+          "first-frame": ["atlas-video-minimax-h3-i2v", "video-1"],
+          "first-last-frame": ["atlas-video-minimax-h3-i2v", "video-1"],
+          "omni": ["atlas-video-minimax-h3-ref", "video-1"]
+        }
       },
       "keyEnv": "MINIMAX_API_KEY"
     },
@@ -768,7 +857,7 @@
         "maxReferenceImages": 1,
         "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"],
         "videoModes": [
-          { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["first_frame"], "mediaTypes": ["image"], "ratios": ["adaptive"], "durations": [3, 5, 10, 15] }
+          { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["first_frame"], "mediaTypes": ["image"], "ratios": ["adaptive", "16:9", "9:16", "1:1"], "durations": [3, 5, 10, 15] }
         ],
         "generateAudio": true
       },
@@ -791,7 +880,7 @@
         "maxReferenceImages": 1,
         "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"],
         "videoModes": [
-          { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["first_frame"], "mediaTypes": ["image"], "ratios": ["adaptive"], "durations": [3, 5, 10, 15] }
+          { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["first_frame"], "mediaTypes": ["image"], "ratios": ["adaptive", "16:9", "9:16", "1:1"], "durations": [3, 5, 10, 15] }
         ],
         "generateAudio": true
       },
@@ -818,7 +907,7 @@
         "maxReferenceImages": 7,
         "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"],
         "videoModes": [
-          { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["reference_image"], "mediaTypes": ["image"], "ratios": ["adaptive"], "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },
+          { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["reference_image"], "mediaTypes": ["image"], "ratios": ["adaptive", "9:16", "1:1", "16:9"], "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },
           { "id": "first-last-frame", "minReferences": 2, "maxReferences": 2, "roles": ["first_frame", "last_frame"], "mediaTypes": ["image"], "ratios": ["adaptive", "9:16", "1:1", "16:9"], "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },
           { "id": "omni", "minReferences": 1, "maxReferences": 7, "roles": ["reference_image"], "mediaTypes": ["image", "video"], "maxReferenceVideos": 1, "maxReferenceImagesWithVideo": 4, "ratios": ["9:16", "1:1", "16:9"], "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },
           { "id": "video-reference", "hidden": true, "minReferences": 1, "maxReferences": 7, "roles": ["reference_image"], "mediaTypes": ["image", "video"], "maxReferenceVideos": 1, "maxReferenceImagesWithVideo": 4, "ratios": ["9:16", "1:1", "16:9"], "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },
@@ -846,7 +935,7 @@
         "maxReferenceImages": 7,
         "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"],
         "videoModes": [
-          { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["reference_image"], "mediaTypes": ["image"], "ratios": ["adaptive"], "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },
+          { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["reference_image"], "mediaTypes": ["image"], "ratios": ["adaptive", "9:16", "1:1", "16:9"], "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },
           { "id": "first-last-frame", "minReferences": 2, "maxReferences": 2, "roles": ["first_frame", "last_frame"], "mediaTypes": ["image"], "ratios": ["adaptive", "9:16", "1:1", "16:9"], "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },
           { "id": "omni", "minReferences": 1, "maxReferences": 7, "roles": ["reference_image"], "mediaTypes": ["image", "video"], "maxReferenceVideos": 1, "maxReferenceImagesWithVideo": 4, "ratios": ["9:16", "1:1", "16:9"], "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },
           { "id": "video-reference", "hidden": true, "minReferences": 1, "maxReferences": 7, "roles": ["reference_image"], "mediaTypes": ["image", "video"], "maxReferenceVideos": 1, "maxReferenceImagesWithVideo": 4, "ratios": ["9:16", "1:1", "16:9"], "durations": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },

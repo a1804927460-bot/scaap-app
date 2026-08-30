@@ -96,6 +96,12 @@ async function run() {
 
   const result = await evaluate(send, `(async () => {
     showCanvasWorkspace();
+    for (let attempt = 0; attempt < 50 && !document.getElementById('board-viewport'); attempt += 1) {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    }
+    if (!document.getElementById('board-viewport')) {
+      return { prevented: false, fileDelta: 0, reason: 'board-viewport-not-mounted' };
+    }
     const before = AppState.files.length;
     const dataUrl = ${JSON.stringify(dataUrl)};
     const binary = atob(dataUrl.slice(dataUrl.indexOf(',') + 1));
@@ -152,11 +158,28 @@ async function run() {
     document.dispatchEvent(pasteEvent);
     await (Board.historyPersistPromise || Promise.resolve());
     const pastedItem = AppState.allBoardItems.find((entry) => entry.id !== sourceItem.id && entry.fileId === file.id && entry.canvasId === targetCanvasId);
+    if (!pastedItem) {
+      return { prevented: event.defaultPrevented, fileDelta: AppState.files.length - before, ext: file && file.ext,
+        hasBoardItem: !!item, crossCanvasCopyPrevented: copyEvent.defaultPrevented,
+        crossCanvasPastePrevented: pasteEvent.defaultPrevented, crossCanvasPasted: false,
+        visibleAfterSwitch, reason: 'cross-canvas-paste-missing', activeCanvasId: AppState.activeCanvasId,
+        clipboard: { preferInternal: BoardClipboard.preferInternal, items: BoardClipboard.items.length,
+          mediaFileIds: BoardClipboard.mediaFileIds, sourceCanvasId: BoardClipboard.sourceCanvasId } };
+    }
     switchCanvas(sourceCanvasId, { enterWorkspace: true });
     switchCanvas(targetCanvasId, { enterWorkspace: true });
     const visibleAfterSwitch = AppState.boardItems.some((entry) => entry.id === (pastedItem && pastedItem.id));
     showCanvasLibrary();
+    for (let attempt = 0; attempt < 50 && !document.querySelector('[data-canvas-id="' + targetCanvasId + '"]'); attempt += 1) {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    }
     const targetCard = document.querySelector('[data-canvas-id="' + targetCanvasId + '"]');
+    if (!targetCard) {
+      return { prevented: event.defaultPrevented, fileDelta: AppState.files.length - before, ext: file && file.ext,
+        hasBoardItem: !!item, crossCanvasCopyPrevented: copyEvent.defaultPrevented,
+        crossCanvasPastePrevented: pasteEvent.defaultPrevented, crossCanvasPasted: !!pastedItem,
+        visibleAfterSwitch, reason: 'canvas-library-card-not-mounted' };
+    }
     const contextEvent = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 120 });
     targetCard.dispatchEvent(contextEvent);
     const pinMenu = document.getElementById('canvas-card-context-menu');

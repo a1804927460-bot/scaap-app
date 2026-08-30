@@ -703,7 +703,7 @@ await assert.rejects(
     prompt: 'invalid frame ratio',
     resolution: '768P',
     duration: 4,
-    aspectRatio: '16:9',
+    aspectRatio: '4:5',
     urls: ['https://cdn.example/first.png']
   }),
   (error) => error && error.code === 'invalid-aspect-ratio'

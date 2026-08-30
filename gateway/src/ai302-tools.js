@@ -10,6 +10,10 @@ import {
 } from './tool-routes.js';
 
 const API_ORIGIN = 'https://api.302.ai';
+const ATLAS_CLOUD_ORIGIN = 'https://api.atlascloud.ai';
+const ATLAS_CLOUD_GENERATE_PATH = '/api/v1/model/generateImage';
+const ATLAS_CLOUD_PREDICTION_PATH = '/api/v1/model/prediction';
+const ATLAS_CLOUD_UPLOAD_PATH = '/api/v1/model/uploadMedia';
 // Clipdrop is the higher-priced, quality-first background-removal tool the
 // user selected. Keep the public function name stable for the desktop bridge.
 const BACKGROUND_PATH = '/clipdrop/remove-background/v1';
@@ -117,6 +121,21 @@ function configuredApiKey(explicitKey) {
   return key;
 }
 
+function configuredAtlasCloudApiKey(explicitKey) {
+  const key = String(explicitKey ?? process.env.ATLASCLOUD_API_KEY ?? process.env.ATLAS_CLOUD_API_KEY ?? '')
+    .trim()
+    .replace(/^Bearer\s+/i, '');
+  if (!key) throw toolError('atlas-not-configured', 'The Atlas Cloud tool gateway is not configured.', 503);
+  if (key.length > 4096 || /[\r\n]/.test(key)) {
+    throw toolError('atlas-not-configured', 'The Atlas Cloud tool gateway credential is invalid.', 503);
+  }
+  return key;
+}
+
+function atlasCloudConfigured(explicitKey) {
+  return Boolean(String(explicitKey ?? process.env.ATLASCLOUD_API_KEY ?? process.env.ATLAS_CLOUD_API_KEY ?? '').trim());
+}
+
 function configuredTaskSecret(apiKey, explicitSecret) {
   const secret = String(explicitSecret ?? process.env.AI302_TASK_SECRET ?? apiKey).trim();
   if (!secret || secret.length > 8192 || /[\r\n]/.test(secret)) {
@@ -137,7 +156,16 @@ function invalidTaskToken() {
   return toolError('three-d-task-not-found', '3D task not found.', 404);
 }
 
-function createTaskToken(providerId, jobId, userId, key, now = Date.now(), accounting = {}, routeId = AI302_PRIMARY_ROUTE_ID) {
+function createTaskToken(
+  providerId,
+  jobId,
+  userId,
+  key,
+  now = Date.now(),
+  accounting = {},
+  routeId = AI302_PRIMARY_ROUTE_ID,
+  backend = 'ai302'
+) {
   const issuedAt = Math.floor(Number(now) / 1000);
   const payload = Buffer.from(JSON.stringify({
     p: providerId,
@@ -146,6 +174,7 @@ function createTaskToken(providerId, jobId, userId, key, now = Date.now(), accou
     ...(accounting.requestId ? { q: accounting.requestId } : {}),
     ...(Number.isInteger(accounting.credits) ? { a: accounting.credits } : {}),
     ...(routeId && routeId !== AI302_PRIMARY_ROUTE_ID ? { h: routeId } : {}),
+    ...(backend === 'atlas' ? { b: 'atlas' } : {}),
     i: issuedAt,
     e: issuedAt + Math.floor(TASK_TOKEN_TTL_MS / 1000)
   }), 'utf8');
@@ -180,6 +209,7 @@ function readTaskToken(taskToken, userId, key, now = Date.now()) {
     const jobId = String(payload && payload.j || '');
     const ownerId = String(payload && payload.u || '');
     const routeId = String(payload && payload.h || AI302_PRIMARY_ROUTE_ID).trim().toLowerCase();
+    const backend = String(payload && payload.b || 'ai302').trim().toLowerCase();
     const requestId = String(payload && payload.q || '').toLowerCase();
     const credits = Number(payload && payload.a);
     const issuedAt = Number(payload && payload.i);
@@ -189,6 +219,7 @@ function readTaskToken(taskToken, userId, key, now = Date.now()) {
       || !jobId || jobId.length > 512 || /[\u0000-\u001f\u007f]/.test(jobId)
       || !ownerId || ownerId !== String(userId || '')
       || !ROUTE_ID_PATTERN.test(routeId)
+      || !['ai302', 'atlas'].includes(backend)
       || (requestId && !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(requestId))
       || (payload && payload.a !== undefined && (!Number.isInteger(credits) || credits < 0 || credits > 3_000_000))
       || !Number.isInteger(issuedAt) || !Number.isInteger(expiresAt)
@@ -203,7 +234,8 @@ function readTaskToken(taskToken, userId, key, now = Date.now()) {
       issuedAt,
       ...(requestId ? { requestId } : {}),
       ...(Number.isInteger(credits) ? { credits } : {}),
-      routeId
+      routeId,
+      backend
     };
   } catch (error) {
     if (error && error.code === 'three-d-task-not-found') throw error;
@@ -810,6 +842,11 @@ function safeAssetHost(hostname) {
     || /\.cos\.[a-z0-9-]+\.myqcloud\.com$/.test(host)
     || host.endsWith('.tencentcos.cn')
     || /\.cos\.[a-z0-9-]+\.tencentcos\.cn$/.test(host)
+    || host === 'storage.atlascloud.ai'
+    || host.endsWith('.storage.atlascloud.ai')
+    || host === 'static.atlascloud.ai'
+    || host.endsWith('.static.atlascloud.ai')
+    || host === 'atlas-img.oss-accelerate-overseas.aliyuncs.com'
     || host === 'tripo-data.rg1.data.tripo3d.com'
     || /^tripo-data\.[a-z0-9-]+\.data\.tripo3d\.com$/.test(host);
 }
@@ -989,6 +1026,56 @@ async function fetch302Json(path, init, dependencies = {}) {
     }
   }
   throw lastError || toolError('ai302-unavailable', 'The 302 tool service is temporarily unavailable.', 503);
+}
+
+async function fetchAtlasCloudJson(path, init, dependencies = {}) {
+  const {
+    apiKey,
+    fetchImpl = fetch,
+    timeoutMs = REQUEST_TIMEOUT_MS,
+    signal,
+    submission = false,
+    requestId = ''
+  } = dependencies;
+  let response;
+  try {
+    response = await fetchImpl(`${ATLAS_CLOUD_ORIGIN}${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'application/json',
+        ...(submission && requestId
+          ? { 'Idempotency-Key': requestId, 'X-Request-Id': requestId }
+          : {}),
+        ...(init.headers || {})
+      },
+      redirect: 'error',
+      signal: composedSignal(timeoutMs, signal)
+    });
+  } catch (error) {
+    throw markSubmissionAmbiguous(providerTransportFailure(error), dependencies);
+  }
+  if (!response.ok) {
+    const error = await upstreamFailure(response);
+    if (submission && Number(response.status) >= 500) error.submissionAmbiguous = true;
+    throw error;
+  }
+  let bytes;
+  try {
+    bytes = await limitedBuffer(response, MAX_JSON_BYTES);
+  } catch (error) {
+    throw markSubmissionAmbiguous(error, dependencies);
+  }
+  try {
+    const payload = JSON.parse(bytes.toString('utf8'));
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('invalid object');
+    return payload;
+  } catch (error) {
+    throw markSubmissionAmbiguous(
+      toolError('atlas-invalid-response', 'The Atlas Cloud service returned an invalid response.', 502),
+      dependencies
+    );
+  }
 }
 
 async function fetchAsset(urlValue, maximum, { fetchImpl, signal } = {}) {
@@ -1752,6 +1839,222 @@ function findTripoGlb(job) {
   return { url: modelUrl, ...(previewImageUrl ? { previewImageUrl } : {}) };
 }
 
+function atlasCloudResponseObject(payload, { terminalOnBusinessError = false } = {}) {
+  const code = String((payload && payload.code) ?? '').trim();
+  const data = payload && payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)
+    ? payload.data
+    : payload;
+  if (code && !['0', '200'].includes(code)) {
+    if (terminalOnBusinessError) return { ...data, status: 'failed', error: data.error || code };
+    throw toolError('atlas-upstream-error', 'The Atlas Cloud service rejected the request.', 502);
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw toolError('atlas-invalid-response', 'The Atlas Cloud service returned an invalid response.', 502);
+  }
+  return data;
+}
+
+function atlasCloudTaskId(job) {
+  return String(job && (job.id || job.request_id || job.requestId || job.prediction_id || job.predictionId || job.task_id || job.taskId) || '').trim();
+}
+
+function atlasCloudStatus(job) {
+  const status = String(job && (job.status || job.state) || '').trim();
+  if (!status) return 'queued';
+  return normalizeThreeDStatus(status);
+}
+
+function atlasCloudOutputFiles(value, seen = new Set(), depth = 0) {
+  if (!value || typeof value !== 'object' || seen.has(value) || depth > 8) return [];
+  seen.add(value);
+  const files = [];
+  const addFile = (file, inheritedType = '') => {
+    if (!file || typeof file !== 'object') return;
+    const url = String(file.url || file.href || file.download_url || file.downloadUrl || '').trim();
+    const type = String(file.type || file.format || file.content_type || file.contentType || inheritedType)
+      .trim().toUpperCase();
+    if (url) files.push({ url, type });
+  };
+  if (Array.isArray(value)) {
+    value.forEach((entry) => files.push(...atlasCloudOutputFiles(entry, seen, depth + 1)));
+    return files;
+  }
+  if (Array.isArray(value.files)) value.files.forEach((file) => {
+    addFile(file);
+    if (file && typeof file === 'object') files.push(...atlasCloudOutputFiles(file, seen, depth + 1));
+  });
+  if (Array.isArray(value.outputs)) value.outputs.forEach((file) => {
+    if (typeof file === 'string') files.push({ url: file.trim(), type: '' });
+    else {
+      addFile(file);
+      files.push(...atlasCloudOutputFiles(file, seen, depth + 1));
+    }
+  });
+  for (const [key, child] of Object.entries(value)) {
+    if (key === 'files' || key === 'outputs') continue;
+    if (typeof child === 'string' && /^https:\/\/\S+$/i.test(child.trim())
+        && /glb|model|download/i.test(key)) {
+      files.push({ url: child.trim(), type: /glb|model/i.test(key) ? 'GLB' : '' });
+      continue;
+    }
+    if (child && typeof child === 'object') {
+      const inheritedType = /glb|model/i.test(key) ? 'GLB' : '';
+      addFile(child, inheritedType);
+      files.push(...atlasCloudOutputFiles(child, seen, depth + 1));
+    }
+  }
+  return files;
+}
+
+function atlasCloudGlbResult(job) {
+  const files = atlasCloudOutputFiles(job);
+  const fileResult = files.find((file) => file.type === 'GLB' || /\.glb(?:[?#]|$)/i.test(file.url));
+  const outputResult = files.find((file) => /\.glb(?:[?#]|$)/i.test(file.url));
+  const url = String((fileResult && fileResult.url) || (outputResult && outputResult.url) || '').trim();
+  if (!url) return null;
+  const previewImage = files.find((file) => /(?:PNG|JPEG|JPG|WEBP|IMAGE)/.test(file.type)
+    || /\.(?:png|jpe?g|webp)(?:[?#]|$)/i.test(file.url));
+  const directPreview = typeof (job && job.thumbnail) === 'string'
+    ? job.thumbnail
+    : typeof (job && job.preview) === 'string' ? job.preview : '';
+  const previewImageUrl = String(directPreview || '').trim()
+    || (previewImage && previewImage.url)
+    || '';
+  return { url, ...(previewImageUrl ? { previewImageUrl } : {}) };
+}
+
+function atlasThreeDStatus(job) {
+  if (atlasCloudGlbResult(job)) return 'succeeded';
+  return atlasCloudStatus(job);
+}
+
+function findAtlasThreeDGlb(job) {
+  const result = atlasCloudGlbResult(job);
+  if (!result) {
+    throw toolError('three-d-result-invalid', 'The completed 3D task did not contain a GLB model.', 502);
+  }
+  return result;
+}
+
+function atlasThreeDModel(providerId, toolOptions) {
+  if (providerId === 'hunyuan3d') {
+    return toolOptions.model === '3.1'
+      ? 'tencent/hunyuan3d-pro/image-to-3d'
+      : 'tencent/hunyuan3d-rapid/image-to-3d';
+  }
+  // Atlas does not expose a Hyper3D/Rodin model. Keep the existing product
+  // entry usable by routing it to Atlas's closest image-to-3D model and map
+  // the compatible quality/material controls below.
+  return 'tripo-h3.1/image-to-3d';
+}
+
+function atlasThreeDRequest(providerId, imageUrl, toolOptions) {
+  if (providerId === 'hunyuan3d') {
+    const isRapid = toolOptions.model === '3.0';
+    if (['LowPoly', 'Sketch'].includes(toolOptions.generateType)) {
+      throw toolError(
+        'invalid-three-d-options',
+        'This 3D mode is not supported by the selected Atlas model. Choose Standard or Geometry.',
+        400
+      );
+    }
+    return {
+      model: atlasThreeDModel(providerId, toolOptions),
+      image: imageUrl,
+      ...(isRapid
+        ? { enable_pbr: toolOptions.enablePbr, enable_geometry: toolOptions.generateType === 'Geometry', format: 'GLB' }
+        : {
+            generate_type: toolOptions.generateType === 'Geometry' ? 'Geometry' : 'Normal',
+            enable_pbr: toolOptions.enablePbr,
+            ...(toolOptions.faceCount !== undefined ? { face_count: toolOptions.faceCount } : {})
+          })
+    };
+  }
+  if (toolOptions.quad === true) {
+    throw toolError(
+      'invalid-three-d-options',
+      'Quad mesh output is not available in the GLB delivery mode. Turn off Quad mesh and try again.',
+      400
+    );
+  }
+  const hyper = providerId === 'hyper3d';
+  const texture = hyper ? toolOptions.material !== 'Shaded' : toolOptions.texture;
+  return {
+    model: 'tripo-h3.1/image-to-3d',
+    image_url: imageUrl,
+    ...(toolOptions.faceLimit !== undefined ? { face_limit: toolOptions.faceLimit } : {}),
+    texture,
+    pbr: texture && (hyper ? toolOptions.material === 'PBR' : toolOptions.pbr),
+    texture_quality: (hyper || toolOptions.textureQuality === 'extreme') ? 'detailed' : toolOptions.textureQuality,
+    ...(hyper ? { geometry_quality: toolOptions.quality === 'high' ? 'detailed' : 'standard' } : (
+      toolOptions.geometryQuality ? { geometry_quality: toolOptions.geometryQuality } : {}
+    )),
+    texture_alignment: hyper ? 'original_image' : toolOptions.textureAlignment,
+    orientation: hyper ? 'default' : toolOptions.orientation,
+    auto_size: hyper ? false : toolOptions.autoSize,
+    quad: false,
+    ...(hyper
+      ? {}
+      : {
+          ...(toolOptions.modelSeed !== undefined ? { model_seed: toolOptions.modelSeed } : {}),
+          ...(toolOptions.textureSeed !== undefined && texture ? { texture_seed: toolOptions.textureSeed } : {})
+        })
+  };
+}
+
+async function uploadAtlasThreeDImage(image, dependencies) {
+  const form = new FormData();
+  const extension = image.extension === 'jpeg' ? 'jpg' : image.extension || 'png';
+  form.append('file', new Blob([image.buffer], { type: image.mime }), `input.${extension}`);
+  const payload = await fetchAtlasCloudJson(ATLAS_CLOUD_UPLOAD_PATH, { method: 'POST', body: form }, dependencies);
+  const response = atlasCloudResponseObject(payload);
+  const url = String(response.download_url || response.downloadUrl || response.url || '').trim();
+  if (!/^https:\/\/\S+$/i.test(url)) {
+    throw markSubmissionAmbiguous(
+      toolError('atlas-invalid-response', 'The Atlas Cloud upload did not return a valid image URL.', 502),
+      dependencies
+    );
+  }
+  return url;
+}
+
+async function createAtlasThreeDJob(providerId, image, dependencies, toolOptions) {
+  const imageUrl = await uploadAtlasThreeDImage(image, dependencies);
+  let payload;
+  try {
+    payload = await fetchAtlasCloudJson(ATLAS_CLOUD_GENERATE_PATH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(atlasThreeDRequest(providerId, imageUrl, toolOptions))
+    }, dependencies);
+  } catch (error) {
+    throw markSubmissionAmbiguous(error, dependencies);
+  }
+  let response;
+  try {
+    response = atlasCloudResponseObject(payload);
+  } catch (error) {
+    throw markSubmissionAmbiguous(error, dependencies);
+  }
+  const jobId = atlasCloudTaskId(response);
+  if (!jobId || jobId.length > 512 || /[\u0000-\u001f\u007f]/.test(jobId)) {
+    throw markSubmissionAmbiguous(
+      toolError('atlas-invalid-response', 'The Atlas Cloud service did not return a valid 3D task.', 502),
+      dependencies
+    );
+  }
+  return { jobId, status: atlasCloudStatus(response) };
+}
+
+async function queryAtlasThreeDJob(jobId, dependencies) {
+  const payload = await fetchAtlasCloudJson(
+    `${ATLAS_CLOUD_PREDICTION_PATH}/${encodeURIComponent(jobId)}`,
+    { method: 'GET' },
+    { ...dependencies, timeoutMs: STATUS_TIMEOUT_MS }
+  );
+  return atlasCloudResponseObject(payload, { terminalOnBusinessError: true });
+}
+
 async function uploadTripoImage(image, dependencies) {
   const form = new FormData();
   const extension = image.extension === 'jpeg' ? 'jpg' : image.extension;
@@ -1860,6 +2163,62 @@ const threeDProviderHandlers = Object.freeze({
     result: findTripoGlb
   }
 });
+
+const atlasThreeDProviderHandlers = Object.freeze({
+  hunyuan3d: {
+    create: (image, prompt, dependencies, toolOptions) => createAtlasThreeDJob('hunyuan3d', image, dependencies, toolOptions),
+    query: queryAtlasThreeDJob,
+    status: atlasThreeDStatus,
+    result: findAtlasThreeDGlb
+  },
+  hyper3d: {
+    create: (image, prompt, dependencies, toolOptions) => createAtlasThreeDJob('hyper3d', image, dependencies, toolOptions),
+    query: queryAtlasThreeDJob,
+    status: atlasThreeDStatus,
+    result: findAtlasThreeDGlb
+  },
+  tripo3d: {
+    create: (image, prompt, dependencies, toolOptions) => createAtlasThreeDJob('tripo3d', image, dependencies, toolOptions),
+    query: queryAtlasThreeDJob,
+    status: atlasThreeDStatus,
+    result: findAtlasThreeDGlb
+  }
+});
+
+function configuredThreeDBackend(explicitKey, requestedBackend = '') {
+  const backend = String(requestedBackend || '').trim().toLowerCase();
+  if (backend === 'atlas' || (!backend && atlasCloudConfigured())) {
+    return { backend: 'atlas', apiKey: configuredAtlasCloudApiKey(explicitKey) };
+  }
+  return { backend: 'ai302', apiKey: configuredApiKey(explicitKey) };
+}
+
+function threeDHandler(providerId, backend) {
+  const handlers = backend === 'atlas' ? atlasThreeDProviderHandlers : threeDProviderHandlers;
+  return handlers[providerId];
+}
+
+function readThreeDTask(taskToken, userId, options = {}) {
+  const requestedBackend = String(options.upstream || '').trim().toLowerCase();
+  const backends = requestedBackend === 'atlas'
+    ? ['atlas']
+    : requestedBackend === 'ai302'
+      ? ['ai302']
+      : atlasCloudConfigured() ? ['atlas', 'ai302'] : ['ai302', 'atlas'];
+  let lastError;
+  for (const backend of backends) {
+    try {
+      const credentials = configuredThreeDBackend(options.apiKey, backend);
+      const taskKey = configuredTaskSecret(credentials.apiKey, options.taskSecret);
+      const task = readTaskToken(taskToken, userId, taskKey, options.now ?? Date.now());
+      if (task.backend !== backend) continue;
+      return { task, ...credentials };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || invalidTaskToken();
+}
 
 export function validateGlb(buffer) {
   if (!Buffer.isBuffer(buffer) || buffer.length < 20 || buffer.toString('ascii', 0, 4) !== 'glTF') {
@@ -2068,10 +2427,10 @@ export async function removeBackground({ imageDataUrl, toolOptions } = {}, optio
 }
 
 export async function createThreeDTask({ providerId, imageDataUrl, prompt, toolOptions, userId } = {}, options = {}) {
-  const apiKey = configuredApiKey(options.apiKey);
-  const taskKey = configuredTaskSecret(apiKey, options.taskSecret);
+  const credentials = configuredThreeDBackend(options.apiKey, options.upstream);
+  const taskKey = configuredTaskSecret(credentials.apiKey, options.taskSecret);
   const normalizedProviderId = String(providerId || '').trim().toLowerCase();
-  const handler = threeDProviderHandlers[normalizedProviderId];
+  const handler = threeDHandler(normalizedProviderId, credentials.backend);
   if (!handler) throw toolError('invalid-three-d-provider', 'The selected 3D provider is not supported.', 400);
   const normalizedToolOptions = normalizeThreeDOptions(normalizedProviderId, toolOptions);
   const ownerId = String(userId || '').trim();
@@ -2097,15 +2456,18 @@ export async function createThreeDTask({ providerId, imageDataUrl, prompt, toolO
     throw toolError('credit-service-failed', 'The 3D accounting credits are invalid.', 503);
   }
   const dependencies = {
-    apiKey,
+    apiKey: credentials.apiKey,
     fetchImpl: options.fetchImpl || fetch,
     signal: options.signal,
     publicBaseUrl: options.publicBaseUrl,
     now: options.now,
     submission: true,
     requestId: accountingRequestId,
-    routes: getAi302Routes({ apiKey, routeId: options.routeId }),
-    routeId: String(options.routeId || '').trim().toLowerCase()
+    ...(credentials.backend === 'ai302'
+      ? { routes: getAi302Routes({ apiKey: credentials.apiKey, routeId: options.routeId }) }
+      : {}),
+    routeId: String(options.routeId || '').trim().toLowerCase(),
+    backend: credentials.backend
   };
   const job = await handler.create(image, normalizedPrompt, dependencies, normalizedToolOptions);
   return {
@@ -2119,7 +2481,8 @@ export async function createThreeDTask({ providerId, imageDataUrl, prompt, toolO
         ...(accountingRequestId ? { requestId: accountingRequestId } : {}),
         ...(Number.isInteger(credits) ? { credits } : {})
       },
-      dependencies.routeId
+      dependencies.routeId,
+      credentials.backend
     ),
     status: job.status,
     retryAfterMs: ['queued', 'processing'].includes(job.status) ? 5_000 : 0,
@@ -2141,18 +2504,16 @@ async function settleThreeDCredits(task, status, options) {
 }
 
 export async function getThreeDStatus({ taskToken, userId } = {}, options = {}) {
-  const apiKey = configuredApiKey(options.apiKey);
-  const taskKey = configuredTaskSecret(apiKey, options.taskSecret);
-  const task = readTaskToken(taskToken, userId, taskKey, options.now ?? Date.now());
+  const { task, apiKey, backend } = readThreeDTask(taskToken, userId, options);
   const { providerId, jobId } = task;
-  const taskRoute = getAi302Routes({ apiKey, routeId: task.routeId });
+  const taskRoute = backend === 'ai302' ? getAi302Routes({ apiKey, routeId: task.routeId }) : undefined;
   if (task.requestId && typeof options.touchCredits === 'function') {
     const touched = await options.touchCredits({ requestId: task.requestId, userId: String(userId || '') });
     if (!touched || touched.ok !== true) {
       throw toolError('credit-service-failed', 'The 3D generation accounting could not be refreshed.', 503);
     }
   }
-  const handler = threeDProviderHandlers[providerId];
+  const handler = threeDHandler(providerId, backend);
   const job = await handler.query(jobId, {
     apiKey,
     fetchImpl: options.fetchImpl || fetch,
@@ -2204,18 +2565,16 @@ export async function getThreeDStatus({ taskToken, userId } = {}, options = {}) 
 }
 
 export async function downloadThreeDModel({ taskToken, userId } = {}, options = {}) {
-  const apiKey = configuredApiKey(options.apiKey);
-  const taskKey = configuredTaskSecret(apiKey, options.taskSecret);
-  const task = readTaskToken(taskToken, userId, taskKey, options.now ?? Date.now());
+  const { task, apiKey, backend } = readThreeDTask(taskToken, userId, options);
   const { providerId, jobId } = task;
-  const taskRoute = getAi302Routes({ apiKey, routeId: task.routeId });
+  const taskRoute = backend === 'ai302' ? getAi302Routes({ apiKey, routeId: task.routeId }) : undefined;
   if (task.requestId && typeof options.touchCredits === 'function') {
     const touched = await options.touchCredits({ requestId: task.requestId, userId: String(userId || '') });
     if (!touched || touched.ok !== true) {
       throw toolError('credit-service-failed', 'The 3D generation accounting could not be refreshed.', 503);
     }
   }
-  const handler = threeDProviderHandlers[providerId];
+  const handler = threeDHandler(providerId, backend);
   const job = await handler.query(jobId, {
     apiKey,
     fetchImpl: options.fetchImpl || fetch,

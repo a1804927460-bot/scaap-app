@@ -645,7 +645,9 @@ function copySelectedCanvasNodeMedia() {
   BoardClipboard.items = [];
   setBoardClipboardMedia(fileIds, 'node');
   if (window.messsAPI.copyBoardMediaToClipboard) {
-    window.messsAPI.copyBoardMediaToClipboard(BoardClipboard.mediaFileIds).catch(() => {});
+    void window.messsAPI.copyBoardMediaToClipboard(BoardClipboard.mediaFileIds)
+      .catch(() => {})
+      .then(() => typeof captureBoardClipboardSignature === 'function' && captureBoardClipboardSignature());
   }
   return BoardClipboard.mediaFileIds.length > 0;
 }

@@ -621,13 +621,28 @@ assert.match(
   'Clipboard import must fall back from files to renderer images, native bitmaps, HTML and public HTTPS URLs.'
 );
 assert.match(
+  boardSource,
+  /transfer\.files[\s\S]*?transfer\.items[\s\S]*?clipboardFileDataUrl\(file\)/,
+  'External paste must accept browser clipboard files even when Chromium omits file items.'
+);
+assert.match(
+  boardSource,
+  /systemSignature[\s\S]*?getClipboardSignature[\s\S]*?pasteBoardClipboardOrExternal/,
+  'External clipboard changes must override stale in-app canvas clipboard contents.'
+);
+assert.match(
+  mainSource,
+  /readClipboardNativeImageBuffer[\s\S]*?public\.png[\s\S]*?clipboard\.readBuffer\(format\)/,
+  'Native clipboard image formats must be read directly for browser and macOS clipboard providers.'
+);
+assert.match(
   mainSource,
   /resolvePublicClipboardHost[\s\S]*?isPrivateNetworkAddress[\s\S]*?MAX_CLIPBOARD_IMAGE_BYTES/,
   'Remote clipboard images must block private networks and enforce a download limit.'
 );
 assert.match(
   boardSource,
-  /setTimeout\(\(\) => \{[\s\S]*?pasteExternalImageWithFeedback[\s\S]*?document\.addEventListener\('paste'[\s\S]*?clipboardImageRequest\(event\.clipboardData\)/,
+  /document\.addEventListener\('paste'[\s\S]*?clipboardImageRequest\(event\.clipboardData\)[\s\S]*?pasteExternalImageWithFeedback/,
   'The real paste event must get first access to browser and chat image files.'
 );
 assert.match(
@@ -1126,8 +1141,8 @@ assert.match(
 assert.match(boardStyles, /\.fullscreen-stage > img \{[\s\S]*?max-width:\s*var\(--fullscreen-media-max-width\);[\s\S]*?max-height:\s*var\(--fullscreen-media-max-height\);/);
 assert.match(
   contextMenuSource,
-  /function arrangeItemsGrid[\s\S]*?isImageExt\(file\.ext\) \|\| isVideoExt\(file\.ext\)[\s\S]*?boardItemBounds\(item\)[\s\S]*?compactMediaGrid\(measuredItems,[\s\S]*?gap:\s*12[\s\S]*?upsertBoardItems\(mediaItems\)/,
-  'Compact arrangement must resize selected media to the smallest displayed width, preserve aspect ratio, use square-near columns, and persist one packed rectangle.'
+  /function arrangeItemsGrid[\s\S]*?isImageExt\(file\.ext\) \|\| isVideoExt\(file\.ext\)[\s\S]*?boardItemBounds\(item\)[\s\S]*?compactMediaGrid\(measuredItems,[\s\S]*?gap:\s*20[\s\S]*?columns:\s*Math\.max\(1,\s*Math\.ceil\(Math\.sqrt\(mediaItems\.length\s*\*\s*1\.35\)\)\)[\s\S]*?upsertBoardItems\(mediaItems\)/,
+  'Compact arrangement must resize selected media to the smallest displayed width, preserve aspect ratio, use the previous wide rectangular columns, and persist one packed rectangle.'
 );
 assert.match(
   contextMenuSource,

@@ -3168,6 +3168,23 @@ function formatBoardAspectRatio(file, generation) {
   return ratio >= 1 ? `${ratio.toFixed(2)}:1` : `1:${(1 / ratio).toFixed(2)}`;
 }
 
+function formatBoardGenerationDate(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === '') continue;
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) continue;
+    if (typeof formatDateTime === 'function') return formatDateTime(date.toISOString());
+    return date.toLocaleString(typeof appLocale === 'function' ? appLocale() : undefined, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
+  return '';
+}
+
 function boardGenerationModelLabel(generation) {
   const model = String(generation && generation.modelName || '').trim();
   const provider = String(generation && generation.providerName || '').trim();
@@ -3203,6 +3220,11 @@ function showGeneratedMediaDetails(file, anchorElement) {
   const modelLabel = boardGenerationModelLabel(generation) ||
     (butlerOperation.kind === 'video-upscale' ? t('Video enhancement', '视频增强', '비디오 향상') : '');
   const isGenerated = !!(file.aiGeneration || file.sourceFolder === 'AI Generated');
+  const generatedAt = formatBoardGenerationDate(
+    generation.createdAt,
+    butlerOperation.createdAt,
+    isGenerated ? file.importedAt : ''
+  );
   const isVideoDetail = isVideoExt(file && file.ext) ||
     generation.kind === 'video' || butlerOperation.kind === 'video-upscale';
   const mediaDuration = Number(file.sourceDuration) > 0
@@ -3296,6 +3318,12 @@ function showGeneratedMediaDetails(file, anchorElement) {
       ? `${t('Estimated points', '预估积分', '예상 포인트')} ${t('Not recorded', '未记录', '기록 없음')}`
       : `${t('Estimated points', '预估积分', '예상 포인트')} ${estimatedCredits}`;
     chips.appendChild(estimate);
+  }
+  if (generatedAt) {
+    const created = document.createElement('span');
+    created.className = 'generated-media-detail-created-at';
+    created.textContent = `${t('Generated at', '生成时间', '생성 시간')} ${generatedAt}`;
+    chips.appendChild(created);
   }
   if (Number.isFinite(Number(file.sizeBytes)) && Number(file.sizeBytes) >= 0) {
     const fileSize = document.createElement('span');

@@ -120,6 +120,9 @@ assert.match(
 );
 assert.match(boardMedia, /BOARD_BUTLER_VIDEO_EXTENSIONS[\s\S]*?\.mp4[\s\S]*?\.mkv[\s\S]*?appendBoardVideoButlerToolbar/, 'The Butler video entry must use the same supported container list as the desktop bridge.');
 assert.match(boardMedia, /const billingOperation = file\.aiGeneration \|\| file\.butlerOperation[\s\S]*?rawEstimatedCredits[\s\S]*?estimatedCredits/, 'Generated-media details must preserve the protected estimate.');
+assert.match(boardMedia, /function formatBoardGenerationDate[\s\S]*?Number\.isFinite\(date\.getTime\(\)\)[\s\S]*?formatDateTime/, 'Generated-media details must format timestamps safely for the active locale.');
+assert.match(boardMedia, /const generatedAt = formatBoardGenerationDate\([\s\S]*?generation\.createdAt[\s\S]*?butlerOperation\.createdAt[\s\S]*?file\.importedAt/, 'Generated-media details must fall back to the saved file time for older records.');
+assert.match(boardMedia, /generated-media-detail-created-at[\s\S]*?t\('Generated at', '生成时间'/, 'Generated-media details must show the generation date and time.');
 assert.doesNotMatch(boardMedia, /Generated-media details[\s\S]{0,160}rawChargedCredits/, 'Generated-media details must not expose the settled charge in the renderer.');
 assert.match(boardMedia, /butler-video-model[\s\S]*filters:\s*\[\{[\s\S]*videoType:[\s\S]*audioTransfer: 'Copy'/, 'Video enhancement must send the selected documented filter/output shape.');
 assert.match(boardCanvas, /appendBoardVideoButlerToolbar\(el, f, item\)/, 'Selected videos must expose the Butler capsule.');

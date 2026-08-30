@@ -170,7 +170,10 @@ function ai302Enabled(flag) {
   const configured = String(process.env[flag] || '').trim().toLowerCase();
   if (configured === 'false') return false;
   if (configured === 'true') return true;
-  return Boolean(String(process.env.AI302_KEY || process.env.AI_302_API_KEY || '').trim());
+  return Boolean(String(
+    process.env.AI302_KEY || process.env.AI_302_API_KEY
+      || process.env.ATLASCLOUD_API_KEY || process.env.ATLAS_CLOUD_API_KEY || ''
+  ).trim());
 }
 
 function disabledTool(response) {

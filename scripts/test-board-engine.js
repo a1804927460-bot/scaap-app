@@ -53,13 +53,23 @@ assert.strictEqual(Math.min(...compactMediaLayout.map((item) => item.width)), 10
 assert.ok(compactMediaLayout.every((item) => item.width === 100), 'compact media must use the smallest selected width');
 
 const compactRectangularLayout = engine.compactMediaGrid([
-  { id: 'one', x: 0, y: 0, width: 100, height: 100 },
-  { id: 'two', x: 100, y: 0, width: 100, height: 100 },
-  { id: 'three', x: 200, y: 0, width: 100, height: 100 },
-  { id: 'four', x: 300, y: 0, width: 100, height: 100 }
+  ...Array.from({ length: 12 }, (_, index) => ({
+    id: `item-${index}`,
+    x: index * 100,
+    y: 0,
+    width: 100,
+    height: 100
+  }))
 ], { originX: 0, originY: 0, gap: 12 });
-assert.strictEqual(new Set(compactRectangularLayout.map((item) => item.x)).size, 2);
-assert.strictEqual(new Set(compactRectangularLayout.map((item) => item.y)).size, 2);
+const compactFirstRow = compactRectangularLayout.filter((item) => item.y === 0);
+assert.strictEqual(compactFirstRow.length, 5);
+assert.strictEqual(new Set(compactFirstRow.map((item) => item.x)).size, 5);
+assert.strictEqual(new Set(compactRectangularLayout.map((item) => item.y)).size, 3);
+assert.ok(
+  compactRectangularLayout[compactRectangularLayout.length - 1].x >
+    compactRectangularLayout[compactRectangularLayout.length - 1].y,
+  'compact media should favor the previous wide rectangular layout'
+);
 
 const shortLastRow = engine.packRows([
   { id: 'c', x: 0, y: 100, width: 80, height: 80 },

@@ -3221,6 +3221,75 @@ function clipboardImageError(message, code = 'clipboard-image-unavailable') {
   return error;
 }
 
+function safeClipboardRead(method, format = '') {
+  try {
+    if (!clipboard || typeof clipboard[method] !== 'function') return '';
+    const value = format ? clipboard[method](format) : clipboard[method]();
+    return typeof value === 'string' ? value : '';
+  } catch (error) {
+    return '';
+  }
+}
+
+function readClipboardNativeImageBuffer() {
+  const formats = new Set();
+  try {
+    if (typeof clipboard.availableFormats === 'function') {
+      clipboard.availableFormats().forEach((format) => formats.add(String(format || '').toLowerCase()));
+    }
+  } catch (error) {}
+  for (const format of [
+    'image/png', 'public.png', 'image/jpeg', 'public.jpeg', 'image/webp',
+    'image/tiff', 'public.tiff', 'image/bmp', 'public.bmp'
+  ]) {
+    if (formats.size && !formats.has(format)) continue;
+    try {
+      const buffer = clipboard.readBuffer(format);
+      if (Buffer.isBuffer(buffer) && buffer.length) return buffer;
+    } catch (error) {}
+  }
+  return null;
+}
+
+function readClipboardFileUrlText() {
+  const values = [];
+  for (const format of ['public.file-url', 'text/uri-list', 'text/uri']) {
+    try {
+      const buffer = clipboard.readBuffer(format);
+      if (Buffer.isBuffer(buffer) && buffer.length) values.push(buffer.toString('utf8'));
+    } catch (error) {}
+  }
+  return values.join('\n');
+}
+
+function clipboardSignature() {
+  const hash = crypto.createHash('sha256');
+  const add = (label, value) => {
+    const buffer = Buffer.isBuffer(value) ? value : Buffer.from(String(value || ''), 'utf8');
+    hash.update(`${label}:${buffer.length}:`);
+    if (buffer.length <= 128 * 1024) hash.update(buffer);
+    else hash.update(Buffer.concat([buffer.subarray(0, 64 * 1024), buffer.subarray(-64 * 1024)]));
+    hash.update('\0');
+  };
+  let formats = [];
+  try {
+    formats = typeof clipboard.availableFormats === 'function'
+      ? [...new Set(clipboard.availableFormats().map((format) => String(format || '').toLowerCase()))].sort()
+      : [];
+  } catch (error) {}
+  add('formats', formats.join('\n'));
+  for (const format of formats) {
+    try { add(`format:${format}`, clipboard.readBuffer(format)); } catch (error) {}
+  }
+  add('text', safeClipboardRead('readText'));
+  add('html', safeClipboardRead('readHTML'));
+  try {
+    const image = clipboard.readImage();
+    if (image && !image.isEmpty()) add('native-image', image.toPNG());
+  } catch (error) {}
+  return hash.digest('hex');
+}
+
 function clipboardDataImageBuffer(value) {
   const source = String(value || '').trim();
   if (!source || source.length > Math.ceil(MAX_CLIPBOARD_IMAGE_BYTES * 4 / 3) + 4096) return null;
@@ -8076,9 +8145,13 @@ function registerIpcHandlers() {
     const nativeFilePaths = process.platform === 'win32'
       ? parseCfHDrop(clipboard.readBuffer('CF_HDROP'))
       : [];
+    const nativeClipboardHtml = safeClipboardRead('readHTML');
+    const nativeClipboardText = [safeClipboardRead('readText'), readClipboardFileUrlText()]
+      .filter(Boolean)
+      .join('\n');
     const sources = extractClipboardImageSources({
-      html: String(request.html || '') || clipboard.readHTML(),
-      text: String(request.text || '') || clipboard.readText()
+      html: String(request.html || '') || nativeClipboardHtml,
+      text: [String(request.text || ''), nativeClipboardText].filter(Boolean).join('\n')
     });
     const localPaths = [...nativeFilePaths, ...sources.map(clipboardSourceToLocalPath).filter(Boolean)];
     const copiedImagePath = localPaths.find((filePath) => {
@@ -8115,16 +8188,27 @@ function registerIpcHandlers() {
       return importClipboardPng(canonical.png, request, canonical.dimensions);
     }
 
-    const nativeImage = clipboard.readImage();
-    if (nativeImage && !nativeImage.isEmpty()) {
-      const nativePng = nativeImage.toPNG();
-      if (nativePng && nativePng.length) {
-        const dimensions = nativeImage.getSize();
-        const canonical = await canonicalClipboardPng(nativePng);
-        return importClipboardPng(canonical.png, request, dimensions.width > 0 && dimensions.height > 0
-          ? dimensions
-          : canonical.dimensions);
+    const nativeBuffer = readClipboardNativeImageBuffer();
+    if (nativeBuffer) {
+      const canonical = await canonicalClipboardPng(nativeBuffer);
+      return importClipboardPng(canonical.png, request, canonical.dimensions);
+    }
+
+    try {
+      const nativeImage = clipboard.readImage();
+      if (nativeImage && !nativeImage.isEmpty()) {
+        const nativePng = nativeImage.toPNG();
+        if (nativePng && nativePng.length) {
+          const dimensions = nativeImage.getSize();
+          const canonical = await canonicalClipboardPng(nativePng);
+          return importClipboardPng(canonical.png, request, dimensions.width > 0 && dimensions.height > 0
+            ? dimensions
+            : canonical.dimensions);
+        }
       }
+    } catch (error) {
+      // Some macOS clipboard providers expose HTML/PNG without a nativeImage.
+      // Continue with the HTML and URL sources below instead of failing paste.
     }
 
     let sourceError = null;
@@ -8148,6 +8232,8 @@ function registerIpcHandlers() {
     if (sourceError) throw sourceError;
     return { ok: false, reason: 'empty' };
   });
+
+  ipcMain.handle('clipboard:signature', () => clipboardSignature());
 
   ipcMain.handle('dialog:pickFolderToImport', async (_evt, canvasId) => {
     const result = await dialog.showOpenDialog(mainWindow, {
