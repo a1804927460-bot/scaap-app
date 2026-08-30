@@ -26,7 +26,18 @@ function buildIconSvg(pathData) {
 }
 
 function copyBoardSelection(items) {
-  BoardClipboard.items = items.map((item) => ({ ...item }));
+  const copied = typeof setBoardClipboardItems === 'function'
+    ? setBoardClipboardItems(items)
+    : (BoardClipboard.items = items.map((item) => ({ ...item })));
+  const mediaFileIds = BoardClipboard.mediaFileIds || [];
+  if (mediaFileIds.length && window.messsAPI && window.messsAPI.copyBoardMediaToClipboard) {
+    void window.messsAPI.copyBoardMediaToClipboard(mediaFileIds)
+      .catch(() => {})
+      .then(() => typeof captureBoardClipboardSignature === 'function' && captureBoardClipboardSignature());
+  } else if (typeof captureBoardClipboardSignature === 'function') {
+    void captureBoardClipboardSignature();
+  }
+  return copied;
 }
 
 function cutBoardSelection(items) {
@@ -36,12 +47,15 @@ function cutBoardSelection(items) {
 
 function pasteBoardSelectionAt(clickX, clickY) {
   const { x, y } = clientToBoardCoords(clickX, clickY);
-  const placement = { x: Math.round(x - 110), y: Math.round(y - 70) };
-  if (BoardClipboard.items.length) {
-    pasteBoardClipboard(placement.x, placement.y);
-    return;
-  }
-  pasteExternalImageWithFeedback(placement);
+  const placement = {
+    x: Math.round(x - 110),
+    y: Math.round(y - 70),
+    partitionPoint: { x, y },
+    externalPlacement: { x, y }
+  };
+  void pasteBoardClipboardOrExternal(placement).catch((error) => {
+    showToast(error && error.message ? error.message : t('Could not paste the image', '无法粘贴图片'));
+  });
 }
 
 function normalizeTargetFolderId(folderId) {
@@ -822,6 +836,26 @@ async function removeBoardItemFromCanvas(item) {
 }
 
 function showBoardItemContextMenu(item, x, y) {
+  if (item.isPartition) {
+    buildAndShowSimpleMenu([
+      {
+        label: t('Rename partition', '重命名分区'),
+        icon: 'M4 20h4l10-10-4-4L4 16v4;M13 5l4 4',
+        action: () => beginBoardPartitionRename(item)
+      },
+      {
+        label: t('Remove secondary partition', '取消二级分区'),
+        icon: 'M4 4l16 16;M4 20h16;M4 4h16',
+        divider: true,
+        action: () => {
+          if (removeBoardPartition(item, { recordHistory: true })) {
+            showToast(t('Partition removed; its media was kept.', '已取消分区，图片和视频仍然保留。'));
+          }
+        }
+      }
+    ], x, y, 'board-partition-context-menu');
+    return;
+  }
   if (item.isMoodboard) {
     buildAndShowSimpleMenu([
       {
@@ -932,6 +966,7 @@ const MULTI_MENU_ITEMS = [
   { key: 'download', label: ['Export', '导出'] },
   { key: 'send-chat', label: ['Send to Chat', '发送到聊天'] },
   { key: 'usage', label: ['View points usage', '\u67e5\u770b\u79ef\u5206\u7528\u91cf'] },
+  { key: 'secondary-partition', label: ['Secondary partition', '二级分区'] },
   { key: 'group', label: ['Group', '成组'] },
   { key: 'ungroup', label: ['Ungroup', '取消成组'] },
   { key: 'delete', label: ['Delete', '删除'], danger: true }
@@ -950,6 +985,11 @@ function showBoardMultiContextMenu(x, y) {
   if (existingSub) existingSub.remove();
 
   const { isGrouped } = selectionGroupState();
+  const partitionSelection = AppState.boardItems.filter((item) => item.selected);
+  const canCreatePartition = partitionSelection.length >= 2 && partitionSelection.every((item) => {
+    const file = AppState.files.find((entry) => entry.id === item.fileId);
+    return !item.isPartition && !item.partitionId && file && (isImageExt(file.ext) || isVideoExt(file.ext));
+  });
   const menu = document.createElement('ul');
   menu.id = 'board-multi-menu';
   menu.className = 'context-menu is-visible';
@@ -968,6 +1008,7 @@ function showBoardMultiContextMenu(x, y) {
   for (const item of MULTI_MENU_ITEMS) {
     if (item.key === 'group' && isGrouped) continue;
     if (item.key === 'ungroup' && !isGrouped) continue;
+    if (item.key === 'secondary-partition' && !canCreatePartition) continue;
 
     const li = document.createElement('li');
     li.className = 'context-menu-item' + (item.danger ? ' is-danger' : '');
@@ -1087,6 +1128,9 @@ async function runMultiMenuAction(key, x, y) {
     case 'usage':
       openCanvasUsageDetails();
       break;
+    case 'secondary-partition':
+      createSecondaryPartition(selected);
+      break;
     case 'group': {
       const groupId = 'g_' + Math.random().toString(36).slice(2, 10);
       selected.forEach((item) => { item.groupId = groupId; window.messsAPI.upsertBoardItem(item); });
@@ -1105,15 +1149,18 @@ async function runMultiMenuAction(key, x, y) {
 
 function scaleBoardItemsToWidth(items, targetWidth) {
   const width = Math.max(1, Math.round(Number(targetWidth) || DEFAULT_BOARD_ITEM_WIDTH));
-  items.forEach((item) => {
+  const changedItems = items.filter((item) => item && !item.isPartition);
+  changedItems.forEach((item) => {
     const previousWidth = Math.max(1, Number(item.width) || DEFAULT_BOARD_ITEM_WIDTH);
     const previousHeight = Number(item.height);
     if (previousHeight > 0) {
       item.height = Math.max(1, Math.round(previousHeight * width / previousWidth));
     }
     item.width = width;
-    window.messsAPI.upsertBoardItem(item);
   });
+  if (typeof fitBoardItemsIntoPartitions === 'function') fitBoardItemsIntoPartitions(changedItems);
+  if (typeof window.messsAPI.upsertBoardItems === 'function') window.messsAPI.upsertBoardItems(changedItems);
+  else changedItems.forEach((item) => window.messsAPI.upsertBoardItem(item));
   renderBoard();
 }
 
@@ -1147,6 +1194,7 @@ async function arrangeItemsGrid(items) {
     item.height = position.height;
     delete item.layoutFrame;
   });
+  if (typeof fitBoardItemsIntoPartitions === 'function') fitBoardItemsIntoPartitions(mediaItems);
 
   if (typeof window.messsAPI.upsertBoardItems === 'function') {
     await window.messsAPI.upsertBoardItems(mediaItems);
@@ -1161,7 +1209,8 @@ function arrangeItemsLine(items, direction) {
   const originX = items.reduce((min, it) => Math.min(min, it.x), Infinity);
   const originY = items.reduce((min, it) => Math.min(min, it.y), Infinity);
   let cursor = direction === 'row' ? originX : originY;
-  items.forEach((item) => {
+  const changedItems = items.filter((item) => item && !item.isPartition);
+  changedItems.forEach((item) => {
     const w = item.width || 220;
     if (direction === 'row') {
       item.x = Math.round(cursor);
@@ -1172,8 +1221,10 @@ function arrangeItemsLine(items, direction) {
       item.y = Math.round(cursor);
       cursor += w * 0.75 + gap;
     }
-    window.messsAPI.upsertBoardItem(item);
   });
+  if (typeof fitBoardItemsIntoPartitions === 'function') fitBoardItemsIntoPartitions(changedItems);
+  if (typeof window.messsAPI.upsertBoardItems === 'function') window.messsAPI.upsertBoardItems(changedItems);
+  else changedItems.forEach((item) => window.messsAPI.upsertBoardItem(item));
   renderBoard();
 }
 

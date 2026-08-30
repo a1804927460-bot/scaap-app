@@ -219,7 +219,7 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /referenceFileIds:\s*\[\.\.\.boardReferences\.values\(\)\]\.map\(\(entry\) => entry\.fileId\)/,
+  /const selectedReferenceIds = \[\.\.\.boardReferences\.values\(\)\]\.map\(\(entry\) => entry\.fileId\)[\s\S]*?referenceFileIds:\s*selectedReferenceIds/,
   'Generation requests must preserve repeated real file IDs from independent reference slots.'
 );
 assert.match(
@@ -644,6 +644,21 @@ assert.match(
   boardSource,
   /document\.addEventListener\('paste'[\s\S]*?clipboardImageRequest\(event\.clipboardData\)[\s\S]*?pasteExternalImageWithFeedback/,
   'The real paste event must get first access to browser and chat image files.'
+);
+assert.match(
+  boardSource,
+  /addBoardPartitionResizeHandles[\s\S]*?startMemberFrames[\s\S]*?partition\.contentScale[\s\S]*?persistBoardMoveHistory\(changedItems/,
+  'Resizing a secondary partition must scale and persist its members together with the frame.'
+);
+assert.match(
+  boardSource,
+  /e\.key\.toLowerCase\(\) === 'v'[\s\S]*?clipboardPasteTimer[\s\S]*?pasteBoardClipboardOrExternal/,
+  'Ctrl/Cmd+V must use a delayed desktop fallback so the native paste event can run first.'
+);
+assert.match(
+  contextMenuSource,
+  /function copyBoardSelection[\s\S]*?setBoardClipboardItems\(items\)[\s\S]*?copyBoardMediaToClipboard[\s\S]*?captureBoardClipboardSignature/,
+  'Context-menu canvas copy must use the unified application clipboard and system signature.'
 );
 assert.match(
   boardStyles,
@@ -1156,7 +1171,7 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /function setBoardClipboardItems[\s\S]*?map\(cloneBoardHistoryItem\)[\s\S]*?sourceCanvasId = BoardClipboard\.items\.length \? activeCanvasId\(\) : null/,
+  /function setBoardClipboardItems[\s\S]*?map\(cloneBoardHistoryItem\)[\s\S]*?sourceCanvasId = BoardClipboard\.items\.length \? sourceCanvasId : null/,
   'Canvas copy must preserve an independent application-level snapshot and its source canvas.'
 );
 assert.match(

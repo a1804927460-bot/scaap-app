@@ -176,7 +176,7 @@ assert.match(main, /function registerButlerDelivery[\s\S]*accountingRequestId = 
   'Pending Butler files must retain one accounting request without recording an unconfirmed charge.');
 assert.match(main, /ipcMain\.handle\('butler:confirmDelivery'[\s\S]*settleButlerDeliveryToken\(deliveryToken, true\)[\s\S]*ipcMain\.handle\('butler:releaseDelivery'[\s\S]*settleButlerDeliveryToken\(deliveryToken, false\)/,
   'Main-process Butler delivery must explicitly confirm successful placement or release failed placement.');
-assert.match(boardMedia, /await addFileToBoard\(file\.id, placementX, placementY\)[\s\S]*await confirmBoardButlerDeliveries\(\[file\]\)/,
+assert.match(boardMedia, /await addFileToBoard\(file\.id, placementX, placementY(?:,\s*\{[\s\S]*?\})?\)[\s\S]*await confirmBoardButlerDeliveries\(\[file\]\)/,
   'A single Butler result must be charged only after it is added to the canvas.');
 assert.match(boardMedia, /for \(let index = 0; index < validFiles\.length[\s\S]*await addFileToBoard[\s\S]*await confirmBoardButlerDeliveries\(validFiles\)/,
   'A multi-result Butler task must confirm its charge only after every result reaches the canvas.');

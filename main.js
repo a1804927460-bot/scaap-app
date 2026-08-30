@@ -386,6 +386,8 @@ function persistAiMediaDelivery(entry) {
       ? null : Math.max(0, Number(entry.estimatedCredits) || 0),
     recordIds: Array.isArray(entry.recordIds)
       ? entry.recordIds.map((id) => String(id).slice(0, 128)).slice(0, 8) : [],
+    boardItemIds: Array.isArray(entry.boardItemIds)
+      ? entry.boardItemIds.map((id) => String(id).slice(0, 128)).slice(0, 8) : [],
     requiresBoardItem: entry.requiresBoardItem !== false,
     usageId: String(entry.usageId || '').slice(0, 160),
     groupId: String(entry.groupId || '').slice(0, 160),
@@ -398,6 +400,17 @@ function persistAiMediaDelivery(entry) {
   else deliveries[index] = safe;
   store.data.aiMediaDeliveries = deliveries.slice(-AI_MEDIA_DELIVERY_PERSIST_LIMIT);
   store.scheduleSave();
+}
+
+async function flushStoreDurably() {
+  if (!store) return;
+  if (typeof store.flush === 'function') {
+    await store.flush();
+    return;
+  }
+  // Keep compatibility with test doubles and older embedded stores while the
+  // production Store uses the asynchronous durable flush above.
+  if (typeof store.save === 'function') store.save();
 }
 
 function generatedMediaDeliveryRequest(kind, generated) {
@@ -445,19 +458,51 @@ function registerAiMediaDelivery(kind, generated, records, boardItems, usageGrou
 }
 
 function aiMediaDeliveryHasCanvasItem(entry) {
-  const ids = new Set((entry.recordIds || []).map(String));
-  const filesExist = ids.size > 0 && ids.size === new Set(
-    (store.data.files || [])
-      .filter((file) => ids.has(String(file && file.id || '')))
-      .map((file) => String(file.id))
-  ).size;
+  if (!store || !store.data || !entry) return false;
+  const ids = new Set((entry.recordIds || []).map(String).filter(Boolean));
+  if (!ids.size) return false;
+  const records = [...ids].map((id) => store.getFile(id)).filter(Boolean);
+  if (records.length !== ids.size) return false;
+  const filesExist = records.every((file) => {
+    try {
+      const stat = fs.statSync(file.storedPath);
+      const expectedBytes = Number(file.sizeBytes);
+      return stat.isFile() && stat.size > 0
+        && (!Number.isFinite(expectedBytes) || expectedBytes <= 0 || stat.size === expectedBytes);
+    } catch (error) {
+      return false;
+    }
+  });
   if (!filesExist) return false;
   if (entry.requiresBoardItem !== true) return true;
-  return ids.size === new Set(
-    (store.data.boardItems || [])
-      .filter((item) => ids.has(String(item && item.fileId || '')))
-      .map((item) => String(item.fileId))
-  ).size;
+  const boardItemIds = new Set((entry.boardItemIds || []).map(String).filter(Boolean));
+  return records.every((file) => (store.data.boardItems || []).some((item) => (
+    item && item.isAiPlaceholder !== true
+      && String(item.fileId || '') === String(file.id)
+      && (!file.canvasId || String(item.canvasId || '') === String(file.canvasId))
+      && (!boardItemIds.size || boardItemIds.has(String(item.id)))
+  )));
+}
+
+async function aiMediaDeliveryIsDurable(entry) {
+  if (!store || !store.data || !entry) return false;
+  const ids = new Set((entry.recordIds || []).map(String).filter(Boolean));
+  if (!ids.size) return false;
+  const records = [...ids].map((id) => store.getFile(id));
+  if (records.some((file) => !file)) return false;
+  const stats = await Promise.all(records.map((file) => fs.promises.stat(file.storedPath).catch(() => null)));
+  if (stats.some((stat, index) => {
+    if (!stat || !stat.isFile() || stat.size <= 0) return true;
+    const expectedBytes = Number(records[index].sizeBytes);
+    return Number.isFinite(expectedBytes) && expectedBytes > 0 && stat.size !== expectedBytes;
+  })) return false;
+  const boardItemIds = new Set((entry.boardItemIds || []).map(String).filter(Boolean));
+  return entry.requiresBoardItem !== true || records.every((file) => (store.data.boardItems || []).some((item) => (
+    item && item.isAiPlaceholder !== true
+      && String(item.fileId || '') === String(file.id)
+      && (!file.canvasId || String(item.canvasId || '') === String(file.canvasId))
+      && (!boardItemIds.size || boardItemIds.has(String(item.id)))
+  )));
 }
 
 function scheduleAiMediaDeliveryRecovery(token, delayMs = AI_MEDIA_DELIVERY_TTL_MS) {
@@ -1181,14 +1226,23 @@ async function importCanvasPackage(packagePath, targetProjectId) {
         fingerprint: await makeFileFingerprint(destinationPath, stat)
       });
     }
+    const boardItemIdMap = new Map(parsed.manifest.boardItems.map((item) => [
+      String(item && item.id || ''),
+      crypto.randomUUID()
+    ]));
     const boardItems = parsed.manifest.boardItems.map((item) => {
       const next = canvasPackageJsonClone(item);
-      next.id = crypto.randomUUID();
+      next.id = boardItemIdMap.get(String(item && item.id || '')) || crypto.randomUUID();
       next.canvasId = canvas.id;
       if (next.fileId) {
         const mappedId = fileIdMap.get(String(next.fileId));
         if (!mappedId) throw canvasPackageError('invalid-package', `The canvas layout references a file that is not in the package.`);
         next.fileId = mappedId;
+      }
+      if (next.partitionId) {
+        const mappedPartitionId = boardItemIdMap.get(String(next.partitionId));
+        if (!mappedPartitionId) throw canvasPackageError('invalid-package', 'The canvas layout references a partition that is not in the package.');
+        next.partitionId = mappedPartitionId;
       }
       return next;
     });
@@ -3232,6 +3286,17 @@ function safeClipboardRead(method, format = '') {
 }
 
 function readClipboardNativeImageBuffer() {
+  // Electron's native image bridge is the most reliable path on macOS: some
+  // apps publish a valid image UTI but do not expose readable bytes through
+  // every UTI variant. Convert it to PNG before trying the raw formats.
+  try {
+    const image = clipboard.readImage();
+    if (image && !image.isEmpty()) {
+      const png = image.toPNG();
+      if (Buffer.isBuffer(png) && png.length) return png;
+    }
+  } catch (error) {}
+
   const formats = new Set();
   try {
     if (typeof clipboard.availableFormats === 'function') {
@@ -3240,7 +3305,10 @@ function readClipboardNativeImageBuffer() {
   } catch (error) {}
   for (const format of [
     'image/png', 'public.png', 'image/jpeg', 'public.jpeg', 'image/webp',
-    'image/tiff', 'public.tiff', 'image/bmp', 'public.bmp'
+    'public.webp', 'org.webmproject.webp', 'image/tiff', 'public.tiff',
+    'image/bmp', 'public.bmp', 'com.microsoft.bmp', 'image/gif',
+    'com.compuserve.gif', 'image/heic', 'public.heic', 'public.heif',
+    'public.jpeg-2000', 'com.apple.icns'
   ]) {
     if (formats.size && !formats.has(format)) continue;
     try {
@@ -5565,6 +5633,10 @@ function addGeneratedMediaBoardItem(record, request, placement, index) {
     : null;
   const ratio = sourceRatio || requestedRatio || (width / Math.max(1, numberOr(placement.height, 220)));
   const id = String(placement.id || '').trim().slice(0, 120) || `b_${crypto.randomUUID()}`;
+  const requestedPartitionId = String(placement.partitionId || request.partitionId || '').trim().slice(0, 120);
+  const partition = requestedPartitionId
+    ? store.data.boardItems.find((entry) => entry && entry.isPartition && entry.id === requestedPartitionId && entry.canvasId === canvas.id)
+    : null;
   const item = {
     id,
     fileId: record.id,
@@ -5577,7 +5649,8 @@ function addGeneratedMediaBoardItem(record, request, placement, index) {
       ? `${Math.round(record.sourceWidth)}:${Math.round(record.sourceHeight)}`
       : (placement.aspectRatio || request.aspectRatio || 'auto'),
     zIndex: Math.round(numberOr(placement.zIndex, store.data.boardItems.length + index + 1)),
-    selected: index === 0
+    selected: index === 0,
+    ...(partition ? { partitionId: partition.id } : {})
   };
   const existingIndex = store.data.boardItems.findIndex((entry) => entry.id === item.id);
   if (existingIndex === -1) store.data.boardItems.push(item);
@@ -5587,6 +5660,24 @@ function addGeneratedMediaBoardItem(record, request, placement, index) {
 
 async function rollbackGeneratedMediaFile(record) {
   if (!record || !record.id) return;
+  const persistedDelivery = Array.isArray(store.data.aiMediaDeliveries)
+    ? store.data.aiMediaDeliveries.find((entry) => (
+      entry && Array.isArray(entry.recordIds)
+        && entry.recordIds.some((id) => String(id) === String(record.id))
+        && entry.status === 'confirmed'
+    ))
+    : null;
+  const activeDelivery = [...aiMediaDeliveries.values()].find((entry) => (
+    entry && Array.isArray(entry.recordIds)
+      && entry.recordIds.some((id) => String(id) === String(record.id))
+      && entry.status === 'confirmed'
+  ));
+  if (persistedDelivery || activeDelivery) {
+    // A confirmed result is already paid for. A late renderer failure or a
+    // duplicate cleanup callback must never turn it into a missing file.
+    console.warn('Skipped rollback for a confirmed AI media result:', record.id);
+    return;
+  }
   store.data.boardItems = store.data.boardItems.filter((item) => item.fileId !== record.id);
   if (Array.isArray(store.data.canvasUsageLedger)) {
     const usageEntryId = `file:${record.id}`;
@@ -5863,18 +5954,34 @@ async function settleAiMediaDeliveryToken(rawToken, delivered) {
   }
   const expectedStatus = delivered === true ? 'confirmed' : 'released';
   if (entry.status !== 'pending') {
-    if (entry.status === expectedStatus) return entry.result;
+    if (entry.status === expectedStatus) {
+      // A previous settlement may have completed just before the process lost
+      // its response. Retry the local flush only; never call the gateway twice.
+      await flushStoreDurably();
+      return entry.result;
+    }
     const error = new Error('The AI media delivery was already settled differently.');
     error.code = 'ai-delivery-status-conflict';
     throw error;
   }
-  if (delivered === true && !aiMediaDeliveryHasCanvasItem(entry)) {
-    const error = new Error('The generated result has not been persisted to the canvas.');
-    error.code = 'ai-delivery-not-placed';
+  if (entry.inFlight) {
+    if (entry.settlementIntent === (delivered === true ? 'confirmed' : 'released')) return entry.inFlight;
+    const error = new Error('The AI media delivery is already being settled differently.');
+    error.code = 'ai-delivery-settlement-in-flight';
     throw error;
   }
-  if (entry.inFlight) return entry.inFlight;
+  entry.settlementIntent = delivered === true ? 'confirmed' : 'released';
   entry.inFlight = (async () => {
+    if (delivered === true) {
+      // The gateway must not charge until both the bytes and their canvas
+      // placement have survived the local persistence barrier.
+      await flushStoreDurably();
+      if (!await aiMediaDeliveryIsDurable(entry) || !aiMediaDeliveryHasCanvasItem(entry)) {
+        const error = new Error('The generated result has not been persisted to the canvas.');
+        error.code = 'ai-delivery-not-placed';
+        throw error;
+      }
+    }
     const records = entry.recordIds.map((id) => store.getFile(id)).filter(Boolean);
     const representative = records[0];
     const settlement = deliverySettlement(delivered === true
@@ -5918,6 +6025,7 @@ async function settleAiMediaDeliveryToken(rawToken, delivered) {
     };
     persistAiMediaDelivery(entry);
     settleAiMediaDeliveryGroup(entry, delivered === true, charged);
+    await flushStoreDurably();
     const cleanup = setTimeout(() => aiMediaDeliveries.delete(token), 5 * 60 * 1000);
     cleanup.unref?.();
     return entry.result;
@@ -5929,6 +6037,7 @@ async function settleAiMediaDeliveryToken(rawToken, delivered) {
     throw error;
   } finally {
     entry.inFlight = null;
+    if (entry.status === 'pending') entry.settlementIntent = null;
   }
 }
 
@@ -9189,6 +9298,9 @@ function registerIpcHandlers() {
       }
       if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
       store.scheduleSave();
+      // Do not return a successful result until its file record, canvas item,
+      // delivery token and membership reservation are on disk together.
+      await flushStoreDurably();
       return {
         ok: true,
         file: files[0],

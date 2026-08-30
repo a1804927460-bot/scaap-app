@@ -40,6 +40,11 @@ const BOARD_TOOLBAR_COMPACT_START_ZOOM = 1.6;
 const BOARD_TOOLBAR_COMPACT_END_ZOOM = 3.2;
 const BOARD_TOOLBAR_MIN_SCREEN_SCALE = 0.86;
 const BOARD_TOOLBAR_SCREEN_GAP = 7;
+const BOARD_PARTITION_SIDE_PADDING = 28;
+const BOARD_PARTITION_TOP_PADDING = 54;
+const BOARD_PARTITION_BOTTOM_PADDING = 28;
+const BOARD_PARTITION_MIN_WIDTH = 260;
+const BOARD_PARTITION_MIN_HEIGHT = 190;
 
 // Anything matching this boundary owns its interaction. Canvas listeners run
 // in the capture phase in a few places, so stopping propagation on a button is
@@ -141,6 +146,8 @@ const Board = {
   resizeObserver: null,
   clipboardPastePromise: null,
   clipboardPasteTimer: 0,
+  partitionCelebrations: new Set(),
+  activePartitionId: null,
   historyPersistPromise: Promise.resolve()
 };
 
@@ -181,15 +188,26 @@ function recordBoardMoveHistory(startPositions) {
 }
 
 function recordBoardResizeHistory(startFrames) {
-  const changes = startFrames.map(({ item, x, y, width, height }) => ({
+  const changes = startFrames.map(({ item, x, y, width, height, contentScale }) => ({
     id: item.id,
-    before: { x, y, width, height },
-    after: { x: item.x, y: item.y, width: item.width, height: item.height }
+    before: {
+      x, y, width, height,
+      ...(Number.isFinite(Number(contentScale))
+        ? { contentScale: Number(contentScale) }
+        : {})
+    },
+    after: {
+      x: item.x, y: item.y, width: item.width, height: item.height,
+      ...(item.isPartition && Number.isFinite(Number(item.contentScale))
+        ? { contentScale: Number(item.contentScale) }
+        : {})
+    }
   })).filter((change) => (
     change.before.x !== change.after.x ||
     change.before.y !== change.after.y ||
     change.before.width !== change.after.width ||
-    change.before.height !== change.after.height
+    change.before.height !== change.after.height ||
+    change.before.contentScale !== change.after.contentScale
   ));
   return changes.length ? recordBoardHistoryEntry({ type: 'resize', changes }) : false;
 }
@@ -268,6 +286,10 @@ function applyBoardResizeHistory(entry, direction) {
     item.y = frame.y;
     item.width = frame.width;
     item.height = frame.height;
+    if (item.isPartition) {
+      if (Number.isFinite(Number(frame.contentScale))) item.contentScale = Number(frame.contentScale);
+      else delete item.contentScale;
+    }
     updateBoardItemIndex(item);
     const element = Board.mounted.get(item.id) || document.querySelector(`.board-item[data-board-id="${item.id}"]`);
     if (element) syncMountedBoardItemGeometry(element, item);
@@ -304,9 +326,40 @@ function applyBoardItemsHistory(entry, direction) {
   return true;
 }
 
+function applyBoardPartitionHistory(entry, direction) {
+  const partition = cloneBoardHistoryItem(entry.partition);
+  const memberIds = new Set(entry.memberIds || []);
+  const shouldExist = entry.action === 'create' ? direction === 'after' : direction === 'before';
+  const changedMembers = AppState.boardItems.filter((item) => memberIds.has(item.id));
+
+  if (shouldExist) {
+    const existing = AppState.boardItems.findIndex((item) => item.id === partition.id);
+    if (existing === -1) {
+      AppState.boardItems.push(partition);
+      canvasWorkspaceAddItem(partition);
+    } else {
+      AppState.boardItems[existing] = partition;
+      canvasWorkspaceAddItem(partition);
+    }
+    changedMembers.forEach((item) => { item.partitionId = partition.id; });
+    persistBoardItemMutation({ upsert: [partition, ...changedMembers] }, partition.canvasId || activeCanvasId());
+  } else {
+    AppState.boardItems = AppState.boardItems.filter((item) => item.id !== partition.id);
+    canvasWorkspaceRemoveItems([partition.id]);
+    changedMembers.forEach((item) => {
+      if (item.partitionId === partition.id) delete item.partitionId;
+    });
+    persistBoardItemMutation({ upsert: changedMembers, remove: [partition.id] }, partition.canvasId || activeCanvasId());
+  }
+  renderBoard();
+  return true;
+}
+
 function applyBoardHistory(entry, direction) {
   if (!entry) return false;
-  return entry.type === 'add' || entry.type === 'remove'
+  return entry.type === 'partition'
+    ? applyBoardPartitionHistory(entry, direction)
+    : entry.type === 'add' || entry.type === 'remove'
     ? applyBoardItemsHistory(entry, direction)
     : entry.type === 'resize'
       ? applyBoardResizeHistory(entry, direction)
@@ -344,11 +397,19 @@ function removeBoardItemsWithHistory(items) {
   if (liveItems.some((item) => item.isMoodboard) && typeof closeMoodboardEditor === 'function') {
     closeMoodboardEditor();
   }
-  recordBoardItemsHistory('remove', liveItems);
-  AppState.boardItems = AppState.boardItems.filter((item) => !liveIds.has(item.id));
-  canvasWorkspaceRemoveItems([...liveIds]);
-  if (typeof activeTextNoteId !== 'undefined' && liveIds.has(activeTextNoteId)) hideTextToolPanel();
-  persistBoardItemMutation({ remove: [...liveIds] });
+  const partitions = liveItems.filter((item) => item.isPartition);
+  const regularItems = liveItems.filter((item) => !item.isPartition);
+  partitions.forEach((partition) => removeBoardPartition(partition, { recordHistory: true, render: false }));
+  if (!regularItems.length) {
+    renderBoard();
+    return true;
+  }
+  const regularIds = new Set(regularItems.map((item) => item.id));
+  recordBoardItemsHistory('remove', regularItems);
+  AppState.boardItems = AppState.boardItems.filter((item) => !regularIds.has(item.id));
+  canvasWorkspaceRemoveItems([...regularIds]);
+  if (typeof activeTextNoteId !== 'undefined' && regularIds.has(activeTextNoteId)) hideTextToolPanel();
+  persistBoardItemMutation({ remove: [...regularIds] });
   renderBoard();
   return true;
 }
@@ -387,23 +448,54 @@ async function boardClipboardIsCurrent() {
   }
 }
 
-async function pasteBoardClipboardOrExternal() {
+async function pasteBoardClipboardOrExternal(placement = null) {
   if (await boardClipboardIsCurrent()) {
-    if (BoardClipboard.items.length) pasteBoardClipboard();
+    if (BoardClipboard.items.length) {
+      if (placement && Number.isFinite(placement.x) && Number.isFinite(placement.y)) {
+        pasteBoardClipboard(placement.x, placement.y, placement);
+      } else {
+        pasteBoardClipboard();
+      }
+    }
     else if (BoardClipboard.mediaFileIds.length) {
-      await pasteBoardClipboardMedia();
+      await pasteBoardClipboardMedia(placement);
     }
     return;
   }
   BoardClipboard.preferInternal = false;
-  await pasteExternalImageWithFeedback();
+  const target = placement && Number.isFinite(placement.x) && Number.isFinite(placement.y)
+    ? (placement.externalPlacement || placement)
+    : (boardImplicitPastePlacement() || boardViewportCenterCoords());
+  await pasteExternalImageWithFeedback(target, placement && placement.clipboardRequest
+    ? placement.clipboardRequest
+    : {});
 }
 
 function setBoardClipboardItems(items) {
-  BoardClipboard.items = (items || []).filter(Boolean).map(cloneBoardHistoryItem);
-  BoardClipboard.sourceCanvasId = BoardClipboard.items.length ? activeCanvasId() : null;
+  const sourceCanvasId = activeCanvasId();
+  const fallbackCanvasId = (AppState.canvases[0] && AppState.canvases[0].id) || 'canvas-1';
+  const liveItemsById = new Map(
+    AppState.boardItems
+      .filter((item) => item && (item.canvasId || fallbackCanvasId) === sourceCanvasId)
+      .map((item) => [item.id, item])
+  );
+  const requested = (items || [])
+    .map((item) => item && liveItemsById.get(item.id))
+    .filter(Boolean);
+  const requestedIds = new Set(requested.map((item) => item.id));
+  requested.filter((item) => item.isPartition).forEach((partition) => {
+    AppState.boardItems
+      .filter((item) => item.partitionId === partition.id && !requestedIds.has(item.id))
+      .forEach((item) => {
+        requested.push(item);
+        requestedIds.add(item.id);
+      });
+  });
+  BoardClipboard.items = requested.map(cloneBoardHistoryItem);
+  BoardClipboard.sourceCanvasId = BoardClipboard.items.length ? sourceCanvasId : null;
   const mediaFileIds = BoardClipboard.items.map((item) => item.fileId).filter(Boolean);
   setBoardClipboardMedia(mediaFileIds, 'canvas');
+  return BoardClipboard.items;
 }
 
 function boardClipboardMediaFiles() {
@@ -424,37 +516,83 @@ function setBoardClipboardMedia(fileIds, sourceMode) {
   BoardClipboard.preferInternal = BoardClipboard.items.length > 0 || BoardClipboard.mediaFileIds.length > 0;
 }
 
-async function pasteBoardClipboardMedia() {
+async function pasteBoardClipboardMedia(placement = null) {
   const fileIds = boardClipboardMediaFiles().map((file) => file.id);
   if (!fileIds.length) return [];
-  const center = boardViewportCenterCoords();
+  const effectivePlacement = placement && placement.externalPlacement
+    ? { ...placement.externalPlacement, partitionPoint: placement.partitionPoint }
+    : placement;
+  const center = effectivePlacement && Number.isFinite(effectivePlacement.x) && Number.isFinite(effectivePlacement.y)
+    ? effectivePlacement
+    : (boardImplicitPastePlacement() || boardViewportCenterCoords());
+  const activePartition = !placement ? activeBoardPartition() : null;
   return addFilesToBoard(fileIds, center.x, center.y, {
     duplicateExisting: true,
-    selectAdded: true
+    selectAdded: true,
+    partitionId: activePartition
+      ? activePartition.id
+      : (boardPartitionAtPoint(center.partitionPoint || center)?.id || null)
   });
 }
 
-function pasteBoardClipboard(atX, atY) {
+function pasteBoardClipboard(atX, atY, placementOptions = {}) {
   const offset = 28;
   const targetCanvasId = activeCanvasId();
   const newItems = [];
   AppState.boardItems.forEach((item) => { item.selected = false; });
+  const sourceBounds = boardSelectionBounds(BoardClipboard.items);
+  const hasExplicitPlacement = Number.isFinite(atX) && Number.isFinite(atY);
+  const implicitPartition = !hasExplicitPlacement ? activeBoardPartition() : null;
+  const implicitPlacement = implicitPartition ? boardPartitionPlacement(implicitPartition) : null;
+  const targetPlacement = hasExplicitPlacement ? { x: atX, y: atY } : implicitPlacement;
+  const deltaX = targetPlacement && sourceBounds
+    ? (hasExplicitPlacement
+      ? targetPlacement.x - sourceBounds.x
+      : targetPlacement.x - (sourceBounds.x + sourceBounds.w / 2))
+    : offset;
+  const deltaY = targetPlacement && sourceBounds
+    ? (hasExplicitPlacement
+      ? targetPlacement.y - sourceBounds.y
+      : targetPlacement.y - (sourceBounds.y + sourceBounds.h / 2))
+    : offset;
+  const idMap = new Map(BoardClipboard.items.map((clipboardItem) => [
+    clipboardItem.id,
+    (clipboardItem.isPartition ? 'partition_' : clipboardItem.isMoodboard ? 'moodboard_' : (clipboardItem.isNote ? 'note_' : 'b_')) + Math.random().toString(36).slice(2, 10)
+  ]));
+  const targetPartition = hasExplicitPlacement
+    ? boardPartitionAtPoint(placementOptions.partitionPoint || {
+      x: atX + (sourceBounds ? sourceBounds.w / 2 : 0),
+      y: atY + (sourceBounds ? sourceBounds.h / 2 : 0)
+    })
+    : implicitPartition;
 
   BoardClipboard.items.forEach((clipboardItem, i) => {
     const srcItem = cloneBoardHistoryItem(clipboardItem);
     const newItem = {
       ...srcItem,
-      id: (clipboardItem.isMoodboard ? 'moodboard_' : (srcItem.isNote ? 'note_' : 'b_')) + Math.random().toString(36).slice(2, 10),
-      x: (atX !== undefined ? atX : srcItem.x + offset) + i * 12,
-      y: (atY !== undefined ? atY : srcItem.y + offset) + i * 12,
-      zIndex: AppState.boardItems.length + i + 1,
+      id: idMap.get(srcItem.id),
+      x: srcItem.x + deltaX,
+      y: srcItem.y + deltaY,
+      zIndex: srcItem.isPartition ? 0 : AppState.boardItems.length + i + 1,
       canvasId: targetCanvasId,
-      selected: true
+      selected: !srcItem.isPartition
     };
+    if (srcItem.partitionId && idMap.has(srcItem.partitionId)) {
+      newItem.partitionId = idMap.get(srcItem.partitionId);
+    } else if (!srcItem.isPartition && targetPartition && newItem.fileId) {
+      newItem.partitionId = targetPartition.id;
+    } else if (!hasExplicitPlacement && srcItem.partitionId &&
+      BoardClipboard.sourceCanvasId === targetCanvasId && boardPartitionById(srcItem.partitionId)) {
+      newItem.partitionId = srcItem.partitionId;
+    } else {
+      delete newItem.partitionId;
+    }
     AppState.boardItems.push(newItem);
     canvasWorkspaceAddItem(newItem);
     newItems.push(newItem);
   });
+
+  constrainBoardItemsToPartitions(newItems.filter((item) => !item.isPartition), { resize: true });
 
   recordBoardItemsHistory('add', newItems);
   renderBoard();
@@ -1117,13 +1255,14 @@ function locateBoardImages() {
   fitBoardItemsToViewport(images.length ? images : AppState.boardItems);
 }
 
-async function addFileToBoard(fileId, x, y) {
-  await addFilesToBoard([fileId], x, y);
+async function addFileToBoard(fileId, x, y, options = {}) {
+  await addFilesToBoard([fileId], x, y, options);
 }
 
 async function addFilesToBoard(fileIds, x, y, options = {}) {
   const ids = [...new Set(fileIds.filter(Boolean))];
   if (!ids.length) return;
+  const targetPartition = boardPartitionById(options.partitionId) || boardPartitionAtPoint({ x, y });
   const columns = Math.max(1, Math.ceil(Math.sqrt(ids.length)));
   const changed = [];
   const added = [];
@@ -1164,6 +1303,7 @@ async function addFilesToBoard(fileIds, x, y, options = {}) {
     if (exists && !addCopy) {
       exists.x = itemX;
       exists.y = itemY;
+      if (targetPartition) exists.partitionId = targetPartition.id;
       if (hasMediaDimensions) {
         exists.width = Number(exists.width) > 0 ? exists.width : 220;
         exists.height = Math.max(1, Math.round(exists.width * sourceHeight / sourceWidth));
@@ -1181,6 +1321,7 @@ async function addFilesToBoard(fileIds, x, y, options = {}) {
       canvasId: activeCanvasId(),
       selected: !!options.selectAdded
     };
+    if (targetPartition) item.partitionId = targetPartition.id;
     if (hasMediaDimensions) {
       item.height = Math.max(1, Math.round(item.width * sourceHeight / sourceWidth));
     }
@@ -1190,6 +1331,9 @@ async function addFilesToBoard(fileIds, x, y, options = {}) {
     changed.push(item);
     added.push(item);
   }
+
+  if (targetPartition) fitBoardItemsIntoPartition(changed, targetPartition);
+  else constrainBoardItemsToPartitions(changed, { resize: true });
 
   if (typeof window.messsAPI.upsertBoardItems === 'function') {
     // Paint the local result before the disk/cloud round trip. The caller has
@@ -1476,7 +1620,212 @@ function applyBoardRichContent(content, f, result) {
   // Anything else (unsupported) just keeps the generic icon placeholder.
 }
 
+function boardPartitionById(partitionId) {
+  if (!partitionId) return null;
+  return AppState.boardItems.find((item) => item.isPartition && item.id === partitionId) || null;
+}
+
+function setActiveBoardPartition(partitionOrId) {
+  const partitionId = typeof partitionOrId === 'string'
+    ? partitionOrId
+    : partitionOrId && partitionOrId.id;
+  Board.activePartitionId = partitionId && boardPartitionById(partitionId)
+    ? partitionId
+    : null;
+  return boardPartitionById(Board.activePartitionId);
+}
+
+function activeBoardPartition() {
+  const partition = boardPartitionById(Board.activePartitionId);
+  if (!partition) Board.activePartitionId = null;
+  return partition;
+}
+
+function boardSelectionContextItems() {
+  const partition = activeBoardPartition();
+  return partition
+    ? boardPartitionMembers(partition)
+    : AppState.boardItems.filter((item) => item && !item.isPartition);
+}
+
+function boardPartitionMembers(partitionOrId) {
+  const partitionId = typeof partitionOrId === 'string' ? partitionOrId : partitionOrId && partitionOrId.id;
+  if (!partitionId) return [];
+  return AppState.boardItems.filter((item) => !item.isPartition && item.partitionId === partitionId);
+}
+
+function boardPartitionContentBounds(partition) {
+  if (!partition || !partition.isPartition) return null;
+  const width = Math.max(BOARD_PARTITION_MIN_WIDTH, Number(partition.width) || BOARD_PARTITION_MIN_WIDTH);
+  const height = Math.max(BOARD_PARTITION_MIN_HEIGHT, Number(partition.height) || BOARD_PARTITION_MIN_HEIGHT);
+  // Keep the title/content breathing room tied to the partition scale. This
+  // lets a proportional partition resize keep its members inside the frame
+  // instead of leaving a fixed padding margin that becomes too large after a
+  // shrink operation.
+  const paddingScale = Math.max(0.35, Math.min(4, Number(partition.contentScale) || 1));
+  const sidePadding = BOARD_PARTITION_SIDE_PADDING * paddingScale;
+  const topPadding = BOARD_PARTITION_TOP_PADDING * paddingScale;
+  const bottomPadding = BOARD_PARTITION_BOTTOM_PADDING * paddingScale;
+  return {
+    x: (Number(partition.x) || 0) + sidePadding,
+    y: (Number(partition.y) || 0) + topPadding,
+    w: Math.max(1, width - sidePadding * 2),
+    h: Math.max(1, height - topPadding - bottomPadding)
+  };
+}
+
+function boardPartitionAtPoint(point) {
+  if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return null;
+  return AppState.boardItems
+    .filter((item) => item.isPartition)
+    .sort((left, right) => Number(right.zIndex || 0) - Number(left.zIndex || 0))
+    .find((partition) => {
+      const bounds = boardPartitionContentBounds(partition);
+      return bounds && point.x >= bounds.x && point.x <= bounds.x + bounds.w &&
+        point.y >= bounds.y && point.y <= bounds.y + bounds.h;
+    }) || null;
+}
+
+function boardPartitionForItems(items) {
+  const partitionIds = new Set((items || [])
+    .filter((item) => item && !item.isPartition)
+    .map((item) => item.partitionId)
+    .filter(Boolean));
+  if (partitionIds.size !== 1) return null;
+  return boardPartitionById([...partitionIds][0]);
+}
+
+function boardPartitionPlacement(partition) {
+  const bounds = boardPartitionContentBounds(partition);
+  return bounds ? { x: bounds.x + bounds.w / 2, y: bounds.y + bounds.h / 2 } : null;
+}
+
+function boardImplicitPastePlacement() {
+  const partition = activeBoardPartition();
+  return partition ? boardPartitionPlacement(partition) : null;
+}
+
+function constrainBoardItemToPartition(item, options = {}) {
+  if (!item || item.isPartition || !item.partitionId) return false;
+  const partition = boardPartitionById(item.partitionId);
+  const inner = boardPartitionContentBounds(partition);
+  if (!inner) {
+    delete item.partitionId;
+    return true;
+  }
+  let bounds = boardItemBounds(item);
+  const initialWidth = bounds.w;
+  const initialHeight = bounds.h;
+  if (options.resize !== false && (bounds.w > inner.w || bounds.h > inner.h)) {
+    const scale = Math.min(inner.w / Math.max(1, bounds.w), inner.h / Math.max(1, bounds.h));
+    item.width = Math.max(1, Math.round(bounds.w * scale));
+    item.height = Math.max(1, Math.round(bounds.h * scale));
+    bounds = boardItemBounds(item);
+  }
+  const nextX = Math.round(Math.max(inner.x, Math.min(item.x, inner.x + inner.w - bounds.w)));
+  const nextY = Math.round(Math.max(inner.y, Math.min(item.y, inner.y + inner.h - bounds.h)));
+  const changed = nextX !== item.x || nextY !== item.y || bounds.w !== initialWidth || bounds.h !== initialHeight;
+  item.x = nextX;
+  item.y = nextY;
+  return changed;
+}
+
+function constrainBoardItemsToPartitions(items, options = {}) {
+  let changed = false;
+  (items || []).forEach((item) => {
+    if (constrainBoardItemToPartition(item, options)) changed = true;
+  });
+  return changed;
+}
+
+function fitBoardItemsIntoPartition(items, partition) {
+  const members = (items || []).filter((item) => item && !item.isPartition && item.partitionId === partition.id);
+  const inner = boardPartitionContentBounds(partition);
+  let bounds = boardSelectionBounds(members);
+  if (!members.length || !inner || !bounds) return false;
+  const scale = Math.min(1, inner.w / Math.max(1, bounds.w), inner.h / Math.max(1, bounds.h));
+  if (scale < 1) {
+    members.forEach((item) => {
+      const frame = boardItemBounds(item);
+      item.x = Math.round(bounds.x + (frame.x - bounds.x) * scale);
+      item.y = Math.round(bounds.y + (frame.y - bounds.y) * scale);
+      item.width = Math.max(1, Math.round(frame.w * scale));
+      item.height = Math.max(1, Math.round(frame.h * scale));
+    });
+    bounds = boardSelectionBounds(members);
+  }
+  const shiftX = bounds.x < inner.x
+    ? inner.x - bounds.x
+    : bounds.x + bounds.w > inner.x + inner.w ? inner.x + inner.w - bounds.x - bounds.w : 0;
+  const shiftY = bounds.y < inner.y
+    ? inner.y - bounds.y
+    : bounds.y + bounds.h > inner.y + inner.h ? inner.y + inner.h - bounds.y - bounds.h : 0;
+  if (shiftX || shiftY) {
+    members.forEach((item) => {
+      item.x = Math.round(item.x + shiftX);
+      item.y = Math.round(item.y + shiftY);
+    });
+  }
+  constrainBoardItemsToPartitions(members, { resize: true });
+  return scale < 1 || !!shiftX || !!shiftY;
+}
+
+function fitBoardItemsIntoPartitions(items) {
+  const byPartition = new Map();
+  (items || []).forEach((item) => {
+    if (!item || !item.partitionId) return;
+    if (!byPartition.has(item.partitionId)) byPartition.set(item.partitionId, []);
+    byPartition.get(item.partitionId).push(item);
+  });
+  byPartition.forEach((members, partitionId) => {
+    const partition = boardPartitionById(partitionId);
+    if (partition) fitBoardItemsIntoPartition(members, partition);
+  });
+}
+
+function constrainedBoardMoveDeltas(startPositions, dx, dy) {
+  const result = new Map();
+  const movingPartitionIds = new Set(startPositions
+    .filter(({ item }) => item && item.isPartition)
+    .map(({ item }) => item.id));
+  const groups = new Map();
+  startPositions.forEach((entry) => {
+    const partitionId = entry.item && entry.item.partitionId;
+    if (!partitionId || movingPartitionIds.has(partitionId)) {
+      result.set(entry.item.id, { dx, dy });
+      return;
+    }
+    if (!groups.has(partitionId)) groups.set(partitionId, []);
+    groups.get(partitionId).push(entry);
+  });
+  groups.forEach((entries, partitionId) => {
+    const partition = boardPartitionById(partitionId);
+    const inner = boardPartitionContentBounds(partition);
+    const syntheticItems = entries.map(({ item, startLeft, startTop }) => {
+      const frame = boardItemBounds(item);
+      return { id: item.id, x: startLeft, y: startTop, width: frame.w, height: frame.h };
+    });
+    const bounds = boardSelectionBounds(syntheticItems);
+    if (!inner || !bounds) {
+      entries.forEach(({ item }) => result.set(item.id, { dx, dy }));
+      return;
+    }
+    const safeDx = Math.max(inner.x - bounds.x, Math.min(dx, inner.x + inner.w - bounds.x - bounds.w));
+    const safeDy = Math.max(inner.y - bounds.y, Math.min(dy, inner.y + inner.h - bounds.y - bounds.h));
+    entries.forEach(({ item }) => result.set(item.id, { dx: safeDx, dy: safeDy }));
+  });
+  return result;
+}
+
 function boardItemBounds(item) {
+  if (item && item.isPartition) {
+    return {
+      x: Number.isFinite(item.x) ? item.x : 0,
+      y: Number.isFinite(item.y) ? item.y : 0,
+      w: Math.max(BOARD_PARTITION_MIN_WIDTH, Number(item.width) || BOARD_PARTITION_MIN_WIDTH),
+      h: Math.max(BOARD_PARTITION_MIN_HEIGHT, Number(item.height) || BOARD_PARTITION_MIN_HEIGHT)
+    };
+  }
   const measured = Board.metrics.get(item.id);
   const width = Math.max(1, item.width || (measured && measured.w) || 220);
   let height = item.height || (measured && measured.h);
@@ -1577,6 +1926,7 @@ function boardRenderMetadata(value) {
 }
 
 function boardItemRenderSignature(item, file) {
+  if (item.isPartition) return `partition:${item.partitionName || ''}`;
   if (item.isAiPlaceholder) return `pending:${item.id}`;
   if (item.isMoodboard) {
     return [
@@ -1607,13 +1957,18 @@ function boardItemRenderSignature(item, file) {
 function syncMountedBoardItemGeometry(element, item) {
   const file = Board.filesById.get(item.fileId);
   const isMedia = file && (isImageExt(file.ext) || isVideoExt(file.ext));
-  const width = Math.max(1, Number(item.width) || 220);
+  const width = item.isPartition
+    ? Math.max(BOARD_PARTITION_MIN_WIDTH, Number(item.width) || BOARD_PARTITION_MIN_WIDTH)
+    : Math.max(1, Number(item.width) || 220);
   element.style.left = `${Number.isFinite(item.x) ? item.x : 0}px`;
   element.style.top = `${Number.isFinite(item.y) ? item.y : 0}px`;
-  element.style.zIndex = String(item.zIndex || 1);
+  element.style.zIndex = String(item.isPartition ? (Number(item.zIndex) || 0) : (item.zIndex || 1));
   if (!item.isNote || Number(item.width) > 0) element.style.width = `${width}px`;
 
-  if (isMedia && Number(file.sourceWidth) > 0 && Number(file.sourceHeight) > 0) {
+  if (item.isPartition) {
+    element.style.aspectRatio = '';
+    element.style.height = `${Math.max(BOARD_PARTITION_MIN_HEIGHT, Number(item.height) || BOARD_PARTITION_MIN_HEIGHT)}px`;
+  } else if (isMedia && Number(file.sourceWidth) > 0 && Number(file.sourceHeight) > 0) {
     const height = Math.max(1, Math.round(width * file.sourceHeight / file.sourceWidth));
     element.style.aspectRatio = `${file.sourceWidth} / ${file.sourceHeight}`;
     element.style.height = `${height}px`;
@@ -1647,7 +2002,7 @@ function reconcileMountedBoardItemsAfterDataChange() {
 function isMountableBoardItem(id) {
   const item = Board.itemsById.get(id);
   if (!item) return false;
-  return !!(item.isAiPlaceholder || item.isMoodboard || item.isNote || item.isDoodle || Board.filesById.has(item.fileId));
+  return !!(item.isPartition || item.isAiPlaceholder || item.isMoodboard || item.isNote || item.isDoodle || Board.filesById.has(item.fileId));
 }
 
 function isBoardElementPaintReady(element) {
@@ -1758,6 +2113,7 @@ function ensureBoardOverviewCanvas() {
 }
 
 function boardOverviewColor(item) {
+  if (item.isPartition) return 'rgba(125, 135, 152, 0.22)';
   if (item.isDoodle) return '#9b58e9';
   if (item.isNote) return '#d7b94b';
   const file = Board.filesById.get(item.fileId);
@@ -2021,7 +2377,15 @@ function drawBoardOverview(visibleIds, viewportRect) {
   const imageIds = new Set(prioritizedImages.map((entry) => entry.id));
   prioritizeBoardOverviewImageQueue(prioritizedImages.map((entry) => entry.file));
 
-  for (const id of visibleIds) {
+  const overviewIds = [...visibleIds].sort((leftId, rightId) => {
+    const left = Board.itemsById.get(leftId);
+    const right = Board.itemsById.get(rightId);
+    if (!!(left && left.isPartition) !== !!(right && right.isPartition)) {
+      return left && left.isPartition ? -1 : 1;
+    }
+    return Number((left && left.zIndex) || 0) - Number((right && right.zIndex) || 0);
+  });
+  for (const id of overviewIds) {
     const item = Board.itemsById.get(id);
     const bounds = Board.spatialIndex.getBounds(id);
     if (!item || !bounds) continue;
@@ -2083,7 +2447,355 @@ function buildAiPlaceholderElementLocalized(item) {
   return el;
 }
 
+function beginBoardPartitionRename(item, partitionElement = null) {
+  if (!item || !item.isPartition) return false;
+  const element = partitionElement || Board.mounted.get(item.id) ||
+    document.querySelector(`.board-partition[data-board-id="${item.id}"]`);
+  const title = element && element.querySelector('.board-partition-title');
+  if (!title || title.dataset.editing === 'true') return false;
+  const previousName = String(item.partitionName || t('Secondary partition', '二级分区')).trim();
+  const input = document.createElement('input');
+  input.className = 'board-partition-title-input';
+  input.type = 'text';
+  input.maxLength = 48;
+  input.value = previousName;
+  input.setAttribute('aria-label', t('Partition name', '分区名称'));
+  title.dataset.editing = 'true';
+  title.replaceChildren(input);
+
+  let finished = false;
+  const finish = (commit) => {
+    if (finished) return;
+    finished = true;
+    const nextName = commit ? input.value.trim().slice(0, 48) : previousName;
+    item.partitionName = nextName || previousName || t('Secondary partition', '二级分区');
+    title.dataset.editing = 'false';
+    title.textContent = item.partitionName;
+    if (commit && item.partitionName !== previousName) {
+      persistBoardItemMutation({ upsert: [item] }, item.canvasId || activeCanvasId());
+    }
+  };
+  input.addEventListener('mousedown', (event) => event.stopPropagation());
+  input.addEventListener('click', (event) => event.stopPropagation());
+  input.addEventListener('keydown', (event) => {
+    event.stopPropagation();
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      finish(true);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      finish(false);
+    }
+  });
+  input.addEventListener('blur', () => finish(true), { once: true });
+  requestAnimationFrame(() => {
+    input.focus({ preventScroll: true });
+    input.select();
+  });
+  return true;
+}
+
+function makeBoardPartitionDraggable(handle, element, partition) {
+  handle.addEventListener('mousedown', (event) => {
+    if (event.button !== 0 || event.altKey || event.target.closest('input')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setActiveBoardPartition(partition);
+    AppState.boardItems.forEach((item) => { item.selected = item.id === partition.id; });
+    syncBoardSelectionClasses();
+    markBoardInteraction();
+    element.classList.add('is-dragging');
+
+    const members = boardPartitionMembers(partition);
+    const movingItems = [partition, ...members];
+    const startPositions = movingItems.map((item) => ({ item, startLeft: item.x, startTop: item.y }));
+    const movingElements = new Map(movingItems.map((item) => [
+      item.id,
+      Board.mounted.get(item.id) || document.querySelector(`.board-item[data-board-id="${item.id}"]`)
+    ]));
+    const startClientX = event.clientX;
+    const startClientY = event.clientY;
+    let moved = false;
+    const moveRunner = createLatestFrameRunner((point) => {
+      const dx = (point.clientX - startClientX) / Math.max(Board.zoom, 0.001);
+      const dy = (point.clientY - startClientY) / Math.max(Board.zoom, 0.001);
+      startPositions.forEach(({ item, startLeft, startTop }) => {
+        item.x = Math.round(startLeft + dx);
+        item.y = Math.round(startTop + dy);
+        const movingElement = movingElements.get(item.id);
+        if (movingElement) {
+          movingElement.style.left = `${item.x}px`;
+          movingElement.style.top = `${item.y}px`;
+        }
+      });
+    });
+    const onMove = (moveEvent) => {
+      if (Math.hypot(moveEvent.clientX - startClientX, moveEvent.clientY - startClientY) > 4) moved = true;
+      markBoardInteraction();
+      moveRunner.push({ clientX: moveEvent.clientX, clientY: moveEvent.clientY });
+    };
+    const onUp = () => {
+      moveRunner.flush();
+      element.classList.remove('is-dragging');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      movingItems.forEach(updateBoardItemIndex);
+      if (moved) {
+        Board.lastDragEndedAt = Date.now();
+        recordBoardMoveHistory(startPositions);
+        persistBoardMoveHistory(movingItems, partition.canvasId || activeCanvasId());
+      }
+      scheduleBoardReconcile();
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+function addBoardPartitionResizeHandles(element, partition) {
+  const corners = [
+    { cls: 'corner-se', signX: 1, signY: 1 },
+    { cls: 'corner-sw', signX: -1, signY: 1 },
+    { cls: 'corner-ne', signX: 1, signY: -1 },
+    { cls: 'corner-nw', signX: -1, signY: -1 }
+  ];
+  corners.forEach(({ cls, signX, signY }) => {
+    const handle = document.createElement('div');
+    handle.className = `board-resize-handle ${cls}`;
+    handle.addEventListener('mousedown', (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const startFrame = boardItemBounds(partition);
+      const members = boardPartitionMembers(partition);
+      const startMemberFrames = members.map((item) => {
+        const frame = boardItemBounds(item);
+        return { item, x: frame.x, y: frame.y, width: frame.w, height: frame.h };
+      });
+      const startContentScale = Math.max(0.35, Math.min(4, Number(partition.contentScale) || 1));
+      const startClientX = event.clientX;
+      const startClientY = event.clientY;
+      const anchorX = signX > 0 ? startFrame.x : startFrame.x + startFrame.w;
+      const anchorY = signY > 0 ? startFrame.y : startFrame.y + startFrame.h;
+      let minScale = Math.max(
+        BOARD_PARTITION_MIN_WIDTH / Math.max(1, startFrame.w),
+        BOARD_PARTITION_MIN_HEIGHT / Math.max(1, startFrame.h)
+      );
+      startMemberFrames.forEach(({ item, width, height }) => {
+        minScale = Math.max(
+          minScale,
+          (item.isDoodle ? 4 : MIN_BOARD_ITEM_WIDTH) / Math.max(1, width),
+          (item.isDoodle ? 4 : 40) / Math.max(1, height)
+        );
+      });
+      const memberElements = new Map(startMemberFrames.map(({ item }) => [
+        item.id,
+        Board.mounted.get(item.id) || document.querySelector(`.board-item[data-board-id="${item.id}"]`)
+      ]));
+      element.classList.add('is-resizing');
+      markBoardInteraction();
+
+      const resizeRunner = createLatestFrameRunner((point) => {
+        const worldDx = (point.clientX - startClientX) / Math.max(Board.zoom, 0.001);
+        const worldDy = (point.clientY - startClientY) / Math.max(Board.zoom, 0.001);
+        const widthScale = (startFrame.w + worldDx * signX) / Math.max(1, startFrame.w);
+        const heightScale = (startFrame.h + worldDy * signY) / Math.max(1, startFrame.h);
+        const rawScale = Math.abs(widthScale - 1) >= Math.abs(heightScale - 1)
+          ? widthScale
+          : heightScale;
+        const scale = Math.max(minScale, rawScale);
+        const width = Math.max(BOARD_PARTITION_MIN_WIDTH, Math.round(startFrame.w * scale));
+        const height = Math.max(BOARD_PARTITION_MIN_HEIGHT, Math.round(startFrame.h * scale));
+        const left = signX > 0 ? anchorX : anchorX - width;
+        const top = signY > 0 ? anchorY : anchorY - height;
+        partition.x = Math.round(left);
+        partition.y = Math.round(top);
+        partition.width = width;
+        partition.height = height;
+        partition.contentScale = Number((startContentScale * scale).toFixed(4));
+        syncMountedBoardItemGeometry(element, partition);
+        startMemberFrames.forEach(({ item, x, y, width: startWidth, height: startHeight }) => {
+          item.x = Math.round(anchorX + (x - anchorX) * scale);
+          item.y = Math.round(anchorY + (y - anchorY) * scale);
+          item.width = Math.max(item.isDoodle ? 4 : MIN_BOARD_ITEM_WIDTH, Math.round(startWidth * scale));
+          item.height = Math.max(item.isDoodle ? 4 : 40, Math.round(startHeight * scale));
+        });
+        constrainBoardItemsToPartitions(members, { resize: true });
+        members.forEach((item) => {
+          const memberElement = memberElements.get(item.id);
+          if (memberElement) syncMountedBoardItemGeometry(memberElement, item);
+        });
+      });
+      const onMove = (moveEvent) => {
+        markBoardInteraction();
+        resizeRunner.push({ clientX: moveEvent.clientX, clientY: moveEvent.clientY });
+      };
+      const onUp = () => {
+        resizeRunner.flush();
+        element.classList.remove('is-resizing');
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        updateBoardItemIndex(partition);
+        constrainBoardItemsToPartitions(members, { resize: true });
+        const changedItems = [partition, ...members];
+        changedItems.forEach((item) => updateBoardItemIndex(item));
+        members.forEach((item) => {
+          const memberElement = memberElements.get(item.id);
+          if (memberElement) syncMountedBoardItemGeometry(memberElement, item);
+        });
+        const startFrames = [
+          {
+            item: partition,
+            x: startFrame.x,
+            y: startFrame.y,
+            width: startFrame.w,
+            height: startFrame.h,
+            contentScale: startContentScale
+          },
+          ...startMemberFrames
+        ];
+        if (recordBoardResizeHistory(startFrames)) {
+          persistBoardMoveHistory(changedItems, partition.canvasId || activeCanvasId());
+        }
+        scheduleBoardReconcile();
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    element.appendChild(handle);
+  });
+}
+
+function buildBoardPartitionElement(partition) {
+  const element = document.createElement('div');
+  element.className = 'board-item board-partition' +
+    (partition.selected ? ' is-selected is-single-selection' : '');
+  element.dataset.boardId = partition.id;
+  syncMountedBoardItemGeometry(element, partition);
+
+  const title = document.createElement('div');
+  title.className = 'board-partition-title';
+  title.dataset.boardInteractive = 'true';
+  title.textContent = String(partition.partitionName || t('Secondary partition', '二级分区'));
+  title.title = t('Double-click to rename', '双击重命名');
+  title.setAttribute('role', 'button');
+  title.setAttribute('tabindex', '0');
+  title.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setActiveBoardPartition(partition);
+    AppState.boardItems.forEach((item) => { item.selected = item.id === partition.id; });
+    syncBoardSelectionClasses();
+  });
+  title.addEventListener('dblclick', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    beginBoardPartitionRename(partition, element);
+  });
+  title.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === 'F2') {
+      event.preventDefault();
+      beginBoardPartitionRename(partition, element);
+    }
+  });
+  title.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setActiveBoardPartition(partition);
+    AppState.boardItems.forEach((item) => { item.selected = item.id === partition.id; });
+    syncBoardSelectionClasses();
+    showBoardItemContextMenu(partition, event.clientX, event.clientY);
+  });
+  element.appendChild(title);
+  makeBoardPartitionDraggable(title, element, partition);
+  addBoardPartitionResizeHandles(element, partition);
+
+  if (Board.partitionCelebrations.has(partition.id)) {
+    const beam = document.createElement('div');
+    beam.className = 'board-partition-border-beam';
+    beam.setAttribute('aria-hidden', 'true');
+    beam.innerHTML = '<span></span>';
+    element.appendChild(beam);
+    const finish = () => {
+      Board.partitionCelebrations.delete(partition.id);
+      if (beam.isConnected) beam.remove();
+    };
+    beam.addEventListener('animationend', finish, { once: true });
+    setTimeout(finish, 1400);
+  }
+  return element;
+}
+
+function createSecondaryPartition(items) {
+  const filesById = new Map(AppState.files.map((file) => [file.id, file]));
+  const members = (items || []).filter((item) => {
+    const file = item && filesById.get(item.fileId);
+    return item && !item.isPartition && !item.partitionId && file && (isImageExt(file.ext) || isVideoExt(file.ext));
+  });
+  if (members.length < 2) {
+    showToast(t('Select at least two unpartitioned images or videos.', '请至少选择两个尚未分区的图片或视频。'));
+    return null;
+  }
+  const bounds = boardSelectionBounds(members);
+  if (!bounds) return null;
+  const existingCount = AppState.boardItems.filter((item) => item.isPartition).length;
+  const partition = {
+    id: 'partition_' + Math.random().toString(36).slice(2, 11),
+    isPartition: true,
+    partitionName: `${t('Secondary partition', '二级分区')} ${existingCount + 1}`,
+    x: Math.round(bounds.x - BOARD_PARTITION_SIDE_PADDING),
+    y: Math.round(bounds.y - BOARD_PARTITION_TOP_PADDING),
+    width: Math.max(BOARD_PARTITION_MIN_WIDTH, Math.round(bounds.w + BOARD_PARTITION_SIDE_PADDING * 2)),
+    height: Math.max(BOARD_PARTITION_MIN_HEIGHT, Math.round(bounds.h + BOARD_PARTITION_TOP_PADDING + BOARD_PARTITION_BOTTOM_PADDING)),
+    zIndex: 0,
+    canvasId: activeCanvasId(),
+    selected: false
+  };
+  members.forEach((item) => { item.partitionId = partition.id; });
+  AppState.boardItems.push(partition);
+  canvasWorkspaceAddItem(partition);
+  setActiveBoardPartition(partition);
+  Board.partitionCelebrations.add(partition.id);
+  recordBoardHistoryEntry({
+    type: 'partition',
+    action: 'create',
+    partition: cloneBoardHistoryItem(partition),
+    memberIds: members.map((item) => item.id)
+  }, partition.canvasId);
+  persistBoardItemMutation({ upsert: [partition, ...members] }, partition.canvasId);
+  renderBoard();
+  showToast(t('Secondary partition created', '二级分区已建立'));
+  let renameAttempts = 0;
+  const beginInitialRename = () => {
+    renameAttempts += 1;
+    if (!beginBoardPartitionRename(partition) && renameAttempts < 8) setTimeout(beginInitialRename, 60);
+  };
+  setTimeout(beginInitialRename, 60);
+  return partition;
+}
+
+function removeBoardPartition(partition, options = {}) {
+  const livePartition = partition && boardPartitionById(partition.id);
+  if (!livePartition) return false;
+  if (Board.activePartitionId === livePartition.id) Board.activePartitionId = null;
+  const members = boardPartitionMembers(livePartition);
+  if (options.recordHistory !== false) {
+    recordBoardHistoryEntry({
+      type: 'partition',
+      action: 'remove',
+      partition: cloneBoardHistoryItem(livePartition),
+      memberIds: members.map((item) => item.id)
+    }, livePartition.canvasId || activeCanvasId());
+  }
+  members.forEach((item) => { delete item.partitionId; });
+  AppState.boardItems = AppState.boardItems.filter((item) => item.id !== livePartition.id);
+  canvasWorkspaceRemoveItems([livePartition.id]);
+  persistBoardItemMutation({ upsert: members, remove: [livePartition.id] }, livePartition.canvasId || activeCanvasId());
+  if (options.render !== false) renderBoard();
+  return true;
+}
+
 function createBoardItemElement(item) {
+  if (item.isPartition) return buildBoardPartitionElement(item);
   if (item.isAiPlaceholder) return buildAiPlaceholderElementLocalized(item);
   if (item.isMoodboard) return buildBoardMoodboardElement(item);
   if (item.isNote) return buildTextNoteEl(item);
@@ -2118,6 +2830,7 @@ function createBoardItemElement(item) {
   el.dataset.boardId = item.id;
   el.addEventListener('click', (e) => {
     if (isBoardUiEventTarget(e.target)) return;
+    setActiveBoardPartition(item.partitionId || null);
     if (e.ctrlKey || e.metaKey || e.shiftKey) {
       e.stopPropagation();
       item.selected = !item.selected;
@@ -2175,6 +2888,7 @@ function createBoardItemElement(item) {
   el.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     e.stopPropagation();
+    setActiveBoardPartition(item.partitionId || null);
     const selectedCount = AppState.boardItems.filter((boardItem) => boardItem.selected).length;
     if (selectedCount >= 2 && item.selected) {
       showBoardMultiContextMenu(e.clientX, e.clientY);
@@ -2419,7 +3133,7 @@ function boardSelectionBounds(items) {
 }
 
 function boardSelectionResizeItems() {
-  return AppState.boardItems.filter((item) => item && item.selected);
+  return AppState.boardItems.filter((item) => item && item.selected && !item.isPartition);
 }
 
 function ensureBoardSelectionGroup() {
@@ -2558,7 +3272,10 @@ function makeBoardItemDraggable(el, item) {
     // drags the whole selection together, rather than peeling just that
     // one item away from the rest.
     const selectedMates = AppState.boardItems.filter((b) => b.selected);
-    const groupMates = item.groupId
+    const partitionMates = item.isPartition ? boardPartitionMembers(item) : [];
+    const groupMates = item.isPartition
+      ? [item, ...partitionMates]
+      : item.groupId
       ? AppState.boardItems.filter((b) => b.groupId === item.groupId)
       : (item.selected && selectedMates.length > 1 ? selectedMates : [item]);
     const groupStartPositions = groupMates.map((b) => ({ item: b, startLeft: b.x, startTop: b.y }));
@@ -2573,9 +3290,11 @@ function makeBoardItemDraggable(el, item) {
     const moveRunner = createLatestFrameRunner((point) => {
       const dx = (point.clientX - startClientX) / Board.zoom;
       const dy = (point.clientY - startClientY) / Board.zoom;
+      const deltas = constrainedBoardMoveDeltas(groupStartPositions, dx, dy);
       groupStartPositions.forEach(({ item: gItem, startLeft, startTop }) => {
-        gItem.x = Math.round(startLeft + dx);
-        gItem.y = Math.round(startTop + dy);
+        const delta = deltas.get(gItem.id) || { dx, dy };
+        gItem.x = Math.round(startLeft + delta.dx);
+        gItem.y = Math.round(startTop + delta.dy);
         const gEl = groupEls.get(gItem.id);
         if (gEl) {
           gEl.style.left = gItem.x + 'px';
@@ -2694,6 +3413,11 @@ function startBoardSelectionResize(event, corner, group) {
     markBoardInteraction();
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
+    fitBoardItemsIntoPartitions(selectedItems);
+    selectedItems.forEach((item) => {
+      const element = groupElements.get(item.id);
+      if (element) syncMountedBoardItemGeometry(element, item);
+    });
     selectedItems.forEach((item) => updateBoardItemIndex(item));
     if (recordBoardResizeHistory(startFrames)) persistBoardMoveHistory(selectedItems);
     syncBoardSelectionGroup();
@@ -2799,6 +3523,10 @@ function addResizeHandles(el, item) {
         markBoardInteraction();
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
+        const wasConstrained = item.partitionId
+          ? constrainBoardItemToPartition(item, { resize: true })
+          : false;
+        if (wasConstrained) syncMountedBoardItemGeometry(el, item);
         updateBoardItemIndex(item);
         scheduleBoardReconcile();
         window.messsAPI.upsertBoardItem(item);
@@ -2864,6 +3592,9 @@ function startBoxSelect(e) {
   const viewport = document.getElementById('board-viewport');
   const startX = e.clientX, startY = e.clientY;
   const startWorld = clientToBoardCoords(startX, startY);
+  const selectionPartition = boardPartitionAtPoint(startWorld);
+  if (selectionPartition) setActiveBoardPartition(selectionPartition);
+  else setActiveBoardPartition(null);
   const initialSelected = new Set(
     e.shiftKey
       ? AppState.boardItems.filter((item) => item.selected).map((item) => item.id)
@@ -2901,6 +3632,14 @@ function startBoxSelect(e) {
       h: Math.max(0.001, Math.abs(currentWorld.y - startWorld.y))
     };
     const nextIds = Board.spatialIndex.query(worldRect);
+    for (const id of [...nextIds]) {
+      const candidate = Board.itemsById.get(id);
+      if (!candidate || candidate.isPartition ||
+        (selectionPartition && candidate.partitionId !== selectionPartition.id) ||
+        (!selectionPartition && candidate.partitionId)) {
+        nextIds.delete(id);
+      }
+    }
     if (e.shiftKey) initialSelected.forEach((id) => nextIds.add(id));
 
     for (const id of previewIds) {
@@ -2981,7 +3720,10 @@ function initBoardCanvas() {
       void openAiComposerForSelection(editKind);
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
       e.preventDefault();
-      AppState.boardItems.forEach((item) => { item.selected = true; });
+      const contextIds = new Set(boardSelectionContextItems().map((item) => item.id));
+      AppState.boardItems.forEach((item) => {
+        item.selected = contextIds.has(item.id);
+      });
       syncBoardSelectionClasses();
       scheduleBoardReconcile();
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
@@ -2998,10 +3740,16 @@ function initBoardCanvas() {
         void captureBoardClipboardSignature();
       }
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
-      e.preventDefault();
-      void pasteBoardClipboardOrExternal().catch((error) => {
-        showToast(error && error.message ? error.message : t('Could not paste the image', '无法粘贴图片'));
-      });
+      // Chromium dispatches the real paste event after keydown. Let that event
+      // expose browser clipboard files/data URLs first; the timer is only a
+      // fallback for native desktop clipboard providers that emit no event.
+      clearTimeout(Board.clipboardPasteTimer);
+      Board.clipboardPasteTimer = window.setTimeout(() => {
+        Board.clipboardPasteTimer = 0;
+        void pasteBoardClipboardOrExternal().catch((error) => {
+          showToast(error && error.message ? error.message : t('Could not paste the image', '无法粘贴图片'));
+        });
+      }, 220);
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
       e.preventDefault();
       AppState.boardItems.forEach((item) => { item.selected = false; });
@@ -3015,6 +3763,7 @@ function initBoardCanvas() {
     } else if (e.key === 'Escape') {
       closeBoardQuickGenerate();
       AppState.boardItems.forEach((item) => { item.selected = false; });
+      setActiveBoardPartition(null);
       disarmTextPlacement();
       hideTextToolPanel();
       syncBoardSelectionClasses();
@@ -3179,8 +3928,9 @@ function initBoardCanvas() {
         return null;
       }
       BoardClipboard.preferInternal = false;
+      const placement = boardImplicitPastePlacement() || boardViewportCenterCoords();
       return clipboardImageRequest(event.clipboardData)
-        .then((request) => pasteExternalImageWithFeedback(boardViewportCenterCoords(), request));
+        .then((request) => pasteExternalImageWithFeedback(placement, request));
     }).catch((error) => {
       showToast(error && error.message ? error.message : t('Could not paste the image', '无法粘贴图片'));
     });
@@ -3636,6 +4386,7 @@ function buildTextNoteEl(item) {
 
   el.addEventListener('click', (e) => {
     if (el.classList.contains('is-text-editing')) return;
+    setActiveBoardPartition(item.partitionId || null);
     if (!(e.ctrlKey || e.metaKey || e.shiftKey)) AppState.boardItems.forEach((b) => { b.selected = false; });
     item.selected = true;
     syncBoardSelectionClasses();
@@ -3650,6 +4401,7 @@ function buildTextNoteEl(item) {
   el.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     e.stopPropagation();
+    setActiveBoardPartition(item.partitionId || null);
     const selectedCount = AppState.boardItems.filter((boardItem) => boardItem.selected).length;
     if (selectedCount >= 2 && item.selected) showBoardMultiContextMenu(e.clientX, e.clientY);
     else showBoardItemContextMenu(item, e.clientX, e.clientY);
@@ -3980,7 +4732,8 @@ function boardViewportCenterCoords() {
   return clientToBoardCoords(rect.left + rect.width / 2, rect.top + rect.height / 2);
 }
 
-async function importFilesDirectlyToBoard(paths, placement = boardViewportCenterCoords()) {
+async function importFilesDirectlyToBoard(paths, placement = null) {
+  const targetPlacement = placement || boardImplicitPastePlacement() || boardViewportCenterCoords();
   const targetFolderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
     ? AppState.activeFolderId
     : null;
@@ -4002,7 +4755,9 @@ async function importFilesDirectlyToBoard(paths, placement = boardViewportCenter
   ))];
   renderFileList(currentFileListScope());
   renderFolderGridIfActive();
-  await addFilesToBoard(imported.map((file) => file.id), placement.x, placement.y);
+  await addFilesToBoard(imported.map((file) => file.id), targetPlacement.x, targetPlacement.y, {
+    partitionId: !placement ? activeBoardPartition()?.id || null : null
+  });
   if (result.unlocked && result.unlocked.length) await refreshAchievements();
   if (result.failed && result.failed.length) {
     showToast(t('Some files could not be imported.', '部分文件无法导入画布。'), 'AI');
@@ -4066,7 +4821,11 @@ async function clipboardImageRequest(dataTransfer) {
   return request;
 }
 
-async function pasteExternalImageToBoard(placement = boardViewportCenterCoords(), clipboardRequest = {}) {
+async function pasteExternalImageToBoard(placement = null, clipboardRequest = {}) {
+  const targetPlacement = placement && Number.isFinite(placement.x) && Number.isFinite(placement.y)
+    ? placement
+    : (boardImplicitPastePlacement() || boardViewportCenterCoords());
+  const targetPartition = !placement ? activeBoardPartition() : boardPartitionAtPoint(targetPlacement);
   const result = await window.messsAPI.importClipboardImage({
     canvasId: activeCanvasId(),
     folderId: AppState.activeFolderId,
@@ -4079,19 +4838,17 @@ async function pasteExternalImageToBoard(placement = boardViewportCenterCoords()
   AppState.files = [file, ...AppState.files.filter((entry) => entry.id !== file.id)];
   renderFileList(currentFileListScope());
   renderFolderGridIfActive();
-  await addFilesToBoard([file.id], placement.x, placement.y);
+  await addFilesToBoard([file.id], targetPlacement.x, targetPlacement.y, {
+    partitionId: targetPartition ? targetPartition.id : null
+  });
   return true;
 }
 
-function pasteExternalImageWithFeedback(placement = boardViewportCenterCoords(), clipboardRequest = {}) {
+function pasteExternalImageWithFeedback(placement = null, clipboardRequest = {}) {
   if (Board.clipboardPastePromise) return Board.clipboardPastePromise;
   Board.clipboardPastePromise = pasteExternalImageToBoard(placement, clipboardRequest)
     .then((pasted) => {
       if (pasted) return true;
-      if (BoardClipboard.items.length) {
-        pasteBoardClipboard();
-        return true;
-      }
       showToast(t(
         'No importable image found. Copy the image, image file, or image link and try again.',
         '没有找到可导入的图片，请复制图片本身、图片文件或图片链接后重试。'
@@ -4275,7 +5032,8 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
       width: placeholder.width,
       height: placeholder.height,
       aspectRatio: placeholder.aspectRatio,
-      zIndex: placeholder.zIndex
+      zIndex: placeholder.zIndex,
+      ...(placeholder.partitionId ? { partitionId: placeholder.partitionId } : {})
     }));
     const res = await window.messsAPI.generateAiMedia({
       ...generationRequest,
@@ -4768,7 +5526,14 @@ function createAiPlaceholders(request) {
   const count = request.kind === 'image' ? Math.max(1, Math.min(4, Number(request.count) || 1)) : 1;
   const size = BoardEngine.fitAspectRatio(request.aspectRatio, 300, 220);
   const targetCanvasId = request.canvasId || activeCanvasId();
-  const positions = BoardEngine.gridAroundCenter(count, size, request.placement || boardViewportCenterCoords(), 24);
+  const targetPartition = boardPartitionById(request.partitionId) ||
+    boardPartitionAtPoint(request.placement || boardViewportCenterCoords());
+  const positions = BoardEngine.gridAroundCenter(
+    count,
+    size,
+    targetPartition ? boardPartitionPlacement(targetPartition) : (request.placement || boardViewportCenterCoords()),
+    24
+  );
   const items = positions.map((position, index) => ({
     id: 'ai_pending_' + Math.random().toString(36).slice(2, 10),
     isAiPlaceholder: true,
@@ -4780,8 +5545,10 @@ function createAiPlaceholders(request) {
     height: size.height,
     aspectRatio: request.aspectRatio,
     zIndex: AppState.boardItems.length + index + 1,
-    canvasId: targetCanvasId
+    canvasId: targetCanvasId,
+    ...(targetPartition ? { partitionId: targetPartition.id } : {})
   }));
+  if (targetPartition) fitBoardItemsIntoPartition(items, targetPartition);
   AppState.boardItems.push(...items);
   items.forEach(canvasWorkspaceAddItem);
   renderBoard();
@@ -4913,6 +5680,7 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
       zIndex: livePlaceholder.zIndex,
       selected: index === 0
     };
+    if (livePlaceholder.partitionId) item.partitionId = livePlaceholder.partitionId;
     if (sourceWidth > 0 && sourceHeight > 0) {
       item.height = Math.max(1, Math.round(item.width * sourceHeight / sourceWidth));
       item.aspectRatio = `${Math.round(sourceWidth)}:${Math.round(sourceHeight)}`;
@@ -4954,6 +5722,8 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
         zIndex: workingBoardItems.length + index + 1,
         selected: updates.length === 0 && index === 0
       };
+      const targetPartition = boardPartitionById(request.partitionId);
+      if (targetPartition) item.partitionId = targetPartition.id;
       workingBoardItems.push(item);
       updates.push(item);
     });
@@ -4970,6 +5740,8 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
     !placeholderIds.has(item.id) || replacedIds.has(item.id)
   );
   AppState.boardItems = AppState.allBoardItems.filter((item) => (item.canvasId || 'canvas-1') === activeCanvasId());
+  const resultPartitionId = request.partitionId || placeholders.find((placeholder) => placeholder.partitionId)?.partitionId || null;
+  setActiveBoardPartition(resultPartitionId);
   renderBoard();
   if (typeof renderCanvasLibrary === 'function') renderCanvasLibrary();
   canvasWorkspaceTouch(request.canvasId || activeCanvasId());
@@ -6607,6 +7379,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const upstreamPrompt = promptStyle
       ? `${text}\n\nStyle direction:\n${promptStyle.prompt}`
       : text;
+    const selectedReferenceIds = [...boardReferences.values()].map((entry) => entry.fileId);
+    const selectedReferenceItems = AppState.boardItems.filter((item) => selectedReferenceIds.includes(item.fileId));
+    const referencePartition = boardPartitionForItems(selectedReferenceItems);
     const request = {
       kind,
       prompt: upstreamPrompt,
@@ -6635,8 +7410,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       seed,
       styleId,
       styleStrength,
-      referenceFileIds: [...boardReferences.values()].map((entry) => entry.fileId),
+      referenceFileIds: selectedReferenceIds,
       referenceMediaTypes: selectedReferenceKinds,
+      ...(referencePartition ? { partitionId: referencePartition.id } : {}),
       cameraControl: kind === 'video' ? normalizeAiCameraControl(cameraControl) : null,
       urls: [
         ...boardReferences.values().map((entry) => entry.dataUrl).filter(Boolean)
@@ -6795,7 +7571,8 @@ async function generateAiMediaForBoardV3(request) {
       width: placeholder.width,
       height: placeholder.height,
       aspectRatio: placeholder.aspectRatio,
-      zIndex: placeholder.zIndex
+      zIndex: placeholder.zIndex,
+      ...(placeholder.partitionId ? { partitionId: placeholder.partitionId } : {})
     }));
     const res = await window.messsAPI.generateAiMedia({ ...generationRequest, folderId, placements });
     if (res && res.membership) window.MesssCredits.publish(res.membership);
@@ -6969,6 +7746,9 @@ async function submitBoardQuickGeneration(kind, promptText, options = {}) {
       ? await generatedReferenceData(explicitReferenceIds)
       : { urls: await boardSelectionReferenceData(), referenceFileIds: selectedBoardImageItems().map((item) => item.fileId) };
     const referenceFileIds = referenceData.referenceFileIds;
+    const referencePartition = boardPartitionForItems(
+      AppState.boardItems.filter((item) => referenceFileIds.includes(item.fileId))
+    );
     const referenceFile = referenceFileIds.length
       ? AppState.files.find((entry) => entry.id === referenceFileIds[0])
       : null;
@@ -7021,6 +7801,7 @@ async function submitBoardQuickGeneration(kind, promptText, options = {}) {
         : t('Auto-detected API', '自动识别接口'),
       referenceFileIds,
       referenceMediaTypes: referenceData.referenceMediaTypes || referenceFileIds.map(() => 'image'),
+      ...(referencePartition ? { partitionId: referencePartition.id } : {}),
       urls,
       placement: options.placement || null,
       placeOnBoard: options.placeOnBoard !== false
@@ -7712,6 +8493,7 @@ function buildDoodleItemEl(item) {
   el.style.zIndex = item.zIndex || 1;
   el.dataset.boardId = item.id;
   el.addEventListener('click', (e) => {
+    setActiveBoardPartition(item.partitionId || null);
     if (e.ctrlKey || e.metaKey || e.shiftKey) {
       e.stopPropagation();
       item.selected = !item.selected;
@@ -7736,6 +8518,7 @@ function buildDoodleItemEl(item) {
   el.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     e.stopPropagation();
+    setActiveBoardPartition(item.partitionId || null);
     const selectedCount = AppState.boardItems.filter((boardItem) => boardItem.selected).length;
     if (selectedCount >= 2 && item.selected) showBoardMultiContextMenu(e.clientX, e.clientY);
     else showBoardItemContextMenu(item, e.clientX, e.clientY);

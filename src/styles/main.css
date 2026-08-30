@@ -4793,6 +4793,86 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   contain: layout style paint;
 }
 .board-item.is-dragging { cursor: var(--cursor-grabbing); box-shadow: 0 18px 44px rgba(0,0,0,0.4); z-index: 50; will-change: left, top; }
+.board-partition {
+  box-sizing: border-box;
+  min-width: 260px;
+  min-height: 190px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--text-tertiary) 28%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--board-workspace-bg) 68%, var(--bg-surface) 32%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
+  cursor: var(--cursor-default);
+  pointer-events: none;
+  contain: layout style;
+}
+.board-partition.is-dragging {
+  z-index: 0 !important;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 7%, transparent), 0 16px 40px rgba(0,0,0,.12);
+}
+.board-item.board-partition.is-selected { border-radius: 8px; outline-offset: 2px; }
+.board-partition-title {
+  position: absolute;
+  top: 14px;
+  left: 18px;
+  z-index: 4;
+  max-width: calc(100% - 36px);
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 720;
+  line-height: 24px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: var(--cursor-grab);
+  pointer-events: auto;
+  user-select: none;
+}
+.board-partition-title:focus-visible {
+  outline: 1px solid var(--selection-outline);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+.board-partition-title-input {
+  width: min(320px, calc(100% - 2px));
+  height: 26px;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 1px solid var(--selection-outline);
+  border-radius: 0;
+  outline: 0;
+  color: var(--text-primary);
+  background: transparent;
+  font: inherit;
+}
+.board-partition > .board-resize-handle { pointer-events: auto; }
+.board-partition-border-beam {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  overflow: visible;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.board-partition-border-beam > span {
+  position: absolute;
+  width: 92px;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(to right, transparent, #46e3ff 24%, #7f6cff 58%, #ff4fa3 82%, transparent);
+  box-shadow: 0 0 8px rgba(70,227,255,.72), 0 0 13px rgba(255,79,163,.42);
+  filter: saturate(1.16);
+  offset-path: rect(0 auto auto 0 round 8px);
+  offset-rotate: auto;
+  animation: board-partition-border-beam 1.05s linear 1 both;
+}
+@keyframes board-partition-border-beam {
+  from { offset-distance: 0%; }
+  to { offset-distance: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .board-partition-border-beam > span { animation-duration: .01ms; }
+}
 .board-viewport.is-board-compact .board-item:not(.is-selected) {
   box-shadow: none;
 }

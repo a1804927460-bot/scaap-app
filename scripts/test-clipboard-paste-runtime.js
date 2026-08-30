@@ -156,12 +156,15 @@ async function run() {
     switchCanvas(targetCanvasId, { enterWorkspace: true });
     const pasteEvent = new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true });
     document.dispatchEvent(pasteEvent);
+    // The canvas lets Chromium deliver a native paste event first and uses a
+    // short desktop fallback timer only when no native event arrives.
+    await new Promise((resolve) => setTimeout(resolve, 280));
     await (Board.historyPersistPromise || Promise.resolve());
     const pastedItem = AppState.allBoardItems.find((entry) => entry.id !== sourceItem.id && entry.fileId === file.id && entry.canvasId === targetCanvasId);
     if (!pastedItem) {
       return { prevented: event.defaultPrevented, fileDelta: AppState.files.length - before, ext: file && file.ext,
         hasBoardItem: !!item, crossCanvasCopyPrevented: copyEvent.defaultPrevented,
-        crossCanvasPastePrevented: pasteEvent.defaultPrevented, crossCanvasPasted: false,
+        crossCanvasPasteDefaultPrevented: pasteEvent.defaultPrevented, crossCanvasPasted: false,
         visibleAfterSwitch, reason: 'cross-canvas-paste-missing', activeCanvasId: AppState.activeCanvasId,
         clipboard: { preferInternal: BoardClipboard.preferInternal, items: BoardClipboard.items.length,
           mediaFileIds: BoardClipboard.mediaFileIds, sourceCanvasId: BoardClipboard.sourceCanvasId } };
@@ -177,7 +180,7 @@ async function run() {
     if (!targetCard) {
       return { prevented: event.defaultPrevented, fileDelta: AppState.files.length - before, ext: file && file.ext,
         hasBoardItem: !!item, crossCanvasCopyPrevented: copyEvent.defaultPrevented,
-        crossCanvasPastePrevented: pasteEvent.defaultPrevented, crossCanvasPasted: !!pastedItem,
+        crossCanvasPasteDefaultPrevented: pasteEvent.defaultPrevented, crossCanvasPasted: !!pastedItem,
         visibleAfterSwitch, reason: 'canvas-library-card-not-mounted' };
     }
     const contextEvent = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 120 });
@@ -198,7 +201,7 @@ async function run() {
       ext: file && file.ext,
       hasBoardItem: !!item,
       crossCanvasCopyPrevented: copyEvent.defaultPrevented,
-      crossCanvasPastePrevented: pasteEvent.defaultPrevented,
+      crossCanvasPasteDefaultPrevented: pasteEvent.defaultPrevented,
       crossCanvasPasted: !!pastedItem,
       visibleAfterSwitch,
       persistedAfterReload,
@@ -211,7 +214,7 @@ async function run() {
   })()`);
   socket.close();
   if (!result || !result.prevented || result.fileDelta !== 1 || result.ext !== '.png' || !result.hasBoardItem
-    || !result.crossCanvasCopyPrevented || !result.crossCanvasPastePrevented || !result.crossCanvasPasted
+     || !result.crossCanvasCopyPrevented || result.crossCanvasPasteDefaultPrevented || !result.crossCanvasPasted
     || !result.visibleAfterSwitch || !result.persistedAfterReload || !result.pinContextMenuOpened
     || !result.pinned || !result.pinBadgeVisible || !result.pinnedFirst || !result.persistedPin) {
     throw new Error(`Clipboard IPC paste did not reach the canvas: ${JSON.stringify(result)}\n${diagnostics}`);

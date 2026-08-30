@@ -619,7 +619,9 @@ async function placeBoardButlerResult(file, sourceItem, action) {
   const placementY = sourceY + placementOffset;
   closeBoardButlerMenu();
   try {
-    await addFileToBoard(file.id, placementX, placementY);
+    await addFileToBoard(file.id, placementX, placementY, {
+      partitionId: sourceItem && sourceItem.partitionId
+    });
   } catch (error) {
     try { await releaseBoardButlerDeliveries([file]); } catch (releaseError) {
       console.error('Could not release an unplaced Butler result:', releaseError);
@@ -657,7 +659,8 @@ async function placeBoardButlerResults(files, sourceItem, action) {
       await addFileToBoard(
         validFiles[index].id,
         baseX + column * (columnWidth + cardGap),
-        baseY + row * (rowHeight + cardGap)
+        baseY + row * (rowHeight + cardGap),
+        { partitionId: sourceItem && sourceItem.partitionId }
       );
     }
   } catch (error) {
