@@ -8,7 +8,8 @@ const { PROVIDER_CATALOG_VERSION } = require('../lib/provider-catalog');
 
 process.env.Quick_API_KEY = 'quickrouter-secret';
 process.env.AI302_KEY = 'ai302-secret';
-process.env.MINIMAX_API_KEY = 'minimax-secret';
+process.env.ATLASCLOUD_API_KEY = 'atlas-secret';
+process.env.MINIMAX_API_KEY = 'legacy-minimax-secret';
 process.env.LEGNEXT_API_KEY = 'legnext-secret';
 process.env.AI_GATEWAY_PUBLIC_URL = 'https://gateway.test';
 process.env.RELAY_2_API_KEY = 'relay-two-secret';
@@ -201,6 +202,10 @@ assert.equal(publicText.includes('doubao'), false);
 assert.equal(publicText.includes('seedream'), false);
 assert.equal(publicText.includes('upstreamRoutes'), false);
 assert.equal(publicText.includes('tierProviderIds'), false);
+
+// Keep the Atlas credential out of the following generic backup-route tests;
+// those tests intentionally exercise the legacy 302 primary path.
+delete process.env.ATLASCLOUD_API_KEY;
 
 // The same configured backup route must cover image, video, and chat catalog
 // entries without exposing its address or credential to the renderer.
@@ -633,22 +638,17 @@ assert.equal(JSON.parse(chatModelFallbackCalls[0].options.body).model, 'gpt-5.6'
 assert.equal(JSON.parse(chatModelFallbackCalls[1].options.body).model, 'gpt-5.6-luna');
 
 const miniMaxCalls = [];
+process.env.ATLASCLOUD_API_KEY = 'atlas-secret';
 globalThis.fetch = async (url, options = {}) => {
   const value = String(url);
   miniMaxCalls.push({ url: value, options });
-  if (value === 'https://api.minimaxi.com/v2/video_generation') {
-    return jsonResponse({ task_id: 'h3-task-1' });
+  if (value === 'https://api.atlascloud.ai/api/v1/model/generateVideo') {
+    return jsonResponse({ id: 'h3-task-1', status: 'created' });
   }
-  if (value === 'https://api.minimaxi.com/v2/query/video_generation/h3-task-1') {
-    return jsonResponse({
-      task: {
-        id: 'h3-task-1',
-        status: 'succeeded',
-        content: { url: 'https://cdn.example/h3.mp4' }
-      }
-    });
+  if (value === 'https://api.atlascloud.ai/api/v1/model/prediction/h3-task-1') {
+    return jsonResponse({ id: 'h3-task-1', status: 'completed', outputs: ['https://cdn.example/h3.mp4'] });
   }
-  throw new Error(`Unexpected MiniMax URL: ${value}`);
+  throw new Error(`Unexpected H3 URL: ${value}`);
 };
 const createdVideo = await createVideoTask({
   providerId: 'video-1',
@@ -658,22 +658,24 @@ const createdVideo = await createVideoTask({
   aspectRatio: '16:9',
   urls: []
 });
-assert.deepEqual(createdVideo, { providerId: 'video-1', taskId: 'h3-task-1' });
+assert.deepEqual(createdVideo, {
+  providerId: 'atlas-video-minimax-h3-t2v',
+  taskId: 'messs-route:atlas-video-minimax-h3-t2v:h3-task-1'
+});
 assert.deepEqual(await pollVideoTask('video-1', createdVideo.taskId), {
   status: 'succeeded',
-  resultUrl: 'https://cdn.example/h3.mp4',
-  usage: null
+  resultUrl: 'https://cdn.example/h3.mp4'
 });
 const miniMaxBody = JSON.parse(miniMaxCalls[0].options.body);
 assert.deepEqual(miniMaxBody, {
-  model: 'MiniMax-H3',
-  content: [{ type: 'text', text: 'slow cinematic orbit' }],
-  resolution: '2K',
+  model: 'minimax/h3/text-to-video',
+  prompt: 'slow cinematic orbit',
   duration: 5,
   ratio: '16:9',
-  aigc_watermark: false
+  resolution: '2K'
 });
-assert.equal(miniMaxCalls[0].options.headers.Authorization, 'Bearer minimax-secret');
+assert.equal(miniMaxCalls[0].options.headers.Authorization, 'Bearer atlas-secret');
+assert.equal(miniMaxCalls.some((call) => call.url.includes('api.minimaxi.com')), false);
 
 await createVideoTask({
   providerId: 'video-1',
@@ -689,13 +691,12 @@ const frameRequest = miniMaxCalls
     try { return { ...call, body: JSON.parse(call.options.body) }; } catch (error) { return null; }
   })
   .filter(Boolean)
-  .find((call) => call.body && call.body.content && call.body.content.length === 3);
+  .find((call) => call.body && call.body.image && call.body.end_image);
 assert.ok(frameRequest);
 assert.equal(frameRequest.body.ratio, 'adaptive');
-assert.deepEqual(frameRequest.body.content.slice(1), [
-  { type: 'image_url', image_url: { url: 'https://cdn.example/first.png' }, role: 'first_frame' },
-  { type: 'image_url', image_url: { url: 'https://cdn.example/last.png' }, role: 'last_frame' }
-]);
+assert.equal(frameRequest.body.image, 'https://cdn.example/first.png');
+assert.equal(frameRequest.body.end_image, 'https://cdn.example/last.png');
+assert.equal(frameRequest.body.last_image, undefined);
 
 await assert.rejects(
   createVideoTask({
@@ -735,6 +736,7 @@ await assert.rejects(
   }),
   (error) => error && error.code === 'async-video-required'
 );
+delete process.env.ATLASCLOUD_API_KEY;
 
 // A provider-side 4xx is a request/model error, not an outage. The logical
 // Atlas route must not silently submit the same request to 302 in that case.
@@ -1041,6 +1043,7 @@ await assert.rejects(
 );
 
 for (const providerId of ['video-1', 'video-2', 'video-3']) {
+  if (providerId === 'video-1') process.env.ATLASCLOUD_API_KEY = 'atlas-secret';
   let createAttempts = 0;
   globalThis.fetch = async () => {
     createAttempts += 1;
@@ -1067,6 +1070,7 @@ for (const providerId of ['video-1', 'video-2', 'video-3']) {
   );
   assert.equal(createAttempts, 1, `${providerId} paid creation must be submitted only once`);
 }
+delete process.env.ATLASCLOUD_API_KEY;
 
 let channelConfigurationAttempts = 0;
 globalThis.fetch = async () => {

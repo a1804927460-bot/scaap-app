@@ -861,7 +861,9 @@ function refreshApiSettingsLanguage() {
   setText('#ai-provider-manager-title', 'More Settings', '更多设置');
   setTitleAndLabel('#ai-provider-manager-close', 'Close', '关闭');
   setText('.storage-settings-section .ai-provider-section-heading strong', 'Storage', '存储');
-  setText('#library-path-add-btn', 'Add Mirror Location', '添加镜像位置');
+  setText('#storage-settings-description', 'Keep your assets on a location you choose', '将资产存放在你选择的位置');
+  setText('#library-path-title', 'Asset storage location', '资产存放位置');
+  setText('#library-path-change-btn', 'Change Location', '更改位置');
   setText('.ai-provider-chat-section .ai-provider-section-heading strong', 'Chat API', '对话 API');
   setText('.ai-provider-chat-section .ai-provider-section-heading small', 'Automatic protocol detection', '自动识别接口协议');
   setText('.ai-provider-chat-grid label:nth-child(1) span', 'Profile Name', '配置名称');
@@ -996,7 +998,9 @@ function refreshStaticLanguage() {
   setAttr('.preferences-settings-section .language-switch', 'aria-label', 'Language', '语言');
   setAttr('.color-profile-switch', 'aria-label', 'Color management', '色彩管理');
   setText('.storage-settings-section .ai-provider-section-heading strong', 'Storage', '存储');
-  setText('#library-path-add-btn', 'Add Mirror Location', '添加镜像位置');
+  setText('#storage-settings-description', 'Keep your assets on a location you choose', '将资产存放在你选择的位置');
+  setText('#library-path-title', 'Asset storage location', '资产存放位置');
+  setText('#library-path-change-btn', 'Change Location', '更改位置');
   setText('.ai-provider-chat-grid label:nth-child(1) span', 'Profile Name', '配置名称');
   setText('.ai-provider-chat-grid label:nth-child(2) span', 'Base URL', 'Base URL');
   setText('.ai-provider-chat-grid label:nth-child(3) span', 'Model', '模型');
@@ -1501,34 +1505,37 @@ async function goBackToStartScreen() {
 
 function initLibraryPathSettings() {
   refreshLibraryPathUI();
-  document.getElementById('library-path-add-btn').addEventListener('click', async () => {
-    const chosen = await window.messsAPI.pickCustomLibraryPath();
-    if (chosen) {
-      showToast(t('Added a mirror library path', '已添加镜像库位置'));
-      refreshLibraryPathUI();
+  document.getElementById('library-path-change-btn').addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const result = await window.messsAPI.pickLibraryPath();
+      if (result && result.restarted) {
+        showToast(t('Storage location changed. Messs will restart now.', '存储位置已更改，Messs 即将重启。'));
+      } else if (result && result.path) {
+        refreshLibraryPathUI();
+      }
+    } catch (error) {
+      const reason = String(error && error.code || '').trim();
+      const message = reason === 'storage-path-not-empty'
+        ? t('Choose an empty folder for the library.', '请选择空文件夹作为资料库位置。')
+        : reason === 'storage-path-nested'
+          ? t('The new location cannot be inside the current library.', '新位置不能位于当前资料库内部。')
+          : t('The storage location could not be changed.', '无法更改存储位置。');
+      showToast(message, 'Messs');
+    } finally {
+      button.disabled = false;
     }
   });
 }
 
 async function refreshLibraryPathUI() {
   const paths = await window.messsAPI.getLibraryPaths();
-  const defaultRow = document.getElementById('library-path-default');
-  const customRow = document.getElementById('library-path-custom');
-  defaultRow.innerHTML = `<span class="library-path-label">${t('Default', '默认')}</span><span class="library-path-value" title="${escapeHtml(paths.defaultPath)}">${escapeHtml(paths.defaultPath)}</span>`;
-
-  if (paths.customPath) {
-    customRow.hidden = false;
-    customRow.innerHTML = `<span class="library-path-label">${t('Mirror', '镜像')}</span><span class="library-path-value" title="${escapeHtml(paths.customPath)}">${escapeHtml(paths.customPath)}</span><button id="library-path-clear-btn" class="icon-btn-sm" title="${t('Remove mirror path', '移除镜像路径')}" aria-label="${t('Remove mirror path', '移除镜像路径')}">x</button>`;
-    document.getElementById('library-path-clear-btn').addEventListener('click', async (e) => {
-      e.stopPropagation();
-      await window.messsAPI.clearCustomLibraryPath();
-      refreshLibraryPathUI();
-    });
-    document.getElementById('library-path-add-btn').hidden = true;
-  } else {
-    customRow.hidden = true;
-    document.getElementById('library-path-add-btn').hidden = false;
-  }
+  const value = document.getElementById('library-path-value');
+  if (!value) return;
+  const currentPath = String(paths.currentPath || paths.defaultPath || '').trim();
+  value.textContent = currentPath;
+  value.title = currentPath;
 }
 
 function describeMediaEndpoint(endpoint, kind) {

@@ -106,43 +106,46 @@
 
 /* -------- Light theme -------- */
 [data-theme="light"] {
-  --bg-deep: #e2e5e9;
-  --bg-base: #f1f2f4;
-  --bg-elevated: #f8f9fb;
-  --bg-surface: #e9ebef;
-  --bg-surface-2: #dfe3e8;
-  --bg-frame: #e0e3e8;
-  --board-workspace-bg: #e6e9ed;
-  --canvas-toolbar-bg: rgba(248, 249, 251, .98);
-  --canvas-toolbar-border: rgba(92, 103, 116, .22);
-  --canvas-toolbar-text: #4e5661;
-  --canvas-toolbar-hover: #dfe3e8;
-  --canvas-control-bg: #eef0f3;
-  --canvas-control-bg-muted: #e4e7eb;
-  --canvas-control-border: #cbd2da;
-  --canvas-control-text: #4d5662;
-  --canvas-control-strong: #20262e;
-  --canvas-control-muted: #737d89;
-  --canvas-control-panel: #f2f4f6;
-  --canvas-control-panel-border: #cbd2da;
-  --border-hairline: rgba(30, 41, 59, 0.12);
-  --border-strong: rgba(30, 41, 59, 0.20);
+  /* Neutral light surfaces sampled from the reference interface. Keep the
+     blue limited to branding and explicit actions so the UI reads white and
+     graphite instead of blue-gray. */
+  --bg-deep: #e3e3e3;
+  --bg-base: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-surface: #f6f6f6;
+  --bg-surface-2: #ededed;
+  --bg-frame: #ffffff;
+  --board-workspace-bg: #ffffff;
+  --canvas-toolbar-bg: rgba(255, 255, 255, .98);
+  --canvas-toolbar-border: rgba(86, 86, 86, .20);
+  --canvas-toolbar-text: #565656;
+  --canvas-toolbar-hover: #ededed;
+  --canvas-control-bg: #f6f6f6;
+  --canvas-control-bg-muted: #ededed;
+  --canvas-control-border: #d2d2d2;
+  --canvas-control-text: #565656;
+  --canvas-control-strong: #1c1c1c;
+  --canvas-control-muted: #858585;
+  --canvas-control-panel: #f6f6f6;
+  --canvas-control-panel-border: #d2d2d2;
+  --border-hairline: rgba(28, 28, 28, 0.12);
+  --border-strong: rgba(28, 28, 28, 0.20);
 
-  --text-primary: #0a0a0a;
-  --text-secondary: #5b5f66;
-  --text-tertiary: #8b8f96;
+  --text-primary: #1c1c1c;
+  --text-secondary: #565656;
+  --text-tertiary: #858585;
 
-  --title-accent: #0a0a0a;
+  --title-accent: #111111;
 
   --accent: var(--brand-blue);
-  --accent-soft: rgba(0, 82, 166, 0.10);
+  --accent-soft: rgba(86, 86, 86, 0.16);
   --accent-ink: #ffffff;
   --accent-glow: rgba(0, 82, 166, 0.25);
-  --selection-outline: #111820;
+  --selection-outline: #565656;
   --selection-handle: #ffffff;
-  --glow-color: rgba(0, 82, 166, 0.06);
-  --resize-handle-line: rgba(91, 95, 102, 0.10);
-  --resize-handle-hover: rgba(91, 95, 102, 0.26);
+  --glow-color: rgba(86, 86, 86, 0.06);
+  --resize-handle-line: rgba(86, 86, 86, 0.10);
+  --resize-handle-hover: rgba(86, 86, 86, 0.26);
   --resize-handle-active: rgba(0, 82, 166, 0.60);
 
   --shadow-elevated: 0 20px 50px rgba(0, 0, 0, 0.10);

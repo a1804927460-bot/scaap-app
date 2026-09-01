@@ -31,7 +31,7 @@ async function run() {
       <main class="fixture"><aside class="fixture-panel"><h1>Messs.</h1><i></i><i></i><i></i><i></i></aside><section class="fixture-main"><header class="fixture-header">Integrated canvas</header><div class="fixture-canvas"><div class="fixture-media"></div></div></section><aside class="fixture-panel fixture-detail"><strong>File details</strong><i></i><i></i><i></i></aside></main>
     </body></html>`, 'utf8');
 
-  const window = new BrowserWindow({ width: 1280, height: 760, show: false, backgroundColor: '#f1f2f4' });
+  const window = new BrowserWindow({ width: 1280, height: 760, show: false, backgroundColor: '#ffffff' });
   try {
     await window.loadFile(fixturePath);
     await new Promise((resolve) => setTimeout(resolve, 180));
@@ -46,14 +46,14 @@ async function run() {
       canvas: getComputedStyle(document.querySelector('.fixture-canvas')).backgroundColor
     })`);
     assert.deepStrictEqual(colors, {
-      base: '#f1f2f4',
-      frame: '#e0e3e8',
-      surface: '#e9ebef',
-      surface2: '#dfe3e8',
-      toolbar: 'rgba(248, 249, 251, .98)',
-      controlPanel: '#f2f4f6',
-      titlebar: 'rgb(224, 227, 232)',
-      canvas: 'rgb(230, 233, 237)'
+      base: '#ffffff',
+      frame: '#ffffff',
+      surface: '#f6f6f6',
+      surface2: '#ededed',
+      toolbar: 'rgba(255, 255, 255, .98)',
+      controlPanel: '#f6f6f6',
+      titlebar: 'rgb(255, 255, 255)',
+      canvas: 'rgb(255, 255, 255)'
     });
     fs.mkdirSync(outputDir, { recursive: true });
     fs.writeFileSync(path.join(outputDir, 'light-theme.png'), (await window.webContents.capturePage()).toPNG());

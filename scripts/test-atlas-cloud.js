@@ -74,13 +74,13 @@ function glbFixture() {
     }
     if (endpoint.endsWith('/generateVideo')) {
       requests.push({ endpoint, body: JSON.parse(options.body) });
-      return new Response(JSON.stringify({ request_id: 'atlas-video-request' }), { status: 200 });
+      return new Response(JSON.stringify({ id: 'atlas-video-request', status: 'created' }), { status: 200 });
     }
     if (endpoint.includes('/prediction/atlas-image-request') || endpoint.includes('/prediction?id=atlas-image-request')) {
       return new Response(JSON.stringify({ data: { status: 'completed', outputs: [{ url: 'https://cdn.atlascloud.ai/image.png' }] } }), { status: 200 });
     }
     if (endpoint.includes('/prediction/atlas-video-request') || endpoint.includes('/prediction?id=atlas-video-request')) {
-      return new Response(JSON.stringify({ data: { status: 'completed', video_url: 'https://cdn.atlascloud.ai/video.mp4' } }), { status: 200 });
+      return new Response(JSON.stringify({ data: { id: 'atlas-video-request', status: 'completed', outputs: ['https://cdn.atlascloud.ai/video.mp4'] } }), { status: 200 });
     }
     if (/\/prediction\/atlas-3d-request-\d+$/i.test(endpoint)) {
       return new Response(JSON.stringify({
@@ -189,13 +189,13 @@ function glbFixture() {
     assert.match(h3Text.taskId, /^messs-route:atlas-video-minimax-h3-t2v:atlas-video-request$/);
     const h3FirstFrame = await providers.createVideoTask({
       providerId: 'video-1', prompt: 'H3 first frame generation',
-      resolution: '2K', aspectRatio: '9:16', duration: 6, videoMode: 'first-frame',
+      resolution: '2K', aspectRatio: 'adaptive', duration: 6, videoMode: 'first-frame',
       urls: [localReference], referenceMediaTypes: ['image'], outputFormat: 'mp4'
     });
     assert.match(h3FirstFrame.taskId, /^messs-route:atlas-video-minimax-h3-i2v:atlas-video-request$/);
     const h3FirstLast = await providers.createVideoTask({
       providerId: 'video-1', prompt: 'H3 first and last frame generation',
-      resolution: '768P', aspectRatio: '16:9', duration: 6, videoMode: 'first-last-frame',
+      resolution: '768P', aspectRatio: 'adaptive', duration: 6, videoMode: 'first-last-frame',
       urls: ['https://cdn.example.com/h3-first.png', 'https://cdn.example.com/h3-last.png'],
       referenceMediaTypes: ['image', 'image'], outputFormat: 'mp4'
     });
@@ -370,13 +370,22 @@ function glbFixture() {
       && entry.body.prompt.includes('full reference follows a 16:9 source'));
     const h3TextRequest = requests.find((entry) => entry.body && entry.body.model === 'minimax/h3/text-to-video');
     const h3ImageRequest = requests.find((entry) => entry.body && entry.body.model === 'minimax/h3/image-to-video' && entry.body.image);
-    const h3FirstLastRequest = requests.find((entry) => entry.body && entry.body.model === 'minimax/h3/image-to-video' && entry.body.last_image);
+    const h3FirstLastRequest = requests.find((entry) => entry.body && entry.body.model === 'minimax/h3/image-to-video' && entry.body.end_image);
     const h3ReferenceRequest = requests.find((entry) => entry.body && entry.body.model === 'minimax/h3/reference-to-video');
     assert.equal(h3TextRequest.body.prompt, 'H3 text generation');
     assert.equal(h3TextRequest.body.ratio, '16:9');
-    assert.match(h3ImageRequest.body.image, /^https:\/\/atlas-img\.example\.com\/uploaded-/);
-    assert.equal(h3FirstLastRequest.body.last_image, 'https://cdn.example.com/h3-last.png');
-    assert.deepEqual(h3ReferenceRequest.body.reference_images, ['https://cdn.example.com/h3-reference.png']);
+    assert.equal(h3TextRequest.body.resolution, '768P');
+    assert.equal(h3TextRequest.body.output_format, undefined);
+    assert.equal(h3TextRequest.body.generate_audio, undefined);
+    assert.match(h3ImageRequest.body.image, /^data:image\/png;base64,/);
+    assert.equal(h3FirstLastRequest.body.end_image, 'https://cdn.example.com/h3-last.png');
+    assert.equal(h3FirstLastRequest.body.last_image, undefined);
+    assert.equal(h3FirstLastRequest.body.ratio, 'adaptive');
+    assert.deepEqual(h3ReferenceRequest.body.refers, [
+      { url: 'https://cdn.example.com/h3-reference.png', type: 'image' }
+    ]);
+    assert.equal(h3ReferenceRequest.body.output_format, undefined);
+    assert.equal(h3ReferenceRequest.body.generate_audio, undefined);
     assert.equal(fullReferenceRequest.body.model, 'bytedance/seedance-2.5/reference-to-video');
     assert.equal(fullReferenceRequest.body.ratio, 'adaptive');
     assert.equal(fullReferenceRequest.body.resolution, '1080p-esr & 60fps');

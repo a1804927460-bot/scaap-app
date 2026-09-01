@@ -268,6 +268,11 @@ function escapeHtml(str) {
 
 function showToast(message, emoji, options = {}) {
   const toast = document.getElementById('toast');
+  if (!toast) return;
+  clearTimeout(showToast._t);
+  clearTimeout(showToast._hideT);
+  showToast._t = 0;
+  showToast._hideT = 0;
   toast.innerHTML = '';
   if (emoji) {
     const e = document.createElement('span');
@@ -276,21 +281,54 @@ function showToast(message, emoji, options = {}) {
     toast.appendChild(e);
   }
   const span = document.createElement('span');
+  span.className = 'toast-message';
   span.textContent = typeof window.publicAiErrorMessage === 'function'
     ? window.publicAiErrorMessage(message)
     : String(message || '');
   toast.appendChild(span);
+  const rawDuration = Number(options && options.durationMs);
+  const aiFailure = emoji === 'AI' && /(?:fail|error|unavailable|busy|timeout|rejected|not\s+(?:be\s+)?accepted|restricted|generation\s+request|失败|错误|不可用|繁忙|超时|拒绝|未被接受|未扣积分|受限|版权|실패|오류|사용할 수 없|거부)/i
+    .test(String(message || ''));
+  const persistent = options && options.persistent === true
+    || (aiFailure && options && options.persistent !== false);
+  toast.classList.toggle('is-persistent', persistent);
+  toast.setAttribute('role', persistent ? 'alert' : 'status');
+  toast.setAttribute('aria-live', persistent ? 'assertive' : 'polite');
+  if (persistent) {
+    const dismiss = document.createElement('button');
+    dismiss.className = 'toast-dismiss';
+    dismiss.type = 'button';
+    dismiss.textContent = t('Cancel', '取消', '취소');
+    dismiss.title = t('Dismiss notification', '取消提示', '알림 닫기');
+    dismiss.setAttribute('aria-label', dismiss.title);
+    dismiss.addEventListener('click', dismissToast);
+    toast.appendChild(dismiss);
+  }
   toast.hidden = false;
   requestAnimationFrame(() => toast.classList.add('is-visible'));
-  clearTimeout(showToast._t);
-  const rawDuration = Number(options && options.durationMs);
-  const aiFailure = emoji === 'AI' && /(?:fail|error|unavailable|busy|timeout|rejected|restricted|失败|错误|不可用|繁忙|超时|拒绝|受限|版权)/i
-    .test(String(message || ''));
+  if (persistent) return;
   const durationMs = Number.isFinite(rawDuration) && rawDuration > 0
     ? Math.max(1_000, Math.min(30_000, Math.round(rawDuration)))
     : aiFailure ? 10_000 : 3_200;
   showToast._t = setTimeout(() => {
     toast.classList.remove('is-visible');
-    setTimeout(() => { toast.hidden = true; }, 320);
+    showToast._t = 0;
+    showToast._hideT = setTimeout(() => {
+      toast.hidden = true;
+      showToast._hideT = 0;
+    }, 320);
   }, durationMs);
+}
+
+function dismissToast() {
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  clearTimeout(showToast._t);
+  clearTimeout(showToast._hideT);
+  showToast._t = 0;
+  showToast._hideT = setTimeout(() => {
+    toast.hidden = true;
+    showToast._hideT = 0;
+  }, 320);
+  toast.classList.remove('is-visible');
 }

@@ -702,13 +702,17 @@
             </div>
           </section>
 
-          <section class="ai-provider-section storage-settings-section" hidden aria-hidden="true">
+          <section class="ai-provider-section storage-settings-section">
             <div class="ai-provider-section-heading">
-              <div><strong>Storage</strong></div>
+              <div><strong id="storage-settings-title">Storage</strong><small id="storage-settings-description">Keep your assets on a location you choose</small></div>
             </div>
-            <div id="library-path-default" class="library-path-row"></div>
-            <div id="library-path-custom" class="library-path-row" hidden></div>
-            <button id="library-path-add-btn" class="pill-btn pill-btn-ghost pill-btn-block" type="button">Add Mirror Location</button>
+            <div id="library-path-current" class="library-location-row">
+              <div class="library-location-copy">
+                <strong id="library-path-title">Asset storage location</strong>
+                <span id="library-path-value">Loading...</span>
+              </div>
+              <button id="library-path-change-btn" class="pill-btn pill-btn-ghost" type="button">Change Location</button>
+            </div>
           </section>
 
           <section class="ai-provider-section software-update-section">

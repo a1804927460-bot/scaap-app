@@ -236,8 +236,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   },
 
   getLibraryPaths: () => ipcRenderer.invoke('settings:getLibraryPaths'),
-  pickCustomLibraryPath: () => ipcRenderer.invoke('settings:pickCustomLibraryPath'),
-  clearCustomLibraryPath: () => ipcRenderer.invoke('settings:clearCustomLibraryPath'),
+  pickLibraryPath: () => ipcRenderer.invoke('settings:pickLibraryPath'),
   setViewMode: (mode) => ipcRenderer.invoke('settings:setViewMode', mode),
   setSidebarCollapsed: (collapsed) => ipcRenderer.invoke('settings:setSidebarCollapsed', collapsed),
   getPreviewToolStatus: (forceRefresh) => ipcRenderer.invoke('settings:getPreviewToolStatus', forceRefresh),

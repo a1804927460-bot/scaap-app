@@ -161,6 +161,11 @@ assert.match(
 );
 assert.match(
   boardSource,
+  /const agentInteraction = eventPath\.some\([\s\S]*?#board-agent-panel, #board-agent-history-drawer, \.agent-text-context-menu[\s\S]*?if \(agentInteraction \|\| e\.target\.closest\?\./,
+  'Copying or selecting Agent text must keep the AI composer open.'
+);
+assert.match(
+  boardSource,
   /function aiComposerHasDraft\([\s\S]*?\.ai-composer-reference-thumb, \.ai-prompt-style-toggle\.is-active/,
   'The composer must detect unfinished prompt, reference, or style drafts.'
 );
@@ -254,12 +259,17 @@ assert.deepStrictEqual(
 assert.match(
   boardSource,
   /function videoModeLabel[\s\S]*?'first-last-frame':[\s\S]*?omni:[\s\S]*?function renderVideoModes[\s\S]*?composerVideoModes\(capabilities\)[\s\S]*?function setVideoMode/,
-  'Video composer must expose only first/last frame and omni reference modes.'
+  'Video composer must expose the text, frame, and omni reference modes.'
 );
 assert.match(
   boardSource,
-  /function composerVideoRequestMode[\s\S]*?count >= 2 \? 'first-last-frame' : 'first-frame'/,
-  'The frame UI must submit one image as image-to-video and two images as first/last frame.'
+  /function composerVideoRequestMode[\s\S]*?count === 0[\s\S]*?'text'[\s\S]*?count >= 2 \? 'first-last-frame' : 'first-frame'/,
+  'The video UI must submit text mode without references and frame modes when references are selected.'
+);
+assert.match(
+  boardSource,
+  /let videoMode = 'text';/,
+  'The video composer must open in text-to-video mode.'
 );
 const videoModeFunctions = boardSource.slice(
   boardSource.indexOf('function supportedVideoModes'),
@@ -280,8 +290,12 @@ const videoCapabilities = {
 };
 assert.deepStrictEqual(
   Array.from(videoModeSandbox.videoModeApi.composerVideoModes(videoCapabilities), (entry) => entry.id),
-  ['first-last-frame', 'omni']
+  ['text', 'first-last-frame', 'omni']
 );
+assert.equal(videoModeSandbox.videoModeApi.composerVideoRequestMode('', 0, videoCapabilities).id, 'text');
+assert.equal(videoModeSandbox.videoModeApi.composerVideoRequestMode('text', 0, videoCapabilities).id, 'text');
+assert.equal(videoModeSandbox.videoModeApi.composerVideoRequestMode('text', 1, videoCapabilities).id, 'first-frame');
+assert.equal(videoModeSandbox.videoModeApi.composerVideoRequestMode('text', 2, videoCapabilities).id, 'first-last-frame');
 assert.equal(videoModeSandbox.videoModeApi.composerVideoRequestMode('first-last-frame', 1, videoCapabilities).id, 'first-frame');
 assert.equal(videoModeSandbox.videoModeApi.composerVideoRequestMode('first-last-frame', 2, videoCapabilities).id, 'first-last-frame');
 assert.equal(videoModeSandbox.videoModeApi.composerVideoRequestMode('omni', 3, videoCapabilities).id, 'omni');
@@ -300,7 +314,7 @@ const textOnlyCapabilities = {
 assert.equal(videoModeSandbox.videoModeApi.supportsVideoFirstLastFrame(textOnlyCapabilities), false);
 assert.deepStrictEqual(
   Array.from(videoModeSandbox.videoModeApi.composerVideoModes(textOnlyCapabilities), (entry) => entry.id),
-  []
+  ['text']
 );
 assert.match(
   boardSource,
@@ -835,8 +849,8 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /fullImageReadyFileIds\.has\(String\(f\.id \|\| ''\)\) \|\| cachedBoardFullImage\(fullSource\)[\s\S]*?img\.loading = 'eager'/,
-  'Remounted images must remember decoded full sources instead of flashing back to a thumbnail after cache eviction.'
+  /fullImageReadyFileIds\.has\(String\(f\.id \|\| ''\)\) \|\| cachedBoardFullImage\(fullSource\)[\s\S]*?img\.loading = (?:'eager'|Board\.visibleIds\.has\(item\.id\) \? 'eager' : 'lazy')/,
+  'Remounted images must remember decoded full sources and only eagerly load them while visible.'
 );
 assert.match(
   boardSource,
@@ -955,6 +969,21 @@ assert.doesNotMatch(
   boardStyles,
   /\.board-item[^\{]*\{[^}]*content-visibility:\s*auto/,
   'Browser content-visibility must not compete with board viewport virtualization.'
+);
+assert.match(
+  boardSource,
+  /function rebuildBoardSpatialIndex\(\)[\s\S]*?Board\.indexItemsRef === AppState\.boardItems[\s\S]*?Board\.indexDirty/,
+  'Repeated board renders must reuse the spatial index when the item and file collections are unchanged.'
+);
+assert.match(
+  boardSource,
+  /function syncBoardElementViewportState\([\s\S]*?scheduleBoardMediaRelease[\s\S]*?function buildMiniVideoPlayer[\s\S]*?preload = 'metadata'/,
+  'Retained media must release decoders after leaving the viewport and use metadata-only video preload.'
+);
+assert.match(
+  boardSource,
+  /function makeBoardItemDraggable[\s\S]*?style\.translate = `\$\{gItem\.x - startLeft\}px \$\{gItem\.y - startTop\}px`[\s\S]*?style\.translate = ''/,
+  'Multi-item dragging must update the compositor position during input and commit layout coordinates after release.'
 );
 assert.match(
   boardStyles,
@@ -1229,7 +1258,7 @@ assert.match(
 assert.match(themeSource, /\[data-theme="dark"\][\s\S]*?--bg-base:\s*#111111;[\s\S]*?--bg-surface-2:\s*#282828;/);
 assert.match(
   themeSource,
-  /\[data-theme="light"\][\s\S]*?--bg-base:\s*#f1f2f4;[\s\S]*?--bg-surface:\s*#e9ebef;[\s\S]*?--bg-surface-2:\s*#dfe3e8;[\s\S]*?--bg-frame:\s*#e0e3e8;[\s\S]*?--board-workspace-bg:\s*#e6e9ed;/,
+  /\[data-theme="light"\][\s\S]*?--bg-base:\s*#ffffff;[\s\S]*?--bg-surface:\s*#f6f6f6;[\s\S]*?--bg-surface-2:\s*#ededed;[\s\S]*?--bg-frame:\s*#ffffff;[\s\S]*?--board-workspace-bg:\s*#ffffff;/,
   'Light mode must use the neutral gray-white hierarchy from the supplied reference.'
 );
 assert.doesNotMatch(

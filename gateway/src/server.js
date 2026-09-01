@@ -513,7 +513,16 @@ function validateBody(body, kind) {
           : fallbackReferenceCount === 1
             ? availableMode('first-frame', 'omni')
             : availableMode('text');
-    videoMode = requestedVideoMode || fallbackMode;
+    // Older desktop clients defaulted H3 to a frame mode even when the user
+    // supplied no reference image. Treat that stale default as text-to-video
+    // instead of rejecting the request for missing frames.
+    const legacyEmptyFrameMode = isAtlasVideo
+      && submittedUrlCount === 0
+      && submittedAudioReferenceCount === 0
+      && ['first-frame', 'first-last-frame'].includes(requestedVideoMode)
+      && capabilities.upstreamRoutes
+      && Array.isArray(capabilities.upstreamRoutes.text);
+    videoMode = legacyEmptyFrameMode ? 'text' : requestedVideoMode || fallbackMode;
     selectedVideoMode = capabilities.videoModes.find((entry) => entry && entry.id === videoMode) || null;
     if (!selectedVideoMode) {
       throw invalidOption('invalid-video-mode', 'The selected video generation mode is not supported.');

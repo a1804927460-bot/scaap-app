@@ -45,6 +45,11 @@ const BOARD_PARTITION_TOP_PADDING = 54;
 const BOARD_PARTITION_BOTTOM_PADDING = 28;
 const BOARD_PARTITION_MIN_WIDTH = 260;
 const BOARD_PARTITION_MIN_HEIGHT = 190;
+// The board deliberately keeps a small live DOM window. Media outside that
+// window is suspended, while the overview canvas continues to represent it.
+// This is the same broad strategy used by real-time 2D editors: keep input
+// targets live, but do not keep thousands of decoders and textures alive.
+const BOARD_MEDIA_RELEASE_DELAY_MS = 180;
 
 // Anything matching this boundary owns its interaction. Canvas listeners run
 // in the capture phase in a few places, so stopping propagation on a button is
@@ -148,7 +153,13 @@ const Board = {
   clipboardPasteTimer: 0,
   partitionCelebrations: new Set(),
   activePartitionId: null,
-  historyPersistPromise: Promise.resolve()
+  historyPersistPromise: Promise.resolve(),
+  indexItemsRef: null,
+  indexFilesRef: null,
+  indexItemCount: -1,
+  indexFileCount: -1,
+  indexDirty: true,
+  mediaReleaseTimers: new Map()
 };
 
 const BoardMoveHistory = new Map();
@@ -339,6 +350,7 @@ function applyBoardPartitionHistory(entry, direction) {
       canvasWorkspaceAddItem(partition);
     } else {
       AppState.boardItems[existing] = partition;
+      Board.indexDirty = true;
       canvasWorkspaceAddItem(partition);
     }
     changedMembers.forEach((item) => { item.partitionId = partition.id; });
@@ -1436,7 +1448,7 @@ function renderBoardItemContent(content, f, item) {
     img.dataset.fullSrc = fullSource;
     img.dataset.thumbSrc = thumbSource;
     img.dataset.quality = quality;
-    img.loading = 'eager';
+    img.loading = Board.visibleIds.has(item.id) ? 'eager' : 'lazy';
     img.alt = f.name;
     img.draggable = false;
     img.decoding = 'async';
@@ -1493,7 +1505,7 @@ function renderBoardItemContent(content, f, item) {
     preview.className = 'board-video-thumbnail';
     const img = document.createElement('img');
     img.src = f.thumbUrl;
-    img.loading = 'eager';
+    img.loading = Board.visibleIds.has(item.id) ? 'eager' : 'lazy';
     observeBoardMediaIntrinsicRatio(content, f, item, img);
     img.alt = f.name;
     img.draggable = false;
@@ -1844,6 +1856,13 @@ function boardItemBounds(item) {
 }
 
 function restoreLegacyUniformBoardFrames() {
+  if (
+    Board.indexItemsRef === AppState.boardItems &&
+    Board.indexFilesRef === AppState.files &&
+    Board.indexFileCount === AppState.files.length &&
+    Board.indexItemsRef &&
+    Board.indexItemCount === AppState.boardItems.length
+  ) return;
   const filesById = new Map(AppState.files.map((file) => [file.id, file]));
   const changed = [];
   AppState.boardItems.forEach((item) => {
@@ -1872,6 +1891,13 @@ function restoreLegacyUniformBoardFrames() {
 }
 
 function rebuildBoardSpatialIndex() {
+  if (
+    !Board.indexDirty &&
+    Board.indexItemsRef === AppState.boardItems &&
+    Board.indexFilesRef === AppState.files &&
+    Board.indexItemCount === AppState.boardItems.length &&
+    Board.indexFileCount === AppState.files.length
+  ) return;
   Board.spatialIndex.clear();
   Board.filesById = new Map(AppState.files.map((file) => [file.id, file]));
   Board.itemsById = new Map(AppState.boardItems.map((item) => [item.id, item]));
@@ -1880,12 +1906,18 @@ function rebuildBoardSpatialIndex() {
     if (item.selected) Board.selectedCount += 1;
     Board.spatialIndex.set(item.id, boardItemBounds(item));
   }
+  Board.indexItemsRef = AppState.boardItems;
+  Board.indexFilesRef = AppState.files;
+  Board.indexItemCount = AppState.boardItems.length;
+  Board.indexFileCount = AppState.files.length;
+  Board.indexDirty = false;
   Board.lastMountHash = null;
   Board.lastKeepHash = null;
 }
 
 function updateBoardItemIndex(item) {
   Board.spatialIndex.set(item.id, boardItemBounds(item));
+  Board.itemsById.set(item.id, item);
   Board.lastMountHash = null;
   Board.lastKeepHash = null;
 }
@@ -1898,11 +1930,42 @@ function cleanupBoardElement(element) {
 
 function destroyMountedBoardItem(id) {
   Board.measureQueue.delete(id);
+  const releaseTimer = Board.mediaReleaseTimers.get(id);
+  if (releaseTimer) {
+    clearTimeout(releaseTimer);
+    Board.mediaReleaseTimers.delete(id);
+  }
   const element = Board.mounted.get(id);
   if (!element) return;
   cleanupBoardElement(element);
   element.remove();
   Board.mounted.delete(id);
+}
+
+function cancelBoardMediaRelease(id) {
+  const timer = Board.mediaReleaseTimers.get(id);
+  if (!timer) return;
+  clearTimeout(timer);
+  Board.mediaReleaseTimers.delete(id);
+}
+
+function scheduleBoardMediaRelease(id, element) {
+  cancelBoardMediaRelease(id);
+  if (!element || !element.querySelector('video, audio')) return;
+  const timer = window.setTimeout(() => {
+    Board.mediaReleaseTimers.delete(id);
+    if (Board.mounted.get(id) !== element || Board.visibleIds.has(id)) return;
+    element.querySelectorAll('.mini-video-player, .mini-audio-player').forEach((media) => {
+      if (typeof media._boardSuspend === 'function') media._boardSuspend();
+    });
+  }, BOARD_MEDIA_RELEASE_DELAY_MS);
+  Board.mediaReleaseTimers.set(id, timer);
+}
+
+function syncMountedBoardViewportStates(visibleIds) {
+  Board.mounted.forEach((element, id) => {
+    syncBoardElementViewportState(id, element, visibleIds.has(id));
+  });
 }
 
 function clearMountedBoardItems() {
@@ -2524,8 +2587,10 @@ function makeBoardPartitionDraggable(handle, element, partition) {
         item.y = Math.round(startTop + dy);
         const movingElement = movingElements.get(item.id);
         if (movingElement) {
-          movingElement.style.left = `${item.x}px`;
-          movingElement.style.top = `${item.y}px`;
+          // Keep the drag on the compositor. Updating left/top for every
+          // member makes a large partition pay a layout cost on every input
+          // event; the final coordinates are committed on pointerup.
+          movingElement.style.translate = `${item.x - startLeft}px ${item.y - startTop}px`;
         }
       });
     });
@@ -2540,6 +2605,12 @@ function makeBoardPartitionDraggable(handle, element, partition) {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       movingItems.forEach(updateBoardItemIndex);
+      movingElements.forEach((movingElement, id) => {
+        if (!movingElement) return;
+        movingElement.style.translate = '';
+        const movingItem = Board.itemsById.get(id);
+        if (movingItem) syncMountedBoardItemGeometry(movingElement, movingItem);
+      });
       if (moved) {
         Board.lastDragEndedAt = Date.now();
         recordBoardMoveHistory(startPositions);
@@ -2946,6 +3017,7 @@ function processBoardMountQueue() {
     element._boardRenderSignature = boardItemRenderSignature(item, file);
     canvas.appendChild(element);
     Board.mounted.set(id, element);
+    syncBoardElementViewportState(id, element, Board.visibleIds.has(id));
     observeBoardElementPaintReady(element);
     mountedThisFrame += 1;
     if (isMedia) mountedMediaThisFrame += 1;
@@ -3042,6 +3114,7 @@ function reconcileBoardViewport(force = false) {
   const mountIds = Board.spatialIndex.queryLimited(regions.mount, BOARD_DOM_ITEM_LIMIT);
   const visibleIds = Board.spatialIndex.query(regions.visible);
   Board.visibleIds = visibleIds;
+  syncMountedBoardViewportStates(visibleIds);
   const keepCandidates = [];
   for (const id of Board.mounted.keys()) {
     const bounds = Board.spatialIndex.getBounds(id);
@@ -3073,10 +3146,11 @@ function reconcileBoardViewport(force = false) {
     if (mountIds.has(id)) {
       element.style.visibility = '';
       element.style.pointerEvents = '';
+      syncBoardElementViewportState(id, element, visibleIds.has(id));
     } else if (retainedIds.has(id)) {
-      pauseBoardElementMedia(element);
       element.style.visibility = 'hidden';
       element.style.pointerEvents = 'none';
+      syncBoardElementViewportState(id, element, false);
     } else {
       destroyMountedBoardItem(id);
     }
@@ -3230,6 +3304,28 @@ function pauseBoardElementMedia(element) {
   });
 }
 
+function syncBoardElementViewportState(id, element, visible) {
+  if (!element) return;
+  const state = visible ? 'visible' : 'retained';
+  if (element.dataset.boardViewportState === state) return;
+  element.dataset.boardViewportState = state;
+  element.classList.toggle('is-board-visible', visible);
+  element.querySelectorAll('img').forEach((image) => {
+    // Do not remove src here: an image can be selected or opened immediately
+    // after a pan. The browser can still reclaim a lazy image's decoded data.
+    image.loading = visible ? 'eager' : 'lazy';
+  });
+  if (visible) {
+    cancelBoardMediaRelease(id);
+    element.querySelectorAll('.mini-video-player, .mini-audio-player').forEach((media) => {
+      if (typeof media._boardResume === 'function') media._boardResume();
+    });
+  } else {
+    pauseBoardElementMedia(element);
+    scheduleBoardMediaRelease(id, element);
+  }
+}
+
 function pauseAllBoardMedia() {
   Board.mounted.forEach((element) => pauseBoardElementMedia(element));
 }
@@ -3279,6 +3375,9 @@ function makeBoardItemDraggable(el, item) {
       ? AppState.boardItems.filter((b) => b.groupId === item.groupId)
       : (item.selected && selectedMates.length > 1 ? selectedMates : [item]);
     const groupStartPositions = groupMates.map((b) => ({ item: b, startLeft: b.x, startTop: b.y }));
+    const selectionGroup = groupMates.length > 1 && !item.isPartition
+      ? ensureBoardSelectionGroup()
+      : null;
     const groupEls = new Map();
     for (const groupItem of groupMates) {
       const groupEl = groupItem.id === item.id
@@ -3297,11 +3396,14 @@ function makeBoardItemDraggable(el, item) {
         gItem.y = Math.round(startTop + delta.dy);
         const gEl = groupEls.get(gItem.id);
         if (gEl) {
-          gEl.style.left = gItem.x + 'px';
-          gEl.style.top = gItem.y + 'px';
+          gEl.style.translate = `${gItem.x - startLeft}px ${gItem.y - startTop}px`;
         }
       });
-      if (groupMates.length > 1) syncBoardSelectionGroup();
+      if (selectionGroup) {
+        const anchor = groupStartPositions[0];
+        const anchorDelta = deltas.get(anchor.item.id) || { dx, dy };
+        selectionGroup.style.translate = `${Math.round(anchorDelta.dx)}px ${Math.round(anchorDelta.dy)}px`;
+      }
     });
     function onMove(ev) {
       if (Math.hypot(ev.clientX - startClientX, ev.clientY - startClientY) > 4) moved = true;
@@ -3319,8 +3421,17 @@ function makeBoardItemDraggable(el, item) {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       groupMates.forEach((gItem) => updateBoardItemIndex(gItem));
+      groupEls.forEach((groupEl, id) => {
+        groupEl.style.translate = '';
+        const movedItem = Board.itemsById.get(id);
+        if (movedItem) syncMountedBoardItemGeometry(groupEl, movedItem);
+      });
+      if (selectionGroup) {
+        selectionGroup.style.translate = '';
+        syncBoardSelectionGroup();
+      }
       if (moved) persistBoardMoveHistory(groupMates);
-      if (groupMates.length > 1) syncBoardSelectionGroup();
+      if (groupMates.length > 1 && !selectionGroup) syncBoardSelectionGroup();
       scheduleBoardReconcile();
     }
     document.addEventListener('mousemove', onMove);
@@ -4154,7 +4265,7 @@ function buildMiniVideoPlayer(result, f) {
   poster.className = 'mini-video-poster';
   poster.src = f.thumbUrl || '';
   poster.alt = '';
-  poster.loading = 'eager';
+  poster.loading = 'lazy';
   poster.draggable = false;
   poster.addEventListener('load', () => scheduleBoardOverviewFallback(), { once: true });
   poster.addEventListener('error', () => {
@@ -4164,7 +4275,7 @@ function buildMiniVideoPlayer(result, f) {
 
   const video = document.createElement('video');
   video.src = result.url;
-  video.preload = 'auto';
+  video.preload = 'metadata';
   video.muted = true;
   video.loop = true;
   video.draggable = false;
@@ -4183,6 +4294,8 @@ function buildMiniVideoPlayer(result, f) {
   let readyRetryRequest = 0;
   let playbackRetries = 0;
   let cleanedUp = false;
+  let currentSource = result.url;
+  let currentTranscoded = result.transcoded === true;
 
   function clearPlaybackWatchdog() {
     clearTimeout(playbackWatchdog);
@@ -4191,6 +4304,8 @@ function buildMiniVideoPlayer(result, f) {
 
   function installVideoSource(url, transcoded = false) {
     if (!url || cleanedUp || !video.isConnected) return;
+    currentSource = url;
+    currentTranscoded = transcoded;
     clearPlaybackWatchdog();
     video.pause();
     playRequest += 1;
@@ -4311,6 +4426,26 @@ function buildMiniVideoPlayer(result, f) {
     clearPlaybackWatchdog();
     video.pause();
     try { video.currentTime = 0; } catch (error) {}
+  };
+  // Retained board cards keep their poster and interaction target, but release
+  // the decoder/network source after a short grace period. Returning to the
+  // viewport restores the same source without rebuilding the card.
+  wrap._boardSuspend = () => {
+    if (cleanedUp) return;
+    wantsPreview = false;
+    playRequest += 1;
+    activePlayPromise = null;
+    readyRetryRequest = 0;
+    playbackRetries = 0;
+    clearPlaybackWatchdog();
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    wrap.classList.remove('has-frame', 'is-playing', 'is-playback-error');
+  };
+  wrap._boardResume = () => {
+    if (cleanedUp || video.getAttribute('src') || !currentSource) return;
+    installVideoSource(currentSource, currentTranscoded);
   };
   wrap._boardCleanup = () => {
     cleanedUp = true;
@@ -5300,6 +5435,7 @@ function supportedVideoMode(value, capabilities = {}) {
 
 function composerVideoModes(capabilities = {}) {
   const modes = supportedVideoModes(capabilities).filter((entry) => entry.hidden !== true);
+  const text = modes.find((entry) => entry.id === 'text') || null;
   const firstFrame = modes.find((entry) => entry.id === 'first-frame') || null;
   const firstLastFrame = modes.find((entry) => entry.id === 'first-last-frame') || null;
   const omni = modes.find((entry) => entry.id === 'omni') || null;
@@ -5307,6 +5443,7 @@ function composerVideoModes(capabilities = {}) {
   const videoEdit = modes.find((entry) => entry.id === 'video-edit') || null;
   const videoExtend = modes.find((entry) => entry.id === 'video-extend') || null;
   const visible = [];
+  if (text) visible.push(text);
   if (firstFrame || firstLastFrame) {
     visible.push({
       ...(firstLastFrame || firstFrame),
@@ -5332,9 +5469,9 @@ function supportsVideoFirstLastFrame(capabilities = {}) {
 function composerVideoMode(value, capabilities = {}) {
   const modes = composerVideoModes(capabilities);
   const requested = String(value || '').trim().toLowerCase();
-  const normalized = ['omni', 'video-reference', 'video-edit', 'video-extend'].includes(requested)
+  const normalized = ['text', 'omni', 'video-reference', 'video-edit', 'video-extend'].includes(requested)
     ? requested
-    : 'first-last-frame';
+    : modes.some((entry) => entry.id === 'text') ? 'text' : 'first-last-frame';
   return modes.find((entry) => entry.id === normalized)
     || modes[0]
     || supportedVideoModes(capabilities).find((entry) => entry.id === 'text')
@@ -5348,7 +5485,9 @@ function composerVideoRequestMode(value, referenceCount, capabilities = {}) {
     return modes.find((entry) => entry.id === selected.id) || selected;
   }
   const count = Math.max(0, Number(referenceCount) || 0);
-  const requestedId = count >= 2 ? 'first-last-frame' : 'first-frame';
+  const requestedId = count === 0
+    ? 'text'
+    : count >= 2 ? 'first-last-frame' : 'first-frame';
   return modes.find((entry) => entry.id === requestedId)
     || modes.find((entry) => entry.id === 'first-last-frame')
     || modes.find((entry) => entry.id === 'first-frame')
@@ -6052,7 +6191,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   const providers = getConfiguredImageProviders(aiConfig);
   const videoProviders = getConfiguredVideoProviders(aiConfig);
   let kind = initialKind === 'video' ? 'video' : 'image';
-  let videoMode = 'first-last-frame';
+  let videoMode = 'text';
   let ratio = kind === 'video' ? (aiConfig.videoAspectRatio || '16:9') : (aiConfig.imageAspectRatio || '1:1');
   let size = aiConfig.imageSize || '1K';
   let quality = 'medium';
@@ -6423,6 +6562,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       return;
     }
     if (kind === 'video') {
+      if (referenceKind === 'image' && composerVideoMode(videoMode, capabilities).id === 'text') {
+        const frameMode = composerVideoModes(capabilities).find((mode) => mode.id === 'first-last-frame');
+        if (frameMode) setVideoMode(frameMode.id);
+      }
       if (referenceKind === 'video' || referenceKind === 'audio') {
         const availableModes = composerVideoModes(capabilities);
         const currentMode = availableModes.find((mode) => mode.id === videoMode);
@@ -6778,6 +6921,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   function videoModeLabel(modeId) {
     if (modeId === 'video-extend') return t('Extend video', '扩展视频');
     const labels = {
+      text: t('Text to video', '文生视频'),
       'first-last-frame': t('First + last frame', '首尾帧'),
       omni: t('Omni reference', '全能参考'),
       'video-reference': t('Video reference', '视频参考'),
@@ -8147,6 +8291,10 @@ async function showAiImagePopover(initialKind = 'image') {
   aiImagePopoverClickCloser = (e) => {
     const eventPath = typeof e.composedPath === 'function' ? e.composedPath() : [];
     if (pop.contains(e.target) || eventPath.includes(pop)) return;
+    const agentInteraction = eventPath.some((entry) =>
+      entry && entry.nodeType === 1 && entry.closest?.('#board-agent-panel, #board-agent-history-drawer, .agent-text-context-menu')
+    );
+    if (agentInteraction || e.target.closest?.('#board-agent-panel, #board-agent-history-drawer, .agent-text-context-menu')) return;
     if (nodeComposer && e.target.closest('#board-node-editor .drawflow-node')) return;
     if (e.target.closest('#board-mode-toggle, #board-tool-ai-image, #board-tool-ai-video, #board-fullscreen-toggle, #board-bottom-fullscreen-toggle')) return;
     // Canvas images toggle AI reference state; they must not dismiss the active composer.

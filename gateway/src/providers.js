@@ -258,6 +258,12 @@ function providerApiKey(provider) {
   if (provider && provider.routeApiKey) return provider.routeApiKey;
   const direct = String(process.env[provider.keyEnv] || '').trim();
   if (direct) return direct;
+  // Both spellings have been used by deployed Railway environments. Keep the
+  // catalog canonical while accepting the legacy underscored secret so a
+  // correctly configured Atlas account is not hidden from the client.
+  if (provider.keyEnv === 'ATLASCLOUD_API_KEY') {
+    return String(process.env.ATLAS_CLOUD_API_KEY || '').trim();
+  }
   if (provider.keyEnv === 'QUICKROUTER_API_KEY') {
     return String(process.env.QUICK_API_KEY || process.env.Quick_API_KEY || '').trim();
   }
@@ -374,6 +380,16 @@ function requestRouteIds(provider, body = {}) {
       else if (urlCount === 2) videoMode = 'first-last-frame';
       else if (urlCount === 1) videoMode = 'first-frame';
       else videoMode = 'text';
+    }
+    // Keep old H3 clients working: an empty frame-mode request is really a
+    // text-to-video request, not an image-to-video request missing frames.
+    if (capabilities.atlasRouted === true
+      && Array.isArray(capabilities.upstreamRoutes && capabilities.upstreamRoutes.text)
+      && ['first-frame', 'first-last-frame'].includes(videoMode)
+      && (Array.isArray(body.urls) ? body.urls.filter(Boolean).length : 0) === 0
+      && (Array.isArray(body.referenceAudioUrls) ? body.referenceAudioUrls.filter(Boolean).length : 0)
+        + (Array.isArray(body.referenceAudioUploadIds) ? body.referenceAudioUploadIds.filter(Boolean).length : 0) === 0) {
+      videoMode = 'text';
     }
     const route = capabilities.upstreamRoutes && capabilities.upstreamRoutes[videoMode];
     if (Array.isArray(route) && route.length) {
@@ -1141,36 +1157,42 @@ function providerVideoTaskStatus(payload) {
 }
 
 function providerVideoResultUrl(payload) {
-  return String(nestedVideoTaskValue(payload, [
-    'video_url', 'videoUrl', 'result_url', 'resultUrl', 'download_url', 'downloadUrl'
-  ]) || deepVideoResultUrl(payload) || '').trim();
+  const direct = nestedVideoTaskValue(payload, [
+    'video_url', 'videoUrl', 'result_url', 'resultUrl', 'download_url', 'downloadUrl',
+    'outputs', 'urls'
+  ]);
+  // `outputs` is documented as an array and some response envelopes expose
+  // `urls` as an object. Do not stringify those containers into
+  // "[object Object]"; let the recursive URL extractor inspect them.
+  const directUrl = typeof direct === 'string' || typeof direct === 'number'
+    ? String(direct).trim()
+    : '';
+  return (directUrl || deepVideoResultUrl(payload)).trim();
 }
 
-function deepVideoResultUrl(value, seen = new Set(), depth = 0) {
+function deepVideoResultUrl(value, seen = new Set(), depth = 0, acceptPlainHttps = false) {
   if (!value || depth > 10 || seen.has(value)) return '';
   if (typeof value === 'string') {
     const candidate = value.trim();
     if (!/^https:\/\/\S+$/i.test(candidate)) return '';
-    let atlasHost = false;
-    try {
-      const hostname = new URL(candidate).hostname.toLowerCase();
-      atlasHost = hostname === 'atlascloud.ai' || hostname.endsWith('.atlascloud.ai');
-    } catch {}
-    return atlasHost || /(?:\.mp4(?:\?|$)|\.mov(?:\?|$)|\.webm(?:\?|$)|video|download)/i.test(candidate)
+    return acceptPlainHttps || /(?:\.mp4(?:\?|$)|\.mov(?:\?|$)|\.webm(?:\?|$)|video|download)/i.test(candidate)
       ? candidate : '';
   }
   if (typeof value !== 'object') return '';
   seen.add(value);
   const preferredKeys = [
     'video_url', 'videoUrl', 'result_url', 'resultUrl', 'download_url', 'downloadUrl',
-    'video', 'uri', 'url'
+    'outputs', 'urls', 'video', 'uri', 'url'
   ];
   for (const key of preferredKeys) {
-    const found = deepVideoResultUrl(value[key], seen, depth + 1);
+    const found = deepVideoResultUrl(value[key], seen, depth + 1,
+      key === 'outputs' || key === 'video' || key === 'video_url' || key === 'videoUrl'
+        || key === 'result_url' || key === 'resultUrl' || key === 'download_url'
+        || key === 'downloadUrl' || acceptPlainHttps);
     if (found) return found;
   }
   for (const child of Object.values(value)) {
-    const found = deepVideoResultUrl(child, seen, depth + 1);
+    const found = deepVideoResultUrl(child, seen, depth + 1, acceptPlainHttps);
     if (found) return found;
   }
   return '';
@@ -1474,14 +1496,18 @@ async function createAtlasMiniMaxH3VideoTask(provider, body, signal) {
     model: provider.model,
     prompt,
     duration,
-    resolution: atlasResolution(resolution),
-    ratio,
-    output_format: outputFormat,
-    generate_audio: body.generateAudio !== false
+    resolution: atlasResolution(resolution, provider.model),
+    ratio
   };
   const uploadedUrls = [];
   for (let index = 0; index < urls.length; index += 1) {
-    uploadedUrls.push(await atlasMediaReference(provider, urls[index], mediaTypes[index] || 'image', signal));
+    uploadedUrls.push(await atlasMediaReference(
+      provider,
+      urls[index],
+      mediaTypes[index] || 'image',
+      signal,
+      { inlineImageData: isI2v }
+    ));
   }
   const uploadedAudioUrls = [];
   for (const url of audioUrls) uploadedAudioUrls.push(await atlasMediaReference(provider, url, 'audio', signal));
@@ -1491,17 +1517,14 @@ async function createAtlasMiniMaxH3VideoTask(provider, body, signal) {
       ? {
           ...common,
           image: uploadedUrls[0],
-          ...(uploadedUrls[1] ? { last_image: uploadedUrls[1] } : {})
+          ...(uploadedUrls[1] ? { end_image: uploadedUrls[1] } : {})
         }
       : {
           ...common,
-          reference_images: uploadedUrls
-            .map((url, index) => mediaTypes[index] === 'image' ? url : null)
-            .filter(Boolean),
-          reference_videos: uploadedUrls
-            .map((url, index) => mediaTypes[index] === 'video' ? url : null)
-            .filter(Boolean),
-          reference_audios: uploadedAudioUrls
+          refers: [
+            ...uploadedUrls.map((url, index) => ({ url, type: mediaTypes[index] })),
+            ...uploadedAudioUrls.map((url) => ({ url, type: 'audio' }))
+          ]
         };
   const created = await responseJson(await fetch(provider.endpoint, {
     method: 'POST',
@@ -1696,30 +1719,70 @@ function atlasUploadMediaEndpoint(provider) {
   return endpoint;
 }
 
-async function atlasMediaReference(provider, rawUrl, mediaType, signal) {
+function atlasInlineImageData(asset) {
+  const mime = String(asset && asset.mime || '').trim().toLowerCase();
+  if (!asset || !Buffer.isBuffer(asset.buffer) || !/^image\/(?:png|jpeg|webp)$/.test(mime)) {
+    throw Object.assign(new Error('The local reference image is invalid.'), {
+      status: 400, code: 'invalid-reference-media', preSubmissionFailure: true
+    });
+  }
+  return `data:${mime};base64,${asset.buffer.toString('base64')}`;
+}
+
+async function atlasMediaReference(provider, rawUrl, mediaType, signal, options = {}) {
   const url = String(rawUrl || '').trim();
   const localAsset = atlasLocalMediaAsset(url, mediaType);
   if (!localAsset) return url;
+  // H3 image-to-video explicitly accepts Base64 for its first and last frame.
+  // Sending the validated image inline removes an unnecessary upload request
+  // that could fail before the actual video task was ever submitted.
+  if (options.inlineImageData === true && mediaType === 'image') {
+    return atlasInlineImageData(localAsset);
+  }
   const mime = String(localAsset.mime || '').trim().toLowerCase();
   const form = new FormData();
   form.append('file', new Blob([localAsset.buffer], { type: mime }), `reference.${atlasMediaExtension(mime, mediaType)}`);
-  const uploaded = await responseJson(await fetch(atlasUploadMediaEndpoint(provider), {
-    method: 'POST',
-    headers: providerHeaders(provider),
-    signal: providerSignal(signal, 180_000),
-    body: form
-  }), provider.name);
-  const uploadedUrl = String(nestedVideoTaskValue(uploaded, ['download_url', 'downloadUrl', 'url']) || '').trim();
+  let uploaded;
+  try {
+    uploaded = await responseJson(await fetch(atlasUploadMediaEndpoint(provider), {
+      method: 'POST',
+      headers: providerHeaders(provider),
+      signal: providerSignal(signal, 180_000),
+      body: form
+    }), provider.name);
+  } catch (error) {
+    // No generation request has been made at this point. This distinction is
+    // required so a failed upload releases the reservation instead of being
+    // treated as an ambiguously accepted provider task.
+    error.preSubmissionFailure = true;
+    error.submissionAmbiguous = false;
+    throw error;
+  }
+  const uploadedUrl = String(nestedVideoTaskValue(uploaded, [
+    'download_url', 'downloadUrl', 'file_url', 'fileUrl',
+    'media_url', 'mediaUrl', 'url'
+  ]) || '').trim();
   if (!/^https:\/\/\S+$/i.test(uploadedUrl)) {
     throw Object.assign(new Error(`${provider.name} did not return a valid uploaded media URL.`), {
-      status: 502, code: 'provider-invalid-response', retryable: false
+      status: 502,
+      code: 'provider-invalid-response',
+      retryable: false,
+      preSubmissionFailure: true,
+      submissionAmbiguous: false
     });
   }
   return uploadedUrl;
 }
 
-function atlasResolution(value) {
-  const normalized = String(value || '720P').trim().toLowerCase();
+function atlasResolution(value, model = '') {
+  const normalizedValue = String(value || '720P').trim();
+  // MiniMax H3's Atlas schema is case-sensitive and documents the values as
+  // 768P and 2K. Seedance's Atlas adapter historically uses lowercase values,
+  // so keep that transport contract unchanged for the other Atlas models.
+  if (/^minimax\/h3\//i.test(String(model || '').trim())) {
+    return normalizedValue.toUpperCase();
+  }
+  const normalized = normalizedValue.toLowerCase();
   return normalized === '4k' ? '4k'
     : normalized.replace(/\s*&\s*/g, ' & ');
 }
@@ -2185,10 +2248,12 @@ async function createVideoTaskWithProvider(provider, body, signal) {
       code: 'async-video-not-supported'
     });
   } catch (error) {
-    if (String(error && error.code || '') === 'provider-invalid-response') {
+    if (String(error && error.code || '') === 'provider-invalid-response'
+        && error.preSubmissionFailure !== true) {
       error.submissionAmbiguous = true;
     }
-    if (isTimeoutError(error) || String(error && error.name || '') === 'TypeError') {
+    if (error.preSubmissionFailure !== true
+        && (isTimeoutError(error) || String(error && error.name || '') === 'TypeError')) {
       error.submissionAmbiguous = true;
     }
     throw error;
@@ -2278,7 +2343,18 @@ async function pollAtlasMiniMaxH3VideoTask(provider, taskId, signal) {
   const status = providerVideoTaskStatus(result);
   if (status === 'succeeded') {
     const resultUrl = providerVideoResultUrl(result);
-    return resultUrl ? { status, resultUrl } : { status: 'running' };
+    const usage = miniMaxVideoUsage(result);
+    const moderation = nestedVideoTaskValue(result, ['has_nsfw_contents', 'hasNsfwContents']);
+    if (!resultUrl && Array.isArray(moderation) && moderation.some(Boolean)) {
+      return {
+        status: 'failed',
+        errorCode: 'reference-policy-rejected',
+        errorMessage: 'The request could not be completed because the content did not pass the safety review.'
+      };
+    }
+    return resultUrl
+      ? { status, resultUrl, ...(usage ? { usage } : {}) }
+      : { status: 'running' };
   }
   if (TERMINAL_VIDEO_FAILURES.has(status)) {
     return {

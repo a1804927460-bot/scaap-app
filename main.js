@@ -32,7 +32,11 @@ const { createMembershipService } = require('./lib/membership-service');
 const achievements = require('./lib/achievements');
 const preview = require('./lib/preview');
 const thumbnails = require('./lib/thumbnails');
-const { getDefaultLibraryRoot } = require('./lib/storage-paths');
+const {
+  configuredLibraryRoot,
+  getDefaultLibraryRoot,
+  saveConfiguredLibraryRoot
+} = require('./lib/storage-paths');
 const { buildCfHDrop, parseCfHDrop } = require('./lib/clipboard-files');
 const {
   extractClipboardImageSources,
@@ -786,11 +790,15 @@ function writeStartupDiagnostic(stage, detail = '') {
 writeStartupDiagnostic('main-loaded');
 
 function createStoreWithFallback() {
+  const configured = process.env.MESSS_LIBRARY_ROOT
+    ? null
+    : configuredLibraryRoot(app.getPath('userData'));
   const candidates = [
+    configured,
     getDefaultLibraryRoot(),
     path.join(app.getPath('documents'), 'MesssLibrary'),
     path.join(app.getPath('userData'), 'MesssLibrary')
-  ];
+  ].filter(Boolean);
   const attempted = new Set();
   let firstError = null;
 
@@ -814,6 +822,22 @@ function createStoreWithFallback() {
   }
 
   throw firstError || new Error('No writable library location is available.');
+}
+
+async function relocateLibraryStore(selectedPath) {
+  const target = path.resolve(String(selectedPath || '').trim());
+  const current = path.resolve(store.dir);
+  const samePath = process.platform === 'win32'
+    ? target.toLowerCase() === current.toLowerCase()
+    : target === current;
+  if (samePath) return { ok: true, path: current, restarted: false };
+  const movedPath = await store.moveLibraryTo(target);
+  saveConfiguredLibraryRoot(app.getPath('userData'), movedPath);
+  setImmediate(() => {
+    app.relaunch();
+    app.exit(0);
+  });
+  return { ok: true, path: movedPath, restarted: true };
 }
 
 const CANVAS_PACKAGE_MAGIC = Buffer.from('MESSS-CANVAS-PKG', 'ascii');
@@ -7925,10 +7949,26 @@ function registerIpcHandlers() {
   ipcMain.handle('profile:chooseAvatar', () => chooseProfileAvatar());
 
   ipcMain.handle('settings:getLibraryPaths', () => {
+    const defaultPath = path.resolve(getDefaultLibraryRoot());
+    const currentPath = path.resolve(store.dir);
+    const samePath = process.platform === 'win32'
+      ? currentPath.toLowerCase() === defaultPath.toLowerCase()
+      : currentPath === defaultPath;
     return {
-      defaultPath: store.dir,
+      defaultPath,
+      currentPath,
+      isDefault: samePath,
       customPath: store.data.settings.customLibraryPath
     };
+  });
+
+  ipcMain.handle('settings:pickLibraryPath', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: localizedMessage('Choose asset storage location', '选择资产存放位置', '자산 저장 위치'),
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    return relocateLibraryStore(result.filePaths[0]);
   });
 
   ipcMain.handle('settings:pickCustomLibraryPath', async () => {

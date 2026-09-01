@@ -38,6 +38,7 @@ BETA_GRANTS.forEach((entry) => {
 });
 
 const mainSource = fs.readFileSync(path.resolve(__dirname, '../main.js'), 'utf8');
+const preloadSource = fs.readFileSync(path.resolve(__dirname, '../preload.js'), 'utf8');
 const activationSource = fs.readFileSync(path.resolve(__dirname, '../src/js/activation.js'), 'utf8');
 const indexHtml = fs.readFileSync(path.resolve(__dirname, '../src/index.html'), 'utf8');
 assert.doesNotMatch(mainSource, /aiProviderRequiresActivation|isAiActivationUnlocked/);
@@ -47,7 +48,11 @@ assert.doesNotMatch(activationSource, /refreshAiMediaSettings|getAiMediaConfig|m
 assert.doesNotMatch(activationSource, /Activated|Not activated|Activation failed|Enter the activation code/);
 assert.match(activationSource, /creditsAdded[\s\S]*?points added/);
 assert.match(indexHtml, /class="ai-provider-section preferences-settings-section"/);
-assert.match(indexHtml, /class="ai-provider-section storage-settings-section" hidden aria-hidden="true"/);
+assert.match(indexHtml, /class="ai-provider-section storage-settings-section"/);
+assert.match(indexHtml, /id="library-path-title"[^>]*>Asset storage location/);
+assert.match(indexHtml, /id="library-path-change-btn"[^>]*>Change Location/);
+assert.match(mainSource, /settings:pickLibraryPath/);
+assert.match(preloadSource, /pickLibraryPath/);
 assert.match(indexHtml, /id="ai-provider-manager-footer" class="ai-provider-manager-footer" hidden aria-hidden="true"/);
 assert.match(indexHtml, /class="theme-switch preference-choice-switch"[\s\S]*?class="language-switch preference-choice-switch"[\s\S]*?class="ai-provider-section software-update-section"[\s\S]*?class="ai-provider-section activation-settings-section"/);
 
