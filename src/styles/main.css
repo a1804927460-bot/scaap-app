@@ -124,6 +124,29 @@
   gap: 0 14px;
 }
 
+/* Workspace keeps the file rail and the canvas as its primary working area.
+   The legacy preview and compact assistant stay in the DOM for shared
+   fullscreen/detail flows, but do not consume workspace layout space. */
+.main-app.is-canvas-only {
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "sidebar board";
+}
+.main-app.is-canvas-only > .preview-panel,
+.main-app.is-canvas-only > .stats-panel,
+.main-app.is-canvas-only > #resize-handle-preview,
+.main-app.is-canvas-only > #resize-handle-stats,
+.main-app.is-canvas-only > #resize-corner-left,
+.main-app.is-canvas-only > #resize-corner-right {
+  display: none !important;
+}
+.main-app.is-canvas-only > #sidebar { grid-area: sidebar !important; }
+.main-app.is-canvas-only > #board-panel { grid-area: board !important; }
+.main-app.is-canvas-only.sidebar-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
+  gap: 0 14px;
+}
+
 /* -------- Sidebar -------- */
 .sidebar {
   grid-area: sidebar;

@@ -43,6 +43,16 @@ assert.equal((statsDetailJs.match(/document\.addEventListener\('keydown'/g) || [
 assert.match(sidebarJs, /section-tab\[data-section="messs"\][\s\S]*?Workspace[\s\S]*?section-tab\[data-section="assistant"\][\s\S]*?Messs/,
   'Navigation labels must localize the assistant and workspace entries.');
 assert.match(mainCss, /\.main-app\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0;/);
+assert.match(
+  indexHtml,
+  /id="main-app" class="main-app is-visible is-canvas-only"/,
+  'The workspace must use the canvas-only layout.'
+);
+assert.match(
+  mainCss,
+  /\.main-app\.is-canvas-only\s*\{[\s\S]*?grid-template-areas:\s*"sidebar board"[\s\S]*?\.main-app\.is-canvas-only > \.preview-panel[\s\S]*?\.main-app\.is-canvas-only > \.stats-panel[\s\S]*?display:\s*none !important[\s\S]*?\.main-app\.is-canvas-only > #board-panel \{ grid-area: board !important; \}/,
+  'The workspace must hide the upper preview and assistant panels while giving the canvas the full right-hand area.'
+);
 assert.match(mainCss, /#search-input\s*\{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-width:\s*0;/);
 assert.doesNotMatch(sidebarJs, /file-list-storage-badge|badge\.textContent\s*=\s*t\('Library',\s*'资料库'\)/, 'The redundant Library badge must stay removed.');
 assert.doesNotMatch(sidebarJs, /file-list-storage-badge[\s\S]{0,180}innerHTML/, 'The Library label must stay text-only.');
