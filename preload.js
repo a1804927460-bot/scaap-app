@@ -249,6 +249,19 @@ contextBridge.exposeInMainWorld('messsAPI', {
   exportCanvas: (canvasId) => ipcRenderer.invoke('canvas:export', canvasId),
   importCanvas: (projectId) => ipcRenderer.invoke('canvas:import', projectId),
   deleteCanvas: (canvasId) => ipcRenderer.invoke('canvas:delete', canvasId),
+  openDetachedCanvas: (canvasId, launchPoint) => ipcRenderer.invoke('canvas:openDetached', canvasId, launchPoint),
+  beginCanvasDetachDrag: (canvasId) => ipcRenderer.send('canvas:beginDetachDrag', canvasId),
+  cancelCanvasDetachDrag: () => ipcRenderer.send('canvas:cancelDetachDrag'),
+  onCanvasItemsChanged: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('canvas:itemsChanged', listener);
+    return () => ipcRenderer.removeListener('canvas:itemsChanged', listener);
+  },
+  onCanvasStateChanged: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('canvas:stateChanged', listener);
+    return () => ipcRenderer.removeListener('canvas:stateChanged', listener);
+  },
 
   renderPdfPage: (pdfPath, pageNumber, scale) => renderPdfPage(pdfPath, pageNumber, scale),
 

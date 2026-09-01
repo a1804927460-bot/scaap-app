@@ -82,6 +82,22 @@ async function run() {
   const screenshotPath = path.join(screenshotDir, 'ai-assistant-layout.png');
   fs.writeFileSync(screenshotPath, (await window.webContents.capturePage()).toPNG());
 
+  const navigationState = await window.webContents.executeJavaScript(`(() => {
+    setAssistantFullscreen(true, { syncNavigation: true });
+    const expandedTab = document.querySelector('.section-tab.is-active')?.dataset.section;
+    setAssistantFullscreen(false, { syncNavigation: true });
+    const panel = document.getElementById('ai-assistant-panel');
+    const collapsedTab = document.querySelector('.section-tab.is-active')?.dataset.section;
+    const restoredToWorkspace = Boolean(panel.closest('.stats-panel'));
+    setAssistantFullscreen(true, { syncNavigation: true });
+    return { expandedTab, collapsedTab, restoredToWorkspace };
+  })()`);
+  if (navigationState.expandedTab !== 'assistant'
+    || navigationState.collapsedTab !== 'messs'
+    || !navigationState.restoredToWorkspace) {
+    throw new Error(`Assistant fullscreen navigation did not restore Workspace: ${JSON.stringify(navigationState)}`);
+  }
+
   const optionMetrics = await window.webContents.executeJavaScript(`(() => {
     setAssistantKind('image');
     const options = document.getElementById('ai-assistant-options');

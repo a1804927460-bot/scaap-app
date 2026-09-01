@@ -397,7 +397,7 @@ test('MiniMax H3 sends the Atlas contract for mixed references and preserves usa
   });
 });
 
-test('MiniMax H3 Atlas text and frame routes use only documented fields', async () => {
+test('MiniMax H3 Atlas frame routes use only documented fields', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({ ATLASCLOUD_API_KEY: 'atlas-test-key', MINIMAX_API_KEY: null }, async () => {
     const calls = [];
@@ -419,30 +419,13 @@ test('MiniMax H3 Atlas text and frame routes use only documented fields', async 
       throw new Error('Unexpected URL: ' + url);
     };
     try {
-      const textTask = await createVideoTask({
-        providerId: 'video-1', prompt: 'text route', resolution: '2K', duration: 5,
-        aspectRatio: '16:9', videoMode: 'text', outputFormat: 'mov', generateAudio: false
-      });
-      const textRequest = JSON.parse(calls[0].options.body);
-      assert.deepEqual(textRequest, {
-        model: 'minimax/h3/text-to-video',
-        prompt: 'text route',
-        duration: 5,
-        resolution: '2K',
-        ratio: '16:9'
-      });
-      assert.equal(Object.hasOwn(textRequest, 'output_format'), false);
-      assert.equal(Object.hasOwn(textRequest, 'generate_audio'), false);
-      assert.equal((await pollVideoTask(textTask.providerId, textTask.taskId)).resultUrl,
-        'https://cdn.example.test/result-output');
-
       await createVideoTask({
         providerId: 'video-1', prompt: 'frame route', resolution: '768P', duration: 4,
         aspectRatio: 'adaptive', videoMode: 'first-last-frame',
         urls: ['https://cdn.example.test/first.png', 'https://cdn.example.test/last.png'],
         referenceMediaTypes: ['image', 'image']
       });
-      const frameRequest = JSON.parse(calls[2].options.body);
+      const frameRequest = JSON.parse(calls[0].options.body);
       assert.deepEqual(frameRequest, {
         model: 'minimax/h3/image-to-video',
         prompt: 'frame route',
@@ -461,7 +444,7 @@ test('MiniMax H3 Atlas text and frame routes use only documented fields', async 
   });
 });
 
-test('MiniMax H3 routes legacy empty frame requests to text-to-video', async () => {
+test('MiniMax H3 rejects legacy empty frame requests before upstream submission', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({ ATLASCLOUD_API_KEY: 'atlas-test-key', MINIMAX_API_KEY: null }, async () => {
     const calls = [];
@@ -473,19 +456,11 @@ test('MiniMax H3 routes legacy empty frame requests to text-to-video', async () 
       throw new Error('Unexpected URL: ' + url);
     };
     try {
-      await createVideoTask({
+      await assert.rejects(() => createVideoTask({
         providerId: 'video-1', prompt: 'legacy H3 prompt', resolution: '2K', duration: 5,
-        aspectRatio: '16:9', videoMode: 'first-last-frame', urls: []
-      });
-      assert.equal(calls.length, 1);
-      assert.match(calls[0].url, /atlascloud\.ai\/api\/v1\/model\/generateVideo$/);
-      assert.deepEqual(JSON.parse(calls[0].options.body), {
-        model: 'minimax/h3/text-to-video',
-        prompt: 'legacy H3 prompt',
-        duration: 5,
-        resolution: '2K',
-        ratio: '16:9'
-      });
+        aspectRatio: 'adaptive', videoMode: 'first-last-frame', urls: []
+      }), (error) => error && error.code === 'reference-required');
+      assert.equal(calls.length, 0);
     } finally {
       globalThis.fetch = previousFetch;
     }
@@ -575,7 +550,9 @@ test('MiniMax H3 ignores task links as outputs and reports moderation failures',
     try {
       const created = await createVideoTask({
         providerId: 'video-1', prompt: 'moderation result', resolution: '768P',
-        duration: 4, aspectRatio: '16:9', videoMode: 'text'
+        duration: 4, aspectRatio: 'adaptive', videoMode: 'first-frame',
+        urls: ['https://cdn.example.test/moderation-reference.png'],
+        referenceMediaTypes: ['image']
       });
       assert.deepEqual(await pollVideoTask(created.providerId, created.taskId), { status: 'running' });
       assert.deepEqual(await pollVideoTask(created.providerId, created.taskId), {
@@ -611,7 +588,9 @@ test('MiniMax H3 accepts the underscored Atlas secret name and nested output URL
     try {
       const created = await createVideoTask({
         providerId: 'video-1', prompt: 'underscored Atlas secret', resolution: '768P',
-        duration: 4, aspectRatio: '16:9', videoMode: 'text'
+        duration: 4, aspectRatio: 'adaptive', videoMode: 'first-frame',
+        urls: ['https://cdn.example.test/secret-reference.png'],
+        referenceMediaTypes: ['image']
       });
       assert.equal(calls[0].options.headers.Authorization, 'Bearer atlas-underscored-key');
       assert.equal((await pollVideoTask(created.providerId, created.taskId)).resultUrl,
@@ -662,7 +641,7 @@ test('reference copyright policy rejections keep a specific public-safe error co
     }
   });
 });
-test('legacy synchronous video compatibility still creates, polls, and downloads MiniMax output', async () => {
+test('legacy synchronous video compatibility still creates, polls, and downloads MiniMax image-to-video output', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({ ATLASCLOUD_API_KEY: 'atlas-test-key', MINIMAX_API_KEY: null }, async () => {
     const video = Buffer.from([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x70, 0x34, 0x32]);
@@ -694,8 +673,10 @@ test('legacy synchronous video compatibility still creates, polls, and downloads
         prompt: 'legacy compatibility',
         resolution: '768P',
         duration: 5,
-        aspectRatio: '16:9',
-        urls: []
+        aspectRatio: 'adaptive',
+        videoMode: 'first-frame',
+        urls: ['https://cdn.example.test/legacy-reference.png'],
+        referenceMediaTypes: ['image']
       });
       assert.deepEqual(result, video);
       assert.equal(calls.length, 3);
@@ -728,7 +709,8 @@ test('legacy synchronous video compatibility rejects an HTTP 200 error page', as
       await assert.rejects(
         generateLegacyVideo({
           providerId: 'video-1', prompt: 'invalid legacy result', resolution: '768P',
-          duration: 5, aspectRatio: '16:9', urls: []
+          duration: 5, aspectRatio: 'adaptive', videoMode: 'first-frame',
+          urls: ['https://cdn.example.test/error-reference.png'], referenceMediaTypes: ['image']
         }),
         (error) => error && error.code === 'invalid-media'
       );

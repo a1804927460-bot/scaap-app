@@ -12,6 +12,8 @@ const BOARD_MOUNT_FRAME_BUDGET_MS = 7;
 const BOARD_DOM_ITEM_LIMIT = 180;
 const BOARD_DOM_ITEM_EXIT_LIMIT = 135;
 const BOARD_DOM_RETAIN_LIMIT = BOARD_DOM_ITEM_LIMIT;
+const BOARD_LIGHTWEIGHT_EFFECTS_ENTER_COUNT = 72;
+const BOARD_LIGHTWEIGHT_EFFECTS_EXIT_COUNT = 48;
 const BOARD_OVERVIEW_ITEM_THRESHOLD = 180;
 const BOARD_FULL_IMAGE_LIMIT = 8;
 const BOARD_FULL_IMAGE_CACHE_LIMIT = 12;
@@ -127,6 +129,7 @@ const Board = {
   lastZoomBucket: null,
   zoomLod: null,
   densityOverview: false,
+  lightweightEffects: false,
   lastDragEndedAt: 0,
   lastPanEndedAt: 0,
   visibleIds: new Set(),
@@ -3175,6 +3178,7 @@ function scheduleBoardReconcile() {
 function renderBoard() {
   const empty = document.getElementById('board-empty');
   empty.hidden = AppState.boardItems.length > 0;
+  syncBoardLightweightEffects();
   restoreLegacyUniformBoardFrames();
   rebuildBoardSpatialIndex();
   reconcileMountedBoardItemsAfterDataChange();
@@ -3208,6 +3212,18 @@ function boardSelectionBounds(items) {
 
 function boardSelectionResizeItems() {
   return AppState.boardItems.filter((item) => item && item.selected && !item.isPartition);
+}
+
+function syncBoardLightweightEffects() {
+  const itemCount = Array.isArray(AppState.boardItems) ? AppState.boardItems.length : 0;
+  Board.lightweightEffects = Board.lightweightEffects
+    ? itemCount > BOARD_LIGHTWEIGHT_EFFECTS_EXIT_COUNT
+    : itemCount >= BOARD_LIGHTWEIGHT_EFFECTS_ENTER_COUNT;
+  const panel = document.getElementById('board-panel');
+  if (panel) {
+    panel.classList.toggle('is-performance-lite', Board.lightweightEffects);
+    panel.dataset.boardEffectMode = Board.lightweightEffects ? 'lightweight' : 'full';
+  }
 }
 
 function ensureBoardSelectionGroup() {
@@ -4652,6 +4668,11 @@ function refreshBoardLanguage() {
   if (locateButton) {
     locateButton.title = t('Locate images', '定位图片');
     locateButton.setAttribute('aria-label', locateButton.title);
+  }
+  const detachButton = document.getElementById('board-detach-window');
+  if (detachButton) {
+    detachButton.title = t('Open in separate window', '分离画布');
+    detachButton.setAttribute('aria-label', detachButton.title);
   }
   const resetZoomTitle = t('Reset to 100%', '重置为 100%', '100%로 재설정');
   ['board-zoom-label', 'board-bottom-zoom-label'].forEach((id) => {

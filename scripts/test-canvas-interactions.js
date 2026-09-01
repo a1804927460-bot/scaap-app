@@ -23,6 +23,101 @@ const usageSettingsSource = fs.readFileSync(path.join(root, 'src', 'js', 'usage-
 const documentEditorSource = fs.readFileSync(path.join(root, 'src', 'js', 'document-editor.js'), 'utf8');
 
 assert.match(
+  boardStyles,
+  /\.ai-model-picker-menu\s*\{[\s\S]*?min-width:\s*224px;[\s\S]*?max-height:\s*300px;/,
+  'The image and video model menu must keep a comfortably sized selection surface.'
+);
+assert.match(
+  boardStyles,
+  /\.ai-model-picker-option\s*\{[\s\S]*?min-height:\s*40px;[\s\S]*?font-size:\s*12\.5px;/,
+  'Model choices must remain large enough to scan and click reliably.'
+);
+
+assert.match(
+  boardSource,
+  /BOARD_LIGHTWEIGHT_EFFECTS_ENTER_COUNT = 72;[\s\S]*?BOARD_LIGHTWEIGHT_EFFECTS_EXIT_COUNT = 48;/,
+  'Large canvases must use separate enter and exit thresholds to avoid effect-mode thrashing.'
+);
+const lightweightEffectsSource = boardSource.slice(
+  boardSource.indexOf('function syncBoardLightweightEffects()'),
+  boardSource.indexOf('function ensureBoardSelectionGroup()')
+);
+const lightweightPanel = {
+  dataset: {},
+  enabled: false,
+  classList: {
+    toggle(_name, enabled) { lightweightPanel.enabled = enabled; }
+  }
+};
+const lightweightSandbox = {
+  AppState: { boardItems: [] },
+  Board: { lightweightEffects: false },
+  BOARD_LIGHTWEIGHT_EFFECTS_ENTER_COUNT: 72,
+  BOARD_LIGHTWEIGHT_EFFECTS_EXIT_COUNT: 48,
+  document: { getElementById: () => lightweightPanel }
+};
+vm.runInNewContext(
+  `${lightweightEffectsSource}\nthis.syncBoardLightweightEffects = syncBoardLightweightEffects;`,
+  lightweightSandbox
+);
+lightweightSandbox.AppState.boardItems = new Array(71);
+lightweightSandbox.syncBoardLightweightEffects();
+assert.equal(lightweightSandbox.Board.lightweightEffects, false);
+lightweightSandbox.AppState.boardItems = new Array(72);
+lightweightSandbox.syncBoardLightweightEffects();
+assert.equal(lightweightSandbox.Board.lightweightEffects, true);
+assert.equal(lightweightPanel.enabled, true);
+assert.equal(lightweightPanel.dataset.boardEffectMode, 'lightweight');
+lightweightSandbox.AppState.boardItems = new Array(49);
+lightweightSandbox.syncBoardLightweightEffects();
+assert.equal(lightweightSandbox.Board.lightweightEffects, true);
+lightweightSandbox.AppState.boardItems = new Array(48);
+lightweightSandbox.syncBoardLightweightEffects();
+assert.equal(lightweightSandbox.Board.lightweightEffects, false);
+assert.equal(lightweightPanel.enabled, false);
+assert.equal(lightweightPanel.dataset.boardEffectMode, 'full');
+assert.match(
+  boardStyles,
+  /\.board-panel\.is-performance-lite \.board-item:not\(\.is-selected\)[\s\S]*?box-shadow:\s*none;/,
+  'Lightweight canvas mode must remove repeated card shadows.'
+);
+assert.match(
+  boardStyles,
+  /\.board-panel\.is-performance-lite \.board-image-layer,[\s\S]*?\.board-quick-generate\s*\{\s*transition:\s*none;/,
+  'Lightweight canvas mode must remove nonessential media control transitions.'
+);
+assert.match(
+  boardStyles,
+  /\.board-panel\.is-performance-lite \.board-agent-panel,[\s\S]*?-webkit-backdrop-filter:\s*none;[\s\S]*?backdrop-filter:\s*none;/,
+  'Lightweight canvas mode must avoid expensive Agent and tool backdrop filters.'
+);
+assert.match(
+  boardStyles,
+  /\.ai-assistant-panel\.is-fullscreen \.ai-assistant-home p\s*\{\s*animation:\s*none;/,
+  'Decorative assistant copy must not animate continuously.'
+);
+assert.match(
+  boardStyles,
+  /\.ai-assistant-form::before,[\s\S]*?\.board-agent-form::before\s*\{[\s\S]*?animation:\s*none;/,
+  'Composer border decoration must remain static instead of consuming continuous paint work.'
+);
+assert.match(
+  boardStyles,
+  /\.ai-assistant-panel::before\s*\{[\s\S]*?animation:\s*none;/,
+  'Assistant panel border decoration must remain static instead of consuming continuous paint work.'
+);
+assert.match(
+  boardStyles,
+  /\.board-partition-border-beam > span\s*\{[\s\S]*?animation:\s*board-partition-border-beam 1\.05s linear 1 both;/,
+  'Secondary partition creation must retain its one-shot confirmation beam.'
+);
+assert.match(
+  boardStyles,
+  /\.board-panel\.is-performance-lite \.board-partition-border-beam > span\s*\{[\s\S]*?animation-duration:\s*\.72s;/,
+  'Lightweight mode should shorten, not remove, secondary partition confirmation.'
+);
+
+assert.match(
   boardSource,
   /const TEXT_NOTE_DEFAULT_COLOR = '#15171c';[\s\S]*?function textNoteUsesThemeColor\(note\)[\s\S]*?note\.colorMode === 'auto'/,
   'Board text needs a theme-aware automatic color mode.'
@@ -1255,7 +1350,11 @@ assert.match(
   /function observeBoardMediaIntrinsicRatio[\s\S]*?syncBoardMediaIntrinsicRatio[\s\S]*?loadedmetadata/,
   'Missing legacy media dimensions must be repaired after the source decodes.'
 );
-assert.match(themeSource, /\[data-theme="dark"\][\s\S]*?--bg-base:\s*#111111;[\s\S]*?--bg-surface-2:\s*#282828;/);
+assert.match(
+  themeSource,
+  /\[data-theme="dark"\][\s\S]*?--bg-deep:\s*#0a0a0a;[\s\S]*?--bg-base:\s*#101112;[\s\S]*?--bg-elevated:\s*#1a1b1d;[\s\S]*?--bg-surface:\s*#151618;[\s\S]*?--bg-surface-2:\s*#292b2e;[\s\S]*?--bg-frame:\s*#101112;/,
+  'Dark mode must preserve distinct frame, workspace, panel, card, and interaction layers.'
+);
 assert.match(
   themeSource,
   /\[data-theme="light"\][\s\S]*?--bg-base:\s*#ffffff;[\s\S]*?--bg-surface:\s*#f6f6f6;[\s\S]*?--bg-surface-2:\s*#ededed;[\s\S]*?--bg-frame:\s*#ffffff;[\s\S]*?--board-workspace-bg:\s*#ffffff;/,
@@ -1295,8 +1394,13 @@ assert.match(boardStyles, /\.app-titlebar \{[\s\S]*?background:\s*var\(--bg-fram
   'The light title bar must use the sampled frame gray while dark mode keeps its fallback.');
 assert.match(
   themeSource,
-  /\[data-theme="dark"\][\s\S]*?--board-workspace-bg:\s*color-mix\(in srgb, var\(--bg-deep\) 94%, #090b10 6%\)/,
+  /\[data-theme="dark"\][\s\S]*?--board-workspace-bg:\s*#0a0a0a/,
   'Dark canvas modes must share the existing node-canvas background color.'
+);
+assert.match(
+  boardStyles,
+  /\[data-theme="dark"\] \.canvas-library-view \{ background: var\(--bg-deep\); \}[\s\S]*?\[data-theme="dark"\] \.canvas-library-sidebar \{ background: var\(--bg-surface\); \}[\s\S]*?\[data-theme="dark"\] \.canvas-library-content \{ background: var\(--bg-deep\); \}/,
+  'The dark canvas library must separate its content well from the navigation and cards.'
 );
 assert.match(
   boardStyles,

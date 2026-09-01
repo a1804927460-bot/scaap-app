@@ -1204,6 +1204,29 @@ body.is-activation-locked .section-tabs { pointer-events: none; opacity: .45; }
   background:
     radial-gradient(circle at 50% 35%, var(--glow-color) 0%, transparent 55%);
 }
+
+body.is-detached-canvas-window #section-tabs { display: none; }
+body.is-detached-canvas-window #main-app {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "board";
+  gap: 0;
+  padding: 8px;
+}
+body.is-detached-canvas-window #main-app > :not(#board-panel),
+body.is-detached-canvas-window #canvas-library-back,
+body.is-detached-canvas-window #board-detach-window { display: none !important; }
+body.is-detached-canvas-window #board-panel {
+  grid-area: board !important;
+  border-color: var(--border-hairline);
+  border-radius: 8px;
+}
+body.is-detached-canvas-window #board-panel:not(.is-fullscreen) #board-agent-toggle { display: inline-flex; }
+body.is-detached-canvas-window #board-panel:not(.is-fullscreen) .board-agent-panel { display: flex; }
+body.is-detached-canvas-window #board-panel:not(.is-fullscreen) #resize-handle-board-agent { display: block; }
+body.is-detached-canvas-window .panel-header { cursor: var(--cursor-grab); }
+body.is-detached-canvas-window .panel-header:active { cursor: var(--cursor-grabbing); }
+[data-theme="dark"] .preview-canvas { background: var(--bg-deep); }
 .preview-canvas.is-drag-over {
   background-color: var(--accent-soft);
   outline: 2px dashed var(--accent);
@@ -2055,7 +2078,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   transform: translateY(3px) scale(.985);
 }
 .ai-assistant-panel.is-fullscreen .ai-assistant-home p {
-  animation: ai-breathing-copy 3.8s ease-in-out infinite;
+  animation: none;
 }
 @keyframes ai-breathing-copy {
   0%, 100% { opacity: .62; transform: translateY(0); }
@@ -2539,9 +2562,9 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   left: 0;
   bottom: calc(100% + 7px);
   width: max-content;
-  min-width: 184px;
-  max-width: min(280px, calc(100vw - 40px));
-  max-height: 220px;
+  min-width: 224px;
+  max-width: min(320px, calc(100vw - 40px));
+  max-height: 300px;
   overflow: auto;
   padding: 5px;
   border: 1px solid var(--border-hairline);
@@ -2555,13 +2578,15 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .ai-model-picker-menu[hidden] { display: none; }
 .ai-model-picker-option {
   width: 100%;
-  min-height: 31px;
+  min-height: 40px;
   display: flex;
   align-items: center;
-  padding: 5px 8px;
+  gap: 7px;
+  padding: 7px 11px;
   border-radius: 6px;
   color: var(--text-secondary);
-  font-size: 10.5px;
+  font-size: 12.5px;
+  font-weight: 620;
   text-align: left;
   overflow-wrap: anywhere;
 }
@@ -3154,8 +3179,11 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   background: color-mix(in srgb, var(--bg-elevated) 78%, var(--bg-surface));
 }
 [data-theme="dark"] .canvas-library-card {
-  background: color-mix(in srgb, var(--bg-elevated) 86%, transparent);
+  background: var(--bg-elevated);
 }
+[data-theme="dark"] .canvas-library-view { background: var(--bg-deep); }
+[data-theme="dark"] .canvas-library-sidebar { background: var(--bg-surface); }
+[data-theme="dark"] .canvas-library-content { background: var(--bg-deep); }
 .canvas-library-card-title {
   min-width: 0;
   overflow: hidden;
@@ -4762,6 +4790,41 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 /* While the whole canvas is moving, avoid repainting decorative shadows on
    every mounted card. The settled frame restores the normal treatment. */
 .board-canvas.is-transforming .board-item:not(.is-selected) { box-shadow: none; }
+.board-panel.is-performance-lite .board-item:not(.is-selected),
+.board-panel.is-performance-lite .board-item.is-dragging,
+.board-panel.is-performance-lite .board-partition.is-dragging { box-shadow: none; }
+
+.board-panel.is-performance-lite .board-media-meta-name,
+.board-panel.is-performance-lite .board-media-meta-size { text-shadow: none; }
+
+.board-panel.is-performance-lite .board-image-layer,
+.board-panel.is-performance-lite .board-image-toolbar,
+.board-panel.is-performance-lite .board-butler-menu,
+.board-panel.is-performance-lite .board-butler-model-menu,
+.board-panel.is-performance-lite .board-butler-config-panel,
+.board-panel.is-performance-lite .board-quick-generate { transition: none; }
+
+.board-panel.is-performance-lite .board-image-layer { animation: none; }
+
+.board-panel.is-performance-lite .board-agent-panel,
+.board-panel.is-performance-lite .board-agent-history-drawer,
+.board-panel.is-performance-lite .board-agent-drop-overlay,
+.board-panel.is-performance-lite .board-butler-expand-editor,
+.board-panel.is-performance-lite .ai-image-btn-primary,
+.board-panel.is-performance-lite .board-quick-generate-submit {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.board-panel.is-performance-lite .board-canvas.is-transforming .board-media-meta {
+  visibility: hidden;
+}
+
+.board-panel.is-performance-lite .board-partition-border-beam > span {
+  box-shadow: none;
+  filter: none;
+  animation-duration: .72s;
+}
 .board-overview-canvas {
   position: absolute;
   inset: 0;
@@ -10343,7 +10406,7 @@ body { font-size: var(--font-ui-md); }
   -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   mask-composite: exclude;
-  animation: composer-edge-beam 16s linear infinite;
+  animation: none;
 }
 .ai-assistant-form::after,
 .board-agent-form::after {
@@ -10360,7 +10423,7 @@ body { font-size: var(--font-ui-md); }
 .ai-assistant-form:focus-within::before,
 .board-agent-form:focus-within::before {
   opacity: .72;
-  animation-duration: 10s;
+  animation-duration: 0s;
 }
 .ai-assistant-form:focus-within,
 .board-agent-form:focus-within {
@@ -10430,13 +10493,13 @@ body { font-size: var(--font-ui-md); }
   -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   mask-composite: exclude;
-  animation: assistant-border-beam 15s linear infinite;
+  animation: none;
 }
 .ai-assistant-panel > * { position: relative; z-index: 1; }
 .ai-assistant-panel.is-fullscreen::before {
   inset: 0;
   opacity: .34;
-  animation-duration: 12s;
+  animation-duration: 0s;
 }
 @keyframes assistant-border-beam {
   to { --assistant-edge-angle: 360deg; }

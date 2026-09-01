@@ -7,6 +7,8 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { app, BrowserWindow } = require('electron');
 
+let currentStage = 'startup';
+
 async function run() {
   const root = path.join(__dirname, '..');
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'messs-light-theme-'));
@@ -31,10 +33,21 @@ async function run() {
       <main class="fixture"><aside class="fixture-panel"><h1>Messs.</h1><i></i><i></i><i></i><i></i></aside><section class="fixture-main"><header class="fixture-header">Integrated canvas</header><div class="fixture-canvas"><div class="fixture-media"></div></div></section><aside class="fixture-panel fixture-detail"><strong>File details</strong><i></i><i></i><i></i></aside></main>
     </body></html>`, 'utf8');
 
-  const window = new BrowserWindow({ width: 1280, height: 760, show: false, backgroundColor: '#ffffff' });
+  const window = new BrowserWindow({
+    width: 1280,
+    height: 760,
+    x: -10000,
+    y: -10000,
+    show: true,
+    skipTaskbar: true,
+    backgroundColor: '#ffffff',
+    webPreferences: { offscreen: true }
+  });
   try {
+    currentStage = 'loading fixture';
     await window.loadFile(fixturePath);
     await new Promise((resolve) => setTimeout(resolve, 180));
+    currentStage = 'reading computed colors';
     const colors = await window.webContents.executeJavaScript(`({
       base: getComputedStyle(document.documentElement).getPropertyValue('--bg-base').trim(),
       frame: getComputedStyle(document.documentElement).getPropertyValue('--bg-frame').trim(),
@@ -56,6 +69,9 @@ async function run() {
       canvas: 'rgb(255, 255, 255)'
     });
     fs.mkdirSync(outputDir, { recursive: true });
+    currentStage = 'capturing screenshot';
+    window.webContents.invalidate();
+    await new Promise((resolve) => setTimeout(resolve, 120));
     fs.writeFileSync(path.join(outputDir, 'light-theme.png'), (await window.webContents.capturePage()).toPNG());
     process.stdout.write(`LIGHT_THEME_VISUAL_OK ${JSON.stringify(colors)}\n`);
   } finally {
@@ -65,6 +81,6 @@ async function run() {
 }
 
 app.whenReady().then(run).then(() => app.quit()).catch((error) => {
-  console.error(error && error.stack ? error.stack : error);
+  console.error(`${currentStage}: ${error && error.stack ? error.stack : error}`);
   app.exit(1);
 });

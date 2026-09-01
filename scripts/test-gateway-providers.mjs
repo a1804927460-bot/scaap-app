@@ -650,31 +650,16 @@ globalThis.fetch = async (url, options = {}) => {
   }
   throw new Error(`Unexpected H3 URL: ${value}`);
 };
-const createdVideo = await createVideoTask({
+await assert.rejects(() => createVideoTask({
   providerId: 'video-1',
-  prompt: 'slow cinematic orbit',
+  prompt: 'H3 requires a first frame',
   resolution: '2K',
   duration: 5,
-  aspectRatio: '16:9',
+  aspectRatio: 'adaptive',
+  videoMode: 'first-last-frame',
   urls: []
-});
-assert.deepEqual(createdVideo, {
-  providerId: 'atlas-video-minimax-h3-t2v',
-  taskId: 'messs-route:atlas-video-minimax-h3-t2v:h3-task-1'
-});
-assert.deepEqual(await pollVideoTask('video-1', createdVideo.taskId), {
-  status: 'succeeded',
-  resultUrl: 'https://cdn.example/h3.mp4'
-});
-const miniMaxBody = JSON.parse(miniMaxCalls[0].options.body);
-assert.deepEqual(miniMaxBody, {
-  model: 'minimax/h3/text-to-video',
-  prompt: 'slow cinematic orbit',
-  duration: 5,
-  ratio: '16:9',
-  resolution: '2K'
-});
-assert.equal(miniMaxCalls[0].options.headers.Authorization, 'Bearer atlas-secret');
+}), (error) => error && error.code === 'reference-required');
+assert.equal(miniMaxCalls.length, 0);
 assert.equal(miniMaxCalls.some((call) => call.url.includes('api.minimaxi.com')), false);
 
 await createVideoTask({
@@ -694,6 +679,8 @@ const frameRequest = miniMaxCalls
   .find((call) => call.body && call.body.image && call.body.end_image);
 assert.ok(frameRequest);
 assert.equal(frameRequest.body.ratio, 'adaptive');
+assert.equal(frameRequest.body.model, 'minimax/h3/image-to-video');
+assert.equal(miniMaxCalls[0].options.headers.Authorization, 'Bearer atlas-secret');
 assert.equal(frameRequest.body.image, 'https://cdn.example/first.png');
 assert.equal(frameRequest.body.end_image, 'https://cdn.example/last.png');
 assert.equal(frameRequest.body.last_image, undefined);
@@ -1062,9 +1049,10 @@ for (const providerId of ['video-1', 'video-2', 'video-3']) {
       prompt: 'do not replay a paid request after an ambiguous provider failure',
       resolution: providerId === 'video-1' ? '768P' : '480P',
       duration: 4,
-      aspectRatio: providerId === 'video-1' ? '16:9' : 'adaptive',
-      urls: providerId === 'video-1' ? [] : ['https://cdn.example/retry-reference.png'],
-      ...(providerId === 'video-1' ? {} : { videoMode: 'first-frame', referenceMediaTypes: ['image'] })
+      aspectRatio: 'adaptive',
+      urls: ['https://cdn.example/retry-reference.png'],
+      videoMode: 'first-frame',
+      referenceMediaTypes: ['image']
     }),
     (error) => error && error.code === 'provider-temporarily-unavailable'
   );

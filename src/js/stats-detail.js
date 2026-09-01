@@ -84,7 +84,19 @@ function updateAssistantCompactState() {
   panel.classList.toggle('is-compact', compact);
 }
 
-function setAssistantFullscreen(expanded) {
+function syncAssistantFullscreenNavigation(expanded) {
+  const section = expanded ? 'assistant' : 'messs';
+  document.querySelectorAll('.section-tab').forEach((tab) => {
+    const active = tab.dataset.section === section;
+    tab.classList.toggle('is-active', active);
+    tab.setAttribute('aria-selected', String(active));
+  });
+  document.querySelectorAll('.app-section').forEach((element) => {
+    element.classList.toggle('is-active', element.id === 'section-messs');
+  });
+}
+
+function setAssistantFullscreen(expanded, options = {}) {
   const panel = document.getElementById('ai-assistant-panel');
   const button = document.getElementById('ai-assistant-history');
   if (expanded && panel.parentElement !== document.body) {
@@ -102,6 +114,7 @@ function setAssistantFullscreen(expanded) {
   button.setAttribute('aria-label', button.title);
   button.setAttribute('aria-pressed', String(expanded));
   button.innerHTML = expanded ? ASSISTANT_ICON_COMPRESS : ASSISTANT_ICON_EXPAND;
+  if (options.syncNavigation === true) syncAssistantFullscreenNavigation(expanded);
   updateAssistantCompactState();
 }
 
@@ -121,12 +134,14 @@ function initStatsDetail() {
   updateAssistantCompactState();
   document.getElementById('ai-assistant-history').addEventListener('click', () => {
     const panel = document.getElementById('ai-assistant-panel');
-    setAssistantFullscreen(!panel.classList.contains('is-fullscreen'));
+    setAssistantFullscreen(!panel.classList.contains('is-fullscreen'), { syncNavigation: true });
   });
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
     const panel = document.getElementById('ai-assistant-panel');
-    if (panel && panel.classList.contains('is-fullscreen')) setAssistantFullscreen(false);
+    if (panel && panel.classList.contains('is-fullscreen')) {
+      setAssistantFullscreen(false, { syncNavigation: true });
+    }
   });
 
   document.getElementById('detail-close').addEventListener('click', () => {
@@ -150,7 +165,4 @@ function initStatsDetail() {
     renderAchievementList();
   });
 
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') setAssistantFullscreen(false);
-  });
 }

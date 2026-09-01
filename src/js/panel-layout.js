@@ -110,6 +110,9 @@ function initPanelLayout() {
     let dragGhost = null;
     let startX = 0;
     let startY = 0;
+    let startedAt = 0;
+    let detachTriggered = false;
+    let detachWatchTimer = 0;
 
     function beginDrag(clientX, clientY) {
       if (dragging || pointerId === null || !sourcePanel) return;
@@ -126,8 +129,19 @@ function initPanelLayout() {
       if (event.button !== 0 || isPanelLayoutControl(event.target) || !event.target.closest(handle)) return;
       pointerId = event.pointerId;
       sourcePanel = panel;
+      if (id === 'board' && panel.setPointerCapture) panel.setPointerCapture(pointerId);
       startX = event.clientX;
       startY = event.clientY;
+      startedAt = Date.now();
+      detachTriggered = false;
+      if (id === 'board' && typeof isDetachedCanvasWindow === 'function' && !isDetachedCanvasWindow()) {
+        detachWatchTimer = window.setTimeout(() => {
+          detachWatchTimer = 0;
+          if (pointerId !== null && window.messsAPI && typeof window.messsAPI.beginCanvasDetachDrag === 'function') {
+            window.messsAPI.beginCanvasDetachDrag(activeCanvasId());
+          }
+        }, 280);
+      }
       timer = window.setTimeout(() => beginDrag(startX, startY), 180);
     });
 
@@ -142,6 +156,22 @@ function initPanelLayout() {
       }
       event.preventDefault();
       movePanelDragGhost(dragGhost, event.clientX, event.clientY);
+      const outsideWindow = event.screenX < window.screenX - 3
+        || event.screenX > window.screenX + window.outerWidth + 3
+        || event.screenY < window.screenY - 3
+        || event.screenY > window.screenY + window.outerHeight + 3;
+      if (
+        id === 'board'
+        && outsideWindow
+        && Date.now() - startedAt >= 280
+        && !detachTriggered
+        && typeof openActiveCanvasInDetachedWindow === 'function'
+        && typeof isDetachedCanvasWindow === 'function'
+        && !isDetachedCanvasWindow()
+      ) {
+        detachTriggered = true;
+        void openActiveCanvasInDetachedWindow({ x: event.screenX, y: event.screenY });
+      }
       const target = panelFromElement(document.elementFromPoint(event.clientX, event.clientY));
       document.querySelectorAll('.is-layout-drop-target').forEach((item) => item.classList.remove('is-layout-drop-target'));
       if (target && target !== sourcePanel) target.classList.add('is-layout-drop-target');
@@ -150,6 +180,11 @@ function initPanelLayout() {
     function endDrag(event) {
       if (event.pointerId !== pointerId) return;
       clearTimeout(timer);
+      clearTimeout(detachWatchTimer);
+      detachWatchTimer = 0;
+      if (id === 'board' && window.messsAPI && typeof window.messsAPI.cancelCanvasDetachDrag === 'function') {
+        window.messsAPI.cancelCanvasDetachDrag();
+      }
       const target = dragging ? panelFromElement(document.elementFromPoint(event.clientX, event.clientY)) : null;
       document.querySelectorAll('.is-layout-drop-target').forEach((item) => item.classList.remove('is-layout-drop-target'));
       if (dragging && target && target !== sourcePanel) {
@@ -172,6 +207,7 @@ function initPanelLayout() {
       pointerId = null;
       sourcePanel = null;
       dragging = false;
+      detachTriggered = false;
     }
 
     panel.addEventListener('pointerup', endDrag);

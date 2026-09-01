@@ -14,7 +14,9 @@ function initWindowControls() {
 
   minBtn.addEventListener('click', () => window.messsAPI.minimizeWindow());
   closeBtn.addEventListener('click', () => window.messsAPI.closeWindow());
-  closeBtn.title = t('Run in background', '在后台运行');
+  closeBtn.title = isDetachedCanvasWindow()
+    ? t('Close window', '关闭窗口')
+    : t('Run in background', '在后台运行');
   closeBtn.setAttribute('aria-label', closeBtn.title);
   maxBtn.addEventListener('click', async () => {
     const isMaximized = await window.messsAPI.toggleMaximizeWindow();
@@ -42,7 +44,9 @@ function refreshTitlebarLanguage() {
   maxBtn.setAttribute('aria-label', maxBtn.title);
   const closeBtn = document.getElementById('win-close-btn');
   if (closeBtn) {
-    closeBtn.title = t('Run in background', '在后台运行');
+    closeBtn.title = isDetachedCanvasWindow()
+      ? t('Close window', '关闭窗口')
+      : t('Run in background', '在后台运行');
     closeBtn.setAttribute('aria-label', closeBtn.title);
   }
 }

@@ -50,13 +50,14 @@
 
 /* -------- Dark theme (default) -------- */
 [data-theme="dark"] {
-  --bg-deep: #0d0d0d;
-  --bg-base: #111111;
-  --bg-elevated: #171717;
-  --bg-surface: #1d1d1d;
-  --bg-surface-2: #282828;
-  --board-workspace-bg: color-mix(in srgb, var(--bg-deep) 94%, #090b10 6%);
-  --canvas-toolbar-bg: rgba(29, 29, 29, .97);
+  --bg-deep: #0a0a0a;
+  --bg-base: #101112;
+  --bg-elevated: #1a1b1d;
+  --bg-surface: #151618;
+  --bg-surface-2: #292b2e;
+  --bg-frame: #101112;
+  --board-workspace-bg: #0a0a0a;
+  --canvas-toolbar-bg: rgba(21, 22, 24, .97);
   --canvas-toolbar-border: rgba(255, 255, 255, .13);
   --canvas-toolbar-text: var(--text-secondary);
   --canvas-toolbar-hover: var(--bg-surface-2);
@@ -71,9 +72,9 @@
   --border-hairline: rgba(255, 255, 255, 0.09);
   --border-strong: rgba(255, 255, 255, 0.17);
 
-  --text-primary: #f3f3f3;
-  --text-secondary: #b0b0b0;
-  --text-tertiary: #777777;
+  --text-primary: #f2f3f4;
+  --text-secondary: #b7b9bd;
+  --text-tertiary: #7e8187;
 
   --title-accent: #f3f3f3;
 
@@ -88,7 +89,8 @@
   --resize-handle-hover: rgba(255, 255, 255, 0.24);
   --resize-handle-active: rgba(87, 188, 232, 0.68);
 
-  --shadow-elevated: 0 20px 60px rgba(0, 0, 0, 0.62);
+  --shadow-subtle: 0 1px 0 rgba(255, 255, 255, .025), 0 8px 20px rgba(0, 0, 0, .2);
+  --shadow-elevated: 0 20px 60px rgba(0, 0, 0, 0.68);
   --scrollbar-thumb: rgba(255, 255, 255, 0.22);
 
   --cursor-default: url('../assets/cursors/arrow-dark.svg') 4 3, default;

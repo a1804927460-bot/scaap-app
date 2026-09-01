@@ -37,6 +37,8 @@ function bootstrapMainApp(initial) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  const detachedCanvasId = String(new URLSearchParams(window.location.search).get('detachedCanvas') || '').trim();
+  document.body.classList.toggle('is-detached-canvas-window', !!detachedCanvasId);
   initTitlebar();
   const startupLanguage = normalizeAppLanguage(document.documentElement.dataset.language || 'ko');
   AppState.language = startupLanguage;

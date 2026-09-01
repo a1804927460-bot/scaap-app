@@ -19,8 +19,88 @@ const CanvasWorkspace = {
   libraryFilter: 'all',
   libraryScope: 'personal',
   libraryProjectId: null,
-  libraryQuery: ''
+  libraryQuery: '',
+  detachedCanvasId: String(new URLSearchParams(window.location.search).get('detachedCanvas') || '').trim(),
+  detachInFlight: false
 };
+
+function isDetachedCanvasWindow() {
+  return !!CanvasWorkspace.detachedCanvasId;
+}
+
+async function openActiveCanvasInDetachedWindow(launchPoint = {}) {
+  if (isDetachedCanvasWindow() || CanvasWorkspace.detachInFlight) return { ok: true, reused: true };
+  const canvas = activeCanvasRecord();
+  if (!canvas || !window.messsAPI || typeof window.messsAPI.openDetachedCanvas !== 'function') {
+    return { ok: false, reason: 'unavailable' };
+  }
+  CanvasWorkspace.detachInFlight = true;
+  const button = document.getElementById('board-detach-window');
+  if (button) button.disabled = true;
+  try {
+    if (typeof flushBoardViewportSave === 'function') flushBoardViewportSave();
+    await canvasWorkspaceSave();
+    const result = await window.messsAPI.openDetachedCanvas(canvas.id, {
+      x: Number.isFinite(Number(launchPoint.x)) ? Number(launchPoint.x) : undefined,
+      y: Number.isFinite(Number(launchPoint.y)) ? Number(launchPoint.y) : undefined
+    });
+    if (!result || result.ok !== true) {
+      showToast(t('Could not open the separate canvas window.', '无法打开独立画布窗口。'));
+    }
+    return result || { ok: false, reason: 'unknown' };
+  } catch (error) {
+    showToast(t('Could not open the separate canvas window.', '无法打开独立画布窗口。'));
+    return { ok: false, reason: error && error.message || 'open-failed' };
+  } finally {
+    CanvasWorkspace.detachInFlight = false;
+    if (button) button.disabled = false;
+  }
+}
+
+function applyRemoteCanvasItemsChange(payload = {}) {
+  const canvasId = String(payload.canvasId || '').trim();
+  if (!canvasId) return;
+  const removedIds = new Set(Array.isArray(payload.remove) ? payload.remove.filter(Boolean) : []);
+  if (removedIds.size) {
+    AppState.allBoardItems = AppState.allBoardItems.filter((item) => !removedIds.has(item.id));
+  }
+  for (const item of Array.isArray(payload.upsert) ? payload.upsert : []) {
+    if (!item || !item.id) continue;
+    const index = AppState.allBoardItems.findIndex((entry) => entry.id === item.id);
+    if (index === -1) AppState.allBoardItems.push(item);
+    else AppState.allBoardItems[index] = item;
+  }
+  for (const file of Array.isArray(payload.files) ? payload.files : []) {
+    if (!file || !file.id) continue;
+    const index = AppState.files.findIndex((entry) => entry.id === file.id);
+    if (index === -1) AppState.files.push(file);
+    else AppState.files[index] = file;
+  }
+  if (canvasId !== activeCanvasId()) return;
+  AppState.boardItems = AppState.allBoardItems.filter((item) => (item.canvasId || 'canvas-1') === canvasId);
+  if (typeof renderBoard === 'function') renderBoard();
+  if (typeof renderFileList === 'function' && typeof currentFileListScope === 'function') {
+    renderFileList(currentFileListScope());
+  }
+}
+
+function applyRemoteCanvasStateChange(payload = {}) {
+  if (Array.isArray(payload.projects) && payload.projects.length) {
+    AppState.canvasProjects = payload.projects.map(normalizeCanvasProject).filter(Boolean);
+  }
+  if (Array.isArray(payload.canvases) && payload.canvases.length) {
+    AppState.canvases = payload.canvases;
+  }
+  if (isDetachedCanvasWindow() && !AppState.canvases.some((canvas) => canvas.id === CanvasWorkspace.detachedCanvasId)) {
+    window.messsAPI.closeWindow();
+    return;
+  }
+  const active = activeCanvasRecord();
+  const title = document.getElementById('board-panel-title');
+  if (title && active) title.textContent = active.name;
+  if (isDetachedCanvasWindow() && active) document.title = `${active.name} - Messs.`;
+  if (document.getElementById('board-panel').classList.contains('is-canvas-library')) renderCanvasLibrary();
+}
 
 function normalizeCanvasProjectScope(value) {
   return String(value || '').trim().toLowerCase() === 'team' ? 'team' : 'personal';
@@ -339,7 +419,8 @@ function toggleCanvasPinned(canvasId) {
 async function canvasWorkspaceSave() {
   const result = await window.messsAPI.saveCanvasState({
     projects: AppState.canvasProjects,
-    canvases: AppState.canvases
+    canvases: AppState.canvases,
+    detachedCanvasId: isDetachedCanvasWindow() ? CanvasWorkspace.detachedCanvasId : null
   });
   if (result && Array.isArray(result.projects)) AppState.canvasProjects = result.projects;
   if (result && Array.isArray(result.canvases)) AppState.canvases = result.canvases;
@@ -728,6 +809,7 @@ function showCanvasWorkspace() {
 }
 
 function switchCanvas(canvasId, options = {}) {
+  if (isDetachedCanvasWindow() && canvasId !== CanvasWorkspace.detachedCanvasId) return;
   const next = AppState.canvases.find((canvas) => canvas.id === canvasId);
   if (!next) return;
   const previousCanvasId = activeCanvasId();
@@ -2060,7 +2142,11 @@ async function initCanvasWorkspace(initial) {
   const lastOpenedCanvas = AppState.canvases
     .filter((canvas) => canvas && canvas.lastOpenedAt)
     .sort((a, b) => new Date(b.lastOpenedAt) - new Date(a.lastOpenedAt))[0];
-  AppState.activeCanvasId = (lastOpenedCanvas || AppState.canvases[0]).id;
+  const detachedCanvas = CanvasWorkspace.detachedCanvasId
+    ? AppState.canvases.find((canvas) => canvas.id === CanvasWorkspace.detachedCanvasId)
+    : null;
+  if (CanvasWorkspace.detachedCanvasId && !detachedCanvas) CanvasWorkspace.detachedCanvasId = '';
+  AppState.activeCanvasId = (detachedCanvas || lastOpenedCanvas || AppState.canvases[0]).id;
   AppState.boardItems = AppState.allBoardItems.filter((item) => item.canvasId === AppState.activeCanvasId);
   const activeProject = AppState.canvasProjects.find((project) => project.id === (lastOpenedCanvas || AppState.canvases[0]).projectId);
   CanvasWorkspace.libraryScope = canvasProjectScope(activeProject);
@@ -2070,6 +2156,15 @@ async function initCanvasWorkspace(initial) {
   document.getElementById('canvas-import').addEventListener('click', promptImportCanvas);
   document.getElementById('canvas-project-new').addEventListener('click', promptNewProject);
   document.getElementById('canvas-library-back').addEventListener('click', showCanvasLibrary);
+  document.getElementById('board-detach-window').addEventListener('click', () => {
+    void openActiveCanvasInDetachedWindow();
+  });
+  if (window.messsAPI && typeof window.messsAPI.onCanvasItemsChanged === 'function') {
+    window.messsAPI.onCanvasItemsChanged(applyRemoteCanvasItemsChange);
+  }
+  if (window.messsAPI && typeof window.messsAPI.onCanvasStateChanged === 'function') {
+    window.messsAPI.onCanvasStateChanged(applyRemoteCanvasStateChange);
+  }
   document.getElementById('canvas-library-search').addEventListener('input', (event) => {
     CanvasWorkspace.libraryQuery = event.target.value;
     renderCanvasLibrary();
@@ -2236,6 +2331,12 @@ async function initCanvasWorkspace(initial) {
   renderCanvasAgentReferences();
   renderCanvasAgentHistory();
   void loadCanvasAgentHistory();
-  showCanvasLibrary();
+  if (isDetachedCanvasWindow()) {
+    document.body.classList.add('is-detached-canvas-window');
+    document.title = `${activeCanvasRecord().name} - Messs.`;
+    showCanvasWorkspace();
+  } else {
+    showCanvasLibrary();
+  }
   refreshCanvasWorkspaceLanguage();
 }

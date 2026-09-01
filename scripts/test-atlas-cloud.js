@@ -181,12 +181,13 @@ function glbFixture() {
     global.fetch = atlasFetch;
 
     const localReference = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
-    const h3Text = await providers.createVideoTask({
-      providerId: 'video-1', prompt: 'H3 text generation',
-      resolution: '768P', aspectRatio: '16:9', duration: 6, videoMode: 'text',
+    const h3CallCount = requests.length;
+    await assert.rejects(() => providers.createVideoTask({
+      providerId: 'video-1', prompt: 'H3 requires a first frame',
+      resolution: '768P', aspectRatio: 'adaptive', duration: 6, videoMode: 'first-last-frame',
       urls: [], outputFormat: 'mp4'
-    });
-    assert.match(h3Text.taskId, /^messs-route:atlas-video-minimax-h3-t2v:atlas-video-request$/);
+    }), (error) => error && error.code === 'reference-required');
+    assert.equal(requests.length, h3CallCount);
     const h3FirstFrame = await providers.createVideoTask({
       providerId: 'video-1', prompt: 'H3 first frame generation',
       resolution: '2K', aspectRatio: 'adaptive', duration: 6, videoMode: 'first-frame',
@@ -207,7 +208,7 @@ function glbFixture() {
       outputFormat: 'mp4'
     });
     assert.match(h3Reference.taskId, /^messs-route:atlas-video-minimax-h3-ref:atlas-video-request$/);
-    assert.equal((await providers.pollVideoTask('video-1', h3Text.taskId)).status, 'succeeded');
+    assert.equal((await providers.pollVideoTask('video-1', h3FirstFrame.taskId)).status, 'succeeded');
 
     for (const providerId of ['hunyuan3d', 'hyper3d', 'tripo3d']) {
       const task = await relayAssets.createThreeDTask({
@@ -368,15 +369,9 @@ function glbFixture() {
     const fullReferenceRequest = requests.find((entry) => entry.body
       && typeof entry.body.prompt === 'string'
       && entry.body.prompt.includes('full reference follows a 16:9 source'));
-    const h3TextRequest = requests.find((entry) => entry.body && entry.body.model === 'minimax/h3/text-to-video');
     const h3ImageRequest = requests.find((entry) => entry.body && entry.body.model === 'minimax/h3/image-to-video' && entry.body.image);
     const h3FirstLastRequest = requests.find((entry) => entry.body && entry.body.model === 'minimax/h3/image-to-video' && entry.body.end_image);
     const h3ReferenceRequest = requests.find((entry) => entry.body && entry.body.model === 'minimax/h3/reference-to-video');
-    assert.equal(h3TextRequest.body.prompt, 'H3 text generation');
-    assert.equal(h3TextRequest.body.ratio, '16:9');
-    assert.equal(h3TextRequest.body.resolution, '768P');
-    assert.equal(h3TextRequest.body.output_format, undefined);
-    assert.equal(h3TextRequest.body.generate_audio, undefined);
     assert.match(h3ImageRequest.body.image, /^data:image\/png;base64,/);
     assert.equal(h3FirstLastRequest.body.end_image, 'https://cdn.example.com/h3-last.png');
     assert.equal(h3FirstLastRequest.body.last_image, undefined);

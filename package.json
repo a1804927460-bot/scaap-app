@@ -20,6 +20,7 @@
     "test:chat-screenshot-integration": "node scripts/test-chat-screenshot-integration.js",
     "test:screenshot-runtime": "node scripts/test-screenshot-runtime.js",
     "test:canvas-zoom-runtime": "electron scripts/test-board-zoom-runtime.js",
+    "test:detached-canvas-runtime": "node scripts/test-detached-canvas-runtime.js",
     "test:usage-visual": "node scripts/test-usage-visual.js",
     "stress:canvas": "node scripts/stress-canvas-performance.js",
     "start": "electron .",

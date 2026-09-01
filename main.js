@@ -268,6 +268,8 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow;
+const detachedCanvasWindows = new Map();
+const canvasDetachDragWatches = new Map();
 let tray;
 let isQuitting = false;
 const activeNotifications = new Set();
@@ -2349,7 +2351,7 @@ function fileImportFailure(originalPath, error, stage = 'import') {
   };
 }
 
-async function importFilePaths(filePaths, folderId, canvasId, options = {}) {
+async function importFilePaths(filePaths, folderId, canvasId, options = {}, ownerWindow = mainWindow) {
   const importedNow = [];
   const unlockedKeys = new Set();
   const failed = [];
@@ -2380,13 +2382,13 @@ async function importFilePaths(filePaths, folderId, canvasId, options = {}) {
   if (process.platform === 'darwin' && options.recoverAccess !== false &&
       failed.some((entry) => entry && ['EACCES', 'EPERM'].includes(entry.reason))) {
     try {
-      const recovery = await dialog.showOpenDialog(mainWindow, {
+      const recovery = await dialog.showOpenDialog(ownerWindow && !ownerWindow.isDestroyed() ? ownerWindow : mainWindow, {
         title: 'Allow Messs to import the selected file',
         defaultPath: paths[0],
         properties: ['openFile', 'multiSelections']
       });
       if (!recovery.canceled && Array.isArray(recovery.filePaths) && recovery.filePaths.length) {
-        const recovered = await importFilePaths(recovery.filePaths, folderId, canvasId, { recoverAccess: false });
+        const recovered = await importFilePaths(recovery.filePaths, folderId, canvasId, { recoverAccess: false }, ownerWindow);
         return {
           imported: [...importedNow, ...(recovered.imported || [])],
           unlocked: [...new Set([...unlockedKeys, ...(recovered.unlocked || [])])],
@@ -3297,6 +3299,146 @@ function clipboardImageError(message, code = 'clipboard-image-unavailable') {
   const error = new Error(message);
   error.code = code;
   return error;
+}
+
+function rendererWindowForEvent(event) {
+  const senderWindow = event && event.sender ? BrowserWindow.fromWebContents(event.sender) : null;
+  return senderWindow && !senderWindow.isDestroyed() ? senderWindow : mainWindow;
+}
+
+function revealRendererWindow(targetWindow) {
+  if (!targetWindow || targetWindow.isDestroyed()) return;
+  if (targetWindow.isMinimized()) targetWindow.restore();
+  if (!targetWindow.isVisible()) targetWindow.show();
+  targetWindow.focus();
+}
+
+function detachedCanvasWindowBounds(launchPoint = {}) {
+  const point = {
+    x: Number.isFinite(Number(launchPoint.x)) ? Math.round(Number(launchPoint.x)) : 0,
+    y: Number.isFinite(Number(launchPoint.y)) ? Math.round(Number(launchPoint.y)) : 0
+  };
+  const display = point.x || point.y
+    ? screen.getDisplayNearestPoint(point)
+    : screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const workArea = display.workArea;
+  const width = Math.min(1280, Math.max(780, Math.round(workArea.width * 0.72)));
+  const height = Math.min(860, Math.max(560, Math.round(workArea.height * 0.76)));
+  const centerX = point.x || Math.round(workArea.x + workArea.width / 2);
+  const centerY = point.y || Math.round(workArea.y + workArea.height / 2);
+  return {
+    width,
+    height,
+    x: Math.max(workArea.x, Math.min(workArea.x + workArea.width - width, Math.round(centerX - width / 2))),
+    y: Math.max(workArea.y, Math.min(workArea.y + workArea.height - height, Math.round(centerY - 46)))
+  };
+}
+
+function createDetachedCanvasWindow(canvasId, launchPoint = {}) {
+  const normalizedCanvasId = String(canvasId || '').trim();
+  const canvas = store && store.data.canvases.find((entry) => entry.id === normalizedCanvasId);
+  if (!canvas) return { ok: false, reason: 'canvas-not-found' };
+
+  const existing = detachedCanvasWindows.get(normalizedCanvasId);
+  if (existing && !existing.isDestroyed()) {
+    revealRendererWindow(existing);
+    return { ok: true, reused: true };
+  }
+
+  const initialTheme = normalizeTheme(store.data.settings.theme);
+  const initialLanguage = currentLanguage();
+  const initialTextSize = normalizeTextSize(store.data.settings.textSize);
+  const detachedWindow = new BrowserWindow({
+    ...detachedCanvasWindowBounds(launchPoint),
+    minWidth: 720,
+    minHeight: 500,
+    show: false,
+    icon: app.isPackaged ? process.execPath : path.join(__dirname, 'build-resources', 'icon.png'),
+    backgroundColor: WINDOW_BACKGROUND_COLORS[initialTheme],
+    frame: false,
+    title: `${canvas.name} - Messs.`,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+
+  detachedCanvasWindows.set(normalizedCanvasId, detachedWindow);
+  detachedWindow.setMenu(null);
+  detachedWindow.loadFile(path.join(__dirname, 'src', 'index.html'), {
+    query: {
+      theme: initialTheme,
+      language: initialLanguage,
+      textSize: initialTextSize,
+      detachedCanvas: normalizedCanvasId
+    }
+  });
+  detachedWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  detachedWindow.webContents.on('will-navigate', (event, url) => {
+    if (url !== detachedWindow.webContents.getURL()) event.preventDefault();
+  });
+  detachedWindow.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  detachedWindow.webContents.once('did-finish-load', () => setTimeout(() => revealRendererWindow(detachedWindow), 120));
+  detachedWindow.on('maximize', () => detachedWindow.webContents.send('window:maximizedChanged', true));
+  detachedWindow.on('unmaximize', () => detachedWindow.webContents.send('window:maximizedChanged', false));
+  detachedWindow.on('closed', () => {
+    if (detachedCanvasWindows.get(normalizedCanvasId) === detachedWindow) {
+      detachedCanvasWindows.delete(normalizedCanvasId);
+    }
+  });
+  return { ok: true, reused: false };
+}
+
+function broadcastCanvasItemsChanged(payload, senderWebContents = null) {
+  broadcastRendererEvent('canvas:itemsChanged', payload, senderWebContents);
+}
+
+function broadcastRendererEvent(channel, payload, senderWebContents = null) {
+  for (const targetWindow of BrowserWindow.getAllWindows()) {
+    if (targetWindow.isDestroyed() || targetWindow.webContents.isDestroyed()) continue;
+    if (senderWebContents && targetWindow.webContents === senderWebContents) continue;
+    targetWindow.webContents.send(channel, payload);
+  }
+}
+
+function stopCanvasDetachDragWatch(webContentsId) {
+  const watch = canvasDetachDragWatches.get(webContentsId);
+  if (!watch) return;
+  clearInterval(watch.interval);
+  clearTimeout(watch.timeout);
+  canvasDetachDragWatches.delete(webContentsId);
+}
+
+function startCanvasDetachDragWatch(event, canvasId) {
+  const sourceWindow = rendererWindowForEvent(event);
+  if (!sourceWindow || sourceWindow.isDestroyed() || sourceWindow !== mainWindow) return false;
+  const normalizedCanvasId = String(canvasId || '').trim();
+  if (!store.data.canvases.some((canvas) => canvas.id === normalizedCanvasId)) return false;
+  const webContentsId = event.sender.id;
+  stopCanvasDetachDragWatch(webContentsId);
+  const interval = setInterval(() => {
+    if (sourceWindow.isDestroyed()) {
+      stopCanvasDetachDragWatch(webContentsId);
+      return;
+    }
+    const cursor = screen.getCursorScreenPoint();
+    const bounds = sourceWindow.getBounds();
+    const outside = cursor.x < bounds.x - 4
+      || cursor.x > bounds.x + bounds.width + 4
+      || cursor.y < bounds.y - 4
+      || cursor.y > bounds.y + bounds.height + 4;
+    if (!outside) return;
+    stopCanvasDetachDragWatch(webContentsId);
+    createDetachedCanvasWindow(normalizedCanvasId, cursor);
+  }, 32);
+  const timeout = setTimeout(() => stopCanvasDetachDragWatch(webContentsId), 10_000);
+  canvasDetachDragWatches.set(webContentsId, { interval, timeout });
+  return true;
 }
 
 function safeClipboardRead(method, format = '') {
@@ -7506,13 +7648,25 @@ async function captureChatScreenshotDraft() {
 
 function registerIpcHandlers() {
   ipcMain.on('window:readyForInteraction', (event) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return;
-    revealMainWindow();
+    const targetWindow = rendererWindowForEvent(event);
+    if (!targetWindow || targetWindow.isDestroyed()) return;
+    if (targetWindow === mainWindow) revealMainWindow();
+    else revealRendererWindow(targetWindow);
   });
 
   ipcMain.on('window:syncThemeSurface', (event, theme) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return;
-    setWindowBackgroundColor(theme);
+    const targetWindow = rendererWindowForEvent(event);
+    if (!targetWindow || targetWindow.isDestroyed()) return;
+    if (targetWindow === mainWindow) setWindowBackgroundColor(theme);
+    else targetWindow.setBackgroundColor(WINDOW_BACKGROUND_COLORS[normalizeTheme(theme)]);
+  });
+
+  ipcMain.on('canvas:beginDetachDrag', (event, canvasId) => {
+    startCanvasDetachDragWatch(event, canvasId);
+  });
+
+  ipcMain.on('canvas:cancelDetachDrag', (event) => {
+    stopCanvasDetachDragWatch(event.sender.id);
   });
 
   ipcMain.handle('app:getInitialState', async () => {
@@ -8120,37 +8274,42 @@ function registerIpcHandlers() {
     return preview.getCapabilities(!!forceRefresh);
   });
 
-  ipcMain.handle('window:minimize', () => {
-    if (mainWindow) mainWindow.minimize();
+  ipcMain.handle('window:minimize', (event) => {
+    const targetWindow = rendererWindowForEvent(event);
+    if (targetWindow) targetWindow.minimize();
     return true;
   });
 
-  ipcMain.handle('window:toggleMaximize', () => {
-    if (!mainWindow) return false;
-    if (mainWindow.isMaximized()) mainWindow.unmaximize();
-    else mainWindow.maximize();
-    return mainWindow.isMaximized();
+  ipcMain.handle('window:toggleMaximize', (event) => {
+    const targetWindow = rendererWindowForEvent(event);
+    if (!targetWindow) return false;
+    if (targetWindow.isMaximized()) targetWindow.unmaximize();
+    else targetWindow.maximize();
+    return targetWindow.isMaximized();
   });
 
-  ipcMain.handle('window:close', () => {
-    if (mainWindow) mainWindow.close();
+  ipcMain.handle('window:close', (event) => {
+    const targetWindow = rendererWindowForEvent(event);
+    if (targetWindow) targetWindow.close();
     return true;
   });
 
-  ipcMain.handle('window:isMaximized', () => {
-    return mainWindow ? mainWindow.isMaximized() : false;
+  ipcMain.handle('window:isMaximized', (event) => {
+    const targetWindow = rendererWindowForEvent(event);
+    return targetWindow ? targetWindow.isMaximized() : false;
   });
 
-  ipcMain.handle('dialog:pickFiles', async () => {
-    const result = await dialog.showOpenDialog(mainWindow, {
+  ipcMain.handle('dialog:pickFiles', async (event) => {
+    const result = await dialog.showOpenDialog(rendererWindowForEvent(event), {
       properties: ['openFile', 'multiSelections']
     });
     if (result.canceled) return [];
     return result.filePaths;
   });
 
-  ipcMain.handle('files:pickAndPrepareAiAttachments', async (_evt, folderId, canvasId) => {
-    const result = await dialog.showOpenDialog(mainWindow, {
+  ipcMain.handle('files:pickAndPrepareAiAttachments', async (event, folderId, canvasId) => {
+    const ownerWindow = rendererWindowForEvent(event);
+    const result = await dialog.showOpenDialog(ownerWindow, {
       title: 'Add files to AI',
       properties: ['openFile', 'multiSelections']
     });
@@ -8159,7 +8318,9 @@ function registerIpcHandlers() {
     const importedResult = await importFilePaths(
       result.filePaths,
       folderId && folderId !== 'default' ? folderId : null,
-      canvasId || null
+      canvasId || null,
+      {},
+      ownerWindow
     );
     const attachments = [];
     const failed = [...(importedResult.failed || [])];
@@ -8384,8 +8545,8 @@ function registerIpcHandlers() {
 
   ipcMain.handle('clipboard:signature', () => clipboardSignature());
 
-  ipcMain.handle('dialog:pickFolderToImport', async (_evt, canvasId) => {
-    const result = await dialog.showOpenDialog(mainWindow, {
+  ipcMain.handle('dialog:pickFolderToImport', async (event, canvasId) => {
+    const result = await dialog.showOpenDialog(rendererWindowForEvent(event), {
       properties: ['openDirectory']
     });
     if (result.canceled || !result.filePaths[0]) return null;
@@ -8396,17 +8557,18 @@ function registerIpcHandlers() {
     return importDirectoryPathAndNotify(dirPath, parentFolderId || null, canvasId);
   });
 
-  ipcMain.handle('files:import', async (_evt, filePaths, folderId, canvasId, options = {}) => {
-    return importFilePaths(filePaths, folderId, canvasId, options);
+  ipcMain.handle('files:import', async (event, filePaths, folderId, canvasId, options = {}) => {
+    return importFilePaths(filePaths, folderId, canvasId, options, rendererWindowForEvent(event));
   });
 
-  ipcMain.handle('files:recoverDroppedImport', async (_evt, folderId, canvasId) => {
-    const result = await dialog.showOpenDialog(mainWindow, {
+  ipcMain.handle('files:recoverDroppedImport', async (event, folderId, canvasId) => {
+    const ownerWindow = rendererWindowForEvent(event);
+    const result = await dialog.showOpenDialog(ownerWindow, {
       title: 'Allow Messs to import the selected file',
       properties: ['openFile', 'multiSelections']
     });
     if (result.canceled || !result.filePaths.length) return { canceled: true, imported: [], unlocked: [], failed: [] };
-    return importFilePaths(result.filePaths, folderId, canvasId, { recoverAccess: false });
+    return importFilePaths(result.filePaths, folderId, canvasId, { recoverAccess: false }, ownerWindow);
   });
 
   ipcMain.handle('files:beginDroppedImport', beginDroppedFileImport);
@@ -9764,14 +9926,25 @@ function registerIpcHandlers() {
     return { ok: true, unlocked: unlocked ? 'final_version' : null };
   });
 
-  ipcMain.handle('canvas:saveState', (_evt, payload = {}) => {
+  ipcMain.handle('canvas:saveState', (event, payload = {}) => {
     const previous = new Map((Array.isArray(store.data.canvases) ? store.data.canvases : []).map((canvas) => [canvas.id, canvas]));
-    const projects = Array.isArray(payload.projects) && payload.projects.length
+    const detachedCanvasId = String(payload.detachedCanvasId || '').trim();
+    const projects = detachedCanvasId
+      ? store.data.canvasProjects
+      : Array.isArray(payload.projects) && payload.projects.length
       ? payload.projects
       : store.data.canvasProjects;
-    const canvases = Array.isArray(payload.canvases) && payload.canvases.length
+    let canvases = Array.isArray(payload.canvases) && payload.canvases.length
       ? payload.canvases
       : store.data.canvases;
+    if (detachedCanvasId) {
+      const incoming = canvases.find((canvas) => String(canvas && canvas.id || '') === detachedCanvasId);
+      canvases = store.data.canvases.map((canvas) => (
+        incoming && canvas.id === detachedCanvasId
+          ? { ...canvas, ...incoming, id: canvas.id }
+          : canvas
+      ));
+    }
     store.data.canvasProjects = projects.map((project, index) => ({
       id: String(project.id || `project-${index + 1}`),
       name: String(project.name || 'General').trim().slice(0, 80) || 'General',
@@ -9810,16 +9983,24 @@ function registerIpcHandlers() {
       if (!validCanvasIds.has(item.canvasId)) item.canvasId = fallbackCanvasId;
     });
     store.scheduleSave();
+    broadcastRendererEvent('canvas:stateChanged', {
+      projects: store.data.canvasProjects,
+      canvases: store.data.canvases
+    }, event.sender);
     return {
       projects: store.data.canvasProjects,
       canvases: store.data.canvases
     };
   });
 
-  ipcMain.handle('canvas:export', async (_evt, canvasId) => {
+  ipcMain.handle('canvas:openDetached', (_evt, canvasId, launchPoint) => {
+    return createDetachedCanvasWindow(canvasId, launchPoint);
+  });
+
+  ipcMain.handle('canvas:export', async (event, canvasId) => {
     const canvas = store.data.canvases.find((entry) => entry.id === canvasId);
     if (!canvas) return { ok: false, reason: 'not-found' };
-    const result = await dialog.showSaveDialog(mainWindow, {
+    const result = await dialog.showSaveDialog(rendererWindowForEvent(event), {
       title: 'Export canvas',
       defaultPath: `${canvasFolderName(canvas.name)}.Messs`,
       filters: [{ name: 'Messs Canvas Package', extensions: ['Messs'] }]
@@ -9840,8 +10021,8 @@ function registerIpcHandlers() {
     }
   });
 
-  ipcMain.handle('canvas:import', async (_evt, targetProjectId) => {
-    const result = await dialog.showOpenDialog(mainWindow, {
+  ipcMain.handle('canvas:import', async (event, targetProjectId) => {
+    const result = await dialog.showOpenDialog(rendererWindowForEvent(event), {
       title: 'Import .Messs canvas',
       properties: ['openFile'],
       filters: [{ name: 'Messs Canvas Package', extensions: ['Messs'] }]
@@ -9884,6 +10065,13 @@ function registerIpcHandlers() {
       // Unknown files in the folder are preserved.
     }
     store.scheduleSave();
+    const detachedWindow = detachedCanvasWindows.get(canvas.id);
+    if (detachedWindow && !detachedWindow.isDestroyed()) detachedWindow.close();
+    broadcastRendererEvent('canvas:stateChanged', {
+      projects: store.data.canvasProjects,
+      canvases: store.data.canvases,
+      deletedCanvasId: canvas.id
+    });
     return {
       ok: true,
       fallbackCanvasId: fallback.id,
@@ -9892,16 +10080,23 @@ function registerIpcHandlers() {
     };
   });
 
-  ipcMain.handle('board:upsertItem', (_evt, item) => {
+  ipcMain.handle('board:upsertItem', (event, item) => {
     if (item && !item.canvasId) item.canvasId = store.data.canvases[0] && store.data.canvases[0].id;
     const idx = store.data.boardItems.findIndex((b) => b.id === item.id);
     if (idx === -1) store.data.boardItems.push(item);
     else store.data.boardItems[idx] = item;
     store.scheduleSave();
+    const file = item && item.fileId ? store.getFile(item.fileId) : null;
+    broadcastCanvasItemsChanged({
+      canvasId: item && item.canvasId,
+      upsert: item ? [item] : [],
+      remove: [],
+      files: file ? [fileToPayload(file)] : []
+    }, event.sender);
     return true;
   });
 
-  ipcMain.handle('board:upsertItems', (_evt, items) => {
+  ipcMain.handle('board:upsertItems', (event, items) => {
     if (!Array.isArray(items) || !items.length) return true;
     const indexById = new Map(store.data.boardItems.map((item, index) => [item.id, index]));
     for (const item of items) {
@@ -9916,12 +10111,32 @@ function registerIpcHandlers() {
       }
     }
     store.scheduleSave();
+    const fileIds = new Set(items.map((item) => item && item.fileId).filter(Boolean));
+    const files = store.data.files.filter((file) => fileIds.has(file.id)).map(fileToPayload);
+    const canvasIds = [...new Set(items.map((item) => item && item.canvasId).filter(Boolean))];
+    for (const canvasId of canvasIds) {
+      broadcastCanvasItemsChanged({
+        canvasId,
+        upsert: items.filter((item) => item && item.canvasId === canvasId),
+        remove: [],
+        files
+      }, event.sender);
+    }
     return true;
   });
 
-  ipcMain.handle('board:removeItem', (_evt, itemId) => {
+  ipcMain.handle('board:removeItem', (event, itemId) => {
+    const existing = store.data.boardItems.find((item) => item.id === itemId);
     store.data.boardItems = store.data.boardItems.filter((b) => b.id !== itemId);
     store.scheduleSave();
+    if (existing) {
+      broadcastCanvasItemsChanged({
+        canvasId: existing.canvasId,
+        upsert: [],
+        remove: [itemId],
+        files: []
+      }, event.sender);
+    }
     return true;
   });
 
@@ -10127,10 +10342,10 @@ function registerIpcHandlers() {
     return { ok: true, file: fileToPayload(f) };
   });
 
-  ipcMain.handle('files:export', async (_evt, id) => {
+  ipcMain.handle('files:export', async (event, id) => {
     const f = store.getFile(id);
     if (!f) return { ok: false };
-    const result = await dialog.showSaveDialog(mainWindow, { defaultPath: f.name });
+    const result = await dialog.showSaveDialog(rendererWindowForEvent(event), { defaultPath: f.name });
     if (result.canceled || !result.filePath) return { ok: false };
     try {
       await copyFileAtomically(f.storedPath, result.filePath);
@@ -10524,6 +10739,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  for (const webContentsId of [...canvasDetachDragWatches.keys()]) stopCanvasDetachDragWatch(webContentsId);
   for (const session of droppedFileImports.values()) void disposeDroppedFileImport(session);
   droppedFileImports.clear();
   if (chatScreenshotTool) void chatScreenshotTool.endCapture().catch(() => {});

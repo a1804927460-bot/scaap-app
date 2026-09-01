@@ -54,9 +54,9 @@ test('built-in image, video, and chat routes can bind same-capability backups', 
       capabilities: {
         resolutions: ['768P', '2K'],
         durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-        ratios: ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'],
+        ratios: ['adaptive'],
         frameReferenceRatios: ['adaptive'],
-        videoModes: [{ id: 'text', minReferences: 0, maxReferences: 0 }]
+        videoModes: [{ id: 'first-frame', minReferences: 1, maxReferences: 1 }]
       },
       hidden: true
     },
@@ -121,8 +121,10 @@ test('built-in image, video, and chat routes can bind same-capability backups', 
       prompt: 'fallback video',
       resolution: '768P',
       duration: 4,
-      aspectRatio: '16:9',
-      urls: []
+      aspectRatio: 'adaptive',
+      videoMode: 'first-frame',
+      urls: ['https://example.com/first-frame.png'],
+      referenceMediaTypes: ['image']
     }), { providerId: 'video-1-backup', taskId: 'messs-route:video-1-backup:backup-video-task' });
     assert.equal(calls.length, 2);
     assert.equal(calls[0].url, 'https://api.atlascloud.ai/api/v1/model/generateVideo');

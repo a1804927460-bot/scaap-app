@@ -15,7 +15,10 @@ const themeJs = read('src/js/theme.js');
 const startScreenJs = read('src/js/start-screen.js');
 const sidebarJs = read('src/js/sidebar.js');
 const titlebarJs = read('src/js/titlebar.js');
+const statsDetailJs = read('src/js/stats-detail.js');
 const appJs = read('src/js/app.js');
+const canvasWorkspaceJs = read('src/js/canvas-workspace.js');
+const panelLayoutJs = read('src/js/panel-layout.js');
 const themeCss = read('src/styles/theme.css');
 const mainCss = read('src/styles/main.css');
 const startCss = read('src/styles/start.css');
@@ -31,6 +34,12 @@ assert.match(mainCss, /\.section-tabs\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?l
   'The section tabs must stay centered in the title bar.');
 assert.match(titlebarJs, /const isAssistantSection = section === 'assistant';[\s\S]*?setAssistantFullscreen\(true\)[\s\S]*?section-' \+ \(isAssistantSection \? 'messs' : section\)/,
   'The Messs entry must open the existing AI panel without changing the internal workspace section id.');
+assert.match(statsDetailJs, /function syncAssistantFullscreenNavigation\(expanded\)[\s\S]*?expanded \? 'assistant' : 'messs'[\s\S]*?aria-selected/,
+  'Expanding and collapsing Messs must keep the title-bar selection synchronized.');
+assert.match(statsDetailJs, /setAssistantFullscreen\(!panel\.classList\.contains\('is-fullscreen'\), \{ syncNavigation: true \}\)/,
+  'The assistant expand button must restore the Workspace tab when it collapses.');
+assert.equal((statsDetailJs.match(/document\.addEventListener\('keydown'/g) || []).length, 1,
+  'The assistant must register only one Escape handler.');
 assert.match(sidebarJs, /section-tab\[data-section="messs"\][\s\S]*?Workspace[\s\S]*?section-tab\[data-section="assistant"\][\s\S]*?Messs/,
   'Navigation labels must localize the assistant and workspace entries.');
 assert.match(mainCss, /\.main-app\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0;/);
@@ -98,6 +107,28 @@ assert.match(sidebarJs, /TEXT_SIZE_DYNAMIC_SURFACE = '#board-canvas, \.drawflow'
   'Dynamic canvas mounts must bypass synchronous computed-style text scans.');
 assert.match(main, /ipcMain\.on\('window:readyForInteraction'[\s\S]*?revealMainWindow\(\)/);
 assert.match(preload, /readyForInteraction:\s*\(\)\s*=>\s*ipcRenderer\.send\('window:readyForInteraction'\)/);
+assert.match(indexHtml, /id="board-detach-window"[^>]*title="Open in separate window"/,
+  'The canvas header must expose a separate-window action at its far right.');
+assert.match(main, /const detachedCanvasWindows = new Map\(\)[\s\S]*?function createDetachedCanvasWindow\(canvasId, launchPoint = \{\}\)/,
+  'Detached canvases must be tracked and reused by canvas id.');
+assert.match(main, /detachedCanvasWindows\.get\(normalizedCanvasId\)[\s\S]*?revealRendererWindow\(existing\)[\s\S]*?reused:\s*true/,
+  'Opening the same detached canvas twice must focus the existing window.');
+assert.match(main, /detachedWindow\.loadFile\([\s\S]*?detachedCanvas:\s*normalizedCanvasId/,
+  'The detached renderer must be locked to the requested canvas through its launch query.');
+assert.match(main, /function rendererWindowForEvent\(event\)[\s\S]*?ipcMain\.handle\('window:minimize', \(event\)[\s\S]*?rendererWindowForEvent\(event\)/,
+  'Native titlebar actions must target the renderer window that invoked them.');
+assert.match(main, /function startCanvasDetachDragWatch\(event, canvasId\)[\s\S]*?screen\.getCursorScreenPoint\(\)[\s\S]*?createDetachedCanvasWindow\(normalizedCanvasId, cursor\)/,
+  'Drag-out must retain a main-process cursor fallback for macOS and Windows window boundaries.');
+assert.match(preload, /openDetachedCanvas:[\s\S]*?beginCanvasDetachDrag:[\s\S]*?cancelCanvasDetachDrag:/,
+  'The preload bridge must expose both click and long-press detach paths.');
+assert.match(canvasWorkspaceJs, /detachedCanvasId:[\s\S]*?function openActiveCanvasInDetachedWindow[\s\S]*?openDetachedCanvas\(canvas\.id/,
+  'The canvas workspace must route the header action to the detached-window IPC.');
+assert.match(canvasWorkspaceJs, /if \(isDetachedCanvasWindow\(\) && canvasId !== CanvasWorkspace\.detachedCanvasId\) return;/,
+  'A detached window must not follow canvas changes in the main window.');
+assert.match(panelLayoutJs, /detachWatchTimer[\s\S]*?beginCanvasDetachDrag\(activeCanvasId\(\)\)[\s\S]*?outsideWindow[\s\S]*?openActiveCanvasInDetachedWindow/,
+  'Long-pressing the canvas header and crossing the app boundary must detach the canvas.');
+assert.match(mainCss, /body\.is-detached-canvas-window #main-app[\s\S]*?grid-template-areas:\s*"board";[\s\S]*?#main-app > :not\(#board-panel\)/,
+  'Detached windows must render a focused canvas-only layout.');
 assert.match(appJs, /initSidebar\(initial\)/, 'Profile settings must be hydrated before account rendering.');
 assert.match(indexHtml, /id="account-popover-name"[^>]*data-profile-field="name"/);
 assert.match(indexHtml, /id="account-popover-signature"[^>]*data-profile-field="signature"/);
