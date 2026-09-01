@@ -58,7 +58,11 @@ assert.match(
 );
 assert.doesNotMatch(boardSource, /board-video-play-indicator/,
   'Canvas videos must not cover their content with a central play button.');
-assert.doesNotMatch(boardSource, /'\.mini-video-player'/,
+const boardUiSelectorSource = boardSource.slice(
+  boardSource.indexOf('const BOARD_UI_EVENT_SELECTOR = ['),
+  boardSource.indexOf('function isBoardUiEventTarget')
+);
+assert.doesNotMatch(boardUiSelectorSource, /'\.mini-video-player'/,
   'The video player surface must not be classified as a canvas UI layer that blocks dragging.');
 assert.match(
   boardSource,
@@ -180,8 +184,8 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /else if \(isVideo\) \{[\s\S]*?appendGeneratedMediaDetailsControl\(el, f, videoToolbar\);[\s\S]*?appendBoardEditHint\(el, 'video'\);/,
-  'Every canvas video must expose details and the Tab edit capsule, regardless of its source.'
+  /function installBoardMediaControls\(element, file, item, kind\)[\s\S]*?if \(kind === 'image'\)[\s\S]*?return;[\s\S]*?const videoToolbar = appendBoardVideoButlerToolbar\(element, file, item\);[\s\S]*?appendGeneratedMediaDetailsControl\(element, file, videoToolbar\);[\s\S]*?appendBoardEditHint\(element, 'video'\);/,
+  'Every canvas video must expose details and the Tab edit capsule when its active single-selection controls are mounted.'
 );
 assert.match(
   boardSource,
@@ -208,10 +212,10 @@ assert.match(
   /async function openFileFullscreenPreview\(file, sourceMedia = null\)[\s\S]*?isVideoExt\(file\.ext\)[\s\S]*?showFullscreenMedia\(video, \{ videoFileId: file\.id, autoplay: true \}\)/,
   'The file fullscreen helper must open canvas videos, preserve mounted players and start playback immediately.'
 );
-assert.match(
+assert.doesNotMatch(
   boardSource,
   /if \(f\.videoPreviewReady === true\) void ensurePlayer\(\);/,
-  'A freshly generated video must prepare its first canvas frame before the first hover.'
+  'Canvas videos must keep the lightweight preview until the user interacts instead of starting a decoder for every mounted item.'
 );
 assert.match(
   previewSource,

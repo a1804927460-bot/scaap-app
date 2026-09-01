@@ -125,10 +125,14 @@ assert.match(boardMedia, /const generatedAt = formatBoardGenerationDate\([\s\S]*
 assert.match(boardMedia, /generated-media-detail-created-at[\s\S]*?t\('Generated at', '生成时间'/, 'Generated-media details must show the generation date and time.');
 assert.doesNotMatch(boardMedia, /Generated-media details[\s\S]{0,160}rawChargedCredits/, 'Generated-media details must not expose the settled charge in the renderer.');
 assert.match(boardMedia, /butler-video-model[\s\S]*filters:\s*\[\{[\s\S]*videoType:[\s\S]*audioTransfer: 'Copy'/, 'Video enhancement must send the selected documented filter/output shape.');
-assert.match(boardCanvas, /appendBoardVideoButlerToolbar\(el, f, item\)/, 'Selected videos must expose the Butler capsule.');
 assert.match(
   boardCanvas,
-  /const videoToolbar = appendBoardVideoButlerToolbar\(el, f, item\);[\s\S]*?appendGeneratedMediaDetailsControl\(el, f, videoToolbar\)/,
+  /function installBoardMediaControls\(element, file, item, kind\)[\s\S]*?appendBoardVideoButlerToolbar\(element, file, item\)/,
+  'Selected videos must expose the Butler capsule when the active single-selection controls are mounted.'
+);
+assert.match(
+  boardCanvas,
+  /const videoToolbar = appendBoardVideoButlerToolbar\(element, file, item\);[\s\S]*?appendGeneratedMediaDetailsControl\(element, file, videoToolbar\)/,
   'Video details must share the Butler toolbar instead of overlapping it.'
 );
 assert.match(

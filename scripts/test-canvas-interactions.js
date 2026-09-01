@@ -38,6 +38,36 @@ assert.match(
   /BOARD_LIGHTWEIGHT_EFFECTS_ENTER_COUNT = 72;[\s\S]*?BOARD_LIGHTWEIGHT_EFFECTS_EXIT_COUNT = 48;/,
   'Large canvases must use separate enter and exit thresholds to avoid effect-mode thrashing.'
 );
+assert.doesNotMatch(
+  boardSource,
+  /if \(f\.videoPreviewReady === true\) void ensurePlayer\(\);/,
+  'Video cards must not create decoders before the user interacts with them.'
+);
+assert.match(
+  boardSource,
+  /function installBoardMediaControls\(element, file, item, kind\)[\s\S]*?element\._boardEnsureMediaControls[\s\S]*?if \(item\.selected && Board\.selectedCount === 1\)/,
+  'Expensive media toolbars must be mounted only for the active single selection.'
+);
+assert.match(
+  boardSource,
+  /element\._boardRemoveMediaControls = \(\) => \{[\s\S]*?\.board-image-toolbar, \.board-edit-hint[\s\S]*?delete element\.dataset\.mediaControlsReady/,
+  'Media toolbars must be removed after selection changes instead of accumulating across a long canvas session.'
+);
+assert.match(
+  boardSource,
+  /const releasePlayer = \(\) => \{[\s\S]*?player\._boardCleanup[\s\S]*?content\.replaceChildren\(preview\)[\s\S]*?const schedulePlayerRelease/,
+  'Video hover previews must release their decoder after the interaction grace period.'
+);
+assert.match(
+  workspaceSource,
+  /function ensureCanvasWorkspaceItemIndex\(\)[\s\S]*?new Map\(\)[\s\S]*?function upsertCanvasWorkspaceItem\([\s\S]*?itemIndex\.get\(item\.id\)/,
+  'Workspace item synchronization must use an index instead of scanning the full canvas for every upsert.'
+);
+assert.match(
+  boardSource,
+  /const BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET = 12_000_000;[\s\S]*?const BOARD_OVERVIEW_IMAGE_CONCURRENCY = 4;/,
+  'Overview thumbnail decoding must stay bounded to protect the renderer and GPU.'
+);
 const lightweightEffectsSource = boardSource.slice(
   boardSource.indexOf('function syncBoardLightweightEffects()'),
   boardSource.indexOf('function ensureBoardSelectionGroup()')
@@ -914,8 +944,8 @@ assert.match(
 );
 assert.match(
   qualitySource,
-  /image\.dataset\.quality === 'full' && quality === 'thumb' && Board\.visibleIds\.has\(id\)/,
-  'Visible full-resolution images must remain stable while offscreen retained textures can be reclaimed.'
+  /const quality = fullIds\.has\(id\) \? 'full' : 'thumb';[\s\S]*?transitionBoardImageQuality\(element, quality\)/,
+  'Image quality must be reconciled against the bounded visible full-resolution set so retained textures can be reclaimed.'
 );
 assert.match(
   boardSource,
@@ -944,8 +974,8 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /fullImageReadyFileIds\.has\(String\(f\.id \|\| ''\)\) \|\| cachedBoardFullImage\(fullSource\)[\s\S]*?img\.loading = (?:'eager'|Board\.visibleIds\.has\(item\.id\) \? 'eager' : 'lazy')/,
-  'Remounted images must remember decoded full sources and only eagerly load them while visible.'
+  /const fullEligible = Board\.visibleIds\.has\(item\.id\)[\s\S]*?cachedBoardFullImage\(fullSource\) \? 'full' : 'thumb'[\s\S]*?img\.loading = Board\.visibleIds\.has\(item\.id\) \? 'eager' : 'lazy'/,
+  'Remounted images must use cached full sources only for visible, sufficiently large cards.'
 );
 assert.match(
   boardSource,
@@ -954,7 +984,7 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET = 72_000_000[\s\S]*?function cacheBoardFullImage[\s\S]*?fullImageCachePixels[\s\S]*?BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET/,
+  /BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET = 40_000_000[\s\S]*?function cacheBoardFullImage[\s\S]*?fullImageCachePixels[\s\S]*?BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET/,
   'Decoded 4K caching must use a pixel budget so several originals cannot exhaust graphics memory.'
 );
 const transformSource = boardSource.slice(
@@ -978,8 +1008,8 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /const BOARD_OVERVIEW_IMAGE_LIMIT = 1600;[\s\S]*?const BOARD_OVERVIEW_IMAGE_CONCURRENCY = 16;/,
-  'Dense boards must retain enough overview thumbnails without starting every decoder at once.'
+  /const BOARD_OVERVIEW_IMAGE_LIMIT = 640;[\s\S]*?const BOARD_OVERVIEW_IMAGE_CONCURRENCY = 4;/,
+  'Dense boards must retain useful overview thumbnails without starting too many decoders at once.'
 );
 assert.match(
   boardSource,
@@ -1037,7 +1067,7 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /function syncBoardSelectionGroup\(\)[\s\S]*?selected\.length >= 2[\s\S]*?group\.style\.left[\s\S]*?group\.style\.width[\s\S]*?group\.style\.height/,
+  /function syncBoardSelectionGroup\(selectedItems = null\)[\s\S]*?selected\.length >= 2[\s\S]*?group\.style\.left[\s\S]*?group\.style\.width[\s\S]*?group\.style\.height/,
   'Multi-selection must render one shared selection box and hide it for smaller selections.'
 );
 assert.match(
@@ -1057,7 +1087,7 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /const BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET = 24_000_000;[\s\S]*?overviewImagePixels > BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET/,
+  /const BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET = 12_000_000;[\s\S]*?overviewImagePixels > BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET/,
   'Overview thumbnails must respect a decoded-pixel memory budget.'
 );
 assert.doesNotMatch(

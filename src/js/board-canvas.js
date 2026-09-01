@@ -16,8 +16,8 @@ const BOARD_LIGHTWEIGHT_EFFECTS_ENTER_COUNT = 72;
 const BOARD_LIGHTWEIGHT_EFFECTS_EXIT_COUNT = 48;
 const BOARD_OVERVIEW_ITEM_THRESHOLD = 180;
 const BOARD_FULL_IMAGE_LIMIT = 8;
-const BOARD_FULL_IMAGE_CACHE_LIMIT = 12;
-const BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET = 72_000_000;
+const BOARD_FULL_IMAGE_CACHE_LIMIT = 8;
+const BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET = 40_000_000;
 const BOARD_FULL_IMAGE_READY_LIMIT = 400;
 const BOARD_THUMBNAIL_MAX_EDGE = 400;
 const BOARD_FULL_IMAGE_MIN_SCREEN_EDGE = 220;
@@ -27,11 +27,12 @@ const BOARD_QUALITY_SETTLE_MS = 90;
 const BOARD_IMAGE_CROSSFADE_MS = 110;
 const BOARD_VIEW_STORAGE_KEY = 'messs.board.viewport.v2';
 const BOARD_OVERVIEW_DPR = 1;
-const BOARD_OVERVIEW_IMAGE_LIMIT = 1600;
-const BOARD_OVERVIEW_IMAGE_CACHE_LIMIT = 1800;
-const BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET = 24_000_000;
-const BOARD_OVERVIEW_IMAGE_CONCURRENCY = 16;
-const BOARD_OVERVIEW_IMAGE_MAX_EDGE = 192;
+const BOARD_OVERVIEW_IMAGE_LIMIT = 640;
+const BOARD_OVERVIEW_IMAGE_CACHE_LIMIT = 800;
+const BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET = 12_000_000;
+const BOARD_OVERVIEW_IMAGE_CONCURRENCY = 4;
+const BOARD_OVERVIEW_IMAGE_MAX_EDGE = 160;
+const BOARD_OVERVIEW_IMAGE_MIN_SCREEN_EDGE = 5;
 const BOARD_WHEEL_MAX_DELTA = 96;
 const BOARD_WHEEL_PAN_GAIN = 0.64;
 const BOARD_WHEEL_ZOOM_RATE = 0.001;
@@ -52,6 +53,7 @@ const BOARD_PARTITION_MIN_HEIGHT = 190;
 // This is the same broad strategy used by real-time 2D editors: keep input
 // targets live, but do not keep thousands of decoders and textures alive.
 const BOARD_MEDIA_RELEASE_DELAY_MS = 180;
+const BOARD_VIDEO_PREVIEW_RELEASE_DELAY_MS = 900;
 
 // Anything matching this boundary owns its interaction. Canvas listeners run
 // in the capture phase in a few places, so stopping propagation on a button is
@@ -123,6 +125,7 @@ const Board = {
   metrics: new Map(),
   filesById: new Map(),
   itemsById: new Map(),
+  selectedIds: new Set(),
   selectedCount: 0,
   lastMountHash: null,
   lastKeepHash: null,
@@ -994,10 +997,6 @@ function syncMountedImageQuality() {
     const image = activeBoardImage(element);
     if (!image) continue;
     const quality = fullIds.has(id) ? 'full' : 'thumb';
-    // Keep visible full-resolution layers stable so zooming never flashes a
-    // thumbnail. Retained items outside the viewport are safe to downgrade;
-    // otherwise a long canvas session accumulates many 4K GPU textures.
-    if (image.dataset.quality === 'full' && quality === 'thumb' && Board.visibleIds.has(id)) continue;
     if (image.dataset.quality === quality) continue;
     transitionBoardImageQuality(element, quality);
   }
@@ -1438,9 +1437,14 @@ function renderBoardItemContent(content, f, item) {
   if (isImageExt(f.ext)) {
     const thumbSource = resolveImageDisplaySource(f, false);
     const fullSource = resolveImageDisplaySource(f, true);
-    const quality = Board.fullImageReadyFileIds.has(String(f.id || '')) || cachedBoardFullImage(fullSource)
-      ? 'full'
-      : 'thumb';
+    const bounds = boardItemBounds(item);
+    const screenEdge = Math.max(bounds.w, bounds.h) * Board.zoom * Math.min(2, window.devicePixelRatio || 1);
+    const fullEligible = Board.visibleIds.has(item.id) && boardZoomBucket() === 'detail' && (
+      item.selected
+        ? screenEdge >= BOARD_SELECTED_FULL_IMAGE_MIN_SCREEN_EDGE
+        : screenEdge >= BOARD_FULL_IMAGE_MIN_SCREEN_EDGE
+    );
+    const quality = fullEligible && cachedBoardFullImage(fullSource) ? 'full' : 'thumb';
     const initialSource = quality === 'full' ? fullSource : thumbSource;
     const stack = document.createElement('div');
     stack.className = 'board-image-stack';
@@ -1532,22 +1536,48 @@ function renderBoardItemContent(content, f, item) {
 
     let hovering = false;
     let playerPromise = null;
+    let playerRequest = 0;
+    let releaseTimer = 0;
+    const releasePlayer = () => {
+      clearTimeout(releaseTimer);
+      releaseTimer = 0;
+      playerRequest += 1;
+      const player = content.querySelector('.mini-video-player');
+      if (player && typeof player._boardCleanup === 'function') player._boardCleanup();
+      if (content.firstElementChild !== preview) content.replaceChildren(preview);
+      playerPromise = null;
+    };
     const ensurePlayer = () => {
+      clearTimeout(releaseTimer);
+      releaseTimer = 0;
       if (!playerPromise) {
+        const request = ++playerRequest;
         playerPromise = loadBoardPreview(f.id).then((result) => {
+          if (request !== playerRequest) return null;
           if (!content.isConnected || !result || result.type !== 'video') {
-            playerPromise = null;
+            if (request === playerRequest) playerPromise = null;
             return null;
           }
           const player = buildMiniVideoPlayer(result, f);
           content.replaceChildren(player);
           return player;
         }).catch(() => {
-          playerPromise = null;
+          if (request === playerRequest) playerPromise = null;
           return null;
         });
       }
       return playerPromise;
+    };
+    const schedulePlayerRelease = () => {
+      clearTimeout(releaseTimer);
+      releaseTimer = window.setTimeout(() => {
+        if (!hovering) releasePlayer();
+      }, BOARD_VIDEO_PREVIEW_RELEASE_DELAY_MS);
+    };
+    content._boardReleasePreview = releasePlayer;
+    content._boardCleanupPreview = () => {
+      hovering = false;
+      releasePlayer();
     };
     content.addEventListener('mouseenter', () => {
       hovering = true;
@@ -1563,6 +1593,7 @@ function renderBoardItemContent(content, f, item) {
       playerPromise.then((player) => {
         if (player && typeof player._boardStopPreview === 'function') player._boardStopPreview();
       });
+      schedulePlayerRelease();
     });
     content.addEventListener('click', (event) => {
       if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) return;
@@ -1571,7 +1602,6 @@ function renderBoardItemContent(content, f, item) {
         if (player && typeof player._boardPlayPreview === 'function') player._boardPlayPreview();
       });
     });
-    if (f.videoPreviewReady === true) void ensurePlayer();
     return;
   }
 
@@ -1904,11 +1934,13 @@ function rebuildBoardSpatialIndex() {
   Board.spatialIndex.clear();
   Board.filesById = new Map(AppState.files.map((file) => [file.id, file]));
   Board.itemsById = new Map(AppState.boardItems.map((item) => [item.id, item]));
+  Board.selectedIds = new Set();
   Board.selectedCount = 0;
   for (const item of AppState.boardItems) {
-    if (item.selected) Board.selectedCount += 1;
+    if (item.selected) Board.selectedIds.add(item.id);
     Board.spatialIndex.set(item.id, boardItemBounds(item));
   }
+  Board.selectedCount = Board.selectedIds.size;
   Board.indexItemsRef = AppState.boardItems;
   Board.indexFilesRef = AppState.files;
   Board.indexItemCount = AppState.boardItems.length;
@@ -1926,6 +1958,9 @@ function updateBoardItemIndex(item) {
 }
 
 function cleanupBoardElement(element) {
+  element.querySelectorAll('.board-item-content').forEach((content) => {
+    if (typeof content._boardCleanupPreview === 'function') content._boardCleanupPreview();
+  });
   element.querySelectorAll('.mini-audio-player, .mini-video-player').forEach((media) => {
     if (typeof media._boardCleanup === 'function') media._boardCleanup();
   });
@@ -1960,6 +1995,9 @@ function scheduleBoardMediaRelease(id, element) {
     if (Board.mounted.get(id) !== element || Board.visibleIds.has(id)) return;
     element.querySelectorAll('.mini-video-player, .mini-audio-player').forEach((media) => {
       if (typeof media._boardSuspend === 'function') media._boardSuspend();
+    });
+    element.querySelectorAll('.board-item-content').forEach((content) => {
+      if (typeof content._boardReleasePreview === 'function') content._boardReleasePreview();
     });
   }, BOARD_MEDIA_RELEASE_DELAY_MS);
   Board.mediaReleaseTimers.set(id, timer);
@@ -2044,6 +2082,9 @@ function syncMountedBoardItemGeometry(element, item) {
   }
   element.classList.toggle('is-selected', Boolean(item.selected));
   element.classList.toggle('is-single-selection', Boolean(item.selected) && Board.selectedCount === 1);
+  if (item.selected && Board.selectedCount === 1 && typeof element._boardEnsureMediaControls === 'function') {
+    element._boardEnsureMediaControls();
+  }
 }
 
 function reconcileMountedBoardItemsAfterDataChange() {
@@ -2433,14 +2474,18 @@ function drawBoardOverview(visibleIds, viewportRect) {
       const file = item && Board.filesById.get(item.fileId);
       return { id, item, bounds, file };
     })
-    .filter((entry) => entry.item && entry.bounds && boardOverviewThumbnailSource(entry.file))
+    .filter((entry) => entry.item && entry.bounds && boardOverviewThumbnailSource(entry.file) && (
+      Math.max(entry.bounds.w * Board.zoom, entry.bounds.h * Board.zoom) >= BOARD_OVERVIEW_IMAGE_MIN_SCREEN_EDGE
+    ))
     .sort((a, b) => {
       const aArea = a.bounds.w * a.bounds.h;
       const bArea = b.bounds.w * b.bounds.h;
       return (b.item.selected ? 1e9 : bArea) - (a.item.selected ? 1e9 : aArea);
     });
   const prioritizedImages = imageCandidates.slice(0, BOARD_OVERVIEW_IMAGE_LIMIT);
-  const imageIds = new Set(prioritizedImages.map((entry) => entry.id));
+  // Request only the most useful thumbnails, but continue drawing any cached
+  // image that is already available from a previous nearby viewport.
+  const imageIds = new Set(imageCandidates.map((entry) => entry.id));
   prioritizeBoardOverviewImageQueue(prioritizedImages.map((entry) => entry.file));
 
   const overviewIds = [...visibleIds].sort((leftId, rightId) => {
@@ -2868,6 +2913,26 @@ function removeBoardPartition(partition, options = {}) {
   return true;
 }
 
+function installBoardMediaControls(element, file, item, kind) {
+  element._boardEnsureMediaControls = () => {
+    if (element.dataset.mediaControlsReady === 'true') return;
+    element.dataset.mediaControlsReady = 'true';
+    if (kind === 'image') {
+      appendBoardImageToolbar(element, file, item);
+      appendBoardEditHint(element);
+      return;
+    }
+    const videoToolbar = appendBoardVideoButlerToolbar(element, file, item);
+    appendGeneratedMediaDetailsControl(element, file, videoToolbar);
+    appendBoardEditHint(element, 'video');
+  };
+  element._boardRemoveMediaControls = () => {
+    element.querySelectorAll('.board-image-toolbar, .board-edit-hint').forEach((control) => control.remove());
+    delete element.dataset.mediaControlsReady;
+  };
+  if (item.selected && Board.selectedCount === 1) element._boardEnsureMediaControls();
+}
+
 function createBoardItemElement(item) {
   if (item.isPartition) return buildBoardPartitionElement(item);
   if (item.isAiPlaceholder) return buildAiPlaceholderElementLocalized(item);
@@ -2930,12 +2995,9 @@ function createBoardItemElement(item) {
   el.appendChild(content);
   renderBoardItemContent(content, f, item);
   if (isImage) {
-    appendBoardImageToolbar(el, f, item);
-    appendBoardEditHint(el);
+    installBoardMediaControls(el, f, item, 'image');
   } else if (isVideo) {
-    const videoToolbar = appendBoardVideoButlerToolbar(el, f, item);
-    appendGeneratedMediaDetailsControl(el, f, videoToolbar);
-    appendBoardEditHint(el, 'video');
+    installBoardMediaControls(el, f, item, 'video');
   }
 
   const name = document.createElement('div');
@@ -3210,8 +3272,16 @@ function boardSelectionBounds(items) {
   };
 }
 
-function boardSelectionResizeItems() {
-  return AppState.boardItems.filter((item) => item && item.selected && !item.isPartition);
+function boardSelectionResizeItems(selectedIds = Board.selectedIds) {
+  if (!(selectedIds instanceof Set)) {
+    return AppState.boardItems.filter((item) => item && item.selected && !item.isPartition);
+  }
+  const selected = [];
+  for (const id of selectedIds) {
+    const item = Board.itemsById.get(id);
+    if (item && !item.isPartition) selected.push(item);
+  }
+  return selected;
 }
 
 function syncBoardLightweightEffects() {
@@ -3255,10 +3325,12 @@ function ensureBoardSelectionGroup() {
   return group;
 }
 
-function syncBoardSelectionGroup() {
+function syncBoardSelectionGroup(selectedItems = null) {
   const canvas = document.getElementById('board-canvas');
   if (!canvas) return;
-  const selected = boardSelectionResizeItems();
+  const selected = Array.isArray(selectedItems)
+    ? selectedItems.filter((item) => item && !item.isPartition)
+    : boardSelectionResizeItems();
   const group = ensureBoardSelectionGroup();
   if (!group) return;
   const isMultiSelection = selected.length >= 2;
@@ -3280,19 +3352,39 @@ function syncBoardSelectionGroup() {
   group.dataset.selectedCount = String(selected.length);
 }
 
-function syncBoardSelectionClasses() {
-  const selectedIds = new Set(AppState.boardItems.filter((item) => item.selected).map((item) => item.id));
+function syncBoardSelectionClasses(selectedIdsOverride = null, options = {}) {
+  const previousSingleSelection = Board.selectedCount === 1;
+  const selectedIds = selectedIdsOverride instanceof Set
+    ? new Set(selectedIdsOverride)
+    : new Set(AppState.boardItems.filter((item) => item.selected).map((item) => item.id));
   const hasSingleSelection = selectedIds.size === 1;
+  Board.selectedIds = selectedIds;
   Board.selectedCount = selectedIds.size;
-  document.querySelectorAll('#board-canvas .board-item').forEach((element) => {
+  const syncElement = (element) => {
+    if (!element) return;
     const selected = selectedIds.has(element.dataset.boardId);
     element.classList.toggle('is-selected', selected);
     element.classList.toggle('is-single-selection', selected && hasSingleSelection);
-  });
-  syncBoardSelectionGroup();
-  if (typeof syncBoardButlerExpandEditorToSelection === 'function') syncBoardButlerExpandEditorToSelection();
-  if (typeof syncCanvasAgentReferencesToSelection === 'function') syncCanvasAgentReferencesToSelection();
-  scheduleMountedImageQuality(0);
+    if (!options.deferControls && selected && hasSingleSelection && typeof element._boardEnsureMediaControls === 'function') {
+      element._boardEnsureMediaControls();
+    } else if ((!selected || !hasSingleSelection) && typeof element._boardRemoveMediaControls === 'function') {
+      element._boardRemoveMediaControls();
+    }
+  };
+  const changedIds = options.changedIds instanceof Set ? options.changedIds : null;
+  if (!changedIds || previousSingleSelection !== hasSingleSelection) {
+    Board.mounted.forEach(syncElement);
+  } else {
+    changedIds.forEach((id) => syncElement(Board.mounted.get(id)));
+  }
+  if (!options.deferGroup) syncBoardSelectionGroup(options.selectedItems || null);
+  if (!options.deferTools && typeof syncBoardButlerExpandEditorToSelection === 'function') {
+    syncBoardButlerExpandEditorToSelection();
+  }
+  if (!options.deferAgent && typeof syncCanvasAgentReferencesToSelection === 'function') {
+    syncCanvasAgentReferencesToSelection();
+  }
+  if (!options.deferQuality) scheduleMountedImageQuality(0);
 }
 
 function appendBoardEditHint(element, kind = 'image') {
@@ -3722,11 +3814,8 @@ function startBoxSelect(e) {
   const selectionPartition = boardPartitionAtPoint(startWorld);
   if (selectionPartition) setActiveBoardPartition(selectionPartition);
   else setActiveBoardPartition(null);
-  const initialSelected = new Set(
-    e.shiftKey
-      ? AppState.boardItems.filter((item) => item.selected).map((item) => item.id)
-      : []
-  );
+  const initialSelected = e.shiftKey ? new Set(Board.selectedIds) : new Set();
+  const clearedIds = e.shiftKey ? new Set() : new Set(Board.selectedIds);
   let previewIds = new Set(initialSelected);
 
   const box = document.createElement('div');
@@ -3769,18 +3858,32 @@ function startBoxSelect(e) {
     }
     if (e.shiftKey) initialSelected.forEach((id) => nextIds.add(id));
 
+    const changedIds = new Set(clearedIds);
+    clearedIds.clear();
     for (const id of previewIds) {
       if (nextIds.has(id)) continue;
       const item = Board.itemsById.get(id);
       if (item) item.selected = false;
+      changedIds.add(id);
     }
     for (const id of nextIds) {
-      const item = Board.itemsById.get(id);
-      if (item) item.selected = true;
+      if (!previewIds.has(id)) {
+        const item = Board.itemsById.get(id);
+        if (item) item.selected = true;
+        changedIds.add(id);
+      }
     }
     previewIds = nextIds;
-    syncBoardSelectionClasses();
-    scheduleBoardReconcile();
+    if (changedIds.size) {
+      syncBoardSelectionClasses(nextIds, {
+        changedIds,
+        deferGroup: true,
+        deferTools: true,
+        deferAgent: true,
+        deferControls: true,
+        deferQuality: true
+      });
+    }
   });
   function onMove(ev) {
     selectRunner.push({ clientX: ev.clientX, clientY: ev.clientY });
@@ -3791,7 +3894,6 @@ function startBoxSelect(e) {
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
     syncBoardSelectionClasses();
-    scheduleBoardReconcile();
   }
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup', onUp);

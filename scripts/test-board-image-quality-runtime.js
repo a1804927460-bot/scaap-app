@@ -98,6 +98,7 @@ async function run() {
     await new Promise((resolve) => setTimeout(resolve, 340));
     const result = await window.webContents.executeJavaScript(`(() => {
       const content = document.createElement('div');
+      Board.visibleIds.add('remount');
       renderBoardItemContent(content, {
         id: 'file-first', name: 'first.png', ext: '.png',
         thumbUrl: ${JSON.stringify(thumb)}, url: ${JSON.stringify(full)}

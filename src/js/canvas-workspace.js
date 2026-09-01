@@ -20,6 +20,9 @@ const CanvasWorkspace = {
   libraryScope: 'personal',
   libraryProjectId: null,
   libraryQuery: '',
+  boardItemIndex: new Map(),
+  boardItemIndexRef: null,
+  boardItemIndexCount: -1,
   detachedCanvasId: String(new URLSearchParams(window.location.search).get('detachedCanvas') || '').trim(),
   detachInFlight: false
 };
@@ -63,12 +66,11 @@ function applyRemoteCanvasItemsChange(payload = {}) {
   const removedIds = new Set(Array.isArray(payload.remove) ? payload.remove.filter(Boolean) : []);
   if (removedIds.size) {
     AppState.allBoardItems = AppState.allBoardItems.filter((item) => !removedIds.has(item.id));
+    invalidateCanvasWorkspaceItemIndex();
   }
   for (const item of Array.isArray(payload.upsert) ? payload.upsert : []) {
     if (!item || !item.id) continue;
-    const index = AppState.allBoardItems.findIndex((entry) => entry.id === item.id);
-    if (index === -1) AppState.allBoardItems.push(item);
-    else AppState.allBoardItems[index] = item;
+    upsertCanvasWorkspaceItem(item, canvasId);
   }
   for (const file of Array.isArray(payload.files) ? payload.files : []) {
     if (!file || !file.id) continue;
@@ -372,28 +374,70 @@ function activeCanvasId() {
   return AppState.activeCanvasId || (AppState.canvases[0] && AppState.canvases[0].id) || 'canvas-1';
 }
 
-function canvasWorkspaceAddItem(item) {
-  if (!item) return;
-  item.canvasId = item.canvasId || activeCanvasId();
+function invalidateCanvasWorkspaceItemIndex() {
+  CanvasWorkspace.boardItemIndexRef = null;
+  CanvasWorkspace.boardItemIndexCount = -1;
+  CanvasWorkspace.boardItemIndex.clear();
+}
+
+function ensureCanvasWorkspaceItemIndex() {
   if (!Array.isArray(AppState.allBoardItems)) AppState.allBoardItems = [];
-  const index = AppState.allBoardItems.findIndex((entry) => entry.id === item.id);
-  if (index === -1) AppState.allBoardItems.push(item);
-  else AppState.allBoardItems[index] = item;
+  if (
+    CanvasWorkspace.boardItemIndexRef === AppState.allBoardItems &&
+    CanvasWorkspace.boardItemIndexCount === AppState.allBoardItems.length
+  ) return CanvasWorkspace.boardItemIndex;
+  const index = new Map();
+  AppState.allBoardItems.forEach((item, itemIndex) => {
+    if (item && item.id) index.set(item.id, itemIndex);
+  });
+  CanvasWorkspace.boardItemIndex = index;
+  CanvasWorkspace.boardItemIndexRef = AppState.allBoardItems;
+  CanvasWorkspace.boardItemIndexCount = AppState.allBoardItems.length;
+  return index;
+}
+
+function upsertCanvasWorkspaceItem(item, fallbackCanvasId = activeCanvasId()) {
+  if (!item || !item.id) return;
+  item.canvasId = item.canvasId || fallbackCanvasId;
+  const itemIndex = ensureCanvasWorkspaceItemIndex();
+  let index = itemIndex.get(item.id);
+  if (index !== undefined && (!AppState.allBoardItems[index] || AppState.allBoardItems[index].id !== item.id)) {
+    invalidateCanvasWorkspaceItemIndex();
+    index = ensureCanvasWorkspaceItemIndex().get(item.id);
+  }
+  if (index === undefined) {
+    AppState.allBoardItems.push(item);
+    CanvasWorkspace.boardItemIndex.set(item.id, AppState.allBoardItems.length - 1);
+    CanvasWorkspace.boardItemIndexCount = AppState.allBoardItems.length;
+  } else {
+    AppState.allBoardItems[index] = item;
+  }
+}
+
+function canvasWorkspaceAddItem(item) {
+  upsertCanvasWorkspaceItem(item);
 }
 
 function canvasWorkspaceRemoveItems(ids) {
   const removed = new Set(ids || []);
   if (Array.isArray(AppState.allBoardItems)) {
     AppState.allBoardItems = AppState.allBoardItems.filter((item) => !removed.has(item.id));
+    invalidateCanvasWorkspaceItemIndex();
   }
 }
 
 function canvasWorkspaceReplaceItem(oldId, item) {
   if (!item) return;
   item.canvasId = item.canvasId || activeCanvasId();
-  const index = AppState.allBoardItems.findIndex((entry) => entry.id === oldId);
-  if (index === -1) AppState.allBoardItems.push(item);
-  else AppState.allBoardItems[index] = item;
+  const itemIndex = ensureCanvasWorkspaceItemIndex();
+  const index = itemIndex.get(oldId);
+  if (index === undefined) {
+    upsertCanvasWorkspaceItem(item);
+    return;
+  }
+  AppState.allBoardItems[index] = item;
+  itemIndex.delete(oldId);
+  itemIndex.set(item.id, index);
 }
 
 function canvasWorkspaceTouch(canvasId = activeCanvasId()) {
