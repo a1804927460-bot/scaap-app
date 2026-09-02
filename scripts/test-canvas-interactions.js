@@ -185,6 +185,27 @@ assert.match(
   /const BOARD_WHEEL_SMOOTHING = 0\.28[\s\S]*?function stepBoardZoom\(now\)[\s\S]*?Math\.pow\(1 - BOARD_WHEEL_SMOOTHING/,
   'Canvas wheel zoom must follow a frame-rate-independent smoothing curve instead of jumping per wheel event.'
 );
+assert.match(
+  boardSource,
+  /function boardTransform\(\)\s*\{[\s\S]*?return `translate\(\$\{Board\.panX\}px, \$\{Board\.panY\}px\) scale\(\$\{Board\.zoom\}\)`;/,
+  'The overflow-based infinite canvas must use a 2D transform so Chromium does not cull media outside its 1px origin.'
+);
+assert.doesNotMatch(boardSource, /function boardTransform\(\)[\s\S]{0,200}?translate3d\(/,
+  'Wheel interaction must not promote the entire overflow-based canvas into one 3D compositor layer.');
+assert.match(boardStyles, /\.board-canvas\.is-transforming\s*\{\s*will-change:\s*auto;\s*\}/,
+  'Transforming the infinite canvas must not force a single oversized GPU layer.');
+assert.match(
+  boardSource,
+  /const groupMates = item\.isPartition[\s\S]*?: \(item\.selected && selectedMates\.length > 1\)[\s\S]*?\? selectedMates[\s\S]*?: item\.groupId/,
+  'The current multi-selection must take priority over an older explicit group when dragging.');
+assert.match(
+  boardSource,
+  /function onUp\(ev\) \{[\s\S]*?selectRunner\.push\(\{ clientX: ev\.clientX, clientY: ev\.clientY \}\);[\s\S]*?selectRunner\.flush\(\);/,
+  'Box selection must include the final mouseup coordinate before committing.');
+assert.doesNotMatch(
+  boardSource,
+  /\(!selectionPartition && candidate\.partitionId\)/,
+  'A marquee started outside a partition must still be able to select visible items inside partitions.');
 assert.doesNotMatch(
   boardSource,
   /beginBoardInteractionOverview|finishBoardInteractionOverview|is-board-interaction-overview/,
@@ -633,8 +654,13 @@ assert.doesNotMatch(
 assert.match(boardSource, /function setBoardPanTarget[\s\S]*?requestAnimationFrame\(stepBoardZoom\)/);
 assert.match(
   boardSource,
-  /function resetBoardZoomTo100[\s\S]*?cancelAnimationFrame\(Board\.zoomFrame\)[\s\S]*?BoardEngine\.zoomAtPoint[\s\S]*?Board\.zoom = 1;[\s\S]*?applyBoardTransform\(\);/,
+  /function cancelBoardViewportMotion[\s\S]*?cancelAnimationFrame\(Board\.zoomFrame\)[\s\S]*?Board\.zoomTarget = null;[\s\S]*?function resetBoardZoomTo100[\s\S]*?cancelBoardViewportMotion\(\);[\s\S]*?BoardEngine\.zoomAtPoint[\s\S]*?Board\.zoom = 1;[\s\S]*?applyBoardTransform\(\);/,
   'Resetting the board must settle pending animation and return to an exact 100% around the viewport center.'
+);
+assert.match(
+  boardSource,
+  /function fitBoardItemsToViewport[\s\S]*?cancelBoardViewportMotion\(\);[\s\S]*?Number\.isFinite\(bounds\.w\)[\s\S]*?Board\.zoomLod = null;[\s\S]*?applyBoardTransform\(\);/,
+  'Fit-to-content must cancel stale wheel targets and ignore malformed item bounds.'
 );
 assert.match(
   boardSource,
@@ -652,6 +678,21 @@ assert.match(
   workspaceSource,
   /function showCanvasWorkspace[\s\S]*?restoreBoardViewport\(activeCanvasId\(\)\);[\s\S]*?resetBoardZoomTo100\(\);/,
   'Returning from the canvas library must always enter the canvas at 100%.'
+);
+assert.match(
+  mainSource,
+  /function persistentBoardItem[\s\S]*?delete normalized\.selected;[\s\S]*?function ensureCanvasState[\s\S]*?store\.data\.boardItems\.forEach[\s\S]*?delete item\.selected;/,
+  'Canvas selection must remain renderer-only and stale saved selections must be migrated away.'
+);
+assert.match(
+  mainSource,
+  /ipcMain\.handle\('board:upsertItem'[\s\S]*?persistentBoardItem\(item,[\s\S]*?ipcMain\.handle\('board:upsertItems'[\s\S]*?persistedItems = items[\s\S]*?persistentBoardItem/,
+  'Single and bulk canvas persistence must strip transient selection state.'
+);
+assert.match(
+  workspaceSource,
+  /function switchCanvas[\s\S]*?allBoardItems\.forEach\(\(item\) => \{ item\.selected = false; \}\)[\s\S]*?function initCanvasWorkspace[\s\S]*?selected: false/,
+  'Opening or switching canvases must never inherit a stale multi-selection.'
 );
 assert.match(
   workspaceSource,
@@ -1112,8 +1153,8 @@ assert.match(
 );
 assert.match(
   boardStyles,
-  /\.board-canvas \{[^}]*will-change:\s*auto[^}]*backface-visibility:\s*visible[^}]*\}[\s\S]*?\.board-canvas\.is-transforming \{\s*will-change:\s*transform;/,
-  'The canvas must use temporary compositing during interaction and rerasterize at the settled 4K zoom.'
+  /\.board-canvas \{[^}]*will-change:\s*auto[^}]*backface-visibility:\s*visible[^}]*\}[\s\S]*?\.board-canvas\.is-transforming \{\s*will-change:\s*auto;/,
+  'The overflow-based infinite canvas must avoid oversized compositor layers during interaction.'
 );
 assert.doesNotMatch(
   boardStyles,
@@ -1310,8 +1351,8 @@ assert.match(
 assert.match(boardStyles, /\.fullscreen-stage > img \{[\s\S]*?max-width:\s*var\(--fullscreen-media-max-width\);[\s\S]*?max-height:\s*var\(--fullscreen-media-max-height\);/);
 assert.match(
   contextMenuSource,
-  /function arrangeItemsGrid[\s\S]*?isImageExt\(file\.ext\) \|\| isVideoExt\(file\.ext\)[\s\S]*?boardItemBounds\(item\)[\s\S]*?compactMediaGrid\(measuredItems,[\s\S]*?gap:\s*20[\s\S]*?columns:\s*Math\.max\(1,\s*Math\.ceil\(Math\.sqrt\(mediaItems\.length\s*\*\s*1\.35\)\)\)[\s\S]*?upsertBoardItems\(mediaItems\)/,
-  'Compact arrangement must resize selected media to the smallest displayed width, preserve aspect ratio, use the previous wide rectangular columns, and persist one packed rectangle.'
+  /function arrangeItemsGrid[\s\S]*?startFrames[\s\S]*?boardItemBounds\(item\)[\s\S]*?compactMediaGrid\(measuredItems,[\s\S]*?gap:\s*20[\s\S]*?columns:\s*Math\.max\(1,\s*Math\.ceil\(Math\.sqrt\(mediaItems\.length\s*\*\s*1\.35\)\)\)[\s\S]*?minWidth:[\s\S]*?recordBoardResizeHistory\(startFrames\)[\s\S]*?persistBoardMoveHistory\(mediaItems\)/,
+  'Compact arrangement must reject tiny outlier widths, retain the wide rectangle, and remain undoable.'
 );
 assert.match(
   contextMenuSource,

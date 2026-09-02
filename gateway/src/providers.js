@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
 import {
   deleteAi302RelayAsset,
   getAi302RelayAsset,
@@ -35,7 +36,8 @@ const ASYNC_VIDEO_PROTOCOLS = new Set([
   'jimeng-video-v30',
   'jimeng-video-v30-pro',
   'kling-v3-image-to-video',
-  'kling-o3-omni'
+  'kling-o3-omni',
+  'aireiter-async'
 ]);
 const TERMINAL_VIDEO_FAILURES = new Set(['failed', 'cancelled', 'expired']);
 const ROUTED_TASK_PREFIX = 'messs-route:';
@@ -203,10 +205,11 @@ function configuredProviders() {
       // This is an internal routing hint. It is deliberately removed from
       // publicProviderConfig so the renderer only sees product model labels.
       logicalModel: String(raw.logicalModel || (builtin && builtin.logicalModel) || '').trim().slice(0, 120),
-      fallbackProviderIds: Array.isArray(raw.fallbackProviderIds)
-        ? raw.fallbackProviderIds.map((value) => String(value || '').trim().toLowerCase())
-          .filter((value) => PROVIDER_ID.test(value)).slice(0, 20)
-        : (builtin && builtin.fallbackProviderIds) || [],
+      fallbackProviderIds: [...new Set([
+        ...((builtin && builtin.fallbackProviderIds) || []),
+        ...(Array.isArray(raw.fallbackProviderIds) ? raw.fallbackProviderIds : [])
+      ].map((value) => String(value || '').trim().toLowerCase())
+        .filter((value) => PROVIDER_ID.test(value)))].slice(0, 20),
       model: String(raw.model || (builtin && builtin.model) || '').trim().slice(0, 120),
       protocol: String(raw.protocol || (builtin && builtin.protocol) || '').trim().slice(0, 40),
       // Capabilities for catalog models are versioned with the application.
@@ -403,6 +406,53 @@ function requestRouteIds(provider, body = {}) {
   return [...new Set([provider.id, ...(provider.fallbackProviderIds || [])])];
 }
 
+function boundedTrafficPercent(value, fallback = 60) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : fallback;
+}
+
+function aireiterTrafficPercent(provider) {
+  let overrides = {};
+  try {
+    const parsed = JSON.parse(process.env.AIREITER_TRAFFIC_JSON || '{}');
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) overrides = parsed;
+  } catch {}
+  const keys = [provider && provider.id, provider && provider.logicalModel]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(overrides, key)) {
+      return boundedTrafficPercent(overrides[key]);
+    }
+  }
+  return boundedTrafficPercent(process.env.AIREITER_TRAFFIC_PERCENT, 60);
+}
+
+function deterministicTrafficBucket(body = {}) {
+  const identity = String(body.operationId || body.requestId || '').trim();
+  if (!identity) return 100;
+  return createHash('sha256').update(identity).digest().readUInt32BE(0) % 100;
+}
+
+function isAireiterProvider(provider) {
+  return provider && (
+    provider.protocol === 'aireiter-async'
+    || String(provider.id || '').startsWith('aireiter-')
+  );
+}
+
+function orderMixedRouteIds(routeIds, byId, requested, body = {}) {
+  const unique = [...new Set(routeIds.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))];
+  const aireiter = unique.filter((id) => isAireiterProvider(byId.get(id)));
+  const existing = unique.filter((id) => !aireiter.includes(id));
+  if (!aireiter.length) return unique;
+  const percent = aireiterTrafficPercent(requested);
+  if (percent <= 0) return existing;
+  return deterministicTrafficBucket(body) < percent
+    ? [...aireiter, ...existing]
+    : [...existing, ...aireiter];
+}
+
 function compactProviderIdentity(value) {
   return String(value || '')
     .trim()
@@ -482,7 +532,7 @@ function providersForRequest(kind, id, body = {}) {
   const configured = configuredProviders();
   const byId = new Map(configured.filter((provider) => provider.kind === kind).map((provider) => [provider.id, provider]));
   const candidates = [];
-  const routeIds = requestRouteIds(requested, body);
+  const routeIds = orderMixedRouteIds(requestRouteIds(requested, body), byId, requested, body);
   for (const routeId of routeIds) {
     const candidate = byId.get(String(routeId || '').trim().toLowerCase());
     if (!candidate || !providerApiKey(candidate) || candidates.some((entry) => entry.id === candidate.id)) continue;
@@ -727,7 +777,192 @@ async function generateAtlasGptImage(provider, body, signal, hooks = {}) {
   }
 }
 
+function aireiterLocalRejection(message, code = 'provider-option-not-supported') {
+  return Object.assign(new Error(message), {
+    status: 400,
+    code,
+    safeToFallback: true,
+    preSubmissionFailure: true
+  });
+}
+
+function aireiterTaskIdentity(body = {}) {
+  const endUserId = /^u_[a-f0-9]{16,64}$/i.test(String(body.endUserId || '').trim())
+    ? String(body.endUserId).trim().toLowerCase()
+    : 'u_gateway';
+  const operationIdentity = String(body.operationId || '').trim() || JSON.stringify({
+    providerId: body.providerId,
+    prompt: body.prompt,
+    size: body.size,
+    resolution: body.resolution,
+    aspectRatio: body.aspectRatio,
+    duration: body.duration,
+    urls: Array.isArray(body.urls) ? body.urls.map((value) => createHash('sha256').update(String(value)).digest('hex').slice(0, 12)) : []
+  });
+  const digest = createHash('sha256').update(operationIdentity).digest('hex').slice(0, 32);
+  return `${endUserId}_${digest}`.slice(0, 64);
+}
+
+function aireiterPayloadCode(payload) {
+  const value = Number(payload && (payload.statusCode ?? payload.code));
+  return Number.isFinite(value) ? value : 200;
+}
+
+function aireiterOutputUrl(payload) {
+  const output = payload && payload.data && payload.data.output;
+  const entries = Array.isArray(output) ? output : output ? [output] : [];
+  for (const entry of entries) {
+    const url = String(entry && (entry.url || entry.output_url || entry.download_url) || entry || '').trim();
+    if (/^https:\/\/\S+$/i.test(url) || /^data:image\//i.test(url)) return url;
+  }
+  return '';
+}
+
+function aireiterTaskStatus(payload) {
+  return normalizeVideoTaskStatus(payload && payload.data && payload.data.status);
+}
+
+function markAireiterSubmitError(error) {
+  const status = Number(error && error.status);
+  if ([400, 401, 402, 425, 429, 433].includes(status)) {
+    error.safeToFallback = true;
+    error.submissionAmbiguous = false;
+  } else if (error.preSubmissionFailure !== true) {
+    error.submissionAmbiguous = true;
+  }
+  return error;
+}
+
+async function submitAireiterTask(provider, body, params, signal) {
+  const outTaskId = aireiterTaskIdentity(body);
+  let payload;
+  try {
+    payload = await responseJson(await fetch(provider.endpoint, {
+      method: 'POST',
+      headers: providerTaskHeaders(provider, body),
+      signal: providerSignal(signal, 45_000),
+      body: JSON.stringify({ model: provider.model, params, out_task_id: outTaskId })
+    }), 'Generation service');
+  } catch (error) {
+    throw markAireiterSubmitError(error);
+  }
+  const code = aireiterPayloadCode(payload);
+  if (code !== 200) {
+    const error = Object.assign(new Error('The generation request was not accepted.'), {
+      status: code >= 400 && code < 600 ? code : 502,
+      code: 'provider-request-failed'
+    });
+    if ([400, 401, 402, 425, 429, 433].includes(code)) error.safeToFallback = true;
+    else error.submissionAmbiguous = true;
+    throw error;
+  }
+  return outTaskId;
+}
+
+async function queryAireiterTask(provider, taskId, signal) {
+  const payload = await responseJson(await fetch(provider.resultEndpoint, {
+    method: 'POST',
+    headers: providerHeaders(provider, true),
+    signal: providerSignal(signal, 30_000),
+    body: JSON.stringify({ out_task_id: validVideoTaskId(taskId) })
+  }), 'Generation service');
+  const code = aireiterPayloadCode(payload);
+  if (code !== 200) {
+    throw Object.assign(new Error('The generation task could not be queried.'), {
+      status: code >= 400 && code < 600 ? code : 502,
+      code: 'provider-task-query-failed',
+      taskId,
+      providerTaskAccepted: true
+    });
+  }
+  return payload;
+}
+
+function aireiterImageParams(provider, body) {
+  const prompt = String(body.prompt || '').trim();
+  const urls = Array.isArray(body.urls) ? body.urls.map(String).map((value) => value.trim()).filter(Boolean) : [];
+  const ratio = String(body.aspectRatio || '').trim();
+  const resolution = String(body.size || body.resolution || '2K').trim().toUpperCase();
+  if (provider.model === 'nano_banana_pro') {
+    if (urls.length > 8) throw aireiterLocalRejection('This route accepts at most 8 reference images.', 'too-many-references');
+    return {
+      prompt,
+      ...(urls.length ? { image_url: urls } : {}),
+      ...(/^\d+:\d+$/.test(ratio) ? { aspect_ratio: ratio } : {}),
+      resolution: ['1K', '2K', '4K'].includes(resolution) ? resolution : '2K'
+    };
+  }
+  if (provider.model === 'gpt_image_2') {
+    if (urls.length > 10) throw aireiterLocalRejection('This route accepts at most 10 reference images.', 'too-many-references');
+    return {
+      prompt,
+      ...(urls.length ? { image_url: urls } : {}),
+      size: gptImage2Size(body)
+    };
+  }
+  if (provider.model === 'mj_v8_1') {
+    if (urls.length) throw aireiterLocalRejection('This route does not accept reference images.', 'invalid-reference-media');
+    const cleanPrompt = prompt.replace(/(?:^|\s)--ar(?:=|\s+)\S+/gi, ' ').replace(/\s{2,}/g, ' ').trim();
+    return {
+      prompt: /^\d+:\d+$/.test(ratio) ? `${cleanPrompt} --ar ${ratio}` : cleanPrompt,
+      speed: 'fast',
+      quality: resolution === '2K' ? 'hd' : 'standard'
+    };
+  }
+  throw aireiterLocalRejection('This model is not available on the selected route.');
+}
+
+async function generateAireiterImage(provider, body, signal, hooks = {}) {
+  const recovered = body && body._acceptedTask;
+  const taskId = recovered && recovered.taskId
+    ? validVideoTaskId(recovered.taskId)
+    : await submitAireiterTask(provider, body, aireiterImageParams(provider, body), signal);
+  try {
+    if (!recovered && typeof hooks.onAccepted === 'function') {
+      await hooks.onAccepted({ providerId: provider.id, taskId, pollUrl: provider.resultEndpoint });
+    }
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 20 * 60_000) {
+      const payload = await queryAireiterTask(provider, taskId, signal);
+      const status = aireiterTaskStatus(payload);
+      if (status === 'succeeded') {
+        const mediaUrl = aireiterOutputUrl(payload);
+        if (!mediaUrl) {
+          throw Object.assign(new Error('The completed image task did not return a file.'), {
+            code: 'provider-result-missing',
+            status: 502,
+            providerTaskTerminalFailure: true
+          });
+        }
+        const buffer = validateGeneratedMediaBuffer('image', await downloadGeneratedImage(mediaUrl, signal));
+        if (typeof hooks.onReady === 'function') {
+          await hooks.onReady({ providerId: provider.id, taskId, mediaUrl, buffer });
+        }
+        return buffer;
+      }
+      if (TERMINAL_VIDEO_FAILURES.has(status)) {
+        throw Object.assign(new Error('The image generation task failed.'), {
+          code: `provider-${status}`,
+          status: 502,
+          providerTaskTerminalFailure: true
+        });
+      }
+      await delayWithSignal(2_000, signal);
+    }
+    throw Object.assign(new Error('The image generation task timed out.'), {
+      code: 'provider-timeout', status: 504
+    });
+  } catch (error) {
+    error.taskId ||= taskId;
+    error.providerTaskAccepted = true;
+    throw error;
+  }
+}
+
 async function generateMediaWithProvider(kind, provider, body, signal, hooks = {}) {
+  if (kind === 'image' && provider.protocol === 'aireiter-async') {
+    return generateAireiterImage(provider, body, signal, hooks);
+  }
   if (kind === 'image' && provider.protocol === 'atlas-gpt-image-2') {
     return generateAtlasGptImage(provider, body, signal, hooks);
   }
@@ -1089,9 +1324,13 @@ function providerTimeoutError(provider) {
 
 function providerTaskHeaders(provider, body) {
   const requestId = String(body && body.operationId || '').trim();
+  const endUserId = /^u_[a-f0-9]{16,64}$/i.test(String(body && body.endUserId || '').trim())
+    ? String(body.endUserId).trim().toLowerCase()
+    : '';
   return {
     ...providerHeaders(provider, true),
-    ...(requestId ? { 'Idempotency-Key': requestId, 'X-Request-Id': requestId } : {})
+    ...(requestId ? { 'Idempotency-Key': requestId, 'X-Request-Id': requestId } : {}),
+    ...(endUserId ? { 'X-End-User-Id': endUserId } : {})
   };
 }
 
@@ -2232,8 +2471,110 @@ async function createJimengVideoTask(provider, body, signal) {
   return { providerId: provider.id, taskId };
 }
 
+function aireiterVideoReferences(body) {
+  const urls = Array.isArray(body.urls) ? body.urls.map(String).map((value) => value.trim()).filter(Boolean) : [];
+  const mediaTypes = Array.isArray(body.referenceMediaTypes)
+    ? body.referenceMediaTypes.slice(0, urls.length).map((value) => String(value || 'image').trim().toLowerCase())
+    : urls.map(() => 'image');
+  const images = [];
+  const videos = [];
+  urls.forEach((url, index) => {
+    const type = mediaTypes[index] === 'video' ? 'video' : 'image';
+    const relayed = seedanceRelayMediaUrl(url, type);
+    if (type === 'video') videos.push(relayed);
+    else images.push(relayed);
+  });
+  const audios = (Array.isArray(body.referenceAudioUrls) ? body.referenceAudioUrls : [])
+    .map(String).map((value) => value.trim()).filter((value) => /^https:\/\//i.test(value));
+  return { images, videos, audios };
+}
+
+function aireiterVideoParams(provider, body) {
+  const prompt = String(body.prompt || '').trim();
+  const mode = String(body.videoMode || '').trim().toLowerCase();
+  const ratio = String(body.aspectRatio || '').trim();
+  const duration = Number(body.duration);
+  const resolution = String(body.resolution || body.size || '').trim().toLowerCase();
+  const generateAudio = body.generateAudio !== false;
+  const { images, videos, audios } = aireiterVideoReferences(body);
+  const referenceCount = images.length + videos.length + audios.length;
+  const common = {
+    prompt,
+    video_length: Number.isInteger(duration) ? duration : 5,
+    ...(ratio && ratio !== 'adaptive' ? { aspect_ratio: ratio } : {})
+  };
+
+  if (provider.model === 'minimax_h3') {
+    if (!referenceCount) throw aireiterLocalRejection('MiniMax H3 requires reference media.', 'reference-required');
+    return {
+      ...common,
+      type: ['first-frame', 'first-last-frame'].includes(mode) ? 'first_last_frame' : 'all_reference',
+      quality: resolution === '2k' ? '2k' : '768p',
+      ...(images.length ? { image_url: images } : {}),
+      ...(videos.length ? { video_url: videos } : {}),
+      ...(audios.length ? { audio_url: audios } : {})
+    };
+  }
+  if (provider.model === 'seedance2' || provider.model === 'seedance2_5') {
+    if (!images.length && !videos.length) throw aireiterLocalRejection('Seedance requires reference media.', 'reference-required');
+    if (provider.model === 'seedance2' && audios.length) {
+      throw aireiterLocalRejection('This route does not accept reference audio.', 'invalid-reference-media');
+    }
+    if (['first-frame', 'first-last-frame'].includes(mode) && videos.length) {
+      throw aireiterLocalRejection('Frame generation accepts image references only.', 'invalid-reference-media');
+    }
+    const firstLast = mode === 'first-last-frame';
+    return {
+      ...common,
+      type: firstLast ? 'first_last_frame' : 'all_reference',
+      resolution: ['480p', '720p', '1080p'].includes(resolution) ? resolution : '720p',
+      ...(images.length ? { image_url: firstLast ? [images[0]] : images } : {}),
+      ...(firstLast && images[1] ? { end_image_url: images[1] } : {}),
+      ...(videos.length ? { video_url: videos } : {}),
+      ...(provider.model === 'seedance2_5' && audios.length ? { audio_url: audios } : {}),
+      generate_audio: generateAudio,
+      ...(provider.model === 'seedance2_5'
+        ? { output_format: ['mp4', 'mov'].includes(String(body.outputFormat || '').toLowerCase()) ? String(body.outputFormat).toLowerCase() : 'mp4' }
+        : {})
+    };
+  }
+  if (provider.model === 'kling_3_0') {
+    if (images.length !== 1 || videos.length || audios.length) {
+      throw aireiterLocalRejection('Kling V3 requires one image reference.', 'invalid-reference-media');
+    }
+    return {
+      ...common,
+      image_url: images[0],
+      resolution: resolution === '1080p' ? '1080p' : '720p',
+      generate_audio: generateAudio
+    };
+  }
+  if (provider.model === 'kling_v3_omni') {
+    if (!images.length && !videos.length) throw aireiterLocalRejection('Kling O3 requires reference media.', 'reference-required');
+    const firstLast = mode === 'first-last-frame';
+    if (firstLast && images.length < 2) {
+      throw aireiterLocalRejection('First/last frame mode requires two images.', 'reference-required');
+    }
+    return {
+      ...common,
+      type: firstLast ? 'first_last_frame' : 'all_reference',
+      resolution: resolution === '1080p' ? '1080p' : '720p',
+      ...(images.length ? { image_url: firstLast ? images.slice(0, 2) : images } : {}),
+      ...(videos.length ? { video_url: videos } : {}),
+      generate_audio: generateAudio
+    };
+  }
+  throw aireiterLocalRejection('This video model is not available on the selected route.');
+}
+
+async function createAireiterVideoTask(provider, body, signal) {
+  const taskId = await submitAireiterTask(provider, body, aireiterVideoParams(provider, body), signal);
+  return { providerId: provider.id, taskId };
+}
+
 async function createVideoTaskWithProvider(provider, body, signal) {
   try {
+    if (provider.protocol === 'aireiter-async') return await createAireiterVideoTask(provider, body, signal);
     if (provider.protocol === 'minimax-video-v2') return await createMiniMaxVideoTask(provider, body, signal);
     if (provider.protocol === 'atlas-minimax-h3-video') return await createAtlasMiniMaxH3VideoTask(provider, body, signal);
     if (provider.protocol === 'seedance-video-v3') return await createSeedanceVideoTask(provider, body, signal);
@@ -2444,6 +2785,29 @@ async function pollKlingO3VideoTask(provider, taskId, signal) {
   return { status };
 }
 
+async function pollAireiterVideoTask(provider, taskId, signal) {
+  const payload = await queryAireiterTask(provider, taskId, signal);
+  const status = aireiterTaskStatus(payload);
+  if (status === 'succeeded') {
+    const resultUrl = aireiterOutputUrl(payload);
+    return resultUrl
+      ? { status, resultUrl }
+      : {
+          status: 'failed',
+          errorCode: 'provider-result-missing',
+          errorMessage: 'The completed video task did not return a file.'
+        };
+  }
+  if (TERMINAL_VIDEO_FAILURES.has(status)) {
+    return {
+      status,
+      errorCode: `provider-${status}`,
+      errorMessage: 'The video generation task failed.'
+    };
+  }
+  return { status };
+}
+
 async function pollJimengVideoTask(provider, taskId, signal) {
   const normalizedTaskId = validVideoTaskId(taskId);
   const result = await responseJson(await fetch(provider.resultEndpoint, {
@@ -2484,6 +2848,7 @@ async function pollJimengVideoTask(provider, taskId, signal) {
 export async function pollVideoTask(providerId, taskId, signal) {
   const routed = parseRoutedProviderTaskId(String(providerId || ''), taskId);
   const provider = providerFor('video', routed.providerId);
+  if (provider.protocol === 'aireiter-async') return pollAireiterVideoTask(provider, routed.taskId, signal);
   if (provider.protocol === 'minimax-video-v2') return pollMiniMaxVideoTask(provider, routed.taskId, signal);
   if (provider.protocol === 'atlas-minimax-h3-video') return pollAtlasMiniMaxH3VideoTask(provider, routed.taskId, signal);
   if (provider.protocol === 'seedance-video-v3') return pollSeedanceVideoTask(provider, routed.taskId, signal);
@@ -2516,9 +2881,12 @@ export async function chat(body, signal) {
   // Older desktop builds could send chat-1 together with the model selected
   // from chat-2. Correct that mismatch server-side so a stale local setting
   // cannot make Luna appear unavailable.
+  const matchingProvider = configured.find((entry) => (
+    !entry.hidden && providerApiKey(entry) && modelMatches(entry)
+  )) || configured.find((entry) => providerApiKey(entry) && modelMatches(entry));
   const selected = requestedProvider && requestedModel && !modelMatches(requestedProvider)
-    ? configured.find((entry) => modelMatches(entry)) || requestedProvider
-    : requestedProvider || configured.find((entry) => modelMatches(entry)) || configured[0];
+    ? matchingProvider || requestedProvider
+    : requestedProvider || matchingProvider || configured[0];
   if (!selected) {
     throw Object.assign(new Error('No chat provider is configured.'), { code: 'provider-not-configured' });
   }
@@ -2528,10 +2896,17 @@ export async function chat(body, signal) {
   const request = {
     prompt: body.prompt,
     messages: body.messages,
-    operationId: String(body.operationId || '').trim().slice(0, 160)
+    operationId: String(body.operationId || '').trim().slice(0, 160),
+    endUserId: String(body.endUserId || '').trim().slice(0, 80)
   };
   const byId = new Map(configured.map((entry) => [entry.id, entry]));
-  const candidates = [selected.id, ...(selected.fallbackProviderIds || [])]
+  const candidateIds = orderMixedRouteIds(
+    [selected.id, ...(selected.fallbackProviderIds || [])],
+    byId,
+    selected,
+    body
+  );
+  const candidates = candidateIds
     .map((id) => byId.get(id))
     .filter((entry, index, list) => entry && providerApiKey(entry)
       && (entry.id === selected.id || modelMatches(entry, logicalModel))
@@ -2549,6 +2924,7 @@ export async function chat(body, signal) {
       chatProviderName: provider.name,
       chatModel,
       operationId: request.operationId,
+      endUserId: request.endUserId,
       returnUsage: true
     }, request, signal);
     try {

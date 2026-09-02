@@ -198,7 +198,13 @@ contextBridge.exposeInMainWorld('messsAPI', {
   signInCloud: (credentials) => ipcRenderer.invoke('auth:signIn', credentials),
   signUpCloud: (credentials) => ipcRenderer.invoke('auth:signUp', credentials),
   signInCloudWithGoogle: () => ipcRenderer.invoke('auth:signInWithGoogle'),
+  requestCloudPasswordReset: (email) => ipcRenderer.invoke('auth:requestPasswordReset', email),
   signOutCloud: () => ipcRenderer.invoke('auth:signOut'),
+  onCloudSessionChanged: (callback) => {
+    const listener = (_event, session) => callback(session);
+    ipcRenderer.on('auth:sessionChanged', listener);
+    return () => ipcRenderer.removeListener('auth:sessionChanged', listener);
+  },
 
   initializeChat: () => ipcRenderer.invoke('chat:initialize'),
   syncChat: () => ipcRenderer.invoke('chat:sync'),
@@ -347,7 +353,6 @@ contextBridge.exposeInMainWorld('messsAPI', {
   openInFileManager: (id) => ipcRenderer.invoke('shell:openInFileManager', id),
   openWithOtherApp: (id) => ipcRenderer.invoke('shell:openWithOtherApp', id),
   sendToCreativeApp: (id, target) => ipcRenderer.invoke('shell:sendToCreativeApp', id, target),
-  sendToWeChatFileHelper: (id) => ipcRenderer.invoke('shell:sendToWeChatFileHelper', id),
   copyFileToClipboard: (id) => ipcRenderer.invoke('clipboard:copyFile', id),
   copyBoardMediaToClipboard: (fileIds) => ipcRenderer.invoke('clipboard:copyBoardMedia', fileIds),
   copyFilePath: (id) => ipcRenderer.invoke('clipboard:copyPath', id),

@@ -34,6 +34,7 @@ async function testSupabaseSessionStorage() {
   const fetchImpl = async (url, options) => {
     calls.push({ url, options });
     if (url.includes('/logout')) return new Response('{}', { status: 200 });
+    if (url.includes('/recover')) return new Response('{}', { status: 200 });
     return new Response(JSON.stringify({
       access_token: accessToken,
       refresh_token: 'refresh-private',
@@ -60,6 +61,9 @@ async function testSupabaseSessionStorage() {
   assert.ok(!fs.readFileSync(sessionPath).toString('utf8').includes('refresh-private'));
   assert.strictEqual(await auth.getAccessToken(), accessToken);
   assert.strictEqual(calls[0].options.headers.apikey, 'sb_publishable_test');
+  assert.deepStrictEqual(await auth.requestPasswordReset('user@example.com'), { ok: true });
+  const recoveryCall = calls.find((call) => call.url.endsWith('/auth/v1/recover'));
+  assert.deepStrictEqual(JSON.parse(recoveryCall.options.body), { email: 'user@example.com' });
   await auth.signOut();
   assert.strictEqual(fs.existsSync(sessionPath), false);
   fs.rmSync(tempDir, { recursive: true, force: true });

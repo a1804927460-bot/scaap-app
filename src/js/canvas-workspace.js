@@ -884,6 +884,7 @@ function switchCanvas(canvasId, options = {}) {
     flushBoardViewportSave();
   }
   AppState.activeCanvasId = next.id;
+  AppState.allBoardItems.forEach((item) => { item.selected = false; });
   AppState.boardItems = AppState.allBoardItems.filter((item) => (item.canvasId || 'canvas-1') === next.id);
   CanvasWorkspace.agentReferenceFileIds.clear();
   CanvasWorkspace.agentSelectionFileIds.clear();
@@ -2185,7 +2186,8 @@ async function initCanvasWorkspace(initial) {
     }];
   AppState.allBoardItems = (initial.boardItems || []).map((item) => ({
     ...item,
-    canvasId: item.canvasId || AppState.canvases[0].id
+    canvasId: item.canvasId || AppState.canvases[0].id,
+    selected: false
   }));
   // Restore the canvas the user was working in. Generated media is stored
   // against that canvas, so always opening canvas-1 makes valid results look

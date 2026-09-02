@@ -24,10 +24,14 @@ const mainCss = read('src/styles/main.css');
 const startCss = read('src/styles/start.css');
 
 assert.match(themeCss, /--titlebar-h:\s*38px/);
+assert.match(themeCss, /--app-shell-inset:\s*10px[\s\S]*?--app-shell-radius:\s*var\(--radius-lg\)[\s\S]*?--dialog-radius:\s*var\(--radius-lg\)/,
+  'Major application surfaces must share the workspace inset and radius hierarchy.');
 assert.match(themeCss, /body\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?inset:\s*0;/);
 assert.match(mainCss, /\.app-section\s*\{[\s\S]*?top:\s*var\(--titlebar-h\);[\s\S]*?bottom:\s*0;/);
 assert.match(indexHtml, /data-section="assistant"[^>]*>[\s\S]*?Messs<\/button>[\s\S]*?data-section="messs"[^>]*>[\s\S]*?Workspace<\/button>/,
   'The title bar must expose Messs before the renamed Workspace entry.');
+assert.doesNotMatch(indexHtml, /data-section="chat"|id="section-chat"|styles\/chat\.css|js\/chat\.js|emoji-picker-loader\.js/,
+  'The removed social chat feature must not return to navigation or renderer startup.');
 assert.match(mainCss, /\.titlebar-drag-region\s*\{\s*flex:\s*1\s*;/,
   'The title bar drag region must leave the navigation centered independently of the window controls.');
 assert.match(mainCss, /\.section-tabs\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?left:\s*50%;[\s\S]*?top:\s*50%;[\s\S]*?transform:\s*translate\(-50%,\s*-50%\);/,
@@ -147,6 +151,12 @@ assert.match(panelLayoutJs, /detachWatchTimer[\s\S]*?beginCanvasDetachDrag\(acti
   'Long-pressing the canvas header and crossing the app boundary must detach the canvas.');
 assert.match(mainCss, /body\.is-detached-canvas-window #main-app[\s\S]*?grid-template-areas:\s*"board";[\s\S]*?#main-app > :not\(#board-panel\)/,
   'Detached windows must render a focused canvas-only layout.');
+assert.match(mainCss, /\.ai-assistant-panel\.is-fullscreen\s*\{[\s\S]*?inset:\s*calc\(var\(--titlebar-h\) \+ var\(--app-shell-inset\)\)[\s\S]*?border-radius:\s*var\(--app-shell-radius\);/,
+  'Fullscreen Messs must use the shared inset rounded shell.');
+assert.match(mainCss, /\.market-section,[\s\S]*?\.workshop-section\s*\{[\s\S]*?padding:\s*var\(--app-shell-inset\);[\s\S]*?\.market-shell,[\s\S]*?\.workshop-shell\s*\{[\s\S]*?height:\s*100%;[\s\S]*?border-radius:\s*var\(--app-shell-radius\);/,
+  'Market and Workshop must render as full-height workspace-style surfaces.');
+assert.match(mainCss, /\.board-panel\.is-fullscreen\s*\{[\s\S]*?border-radius:\s*0;/,
+  'True canvas fullscreen must remain edge-to-edge.');
 assert.match(appJs, /initSidebar\(initial\)/, 'Profile settings must be hydrated before account rendering.');
 assert.match(indexHtml, /id="account-popover-name"[^>]*data-profile-field="name"/);
 assert.match(indexHtml, /id="account-popover-signature"[^>]*data-profile-field="signature"/);

@@ -30,6 +30,34 @@ Authorization: Bearer <short-lived-supabase-access-token>
 QuickRouter is the built-in relay. Store its key as the sealed Railway variable
 `QUICKROUTER_API_KEY`. The temporary aliases `QUICK_API_KEY` and `Quick_API_KEY`
 are accepted during migration, but the canonical name is recommended.
+
+## Mixed AI Reiter routing
+
+Set `AIREITER_API_KEY` as a sealed Railway variable to enable AI Reiter for
+Nano Banana Pro, GPT Image 2, Midjourney V8.1, MiniMax H3, Seedance 2.0/2.5,
+Kling V3/O3, and Agent chat. ChaserPro is intentionally unchanged.
+
+`AIREITER_TRAFFIC_PERCENT` controls the percentage of supported requests that
+try AI Reiter first and defaults to `60`. Existing upstreams receive the rest
+of the traffic and stay available as safe fallbacks, allowing existing balances
+to be consumed during migration. Set it to `0` to disable AI Reiter or `100` to
+make it the first route. Per-product overrides are also supported:
+
+```text
+AIREITER_TRAFFIC_JSON={"image-1":70,"video-1":50,"chat-1":60}
+```
+
+Route selection is deterministic from the operation ID, so a retry keeps the
+same first route. Once an upstream accepts a task, polling and recovery remain
+pinned to that route and the paid request is never submitted elsewhere.
+
+Set `PROVIDER_USER_HASH_SECRET` to a separate stable random secret. The gateway
+turns each authenticated Supabase user ID into a stable anonymous value such as
+`u_4f0c...`. Compatible generation and Agent requests carry that value, which
+separates upstream usage by user without exposing email addresses, Google
+profile data, names, or raw Supabase UUIDs. Keep the secret unchanged across
+deploys so account identities remain stable.
+
 MiniMax H3 uses the official MiniMax sealed Railway variable `MINIMAX_API_KEY`.
 The public product name remains MiniMax H3; the upstream credential is never
 written to `runtime.json`, GitHub, the desktop settings, or gateway responses.

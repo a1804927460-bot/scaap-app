@@ -636,7 +636,10 @@ function cacheBoardPreview(fileId, result) {
 }
 
 function boardTransform() {
-  return `translate3d(${Board.panX}px, ${Board.panY}px, 0) scale(${Board.zoom})`;
+  // The infinite canvas is a 1x1 origin with overflowed children. Promoting
+  // that entire surface to one 3D compositor layer can make Chromium cull
+  // those children while wheel-zooming, especially on large boards.
+  return `translate(${Board.panX}px, ${Board.panY}px) scale(${Board.zoom})`;
 }
 
 function isBoardViewportInteracting() {
@@ -1143,9 +1146,7 @@ function setBoardZoomTarget(screenPoint, factor) {
   }
 }
 
-function resetBoardZoomTo100() {
-  const viewport = document.getElementById('board-viewport');
-  if (!viewport) return;
+function cancelBoardViewportMotion() {
   clearTimeout(Board.wheelSettleTimer);
   Board.wheelSettleTimer = 0;
   Board.isWheelZooming = false;
@@ -1153,6 +1154,13 @@ function resetBoardZoomTo100() {
   Board.zoomFrame = 0;
   Board.zoomTarget = null;
   Board.zoomLastTime = 0;
+  Board.interactionPrefetchView = null;
+}
+
+function resetBoardZoomTo100() {
+  const viewport = document.getElementById('board-viewport');
+  if (!viewport) return;
+  cancelBoardViewportMotion();
 
   const rect = viewport.getBoundingClientRect();
   const currentZoom = Number.isFinite(Board.zoom) && Board.zoom > 0 ? Board.zoom : 1;
@@ -1221,8 +1229,12 @@ function clientToBoardCoords(clientX, clientY) {
 function fitBoardItemsToViewport(items) {
   const viewport = document.getElementById('board-viewport');
   const rect = viewport.getBoundingClientRect();
-  if (!items.length) {
+  cancelBoardViewportMotion();
+  const validItems = (items || []).filter((item) => item &&
+    Number.isFinite(Number(item.x)) && Number.isFinite(Number(item.y)));
+  if (!validItems.length) {
     Board.zoom = 1;
+    Board.zoomLod = null;
     Board.panX = rect.width / 2;
     Board.panY = rect.height / 2;
     applyBoardTransform();
@@ -1233,12 +1245,22 @@ function fitBoardItemsToViewport(items) {
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
-  for (const item of items) {
+  for (const item of validItems) {
     const bounds = Board.spatialIndex.getBounds(item.id) || boardItemBounds(item);
+    if (!bounds || !Number.isFinite(bounds.x) || !Number.isFinite(bounds.y) ||
+      !Number.isFinite(bounds.w) || !Number.isFinite(bounds.h) || bounds.w <= 0 || bounds.h <= 0) continue;
     minX = Math.min(minX, bounds.x);
     minY = Math.min(minY, bounds.y);
     maxX = Math.max(maxX, bounds.x + bounds.w);
     maxY = Math.max(maxY, bounds.y + bounds.h);
+  }
+  if (![minX, minY, maxX, maxY].every(Number.isFinite)) {
+    Board.zoom = 1;
+    Board.zoomLod = null;
+    Board.panX = rect.width / 2;
+    Board.panY = rect.height / 2;
+    applyBoardTransform();
+    return;
   }
   const width = Math.max(1, maxX - minX);
   const height = Math.max(1, maxY - minY);
@@ -1253,6 +1275,7 @@ function fitBoardItemsToViewport(items) {
   );
   Board.panX = (rect.width - width * Board.zoom) / 2 - minX * Board.zoom;
   Board.panY = (rect.height - height * Board.zoom) / 2 - minY * Board.zoom;
+  Board.zoomLod = null;
   applyBoardTransform();
 }
 
@@ -3479,9 +3502,11 @@ function makeBoardItemDraggable(el, item) {
     const partitionMates = item.isPartition ? boardPartitionMembers(item) : [];
     const groupMates = item.isPartition
       ? [item, ...partitionMates]
+      : (item.selected && selectedMates.length > 1)
+      ? selectedMates
       : item.groupId
       ? AppState.boardItems.filter((b) => b.groupId === item.groupId)
-      : (item.selected && selectedMates.length > 1 ? selectedMates : [item]);
+      : [item];
     const groupStartPositions = groupMates.map((b) => ({ item: b, startLeft: b.x, startTop: b.y }));
     const selectionGroup = groupMates.length > 1 && !item.isPartition
       ? ensureBoardSelectionGroup()
@@ -3851,8 +3876,7 @@ function startBoxSelect(e) {
     for (const id of [...nextIds]) {
       const candidate = Board.itemsById.get(id);
       if (!candidate || candidate.isPartition ||
-        (selectionPartition && candidate.partitionId !== selectionPartition.id) ||
-        (!selectionPartition && candidate.partitionId)) {
+        (selectionPartition && candidate.partitionId !== selectionPartition.id)) {
         nextIds.delete(id);
       }
     }
@@ -3888,7 +3912,13 @@ function startBoxSelect(e) {
   function onMove(ev) {
     selectRunner.push({ clientX: ev.clientX, clientY: ev.clientY });
   }
-  function onUp() {
+  function onUp(ev) {
+    // Mouseup can be the first event at the final pointer position during a
+    // fast drag. Include it before flushing the frame runner so edge items do
+    // not get missed by a one-frame-old marquee rectangle.
+    if (ev && Number.isFinite(ev.clientX) && Number.isFinite(ev.clientY)) {
+      selectRunner.push({ clientX: ev.clientX, clientY: ev.clientY });
+    }
     selectRunner.flush();
     box.remove();
     document.removeEventListener('mousemove', onMove);

@@ -33,8 +33,30 @@ async function run() {
     <div id="board-viewport"><div id="board-canvas"></div></div>
     <div id="board-zoom-label"></div>
     <script src="${engineUrl}"></script><script>
+      // Keep the logic test deterministic when the host OS throttles an
+      // unfocused Electron test window.
+      window.requestAnimationFrame = (callback) => setTimeout(() => callback(performance.now()), 0);
+      window.cancelAnimationFrame = (handle) => clearTimeout(handle);
+      window.createLatestFrameRunner = (callback) => {
+        let frameId = 0;
+        let latestValue;
+        const run = () => {
+          frameId = 0;
+          if (latestValue === undefined) return;
+          const value = latestValue;
+          latestValue = undefined;
+          callback(value);
+        };
+        return {
+          push(value) { latestValue = value; if (!frameId) frameId = requestAnimationFrame(run); },
+          flush() { if (frameId) cancelAnimationFrame(frameId); frameId = 0; run(); }
+        };
+      };
       window.AppState = { boardItems: [], files: [] };
       window.activeCanvasId = () => 'zoom-runtime';
+      window.canvasWorkspaceTouch = () => {};
+      window.canvasWorkspaceSave = async () => {};
+      window.messsAPI = { upsertBoardItems: async () => {} };
       window.isImageExt = (ext) => ext === '.png';
       window.isVideoExt = () => false;
       window.isAudioExt = () => false;
@@ -77,6 +99,7 @@ async function run() {
           image.dataset.quality = 'thumb';
           image.src = ${JSON.stringify(pixel)};
           element.appendChild(image);
+          makeBoardItemDraggable(element, item);
           return element;
         };
 
@@ -104,13 +127,68 @@ async function run() {
         unpaintedVisible: unpaintedVisibleBoardIds().size,
         overviewHidden: !Board.overviewCanvas || Board.overviewCanvas.hidden
       });
+      window.runSelectionFixture = () => {
+        Board.zoom = 1;
+        Board.panX = 0;
+        Board.panY = 0;
+        Board.zoomTarget = null;
+        Board.zoomFrame = 0;
+        document.getElementById('board-canvas').style.transform = boardTransform();
+
+        const first = Board.itemsById.get('item-0-0');
+        const second = Board.itemsById.get('item-0-1');
+        const staleGroupMate = Board.itemsById.get('item-0-9');
+        AppState.boardItems.forEach((item) => { item.selected = false; item.groupId = null; item.partitionId = null; });
+        first.partitionId = 'partition-a';
+        first.groupId = 'legacy-group';
+        staleGroupMate.groupId = 'legacy-group';
+        rebuildBoardSpatialIndex();
+
+        startBoxSelect({ clientX: 0, clientY: 0, shiftKey: false });
+        document.dispatchEvent(new MouseEvent('mouseup', {
+          bubbles: true,
+          clientX: 240,
+          clientY: 90
+        }));
+        const selectedBeforeDrag = AppState.boardItems.filter((item) => item.selected).map((item) => item.id).sort();
+        const before = {
+          first: { x: first.x, y: first.y },
+          second: { x: second.x, y: second.y },
+          stale: { x: staleGroupMate.x, y: staleGroupMate.y }
+        };
+
+        const firstElement = Board.mounted.get(first.id);
+        firstElement.dispatchEvent(new MouseEvent('mousedown', {
+          bubbles: true,
+          button: 0,
+          clientX: 20,
+          clientY: 20
+        }));
+        document.dispatchEvent(new MouseEvent('mousemove', {
+          bubbles: true,
+          clientX: 70,
+          clientY: 50
+        }));
+        document.dispatchEvent(new MouseEvent('mouseup', {
+          bubbles: true,
+          clientX: 70,
+          clientY: 50
+        }));
+
+        return {
+          selectedBeforeDrag,
+          firstDelta: { x: first.x - before.first.x, y: first.y - before.first.y },
+          secondDelta: { x: second.x - before.second.x, y: second.y - before.second.y },
+          staleDelta: { x: staleGroupMate.x - before.stale.x, y: staleGroupMate.y - before.stale.y }
+        };
+      };
     </script></body></html>`, 'utf8');
 
   const window = new BrowserWindow({
     width: 960,
     height: 700,
-    x: -10000,
-    y: -10000,
+    x: 20,
+    y: 20,
     show: true,
     webPreferences: {
       contextIsolation: false,
@@ -144,7 +222,18 @@ async function run() {
         !settled.overviewHidden || Math.abs(settled.zoom - 0.6) > 0.001) {
       throw new Error(`Zoom settled with missing or fallback media: ${JSON.stringify(settled)}`);
     }
-    process.stdout.write(`BOARD_ZOOM_RUNTIME_OK during=${during.mounted}/60 settled=${settled.mounted}/60\n`);
+    const selection = await window.webContents.executeJavaScript(`(() => {
+      try { return runSelectionFixture(); }
+      catch (error) { return { error: error && error.stack || String(error) }; }
+    })()`);
+    if (selection.error) throw new Error(`Selection fixture failed: ${selection.error}`);
+    if (selection.selectedBeforeDrag.join(',') !== 'item-0-0,item-0-1' ||
+        selection.firstDelta.x !== 50 || selection.firstDelta.y !== 30 ||
+        selection.secondDelta.x !== 50 || selection.secondDelta.y !== 30 ||
+        selection.staleDelta.x !== 0 || selection.staleDelta.y !== 0) {
+      throw new Error(`Marquee selection or grouped drag regressed: ${JSON.stringify(selection)}`);
+    }
+    process.stdout.write(`BOARD_ZOOM_RUNTIME_OK during=${during.mounted}/60 settled=${settled.mounted}/60 selection=2 drag=50x30\n`);
   } finally {
     window.destroy();
     fs.rmSync(tempDir, { recursive: true, force: true });

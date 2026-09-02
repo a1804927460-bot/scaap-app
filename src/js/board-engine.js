@@ -409,9 +409,17 @@
       width: Math.max(1, Number(item.width) || Number(item.w) || 1),
       height: Math.max(1, Number(item.height) || Number(item.h) || 1)
     }));
-    const baselineWidth = Math.max(1, Math.min(...measured.map((item) => item.width)));
+    const sortedWidths = measured.map((item) => item.width).sort((a, b) => a - b);
+    // Ignore a small tail of malformed or accidentally over-shrunk nodes. The
+    // old absolute-minimum rule let one bad width collapse an entire large
+    // selection into unreadable thumbnails and then persist that damage.
+    const robustMinimumIndex = Math.floor((sortedWidths.length - 1) * 0.1);
+    const minimumWidth = Number.isFinite(options.minWidth)
+      ? Math.max(1, Number(options.minWidth))
+      : 1;
+    const baselineWidth = Math.max(minimumWidth, sortedWidths[robustMinimumIndex]);
     const normalized = measured.map((item) => {
-      const scale = Math.min(1, baselineWidth / item.width);
+      const scale = baselineWidth / item.width;
       return {
         ...item,
         width: Math.max(1, Math.round(item.width * scale)),

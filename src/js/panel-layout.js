@@ -119,7 +119,7 @@ function initPanelLayout() {
       dragging = true;
       sourcePanel.classList.add('is-layout-dragging');
       main.classList.add('is-layout-dragging');
-      const title = sourcePanel.querySelector('.panel-title, .brand-word, .ai-assistant-title, .ai-assistant-header strong');
+      const title = sourcePanel.querySelector('.panel-title, .brand-word, .ai-assistant-title, .ai-assistant-brand-word');
       dragGhost = createPanelDragGhost(sourcePanel, (title && title.textContent.trim()) || id);
       movePanelDragGhost(dragGhost, clientX, clientY);
       if (panel.setPointerCapture) panel.setPointerCapture(pointerId);

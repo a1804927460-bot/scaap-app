@@ -52,6 +52,22 @@ assert.deepStrictEqual(compactMediaLayout.map(({ id, x, y, width, height }) => (
 assert.strictEqual(Math.min(...compactMediaLayout.map((item) => item.width)), 100);
 assert.ok(compactMediaLayout.every((item) => item.width === 100), 'compact media must use the smallest selected width');
 
+const compactOutlierLayout = engine.compactMediaGrid([
+  { id: 'bad-width', x: 0, y: 0, width: 2, height: 2 },
+  ...Array.from({ length: 19 }, (_, index) => ({
+    id: `normal-${index}`,
+    x: (index + 1) * 240,
+    y: 0,
+    width: 220,
+    height: 124
+  }))
+], { originX: 0, originY: 0, gap: 20, minWidth: 90 });
+assert.ok(
+  compactOutlierLayout.every((item) => item.width === 220),
+  'one malformed width must not collapse a large compact arrangement'
+);
+assert.strictEqual(compactOutlierLayout[0].height, 220);
+
 const compactRectangularLayout = engine.compactMediaGrid([
   ...Array.from({ length: 12 }, (_, index) => ({
     id: `item-${index}`,

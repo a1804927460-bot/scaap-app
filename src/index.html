@@ -9,7 +9,6 @@
   <link rel="stylesheet" href="styles/start.css" />
   <link rel="stylesheet" href="styles/main.css" />
   <link rel="stylesheet" href="styles/account-avatar.css" />
-  <link rel="stylesheet" href="styles/chat.css" />
   <link rel="stylesheet" href="../node_modules/drawflow/dist/drawflow.min.css" />
   <link rel="stylesheet" href="../node_modules/quill/dist/quill.snow.css" />
 </head>
@@ -19,7 +18,6 @@
     <nav id="section-tabs" class="section-tabs" role="tablist" aria-label="Sections">
       <button class="section-tab" data-section="assistant" role="tab" aria-selected="false">Messs</button>
       <button class="section-tab is-active" data-section="messs" role="tab" aria-selected="true">Workspace</button>
-      <button class="section-tab" data-section="chat" role="tab" aria-selected="false">Chat</button>
       <button class="section-tab" data-section="market" role="tab" aria-selected="false">Market</button>
       <button class="section-tab" data-section="workshop" role="tab" aria-selected="false">Workshop</button>
     </nav>
@@ -51,6 +49,50 @@
         <p id="activation-error" class="activation-error" role="alert" hidden>Invalid activation code.</p>
       </form>
       <small>Development v0.0.2</small>
+    </section>
+  </div>
+
+  <div id="account-auth-screen" class="account-auth-screen" hidden aria-hidden="true">
+    <section class="account-auth-card" role="dialog" aria-modal="true" aria-labelledby="account-auth-title">
+      <div class="account-auth-brand" aria-label="Messs">
+        <img src="assets/logo-mark.png" alt="" draggable="false" />
+        <span>Messs<span aria-hidden="true">.</span></span>
+      </div>
+      <h1 id="account-auth-title" data-i18n-en="Sign in to continue" data-i18n-zh="登录以继续" data-i18n-ko="계속하려면 로그인하세요">Sign in to continue</h1>
+
+      <form id="account-auth-form" class="account-auth-form" novalidate>
+        <button id="account-auth-google" class="account-auth-google" type="button">
+          <span class="account-auth-google-mark" aria-hidden="true">G</span>
+          <span data-i18n-en="Continue with Google" data-i18n-zh="使用 Google 登录" data-i18n-ko="Google로 계속하기">Continue with Google</span>
+        </button>
+
+        <div class="account-auth-divider">
+          <span data-i18n-en="or use email" data-i18n-zh="或使用邮箱" data-i18n-ko="또는 이메일 사용">or use email</span>
+        </div>
+
+        <label for="account-auth-email">
+          <span data-i18n-en="Email" data-i18n-zh="邮箱" data-i18n-ko="이메일">Email</span>
+          <input id="account-auth-email" type="email" autocomplete="email" inputmode="email" required />
+        </label>
+        <label for="account-auth-password">
+          <span data-i18n-en="Password" data-i18n-zh="密码" data-i18n-ko="비밀번호">Password</span>
+          <span class="account-auth-password-field">
+            <input id="account-auth-password" type="password" autocomplete="current-password" minlength="8" required />
+            <button id="account-auth-password-toggle" type="button" title="Show password" aria-label="Show password" aria-pressed="false">
+              <svg class="account-auth-eye-open" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.8"/></svg>
+              <svg class="account-auth-eye-closed" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" hidden><path d="m3 3 18 18"/><path d="M10.6 10.7a2 2 0 0 0 2.7 2.7"/><path d="M9.9 4.2A10.8 10.8 0 0 1 12 4c6.5 0 10 8 10 8a18 18 0 0 1-2.1 3.2"/><path d="M6.6 6.6C3.6 8.6 2 12 2 12s3.5 8 10 8a9.7 9.7 0 0 0 4.1-.9"/></svg>
+            </button>
+          </span>
+        </label>
+
+        <p id="account-auth-status" class="account-auth-status" role="status" aria-live="polite" hidden></p>
+        <button id="account-auth-submit" class="account-auth-submit" type="submit">Sign In</button>
+
+        <footer class="account-auth-footer">
+          <button id="account-auth-forgot" type="button" data-i18n-en="Forgot password?" data-i18n-zh="忘记密码？" data-i18n-ko="비밀번호를 잊으셨나요?">Forgot password?</button>
+          <button id="account-auth-mode-toggle" type="button">No account? Create one</button>
+        </footer>
+      </form>
     </section>
   </div>
 
@@ -246,8 +288,9 @@
       <section class="stats-panel">
         <div id="ai-assistant-panel" class="ai-assistant-panel">
           <header class="ai-assistant-header">
-            <div>
-              <strong>Messs AI</strong>
+            <div class="ai-assistant-brand" aria-label="Messs">
+              <img src="assets/logo-mark.png" alt="" draggable="false" />
+              <span class="ai-assistant-brand-word">Messs<span class="ai-assistant-brand-dot" aria-hidden="true">.</span></span>
             </div>
             <button id="ai-assistant-history" class="icon-btn-sm" type="button" title="Expand assistant" aria-label="Expand assistant">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
@@ -1049,7 +1092,7 @@
     </div>
   </div>
 
-  <div id="section-chat" class="app-section chat-section">
+  <template id="removed-chat-ui">
     <div id="chat-shell" class="chat-shell" aria-label="Messs Chat">
       <nav class="chat-nav-rail" aria-label="Chat navigation">
         <button id="chat-rail-avatar" class="chat-rail-avatar" type="button" title="Right-click to change profile image" aria-label="Profile image; right-click to change">M</button>
@@ -1210,7 +1253,7 @@
         <button id="chat-open-settings" type="button">Open Settings</button>
       </div>
     </div>
-  </div>
+  </template>
   <div id="section-market" class="app-section market-section">
     <div class="market-shell">
       <header class="market-header">
@@ -1388,8 +1431,6 @@
   <script src="js/usage-settings.js"></script>
   <script src="js/model-badges.js"></script>
   <script src="js/titlebar.js"></script>
-  <script type="module" src="js/emoji-picker-loader.js"></script>
-  <script src="js/chat.js"></script>
   <script src="js/market.js"></script>
   <script src="js/workshop.js"></script>
   <script src="js/theme.js"></script>

@@ -87,7 +87,6 @@ const {
   supportsImageRequest
 } = require('./lib/ai-media-fallback');
 const { launchAdobeMedia } = require('./lib/adobe-launcher');
-const { sendToWeChatFileHelper } = require('./lib/wechat-file-helper');
 const { ChatService } = require('./lib/chat-service');
 const { probeMediaDuration, probeVideoMetadata, shutdownProcesses: shutdownMediaMetadataProcesses } = require('./lib/media-metadata');
 const {
@@ -1336,6 +1335,18 @@ function normalizeCanvasProjectScope(value) {
   return String(value || '').trim().toLowerCase() === 'team' ? 'team' : 'personal';
 }
 
+function persistentBoardItem(item, fallbackCanvasId = null) {
+  if (!item || typeof item !== 'object' || !item.id) return null;
+  const normalized = {
+    ...item,
+    canvasId: item.canvasId || fallbackCanvasId || undefined
+  };
+  // Selection belongs to one renderer window. Persisting or broadcasting it
+  // makes a later drag/resize unexpectedly act on hundreds of stale items.
+  delete normalized.selected;
+  return normalized;
+}
+
 function canvasStorageDir(canvas) {
   return path.join(store.libraryDir, canvasFolderName(canvas && canvas.name));
 }
@@ -1370,6 +1381,7 @@ function ensureCanvasState() {
   const fileCanvasIds = new Map();
   store.data.boardItems.forEach((item) => {
     if (!validCanvasIds.has(item.canvasId)) item.canvasId = fallbackCanvasId;
+    delete item.selected;
     if (item.fileId) fileCanvasIds.set(item.fileId, item.canvasId);
   });
   store.data.files.forEach((file) => {
@@ -5824,9 +5836,10 @@ function addGeneratedMediaBoardItem(record, request, placement, index) {
     selected: index === 0,
     ...(partition ? { partitionId: partition.id } : {})
   };
+  const persistedItem = persistentBoardItem(item, canvas.id);
   const existingIndex = store.data.boardItems.findIndex((entry) => entry.id === item.id);
-  if (existingIndex === -1) store.data.boardItems.push(item);
-  else store.data.boardItems[existingIndex] = item;
+  if (existingIndex === -1) store.data.boardItems.push(persistedItem);
+  else store.data.boardItems[existingIndex] = persistedItem;
   return item;
 }
 
@@ -7900,9 +7913,9 @@ function registerIpcHandlers() {
     if (session && session.authenticated) {
       clearGatewayAccount();
       gatewayCatalogCache = null;
-      await chatService.initialize();
       await syncGatewayAccount({ force: true });
     }
+    broadcastRendererEvent('auth:sessionChanged', session);
     return session;
   });
 
@@ -7911,9 +7924,9 @@ function registerIpcHandlers() {
     if (session && session.authenticated) {
       clearGatewayAccount();
       gatewayCatalogCache = null;
-      await chatService.initialize();
       await syncGatewayAccount({ force: true });
     }
+    broadcastRendererEvent('auth:sessionChanged', session);
     return session;
   });
 
@@ -7922,10 +7935,14 @@ function registerIpcHandlers() {
     if (session && session.authenticated) {
       clearGatewayAccount();
       gatewayCatalogCache = null;
-      await chatService.initialize();
       await syncGatewayAccount({ force: true });
     }
+    broadcastRendererEvent('auth:sessionChanged', session);
     return session;
+  });
+
+  ipcMain.handle('auth:requestPasswordReset', async (_evt, email) => {
+    return supabaseAuth.requestPasswordReset(email);
   });
 
   ipcMain.handle('auth:signOut', async () => {
@@ -7933,6 +7950,7 @@ function registerIpcHandlers() {
     if (chatService) await chatService.signOut();
     clearGatewayAccount();
     gatewayCatalogCache = null;
+    broadcastRendererEvent('auth:sessionChanged', session);
     return session;
   });
 
@@ -10087,15 +10105,17 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('board:upsertItem', (event, item) => {
-    if (item && !item.canvasId) item.canvasId = store.data.canvases[0] && store.data.canvases[0].id;
-    const idx = store.data.boardItems.findIndex((b) => b.id === item.id);
-    if (idx === -1) store.data.boardItems.push(item);
-    else store.data.boardItems[idx] = item;
+    const fallbackCanvasId = store.data.canvases[0] && store.data.canvases[0].id;
+    const persistedItem = persistentBoardItem(item, fallbackCanvasId);
+    if (!persistedItem) return false;
+    const idx = store.data.boardItems.findIndex((b) => b.id === persistedItem.id);
+    if (idx === -1) store.data.boardItems.push(persistedItem);
+    else store.data.boardItems[idx] = persistedItem;
     store.scheduleSave();
-    const file = item && item.fileId ? store.getFile(item.fileId) : null;
+    const file = persistedItem.fileId ? store.getFile(persistedItem.fileId) : null;
     broadcastCanvasItemsChanged({
-      canvasId: item && item.canvasId,
-      upsert: item ? [item] : [],
+      canvasId: persistedItem.canvasId,
+      upsert: [persistedItem],
       remove: [],
       files: file ? [fileToPayload(file)] : []
     }, event.sender);
@@ -10105,9 +10125,11 @@ function registerIpcHandlers() {
   ipcMain.handle('board:upsertItems', (event, items) => {
     if (!Array.isArray(items) || !items.length) return true;
     const indexById = new Map(store.data.boardItems.map((item, index) => [item.id, index]));
-    for (const item of items) {
-      if (!item || !item.id) continue;
-      if (!item.canvasId) item.canvasId = store.data.canvases[0] && store.data.canvases[0].id;
+    const fallbackCanvasId = store.data.canvases[0] && store.data.canvases[0].id;
+    const persistedItems = items
+      .map((item) => persistentBoardItem(item, fallbackCanvasId))
+      .filter(Boolean);
+    for (const item of persistedItems) {
       const index = indexById.get(item.id);
       if (index === undefined) {
         indexById.set(item.id, store.data.boardItems.length);
@@ -10117,13 +10139,13 @@ function registerIpcHandlers() {
       }
     }
     store.scheduleSave();
-    const fileIds = new Set(items.map((item) => item && item.fileId).filter(Boolean));
+    const fileIds = new Set(persistedItems.map((item) => item.fileId).filter(Boolean));
     const files = store.data.files.filter((file) => fileIds.has(file.id)).map(fileToPayload);
-    const canvasIds = [...new Set(items.map((item) => item && item.canvasId).filter(Boolean))];
+    const canvasIds = [...new Set(persistedItems.map((item) => item.canvasId).filter(Boolean))];
     for (const canvasId of canvasIds) {
       broadcastCanvasItemsChanged({
         canvasId,
-        upsert: items.filter((item) => item && item.canvasId === canvasId),
+        upsert: persistedItems.filter((item) => item.canvasId === canvasId),
         remove: [],
         files
       }, event.sender);
@@ -10235,31 +10257,6 @@ function registerIpcHandlers() {
       clipboard.writeText(f.storedPath);
     }
     return true;
-  });
-
-  ipcMain.handle('shell:sendToWeChatFileHelper', async (_evt, id) => {
-    const file = store.getFile(String(id || ''));
-    if (!file || !fs.existsSync(file.storedPath)) {
-      return {
-        ok: false,
-        reason: 'file-not-found',
-        message: localizedMessage('The file could not be found.', '找不到要发送的文件。', '보낼 파일을 찾을 수 없습니다.')
-      };
-    }
-    const result = await sendToWeChatFileHelper(file.storedPath, {
-      openExternal: (url) => shell.openExternal(url),
-      writeClipboardFiles: (paths) => clipboard.writeBuffer('CF_HDROP', buildCfHDrop(paths))
-    });
-    const messages = {
-      sent: localizedMessage('Sent to WeChat File Transfer.', '已发送到微信文件传输助手。', 'WeChat 파일 전송 도우미로 보냈습니다.'),
-      'login-required': localizedMessage('Please sign in to WeChat, then try again.', '请先登录微信，然后重试。', 'WeChat에 로그인한 후 다시 시도하세요.'),
-      'wechat-not-installed': localizedMessage('WeChat is not installed or its link could not be opened.', '未安装微信，或无法打开微信链接。', 'WeChat이 설치되지 않았거나 링크를 열 수 없습니다.'),
-      'file-helper-not-found': localizedMessage('Could not confirm WeChat File Transfer. Open it in WeChat and try again.', '未能确认微信文件传输助手，请在微信中打开后重试。', 'WeChat 파일 전송 도우미를 확인할 수 없습니다. WeChat에서 연 후 다시 시도하세요.'),
-      'unsupported-platform': localizedMessage('This feature is currently available on Windows only.', '此功能目前仅支持 Windows。', '이 기능은 현재 Windows에서만 사용할 수 있습니다.'),
-      'send-failed': localizedMessage('WeChat did not confirm the send action. Please try again.', '微信未能确认发送操作，请重试。', 'WeChat에서 보내기 작업을 확인하지 못했습니다. 다시 시도하세요.'),
-      'integration-unavailable': localizedMessage('WeChat integration is unavailable.', '微信集成暂不可用。', 'WeChat 연동을 사용할 수 없습니다.')
-    };
-    return { ...result, message: messages[result.reason] || messages['send-failed'] };
   });
 
   ipcMain.handle('clipboard:copyBoardMedia', (_evt, fileIds) => {
@@ -10713,13 +10710,6 @@ app.whenReady().then(() => {
   writeStartupDiagnostic('ipc-ready');
   createWindow();
   writeStartupDiagnostic('window-created');
-  // A restored Messs account should start local-history attachment and cloud
-  // reconciliation without waiting for the user to open the Chat section.
-  if (supabaseAuth.getPublicSession().authenticated) {
-    chatService.initialize().catch((error) => {
-      console.warn('Chat startup initialization failed:', error && error.message || error);
-    });
-  }
   startSession();
   runDailyDesktopChecks();
   setTimeout(setupAutoUpdater, 3000); // give the window time to paint first.

@@ -20,6 +20,9 @@
   --radius-md: 14px;
   --radius-lg: 24px;
   --radius-pill: 999px;
+  --app-shell-inset: 10px;
+  --app-shell-radius: var(--radius-lg);
+  --dialog-radius: var(--radius-lg);
 
   --ease-spring: cubic-bezier(0.34, 1.26, 0.36, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);

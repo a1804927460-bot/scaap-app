@@ -13,6 +13,8 @@ let accountAvatarLoadGeneration = 0;
 let accountProfileDisplayName = '';
 let accountProfileSignature = '';
 let accountProfileFallbackName = 'Messs user';
+let accountAuthMode = 'signin';
+let accountAuthInitialized = false;
 let colorManagementState = { profile: 'auto', activeProfile: 'auto', restartRequired: false };
 let displayP3MediaQuery = null;
 const expandedDateYears = new Set();
@@ -705,9 +707,146 @@ function initSidebarMultiSelectShortcuts() {
   }, true);
 }
 
-function setText(selector, en, zh) {
+function setText(selector, en, zh, ko) {
   const el = document.querySelector(selector);
-  if (el) el.textContent = t(en, zh);
+  if (el) el.textContent = t(en, zh, ko);
+}
+
+function setAccountAuthStatus(message = '', kind = '') {
+  const status = document.getElementById('account-auth-status');
+  if (!status) return;
+  status.textContent = String(message || '');
+  status.hidden = !status.textContent;
+  status.classList.toggle('is-error', kind === 'error');
+  status.classList.toggle('is-success', kind === 'success');
+}
+
+function refreshAccountAuthLanguage() {
+  const isSignUp = accountAuthMode === 'signup';
+  setText('#account-auth-title', isSignUp ? 'Create your Messs account' : 'Sign in to continue', isSignUp ? '创建 Messs 账号' : '登录以继续', isSignUp ? 'Messs 계정 만들기' : '계속하려면 로그인하세요');
+  setText('#account-auth-submit', isSignUp ? 'Create Account' : 'Sign In', isSignUp ? '注册' : '登录', isSignUp ? '계정 만들기' : '로그인');
+  setText('#account-auth-mode-toggle', isSignUp ? 'Already have an account? Sign in' : 'No account? Create one', isSignUp ? '已有账号？登录' : '没有账号？注册', isSignUp ? '이미 계정이 있나요? 로그인' : '계정이 없나요? 가입');
+  const password = document.getElementById('account-auth-password');
+  const forgot = document.getElementById('account-auth-forgot');
+  if (password) password.autocomplete = isSignUp ? 'new-password' : 'current-password';
+  if (forgot) forgot.hidden = isSignUp;
+}
+
+function syncAccountAuthScreen(config = {}) {
+  const screen = document.getElementById('account-auth-screen');
+  if (!screen) return;
+  const session = config.cloudSession || config;
+  const configured = config.cloudConfigured !== undefined
+    ? !!config.cloudConfigured
+    : session.configured !== false;
+  const required = configured && !session.authenticated;
+  const wasHidden = screen.hidden;
+  screen.hidden = !required;
+  screen.setAttribute('aria-hidden', String(!required));
+  document.body.classList.toggle('is-auth-required', required);
+  document.querySelectorAll('.app-section').forEach((section) => { section.inert = required; });
+  if (!required) {
+    setAccountAuthStatus();
+    return;
+  }
+  refreshAccountAuthLanguage();
+  if (wasHidden) {
+    requestAnimationFrame(() => document.getElementById('account-auth-email')?.focus({ preventScroll: true }));
+  }
+}
+
+async function submitAccountAuthScreen(event) {
+  event.preventDefault();
+  const emailInput = document.getElementById('account-auth-email');
+  const passwordInput = document.getElementById('account-auth-password');
+  const submit = document.getElementById('account-auth-submit');
+  const email = String(emailInput.value || '').trim();
+  const password = String(passwordInput.value || '');
+  if (!email || !emailInput.validity.valid) {
+    setAccountAuthStatus(t('Enter a valid email address.', '请输入有效的邮箱地址。', '올바른 이메일 주소를 입력하세요.'), 'error');
+    emailInput.focus();
+    return;
+  }
+  if (password.length < 8) {
+    setAccountAuthStatus(t('Password must contain at least 8 characters.', '密码至少需要 8 位。', '비밀번호는 8자 이상이어야 합니다.'), 'error');
+    passwordInput.focus();
+    return;
+  }
+  submit.disabled = true;
+  setAccountAuthStatus(t(accountAuthMode === 'signup' ? 'Creating your account...' : 'Signing in...', accountAuthMode === 'signup' ? '正在创建账号...' : '正在登录...', accountAuthMode === 'signup' ? '계정을 만드는 중...' : '로그인 중...'));
+  try {
+    const result = accountAuthMode === 'signup'
+      ? await window.messsAPI.signUpCloud({ email, password })
+      : await window.messsAPI.signInCloud({ email, password });
+    passwordInput.value = '';
+    if (result && result.confirmationRequired) {
+      accountAuthMode = 'signin';
+      refreshAccountAuthLanguage();
+      setAccountAuthStatus(t('Check your email to confirm the account, then sign in.', '请前往邮箱确认账号，然后返回登录。', '이메일에서 계정을 확인한 후 로그인하세요.'), 'success');
+      return;
+    }
+    const config = await refreshAiMediaSettings();
+    document.dispatchEvent(new CustomEvent('messs:ai-config-updated', { detail: config }));
+  } catch (error) {
+    setAccountAuthStatus(error && error.message ? error.message : t('Could not complete sign-in.', '无法完成登录。', '로그인을 완료하지 못했습니다.'), 'error');
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function requestAccountPasswordReset() {
+  const emailInput = document.getElementById('account-auth-email');
+  const button = document.getElementById('account-auth-forgot');
+  const email = String(emailInput.value || '').trim();
+  if (!email || !emailInput.validity.valid) {
+    setAccountAuthStatus(t('Enter your email address first.', '请先输入邮箱地址。', '먼저 이메일 주소를 입력하세요.'), 'error');
+    emailInput.focus();
+    return;
+  }
+  button.disabled = true;
+  setAccountAuthStatus(t('Sending password reset email...', '正在发送密码重置邮件...', '비밀번호 재설정 이메일을 보내는 중...'));
+  try {
+    await window.messsAPI.requestCloudPasswordReset(email);
+    setAccountAuthStatus(t('Password reset email sent. Check your inbox.', '密码重置邮件已发送，请检查邮箱。', '비밀번호 재설정 이메일을 보냈습니다. 받은편지함을 확인하세요.'), 'success');
+  } catch (error) {
+    setAccountAuthStatus(error && error.message ? error.message : t('Could not send the reset email.', '无法发送重置邮件。', '재설정 이메일을 보내지 못했습니다.'), 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function initAccountAuthScreen() {
+  if (accountAuthInitialized) return;
+  accountAuthInitialized = true;
+  const password = document.getElementById('account-auth-password');
+  const toggle = document.getElementById('account-auth-password-toggle');
+  document.getElementById('account-auth-form').addEventListener('submit', submitAccountAuthScreen);
+  document.getElementById('account-auth-google').addEventListener('click', (event) => signInCloudWithGoogle(event.currentTarget));
+  document.getElementById('account-auth-mode-toggle').addEventListener('click', () => {
+    accountAuthMode = accountAuthMode === 'signin' ? 'signup' : 'signin';
+    setAccountAuthStatus();
+    refreshAccountAuthLanguage();
+    password.focus();
+  });
+  document.getElementById('account-auth-forgot').addEventListener('click', requestAccountPasswordReset);
+  toggle.addEventListener('click', () => {
+    const show = password.type === 'password';
+    password.type = show ? 'text' : 'password';
+    toggle.setAttribute('aria-pressed', String(show));
+    toggle.setAttribute('aria-label', t(show ? 'Hide password' : 'Show password', show ? '隐藏密码' : '显示密码', show ? '비밀번호 숨기기' : '비밀번호 표시'));
+    toggle.title = toggle.getAttribute('aria-label');
+    toggle.querySelector('.account-auth-eye-open').hidden = show;
+    toggle.querySelector('.account-auth-eye-closed').hidden = !show;
+    password.focus({ preventScroll: true });
+  });
+  document.addEventListener('messs:language-changed', refreshAccountAuthLanguage);
+  if (typeof window.messsAPI.onCloudSessionChanged === 'function') {
+    window.messsAPI.onCloudSessionChanged((session) => syncAccountAuthScreen({
+      cloudConfigured: session && session.configured,
+      cloudSession: session || {}
+    }));
+  }
+  refreshAccountAuthLanguage();
 }
 
 function accountProfileElement(field) {
@@ -879,7 +1018,6 @@ function refreshStaticLanguage() {
   setAttr('#section-tabs', 'aria-label', 'Sections', '分区');
   setText('.section-tab[data-section="messs"]', 'Workspace', '工作区');
   setText('.section-tab[data-section="assistant"]', 'Messs', 'Messs');
-  setText('.section-tab[data-section="chat"]', 'Chat', '聊天');
   setText('.section-tab[data-section="market"]', 'Market', '市场');
   setText('.section-tab[data-section="workshop"]', 'Workshop', '创意工坊');
   setTitleAndLabel('#win-minimize-btn', 'Minimize', '最小化');
@@ -1108,6 +1246,7 @@ function applyLanguageChoice(language, options = {}) {
   setTitleAndLabel('#import-folder-btn', 'Upload folder', '\u4e0a\u4f20\u6587\u4ef6\u5939');
   setText('.ai-assistant-compact h2', 'Messs resolves your confusion.', 'Messs \u5e2e\u4f60\u7406\u6e05\u6df7\u4e71\u3002');
   setText('.ai-assistant-compact p', 'What should we solve today?', '\u4eca\u5929\u8981\u89e3\u51b3\u4ec0\u4e48\uff1f');
+  refreshAccountAuthLanguage();
   refreshApiSettingsLanguage();
   if (typeof refreshTitlebarLanguage === 'function') refreshTitlebarLanguage();
   if (options.rerender !== false) refreshLanguageDependentViews();
@@ -1955,6 +2094,7 @@ function renderCloudSecurity(config) {
   const configured = !!(config && config.cloudConfigured);
   const session = config && config.cloudSession || {};
   const authenticated = configured && !!session.authenticated;
+  syncAccountAuthScreen(config || {});
   renderAccountSummary(config);
   document.querySelectorAll('.direct-ai-provider-section').forEach((item) => {
     item.hidden = configured || !(config && config.directAiAllowed);
@@ -1991,13 +2131,16 @@ function renderCloudSecurity(config) {
 
 async function signInCloudWithGoogle(button) {
   if (!button || button.disabled) return;
+  const fromAuthScreen = button.id === 'account-auth-google';
   button.disabled = true;
+  if (fromAuthScreen) setAccountAuthStatus(t('Opening Google sign-in...', '正在打开 Google 登录...', 'Google 로그인을 여는 중...'));
   try {
     await window.messsAPI.signInCloudWithGoogle();
     const config = await refreshAiMediaSettings();
     document.dispatchEvent(new CustomEvent('messs:ai-config-updated', { detail: config }));
     showToast(t('Google account connected.', 'Google 账号已连接。'), 'Cloud');
   } catch (error) {
+    if (fromAuthScreen) setAccountAuthStatus(error && error.message ? error.message : t('Google sign-in failed.', 'Google 登录失败。', 'Google 로그인에 실패했습니다.'), 'error');
     showToast(error && error.message ? error.message : t('Google sign-in failed.', 'Google 登录失败。'), 'Cloud');
   } finally {
     button.disabled = false;
@@ -2015,6 +2158,7 @@ async function signOutCloudAccount() {
   }
   renderAccountAvatars('M', null);
   await window.messsAPI.signOutCloud();
+  setAccountAuthStatus(t('Signed out. Sign in to continue.', '已退出登录，请登录后继续。', '로그아웃되었습니다. 계속하려면 로그인하세요.'));
   const config = await refreshAiMediaSettings();
   document.dispatchEvent(new CustomEvent('messs:ai-config-updated', { detail: config }));
   showToast(t('Signed out.', '已退出登录。'), 'Cloud');
@@ -2251,6 +2395,7 @@ window.openAiProviderManager = openAiProviderManager;
 window.closeAiProviderManager = closeAiProviderManager;
 
 async function initAiMediaSettings() {
+  initAccountAuthScreen();
   await refreshAiMediaSettings();
 
   document.getElementById('ai-provider-manager-open').addEventListener('click', () => {

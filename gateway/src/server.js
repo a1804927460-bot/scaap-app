@@ -86,6 +86,7 @@ import {
 } from './video-jobs.js';
 import { normalizeVideoResolution } from './video-resolution.js';
 import { createIdempotentOperationRunner } from './idempotent-operation.js';
+import { providerUserId } from './provider-user.js';
 import {
   claimImageJob,
   failImageJob,
@@ -94,6 +95,7 @@ import {
   recordImageProviderResult,
   recordImageProviderTask
 } from './image-jobs.js';
+
 import {
   isStoredImageResult,
   readStoredImageResult,
@@ -2080,7 +2082,11 @@ async function handle(request, response) {
     try {
       const providerTask = await videoGenerationGate.run(
         user.id,
-        () => createVideoTask({ ...body, operationId }, controller.signal),
+        () => createVideoTask({
+          ...body,
+          operationId,
+          endUserId: providerUserId(user.id)
+        }, controller.signal),
         { signal: controller.signal }
       );
       try {
@@ -2422,7 +2428,7 @@ async function handle(request, response) {
               if (stored) return stored;
               return recoverMedia(
                 kind,
-                { ...body, operationId: requestId },
+                { ...body, operationId: requestId, endUserId: providerUserId(user.id) },
                 recoverJob,
                 controller.signal,
                 tracker.hooks
@@ -2430,7 +2436,7 @@ async function handle(request, response) {
             }
             return generateMedia(
               kind,
-              { ...body, operationId: requestId },
+              { ...body, operationId: requestId, endUserId: providerUserId(user.id) },
               controller.signal,
               tracker.hooks
             );
@@ -2531,7 +2537,11 @@ async function handle(request, response) {
     if (kind === 'chat') {
       const result = await chatGenerationGate.run(
         user.id,
-        () => chat({ ...body, operationId: requestId }, controller.signal),
+        () => chat({
+          ...body,
+          operationId: requestId,
+          endUserId: providerUserId(user.id)
+        }, controller.signal),
         { signal: controller.signal }
       );
       const text = typeof result === 'string' ? result : String(result && result.text || '');
@@ -2541,7 +2551,11 @@ async function handle(request, response) {
         ...(result && typeof result === 'object' && result.usage ? { usage: result.usage } : {})
       });
     }
-    const media = await videoGenerationGate.run(user.id, () => generateLegacyVideo(body, controller.signal), { signal: controller.signal });
+    const media = await videoGenerationGate.run(user.id, () => generateLegacyVideo({
+      ...body,
+      operationId: requestId,
+      endUserId: providerUserId(user.id)
+    }, controller.signal), { signal: controller.signal });
     await settleUsage(requestId, 'succeeded', Date.now() - startedAt);
     return send(response, 200, media, {
       'Content-Type': kind === 'video' ? 'video/mp4' : 'application/octet-stream'

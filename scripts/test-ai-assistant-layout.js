@@ -11,6 +11,14 @@ const mainSource = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
 const preloadSource = fs.readFileSync(path.join(root, 'preload.js'), 'utf8');
 const storeSource = fs.readFileSync(path.join(root, 'lib', 'store.js'), 'utf8');
 
+assert.match(
+  html,
+  /class="ai-assistant-brand"[\s\S]*?src="assets\/logo-mark\.png"[\s\S]*?class="ai-assistant-brand-word">Messs<span class="ai-assistant-brand-dot"/,
+  'the Agent header should use the Messs logo and wordmark instead of a plain text title'
+);
+assert.match(css, /\.ai-assistant-brand\s*\{[\s\S]*?display: flex;[\s\S]*?align-items: center;/,
+  'the Agent header brand should keep its mark and wordmark aligned');
+
 const footerStart = html.indexOf('<div class="ai-assistant-form-footer">');
 const modeStart = html.indexOf('<div class="ai-assistant-mode"');
 const submitStart = html.indexOf('id="ai-assistant-submit"');

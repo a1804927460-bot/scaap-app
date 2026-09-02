@@ -2057,17 +2057,41 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   flex-basis: 56px;
   padding: 0 24px;
 }
-.ai-assistant-panel.is-fullscreen .ai-assistant-header strong { font-size: 14px; }
-.ai-assistant-panel.is-fullscreen .ai-assistant-header span { font-size: 11px; }
-.ai-assistant-header > div { display: grid; min-width: 0; }
-.ai-assistant-header strong { font-size: 12px; color: var(--text-primary); }
-.ai-assistant-header span {
+.ai-assistant-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 28px;
+}
+.ai-assistant-brand > img {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  object-fit: contain;
+}
+.ai-assistant-brand-word {
   overflow: hidden;
-  color: var(--text-tertiary);
-  font-size: 9.5px;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+.ai-assistant-brand-dot { color: var(--title-accent); }
+[data-theme="dark"] .ai-assistant-brand-dot { color: var(--brand-blue-bright); }
+.ai-assistant-panel.is-fullscreen .ai-assistant-brand {
+  gap: 10px;
+  height: 34px;
+}
+.ai-assistant-panel.is-fullscreen .ai-assistant-brand > img {
+  width: 30px;
+  height: 30px;
+  flex-basis: 30px;
+}
+.ai-assistant-panel.is-fullscreen .ai-assistant-brand-word { font-size: 24px; }
 .ai-assistant-home {
   flex: 1;
   min-height: 0;
@@ -4809,7 +4833,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   backface-visibility: visible;
   z-index: 2;
 }
-.board-canvas.is-transforming { will-change: transform; }
+.board-canvas.is-transforming { will-change: auto; }
 /* While the whole canvas is moving, avoid repainting decorative shadows on
    every mounted card. The settled frame restores the normal treatment. */
 .board-canvas.is-transforming .board-item:not(.is-selected) { box-shadow: none; }
@@ -9162,7 +9186,7 @@ html[data-view="start"] .section-tabs { display: none; }
 .brand-tagline { font-size: 12px; }
 .brand-version { font-size: 11.5px; }
 #search-input { font-size: 14px; }
-.panel-title, .ai-assistant-header strong { font-size: 14px; }
+.panel-title { font-size: 14px; }
 .file-list-label { font-size: 12px; }
 .folder-item-name, .file-item-name { font-size: 14px; }
 .file-item-date, .file-group-label { font-size: 11.5px; }
@@ -9170,7 +9194,6 @@ html[data-view="start"] .section-tabs { display: none; }
 .file-detail-row-label { font-size: 11px; }
 .file-detail-row-value { font-size: 13.5px; }
 .zoom-label, .page-label { font-size: 12px; }
-.ai-assistant-header span { font-size: 10.5px; }
 .ai-assistant-home h2 { font-size: 23px; }
 .ai-assistant-home p { font-size: 12px; }
 .ai-assistant-quick-prompts button { height: 28px; font-size: 10.5px; }
@@ -9224,7 +9247,7 @@ body { font-size: var(--font-ui-md); }
 .brand-version { font-size: 13px; }
 #search-input { font-size: 15px; }
 .panel-title,
-.ai-assistant-header strong { font-size: 16px; }
+.ai-assistant-brand-word { font-size: 16px; }
 .file-list-label { font-size: 13.5px; }
 .folder-item-name,
 .file-item-name { font-size: 15px; }
@@ -9234,7 +9257,6 @@ body { font-size: var(--font-ui-md); }
 .file-detail-row-value { font-size: 15px; }
 .zoom-label,
 .page-label { font-size: 13.5px; }
-.ai-assistant-header span { font-size: 12px; }
 .ai-assistant-message-body,
 #ai-assistant-input { font-size: 15px; }
 .canvas-library-topline p,
@@ -9257,8 +9279,7 @@ body { font-size: var(--font-ui-md); }
   gap: 12px;
   padding: 26px 18px;
 }
-.ai-assistant-panel.is-fullscreen .ai-assistant-header strong { font-size: 16px; }
-.ai-assistant-panel.is-fullscreen .ai-assistant-header span { font-size: 13px; }
+.ai-assistant-panel.is-fullscreen .ai-assistant-brand-word { font-size: 24px; }
 .ai-chat-new {
   height: 48px;
   gap: 11px;
@@ -11189,4 +11210,84 @@ body { font-size: var(--font-ui-md); }
   .moodboard-overlay,
   .moodboard-editor-panel,
   .moodboard-target-overlay { transition-duration: .01ms; }
+}
+
+/* Shared application shell geometry. The workspace is the visual baseline:
+   major surfaces are inset and softly rounded while canvas/media fullscreen
+   remains edge-to-edge. */
+.ai-assistant-panel.is-fullscreen {
+  inset: calc(var(--titlebar-h) + var(--app-shell-inset))
+         var(--app-shell-inset)
+         var(--app-shell-inset);
+  overflow: hidden;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--app-shell-radius);
+}
+
+.market-section,
+.workshop-section {
+  padding: var(--app-shell-inset);
+  overflow: hidden;
+  background: var(--bg-base);
+}
+
+.market-shell,
+.workshop-shell {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: clamp(24px, 2.2vw, 38px);
+  overflow-y: auto;
+  border: 1px solid transparent;
+  border-radius: var(--app-shell-radius);
+  background: var(--bg-surface);
+}
+
+.market-search,
+.workshop-search,
+.market-sort-label select,
+.workshop-sort-label select {
+  border-radius: var(--radius-md);
+}
+
+.market-card,
+.workshop-card,
+.canvas-library-card {
+  border-radius: var(--radius-sm);
+}
+
+.market-detail,
+.workshop-dialog,
+.ai-provider-manager,
+.canvas-usage-dialog,
+.canvas-name-dialog,
+.prompt-optimizer-dialog,
+.board-butler-mask-dialog,
+.generated-media-detail-panel,
+.board-model-viewer-dialog,
+.moodboard-editor-panel,
+.moodboard-target-dialog,
+.activation-dialog,
+.settings-popover,
+.detail-panel,
+.editor-panel,
+.confirm-dialog {
+  border-radius: var(--dialog-radius);
+}
+
+body.is-detached-canvas-window #board-panel:not(.is-fullscreen) {
+  border-radius: var(--app-shell-radius);
+}
+
+@media (max-width: 760px), (max-height: 600px) {
+  :root {
+    --app-shell-inset: 6px;
+    --app-shell-radius: 18px;
+    --dialog-radius: 18px;
+  }
+
+  .market-shell,
+  .workshop-shell {
+    padding: 18px;
+  }
 }

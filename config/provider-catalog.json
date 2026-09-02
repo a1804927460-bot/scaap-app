@@ -1,5 +1,5 @@
 {
-  "version": 47,
+  "version": 48,
   "providers": [
     {
       "id": "atlas-image-gpt2",
@@ -180,6 +180,8 @@
       "name": "Nano Banana Pro",
       "endpoint": "https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent",
       "protocol": "gemini-native",
+      "logicalModel": "nano-banana-pro",
+      "fallbackProviderIds": ["aireiter-image-nano-pro"],
       "requiresActivation": false,
       "capabilities": {
         "sizes": ["1K", "2K", "4K"],
@@ -260,6 +262,8 @@
       "endpoint": "https://api.302.ai/v1/images/generations",
       "model": "gpt-image-2",
       "protocol": "openai-image",
+      "logicalModel": "gpt-image-2",
+      "fallbackProviderIds": ["aireiter-image-gpt2"],
       "requiresActivation": false,
       "capabilities": {
         "resolutionPresets": ["1K", "2K", "4K"],
@@ -525,6 +529,7 @@
       "resultEndpoint": "https://api.minimaxi.com/v2/query/video_generation",
       "model": "MiniMax-H3",
       "protocol": "minimax-video-v2",
+      "fallbackProviderIds": ["aireiter-video-minimax-h3"],
       "requiresActivation": false,
       "capabilities": {
         "resolutions": ["768P", "2K"],
@@ -552,6 +557,8 @@
       "resultEndpoint": "https://api.302.ai/volcengine/api/v3/contents/generations/tasks",
       "model": "doubao-seedance-2-0-260128",
       "protocol": "seedance-video-v3",
+      "logicalModel": "seedance-2-0",
+      "fallbackProviderIds": ["aireiter-video-seedance20"],
       "requiresActivation": false,
       "capabilities": {
         "resolutions": ["480P", "720P", "720P-SR", "1080P", "1080P-SR", "1440P-SR", "4K"],
@@ -611,6 +618,8 @@
       "resultEndpoint": "https://api.302.ai/volcengine/api/v3/contents/generations/tasks",
       "model": "doubao-seedance-2-5-260628",
       "protocol": "seedance-video-v3",
+      "logicalModel": "seedance-2-5",
+      "fallbackProviderIds": ["aireiter-video-seedance25"],
       "requiresActivation": false,
       "capabilities": {
         "resolutions": ["480P", "720P", "720P-SR", "720P-ESR", "1080P", "1080P-SR", "1080P-ESR", "1080P-ESR & 60FPS", "1440P-SR", "1440P-ESR", "4K-ESR"],
@@ -812,6 +821,8 @@
       "endpoint": "https://api.302.ai/ws/api/v3/kwaivgi/kling-v3.0-std/image-to-video",
       "resultEndpoint": "https://api.302.ai/ws/api/v3/predictions",
       "protocol": "kling-v3-image-to-video",
+      "logicalModel": "kling-v3",
+      "fallbackProviderIds": ["aireiter-video-kling-v3"],
       "requiresActivation": false,
       "capabilities": {
         "resolutions": ["720P", "1080P"],
@@ -839,6 +850,8 @@
       "endpoint": "https://api.302.ai/ws/api/v3/kwaivgi/kling-v3.0-pro/image-to-video",
       "resultEndpoint": "https://api.302.ai/ws/api/v3/predictions",
       "protocol": "kling-v3-image-to-video",
+      "logicalModel": "kling-v3",
+      "fallbackProviderIds": ["aireiter-video-kling-v3"],
       "requiresActivation": false,
       "capabilities": {
         "resolutions": ["1080P"],
@@ -862,6 +875,8 @@
       "resultEndpoint": "https://api.302.ai/ws/api/v3/predictions",
       "model": "std",
       "protocol": "kling-o3-omni",
+      "logicalModel": "kling-o3",
+      "fallbackProviderIds": ["aireiter-video-kling-o3"],
       "requiresActivation": false,
       "capabilities": {
         "resolutions": ["720P", "1080P"],
@@ -894,6 +909,8 @@
       "resultEndpoint": "https://api.302.ai/ws/api/v3/predictions",
       "model": "pro",
       "protocol": "kling-o3-omni",
+      "logicalModel": "kling-o3",
+      "fallbackProviderIds": ["aireiter-video-kling-o3"],
       "requiresActivation": false,
       "capabilities": {
         "resolutions": ["1080P"],
@@ -921,6 +938,8 @@
       "resultEndpoint": "https://api.legnext.ai/api/v1/job",
       "model": "8.1",
       "protocol": "legnext-midjourney",
+      "logicalModel": "midjourney-v8-1",
+      "fallbackProviderIds": ["aireiter-image-midjourney81"],
       "requiresActivation": false,
       "capabilities": {
         "sizes": ["1K", "2K"],
@@ -952,11 +971,140 @@
       "keyEnv": "LEGNEXT_API_KEY"
     },
     {
+      "id": "aireiter-image-nano-pro",
+      "kind": "image",
+      "name": "Image generation route",
+      "hidden": true,
+      "endpoint": "https://aireiter.com/api/openapi/submit",
+      "resultEndpoint": "https://aireiter.com/api/openapi/query",
+      "model": "nano_banana_pro",
+      "protocol": "aireiter-async",
+      "logicalModel": "nano-banana-pro",
+      "requiresActivation": false,
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
+      "id": "aireiter-image-gpt2",
+      "kind": "image",
+      "name": "Image generation route",
+      "hidden": true,
+      "endpoint": "https://aireiter.com/api/openapi/submit",
+      "resultEndpoint": "https://aireiter.com/api/openapi/query",
+      "model": "gpt_image_2",
+      "protocol": "aireiter-async",
+      "logicalModel": "gpt-image-2",
+      "requiresActivation": false,
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
+      "id": "aireiter-image-midjourney81",
+      "kind": "image",
+      "name": "Image generation route",
+      "hidden": true,
+      "endpoint": "https://aireiter.com/api/openapi/submit",
+      "resultEndpoint": "https://aireiter.com/api/openapi/query",
+      "model": "mj_v8_1",
+      "protocol": "aireiter-async",
+      "logicalModel": "midjourney-v8-1",
+      "requiresActivation": false,
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
+      "id": "aireiter-video-minimax-h3",
+      "kind": "video",
+      "name": "Video generation route",
+      "hidden": true,
+      "endpoint": "https://aireiter.com/api/openapi/submit",
+      "resultEndpoint": "https://aireiter.com/api/openapi/query",
+      "model": "minimax_h3",
+      "protocol": "aireiter-async",
+      "logicalModel": "minimax-h3",
+      "requiresActivation": false,
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
+      "id": "aireiter-video-seedance20",
+      "kind": "video",
+      "name": "Video generation route",
+      "hidden": true,
+      "endpoint": "https://aireiter.com/api/openapi/submit",
+      "resultEndpoint": "https://aireiter.com/api/openapi/query",
+      "model": "seedance2",
+      "protocol": "aireiter-async",
+      "logicalModel": "seedance-2-0",
+      "requiresActivation": false,
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
+      "id": "aireiter-video-seedance25",
+      "kind": "video",
+      "name": "Video generation route",
+      "hidden": true,
+      "endpoint": "https://aireiter.com/api/openapi/submit",
+      "resultEndpoint": "https://aireiter.com/api/openapi/query",
+      "model": "seedance2_5",
+      "protocol": "aireiter-async",
+      "logicalModel": "seedance-2-5",
+      "requiresActivation": false,
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
+      "id": "aireiter-video-kling-v3",
+      "kind": "video",
+      "name": "Video generation route",
+      "hidden": true,
+      "endpoint": "https://aireiter.com/api/openapi/submit",
+      "resultEndpoint": "https://aireiter.com/api/openapi/query",
+      "model": "kling_3_0",
+      "protocol": "aireiter-async",
+      "logicalModel": "kling-v3",
+      "requiresActivation": false,
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
+      "id": "aireiter-video-kling-o3",
+      "kind": "video",
+      "name": "Video generation route",
+      "hidden": true,
+      "endpoint": "https://aireiter.com/api/openapi/submit",
+      "resultEndpoint": "https://aireiter.com/api/openapi/query",
+      "model": "kling_v3_omni",
+      "protocol": "aireiter-async",
+      "logicalModel": "kling-o3",
+      "requiresActivation": false,
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
+      "id": "aireiter-chat-gemini",
+      "kind": "chat",
+      "name": "AI chat route",
+      "hidden": true,
+      "endpoint": "https://aireiter.com/api/v1/chat/completions",
+      "models": ["gemini-3.7-flash"],
+      "upstreamModels": { "gemini-3.7-flash": "gpt-5.2" },
+      "protocol": "openai-chat",
+      "requiresActivation": false,
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
+      "id": "aireiter-chat-luna",
+      "kind": "chat",
+      "name": "AI chat route",
+      "hidden": true,
+      "endpoint": "https://aireiter.com/api/v1/chat/completions",
+      "models": ["gpt-5.6-luna"],
+      "upstreamModels": { "gpt-5.6-luna": "gpt-5.2" },
+      "protocol": "openai-chat",
+      "requiresActivation": false,
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
       "id": "chat-1",
       "kind": "chat",
       "name": "Messs AI",
       "endpoint": "https://api.302.ai/v1/chat/completions",
       "models": ["gemini-3.7-flash"],
+      "fallbackProviderIds": ["aireiter-chat-gemini"],
       "protocol": "openai-chat",
       "requiresActivation": false,
       "keyEnv": "AI302_KEY"
@@ -967,6 +1115,7 @@
       "name": "AI Chat",
       "endpoint": "https://api.quickrouter.ai/v1/chat/completions",
       "models": ["gpt-5.6-luna"],
+      "fallbackProviderIds": ["aireiter-chat-luna"],
       "upstreamModels": { "gpt-5.6-luna": "gpt-5.6" },
       "protocol": "openai-chat",
       "requiresActivation": false,

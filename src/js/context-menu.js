@@ -6,7 +6,6 @@ const FILE_CONTEXT_ITEMS = [
   { key: 'open-default', label: ['Open Default App', '用默认应用打开'], icon: 'M14 3h7v7M21 3L13 11M5 5h6v2H7v10h10v-4h2v6H5z' },
   { key: 'open-manager', label: ['Open in File Manager', '在文件管理器中打开'], icon: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z' },
   { key: 'reveal', label: ['Show in Folder', '在文件夹中显示'], icon: 'M21 10c0 6-9 12-9 12s-9-6-9-12a9 9 0 1 1 18 0z;M12 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4z', divider: true },
-  { key: 'send-wechat', label: ['Send to WeChat File Transfer', '发送到微信文件传输助手'], icon: 'M4 5h16v12H8l-4 3V5z;M8 9h.01;M12 9h.01;M16 9h.01', divider: true },
   { key: 'copy-selection', label: ['Copy', '复制'], icon: 'M9 9h11v11H9zM5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1' },
   { key: 'cut-selection', label: ['Cut', '剪切'], icon: 'M4 4l16 16M20 4L4 20' },
   { key: 'paste-selection', label: ['Paste', '粘贴'], icon: 'M9 3h6a2 2 0 0 1 2 2v1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h1V5a2 2 0 0 1 2-2z' },
@@ -148,9 +147,6 @@ async function handleContextMenuAction(action) {
       break;
     case 'reveal':
       await window.messsAPI.revealFile(id);
-      break;
-    case 'send-wechat':
-      await sendFileToWeChatHelper(id);
       break;
     case 'copy-selection':
       setFileClipboard([id], 'copy');
@@ -622,29 +618,6 @@ async function sendBoardMediaToCreativeApp(fileId, target) {
   }
 }
 
-async function sendFileToWeChatHelper(fileId) {
-  showToast(t('Opening WeChat File Transfer...', '正在打开微信文件传输助手...'));
-  try {
-    const result = await window.messsAPI.sendToWeChatFileHelper(fileId);
-    showToast((result && result.message) || t(
-      'Could not send this file to WeChat.',
-      '无法将文件发送到微信。'
-    ));
-    return !!(result && result.ok);
-  } catch (error) {
-    showToast(t('Could not send this file to WeChat.', '无法将文件发送到微信。'));
-    return false;
-  }
-}
-
-async function sendBoardMediaToChat(fileIds) {
-  if (typeof window.queueBoardMediaToChat !== 'function') {
-    showToast(t('Chat is still loading. Please try again.', '聊天正在加载，请稍后重试。'));
-    return false;
-  }
-  return window.queueBoardMediaToChat(fileIds);
-}
-
 function formatCanvasUsagePoints(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return t('Not recorded', '\u672a\u8bb0\u5f55');
@@ -896,16 +869,6 @@ function showBoardItemContextMenu(item, x, y) {
     ];
     if (isImage || isVideo) {
       items.push({
-        label: t('Send to Chat', '发送到聊天'),
-        icon: 'M4 5h16v12H8l-4 3V5z;M8 9h.01;M12 9h.01;M16 9h.01',
-        action: () => sendBoardMediaToChat([item.fileId])
-      });
-      items.push({
-        label: t('Send to WeChat File Transfer', '发送到微信文件传输助手'),
-        icon: 'M4 5h16v12H8l-4 3V5z;M8 9h.01;M12 9h.01;M16 9h.01',
-        action: () => sendFileToWeChatHelper(item.fileId)
-      });
-      items.push({
         label: t('Send to After Effects', '\u53d1\u9001\u5230 After Effects'),
         icon: 'M22 2 11 13;M22 2l-7 20-4-9-9-4z',
         action: () => sendBoardMediaToCreativeApp(item.fileId, 'after-effects')
@@ -964,7 +927,6 @@ const MULTI_MENU_ITEMS = [
     { key: 'scale-min', label: ['Scale to Minimum', '缩小至最小', '최소로 축소'] }
   ] },
   { key: 'download', label: ['Export', '导出'] },
-  { key: 'send-chat', label: ['Send to Chat', '发送到聊天'] },
   { key: 'usage', label: ['View points usage', '\u67e5\u770b\u79ef\u5206\u7528\u91cf'] },
   { key: 'secondary-partition', label: ['Secondary partition', '二级分区'] },
   { key: 'group', label: ['Group', '成组'] },
@@ -1111,20 +1073,6 @@ async function runMultiMenuAction(key, x, y) {
       }
       showToast(t(`Exported ${selected.length} file${selected.length === 1 ? '' : 's'}`, `已导出 ${selected.length} 个文件`));
       break;
-    case 'send-chat': {
-      const mediaIds = selected
-        .filter((item) => {
-          const file = AppState.files.find((entry) => entry.id === item.fileId);
-          return file && (isImageExt(file.ext) || isVideoExt(file.ext));
-        })
-        .map((item) => item.fileId);
-      if (!mediaIds.length) {
-        showToast(t('Select at least one image or video.', '请至少选择一张图片或一个视频。'));
-        break;
-      }
-      await sendBoardMediaToChat(mediaIds);
-      break;
-    }
     case 'usage':
       openCanvasUsageDetails();
       break;
@@ -1170,6 +1118,18 @@ async function arrangeItemsGrid(items) {
     return file && (isImageExt(file.ext) || isVideoExt(file.ext));
   });
   if (!mediaItems.length) return;
+  const startFrames = mediaItems.map((item) => {
+    const bounds = typeof boardItemBounds === 'function'
+      ? boardItemBounds(item)
+      : { x: item.x, y: item.y, w: item.width || 220, h: item.height || 180 };
+    return {
+      item,
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.w,
+      height: bounds.h
+    };
+  });
   const originX = mediaItems.reduce((min, item) => Math.min(min, item.x), Infinity);
   const originY = mediaItems.reduce((min, item) => Math.min(min, item.y), Infinity);
   const measuredItems = mediaItems.map((item) => {
@@ -1182,7 +1142,8 @@ async function arrangeItemsGrid(items) {
     originX,
     originY,
     gap: 20,
-    columns: Math.max(1, Math.ceil(Math.sqrt(mediaItems.length * 1.35)))
+    columns: Math.max(1, Math.ceil(Math.sqrt(mediaItems.length * 1.35))),
+    minWidth: typeof MIN_BOARD_ITEM_WIDTH === 'number' ? MIN_BOARD_ITEM_WIDTH : 90
   });
   const itemsById = new Map(mediaItems.map((item) => [item.id, item]));
   packed.forEach((position) => {
@@ -1196,7 +1157,11 @@ async function arrangeItemsGrid(items) {
   });
   if (typeof fitBoardItemsIntoPartitions === 'function') fitBoardItemsIntoPartitions(mediaItems);
 
-  if (typeof window.messsAPI.upsertBoardItems === 'function') {
+  const recorded = typeof recordBoardResizeHistory === 'function' &&
+    recordBoardResizeHistory(startFrames);
+  if (recorded && typeof persistBoardMoveHistory === 'function') {
+    persistBoardMoveHistory(mediaItems);
+  } else if (typeof window.messsAPI.upsertBoardItems === 'function') {
     await window.messsAPI.upsertBoardItems(mediaItems);
   } else {
     await Promise.all(mediaItems.map((item) => window.messsAPI.upsertBoardItem(item)));
