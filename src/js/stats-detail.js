@@ -96,6 +96,23 @@ function syncAssistantFullscreenNavigation(expanded) {
   });
 }
 
+function assistantOccupiesFullscreenLayer(panel) {
+  return !!panel && (panel.classList.contains('is-fullscreen') || panel.parentElement === document.body);
+}
+
+function restoreAssistantPanelToWorkspace(panel) {
+  if (assistantPanelAnchor && assistantPanelAnchor.parentNode) {
+    assistantPanelAnchor.parentNode.insertBefore(panel, assistantPanelAnchor);
+    assistantPanelAnchor.remove();
+  } else {
+    const workspaceHost = document.querySelector('.stats-panel');
+    if (workspaceHost && panel.parentElement !== workspaceHost) {
+      workspaceHost.insertBefore(panel, workspaceHost.firstChild);
+    }
+  }
+  assistantPanelAnchor = null;
+}
+
 function setAssistantFullscreen(expanded, options = {}) {
   const panel = document.getElementById('ai-assistant-panel');
   const button = document.getElementById('ai-assistant-history');
@@ -103,10 +120,8 @@ function setAssistantFullscreen(expanded, options = {}) {
     assistantPanelAnchor = document.createComment('ai-assistant-panel');
     panel.parentNode.insertBefore(assistantPanelAnchor, panel);
     document.body.appendChild(panel);
-  } else if (!expanded && assistantPanelAnchor && assistantPanelAnchor.parentNode) {
-    assistantPanelAnchor.parentNode.insertBefore(panel, assistantPanelAnchor);
-    assistantPanelAnchor.remove();
-    assistantPanelAnchor = null;
+  } else if (!expanded) {
+    restoreAssistantPanelToWorkspace(panel);
   }
   panel.classList.toggle('is-fullscreen', expanded);
   document.body.classList.toggle('is-ai-assistant-fullscreen', expanded);
@@ -134,12 +149,12 @@ function initStatsDetail() {
   updateAssistantCompactState();
   document.getElementById('ai-assistant-history').addEventListener('click', () => {
     const panel = document.getElementById('ai-assistant-panel');
-    setAssistantFullscreen(!panel.classList.contains('is-fullscreen'), { syncNavigation: true });
+    setAssistantFullscreen(!assistantOccupiesFullscreenLayer(panel), { syncNavigation: true });
   });
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
     const panel = document.getElementById('ai-assistant-panel');
-    if (panel && panel.classList.contains('is-fullscreen')) {
+    if (assistantOccupiesFullscreenLayer(panel)) {
       setAssistantFullscreen(false, { syncNavigation: true });
     }
   });

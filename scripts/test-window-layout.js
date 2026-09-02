@@ -36,8 +36,12 @@ assert.match(titlebarJs, /const isAssistantSection = section === 'assistant';[\s
   'The Messs entry must open the existing AI panel without changing the internal workspace section id.');
 assert.match(statsDetailJs, /function syncAssistantFullscreenNavigation\(expanded\)[\s\S]*?expanded \? 'assistant' : 'messs'[\s\S]*?aria-selected/,
   'Expanding and collapsing Messs must keep the title-bar selection synchronized.');
-assert.match(statsDetailJs, /setAssistantFullscreen\(!panel\.classList\.contains\('is-fullscreen'\), \{ syncNavigation: true \}\)/,
+assert.match(statsDetailJs, /function assistantOccupiesFullscreenLayer[\s\S]*?panel\.parentElement === document\.body[\s\S]*?setAssistantFullscreen\(!assistantOccupiesFullscreenLayer\(panel\), \{ syncNavigation: true \}\)/,
   'The assistant expand button must restore the Workspace tab when it collapses.');
+assert.match(statsDetailJs, /function restoreAssistantPanelToWorkspace[\s\S]*?document\.querySelector\('\.stats-panel'\)[\s\S]*?workspaceHost\.insertBefore\(panel, workspaceHost\.firstChild\)/,
+  'Collapsing Messs must restore the panel even when its original DOM anchor was lost.');
+assert.match(titlebarJs, /assistantExpanded[\s\S]*?assistantOccupiesFullscreenLayer\(assistant\)[\s\S]*?setAssistantFullscreen\(false\)/,
+  'Leaving Messs through the title bar must also recover an orphaned fullscreen panel.');
 assert.equal((statsDetailJs.match(/document\.addEventListener\('keydown'/g) || []).length, 1,
   'The assistant must register only one Escape handler.');
 assert.match(sidebarJs, /section-tab\[data-section="messs"\][\s\S]*?Workspace[\s\S]*?section-tab\[data-section="assistant"\][\s\S]*?Messs/,

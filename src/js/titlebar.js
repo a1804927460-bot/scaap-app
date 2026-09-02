@@ -57,7 +57,10 @@ function initSectionTabs() {
       const section = tab.dataset.section;
       const assistant = document.getElementById('ai-assistant-panel');
       const isAssistantSection = section === 'assistant';
-      if (assistant && assistant.classList.contains('is-fullscreen') && !isAssistantSection && typeof setAssistantFullscreen === 'function') {
+      const assistantExpanded = typeof assistantOccupiesFullscreenLayer === 'function'
+        ? assistantOccupiesFullscreenLayer(assistant)
+        : !!assistant && assistant.classList.contains('is-fullscreen');
+      if (assistantExpanded && !isAssistantSection && typeof setAssistantFullscreen === 'function') {
         setAssistantFullscreen(false);
       }
       if (typeof isBoardFullscreen === 'function' && isBoardFullscreen() && typeof exitBoardFullscreen === 'function') {
