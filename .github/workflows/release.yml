@@ -52,7 +52,7 @@ jobs:
           $libreOffice = Join-Path $env:ProgramFiles 'LibreOffice'
           $libreOfficeExe = Join-Path $libreOffice 'program\soffice.exe'
           if (-not (Test-Path $libreOfficeExe)) {
-            $libreOfficeVersion = '26.2.3'
+            $libreOfficeVersion = '26.8.0'
             $libreOfficeMsi = Join-Path $env:RUNNER_TEMP "LibreOffice-$libreOfficeVersion.msi"
             $libreOfficeUrl = "https://download.documentfoundation.org/libreoffice/stable/$libreOfficeVersion/win/x86_64/LibreOffice_${libreOfficeVersion}_Win_x86-64.msi"
             # Bound both network and installer waits so a hosted runner cannot
