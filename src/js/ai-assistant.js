@@ -705,6 +705,30 @@ function assistantVideoModeForAttachments(attachments = AiAssistant.attachments)
   return available('text');
 }
 
+function assistantVideoRatios(mode, capabilities = assistantVideoCapabilities()) {
+  if (mode && Array.isArray(mode.ratios) && mode.ratios.length) return mode.ratios.map(String);
+  if (mode && mode.id === 'text' && Array.isArray(capabilities.textRatios) && capabilities.textRatios.length) {
+    return capabilities.textRatios.map(String);
+  }
+  if (mode && ['first-frame', 'first-last-frame'].includes(mode.id)) {
+    return Array.isArray(capabilities.frameReferenceRatios) && capabilities.frameReferenceRatios.length
+      ? capabilities.frameReferenceRatios.map(String)
+      : ['adaptive'];
+  }
+  return Array.isArray(capabilities.ratios) && capabilities.ratios.length
+    ? capabilities.ratios.map(String)
+    : ['16:9', '9:16'];
+}
+
+function supportedAssistantVideoRatio(value, mode, capabilities = assistantVideoCapabilities()) {
+  const ratios = assistantVideoRatios(mode, capabilities);
+  const requested = String(value || '').trim();
+  if (ratios.includes(requested)) return requested;
+  if (ratios.includes('adaptive')) return 'adaptive';
+  if (ratios.includes('16:9')) return '16:9';
+  return ratios[0] || '16:9';
+}
+
 function assistantHasMediaAttachments() {
   return AiAssistant.attachments.some((attachment) => ['image', 'video'].includes(assistantFileKind(attachment)));
 }
@@ -1166,17 +1190,9 @@ function renderAssistantRatios(options = {}) {
   const select = document.getElementById('ai-assistant-ratio');
   const capabilities = AiAssistant.kind === 'video' ? assistantVideoCapabilities() : assistantImageCapabilities();
   const selectedVideoMode = AiAssistant.kind === 'video' ? assistantVideoModeForAttachments() : null;
+  const previous = select.value;
   const ratios = AiAssistant.kind === 'video'
-    ? (selectedVideoMode && Array.isArray(selectedVideoMode.ratios) && selectedVideoMode.ratios.length
-      ? selectedVideoMode.ratios
-      : assistantHasMediaAttachments() && selectedVideoMode
-        && ['first-frame', 'first-last-frame'].includes(selectedVideoMode.id)
-      ? (Array.isArray(capabilities.frameReferenceRatios) && capabilities.frameReferenceRatios.length
-        ? capabilities.frameReferenceRatios
-        : ['adaptive'])
-      : (Array.isArray(capabilities.ratios) && capabilities.ratios.length
-        ? capabilities.ratios
-        : ['16:9', '9:16']))
+    ? assistantVideoRatios(selectedVideoMode, capabilities)
     : (assistantHasMediaAttachments() && Array.isArray(capabilities.referenceRatios)
       ? capabilities.referenceRatios
       : (Array.isArray(capabilities.ratios) && capabilities.ratios.length
@@ -1184,7 +1200,7 @@ function renderAssistantRatios(options = {}) {
         : AI_IMAGE_RATIOS));
   const config = AiAssistant.config || {};
   const selected = AiAssistant.kind === 'video'
-    ? (config.videoAspectRatio || '16:9')
+    ? supportedAssistantVideoRatio(previous || config.videoAspectRatio, selectedVideoMode, capabilities)
     : (config.imageAspectRatio || '1:1');
   select.innerHTML = '';
   ratios.forEach((ratio) => {
@@ -1491,6 +1507,11 @@ async function submitAssistantMessage() {
       return;
     }
     submittedMediaOptions.videoMode = selectedVideoMode.id;
+    submittedMediaOptions.aspectRatio = supportedAssistantVideoRatio(
+      submittedMediaOptions.aspectRatio,
+      selectedVideoMode,
+      assistantVideoCapabilities()
+    );
   }
   let prompt = input.value.trim();
   if (!prompt && !attachments.length) {

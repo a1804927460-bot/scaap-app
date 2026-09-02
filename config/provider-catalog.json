@@ -521,35 +521,28 @@
       "kind": "video",
       "name": "MiniMax H3",
       "logicalModel": "minimax-h3",
-      "endpoint": "https://api.atlascloud.ai/api/v1/model/generateVideo",
-      "resultEndpoint": "https://api.atlascloud.ai/api/v1/model/prediction",
-      "model": "minimax/h3/image-to-video",
-      "protocol": "atlas-minimax-h3-video",
+      "endpoint": "https://api.minimaxi.com/v2/video_generation",
+      "resultEndpoint": "https://api.minimaxi.com/v2/query/video_generation",
+      "model": "MiniMax-H3",
+      "protocol": "minimax-video-v2",
       "requiresActivation": false,
       "capabilities": {
         "resolutions": ["768P", "2K"],
         "durations": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-        "atlasKind": "image-to-video",
-        "ratios": ["adaptive"],
-        "frameReferenceRatios": ["adaptive"],
+        "ratios": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "frameReferenceRatios": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
         "maxReferenceImages": 9,
         "maxReferenceVideos": 3,
         "maxReferenceAudios": 3,
         "maxTotalReferences": 15,
         "referenceAudioMimeTypes": ["audio/wav", "audio/mpeg", "audio/mp3"],
         "videoModes": [
-          { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["first_frame"], "mediaTypes": ["image"], "ratios": ["adaptive"] },
-          { "id": "first-last-frame", "minReferences": 2, "maxReferences": 2, "roles": ["first_frame", "last_frame"], "mediaTypes": ["image"], "ratios": ["adaptive"] },
+          { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["first_frame"], "mediaTypes": ["image"], "ratios": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] },
+          { "id": "first-last-frame", "minReferences": 2, "maxReferences": 2, "roles": ["first_frame", "last_frame"], "mediaTypes": ["image"], "ratios": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] },
           { "id": "omni", "minReferences": 1, "maxReferences": 15, "maxReferenceImages": 9, "maxReferenceVideos": 3, "maxReferenceAudios": 3, "roles": ["reference_image"], "mediaTypes": ["image", "video", "audio"] }
-        ],
-        "atlasRouted": true,
-        "upstreamRoutes": {
-          "first-frame": ["atlas-video-minimax-h3-i2v"],
-          "first-last-frame": ["atlas-video-minimax-h3-i2v"],
-          "omni": ["atlas-video-minimax-h3-ref"]
-        }
+        ]
       },
-      "keyEnv": "ATLASCLOUD_API_KEY"
+      "keyEnv": "MINIMAX_API_KEY"
     },
     {
       "id": "video-2",

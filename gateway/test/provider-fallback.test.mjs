@@ -110,7 +110,7 @@ test('built-in image, video, and chat routes can bind same-capability backups', 
     globalThis.fetch = async (url, options = {}) => {
       const value = String(url);
       calls.push({ url: value, options });
-      if (value === 'https://api.atlascloud.ai/api/v1/model/generateVideo') {
+      if (value === 'https://api.minimaxi.com/v2/video_generation') {
         return jsonResponse({ base_resp: { status_code: 429, status_msg: 'busy' } }, 429);
       }
       if (value === 'https://backup.example.com/v2/video_generation') return jsonResponse({ task_id: 'backup-video-task' });
@@ -127,7 +127,8 @@ test('built-in image, video, and chat routes can bind same-capability backups', 
       referenceMediaTypes: ['image']
     }), { providerId: 'video-1-backup', taskId: 'messs-route:video-1-backup:backup-video-task' });
     assert.equal(calls.length, 2);
-    assert.equal(calls[0].url, 'https://api.atlascloud.ai/api/v1/model/generateVideo');
+    assert.equal(calls[0].url, 'https://api.minimaxi.com/v2/video_generation');
+    assert.equal(calls[0].options.headers.Authorization, 'Bearer primary-minimax-key');
     assert.equal(calls[1].options.headers.Authorization, 'Bearer video-backup-key');
 
     calls.length = 0;

@@ -638,15 +638,21 @@ assert.equal(JSON.parse(chatModelFallbackCalls[0].options.body).model, 'gpt-5.6'
 assert.equal(JSON.parse(chatModelFallbackCalls[1].options.body).model, 'gpt-5.6-luna');
 
 const miniMaxCalls = [];
-process.env.ATLASCLOUD_API_KEY = 'atlas-secret';
+process.env.MINIMAX_API_KEY = 'minimax-secret';
 globalThis.fetch = async (url, options = {}) => {
   const value = String(url);
   miniMaxCalls.push({ url: value, options });
-  if (value === 'https://api.atlascloud.ai/api/v1/model/generateVideo') {
-    return jsonResponse({ id: 'h3-task-1', status: 'created' });
+  if (value === 'https://api.minimaxi.com/v2/video_generation') {
+    return jsonResponse({ task_id: 'h3-task-1' });
   }
-  if (value === 'https://api.atlascloud.ai/api/v1/model/prediction/h3-task-1') {
-    return jsonResponse({ id: 'h3-task-1', status: 'completed', outputs: ['https://cdn.example/h3.mp4'] });
+  if (value === 'https://api.minimaxi.com/v2/query/video_generation/h3-task-1') {
+    return jsonResponse({
+      task: {
+        id: 'h3-task-1',
+        status: 'succeeded',
+        content: { url: 'https://cdn.example/h3.mp4' }
+      }
+    });
   }
   throw new Error(`Unexpected H3 URL: ${value}`);
 };
@@ -660,7 +666,7 @@ await assert.rejects(() => createVideoTask({
   urls: []
 }), (error) => error && error.code === 'reference-required');
 assert.equal(miniMaxCalls.length, 0);
-assert.equal(miniMaxCalls.some((call) => call.url.includes('api.minimaxi.com')), false);
+assert.equal(miniMaxCalls.some((call) => call.url.includes('api.atlascloud.ai')), false);
 
 await createVideoTask({
   providerId: 'video-1',
@@ -676,14 +682,15 @@ const frameRequest = miniMaxCalls
     try { return { ...call, body: JSON.parse(call.options.body) }; } catch (error) { return null; }
   })
   .filter(Boolean)
-  .find((call) => call.body && call.body.image && call.body.end_image);
+  .find((call) => call.body && Array.isArray(call.body.content) && call.body.content.length === 3);
 assert.ok(frameRequest);
 assert.equal(frameRequest.body.ratio, 'adaptive');
-assert.equal(frameRequest.body.model, 'minimax/h3/image-to-video');
-assert.equal(miniMaxCalls[0].options.headers.Authorization, 'Bearer atlas-secret');
-assert.equal(frameRequest.body.image, 'https://cdn.example/first.png');
-assert.equal(frameRequest.body.end_image, 'https://cdn.example/last.png');
-assert.equal(frameRequest.body.last_image, undefined);
+assert.equal(frameRequest.body.model, 'MiniMax-H3');
+assert.equal(miniMaxCalls[0].options.headers.Authorization, 'Bearer minimax-secret');
+assert.deepEqual(frameRequest.body.content.slice(1), [
+  { type: 'image_url', image_url: { url: 'https://cdn.example/first.png' }, role: 'first_frame' },
+  { type: 'image_url', image_url: { url: 'https://cdn.example/last.png' }, role: 'last_frame' }
+]);
 
 await assert.rejects(
   createVideoTask({
@@ -1030,7 +1037,7 @@ await assert.rejects(
 );
 
 for (const providerId of ['video-1', 'video-2', 'video-3']) {
-  if (providerId === 'video-1') process.env.ATLASCLOUD_API_KEY = 'atlas-secret';
+  if (providerId === 'video-1') process.env.MINIMAX_API_KEY = 'minimax-secret';
   let createAttempts = 0;
   globalThis.fetch = async () => {
     createAttempts += 1;

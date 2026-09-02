@@ -33,6 +33,11 @@ vm.createContext(renderer);
 vm.runInContext(rendererSource, renderer);
 assert.equal(renderer.publicModelLabel('GPT Image 2 (Atlas Cloud)'), 'GPT Image 2');
 assert.doesNotMatch(renderer.publicAiErrorMessage('Atlas Cloud returned an API error.'), /atlas/i);
+renderer.document = { documentElement: { dataset: { language: 'zh' } } };
+assert.equal(
+  renderer.publicAiErrorMessage('The selected video model does not support this aspect ratio with reference images.'),
+  '当前生成模式不支持这个画面比例，已自动切换为可用比例，请重试。'
+);
 
 const indexSource = fs.readFileSync(path.resolve(__dirname, '../src/index.html'), 'utf8');
 assert.ok(indexSource.indexOf('js/public-model-label.js') < indexSource.indexOf('js/store-client.js'));

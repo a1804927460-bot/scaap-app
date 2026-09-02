@@ -92,15 +92,11 @@ for (const id of ['image-7', 'image-8']) {
 }
 assert.equal(media.videoProviderName, 'MiniMax H3');
 const miniMaxH3 = media.videoProviders.find((provider) => provider.id === 'video-1');
-assert.equal(miniMaxH3.endpoint, 'https://api.atlascloud.ai/api/v1/model/generateVideo');
-assert.equal(miniMaxH3.resultEndpoint, 'https://api.atlascloud.ai/api/v1/model/prediction');
-assert.equal(miniMaxH3.protocol, 'atlas-minimax-h3-video');
-assert.equal(require('../lib/provider-catalog').catalogProvider('video-1').keyEnv, 'ATLASCLOUD_API_KEY');
-assert.deepEqual(miniMaxH3.capabilities.upstreamRoutes, {
-  'first-frame': ['atlas-video-minimax-h3-i2v'],
-  'first-last-frame': ['atlas-video-minimax-h3-i2v'],
-  omni: ['atlas-video-minimax-h3-ref']
-});
+assert.equal(miniMaxH3.endpoint, 'https://api.minimaxi.com/v2/video_generation');
+assert.equal(miniMaxH3.resultEndpoint, 'https://api.minimaxi.com/v2/query/video_generation');
+assert.equal(miniMaxH3.protocol, 'minimax-video-v2');
+assert.equal(require('../lib/provider-catalog').catalogProvider('video-1').keyEnv, 'MINIMAX_API_KEY');
+assert.equal(miniMaxH3.capabilities.upstreamRoutes, undefined);
 assert.equal(miniMaxH3.capabilities.videoModes.some((mode) => mode.id === 'text'), false);
 assert.deepEqual(
   media.videoProviders.filter((provider) => provider.name).map((provider) => provider.name),

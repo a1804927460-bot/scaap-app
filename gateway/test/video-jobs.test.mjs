@@ -345,21 +345,22 @@ test('worker fails closed after one clear error when the asynchronous schema is 
   });
 });
 
-test('MiniMax H3 sends the Atlas contract for mixed references and preserves usage', async () => {
+test('MiniMax H3 sends the official multimodal contract and preserves usage', async () => {
   const previousFetch = globalThis.fetch;
-  await withEnvironment({ ATLASCLOUD_API_KEY: 'atlas-test-key', MINIMAX_API_KEY: null }, async () => {
+  await withEnvironment({ MINIMAX_API_KEY: 'minimax-test-key' }, async () => {
     const calls = [];
     globalThis.fetch = async (url, options = {}) => {
       calls.push({ url: String(url), options });
-      if (String(url) === 'https://api.atlascloud.ai/api/v1/model/generateVideo') {
-        return jsonResponse({ id: 'multimodal-task-id', status: 'created' });
+      if (String(url) === 'https://api.minimaxi.com/v2/video_generation') {
+        return jsonResponse({ task_id: 'multimodal-task-id' });
       }
-      if (String(url) === 'https://api.atlascloud.ai/api/v1/model/prediction/multimodal-task-id') {
+      if (String(url) === 'https://api.minimaxi.com/v2/query/video_generation/multimodal-task-id') {
         return jsonResponse({
-          id: 'multimodal-task-id',
-          status: 'completed',
-          outputs: ['https://cdn.example.test/multimodal.mp4'],
-          usage: { total_seconds: 21, input_seconds: 15, output_seconds: 6, input_image_count: 1 }
+          task: {
+            id: 'multimodal-task-id', status: 'succeeded',
+            content: { url: 'https://cdn.example.test/multimodal.mp4' },
+            usage: { total_seconds: 21, input_seconds: 15, output_seconds: 6, input_image_count: 1 }
+          }
         });
       }
       throw new Error('Unexpected URL: ' + url);
@@ -374,19 +375,20 @@ test('MiniMax H3 sends the Atlas contract for mixed references and preserves usa
       });
       const request = JSON.parse(calls[0].options.body);
       assert.deepEqual(request, {
-        model: 'minimax/h3/reference-to-video',
-        prompt: 'Create a new video using @Image1, @Video1, @Audio1 as references. multimodal',
-        duration: 6,
+        model: 'MiniMax-H3',
+        content: [
+          { type: 'text', text: 'multimodal' },
+          { type: 'image_url', image_url: { url: 'https://cdn.example.test/reference.png' }, role: 'reference_image' },
+          { type: 'video_url', video_url: { url: 'https://cdn.example.test/reference.mp4' }, role: 'reference_video' },
+          { type: 'audio_url', audio_url: { url: 'https://cdn.example.test/reference.mp3' }, role: 'reference_audio' }
+        ],
         resolution: '768P',
+        duration: 6,
         ratio: '16:9',
-        refers: [
-          { url: 'https://cdn.example.test/reference.png', type: 'image' },
-          { url: 'https://cdn.example.test/reference.mp4', type: 'video' },
-          { url: 'https://cdn.example.test/reference.mp3', type: 'audio' }
-        ]
+        aigc_watermark: false
       });
-      assert.equal(calls[0].options.headers.Authorization, 'Bearer atlas-test-key');
-      assert.equal(calls.some((call) => call.url.includes('api.minimaxi.com')), false);
+      assert.equal(calls[0].options.headers.Authorization, 'Bearer minimax-test-key');
+      assert.equal(calls.some((call) => call.url.includes('api.atlascloud.ai')), false);
       const result = await pollVideoTask(created.providerId, created.taskId);
       assert.deepEqual(result.usage, {
         totalSeconds: 21, inputSeconds: 15, outputSeconds: 6, inputImageCount: 1
@@ -397,24 +399,17 @@ test('MiniMax H3 sends the Atlas contract for mixed references and preserves usa
   });
 });
 
-test('MiniMax H3 Atlas frame routes use only documented fields', async () => {
+test('MiniMax H3 official frame routes use only documented fields', async () => {
   const previousFetch = globalThis.fetch;
-  await withEnvironment({ ATLASCLOUD_API_KEY: 'atlas-test-key', MINIMAX_API_KEY: null }, async () => {
+  await withEnvironment({ MINIMAX_API_KEY: 'minimax-test-key' }, async () => {
     const calls = [];
     let createCount = 0;
     globalThis.fetch = async (url, options = {}) => {
       const value = String(url);
       calls.push({ url: value, options });
-      if (value === 'https://api.atlascloud.ai/api/v1/model/generateVideo') {
+      if (value === 'https://api.minimaxi.com/v2/video_generation') {
         createCount += 1;
-        return jsonResponse({ id: `h3-task-${createCount}`, status: 'created' });
-      }
-      if (value.startsWith('https://api.atlascloud.ai/api/v1/model/prediction/')) {
-        return jsonResponse({
-          id: value.split('/').pop(),
-          status: 'completed',
-          outputs: ['https://cdn.example.test/result-output']
-        });
+        return jsonResponse({ task_id: `h3-task-${createCount}` });
       }
       throw new Error('Unexpected URL: ' + url);
     };
@@ -427,17 +422,18 @@ test('MiniMax H3 Atlas frame routes use only documented fields', async () => {
       });
       const frameRequest = JSON.parse(calls[0].options.body);
       assert.deepEqual(frameRequest, {
-        model: 'minimax/h3/image-to-video',
-        prompt: 'frame route',
-        duration: 4,
+        model: 'MiniMax-H3',
+        content: [
+          { type: 'text', text: 'frame route' },
+          { type: 'image_url', image_url: { url: 'https://cdn.example.test/first.png' }, role: 'first_frame' },
+          { type: 'image_url', image_url: { url: 'https://cdn.example.test/last.png' }, role: 'last_frame' }
+        ],
         resolution: '768P',
+        duration: 4,
         ratio: 'adaptive',
-        image: 'https://cdn.example.test/first.png',
-        end_image: 'https://cdn.example.test/last.png'
+        aigc_watermark: false
       });
-      assert.equal(Object.hasOwn(frameRequest, 'last_image'), false);
-      assert.equal(Object.hasOwn(frameRequest, 'output_format'), false);
-      assert.equal(Object.hasOwn(frameRequest, 'generate_audio'), false);
+      assert.equal(calls[0].options.headers.Authorization, 'Bearer minimax-test-key');
     } finally {
       globalThis.fetch = previousFetch;
     }
@@ -446,12 +442,12 @@ test('MiniMax H3 Atlas frame routes use only documented fields', async () => {
 
 test('MiniMax H3 rejects legacy empty frame requests before upstream submission', async () => {
   const previousFetch = globalThis.fetch;
-  await withEnvironment({ ATLASCLOUD_API_KEY: 'atlas-test-key', MINIMAX_API_KEY: null }, async () => {
+  await withEnvironment({ MINIMAX_API_KEY: 'minimax-test-key' }, async () => {
     const calls = [];
     globalThis.fetch = async (url, options = {}) => {
       calls.push({ url: String(url), options });
-      if (String(url) === 'https://api.atlascloud.ai/api/v1/model/generateVideo') {
-        return jsonResponse({ id: 'h3-legacy-empty-frame-task', status: 'created' });
+      if (String(url) === 'https://api.minimaxi.com/v2/video_generation') {
+        return jsonResponse({ task_id: 'h3-legacy-empty-frame-task' });
       }
       throw new Error('Unexpected URL: ' + url);
     };
@@ -469,13 +465,13 @@ test('MiniMax H3 rejects legacy empty frame requests before upstream submission'
 
 test('MiniMax H3 sends validated local first and last frames inline without a media upload', async () => {
   const previousFetch = globalThis.fetch;
-  await withEnvironment({ ATLASCLOUD_API_KEY: 'atlas-test-key', MINIMAX_API_KEY: null }, async () => {
+  await withEnvironment({ MINIMAX_API_KEY: 'minimax-test-key' }, async () => {
     const localFrame = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
     const calls = [];
     globalThis.fetch = async (url, options = {}) => {
       calls.push({ url: String(url), options });
-      if (String(url) === 'https://api.atlascloud.ai/api/v1/model/generateVideo') {
-        return jsonResponse({ id: 'h3-local-frame-task', status: 'created' });
+      if (String(url) === 'https://api.minimaxi.com/v2/video_generation') {
+        return jsonResponse({ task_id: 'h3-local-frame-task' });
       }
       throw new Error('Unexpected URL: ' + url);
     };
@@ -486,70 +482,58 @@ test('MiniMax H3 sends validated local first and last frames inline without a me
         urls: [localFrame, localFrame], referenceMediaTypes: ['image', 'image']
       });
       assert.equal(calls.length, 1);
-      assert.equal(calls.some((call) => call.url.endsWith('/uploadMedia')), false);
       const request = JSON.parse(calls[0].options.body);
-      assert.match(request.image, /^data:image\/png;base64,/);
-      assert.match(request.end_image, /^data:image\/png;base64,/);
+      assert.match(request.content[1].image_url.url, /^data:image\/png;base64,/);
+      assert.match(request.content[2].image_url.url, /^data:image\/png;base64,/);
     } finally {
       globalThis.fetch = previousFetch;
     }
   });
 });
 
-test('MiniMax H3 reference upload failures remain pre-submission failures', async () => {
+test('MiniMax H3 official submission outages remain ambiguous after the paid request starts', async () => {
   const previousFetch = globalThis.fetch;
-  await withEnvironment({ ATLASCLOUD_API_KEY: 'atlas-test-key', MINIMAX_API_KEY: null }, async () => {
-    const localReference = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+  await withEnvironment({ MINIMAX_API_KEY: 'minimax-test-key' }, async () => {
     const calls = [];
     globalThis.fetch = async (url) => {
       calls.push(String(url));
-      if (String(url).endsWith('/uploadMedia')) {
-        return jsonResponse({ message: 'temporary upload failure' }, 503);
-      }
-      throw new Error('The generation endpoint must not be called after an upload failure.');
+      return jsonResponse({ message: 'temporary creation failure' }, 503);
     };
     try {
       await assert.rejects(
         createVideoTask({
           providerId: 'video-1', prompt: 'local reference', resolution: '768P',
-          duration: 4, aspectRatio: 'adaptive', videoMode: 'omni',
-          urls: [localReference], referenceMediaTypes: ['image']
+          duration: 4, aspectRatio: 'adaptive', videoMode: 'first-frame',
+          urls: ['https://cdn.example.test/reference.png'], referenceMediaTypes: ['image']
         }),
-        (error) => error && error.preSubmissionFailure === true
-          && error.submissionAmbiguous === false
+        (error) => error && error.submissionAmbiguous === true
       );
-      assert.deepEqual(calls, ['https://api.atlascloud.ai/api/v1/model/uploadMedia']);
+      assert.deepEqual(calls, ['https://api.minimaxi.com/v2/video_generation']);
     } finally {
       globalThis.fetch = previousFetch;
     }
   });
 });
 
-test('MiniMax H3 ignores task links as outputs and reports moderation failures', async () => {
+test('MiniMax H3 official polling waits for output and reports terminal failures', async () => {
   const previousFetch = globalThis.fetch;
-  await withEnvironment({ ATLASCLOUD_API_KEY: 'atlas-test-key', MINIMAX_API_KEY: null }, async () => {
+  await withEnvironment({ MINIMAX_API_KEY: 'minimax-test-key' }, async () => {
     let polls = 0;
     globalThis.fetch = async (url) => {
-      if (String(url) === 'https://api.atlascloud.ai/api/v1/model/generateVideo') {
-        return jsonResponse({ id: 'h3-moderation-task', status: 'created' });
+      if (String(url) === 'https://api.minimaxi.com/v2/video_generation') {
+        return jsonResponse({ task_id: 'h3-failed-task' });
       }
-      if (String(url) === 'https://api.atlascloud.ai/api/v1/model/prediction/h3-moderation-task') {
+      if (String(url) === 'https://api.minimaxi.com/v2/query/video_generation/h3-failed-task') {
         polls += 1;
         return polls === 1
-          ? jsonResponse({
-              id: 'h3-moderation-task', status: 'completed', outputs: [],
-              urls: { get: 'https://api.atlascloud.ai/api/v1/model/prediction/h3-moderation-task' }
-            })
-          : jsonResponse({
-              id: 'h3-moderation-task', status: 'completed', outputs: [],
-              has_nsfw_contents: [true]
-            });
+          ? jsonResponse({ task: { id: 'h3-failed-task', status: 'processing' } })
+          : jsonResponse({ task: { id: 'h3-failed-task', status: 'failed', error_code: 'content_rejected', message: 'The content was rejected.' } });
       }
       throw new Error('Unexpected URL: ' + url);
     };
     try {
       const created = await createVideoTask({
-        providerId: 'video-1', prompt: 'moderation result', resolution: '768P',
+        providerId: 'video-1', prompt: 'failed result', resolution: '768P',
         duration: 4, aspectRatio: 'adaptive', videoMode: 'first-frame',
         urls: ['https://cdn.example.test/moderation-reference.png'],
         referenceMediaTypes: ['image']
@@ -557,44 +541,9 @@ test('MiniMax H3 ignores task links as outputs and reports moderation failures',
       assert.deepEqual(await pollVideoTask(created.providerId, created.taskId), { status: 'running' });
       assert.deepEqual(await pollVideoTask(created.providerId, created.taskId), {
         status: 'failed',
-        errorCode: 'reference-policy-rejected',
-        errorMessage: 'The request could not be completed because the content did not pass the safety review.'
+        errorCode: 'content_rejected',
+        errorMessage: 'The content was rejected.'
       });
-    } finally {
-      globalThis.fetch = previousFetch;
-    }
-  });
-});
-
-test('MiniMax H3 accepts the underscored Atlas secret name and nested output URLs', async () => {
-  const previousFetch = globalThis.fetch;
-  await withEnvironment({ ATLASCLOUD_API_KEY: null, ATLAS_CLOUD_API_KEY: 'atlas-underscored-key' }, async () => {
-    const calls = [];
-    globalThis.fetch = async (url, options = {}) => {
-      calls.push({ url: String(url), options });
-      if (String(url) === 'https://api.atlascloud.ai/api/v1/model/generateVideo') {
-        return jsonResponse({ data: { id: 'h3-underscored-task' }, status: 'created' });
-      }
-      if (String(url) === 'https://api.atlascloud.ai/api/v1/model/prediction/h3-underscored-task') {
-        return jsonResponse({
-          data: {
-            status: 'completed',
-            urls: { video: 'https://cdn.example.test/generated-result' }
-          }
-        });
-      }
-      throw new Error('Unexpected URL: ' + url);
-    };
-    try {
-      const created = await createVideoTask({
-        providerId: 'video-1', prompt: 'underscored Atlas secret', resolution: '768P',
-        duration: 4, aspectRatio: 'adaptive', videoMode: 'first-frame',
-        urls: ['https://cdn.example.test/secret-reference.png'],
-        referenceMediaTypes: ['image']
-      });
-      assert.equal(calls[0].options.headers.Authorization, 'Bearer atlas-underscored-key');
-      assert.equal((await pollVideoTask(created.providerId, created.taskId)).resultUrl,
-        'https://cdn.example.test/generated-result');
     } finally {
       globalThis.fetch = previousFetch;
     }
@@ -643,21 +592,16 @@ test('reference copyright policy rejections keep a specific public-safe error co
 });
 test('legacy synchronous video compatibility still creates, polls, and downloads MiniMax image-to-video output', async () => {
   const previousFetch = globalThis.fetch;
-  await withEnvironment({ ATLASCLOUD_API_KEY: 'atlas-test-key', MINIMAX_API_KEY: null }, async () => {
+  await withEnvironment({ MINIMAX_API_KEY: 'minimax-test-key' }, async () => {
     const video = Buffer.from([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x70, 0x34, 0x32]);
     const calls = [];
     globalThis.fetch = async (url, options = {}) => {
       calls.push({ url: String(url), options });
-      if (String(url) === 'https://api.atlascloud.ai/api/v1/model/generateVideo') {
-        return jsonResponse({ request_id: 'legacy-task-id' });
+      if (String(url) === 'https://api.minimaxi.com/v2/video_generation') {
+        return jsonResponse({ task_id: 'legacy-task-id' });
       }
-      if (String(url) === 'https://api.atlascloud.ai/api/v1/model/prediction/legacy-task-id') {
-        return jsonResponse({
-          data: {
-            status: 'succeeded',
-            video_url: 'https://cdn.example.test/legacy.mp4'
-          }
-        });
+      if (String(url) === 'https://api.minimaxi.com/v2/query/video_generation/legacy-task-id') {
+        return jsonResponse({ task: { status: 'succeeded', content: { url: 'https://cdn.example.test/legacy.mp4' } } });
       }
       if (String(url) === 'https://cdn.example.test/legacy.mp4') {
         return new Response(video, {
@@ -680,10 +624,10 @@ test('legacy synchronous video compatibility still creates, polls, and downloads
       });
       assert.deepEqual(result, video);
       assert.equal(calls.length, 3);
-      assert.equal(calls[0].options.headers.Authorization, 'Bearer atlas-test-key');
-      assert.equal(calls[1].options.headers.Authorization, 'Bearer atlas-test-key');
+      assert.equal(calls[0].options.headers.Authorization, 'Bearer minimax-test-key');
+      assert.equal(calls[1].options.headers.Authorization, 'Bearer minimax-test-key');
       assert.equal(calls[2].options.headers && calls[2].options.headers.Authorization, undefined);
-      assert.equal(calls.some((call) => call.url.includes('api.minimaxi.com')), false);
+      assert.equal(calls.some((call) => call.url.includes('api.atlascloud.ai')), false);
     } finally {
       globalThis.fetch = previousFetch;
     }
@@ -692,13 +636,13 @@ test('legacy synchronous video compatibility still creates, polls, and downloads
 
 test('legacy synchronous video compatibility rejects an HTTP 200 error page', async () => {
   const previousFetch = globalThis.fetch;
-  await withEnvironment({ ATLASCLOUD_API_KEY: 'atlas-test-key', MINIMAX_API_KEY: null }, async () => {
+  await withEnvironment({ MINIMAX_API_KEY: 'minimax-test-key' }, async () => {
     globalThis.fetch = async (url) => {
-      if (String(url) === 'https://api.atlascloud.ai/api/v1/model/generateVideo') {
-        return jsonResponse({ request_id: 'invalid-legacy-task' });
+      if (String(url) === 'https://api.minimaxi.com/v2/video_generation') {
+        return jsonResponse({ task_id: 'invalid-legacy-task' });
       }
-      if (String(url) === 'https://api.atlascloud.ai/api/v1/model/prediction/invalid-legacy-task') {
-        return jsonResponse({ data: { status: 'succeeded', video_url: 'https://cdn.example.test/error.mp4' } });
+      if (String(url) === 'https://api.minimaxi.com/v2/query/video_generation/invalid-legacy-task') {
+        return jsonResponse({ task: { status: 'succeeded', content: { url: 'https://cdn.example.test/error.mp4' } } });
       }
       if (String(url) === 'https://cdn.example.test/error.mp4') {
         return new Response(Buffer.from('<html>upstream error</html>'), { status: 200 });

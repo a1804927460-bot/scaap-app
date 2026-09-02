@@ -30,7 +30,7 @@ Authorization: Bearer <short-lived-supabase-access-token>
 QuickRouter is the built-in relay. Store its key as the sealed Railway variable
 `QUICKROUTER_API_KEY`. The temporary aliases `QUICK_API_KEY` and `Quick_API_KEY`
 are accepted during migration, but the canonical name is recommended.
-MiniMax H3 uses the Atlas Cloud sealed Railway variable `ATLASCLOUD_API_KEY`.
+MiniMax H3 uses the official MiniMax sealed Railway variable `MINIMAX_API_KEY`.
 The public product name remains MiniMax H3; the upstream credential is never
 written to `runtime.json`, GitHub, the desktop settings, or gateway responses.
 Legnext Midjourney V8.1 and V8.2 use the sealed Railway variable
@@ -38,7 +38,7 @@ Legnext Midjourney V8.1 and V8.2 use the sealed Railway variable
 header; task polling is performed server-side against the private job URL and
 the key is never returned to the desktop.
 
-AtlasCloud is the preferred provider for GPT Image 2, MiniMax H3, Seedance 2.0/2.5,
+AtlasCloud is the preferred provider for GPT Image 2, Seedance 2.0/2.5,
 and Butler 3D generation. Store its credential as the sealed Railway variable
 `ATLASCLOUD_API_KEY`.
 The catalog includes GPT Image 2 text-to-image and edit, Seedance image-to-video,

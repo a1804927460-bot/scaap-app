@@ -32,6 +32,33 @@ function publicModelLabel(value, fallback = 'AI model') {
 function publicAiErrorMessage(value, fallback = 'The AI service could not complete this request.') {
   let text = compactPublicText(value);
   if (!text) return fallback;
+  const language = String(
+    typeof document !== 'undefined' && document.documentElement
+      ? document.documentElement.dataset.language || 'en'
+      : 'en'
+  );
+  const localized = (en, zh, ko) => language === 'zh' ? zh : language === 'ko' ? ko : en;
+  if (/does not support (?:this|the selected) aspect ratio|invalid[-_ ]aspect[-_ ]ratio/i.test(text)) {
+    return localized(
+      'This aspect ratio is unavailable for the current generation mode. A supported ratio has been selected; please try again.',
+      '当前生成模式不支持这个画面比例，已自动切换为可用比例，请重试。',
+      '현재 생성 모드에서 이 화면 비율을 지원하지 않습니다. 지원되는 비율로 자동 변경했으니 다시 시도하세요.'
+    );
+  }
+  if (/does not support (?:this|the selected) resolution|invalid[-_ ]resolution/i.test(text)) {
+    return localized(
+      'This resolution is unavailable for the current generation mode. Choose another resolution and try again.',
+      '当前生成模式不支持这个分辨率，请更换分辨率后重试。',
+      '현재 생성 모드에서 이 해상도를 지원하지 않습니다. 다른 해상도를 선택한 후 다시 시도하세요.'
+    );
+  }
+  if (/does not support (?:this|the selected) duration|invalid[-_ ]duration/i.test(text)) {
+    return localized(
+      'This duration is unavailable for the current generation mode. Choose another duration and try again.',
+      '当前生成模式不支持这个时长，请更换时长后重试。',
+      '현재 생성 모드에서 이 길이를 지원하지 않습니다. 다른 길이를 선택한 후 다시 시도하세요.'
+    );
+  }
   text = text
     .replace(PUBLIC_SUPPLIER_DOMAIN_RE, 'AI service')
     .replace(PUBLIC_SUPPLIER_RE, 'AI service')

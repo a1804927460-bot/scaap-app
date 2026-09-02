@@ -73,6 +73,16 @@ assert.match(
 );
 assert.match(
   assistantSource,
+  /function assistantVideoRatios[\s\S]*?textRatios[\s\S]*?frameReferenceRatios[\s\S]*?function supportedAssistantVideoRatio[\s\S]*?ratios\.includes\('adaptive'\)/,
+  'video ratios must follow the exact attachment-dependent generation mode.'
+);
+assert.match(
+  assistantSource,
+  /submittedMediaOptions\.videoMode = selectedVideoMode\.id;[\s\S]*?submittedMediaOptions\.aspectRatio = supportedAssistantVideoRatio/,
+  'video submissions must normalize stale ratios against the final selected mode.'
+);
+assert.match(
+  assistantSource,
   /const saved = AiAssistant\.referenceAutoState[\s\S]*?ratioSelect\.disabled = saved\.ratioDisabled === true[\s\S]*?sizeSelect\.disabled = saved\.sizeDisabled === true[\s\S]*?saved\.ratio[\s\S]*?saved\.size/,
   'removing references must restore the previous ratio and size controls.'
 );

@@ -101,14 +101,10 @@ assert.deepEqual(
 );
 assert.equal(catalog.providers.find((provider) => provider.name === 'MiniMax H3').requiresActivation, false);
 const miniMaxH3 = catalog.providers.find((provider) => provider.id === 'video-1');
-assert.equal(miniMaxH3.keyEnv, 'ATLASCLOUD_API_KEY');
-assert.equal(miniMaxH3.protocol, 'atlas-minimax-h3-video');
-assert.match(miniMaxH3.endpoint, /api\.atlascloud\.ai\/api\/v1\/model\/generateVideo$/);
-assert.deepEqual(miniMaxH3.capabilities.upstreamRoutes, {
-  'first-frame': ['atlas-video-minimax-h3-i2v'],
-  'first-last-frame': ['atlas-video-minimax-h3-i2v'],
-  omni: ['atlas-video-minimax-h3-ref']
-});
+assert.equal(miniMaxH3.keyEnv, 'MINIMAX_API_KEY');
+assert.equal(miniMaxH3.protocol, 'minimax-video-v2');
+assert.match(miniMaxH3.endpoint, /api\.minimaxi\.com\/v2\/video_generation$/);
+assert.equal(miniMaxH3.capabilities.upstreamRoutes, undefined);
 assert.equal(miniMaxH3.capabilities.videoModes.some((mode) => mode.id === 'text'), false);
 assert.equal(catalog.providers.every((provider) => provider.requiresActivation === false), true);
 
