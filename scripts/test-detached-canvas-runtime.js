@@ -121,6 +121,7 @@ async function run() {
   if (!detachedLayout.detached || detachedLayout.canvasId !== sourceCanvasId || !detachedLayout.boardVisible || !detachedLayout.sidebarHidden || !detachedLayout.libraryHidden) {
     throw new Error(`Detached renderer did not lock to the source canvas: ${JSON.stringify(detachedLayout)}`);
   }
+  await waitForRenderer(mainDebugger.send, `Boolean(document.getElementById('board-panel') && document.getElementById('board-panel').classList.contains('is-canvas-library') && !document.getElementById('canvas-library-view').hidden)`);
   await detachedDebugger.send('Page.enable');
   const screenshot = await detachedDebugger.send('Page.captureScreenshot', { format: 'png' });
   const screenshotDir = path.join(root, 'test-artifacts');

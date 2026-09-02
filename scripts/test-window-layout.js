@@ -119,7 +119,7 @@ assert.match(main, /ipcMain\.on\('window:readyForInteraction'[\s\S]*?revealMainW
 assert.match(preload, /readyForInteraction:\s*\(\)\s*=>\s*ipcRenderer\.send\('window:readyForInteraction'\)/);
 assert.match(indexHtml, /id="board-detach-window"[^>]*title="Open in separate window"/,
   'The canvas header must expose a separate-window action at its far right.');
-assert.match(main, /const detachedCanvasWindows = new Map\(\)[\s\S]*?function createDetachedCanvasWindow\(canvasId, launchPoint = \{\}\)/,
+assert.match(main, /const detachedCanvasWindows = new Map\(\)[\s\S]*?function createDetachedCanvasWindow\(canvasId, launchPoint = \{\}, sourceWebContents = null\)/,
   'Detached canvases must be tracked and reused by canvas id.');
 assert.match(main, /detachedCanvasWindows\.get\(normalizedCanvasId\)[\s\S]*?revealRendererWindow\(existing\)[\s\S]*?reused:\s*true/,
   'Opening the same detached canvas twice must focus the existing window.');
@@ -127,14 +127,18 @@ assert.match(main, /detachedWindow\.loadFile\([\s\S]*?detachedCanvas:\s*normaliz
   'The detached renderer must be locked to the requested canvas through its launch query.');
 assert.match(main, /function rendererWindowForEvent\(event\)[\s\S]*?ipcMain\.handle\('window:minimize', \(event\)[\s\S]*?rendererWindowForEvent\(event\)/,
   'Native titlebar actions must target the renderer window that invoked them.');
-assert.match(main, /function startCanvasDetachDragWatch\(event, canvasId\)[\s\S]*?screen\.getCursorScreenPoint\(\)[\s\S]*?createDetachedCanvasWindow\(normalizedCanvasId, cursor\)/,
+assert.match(main, /function startCanvasDetachDragWatch\(event, canvasId\)[\s\S]*?screen\.getCursorScreenPoint\(\)[\s\S]*?createDetachedCanvasWindow\(normalizedCanvasId, cursor, sourceWindow\.webContents\)/,
   'Drag-out must retain a main-process cursor fallback for macOS and Windows window boundaries.');
 assert.match(preload, /openDetachedCanvas:[\s\S]*?beginCanvasDetachDrag:[\s\S]*?cancelCanvasDetachDrag:/,
   'The preload bridge must expose both click and long-press detach paths.');
+assert.match(preload, /onCanvasDetached:[\s\S]*?canvas:detached/,
+  'The preload bridge must notify the source window after detaching a canvas.');
 assert.match(canvasWorkspaceJs, /detachedCanvasId:[\s\S]*?function openActiveCanvasInDetachedWindow[\s\S]*?openDetachedCanvas\(canvas\.id/,
   'The canvas workspace must route the header action to the detached-window IPC.');
 assert.match(canvasWorkspaceJs, /if \(isDetachedCanvasWindow\(\) && canvasId !== CanvasWorkspace\.detachedCanvasId\) return;/,
   'A detached window must not follow canvas changes in the main window.');
+assert.match(canvasWorkspaceJs, /function returnMainWindowToCanvasLibrary[\s\S]*?showCanvasLibrary\(\)/,
+  'The source window must return to the canvas library after a successful detach.');
 assert.match(panelLayoutJs, /detachWatchTimer[\s\S]*?beginCanvasDetachDrag\(activeCanvasId\(\)\)[\s\S]*?outsideWindow[\s\S]*?openActiveCanvasInDetachedWindow/,
   'Long-pressing the canvas header and crossing the app boundary must detach the canvas.');
 assert.match(mainCss, /body\.is-detached-canvas-window #main-app[\s\S]*?grid-template-areas:\s*"board";[\s\S]*?#main-app > :not\(#board-panel\)/,

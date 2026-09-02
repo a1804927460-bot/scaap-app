@@ -3334,7 +3334,7 @@ function detachedCanvasWindowBounds(launchPoint = {}) {
   };
 }
 
-function createDetachedCanvasWindow(canvasId, launchPoint = {}) {
+function createDetachedCanvasWindow(canvasId, launchPoint = {}, sourceWebContents = null) {
   const normalizedCanvasId = String(canvasId || '').trim();
   const canvas = store && store.data.canvases.find((entry) => entry.id === normalizedCanvasId);
   if (!canvas) return { ok: false, reason: 'canvas-not-found' };
@@ -3342,6 +3342,9 @@ function createDetachedCanvasWindow(canvasId, launchPoint = {}) {
   const existing = detachedCanvasWindows.get(normalizedCanvasId);
   if (existing && !existing.isDestroyed()) {
     revealRendererWindow(existing);
+    if (sourceWebContents && !sourceWebContents.isDestroyed()) {
+      sourceWebContents.send('canvas:detached', { canvasId: normalizedCanvasId, reused: true });
+    }
     return { ok: true, reused: true };
   }
 
@@ -3391,6 +3394,9 @@ function createDetachedCanvasWindow(canvasId, launchPoint = {}) {
       detachedCanvasWindows.delete(normalizedCanvasId);
     }
   });
+  if (sourceWebContents && !sourceWebContents.isDestroyed()) {
+    sourceWebContents.send('canvas:detached', { canvasId: normalizedCanvasId, reused: false });
+  }
   return { ok: true, reused: false };
 }
 
@@ -3434,7 +3440,7 @@ function startCanvasDetachDragWatch(event, canvasId) {
       || cursor.y > bounds.y + bounds.height + 4;
     if (!outside) return;
     stopCanvasDetachDragWatch(webContentsId);
-    createDetachedCanvasWindow(normalizedCanvasId, cursor);
+    createDetachedCanvasWindow(normalizedCanvasId, cursor, sourceWindow.webContents);
   }, 32);
   const timeout = setTimeout(() => stopCanvasDetachDragWatch(webContentsId), 10_000);
   canvasDetachDragWatches.set(webContentsId, { interval, timeout });
@@ -9993,8 +9999,8 @@ function registerIpcHandlers() {
     };
   });
 
-  ipcMain.handle('canvas:openDetached', (_evt, canvasId, launchPoint) => {
-    return createDetachedCanvasWindow(canvasId, launchPoint);
+  ipcMain.handle('canvas:openDetached', (event, canvasId, launchPoint) => {
+    return createDetachedCanvasWindow(canvasId, launchPoint, event.sender);
   });
 
   ipcMain.handle('canvas:export', async (event, canvasId) => {

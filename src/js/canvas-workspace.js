@@ -60,6 +60,13 @@ async function openActiveCanvasInDetachedWindow(launchPoint = {}) {
   }
 }
 
+function returnMainWindowToCanvasLibrary() {
+  if (isDetachedCanvasWindow()) return;
+  const panel = document.getElementById('board-panel');
+  if (!panel || panel.classList.contains('is-canvas-library')) return;
+  showCanvasLibrary();
+}
+
 function applyRemoteCanvasItemsChange(payload = {}) {
   const canvasId = String(payload.canvasId || '').trim();
   if (!canvasId) return;
@@ -2208,6 +2215,9 @@ async function initCanvasWorkspace(initial) {
   }
   if (window.messsAPI && typeof window.messsAPI.onCanvasStateChanged === 'function') {
     window.messsAPI.onCanvasStateChanged(applyRemoteCanvasStateChange);
+  }
+  if (window.messsAPI && typeof window.messsAPI.onCanvasDetached === 'function') {
+    window.messsAPI.onCanvasDetached(returnMainWindowToCanvasLibrary);
   }
   document.getElementById('canvas-library-search').addEventListener('input', (event) => {
     CanvasWorkspace.libraryQuery = event.target.value;
