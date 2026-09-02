@@ -76,9 +76,8 @@ assert.deepEqual(gptImage2Provider.capabilities.sizes, ['1K', '2K', '4K']);
 assert.deepEqual(gptImage2Provider.capabilities.resolutionPresets, ['1K', '2K', '4K']);
 assert.deepEqual(gptImage2Provider.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
 assert.deepEqual(gptImage2Provider.capabilities.ratios, [
-  'auto', '1:1', '16:9', '9:16', '16:10', '10:16', '2:1', '1:2',
-  '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9', '9:21', '3:1',
-  '1:3', '7:5', '5:7', '8:5', '5:8'
+  'auto', '1:1', '3:2', '2:3', '4:3', '3:4', '5:4', '4:5', '16:9',
+  '9:16', '2:1', '1:2', '21:9', '9:21'
 ]);
 assert.equal(gptImage2Provider.capabilities.arbitrarySizes, true);
 assert.equal(gptImage2Provider.capabilities.arbitraryRatios, true);

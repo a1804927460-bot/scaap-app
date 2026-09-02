@@ -406,34 +406,6 @@ function requestRouteIds(provider, body = {}) {
   return [...new Set([provider.id, ...(provider.fallbackProviderIds || [])])];
 }
 
-function boundedTrafficPercent(value, fallback = 60) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : fallback;
-}
-
-function aireiterTrafficPercent(provider) {
-  let overrides = {};
-  try {
-    const parsed = JSON.parse(process.env.AIREITER_TRAFFIC_JSON || '{}');
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) overrides = parsed;
-  } catch {}
-  const keys = [provider && provider.id, provider && provider.logicalModel]
-    .map((value) => String(value || '').trim())
-    .filter(Boolean);
-  for (const key of keys) {
-    if (Object.prototype.hasOwnProperty.call(overrides, key)) {
-      return boundedTrafficPercent(overrides[key]);
-    }
-  }
-  return boundedTrafficPercent(process.env.AIREITER_TRAFFIC_PERCENT, 60);
-}
-
-function deterministicTrafficBucket(body = {}) {
-  const identity = String(body.operationId || body.requestId || '').trim();
-  if (!identity) return 100;
-  return createHash('sha256').update(identity).digest().readUInt32BE(0) % 100;
-}
-
 function isAireiterProvider(provider) {
   return provider && (
     provider.protocol === 'aireiter-async'
@@ -441,17 +413,14 @@ function isAireiterProvider(provider) {
   );
 }
 
-function orderMixedRouteIds(routeIds, byId, requested, body = {}) {
+function orderMixedRouteIds(routeIds, byId) {
   const unique = [...new Set(routeIds.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))];
   const aireiter = unique.filter((id) => isAireiterProvider(byId.get(id)));
   const existing = unique.filter((id) => !aireiter.includes(id));
-  if (!aireiter.length) return unique;
-  const percent = aireiterTrafficPercent(requested);
-  if (percent <= 0) return existing;
-  if (percent >= 100) return [...aireiter, ...existing];
-  return deterministicTrafficBucket(body) < percent
-    ? [...aireiter, ...existing]
-    : [...existing, ...aireiter];
+  // AI Reiter is the product's fixed primary route. Legacy providers remain
+  // in the list only as compatible fallbacks after a proven pre-submission
+  // rejection; traffic percentages must never silently demote the primary.
+  return [...aireiter, ...existing];
 }
 
 function compactProviderIdentity(value) {
@@ -825,8 +794,9 @@ function aireiterTaskStatus(payload) {
 
 function markAireiterSubmitError(error) {
   const status = Number(error && error.status);
-  if ([400, 401, 402, 425, 429, 433].includes(status)) {
+  if ([400, 401, 402, 404, 425, 429, 433].includes(status)) {
     error.safeToFallback = true;
+    error.preSubmissionFailure = true;
     error.submissionAmbiguous = false;
   } else if (error.preSubmissionFailure !== true) {
     error.submissionAmbiguous = true;
@@ -845,7 +815,21 @@ async function submitAireiterTask(provider, body, params, signal) {
       body: JSON.stringify({ model: provider.model, params, out_task_id: outTaskId })
     }), 'Generation service');
   } catch (error) {
-    throw markAireiterSubmitError(error);
+    const classified = markAireiterSubmitError(error);
+    // The POST may have reached the service even when its response was lost.
+    // Probe the same deterministic task ID before allowing any fallback. A
+    // successful probe proves that the paid task exists and pins recovery to
+    // AI Reiter without submitting it a second time.
+    if (classified.submissionAmbiguous === true && !(signal && signal.aborted)) {
+      try {
+        await queryAireiterTask(provider, outTaskId, signal);
+        return outTaskId;
+      } catch (probeError) {
+        // A failed probe cannot prove that the original POST was not accepted.
+        // Preserve the ambiguous state so the durable job can recover later.
+      }
+    }
+    throw classified;
   }
   const code = aireiterPayloadCode(payload);
   if (code !== 200) {
@@ -853,7 +837,10 @@ async function submitAireiterTask(provider, body, params, signal) {
       status: code >= 400 && code < 600 ? code : 502,
       code: 'provider-request-failed'
     });
-    if ([400, 401, 402, 425, 429, 433].includes(code)) error.safeToFallback = true;
+    if ([400, 401, 402, 404, 425, 429, 433].includes(code)) {
+      error.safeToFallback = true;
+      error.preSubmissionFailure = true;
+    }
     else error.submissionAmbiguous = true;
     throw error;
   }
@@ -888,17 +875,27 @@ function aireiterImageParams(provider, body) {
     if (urls.length > 8) throw aireiterLocalRejection('This route accepts at most 8 reference images.', 'too-many-references');
     return {
       prompt,
-      ...(urls.length ? { image_url: urls } : {}),
+      // AI Reiter's documented contract is a comma-separated string, not
+      // the array accepted by some of the legacy image relays.
+      ...(urls.length ? { image_url: urls.join(',') } : {}),
       ...(/^\d+:\d+$/.test(ratio) ? { aspect_ratio: ratio } : {}),
       resolution: ['1K', '2K', '4K'].includes(resolution) ? resolution : '2K'
     };
   }
   if (provider.model === 'gpt_image_2') {
     if (urls.length > 10) throw aireiterLocalRejection('This route accepts at most 10 reference images.', 'too-many-references');
+    const customSize = /^\d{2,4}x\d{2,4}$/i.test(String(body.size || '').trim())
+      ? gptImage2Size(body)
+      : '';
     return {
       prompt,
       ...(urls.length ? { image_url: urls } : {}),
-      size: gptImage2Size(body)
+      ...(customSize
+        ? { size: customSize }
+        : {
+            ...(/^\d+:\d+$/.test(ratio) ? { aspect_ratio: ratio } : {}),
+            resolution: ['1K', '2K', '4K'].includes(resolution) ? resolution : '2K'
+          })
     };
   }
   if (provider.model === 'mj_v8_1') {
@@ -915,48 +912,69 @@ function aireiterImageParams(provider, body) {
 
 async function generateAireiterImage(provider, body, signal, hooks = {}) {
   const recovered = body && body._acceptedTask;
-  const taskId = recovered && recovered.taskId
-    ? validVideoTaskId(recovered.taskId)
-    : await submitAireiterTask(provider, body, aireiterImageParams(provider, body), signal);
+  const relayTokens = [];
+  let requestBody = body;
   try {
-    if (!recovered && typeof hooks.onAccepted === 'function') {
-      await hooks.onAccepted({ providerId: provider.id, taskId, pollUrl: provider.resultEndpoint });
+    // AI Reiter fetches reference images asynchronously after submission. A
+    // desktop data URL is not reachable from that service, so expose local
+    // references through an owner-opaque, short-lived gateway relay and keep
+    // it alive until the task has produced its result.
+    if (!recovered && Array.isArray(body && body.urls)) {
+      const urls = body.urls.map((value) => {
+        const source = String(value || '').trim();
+        if (!/^data:image\//i.test(source)) return source;
+        const image = stripImageMetadata(parseImageDataUrl(source, { maxBytes: 30 * 1024 * 1024 }));
+        const relay = storeAi302RelayAsset(image, { relayTtlMs: 25 * 60 * 1000 });
+        relayTokens.push(relay.token);
+        return relay.url;
+      });
+      requestBody = { ...body, urls };
     }
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < 20 * 60_000) {
-      const payload = await queryAireiterTask(provider, taskId, signal);
-      const status = aireiterTaskStatus(payload);
-      if (status === 'succeeded') {
-        const mediaUrl = aireiterOutputUrl(payload);
-        if (!mediaUrl) {
-          throw Object.assign(new Error('The completed image task did not return a file.'), {
-            code: 'provider-result-missing',
+    const taskId = recovered && recovered.taskId
+      ? validVideoTaskId(recovered.taskId)
+      : await submitAireiterTask(provider, requestBody, aireiterImageParams(provider, requestBody), signal);
+    try {
+      if (!recovered && typeof hooks.onAccepted === 'function') {
+        await hooks.onAccepted({ providerId: provider.id, taskId, pollUrl: provider.resultEndpoint });
+      }
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < 20 * 60_000) {
+        const payload = await queryAireiterTask(provider, taskId, signal);
+        const status = aireiterTaskStatus(payload);
+        if (status === 'succeeded') {
+          const mediaUrl = aireiterOutputUrl(payload);
+          if (!mediaUrl) {
+            throw Object.assign(new Error('The completed image task did not return a file.'), {
+              code: 'provider-result-missing',
+              status: 502,
+              providerTaskTerminalFailure: true
+            });
+          }
+          const buffer = validateGeneratedMediaBuffer('image', await downloadGeneratedImage(mediaUrl, signal));
+          if (typeof hooks.onReady === 'function') {
+            await hooks.onReady({ providerId: provider.id, taskId, mediaUrl, buffer });
+          }
+          return buffer;
+        }
+        if (TERMINAL_VIDEO_FAILURES.has(status)) {
+          throw Object.assign(new Error('The image generation task failed.'), {
+            code: `provider-${status}`,
             status: 502,
             providerTaskTerminalFailure: true
           });
         }
-        const buffer = validateGeneratedMediaBuffer('image', await downloadGeneratedImage(mediaUrl, signal));
-        if (typeof hooks.onReady === 'function') {
-          await hooks.onReady({ providerId: provider.id, taskId, mediaUrl, buffer });
-        }
-        return buffer;
+        await delayWithSignal(2_000, signal);
       }
-      if (TERMINAL_VIDEO_FAILURES.has(status)) {
-        throw Object.assign(new Error('The image generation task failed.'), {
-          code: `provider-${status}`,
-          status: 502,
-          providerTaskTerminalFailure: true
-        });
-      }
-      await delayWithSignal(2_000, signal);
+      throw Object.assign(new Error('The image generation task timed out.'), {
+        code: 'provider-timeout', status: 504
+      });
+    } catch (error) {
+      error.taskId ||= taskId;
+      error.providerTaskAccepted = true;
+      throw error;
     }
-    throw Object.assign(new Error('The image generation task timed out.'), {
-      code: 'provider-timeout', status: 504
-    });
-  } catch (error) {
-    error.taskId ||= taskId;
-    error.providerTaskAccepted = true;
-    throw error;
+  } finally {
+    relayTokens.forEach((token) => deleteAi302RelayAsset(token));
   }
 }
 
@@ -1234,7 +1252,7 @@ async function responseJson(response, providerName = 'Video provider') {
     const retryable = channelUnavailable || [401, 402, 425, 429].includes(response.status) || response.status >= 500;
     // A fallback is safe only when the HTTP response explicitly proves that
     // the provider rejected the request before creating a billable task.
-    const safeToFallback = channelUnavailable || [401, 402, 425, 429].includes(response.status);
+    const safeToFallback = channelUnavailable || [401, 402, 404, 425, 429].includes(response.status);
     throw Object.assign(new Error(referencePolicyRejected
       ? 'The reference image may contain copyrighted or restricted content. Choose another reference image.'
       : channelUnavailable
@@ -1252,6 +1270,7 @@ async function responseJson(response, providerName = 'Video provider') {
       retryAfterMs: Number.isFinite(retryAfter) && retryAfter > 0
         ? Math.min(120_000, retryAfter * 1000)
         : channelUnavailable ? 500 : 0,
+      preSubmissionFailure: safeToFallback,
       submissionAmbiguous: !safeToFallback && response.status >= 500
     });
   }
@@ -2955,8 +2974,24 @@ export async function chat(body, signal) {
         const modelRejected = [400, 404].includes(status)
           && /model|not found|unsupported|does not exist|invalid/i.test(message);
         // A logical/upstream alias mismatch is an explicit pre-accept rejection.
-        if (!modelRejected || !logicalModel || String(model).trim() === String(logicalModel).trim()) throw error;
-        return await requestWithModel(logicalModel);
+        if (!modelRejected) throw error;
+        if (!logicalModel || String(model).trim() === String(logicalModel).trim()) {
+          error.preSubmissionFailure = true;
+          error.safeToFallback = true;
+          throw error;
+        }
+        try {
+          return await requestWithModel(logicalModel);
+        } catch (aliasError) {
+          const aliasStatus = Number(aliasError && aliasError.status);
+          const aliasMessage = String(aliasError && aliasError.message || '');
+          if ([400, 404].includes(aliasStatus)
+              && /model|not found|unsupported|does not exist|invalid/i.test(aliasMessage)) {
+            aliasError.preSubmissionFailure = true;
+            aliasError.safeToFallback = true;
+          }
+          throw aliasError;
+        }
       }
     } catch (error) {
       lastError = error;

@@ -37,19 +37,15 @@ Set `AIREITER_API_KEY` as a sealed Railway variable to enable AI Reiter for
 Nano Banana Pro, GPT Image 2, Midjourney V8.1, MiniMax H3, Seedance 2.0/2.5,
 Kling V3/O3, and Agent chat. ChaserPro is intentionally unchanged.
 
-`AIREITER_TRAFFIC_PERCENT` controls the percentage of supported requests that
-try AI Reiter first and defaults to `60`. Existing upstreams receive the rest
-of the traffic and stay available as safe fallbacks, allowing existing balances
-to be consumed during migration. Set it to `0` to disable AI Reiter or `100` to
-make it the first route. Per-product overrides are also supported:
-
-```text
-AIREITER_TRAFFIC_JSON={"image-1":70,"video-1":50,"chat-1":60}
-```
-
-Route selection is deterministic from the operation ID, so a retry keeps the
-same first route. Once an upstream accepts a task, polling and recovery remain
-pinned to that route and the paid request is never submitted elsewhere.
+When `AIREITER_API_KEY` is configured, AI Reiter is always the first route for
+every supported product. Existing upstreams remain available as safe fallbacks
+after a provable pre-acceptance rejection. The old traffic-split environment
+variables are ignored so a deployment cannot silently demote AI Reiter.
+Once an upstream accepts a task, polling and recovery remain pinned to that
+route and the paid request is never submitted elsewhere.
+Customer quotes and reservations remain attached to the public logical model,
+not the selected fallback route. Switching upstreams therefore never changes
+the price displayed to the customer or the amount reserved for the request.
 
 Set `PROVIDER_USER_HASH_SECRET` to a separate stable random secret. The gateway
 turns each authenticated Supabase user ID into a stable anonymous value such as
@@ -58,9 +54,8 @@ separates upstream usage by user without exposing email addresses, Google
 profile data, names, or raw Supabase UUIDs. Keep the secret unchanged across
 deploys so account identities remain stable.
 
-MiniMax H3 uses AI Reiter for all new requests when
-`AIREITER_TRAFFIC_JSON` contains `"minimax-h3":100` (or `"video-1":100`).
-The older MiniMax route remains available only as a safe fallback after a
+MiniMax H3 uses AI Reiter for all new requests. The older MiniMax
+route remains available only as a safe fallback after a
 provable pre-acceptance rejection; accepted or ambiguous paid tasks are never
 replayed. The public product name remains MiniMax H3, and upstream credentials
 are never written to `runtime.json`, GitHub, desktop settings, or responses.
@@ -116,7 +111,7 @@ The 302-compatible tools also support optional server-only failover routes. Set
 `AI302_BACKUP_ROUTES_JSON` to a JSON array of `{ "id", "baseUrl", "keyEnv" }`
 entries and provide each named key as a sealed Railway variable. The gateway
 accepts only HTTPS routes and ignores routes without a valid key. Failover is
-limited to an explicit 402, 425, or 429 response before a task is accepted; a
+limited to an explicit pre-submission rejection before a task is accepted; a
 timeout, network error, 5xx response, malformed success, or download failure
 never submits the same paid request to another route. After a task is accepted,
 its encrypted task token pins status and download requests to the route that
@@ -217,8 +212,8 @@ Only same-kind, same-capability-family entries are eligible. For example:
 
 The same structure applies to every configured image, video, or chat provider.
 Failover occurs only when the first route explicitly proves that it rejected
-the request before accepting it (`402`, `425`, `429`, or a declared channel
-configuration outage). A timeout, network error, `5xx`, malformed success,
+the request before accepting it (`401`, `402`, `404`, `425`, `429`, or a declared
+channel configuration outage). A timeout, network error, `5xx`, malformed success,
 accepted task id, or result download failure is state-ambiguous and is never
 replayed to another route. Accepted tasks stay pinned to their original route
 for polling and recovery. The desktop receives only the public product labels;

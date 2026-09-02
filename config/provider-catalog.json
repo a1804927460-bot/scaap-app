@@ -1,5 +1,5 @@
 {
-  "version": 48,
+  "version": 49,
   "providers": [
     {
       "id": "atlas-image-gpt2",
@@ -186,7 +186,7 @@
       "capabilities": {
         "sizes": ["1K", "2K", "4K"],
         "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"],
-        "maxReferenceImages": 14,
+        "maxReferenceImages": 8,
         "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
       },
       "keyEnv": "QUICKROUTER_API_KEY"
@@ -269,7 +269,7 @@
         "resolutionPresets": ["1K", "2K", "4K"],
         "sizes": ["1K", "2K", "4K"],
         "qualities": ["low", "medium", "high", "auto"],
-        "ratios": ["auto", "1:1", "16:9", "9:16", "16:10", "10:16", "2:1", "1:2", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9", "9:21", "3:1", "1:3", "7:5", "5:7", "8:5", "5:8"],
+        "ratios": ["auto", "1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "2:1", "1:2", "21:9", "9:21"],
         "arbitraryRatios": true,
         "arbitrarySizes": true,
         "minimumAspectRatio": 0.3333333333333333,
@@ -283,7 +283,7 @@
         "maxReferenceImageBytes": 26214399,
         "referenceDataUrlsOnly": true,
         "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"],
-        "upstreamPriority": ["atlas-image-gpt2", "image-6"]
+        "upstreamPriority": ["aireiter-image-gpt2", "atlas-image-gpt2", "image-6"]
       },
       "keyEnv": "AI302_KEY"
     },
@@ -603,9 +603,9 @@
           "outputFormats": ["mp4"]
         },
         "upstreamRoutes": {
-          "first-frame": ["atlas-video-seedance20-i2v", "video-2"],
-          "first-last-frame": ["atlas-video-seedance20-i2v", "video-2"],
-          "omni": ["atlas-video-seedance20-ref", "video-2"]
+          "first-frame": ["aireiter-video-seedance20", "atlas-video-seedance20-i2v", "video-2"],
+          "first-last-frame": ["aireiter-video-seedance20", "atlas-video-seedance20-i2v", "video-2"],
+          "omni": ["aireiter-video-seedance20", "atlas-video-seedance20-ref", "video-2"]
         }
       },
       "keyEnv": "AI302_KEY"
@@ -672,12 +672,12 @@
           "outputFormats": ["mp4"]
         },
         "upstreamRoutes": {
-          "first-frame": ["atlas-video-seedance25-i2v", "video-3"],
-          "first-last-frame": ["atlas-video-seedance25-i2v", "video-3"],
-          "omni": ["atlas-video-seedance25-ref", "video-3"],
-          "video-reference": ["atlas-video-seedance25-ref", "video-3"],
-          "video-edit": ["atlas-video-seedance25-ref", "video-3"],
-          "video-extend": ["atlas-video-seedance25-ref", "video-3"]
+          "first-frame": ["aireiter-video-seedance25", "atlas-video-seedance25-i2v", "video-3"],
+          "first-last-frame": ["aireiter-video-seedance25", "atlas-video-seedance25-i2v", "video-3"],
+          "omni": ["aireiter-video-seedance25", "atlas-video-seedance25-ref", "video-3"],
+          "video-reference": ["aireiter-video-seedance25", "atlas-video-seedance25-ref", "video-3"],
+          "video-edit": ["aireiter-video-seedance25", "atlas-video-seedance25-ref", "video-3"],
+          "video-extend": ["aireiter-video-seedance25", "atlas-video-seedance25-ref", "video-3"]
         }
       },
       "keyEnv": "AI302_KEY"
