@@ -49,6 +49,10 @@ assert.match(source, /root\.addEventListener\('paste'[\s\S]*getData\('text\/plai
   'External clipboard and drop input must stay text-only.');
 assert.match(source, /function createBoardMoodboard[\s\S]*isMoodboard: true[\s\S]*recordBoardItemsHistory\('add'[\s\S]*moodboardPersistItem/,
   'Moodboards must be durable canvas items with undo history.');
+assert.match(source, /if \(options\.open === true\)[\s\S]*openMoodboardEditor\(item\)/,
+  'A newly created moodboard must stay closed unless an entry point explicitly asks to open it.');
+assert.doesNotMatch(source, /createBoardMoodboard\(\{\s*text:\s*value,\s*open:\s*true\s*\}\)/,
+  'Creating a moodboard from Agent text must not open the editor automatically.');
 assert.match(source, /function openMoodboardEditor[\s\S]*classList\.add\('is-open'\)[\s\S]*function closeMoodboardEditor/,
   'Double-click editing must use the dedicated half-screen editor.');
 assert.match(source, /function requestMoodboardAgentOptimization[\s\S]*referenceFiles: \[\][\s\S]*moodboardSuggestion/,

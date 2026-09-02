@@ -310,7 +310,7 @@ function createBoardMoodboard(options = {}) {
   moodboardPersistItem(item);
   renderBoard();
   showToast(t('Text moodboard created', '文字情绪板已建立'));
-  if (options.open !== false) window.setTimeout(() => openMoodboardEditor(item), 50);
+  if (options.open === true) window.setTimeout(() => openMoodboardEditor(item), 50);
   return item;
 }
 
@@ -324,7 +324,7 @@ function openMoodboardTargetPicker(text) {
   if (!value) return false;
   const moodboards = moodboardItemsForCanvas();
   if (!moodboards.length) {
-    createBoardMoodboard({ text: value, open: true });
+    createBoardMoodboard({ text: value });
     return true;
   }
   if (moodboards.length === 1) return addAgentTextToMoodboard(moodboards[0], value);
@@ -371,7 +371,7 @@ function openMoodboardTargetPicker(text) {
   create.textContent = t('New moodboard', '新建情绪板');
   create.addEventListener('click', () => {
     closeMoodboardTargetPicker();
-    createBoardMoodboard({ text: value, open: true });
+    createBoardMoodboard({ text: value });
   });
   dialog.append(header, list, create);
   overlay.appendChild(dialog);

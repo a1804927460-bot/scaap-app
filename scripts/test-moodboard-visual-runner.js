@@ -49,8 +49,12 @@ async function run() {
       if (level >= 2) process.stderr.write(`[renderer] ${message}\n`);
     });
     await win.loadFile(htmlPath);
-    const setup = await win.webContents.executeJavaScript(`(() => { try { initBoardMoodboards(); document.getElementById('board-tool-moodboard').click(); return {ok:true}; } catch (error) { return {ok:false,error:error && error.stack || String(error)}; } })()`);
+    const setup = await win.webContents.executeJavaScript(`(() => { try { initBoardMoodboards(); document.getElementById('board-tool-moodboard').click(); return {ok:true,overlayHidden:document.getElementById('moodboard-overlay').hidden,itemCount:AppState.boardItems.length}; } catch (error) { return {ok:false,error:error && error.stack || String(error)}; } })()`);
     if (!setup.ok) throw new Error(`Moodboard setup failed: ${setup.error}`);
+    if (!setup.overlayHidden || setup.itemCount !== 1) throw new Error(`Moodboard creation must stay closed: ${JSON.stringify(setup)}`);
+    await wait(180);
+    const opened = await win.webContents.executeJavaScript(`(() => { try { document.querySelector('.board-moodboard').dispatchEvent(new MouseEvent('dblclick',{bubbles:true,button:0})); return !document.getElementById('moodboard-overlay').hidden; } catch (error) { return false; } })()`);
+    if (!opened) throw new Error('Moodboard did not open after an explicit double click.');
     await wait(180);
     const edit = await win.webContents.executeJavaScript(`(() => { try { const quill=Quill.find(document.querySelector('#moodboard-editor')); quill.setText('视觉方向一\\n保留克制的黑色轮廓，以冷色光线建立节奏。\\n\\n视觉方向二\\n强调材质反差与清晰的空间层级。'); document.querySelector('[data-moodboard-agent-action="polish"]').click(); return {ok:true}; } catch (error) { return {ok:false,error:error && error.stack || String(error)}; } })()`);
     if (!edit.ok) throw new Error(`Moodboard edit failed: ${edit.error}`);
