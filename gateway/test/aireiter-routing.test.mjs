@@ -100,6 +100,7 @@ test('AI Reiter video tasks stay pinned to their accepted route', async () => {
         assert.equal(body.model, 'minimax_h3');
         assert.equal(body.params.type, 'first_last_frame');
         assert.deepEqual(body.params.image_url, ['https://assets.example.com/first.png']);
+        assert.equal(body.params.aspect_ratio, undefined);
         return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
       }
       if (value.endsWith('/api/openapi/query')) {
@@ -128,6 +129,68 @@ test('AI Reiter video tasks stay pinned to their accepted route', async () => {
       status: 'succeeded', resultUrl: 'https://assets.example.com/result.mp4'
     });
     assert.equal(calls.some((call) => call.url.includes('api.minimaxi.com')), false);
+  }).finally(() => { globalThis.fetch = previousFetch; });
+});
+
+test('100 percent AI Reiter traffic is absolute even without an operation ID', async () => {
+  const previousFetch = globalThis.fetch;
+  await withEnvironment({
+    AIREITER_API_KEY: 'aireiter-key',
+    AIREITER_TRAFFIC_PERCENT: '100',
+    AIREITER_TRAFFIC_JSON: undefined,
+    MINIMAX_API_KEY: 'legacy-key'
+  }, async () => {
+    const calls = [];
+    globalThis.fetch = async (url, options = {}) => {
+      const value = String(url);
+      calls.push(value);
+      if (value.endsWith('/api/openapi/submit')) {
+        const body = JSON.parse(options.body);
+        assert.equal(body.model, 'minimax_h3');
+        return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
+      }
+      throw new Error(`Unexpected route: ${value}`);
+    };
+
+    const task = await createVideoTask({
+      providerId: 'video-1',
+      prompt: 'test video',
+      resolution: '768P',
+      duration: 5,
+      aspectRatio: '16:9',
+      videoMode: 'first-frame',
+      urls: ['https://assets.example.com/first.png'],
+      referenceMediaTypes: ['image']
+    });
+    assert.equal(task.providerId, 'aireiter-video-minimax-h3');
+    assert.deepEqual(calls, ['https://aireiter.com/api/openapi/submit']);
+  }).finally(() => { globalThis.fetch = previousFetch; });
+});
+
+test('AI Reiter MiniMax H3 rejects unsupported frame media before submission', async () => {
+  const previousFetch = globalThis.fetch;
+  await withEnvironment({
+    AIREITER_API_KEY: 'aireiter-key',
+    AIREITER_TRAFFIC_PERCENT: '100',
+    MINIMAX_API_KEY: 'legacy-key'
+  }, async () => {
+    const calls = [];
+    globalThis.fetch = async (url) => {
+      calls.push(String(url));
+      throw new Error('No upstream request should be sent.');
+    };
+    await assert.rejects(createVideoTask({
+      providerId: 'video-1',
+      operationId: '23232323-2323-4232-8232-232323232323',
+      prompt: 'test video',
+      resolution: '2K',
+      duration: 5,
+      aspectRatio: '16:9',
+      videoMode: 'first-frame',
+      urls: ['https://assets.example.com/reference.mp4'],
+      referenceMediaTypes: ['video']
+    }), { code: 'invalid-reference-media' });
+    assert.deepEqual(calls, []);
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 

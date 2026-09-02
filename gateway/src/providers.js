@@ -448,6 +448,7 @@ function orderMixedRouteIds(routeIds, byId, requested, body = {}) {
   if (!aireiter.length) return unique;
   const percent = aireiterTrafficPercent(requested);
   if (percent <= 0) return existing;
+  if (percent >= 100) return [...aireiter, ...existing];
   return deterministicTrafficBucket(body) < percent
     ? [...aireiter, ...existing]
     : [...existing, ...aireiter];
@@ -2506,10 +2507,28 @@ function aireiterVideoParams(provider, body) {
 
   if (provider.model === 'minimax_h3') {
     if (!referenceCount) throw aireiterLocalRejection('MiniMax H3 requires reference media.', 'reference-required');
+    const frameMode = ['first-frame', 'first-last-frame'].includes(mode);
+    if (frameMode && (!images.length || images.length > 2 || videos.length || audios.length)) {
+      throw aireiterLocalRejection(
+        'MiniMax H3 frame generation accepts one or two image references only.',
+        'invalid-reference-media'
+      );
+    }
+    if (!frameMode && images.length > 9) {
+      throw aireiterLocalRejection('MiniMax H3 accepts at most 9 reference images.', 'too-many-references');
+    }
+    if (!frameMode && videos.length > 1) {
+      throw aireiterLocalRejection('MiniMax H3 accepts at most 1 reference video.', 'too-many-reference-videos');
+    }
+    if (!frameMode && audios.length > 3) {
+      throw aireiterLocalRejection('MiniMax H3 accepts at most 3 reference audio files.', 'too-many-reference-audios');
+    }
     return {
-      ...common,
-      type: ['first-frame', 'first-last-frame'].includes(mode) ? 'first_last_frame' : 'all_reference',
+      prompt,
+      video_length: common.video_length,
+      type: frameMode ? 'first_last_frame' : 'all_reference',
       quality: resolution === '2k' ? '2k' : '768p',
+      ...(!frameMode && common.aspect_ratio ? { aspect_ratio: common.aspect_ratio } : {}),
       ...(images.length ? { image_url: images } : {}),
       ...(videos.length ? { video_url: videos } : {}),
       ...(audios.length ? { audio_url: audios } : {})

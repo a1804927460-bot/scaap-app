@@ -58,9 +58,12 @@ separates upstream usage by user without exposing email addresses, Google
 profile data, names, or raw Supabase UUIDs. Keep the secret unchanged across
 deploys so account identities remain stable.
 
-MiniMax H3 uses the official MiniMax sealed Railway variable `MINIMAX_API_KEY`.
-The public product name remains MiniMax H3; the upstream credential is never
-written to `runtime.json`, GitHub, the desktop settings, or gateway responses.
+MiniMax H3 uses AI Reiter for all new requests when
+`AIREITER_TRAFFIC_JSON` contains `"minimax-h3":100` (or `"video-1":100`).
+The older MiniMax route remains available only as a safe fallback after a
+provable pre-acceptance rejection; accepted or ambiguous paid tasks are never
+replayed. The public product name remains MiniMax H3, and upstream credentials
+are never written to `runtime.json`, GitHub, desktop settings, or responses.
 Legnext Midjourney V8.1 and V8.2 use the sealed Railway variable
 `LEGNEXT_API_KEY`. The key is sent only in the gateway's `x-api-key` request
 header; task polling is performed server-side against the private job URL and
