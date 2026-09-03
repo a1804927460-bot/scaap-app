@@ -1131,7 +1131,7 @@ function openBoardButlerBackgroundPanel(anchor, file, item) {
     anchor,
     BOARD_BUTLER_ICONS.removeBackground,
     t('Remove background', '去除背景', '배경 제거'),
-    'Clipdrop'
+    'Photoroom'
   );
   const form = document.createElement('form');
   form.className = 'board-butler-config-form';
@@ -2820,101 +2820,24 @@ function openBoardButlerMenu(trigger, file, item) {
     ));
   } else {
     menu.appendChild(createBoardButlerMenuButton(
-    file,
-    'removeBackground',
-    BOARD_BUTLER_ICONS.removeBackground,
-    t('Remove background', '去除背景', '배경 제거'),
-    () => {
-      closeBoardButlerMenu();
-      void runBoardButlerRemoveBackground(file, item, {});
-    },
-    { popup: null, credits: BOARD_BUTLER_RETAIL_CREDITS.removeBackground }
-  ));
-  menu.appendChild(createBoardButlerMenuButton(
-    file,
-    'imageEdit',
-    BOARD_BUTLER_ICONS.imageEdit,
-    t('Edit image', '图片修改', '이미지 편집'),
-    (button) => openBoardButlerSeedEditPanel(button, file, item),
-    { popup: 'dialog', credits: BOARD_BUTLER_RETAIL_CREDITS.imageEdit }
-  ));
-  menu.appendChild(createBoardButlerMenuButton(
-    file,
-    'imageExpand',
-    BOARD_BUTLER_ICONS.imageLayer,
-    t('Expand image', '图片扩展', '이미지 확장'),
-    (button) => openBoardButlerExpandPanel(button, file, item),
-    { popup: 'dialog', credits: BOARD_BUTLER_RETAIL_CREDITS.imageExpand }
-  ));
-  menu.appendChild(createBoardButlerMenuButton(
-    file,
-    'imageEnhance',
-    BOARD_BUTLER_ICONS.enhance,
-    t('Enhance quality', '画质提升', '화질 향상'),
-    () => {
-      closeBoardButlerMenu();
-      void runBoardButlerImageTool('imageEnhance', file, item, {});
-    },
-    { popup: null, credits: BOARD_BUTLER_RETAIL_CREDITS.imageEnhance }
-  ));
-  menu.appendChild(createBoardButlerMenuButton(
-    file,
-    'eraseObject',
-    BOARD_BUTLER_ICONS.eraseObject,
-    t('Erase objects', '物体消除', '개체 지우기'),
-    () => openBoardButlerErasePanel(file, item),
-    { popup: 'dialog', credits: BOARD_BUTLER_RETAIL_CREDITS.eraseObject }
-  ));
-
-  const topazGroup = document.createElement('div');
-  topazGroup.className = 'board-butler-model-group board-butler-submenu-group';
-  const topazTrigger = createBoardButlerMenuButton(
-    file,
-    'topazImage',
-    BOARD_BUTLER_ICONS.topazImage,
-    t('Image enhancement', '图片增强', '이미지 향상'),
-    null,
-    { popup: 'menu', hasSubmenu: true }
-  );
-  const topazMenu = document.createElement('div');
-  topazMenu.className = 'board-butler-model-menu board-butler-submenu';
-  topazMenu.setAttribute('role', 'menu');
-  const topazItems = [
-    ['topazSharpen', BOARD_BUTLER_ICONS.sharpen, t('Sharpen', '锐化', '선명화')],
-    ['topazSharpenGen', BOARD_BUTLER_ICONS.sharpen, t('Generative sharpen', '生成式锐化', '생성형 선명화')],
-    ['topazEnhance', BOARD_BUTLER_ICONS.enhance, t('Enhance', '增强', '향상')],
-    ['topazEnhanceGen', BOARD_BUTLER_ICONS.enhance, t('Generative enhance', '生成式增强', '생성형 향상')],
-    ['topazDenoise', BOARD_BUTLER_ICONS.denoise, t('Denoise', '降噪', '노이즈 제거')],
-    ['topazRestore', BOARD_BUTLER_ICONS.restore, t('Restore', '修复', '복원')],
-    ['topazLighting', BOARD_BUTLER_ICONS.lighting, t('Relight', '打光', '조명 보정')]
-  ];
-  topazItems.forEach(([action, icon, label]) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'board-butler-model-option board-butler-submenu-option board-butler-menu-item';
-    button.dataset.butlerAction = action;
-    button.dataset.fileId = String(file.id);
-    button.setAttribute('role', 'menuitem');
-    button.innerHTML = `
-      <span class="board-butler-submenu-icon" aria-hidden="true">${icon}</span>
-      <span class="board-butler-submenu-label">${label} · ${BOARD_BUTLER_RETAIL_CREDITS.topazImage} ${t('pts reserved', '积分预扣', '포인트 예약')}</span>
-      <small class="board-butler-menu-status" hidden></small>
-    `;
-    button.addEventListener('click', () => {
-      if (button.disabled) return;
-      const width = Math.max(128, Number(file.sourceWidth) || 960);
-      const height = Math.max(128, Number(file.sourceHeight) || 540);
-      const scale = Math.min(2, 8192 / width, 8192 / height, Math.sqrt(33_554_432 / (width * height)));
-      const options = action === 'topazEnhance' || action === 'topazEnhanceGen'
-        ? { outputWidth: Math.round(width * scale), outputHeight: Math.round(height * scale), cropToFill: false }
-        : {};
-      if (launchBoardButlerImageTool(action, file, item, options)) closeBoardButlerMenu();
-    });
-    topazMenu.appendChild(button);
-  });
-  bindBoardButlerHoverSubmenu(topazGroup, topazTrigger);
-  topazGroup.append(topazTrigger, topazMenu);
-  menu.appendChild(topazGroup);
+      file,
+      'removeBackground',
+      BOARD_BUTLER_ICONS.removeBackground,
+      t('Remove background', '去除背景', '배경 제거'),
+      () => {
+        closeBoardButlerMenu();
+        void runBoardButlerRemoveBackground(file, item, {});
+      },
+      { popup: null, credits: BOARD_BUTLER_RETAIL_CREDITS.removeBackground }
+    ));
+    menu.appendChild(createBoardButlerMenuButton(
+      file,
+      'imageExpand',
+      BOARD_BUTLER_ICONS.imageLayer,
+      t('Expand image', '图片扩展', '이미지 확장'),
+      (button) => openBoardButlerExpandPanel(button, file, item),
+      { popup: 'dialog', credits: BOARD_BUTLER_RETAIL_CREDITS.imageExpand }
+    ));
 
   const modelGroup = document.createElement('div');
   modelGroup.className = 'board-butler-model-group board-butler-submenu-group';

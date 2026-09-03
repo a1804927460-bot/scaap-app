@@ -3,6 +3,8 @@ gateway/node_modules/
 release/
 release-dev/
 release-*/
+test-artifacts/*.png
+%SystemDrive%/
 .qa-user-data/
 .codex-test-profile/
 runtime.json

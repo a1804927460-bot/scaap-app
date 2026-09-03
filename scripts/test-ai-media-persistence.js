@@ -102,6 +102,11 @@ async function testTempRecovery(root, store) {
   assert.match(mainSource, /boardItemIds:[\s\S]*?requiresBoardItem/);
   assert.match(mainSource, /Skipped rollback for a confirmed AI media result/);
   assert.match(mainSource, /Do not return a successful result until its file record/);
+  const boardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'board-canvas.js'), 'utf8');
+  const assistantSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'ai-assistant.js'), 'utf8');
+  assert.match(boardSource, /aiDeliveryConfirmationAttempted = true/);
+  assert.match(boardSource, /generatedFiles\.length && err && err\.aiDeliveryConfirmationAttempted !== true/);
+  assert.match(assistantSource, /generatedMediaFiles\.length && err && err\.aiDeliveryConfirmationAttempted !== true/);
   console.log('AI media persistence tests passed.');
 })().catch((error) => {
   console.error(error);

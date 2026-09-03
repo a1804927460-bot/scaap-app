@@ -218,8 +218,16 @@ assert.doesNotMatch(
 );
 assert.match(
   boardSource,
-  /function scheduleBoardInteractionPrefetch\(view\)[\s\S]*?viewportRects\([\s\S]*?queryLimited\([\s\S]*?BOARD_DOM_ITEM_LIMIT \+ 1[\s\S]*?queueBoardMounts\(targetIds, regions\.visible, true\)/,
-  'Zoom and pan must pre-mount the target viewport instead of waiting for the interaction to settle.'
+  /function scheduleBoardInteractionPrefetch\(view\)[\s\S]*?viewportRects\([\s\S]*?const targetIds = Board\.spatialIndex\.query\(regions\.visible\)[\s\S]*?Board\.interactionVisibleIds = targetIds[\s\S]*?drawBoardOverview\(targetIds/,
+  'Zoom and pan must paint the target viewport through the lightweight overview renderer.'
+);
+assert.doesNotMatch(
+  boardSource.slice(
+    boardSource.indexOf('function scheduleBoardInteractionPrefetch(view)'),
+    boardSource.indexOf('function clearBoardInteractionOverviewWork')
+  ),
+  /queryLimited\([\s\S]*?queueBoardMounts\(/,
+  'Interaction prefetch must not mutate the live DOM mount queue while the transform is moving.'
 );
 assert.match(
   boardSource,
@@ -972,6 +980,14 @@ assert.match(indexHtml, /js\/vendor\/perfect-freehand\.js[\s\S]*?js\/board-canva
   'The smooth-stroke library must load before canvas interactions.');
 assert.match(boardSource, /window\.PerfectFreehand\.getStroke[\s\S]*?smoothing:\s*0\.72[\s\S]*?streamline:\s*0\.48/,
   'Doodles must use perfect-freehand smoothing instead of raw pixelated line segments.');
+assert.match(boardSource, /function lockDoodleCanvasToViewport[\s\S]*?canvas\.style\.transform = 'none'[\s\S]*?doodleActive[\s\S]*?lockDoodleCanvasToViewport/,
+  'The in-progress doodle surface must stay in viewport coordinates during board zoom.');
+assert.match(boardSource, /canvas\.addEventListener\('wheel', keepDoodleScreenSpace[\s\S]*?canvas\.removeEventListener\('wheel', keepDoodleScreenSpace/,
+  'Doodle wheel handling must preserve canvas zoom while reasserting the screen-space overlay.');
+assert.match(boardSource, /const inkLeft = overlayRect\.left \+ bounds\.x \/ doodlePixelRatio[\s\S]*?const \{ x, y \} = clientToBoardCoords\(inkLeft, inkTop\)[\s\S]*?x: Math\.round\(x\),[\s\S]*?y: Math\.round\(y\),/,
+  'Committed doodles must convert the screen-space ink origin exactly once.');
+assert.match(boardStyles, /\.board-doodle-canvas\.is-screen-space\s*\{[\s\S]*?transform:\s*none\s*!important[\s\S]*?scale:\s*none\s*!important/,
+  'The active doodle surface must not inherit board camera scaling.');
 assert.match(boardSource, /window\.devicePixelRatio[\s\S]*?canvas\.width[\s\S]*?doodlePixelRatio/,
   'The doodle surface must render at device pixel ratio.');
 assert.match(boardSource, /16_000_000[\s\S]*?maximumPixelRatio[\s\S]*?doodlePixelRatio/,
@@ -1141,6 +1157,21 @@ assert.match(
   boardSource,
   /const BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET = 12_000_000;[\s\S]*?overviewImagePixels > BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET/,
   'Overview thumbnails must respect a decoded-pixel memory budget.'
+);
+assert.match(
+  boardSource,
+  /function boardOverviewPixelRatio\(width, height, interactive = isBoardViewportInteracting\(\)\)[\s\S]*?window\.devicePixelRatio[\s\S]*?Math\.sqrt\(pixelBudget \/ area\)[\s\S]*?Math\.floor\([\s\S]*?\* 4\) \/ 4/,
+  'Overview rendering must choose a bounded, quantized device pixel ratio from the viewport budget.'
+);
+assert.match(
+  boardSource,
+  /function drawBoardOverviewWithLeafer\(visibleIds, viewportRect, view = Board\)[\s\S]*?const pixelRatio = boardOverviewPixelRatio\([\s\S]*?layer\.resize\([\s\S]*?pixelRatio/,
+  'Leafer overview rendering must apply the adaptive pixel ratio without rebuilding the layer every frame.'
+);
+assert.match(
+  boardSource,
+  /cacheKey: `\$\{activeCanvasId\(\)\}:\$\{Board\.overviewContentRevision\}:\$\{BoardEngine\.hashSet\(visibleIds\)\}`/,
+  'Leafer node synchronization must be cached by canvas, data revision, and visible item set.'
 );
 assert.doesNotMatch(
   boardStyles,

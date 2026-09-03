@@ -14,9 +14,9 @@ const ATLAS_CLOUD_ORIGIN = 'https://api.atlascloud.ai';
 const ATLAS_CLOUD_GENERATE_PATH = '/api/v1/model/generateImage';
 const ATLAS_CLOUD_PREDICTION_PATH = '/api/v1/model/prediction';
 const ATLAS_CLOUD_UPLOAD_PATH = '/api/v1/model/uploadMedia';
-// Clipdrop is the higher-priced, quality-first background-removal tool the
-// user selected. Keep the public function name stable for the desktop bridge.
-const BACKGROUND_PATH = '/clipdrop/remove-background/v1';
+// Photoroom is the background-removal tool selected for the current product
+// flow. Keep the public function name stable for the desktop bridge.
+const BACKGROUND_PATH = '/photoroom/v1/segment';
 const HUNYUAN_PATH = '/tencent/hunyuan3d/pro-job';
 const HYPER3D_PATH = '/302/submit/hyper3d-rodin';
 const TRIPO3D_UPLOAD_PATH = '/tripo3d/v2/openapi/upload';
@@ -2338,6 +2338,7 @@ export async function removeBackground({ imageDataUrl, toolOptions } = {}, optio
   const image = stripImageMetadata(parseImageDataUrl(imageDataUrl, { maxBytes: MAX_BACKGROUND_INPUT_BYTES }));
   const form = new FormData();
   form.append('image_file', new Blob([image.buffer], { type: image.mime }), `input.${image.extension}`);
+  form.append('format', 'png');
   void normalizedOptions;
   const fetchImpl = options.fetchImpl || fetch;
   const requestId = String(options.accountingRequestId || '').trim().toLowerCase();

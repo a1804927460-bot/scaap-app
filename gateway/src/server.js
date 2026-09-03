@@ -1661,6 +1661,29 @@ async function handle(request, response) {
     if (!['clipdrop-uncrop', 'kling-image-expand'].includes(modelId)) {
       throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
     }
+    if (modelId === 'kling-image-expand') {
+      const task = await runIdempotentImageOperation(user.id, requestId, async () => {
+        const usage = await reserveFixedTool(user.id, modelId, requestId);
+        try {
+          const created = await submitKlingImageExpand({
+            imageDataUrl: body && body.imageDataUrl,
+            toolOptions: body && body.options,
+            userId: user.id
+          }, { accountingRequestId: usage.requestId });
+          return {
+            ...created,
+            credits: usage.reservation.credits,
+            availableCredits: usage.reservation.availableCredits ?? usage.reservation.available_credits
+          };
+        } catch (error) {
+          if (error && error.submissionAmbiguous !== true && error.providerTaskAccepted !== true) {
+            await releaseFailedToolReservation(user.id, usage);
+          }
+          throw error;
+        }
+      });
+      return send(response, 202, task);
+    }
     const providerId = 'clipdrop-uncrop';
     const png = await runIdempotentImageOperation(user.id, requestId, async () => {
       const usage = await reserveFixedTool(user.id, providerId, requestId);

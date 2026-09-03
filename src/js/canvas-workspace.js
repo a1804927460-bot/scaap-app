@@ -201,6 +201,7 @@ function normalizeCanvasAgentSession(session, fallbackCanvasId = null) {
     createdAt: session.createdAt || new Date().toISOString(),
     updatedAt: session.updatedAt || session.createdAt || new Date().toISOString(),
     favorite: session.favorite === true || session.pinned === true,
+    unread: session.unread === true,
     messages
   };
 }
@@ -311,6 +312,7 @@ function ensureCanvasAgentSession(title = '') {
     createdAt: now,
     updatedAt: now,
     favorite: false,
+    unread: false,
     messages: []
   };
   CanvasWorkspace.agentSessions.unshift(session);
@@ -331,6 +333,7 @@ function persistActiveCanvasAgentSession() {
     })) : []
   }));
   session.updatedAt = new Date().toISOString();
+  session.unread = false;
   if (!session.messages.length) session.title = t('New conversation', '\u65b0\u5bf9\u8bdd');
   else {
     const first = session.messages.find((message) => message.role === 'user');
@@ -579,8 +582,7 @@ function filteredCanvases() {
       || new Date(b.lastOpenedAt || b.updatedAt || b.createdAt || 0) - new Date(a.lastOpenedAt || a.updatedAt || a.createdAt || 0));
 }
 
-function renderCanvasLibraryProjects() {
-  const list = document.getElementById('canvas-library-projects');
+function renderCanvasProjectList(list) {
   if (!list) return;
   list.innerHTML = '';
   canvasProjectsForScope().forEach((project) => {
@@ -609,6 +611,16 @@ function renderCanvasLibraryProjects() {
       ], event.clientX, event.clientY, 'canvas-project-context-menu');
     });
     list.appendChild(button);
+  });
+}
+
+function renderCanvasLibraryProjects() {
+  renderCanvasProjectList(document.getElementById('canvas-library-projects'));
+  renderCanvasProjectList(document.getElementById('sidebar-project-list'));
+  document.querySelectorAll('[data-sidebar-project-scope]').forEach((button) => {
+    const active = normalizeCanvasProjectScope(button.dataset.sidebarProjectScope) === CanvasWorkspace.libraryScope;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-selected', String(active));
   });
 }
 
@@ -644,6 +656,7 @@ function renderCanvasLibrary() {
   });
   const canvases = filteredCanvases();
   grid.innerHTML = '';
+  if (!CanvasWorkspace.libraryQuery.trim()) grid.appendChild(buildCanvasLibraryCreateCard());
   canvases.forEach((canvas) => {
     const project = AppState.canvasProjects.find((entry) => entry.id === canvas.projectId);
     const card = document.createElement('article');
@@ -770,7 +783,6 @@ function renderCanvasLibrary() {
     });
     grid.appendChild(card);
   });
-  if (!CanvasWorkspace.libraryQuery.trim()) grid.appendChild(buildCanvasLibraryCreateCard());
   const empty = document.getElementById('canvas-library-empty');
   if (empty) {
     empty.hidden = canvases.length > 0 || Boolean(CanvasWorkspace.libraryQuery.trim());
@@ -1462,7 +1474,6 @@ function appendCanvasAgentAttachments(row, files) {
 
 function canvasAgentSessionMatchesFilter(session) {
   if (CanvasWorkspace.agentHistoryFavoritesOnly && !session.favorite) return false;
-  if (CanvasWorkspace.agentHistoryDate && canvasAgentHistoryDate(session.updatedAt) !== CanvasWorkspace.agentHistoryDate) return false;
   return true;
 }
 
@@ -1482,18 +1493,46 @@ function renderCanvasAgentHistory() {
     const row = document.createElement('div');
     row.className = 'board-agent-history-row';
     row.dataset.sessionId = session.id;
+    row.draggable = true;
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'board-agent-history-item';
     button.classList.toggle('is-active', session.id === CanvasWorkspace.activeAgentSessionId);
-    button.innerHTML = `<span class="board-agent-history-star" aria-hidden="true">${session.favorite ? '\u2605' : '\u2606'}</span><span class="board-agent-history-copy"><b></b><small></small></span>`;
+    button.innerHTML = `<span class="board-agent-history-star" aria-hidden="true">${session.favorite ? '\u2605' : '\u2606'}</span><span class="board-agent-history-copy"><b></b><small></small></span><span class="board-agent-history-unread" aria-hidden="true"></span>`;
+    button.classList.toggle('is-unread', session.unread === true);
     button.querySelector('b').textContent = session.title || t('New conversation', '\u65b0\u5bf9\u8bdd');
-    button.querySelector('small').textContent = canvasAgentHistoryDate(session.updatedAt);
+    button.querySelector('small').textContent = session.unread
+      ? t('Unread', '未读')
+      : t('Recent', '最近');
     button.addEventListener('click', () => loadCanvasAgentSession(session.id));
     row.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       event.stopPropagation();
       showCanvasAgentSessionMenu(session.id, event.clientX, event.clientY);
+    });
+    row.addEventListener('dragstart', (event) => {
+      event.dataTransfer.setData('text/messs-agent-session', session.id);
+      event.dataTransfer.effectAllowed = 'move';
+      row.classList.add('is-dragging');
+    });
+    row.addEventListener('dragend', () => row.classList.remove('is-dragging'));
+    row.addEventListener('dragover', (event) => {
+      if (!event.dataTransfer.types.includes('text/messs-agent-session')) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      row.classList.add('is-drop-target');
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('is-drop-target'));
+    row.addEventListener('drop', (event) => {
+      event.preventDefault();
+      row.classList.remove('is-drop-target');
+      const draggedId = event.dataTransfer.getData('text/messs-agent-session');
+      const dragged = CanvasWorkspace.agentSessions.find((entry) => entry.id === draggedId);
+      if (!dragged) return;
+      dragged.favorite = true;
+      dragged.unread = false;
+      persistCanvasAgentHistory();
+      renderCanvasAgentHistory();
     });
     row.appendChild(button);
     list.appendChild(row);
@@ -1510,6 +1549,8 @@ function loadCanvasAgentSession(sessionId) {
   const session = CanvasWorkspace.agentSessions.find((entry) => entry.id === sessionId);
   if (!session || canvasAgentSessionCanvasId(session) !== activeCanvasId()) return;
   CanvasWorkspace.activeAgentSessionId = session.id;
+  session.unread = false;
+  persistCanvasAgentHistory();
   CanvasWorkspace.agentMessages = session.messages.map((message) => ({ ...message }));
   const list = document.getElementById('board-agent-messages');
   if (!list) return;
@@ -1537,11 +1578,80 @@ function showCanvasAgentSessionMenu(sessionId, x, y) {
       }
     },
     {
+      label: session.unread ? t('Mark as read', '标记为已读') : t('Mark as unread', '标记为未读'),
+      icon: 'M3 5h18v14H3z;M3 7l9 6 9-6',
+      action: () => {
+        session.unread = !session.unread;
+        persistCanvasAgentHistory();
+        renderCanvasAgentHistory();
+      }
+    },
+    {
+      label: t('Rename', '重命名'),
+      icon: 'M4 20h4L19 9l-4-4L4 16v4zM13 7l4 4',
+      action: () => renameCanvasAgentSession(sessionId)
+    },
+    {
+      label: t('Delete', '删除'),
+      icon: 'M4 7h16M9 7V4h6v3M7 7l1 14h8l-1-14',
+      danger: true,
+      action: () => deleteCanvasAgentSession(sessionId)
+    },
+    {
       label: t('Open conversation', '\u6253\u5f00\u5bf9\u8bdd'),
       icon: 'M4 5h16v12H8l-4 3V5z',
       action: () => loadCanvasAgentSession(session.id)
     }
   ], x, y, 'board-agent-history-context-menu');
+}
+
+function renameCanvasAgentSession(sessionId) {
+  const session = CanvasWorkspace.agentSessions.find((entry) => entry.id === sessionId);
+  const row = [...document.querySelectorAll('.board-agent-history-row')]
+    .find((entry) => entry.dataset.sessionId === sessionId);
+  const title = row && row.querySelector('.board-agent-history-copy b');
+  if (!session || !row || !title) return;
+  const input = document.createElement('input');
+  input.className = 'board-agent-history-rename';
+  input.value = session.title || t('New conversation', '新对话');
+  title.replaceWith(input);
+  let finished = false;
+  const finish = (commit) => {
+    if (finished) return;
+    finished = true;
+    if (commit) {
+      const next = input.value.trim().slice(0, 120);
+      if (next) session.title = next;
+      session.updatedAt = new Date().toISOString();
+      persistCanvasAgentHistory();
+    }
+    renderCanvasAgentHistory();
+  };
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') finish(true);
+    if (event.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true), { once: true });
+  input.focus();
+  input.select();
+}
+
+async function deleteCanvasAgentSession(sessionId) {
+  const session = CanvasWorkspace.agentSessions.find((entry) => entry.id === sessionId);
+  if (!session) return;
+  const confirmed = typeof showConfirmDialog === 'function'
+    ? await showConfirmDialog({
+      title: t('Delete conversation', '删除对话'),
+      message: t(`Delete "${session.title}"? This cannot be undone.`, `删除“${session.title}”？此操作无法撤销。`),
+      confirmLabel: t('Delete', '删除'),
+      danger: true
+    })
+    : window.confirm(t(`Delete "${session.title}"?`, `删除“${session.title}”？`));
+  if (!confirmed) return;
+  CanvasWorkspace.agentSessions = CanvasWorkspace.agentSessions.filter((entry) => entry.id !== sessionId);
+  if (CanvasWorkspace.activeAgentSessionId === sessionId) startNewCanvasAgentChat();
+  persistCanvasAgentHistory();
+  renderCanvasAgentHistory();
 }
 
 function toggleCanvasAgentHistory(open = null) {
@@ -2009,6 +2119,17 @@ async function requestCanvasAgentText(options = {}) {
   }
 }
 
+function handleCanvasAgentHistoryDrop(event) {
+  const draggedId = event.dataTransfer && event.dataTransfer.getData('text/messs-agent-session');
+  const dragged = CanvasWorkspace.agentSessions.find((entry) => entry.id === draggedId);
+  if (!dragged) return;
+  event.preventDefault();
+  dragged.favorite = true;
+  dragged.unread = false;
+  persistCanvasAgentHistory();
+  renderCanvasAgentHistory();
+}
+
 async function submitCanvasAgentMessage() {
   if (CanvasWorkspace.agentBusy) return;
   const input = document.getElementById('board-agent-input');
@@ -2163,7 +2284,7 @@ function refreshCanvasWorkspaceLanguage() {
   const historyTitle = document.querySelector('.board-agent-history-drawer > header strong');
   if (historyTitle) historyTitle.textContent = t('Agent history', 'Agent \u5386\u53f2\u8bb0\u5f55');
   const historyFavorites = document.getElementById('board-agent-history-favorites');
-  if (historyFavorites) historyFavorites.textContent = t('Favorites', '\u6536\u85cf\u5939');
+  if (historyFavorites) historyFavorites.textContent = t('Pinned', '置顶');
   const historyEmpty = document.getElementById('board-agent-history-empty');
   if (historyEmpty) historyEmpty.textContent = t('No conversations found', '\u6ca1\u6709\u627e\u5230\u5bf9\u8bdd');
   const send = document.getElementById('board-agent-submit');
@@ -2258,6 +2379,21 @@ async function initCanvasWorkspace(initial) {
     });
     renderCanvasLibrary();
   });
+  document.getElementById('sidebar-project-list').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-project-id]');
+    if (!button) return;
+    CanvasWorkspace.libraryProjectId = CanvasWorkspace.libraryProjectId === button.dataset.projectId
+      ? null
+      : button.dataset.projectId;
+    CanvasWorkspace.libraryFilter = 'all';
+    renderCanvasLibrary();
+  });
+  document.getElementById('sidebar-project-scope').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-sidebar-project-scope]');
+    if (!button) return;
+    selectCanvasLibraryScope(button.dataset.sidebarProjectScope);
+  });
+  document.getElementById('sidebar-project-new').addEventListener('click', promptNewProject);
   document.addEventListener('click', (event) => {
     if (!event.target.closest('.canvas-library-card-menu, .canvas-library-card-menu-trigger')) {
       closeCanvasCardMenus();
@@ -2291,14 +2427,17 @@ async function initCanvasWorkspace(initial) {
     event.currentTarget.setAttribute('aria-pressed', String(CanvasWorkspace.agentHistoryFavoritesOnly));
     renderCanvasAgentHistory();
   });
-  document.getElementById('board-agent-history-date').addEventListener('change', (event) => {
-    CanvasWorkspace.agentHistoryDate = String(event.target.value || '');
-    renderCanvasAgentHistory();
+  const agentHistoryPinned = document.getElementById('board-agent-history-favorites');
+  agentHistoryPinned.addEventListener('dragover', (event) => {
+    if (!event.dataTransfer || !event.dataTransfer.types.includes('text/messs-agent-session')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    event.currentTarget.classList.add('is-drop-target');
   });
-  document.getElementById('board-agent-history-date-clear').addEventListener('click', () => {
-    CanvasWorkspace.agentHistoryDate = '';
-    document.getElementById('board-agent-history-date').value = '';
-    renderCanvasAgentHistory();
+  agentHistoryPinned.addEventListener('dragleave', (event) => event.currentTarget.classList.remove('is-drop-target'));
+  agentHistoryPinned.addEventListener('drop', (event) => {
+    event.currentTarget.classList.remove('is-drop-target');
+    handleCanvasAgentHistoryDrop(event);
   });
   const modelTrigger = document.getElementById('board-agent-model-trigger');
   const modelMenu = document.getElementById('board-agent-model-menu');

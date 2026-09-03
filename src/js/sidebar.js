@@ -721,6 +721,68 @@ function setAccountAuthStatus(message = '', kind = '') {
   status.classList.toggle('is-success', kind === 'success');
 }
 
+const AUTH_LEGAL_DOCUMENTS = Object.freeze({
+  privacy: {
+    title: ['Privacy', '隐私协议', '개인정보 보호'],
+    body: [
+      'Messs stores the account, canvas, file, and usage data needed to provide the app. Provider credentials remain on the configured gateway and are not shown in the renderer.',
+      'Messs 会保存提供服务所需的账号、画布、文件和用量数据。上游密钥保存在已配置的网关中，不会显示在客户端。',
+      'Messs는 서비스 제공에 필요한 계정, 캔버스, 파일 및 사용량 데이터를 저장합니다. 공급자 키는 구성된 게이트웨이에 보관되며 앱 화면에 표시되지 않습니다.'
+    ]
+  },
+  terms: {
+    title: ['Terms', '用户协议', '이용 약관'],
+    body: [
+      'Use Messs lawfully and keep your account secure. You are responsible for content submitted to AI services and for checking generated results before publishing or sharing them.',
+      '请合法使用 Messs 并保护账号安全。你需要对提交给 AI 服务的内容负责，发布或分享前请自行检查生成结果。',
+      'Messs를 합법적으로 사용하고 계정을 안전하게 관리하세요. AI 서비스에 제출하는 콘텐츠와 게시 또는 공유 전 결과 확인에 대한 책임은 사용자에게 있습니다.'
+    ]
+  },
+  content: {
+    title: ['Content rules', '内容规范', '콘텐츠 규정'],
+    body: [
+      'Do not use Messs to create illegal, abusive, deceptive, or privacy-invasive content. Respect copyright, likeness, trademarks, and the rights of other people when uploading references or generating media.',
+      '请勿使用 Messs 制作违法、骚扰、欺骗或侵犯隐私的内容。上传参考素材或生成媒体时，请尊重版权、肖像、商标及他人的合法权益。',
+      'Messs를 사용해 불법적이거나 괴롭힘, 기만, 개인정보 침해에 해당하는 콘텐츠를 만들지 마세요. 참고 자료를 업로드하거나 미디어를 생성할 때 저작권, 초상, 상표 및 타인의 권리를 존중하세요.'
+    ]
+  }
+});
+
+function openAuthLegalDocument(kind) {
+  const documentCopy = AUTH_LEGAL_DOCUMENTS[kind] || AUTH_LEGAL_DOCUMENTS.privacy;
+  const dialog = document.getElementById('account-auth-legal-dialog');
+  const title = document.getElementById('account-auth-legal-title');
+  const body = document.getElementById('account-auth-legal-body');
+  if (!dialog || !title || !body) return;
+  title.textContent = t(...documentCopy.title);
+  body.textContent = t(...documentCopy.body);
+  dialog.hidden = false;
+  dialog.setAttribute('aria-hidden', 'false');
+  requestAnimationFrame(() => dialog.classList.add('is-visible'));
+}
+
+function closeAuthLegalDocument() {
+  const dialog = document.getElementById('account-auth-legal-dialog');
+  if (!dialog || dialog.hidden) return;
+  dialog.classList.remove('is-visible');
+  dialog.setAttribute('aria-hidden', 'true');
+  window.setTimeout(() => { dialog.hidden = true; }, 160);
+}
+
+function initAuthLegalLinks() {
+  document.querySelectorAll('[data-auth-legal]').forEach((button) => {
+    button.addEventListener('click', () => openAuthLegalDocument(button.dataset.authLegal));
+  });
+  const dialog = document.getElementById('account-auth-legal-dialog');
+  const close = document.getElementById('account-auth-legal-close');
+  if (close) close.addEventListener('click', closeAuthLegalDocument);
+  if (dialog) {
+    dialog.addEventListener('click', (event) => {
+      if (event.target === dialog) closeAuthLegalDocument();
+    });
+  }
+}
+
 function refreshAccountAuthLanguage() {
   const isSignUp = accountAuthMode === 'signup';
   setText('#account-auth-title', isSignUp ? 'Create your Messs account' : 'Sign in to continue', isSignUp ? '创建 Messs 账号' : '登录以继续', isSignUp ? 'Messs 계정 만들기' : '계속하려면 로그인하세요');
@@ -730,6 +792,12 @@ function refreshAccountAuthLanguage() {
   const forgot = document.getElementById('account-auth-forgot');
   if (password) password.autocomplete = isSignUp ? 'new-password' : 'current-password';
   if (forgot) forgot.hidden = isSignUp;
+  setText('.account-auth-google-note', 'Use your Google account to keep points, files, and canvases synced.', '使用 Google 账号同步积分、文件和画布。', 'Google 계정으로 포인트, 파일, 캔버스를 동기화하세요.');
+  Object.entries(AUTH_LEGAL_DOCUMENTS).forEach(([kind, copy]) => {
+    document.querySelectorAll(`[data-auth-legal="${kind}"]`).forEach((button) => {
+      button.textContent = t(...copy.title);
+    });
+  });
 }
 
 function syncAccountAuthScreen(config = {}) {
@@ -751,7 +819,7 @@ function syncAccountAuthScreen(config = {}) {
   }
   refreshAccountAuthLanguage();
   if (wasHidden) {
-    requestAnimationFrame(() => document.getElementById('account-auth-email')?.focus({ preventScroll: true }));
+    requestAnimationFrame(() => document.getElementById('account-auth-google')?.focus({ preventScroll: true }));
   }
 }
 
@@ -818,6 +886,7 @@ async function requestAccountPasswordReset() {
 function initAccountAuthScreen() {
   if (accountAuthInitialized) return;
   accountAuthInitialized = true;
+  initAuthLegalLinks();
   const password = document.getElementById('account-auth-password');
   const toggle = document.getElementById('account-auth-password-toggle');
   document.getElementById('account-auth-form').addEventListener('submit', submitAccountAuthScreen);

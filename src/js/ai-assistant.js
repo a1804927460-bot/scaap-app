@@ -64,6 +64,7 @@ function normalizeAiChatSession(session) {
     createdAt: session.createdAt || new Date().toISOString(),
     updatedAt: session.updatedAt || session.createdAt || new Date().toISOString(),
     favorite: session.favorite === true || session.pinned === true,
+    unread: session.unread === true,
     messages
   };
 }
@@ -135,6 +136,7 @@ function ensureAiChatSession(title) {
     createdAt: now,
     updatedAt: now,
     favorite: false,
+    unread: false,
     messages: []
   };
   AiAssistant.sessions.unshift(session);
@@ -169,13 +171,13 @@ function persistActiveAiChatSession() {
       })) : []
     }));
   session.updatedAt = new Date().toISOString();
+  session.unread = false;
   persistAiChatHistory();
   renderAiChatHistory();
 }
 
 function aiChatSessionMatchesFilter(session) {
   if (AiAssistant.historyFavoritesOnly && !session.favorite) return false;
-  if (AiAssistant.historyDate && aiChatHistoryDate(session.updatedAt) !== AiAssistant.historyDate) return false;
   return true;
 }
 
@@ -194,13 +196,15 @@ function renderAiChatHistory() {
     const entry = document.createElement('div');
     entry.className = 'ai-chat-history-entry';
     entry.dataset.sessionId = session.id;
+    entry.draggable = true;
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'ai-chat-history-item';
     button.classList.toggle('is-active', session.id === AiAssistant.activeSessionId);
-    button.innerHTML = `<span class="ai-chat-history-star" aria-hidden="true">${session.favorite ? '\u2605' : '\u2606'}</span><span class="ai-chat-history-copy"><b></b><small></small></span>`;
+    button.innerHTML = `<span class="ai-chat-history-star" aria-hidden="true">${session.favorite ? '\u2605' : '\u2606'}</span><span class="ai-chat-history-copy"><b></b><small></small></span><span class="ai-chat-history-unread" aria-hidden="true"></span>`;
+    button.classList.toggle('is-unread', session.unread === true);
     button.querySelector('b').textContent = session.title || t('New conversation', '\u65b0\u5bf9\u8bdd');
-    button.querySelector('small').textContent = aiChatHistoryDate(session.updatedAt);
+    button.querySelector('small').textContent = session.unread ? t('Unread', '未读') : t('Recent', '最近');
     button.addEventListener('click', () => loadAiChatSession(session.id));
     const more = document.createElement('button');
     more.type = 'button';
@@ -217,6 +221,12 @@ function renderAiChatHistory() {
       event.stopPropagation();
       showAiChatSessionMenu(session.id, event.clientX, event.clientY);
     });
+    entry.addEventListener('dragstart', (event) => {
+      event.dataTransfer.setData('text/messs-ai-session', session.id);
+      event.dataTransfer.effectAllowed = 'move';
+      entry.classList.add('is-dragging');
+    });
+    entry.addEventListener('dragend', () => entry.classList.remove('is-dragging'));
     entry.append(button, more);
     list.appendChild(entry);
   });
@@ -296,6 +306,15 @@ function showAiChatSessionMenu(sessionId, x, y) {
       }
     },
     {
+      label: session.unread ? t('Mark as read', '标记为已读') : t('Mark as unread', '标记为未读'),
+      icon: 'M3 5h18v14H3z;M3 7l9 6 9-6',
+      action: () => {
+        session.unread = !session.unread;
+        persistAiChatHistory();
+        renderAiChatHistory();
+      }
+    },
+    {
       label: t('Rename', '重命名'),
       icon: 'M4 20h4L19 9l-4-4L4 16v4zM13 7l4 4',
       action: () => renameAiChatSession(sessionId)
@@ -314,10 +333,23 @@ function showAiChatSessionMenu(sessionId, x, y) {
   ], x, y, 'ai-chat-session-menu');
 }
 
+function handleAiChatHistoryDrop(event) {
+  const draggedId = event.dataTransfer && event.dataTransfer.getData('text/messs-ai-session');
+  const dragged = AiAssistant.sessions.find((entry) => entry.id === draggedId);
+  if (!dragged) return;
+  event.preventDefault();
+  dragged.favorite = true;
+  dragged.unread = false;
+  persistAiChatHistory();
+  renderAiChatHistory();
+}
+
 function loadAiChatSession(sessionId) {
   const session = AiAssistant.sessions.find((entry) => entry.id === sessionId);
   if (!session) return;
   AiAssistant.activeSessionId = session.id;
+  session.unread = false;
+  persistAiChatHistory();
   AiAssistant.messages = session.messages.map((message) => ({ ...message }));
   const messages = document.getElementById('ai-assistant-messages');
   messages.innerHTML = '';
@@ -1694,7 +1726,7 @@ async function submitAssistantMessage() {
       persistActiveAiChatSession();
     }
   } catch (err) {
-    if (generatedMediaFiles.length) {
+    if (generatedMediaFiles.length && err && err.aiDeliveryConfirmationAttempted !== true) {
       try { await releaseAiMediaDeliveries(generatedMediaFiles); } catch (releaseError) {
         console.error('Could not release a failed AI media result:', releaseError);
       }
@@ -1887,6 +1919,18 @@ function initAiAssistant() {
     AiAssistant.historyFavoritesOnly = !AiAssistant.historyFavoritesOnly;
     renderAiChatHistory();
   });
+  const assistantHistoryPinned = document.getElementById('ai-chat-history-favorites');
+  assistantHistoryPinned.addEventListener('dragover', (event) => {
+    if (!event.dataTransfer || !event.dataTransfer.types.includes('text/messs-ai-session')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    event.currentTarget.classList.add('is-drop-target');
+  });
+  assistantHistoryPinned.addEventListener('dragleave', (event) => event.currentTarget.classList.remove('is-drop-target'));
+  assistantHistoryPinned.addEventListener('drop', (event) => {
+    event.currentTarget.classList.remove('is-drop-target');
+    handleAiChatHistoryDrop(event);
+  });
   document.getElementById('ai-assistant-quality-buttons').addEventListener('click', (event) => {
     const button = event.target.closest('[data-quality]');
     if (!button || button.hidden) return;
@@ -1898,15 +1942,6 @@ function initAiAssistant() {
     });
     refreshAssistantOptionSummary();
     updateAssistantCreditEstimate();
-  });
-  document.getElementById('ai-chat-history-date').addEventListener('change', (event) => {
-    AiAssistant.historyDate = event.target.value || '';
-    renderAiChatHistory();
-  });
-  document.getElementById('ai-chat-history-date-clear').addEventListener('click', () => {
-    AiAssistant.historyDate = '';
-    document.getElementById('ai-chat-history-date').value = '';
-    renderAiChatHistory();
   });
   document.addEventListener('click', (event) => {
     const picker = document.querySelector('.ai-assistant-model-picker');

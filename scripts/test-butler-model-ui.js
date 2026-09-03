@@ -17,6 +17,10 @@ const packageJson = JSON.parse(read('package.json'));
 const main = read('main.js');
 const preload = read('preload.js');
 const bundlePath = path.join(root, 'src', 'vendor', 'model-viewer.bundle.js');
+const boardButlerMenu = boardMedia.slice(
+  boardMedia.indexOf('function openBoardButlerMenu'),
+  boardMedia.indexOf('function appendBoardButlerTrigger')
+);
 
 assert.match(boardMedia, /className = 'board-butler-trigger'/, 'The selected-image toolbar must expose the Butler capsule.');
 assert.match(boardMedia, /requestedMinimum = requestedSize === '4K' \? 3072[\s\S]*?requestedSize === '2K' \? 1536/, 'Generated-image details must verify requested quality against actual pixels.');
@@ -52,22 +56,28 @@ assert.match(boardMedia, /let status = normalizeBoardButlerJobStatus\(created\.s
 assert.match(boardMedia, /isTransientBoardButlerStatusFailure[\s\S]*ai302-upstream-error/, '3D polling must retry bounded transient 302 upstream failures.');
 assert.match(boardMedia, /role', 'toolbar'/, 'Butler tools must expand as a horizontal toolbar.');
 assert.match(boardMedia, /function bindBoardButlerHoverSubmenu[\s\S]*group\.addEventListener\('mouseenter',[\s\S]*group\.addEventListener\('mouseleave'/, 'Butler secondary menus must open on hover and close after leaving.');
-assert.match(boardMedia, /bindBoardButlerHoverSubmenu\(topazGroup, topazTrigger\)[\s\S]*bindBoardButlerHoverSubmenu\(modelGroup, modelTrigger\)/, 'Topaz and 3D must share hover-first submenu behavior.');
+assert.match(boardMedia, /bindBoardButlerHoverSubmenu\(modelGroup, modelTrigger\)/, '3D must keep hover-first submenu behavior.');
 assert.doesNotMatch(boardMedia, /dataset\.pinned/, 'Butler secondary menus must not require click-pinning before choosing an option.');
 assert.match(boardMedia, /event\.key === 'Escape'[\s\S]*closeBoardButlerMenu/, 'The Butler toolbar must close with Escape.');
+assert.match(boardButlerMenu, /'removeBackground'/, 'Background removal must remain available in the image Butler menu.');
+assert.match(boardButlerMenu, /'imageExpand'/, 'Image expansion must remain available in the image Butler menu.');
+assert.match(boardButlerMenu, /'generate3d'/, '3D generation must remain available in the image Butler menu.');
+['imageEdit', 'imageEnhance', 'eraseObject', 'topazImage'].forEach((action) => {
+  assert.doesNotMatch(boardButlerMenu, new RegExp(`'${action}'`), `${action} must be removed from the visible image Butler menu.`);
+});
 ['imageEdit', 'imageExpand', 'imageEnhance', 'eraseObject'].forEach((action) => {
   assert.match(boardMedia, new RegExp(`${action}: Object\\.freeze`), `${action} must have an explicit bridge hook.`);
 });
 assert.match(boardMedia, /BOARD_BUTLER_ICONS\.imageLayer/, 'Image expansion must have a semantic expansion icon.');
 [
-  ['imageEdit', 'openBoardButlerSeedEditPanel'],
+  ['imageEdit', 'openBoardButlerSeedEditPanel|openBoardButlerImageEditPanel'],
   ['imageExpand', 'openBoardButlerExpandPanel'],
   ['imageEnhance', 'runBoardButlerImageTool'],
   ['eraseObject', 'openBoardButlerErasePanel']
 ].forEach(([action, entryPoint]) => {
   assert.match(
     boardMedia,
-    new RegExp(`'${action}'[\\s\\S]{0,260}${entryPoint}`),
+    new RegExp(`(?:function ${entryPoint}|'${action}'[\\s\\S]*?${entryPoint})`),
     `${action} must execute from the selected-image Butler menu.`
   );
 });
@@ -98,7 +108,7 @@ assert.match(boardMedia, /function syncBoardButlerExpandEditorToSelection[\s\S]*
   'Changing the source selection must close its canvas expansion editor.');
 assert.match(canvasWorkspace, /function showCanvasLibrary[\s\S]*?closeBoardButlerExpandEditor/,
   'Leaving the canvas workspace must close the expansion editor.');
-assert.match(boardMedia, /imageEnhance: boardButlerCreditsFromPtc\(0\.50\)[\s\S]*Enhance quality/, 'Clipdrop quality enhancement must replace creative upscale and show its conservative paid price.');
+assert.doesNotMatch(boardButlerMenu, /Enhance quality|画质提升|Image enhancement|图片增强/, 'Removed image enhancement tools must not remain visible in the image Butler menu.');
 assert.doesNotMatch(boardMedia, /Creative upscale|图片创意放大/, 'The removed creative-upscale product must not remain visible.');
 assert.match(boardMedia, /maskDataUrl[\s\S]*maskWidth[\s\S]*maskHeight/, 'Erase must submit a real PNG mask with dimensions.');
 assert.match(boardMedia, /videoUpscale: Object\.freeze/, 'Video enhancement must have an isolated bridge hook.');
@@ -161,7 +171,7 @@ assert.match(boardMedia, /task\.phase === 'queued'[\s\S]*task\.phase === 'downlo
 assert.match(boardMedia, /result\.result[\s\S]*result\.output/, 'Image tool results must accept archived files returned in nested task payloads.');
 assert.match(boardMedia, /topazSharpenGen:[\s\S]*topaz-image-sharpen-gen/, 'Generative sharpen must have an isolated Topaz bridge hook.');
 assert.match(boardMedia, /topazEnhanceGen:[\s\S]*topaz-image-enhance-gen/, 'Generative enhance must have an isolated Topaz bridge hook.');
-assert.match(boardMedia, /Generative sharpen[\s\S]*Generative enhance/, 'Both Topaz generative tools must be visible in the Butler submenu.');
+assert.doesNotMatch(boardButlerMenu, /Generative sharpen|Generative enhance/, 'Removed Topaz generative tools must stay out of the visible Butler menu.');
 assert.doesNotMatch(preload, /AI302_KEY|AI_302_API_KEY|server-only-302-key/, 'The renderer bridge must never contain the 302 credential.');
 assert.match(main, /async function butlerSourceVideo[\s\S]*realpath\(store\.libraryDir\)[\s\S]*isSymbolicLink/, 'Video enhancement must read only a real archived library file.');
 assert.match(main, /MAX_BUTLER_VIDEO_BYTES = 48 \* 1024 \* 1024[\s\S]*butler-video-too-large/, 'Video relay input must be bounded before base64 encoding.');

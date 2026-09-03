@@ -183,7 +183,7 @@ const WINDOW_BACKGROUND_COLORS = Object.freeze({
 });
 
 function normalizeTheme(theme) {
-  return theme === 'light' ? 'light' : 'dark';
+  return theme === 'dark' ? 'dark' : 'light';
 }
 
 const TEXT_SIZE_LEVELS = Object.freeze(['extra-small', 'small', 'medium', 'large', 'extra-large']);
@@ -8720,9 +8720,23 @@ function registerIpcHandlers() {
         error.code = 'gateway-not-configured';
         throw error;
       }
-      const modelId = 'clipdrop-uncrop';
+      const modelId = normalizeButlerImageTool(requestedOptions && requestedOptions.modelId || 'clipdrop-uncrop');
       const options = normalizeButlerImageOptions(modelId, requestedOptions);
       const source = await butlerSourceImage(fileId);
+      if (modelId === 'kling-image-expand') {
+        const payload = await aiGateway.runImageTool(source.imageDataUrl, modelId, options);
+        const taskToken = normalizeButlerTaskToken(payload && payload.taskToken);
+        const status = normalizeButlerImageStatus(payload || { status: 'queued' });
+        rememberButlerImageTask(taskToken, {
+          sourceFileId: source.file.id,
+          modelId,
+          operation: 'image-expand',
+          resultCount: status.resultCount,
+          credits: status.credits !== undefined ? status.credits : BUTLER_IMAGE_TOOL_CREDITS[modelId],
+          status: status.status
+        });
+        return { ok: true, taskToken, ...status };
+      }
       responseBuffer = await aiGateway.expandImage(source.imageDataUrl, options);
       const pngBuffer = await sanitizeButlerImagePng(responseBuffer);
       record = await addButlerOutputFile(pngBuffer, source.file, 'image-expand', {

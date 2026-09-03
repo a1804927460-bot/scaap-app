@@ -10,7 +10,7 @@ function applyTheme(theme) {
 }
 
 function initTheme(initialTheme) {
-  const appliedTheme = initialTheme || 'dark';
+  const appliedTheme = initialTheme === 'dark' ? 'dark' : 'light';
   applyTheme(appliedTheme);
 
   document.querySelectorAll('.theme-opt').forEach((btn) => {

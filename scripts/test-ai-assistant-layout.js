@@ -125,8 +125,10 @@ assert.match(
   /historyFavoritesOnly[\s\S]*?historyDate[\s\S]*?Add to Favorites[\s\S]*?session\.favorite = !session\.favorite/,
   'Agent history must support favorite and date filtering with a right-click favorite action.'
 );
-assert.match(html, /id="ai-chat-history-favorites"[\s\S]*?id="ai-chat-history-date"/,
-  'The Agent history sidebar must expose Favorites and date lookup.');
+assert.match(html, /id="ai-chat-history-favorites"[\s\S]*?id="ai-chat-history-list"/,
+  'The Agent history sidebar must expose pin filtering and the conversation list.');
+assert.doesNotMatch(html, /id="ai-chat-history-date"/,
+  'The Agent history sidebar must not render the removed date filter.');
 assert.match(storeSource, /canvasAgentHistory:\s*\[\][\s\S]*?aiAssistantHistory:\s*\[\]/,
   'Both Agent surfaces must have update-safe store defaults.');
 assert.match(mainSource, /sanitizeAiAssistantHistory[\s\S]*?ipcMain\.handle\('ai-assistant:getHistory'[\s\S]*?ipcMain\.handle\('ai-assistant:saveHistory'/,

@@ -122,7 +122,7 @@ test('image data URLs are strict and metadata is removed without corrupting PNG 
   );
 });
 
-test('background removal uses fixed upstream options and accepts a direct transparent PNG', async () => {
+test('Photoroom background removal requests a transparent PNG', async () => {
   const input = rgbaPng();
   const output = rgbaPng();
   const calls = [];
@@ -135,9 +135,10 @@ test('background removal uses fixed upstream options and accepts a direct transp
     fetchImpl: fetchMock
   });
   assert.deepEqual(result, output);
-  assert.equal(calls[0].url, 'https://api.302.ai/clipdrop/remove-background/v1');
+  assert.equal(calls[0].url, 'https://api.302.ai/photoroom/v1/segment');
   assert.equal(calls[0].options.headers.Authorization, 'Bearer test-302-key');
   assert.equal(calls[0].options.body.get('image_file') instanceof Blob, true);
+  assert.equal(calls[0].options.body.get('format'), 'png');
   assert.equal(calls.length, 1);
   assert.equal(JSON.stringify(result).includes('test-302-key'), false);
 });
@@ -158,6 +159,7 @@ test('302 authorization failures are explicit and unsupported background options
     { code: 'ai302-unauthorized', status: 503 }
   );
   assert.equal(submittedForm.get('image_file') instanceof Blob, true);
+  assert.equal(submittedForm.get('format'), 'png');
   assert.equal(submittedForm.get('size'), null);
   assert.equal(submittedForm.get('crop'), null);
   assert.equal(submittedForm.get('despill'), null);

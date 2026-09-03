@@ -94,7 +94,7 @@ assert.match(main, /ipcMain\.on\('window:syncThemeSurface',[\s\S]*?setWindowBack
 assert.match(preload, /syncThemeSurface:\s*\(theme\)\s*=>\s*ipcRenderer\.send\('window:syncThemeSurface',\s*theme\)/);
 assert.ok(indexHtml.indexOf('<script src="js/startup-theme.js"></script>') < indexHtml.indexOf('<link rel="stylesheet" href="styles/theme.css"'), 'startup theme must run before CSS');
 assert.match(startupThemeJs, /new URLSearchParams\(window\.location\.search\)\.get\('theme'\)/);
-assert.match(startupThemeJs, /dataset\.theme\s*=\s*startupTheme\s*===\s*'light'\s*\?\s*'light'\s*:\s*'dark'/);
+assert.match(startupThemeJs, /dataset\.theme\s*=\s*startupTheme\s*===\s*'dark'\s*\?\s*'dark'\s*:\s*'light'/);
 assert.match(startupThemeJs, /get\('language'\)[\s\S]*?dataset\.language\s*=\s*normalizedStartupLanguage/);
 const evaluateStartupTheme = (search) => {
   const document = { documentElement: { dataset: {} } };
@@ -107,8 +107,8 @@ const evaluateStartupTheme = (search) => {
 };
 assert.strictEqual(evaluateStartupTheme('?theme=light'), 'light');
 assert.strictEqual(evaluateStartupTheme('?theme=dark'), 'dark');
-assert.strictEqual(evaluateStartupTheme('?theme=LIGHT'), 'dark');
-assert.strictEqual(evaluateStartupTheme(''), 'dark');
+assert.strictEqual(evaluateStartupTheme('?theme=LIGHT'), 'light');
+assert.strictEqual(evaluateStartupTheme(''), 'light');
 assert.match(main, /query:\s*\{\s*theme:\s*initialTheme,\s*language:\s*initialLanguage,\s*textSize:\s*initialTextSize\s*\}/);
 assert.match(startupThemeJs, /get\('textSize'\)[\s\S]*?dataset\.textSize/);
 assert.match(preload, /setTextSize:\s*\(size\)\s*=>\s*ipcRenderer\.invoke\('settings:setTextSize'/);
