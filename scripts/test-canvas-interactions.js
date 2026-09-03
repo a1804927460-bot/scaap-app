@@ -857,6 +857,12 @@ assert.match(
 );
 assert.match(indexHtml, /id="canvas-project-new"[\s\S]*?New folder/,
   'The canvas library must expose a new-folder entry point.');
+assert.match(
+  indexHtml,
+  /id="canvas-library-view"[\s\S]*?canvas-library-toolbar[\s\S]*?id="canvas-library-search"[\s\S]*?canvas-library-actions[\s\S]*?id="canvas-new"[\s\S]*?New canvas/,
+  'Canvas library actions must live beside the search field with new canvas as the primary entry point.'
+);
+assert.doesNotMatch(indexHtml, /id="canvas-header-new"/, 'The duplicate top-right new-canvas plus button must be removed.');
 assert.match(indexHtml, /id="canvas-scope-picker"[\s\S]*?value="personal"[\s\S]*?Independent projects[\s\S]*?value="team"[\s\S]*?Team projects/,
   'The canvas library must expose independent and team project choices.');
 assert.match(
@@ -880,6 +886,11 @@ assert.match(
   boardStyles,
   /\.canvas-library-create-card \{[\s\S]*?border:\s*1px dashed[\s\S]*?\.canvas-library-create-card:hover/,
   'The empty grid create-canvas action must have a clear, keyboard-visible affordance.'
+);
+assert.match(
+  boardStyles,
+  /\.canvas-library-view \{[\s\S]*?display:\s*flex;[\s\S]*?\.canvas-library-toolbar \{[\s\S]*?flex:\s*1 1 680px;[\s\S]*?\.canvas-library-actions \.canvas-library-action\.is-primary \{/,
+  'Canvas library controls must use the responsive top toolbar layout.'
 );
 assert.match(
   workspaceSource,
@@ -1025,7 +1036,7 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET = 40_000_000[\s\S]*?function cacheBoardFullImage[\s\S]*?fullImageCachePixels[\s\S]*?BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET/,
+  /BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET = 24_000_000[\s\S]*?function cacheBoardFullImage[\s\S]*?fullImageCachePixels[\s\S]*?BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET/,
   'Decoded 4K caching must use a pixel budget so several originals cannot exhaust graphics memory.'
 );
 const transformSource = boardSource.slice(
@@ -1039,7 +1050,7 @@ assert.doesNotMatch(
 );
 assert.match(
   boardSource,
-  /const BOARD_DOM_ITEM_LIMIT = 180;[\s\S]*?BoardEngine\.resolveZoomLod[\s\S]*?BoardEngine\.isOverDomBudget[\s\S]*?queryLimited\(regions\.mount, BOARD_DOM_ITEM_LIMIT\)/,
+  /const BOARD_DOM_ITEM_LIMIT = 96;[\s\S]*?BoardEngine\.resolveZoomLod[\s\S]*?BoardEngine\.isOverDomBudget[\s\S]*?queryLimited\(regions\.mount, BOARD_DOM_ITEM_LIMIT\)/,
   'The board must combine a hard DOM budget with zoom and density hysteresis.'
 );
 assert.match(
@@ -1143,7 +1154,7 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /function syncBoardElementViewportState\([\s\S]*?scheduleBoardMediaRelease[\s\S]*?function buildMiniVideoPlayer[\s\S]*?preload = 'metadata'/,
+  /function syncBoardElementViewportState\([\s\S]*?scheduleBoardMediaRelease[\s\S]*?function buildMiniVideoPlayer[\s\S]*?preload = 'none'/,
   'Retained media must release decoders after leaving the viewport and use metadata-only video preload.'
 );
 assert.match(
@@ -1470,8 +1481,8 @@ assert.match(
 );
 assert.match(
   boardStyles,
-  /\[data-theme="dark"\] \.canvas-library-view \{ background: var\(--bg-deep\); \}[\s\S]*?\[data-theme="dark"\] \.canvas-library-sidebar \{ background: var\(--bg-surface\); \}[\s\S]*?\[data-theme="dark"\] \.canvas-library-content \{ background: var\(--bg-deep\); \}/,
-  'The dark canvas library must separate its content well from the navigation and cards.'
+  /\[data-theme="dark"\] \.canvas-library-view \{ background: var\(--bg-deep\); \}[\s\S]*?\[data-theme="dark"\] \.canvas-library-content \{ background: var\(--bg-deep\); \}/,
+  'The dark canvas library must keep its content on the shared deep workspace surface.'
 );
 assert.match(
   boardStyles,

@@ -1617,10 +1617,19 @@ function activeCanvasAgentProvider() {
 
 function canvasAgentChatProviders() {
   const config = CanvasWorkspace.config || {};
-  const allowedModels = new Set(['gemini-3.7-flash', 'gpt-5.6-luna']);
+  const allowedModels = new Set([
+    'gemini-3.7-flash',
+    'gpt-5.6-luna',
+    'gemini-3.1-pro',
+    'gpt-5.6-sol',
+    'kimi-k3'
+  ]);
   const names = {
     'gemini-3.7-flash': 'Gemini 3.7 Flash',
-    'gpt-5.6-luna': 'GPT-5.6 Luna'
+    'gpt-5.6-luna': 'GPT-5.6 Luna',
+    'gemini-3.1-pro': 'Gemini 3.1 Pro',
+    'gpt-5.6-sol': 'GPT-5.6 Sol',
+    'kimi-k3': 'Kimi K3'
   };
   return (Array.isArray(config.chatProviders) ? config.chatProviders : []).flatMap((provider) => {
     if (!provider || provider.available === false || !provider.endpoint) return [];
@@ -2205,7 +2214,6 @@ async function initCanvasWorkspace(initial) {
   CanvasWorkspace.libraryScope = canvasProjectScope(activeProject);
 
   document.getElementById('canvas-new').addEventListener('click', promptNewCanvas);
-  document.getElementById('canvas-header-new').addEventListener('click', promptNewCanvas);
   document.getElementById('canvas-import').addEventListener('click', promptImportCanvas);
   document.getElementById('canvas-project-new').addEventListener('click', promptNewProject);
   document.getElementById('canvas-library-back').addEventListener('click', showCanvasLibrary);

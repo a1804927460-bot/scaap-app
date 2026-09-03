@@ -25,7 +25,7 @@ const {
 } = require('../lib/credit-pricing');
 
 assert.strictEqual(POINTS_PER_CNY, 1000 / 70);
-assert.strictEqual(CREDIT_PRICING_VERSION, '202608220007');
+assert.strictEqual(CREDIT_PRICING_VERSION, '202609020001');
 assert.strictEqual(RETAIL_GROSS_MARGIN_PERCENT, 10);
 assert.ok(Math.abs(RETAIL_MARKUP_PERCENT - (100 / 9)) < 1e-12);
 assert.strictEqual(RETAIL_MULTIPLIER, 10 / 9);
@@ -183,33 +183,33 @@ assert.deepStrictEqual(quoteMediaCredits({
   duration: 6,
   units: 6,
   unit: 'second',
-  unitCredits: 16,
+  unitCredits: 27,
   fixedCredits: 0,
   minimumCredits: 0,
-  totalCredits: 96
+  totalCredits: 162
 });
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'video',
   resolution: '768P',
   duration: undefined
-}).totalCredits, 60, 'Invalid duration must use the six-second default.');
+}).totalCredits, 102, 'Invalid duration must use the six-second default.');
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'video',
   resolution: '768P',
   duration: 0
-}).totalCredits, 40, 'Video billing must enforce the four-second minimum.');
+}).totalCredits, 68, 'Video billing must enforce the four-second minimum.');
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'video', videoProviderId: 'video-1', resolution: '768P', duration: 6,
   referenceMediaTypes: ['video']
-}).totalCredits, 210, 'A MiniMax reference video must reserve the documented 15-second input maximum.');
+}).totalCredits, 357, 'A MiniMax reference video must reserve the documented 15-second input maximum.');
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'video', videoProviderId: 'video-1', resolution: '2K', duration: 6,
   referenceMediaTypes: Array(9).fill('image')
-}).totalCredits, 112, 'MiniMax must reserve five points for each image after the first five.');
+}).totalCredits, 194, 'MiniMax must reserve the documented image charge after the first five.');
 
 assert.deepStrictEqual(quoteMediaCredits({
   kind: 'video',
@@ -347,8 +347,8 @@ assert.deepStrictEqual(publicPricing.imageResolution['image-7'], IMAGE_RESOLUTIO
 assert.deepStrictEqual(publicPricing.imageResolution['image-8'], IMAGE_RESOLUTION_PRICES['image-8']);
 assert.deepStrictEqual(publicPricing.imageResolution['image-1'], IMAGE_RESOLUTION_PRICES['image-1']);
 assert.deepStrictEqual(publicPricing.imageResolution['image-2'], IMAGE_RESOLUTION_PRICES['image-2']);
-assert.strictEqual(publicPricing.video['video-1']['768P'], 10);
-assert.strictEqual(publicPricing.video['video-1']['2K'], 16);
+assert.strictEqual(publicPricing.video['video-1']['768P'], 17);
+assert.strictEqual(publicPricing.video['video-1']['2K'], 27);
 assert.deepStrictEqual(publicPricing.video['video-2'], VIDEO_RATES['video-2']);
 assert.deepStrictEqual(publicPricing.video['video-3'], VIDEO_RATES['video-3']);
 

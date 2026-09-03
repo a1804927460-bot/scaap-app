@@ -10,7 +10,7 @@ import {
 import { normalizeVideoResolution } from './video-resolution.js';
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
-export const CREDIT_PRICING_VERSION = '202608220007';
+export const CREDIT_PRICING_VERSION = '202609020001';
 const LEGACY_POINTS_PER_CNY = 10;
 const POINTS_PER_CNY = 1000 / 70;
 const POINT_DENOMINATION_SCALE = POINTS_PER_CNY / LEGACY_POINTS_PER_CNY;
@@ -26,6 +26,13 @@ export const UPSTREAM_COST_SAFETY_PERCENT = 10;
 export const UPSTREAM_COST_SAFETY_MULTIPLIER = 1 + UPSTREAM_COST_SAFETY_PERCENT / 100;
 export const USD_TO_CNY = 7.3;
 const PTC_TO_CREDITS = USD_TO_CNY * POINTS_PER_CNY;
+// AI Reiter's published MiniMax H3 rates, converted to credits with the
+// upstream safety buffer and the video gross-margin formula.
+const MINIMAX_H3_RETAIL_CREDITS_PER_SECOND = Object.freeze({
+  '768P': retailVideoCreditsFromUpstreamCny(0.1125 * USD_TO_CNY),
+  '2K': retailVideoCreditsFromUpstreamCny(0.1825 * USD_TO_CNY)
+});
+const MINIMAX_H3_EXTRA_IMAGE_RETAIL_CREDITS = retailVideoCreditsFromUpstreamCny(0.055 * USD_TO_CNY);
 // Agent and AI chat are explicitly free. Keep the named exports for clients
 // that still read the public pricing object, but never reserve points here.
 export const CHAT_UPSTREAM_PTC_RESERVE = 0;
@@ -243,10 +250,7 @@ export const VIDEO_CREDITS_PER_SECOND = Object.freeze({
     '4K-ESR': Number((SEEDANCE_25_4K_ESR_PTC_PER_SECOND * USD_TO_CNY * POINTS_PER_CNY).toFixed(9))
   }),
   // Approved CNY retail prices converted to the current point denomination.
-  'video-1': Object.freeze({
-    '768P': retailVideoCreditsFromUpstreamCny(0.50),
-    '2K': retailVideoCreditsFromUpstreamCny(0.80)
-  }),
+  'video-1': MINIMAX_H3_RETAIL_CREDITS_PER_SECOND,
   // Logical Seedance billing uses the higher of the Atlas primary price and
   // the USD/PTC 302 fallback for every resolution the fallback supports.
   'video-2': legacyPointRateTable({
@@ -337,6 +341,7 @@ export const VIDEO_SERVICE_TIER_PROVIDERS = Object.freeze({
 const DURABLE_TIMEOUT_MS = 5_000;
 const VALID_RESERVE_REASONS = new Set([
   'reserved',
+  'already-reserved',
   // Only accepted as a fail-closed response from the legacy credit RPC. The
   // gateway makes one scoped migration attempt before exposing this denial.
   'activation-required',
@@ -439,15 +444,20 @@ export function quoteUsage(kind, request = {}) {
         : resolutionRates && Object.hasOwn(resolutionRates, requestedResolution)
       ? requestedResolution
       : defaultResolution;
-    const credits = qualityRates
+    const unitCredits = qualityRates
       ? (selectedQualityRates ? selectedQualityRates[resolution] : qualityRates[quality])
       : resolutionRates
         ? resolutionRates[resolution]
         : IMAGE_CREDITS[providerId];
+    const count = boundedInteger(request.count, 1, 1, 4);
+    const totalCredits = Math.ceil(Number(unitCredits) * count);
     return {
       kind: 'image',
       providerId,
-      credits,
+      credits: totalCredits,
+      unitCredits,
+      totalCredits,
+      count,
       resolution: qualityRates ? quality : resolutionRates ? resolution : null,
       ...(qualityRates ? { quality } : {}),
       ...((qualityResolutionRates || resolutionRates) ? { imageResolution: resolution } : {}),
@@ -494,8 +504,7 @@ export function quoteUsage(kind, request = {}) {
       ? unitCredits * 15
       : 0;
     const extraImageCredits = providerId === 'video-1'
-      ? Math.max(0, referenceImageCount - 5)
-        * Math.ceil(2 * POINT_DENOMINATION_SCALE * guardedMultiplier)
+      ? Math.max(0, referenceImageCount - 5) * MINIMAX_H3_EXTRA_IMAGE_RETAIL_CREDITS
       : 0;
     const baseCredits = providerId === 'video-1'
       ? unitCredits * duration
@@ -630,37 +639,40 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
     p_request_id: requestId,
     p_resolution: quote.billingResolution || quote.resolution,
     p_duration: quote.duration,
-    p_expected_credits: quote.credits
+    p_expected_credits: quote.credits,
+    ...(quote.kind === 'image'
+      ? { p_count: quote.count }
+      : {
+        p_reference_image_count: Array.isArray(request.referenceMediaTypes)
+          ? request.referenceMediaTypes.filter((value) => String(value || '').trim().toLowerCase() === 'image').length
+          : 0,
+        p_has_reference_video: Array.isArray(request.referenceMediaTypes)
+          && request.referenceMediaTypes.some((value) => String(value || '').trim().toLowerCase() === 'video')
+      })
   });
-  const reserveRpc = (quote.providerId.startsWith('atlas-') || ['image-6', 'video-2', 'video-3'].includes(quote.providerId))
-    ? 'reserve_atlas_catalog_credits'
-    : ['video-10', 'video-11', 'video-12', 'video-13'].includes(quote.providerId)
-    ? 'reserve_kling_video_credits'
-    : (['image-1', 'image-2', 'image-5', 'image-9'].includes(quote.providerId)
-    ? 'reserve_nano_banana_credits'
-    : (['image-7', 'image-8'].includes(quote.providerId)
-      ? 'reserve_higgsfield_credits'
-      : (['image-17', 'image-18'].includes(quote.providerId)
-        ? 'reserve_legnext_credits'
-        : (['image-3', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16',
-          'video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9',
-          'video-10', 'video-11', 'video-12', 'video-13'].includes(quote.providerId)
-          ? 'reserve_302_catalog_credits'
-          : 'reserve_ai_credits'))));
+  const reserveRpc = quote.kind === 'image'
+    ? 'reserve_ai_media_credits'
+    : 'reserve_ai_video_credits';
   let { response, payload } = await reserveCredits(headers, requestBody, fetchImpl, reserveRpc);
   if (response.ok && payload && payload.ok === false && payload.reason === 'pricing-mismatch'
       && Number.isInteger(Number(payload.credits)) && Number(payload.credits) >= quote.credits) {
     requestBody = JSON.stringify({
       p_user_id: userId, p_kind: quote.kind, p_provider_id: quote.providerId,
       p_request_id: requestId, p_resolution: quote.billingResolution || quote.resolution, p_duration: quote.duration,
-      p_expected_credits: Number(payload.credits)
+      p_expected_credits: Number(payload.credits),
+      ...(quote.kind === 'image'
+        ? { p_count: quote.count }
+        : {
+          p_reference_image_count: Array.isArray(request.referenceMediaTypes)
+            ? request.referenceMediaTypes.filter((value) => String(value || '').trim().toLowerCase() === 'image').length
+            : 0,
+          p_has_reference_video: Array.isArray(request.referenceMediaTypes)
+            && request.referenceMediaTypes.some((value) => String(value || '').trim().toLowerCase() === 'video')
+        })
     });
     ({ response, payload } = await reserveCredits(headers, requestBody, fetchImpl, reserveRpc));
   }
   if (!response.ok) {
-    if (isMissingCreditRpc(response, payload) && !durableRequired()) {
-      return legacyReserve(headers, userId, quote.kind, requestId, fetchImpl);
-    }
     const code = isMissingCreditRpc(response, payload) ? 'credit-schema-missing' : 'credit-service-failed';
     throw serviceError(code, 'Could not reserve AI credits.');
   }
@@ -694,7 +706,12 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
     resolution: quote.resolution,
     ...(quote.quality ? { quality: quote.quality } : {}),
     ...(quote.imageResolution ? { imageResolution: quote.imageResolution } : {}),
-    duration: quote.duration
+    duration: quote.duration,
+    ...(quote.kind === 'image' ? {
+      count: quote.count,
+      unitCredits: quote.unitCredits,
+      totalCredits: quote.totalCredits
+    } : {})
   };
 }
 

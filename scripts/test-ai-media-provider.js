@@ -292,9 +292,11 @@ async function testOpenAiImageFlow() {
 }
 
 async function testGptImage2FlowAndReferenceLimits() {
-  const provider = catalogProvider('image-6');
+  // GPT Image 2 now uses AI Reiter as its logical public route. This test
+  // covers the retained 302 compatibility route explicitly.
+  const provider = catalogProvider('legacy-image-gpt2');
   assert.ok(provider);
-  assert.strictEqual(provider.name, 'GPT Image 2');
+  assert.strictEqual(provider.name, 'GPT Image 2 legacy route');
   assert.strictEqual(provider.model, 'gpt-image-2');
   assert.strictEqual(provider.endpoint, 'https://api.302.ai/v1/images/generations');
   assert.strictEqual(provider.keyEnv, 'AI302_KEY');
@@ -516,7 +518,7 @@ async function testQuickRouterNativeGeminiImageFlow() {
 async function test302NanoBananaFlows() {
   const cases = [
     {
-      id: 'image-2', name: 'Nano Banana 2', suffix: 'nano-banana-2/edit', size: '2K',
+      id: 'legacy-image-2', name: 'Nano Banana 2 legacy route', suffix: 'nano-banana-2/edit', size: '2K',
       urls: ['https://gateway.test/reference.png'],
       expectedBody: {
         aspect_ratio: '16:9', resolution: '2k', enable_base64_output: false,
@@ -610,7 +612,7 @@ async function test302NanoBananaFlows() {
   assert.throws(
     () => buildRequestBody('image', {
       prompt: 'unsupported resolution', size: '0.5K', aspectRatio: '1:1', urls: []
-    }, normalizeConfig({ apiKey: 'server-only-302-key', imageEndpoint: catalogProvider('image-2').endpoint }), catalogProvider('image-2').endpoint),
+      }, normalizeConfig({ apiKey: 'server-only-302-key', imageEndpoint: catalogProvider('legacy-image-2').endpoint }), catalogProvider('legacy-image-2').endpoint),
     (error) => error && error.code === 'invalid-size'
   );
 }

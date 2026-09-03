@@ -793,6 +793,9 @@ function validateBody(body, kind) {
   return {
     prompt,
     providerId,
+    ...(kind === 'image' ? {
+      count: Math.max(1, Math.min(4, Math.round(Number(body.count) || 1)))
+    } : {}),
     canvasId: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(String(body.canvasId || '').trim())
       ? String(body.canvasId).trim()
       : null,
@@ -2296,10 +2299,8 @@ async function handle(request, response) {
     });
     const unitCredits = kind === 'video'
       ? Math.max(0, Number(quote.unitCredits) || 0)
-      : Math.max(0, Math.ceil(Number(quote.credits) || 0));
-    const totalCredits = kind === 'video'
-      ? Math.max(0, Math.ceil(Number(quote.credits) || 0))
-      : unitCredits * count;
+      : Math.max(0, Math.ceil(Number(quote.unitCredits) || Number(quote.credits) || 0));
+    const totalCredits = Math.max(0, Math.ceil(Number(quote.totalCredits ?? quote.credits) || 0));
     return send(response, 200, {
       pricingVersion: CREDIT_PRICING_VERSION,
       kind: quote.kind,

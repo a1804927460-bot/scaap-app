@@ -86,7 +86,7 @@ assert.ok(catalog.version >= 8);
 assert.deepEqual(
   catalog.providers.filter((provider) => provider.kind === 'image' && provider.hidden !== true).map((provider) => provider.name),
   [
-    'Nano Banana Pro', 'Chaser Pro', 'GPT Image 2', 'Midjourney V8.1', 'Midjourney V8.2'
+    'Nano Banana Pro', 'Nano Banana 2', 'GPT Image 2', 'Midjourney V8.1', 'Midjourney V8.2'
   ]
 );
 assert.deepEqual(
@@ -97,15 +97,15 @@ assert.deepEqual(
 );
 assert.deepEqual(
   catalog.providers.filter((provider) => provider.hidden === true).map((provider) => provider.id),
-  ['atlas-image-gpt2', 'atlas-video-seedance20-i2v', 'atlas-video-seedance20-ref', 'atlas-video-seedance25-i2v', 'atlas-video-seedance25-ref', 'image-2', 'image-4', 'image-5', 'image-7', 'image-8', 'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16', 'atlas-video-minimax-h3-i2v', 'atlas-video-minimax-h3-ref', 'video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9', 'video-11', 'video-13', 'aireiter-image-nano-pro', 'aireiter-image-gpt2', 'aireiter-image-midjourney81', 'aireiter-video-minimax-h3', 'aireiter-video-seedance20', 'aireiter-video-seedance25', 'aireiter-video-kling-v3', 'aireiter-video-kling-o3', 'aireiter-chat-gemini', 'aireiter-chat-luna']
+  ['atlas-image-gpt2', 'atlas-video-seedance20-i2v', 'atlas-video-seedance20-ref', 'atlas-video-seedance25-i2v', 'atlas-video-seedance25-ref', 'legacy-image-2', 'image-3', 'image-4', 'image-5', 'legacy-image-gpt2', 'image-7', 'image-8', 'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16', 'atlas-video-minimax-h3-i2v', 'atlas-video-minimax-h3-ref', 'legacy-video-minimax-h3', 'video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9', 'video-11', 'video-13', 'aireiter-image-nano-pro', 'aireiter-image-gpt2', 'aireiter-image-midjourney81', 'aireiter-video-minimax-h3', 'aireiter-video-seedance20', 'aireiter-video-seedance25', 'aireiter-video-kling-v3', 'aireiter-video-kling-o3', 'aireiter-chat-gemini', 'aireiter-chat-luna']
 );
 assert.equal(catalog.providers.find((provider) => provider.name === 'MiniMax H3').requiresActivation, false);
 const miniMaxH3 = catalog.providers.find((provider) => provider.id === 'video-1');
-assert.equal(miniMaxH3.keyEnv, 'MINIMAX_API_KEY');
-assert.equal(miniMaxH3.protocol, 'minimax-video-v2');
-assert.match(miniMaxH3.endpoint, /api\.minimaxi\.com\/v2\/video_generation$/);
+assert.equal(miniMaxH3.keyEnv, 'AIREITER_API_KEY');
+assert.equal(miniMaxH3.protocol, 'aireiter-async');
+assert.match(miniMaxH3.endpoint, /aireiter\.com\/api\/openapi\/submit$/);
 assert.equal(miniMaxH3.capabilities.upstreamRoutes, undefined);
-assert.equal(miniMaxH3.capabilities.videoModes.some((mode) => mode.id === 'text'), false);
+assert.equal(miniMaxH3.capabilities.videoModes.some((mode) => mode.id === 'text'), true);
 assert.equal(catalog.providers.every((provider) => provider.requiresActivation === false), true);
 
 console.log('Release configuration tests passed.');

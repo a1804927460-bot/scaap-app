@@ -218,6 +218,9 @@ function configuredProviders() {
       capabilities: builtin && builtin.capabilities
         ? builtin.capabilities
         : (raw.capabilities && typeof raw.capabilities === 'object' ? raw.capabilities : null),
+      // Routing policy is internal metadata. It is intentionally omitted from
+      // publicProvider() so the UI only receives product capabilities.
+      routingPolicy: String(raw.routingPolicy || (builtin && builtin.routingPolicy) || '').trim().slice(0, 40),
       hidden: raw.hidden === true || Boolean(builtin && builtin.hidden),
       keyEnv
     });
@@ -252,6 +255,17 @@ function configuredProviders() {
       provider.fallbackProviderIds = [
         ...new Set([...(provider.fallbackProviderIds || []), ...aliases])
       ].slice(0, 20);
+      // A logical product route can point at a hidden compatibility provider
+      // (for example GPT Image 2 -> legacy 302). Carry that provider's
+      // dynamically configured backup routes onto the logical route too, so
+      // a rejected primary still has the complete same-family chain.
+      for (const parent of originals) {
+        if (parent === provider || !Array.isArray(parent.fallbackProviderIds)) continue;
+        if (!parent.fallbackProviderIds.includes(provider.id)) continue;
+        parent.fallbackProviderIds = [
+          ...new Set([...parent.fallbackProviderIds, ...aliases])
+        ].slice(0, 20);
+      }
     }
   }
   return [...byId.values()];
@@ -413,10 +427,19 @@ function isAireiterProvider(provider) {
   );
 }
 
-function orderMixedRouteIds(routeIds, byId) {
+function orderMixedRouteIds(routeIds, byId, requested) {
   const unique = [...new Set(routeIds.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))];
+  const atlas = unique.filter((id) => {
+    const provider = byId.get(id);
+    return provider && (/^atlas[-_]/i.test(id) || /^atlas[-_]/i.test(String(provider.protocol || '')));
+  });
   const aireiter = unique.filter((id) => isAireiterProvider(byId.get(id)));
-  const existing = unique.filter((id) => !aireiter.includes(id));
+  const existing = unique.filter((id) => !aireiter.includes(id) && !atlas.includes(id));
+  if (requested && requested.routingPolicy === 'atlas-primary') {
+    // Seedance is explicitly Atlas-first. AI Reiter and the legacy route stay
+    // available as fallbacks after a proven pre-submission rejection.
+    return [...atlas, ...aireiter, ...existing];
+  }
   // AI Reiter is the product's fixed primary route. Legacy providers remain
   // in the list only as compatible fallbacks after a proven pre-submission
   // rejection; traffic percentages must never silently demote the primary.
@@ -871,6 +894,15 @@ function aireiterImageParams(provider, body) {
   const urls = Array.isArray(body.urls) ? body.urls.map(String).map((value) => value.trim()).filter(Boolean) : [];
   const ratio = String(body.aspectRatio || '').trim();
   const resolution = String(body.size || body.resolution || '2K').trim().toUpperCase();
+  if (provider.model === 'nano_banana_v2') {
+    if (urls.length > 14) throw aireiterLocalRejection('This route accepts at most 14 reference images.', 'too-many-references');
+    return {
+      prompt,
+      ...(urls.length ? { image_url: urls } : {}),
+      ...(/^\d+:\d+$/.test(ratio) ? { aspect_ratio: ratio } : {}),
+      resolution: ['1K', '2K', '4K'].includes(resolution) ? resolution : '2K'
+    };
+  }
   if (provider.model === 'nano_banana_pro') {
     if (urls.length > 8) throw aireiterLocalRejection('This route accepts at most 8 reference images.', 'too-many-references');
     return {
@@ -2525,8 +2557,14 @@ function aireiterVideoParams(provider, body) {
   };
 
   if (provider.model === 'minimax_h3') {
-    if (!referenceCount) throw aireiterLocalRejection('MiniMax H3 requires reference media.', 'reference-required');
     const frameMode = ['first-frame', 'first-last-frame'].includes(mode);
+    const textMode = mode === 'text' || (!mode && !referenceCount);
+    if (textMode && referenceCount) {
+      throw aireiterLocalRejection('Text-to-video mode does not accept reference media.', 'invalid-reference-media');
+    }
+    if (!textMode && !referenceCount) {
+      throw aireiterLocalRejection('This video mode requires reference media.', 'reference-required');
+    }
     if (frameMode && (!images.length || images.length > 2 || videos.length || audios.length)) {
       throw aireiterLocalRejection(
         'MiniMax H3 frame generation accepts one or two image references only.',
@@ -2545,7 +2583,7 @@ function aireiterVideoParams(provider, body) {
     return {
       prompt,
       video_length: common.video_length,
-      type: frameMode ? 'first_last_frame' : 'all_reference',
+      type: textMode ? 'text_to_video' : frameMode ? 'first_last_frame' : 'all_reference',
       quality: resolution === '2k' ? '2k' : '768p',
       ...(!frameMode && common.aspect_ratio ? { aspect_ratio: common.aspect_ratio } : {}),
       ...(images.length ? { image_url: images } : {}),

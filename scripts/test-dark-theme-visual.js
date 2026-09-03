@@ -46,8 +46,9 @@ async function run() {
         sidebar: color('.sidebar'),
         preview: color('.preview-canvas'),
         library: color('.canvas-library-content'),
-        librarySidebar: color('.canvas-library-sidebar'),
-        card: color('.canvas-library-card')
+        card: color('.canvas-library-card'),
+        toolbarPresent: !!document.querySelector('.canvas-library-toolbar'),
+        headerPlusPresent: !!document.querySelector('#canvas-header-new')
       };
     })()`);
 
@@ -62,8 +63,9 @@ async function run() {
       sidebar: 'rgb(21, 22, 24)',
       preview: 'rgb(10, 10, 10)',
       library: 'rgb(10, 10, 10)',
-      librarySidebar: 'rgb(21, 22, 24)',
-      card: 'rgb(26, 27, 29)'
+      card: 'rgb(26, 27, 29)',
+      toolbarPresent: true,
+      headerPlusPresent: false
     });
 
     const outputDir = path.join(root, 'test-artifacts');

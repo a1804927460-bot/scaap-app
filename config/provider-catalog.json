@@ -1,5 +1,5 @@
 {
-  "version": 49,
+  "version": 51,
   "providers": [
     {
       "id": "atlas-image-gpt2",
@@ -181,7 +181,7 @@
       "endpoint": "https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent",
       "protocol": "gemini-native",
       "logicalModel": "nano-banana-pro",
-      "fallbackProviderIds": ["aireiter-image-nano-pro"],
+      "fallbackProviderIds": [],
       "requiresActivation": false,
       "capabilities": {
         "sizes": ["1K", "2K", "4K"],
@@ -195,9 +195,29 @@
       "id": "image-2",
       "kind": "image",
       "name": "Nano Banana 2",
+      "endpoint": "https://aireiter.com/api/openapi/submit",
+      "resultEndpoint": "https://aireiter.com/api/openapi/query",
+      "model": "nano_banana_v2",
+      "protocol": "aireiter-async",
+      "logicalModel": "nano-banana-2",
+      "fallbackProviderIds": ["legacy-image-2"],
+      "requiresActivation": false,
+      "capabilities": {
+        "sizes": ["1K", "2K", "4K"],
+        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"],
+        "maxReferenceImages": 14,
+        "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
+      },
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
+      "id": "legacy-image-2",
+      "kind": "image",
+      "name": "Nano Banana 2 legacy route",
       "hidden": true,
       "endpoint": "https://api.302.ai/ws/api/v3/google/nano-banana-2/text-to-image",
       "protocol": "ai302-nano-banana-v3",
+      "logicalModel": "nano-banana-2",
       "requiresActivation": false,
       "capabilities": {
         "sizes": ["1K", "2K", "4K"],
@@ -211,6 +231,7 @@
       "id": "image-3",
       "kind": "image",
       "name": "Chaser Pro",
+      "hidden": true,
       "icon": "chaser-pro",
       "endpoint": "https://api.302.ai/doubao/images/generations",
       "model": "doubao-seedream-5-0-pro-260628",
@@ -259,11 +280,12 @@
       "id": "image-6",
       "kind": "image",
       "name": "GPT Image 2",
-      "endpoint": "https://api.302.ai/v1/images/generations",
-      "model": "gpt-image-2",
-      "protocol": "openai-image",
+      "endpoint": "https://aireiter.com/api/openapi/submit",
+      "resultEndpoint": "https://aireiter.com/api/openapi/query",
+      "model": "gpt_image_2",
+      "protocol": "aireiter-async",
       "logicalModel": "gpt-image-2",
-      "fallbackProviderIds": ["aireiter-image-gpt2"],
+      "fallbackProviderIds": ["legacy-image-gpt2", "atlas-image-gpt2"],
       "requiresActivation": false,
       "capabilities": {
         "resolutionPresets": ["1K", "2K", "4K"],
@@ -284,6 +306,37 @@
         "referenceDataUrlsOnly": true,
         "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"],
         "upstreamPriority": ["aireiter-image-gpt2", "atlas-image-gpt2", "image-6"]
+      },
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
+      "id": "legacy-image-gpt2",
+      "kind": "image",
+      "name": "GPT Image 2 legacy route",
+      "hidden": true,
+      "endpoint": "https://api.302.ai/v1/images/generations",
+      "model": "gpt-image-2",
+      "protocol": "openai-image",
+      "logicalModel": "gpt-image-2",
+      "requiresActivation": false,
+      "capabilities": {
+        "resolutionPresets": ["1K", "2K", "4K"],
+        "sizes": ["1K", "2K", "4K"],
+        "qualities": ["low", "medium", "high", "auto"],
+        "ratios": ["auto", "1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "2:1", "1:2", "21:9", "9:21"],
+        "arbitraryRatios": true,
+        "arbitrarySizes": true,
+        "minimumAspectRatio": 0.3333333333333333,
+        "maximumAspectRatio": 3,
+        "sizeMultiple": 16,
+        "maxSizeEdge": 3840,
+        "maxSizePixels": 8300000,
+        "promptMaxCharacters": 32000,
+        "referencePromptMaxCharacters": 32000,
+        "maxReferenceImages": 10,
+        "maxReferenceImageBytes": 26214399,
+        "referenceDataUrlsOnly": true,
+        "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
       },
       "keyEnv": "AI302_KEY"
     },
@@ -525,11 +578,41 @@
       "kind": "video",
       "name": "MiniMax H3",
       "logicalModel": "minimax-h3",
+      "endpoint": "https://aireiter.com/api/openapi/submit",
+      "resultEndpoint": "https://aireiter.com/api/openapi/query",
+      "model": "minimax_h3",
+      "protocol": "aireiter-async",
+      "fallbackProviderIds": ["atlas-video-minimax-h3-i2v", "atlas-video-minimax-h3-ref", "legacy-video-minimax-h3"],
+      "requiresActivation": false,
+      "capabilities": {
+        "resolutions": ["768P", "2K"],
+        "durations": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "ratios": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "frameReferenceRatios": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "maxReferenceImages": 9,
+        "maxReferenceVideos": 3,
+        "maxReferenceAudios": 3,
+        "maxTotalReferences": 15,
+        "referenceAudioMimeTypes": ["audio/wav", "audio/mpeg", "audio/mp3"],
+        "videoModes": [
+          { "id": "text", "minReferences": 0, "maxReferences": 0, "roles": [], "mediaTypes": [], "ratios": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] },
+          { "id": "first-frame", "minReferences": 1, "maxReferences": 1, "roles": ["first_frame"], "mediaTypes": ["image"], "ratios": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] },
+          { "id": "first-last-frame", "minReferences": 2, "maxReferences": 2, "roles": ["first_frame", "last_frame"], "mediaTypes": ["image"], "ratios": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] },
+          { "id": "omni", "minReferences": 1, "maxReferences": 15, "maxReferenceImages": 9, "maxReferenceVideos": 3, "maxReferenceAudios": 3, "roles": ["reference_image"], "mediaTypes": ["image", "video", "audio"] }
+        ]
+      },
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
+      "id": "legacy-video-minimax-h3",
+      "kind": "video",
+      "name": "MiniMax H3 legacy route",
+      "hidden": true,
+      "logicalModel": "minimax-h3",
       "endpoint": "https://api.minimaxi.com/v2/video_generation",
       "resultEndpoint": "https://api.minimaxi.com/v2/query/video_generation",
       "model": "MiniMax-H3",
       "protocol": "minimax-video-v2",
-      "fallbackProviderIds": ["aireiter-video-minimax-h3"],
       "requiresActivation": false,
       "capabilities": {
         "resolutions": ["768P", "2K"],
@@ -558,6 +641,7 @@
       "model": "doubao-seedance-2-0-260128",
       "protocol": "seedance-video-v3",
       "logicalModel": "seedance-2-0",
+      "routingPolicy": "atlas-primary",
       "fallbackProviderIds": ["aireiter-video-seedance20"],
       "requiresActivation": false,
       "capabilities": {
@@ -619,6 +703,7 @@
       "model": "doubao-seedance-2-5-260628",
       "protocol": "seedance-video-v3",
       "logicalModel": "seedance-2-5",
+      "routingPolicy": "atlas-primary",
       "fallbackProviderIds": ["aireiter-video-seedance25"],
       "requiresActivation": false,
       "capabilities": {
@@ -1120,6 +1205,39 @@
       "protocol": "openai-chat",
       "requiresActivation": false,
       "keyEnv": "QUICKROUTER_API_KEY"
+    },
+    {
+      "id": "chat-3",
+      "kind": "chat",
+      "name": "Gemini 3.1 Pro",
+      "endpoint": "https://aireiter.com/api/v1/chat/completions",
+      "models": ["gemini-3.1-pro"],
+      "upstreamModels": { "gemini-3.1-pro": "chat-gemini-3.1-pro" },
+      "protocol": "openai-chat",
+      "requiresActivation": false,
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
+      "id": "chat-4",
+      "kind": "chat",
+      "name": "GPT-5.6 Sol",
+      "endpoint": "https://aireiter.com/api/v1/chat/completions",
+      "models": ["gpt-5.6-sol"],
+      "upstreamModels": { "gpt-5.6-sol": "chat-gpt-5.6-sol" },
+      "protocol": "openai-chat",
+      "requiresActivation": false,
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
+      "id": "chat-5",
+      "kind": "chat",
+      "name": "Kimi K3",
+      "endpoint": "https://aireiter.com/api/v1/chat/completions",
+      "models": ["kimi-k3"],
+      "upstreamModels": { "kimi-k3": "chat-kimi-k3" },
+      "protocol": "openai-chat",
+      "requiresActivation": false,
+      "keyEnv": "AIREITER_API_KEY"
     }
   ]
 }

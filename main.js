@@ -4470,6 +4470,10 @@ function normalizeChatProviders(value, legacy = {}) {
   const hasConfiguredSource = source.some((provider) =>
     provider && String(provider.endpoint || '').trim()
   );
+  const savedById = new Map(source
+    .filter((provider) => provider && /^chat-\d+$/i.test(String(provider.id || '').trim()))
+    .map((provider) => [String(provider.id).trim().toLowerCase(), provider]));
+  const hasStableIds = savedById.size > 0;
   const legacyEndpoint = normalizeProviderEndpoint(legacy.endpoint);
   const legacyProvider = {
     id: 'chat-1',
@@ -4479,10 +4483,15 @@ function normalizeChatProviders(value, legacy = {}) {
   };
   const effectiveSource = !hasConfiguredSource && legacyEndpoint ? [legacyProvider] : source;
   return Array.from({ length: Math.max(10, effectiveSource.length) }, (_, index) => {
-    const saved = effectiveSource[index] || {};
+    const id = `chat-${index + 1}`;
+    // Hidden catalog routes can occupy earlier positions in older data.json
+    // files. Stable chat IDs must win so those routes cannot shift user slots.
+    const saved = hasStableIds
+      ? (savedById.get(id) || {})
+      : (effectiveSource[index] || {});
     const endpoint = normalizeProviderEndpoint(saved.endpoint);
     return {
-      id: `chat-${index + 1}`,
+      id,
       name: String(saved.name || (endpoint ? deriveProviderName(endpoint) : '')).trim().slice(0, 40),
       endpoint,
       models: normalizeChatModels(saved.models || saved.model, index === 0 ? DEFAULT_CATALOG_CHAT.models[0] : ''),

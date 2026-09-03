@@ -9,6 +9,7 @@ const { PROVIDER_CATALOG_VERSION } = require('../lib/provider-catalog');
 process.env.Quick_API_KEY = 'quickrouter-secret';
 process.env.AI302_KEY = 'ai302-secret';
 process.env.ATLASCLOUD_API_KEY = 'atlas-secret';
+process.env.AIREITER_API_KEY = 'aireiter-secret';
 process.env.MINIMAX_API_KEY = 'legacy-minimax-secret';
 process.env.LEGNEXT_API_KEY = 'legnext-secret';
 process.env.AI_GATEWAY_PUBLIC_URL = 'https://gateway.test';
@@ -51,6 +52,9 @@ assert.ok(ids.includes('video-2'));
 assert.ok(ids.includes('video-3'));
 assert.ok(ids.includes('chat-1'));
 assert.ok(ids.includes('chat-2'));
+assert.ok(ids.includes('chat-3'));
+assert.ok(ids.includes('chat-4'));
+assert.ok(ids.includes('chat-5'));
 assert.ok(ids.includes('relay-2-image'));
 assert.ok(ids.includes('relay-2-chat'));
 assert.deepEqual(
@@ -58,13 +62,13 @@ assert.deepEqual(
   ['model-a', 'model-b']
 );
 assert.equal(config.providers.find((provider) => provider.id === 'image-1').name, 'Nano Banana Pro');
-assert.equal(config.providers.find((provider) => provider.id === 'image-3').name, 'Chaser Pro');
+assert.equal(ids.includes('image-3'), false);
 for (const [id, model] of [['image-17', '8.1'], ['image-18', '8.2']]) {
   const provider = config.providers.find((entry) => entry.id === id);
   assert.equal(provider.name, `Midjourney V${model}`);
   assert.equal(provider.capabilities.maxReferenceImages, 0);
 }
-for (const id of ['image-2', 'image-4', 'image-5', 'image-7', 'image-8', 'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16']) {
+for (const id of ['image-4', 'image-5', 'image-7', 'image-8', 'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16']) {
   assert.equal(ids.includes(id), false);
 }
 for (const id of ['video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9']) {
@@ -173,6 +177,12 @@ assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-1').m
 ]);
 assert.equal(config.providers.find((provider) => provider.id === 'chat-2').name, 'AI Chat');
 assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-2').models, ['gpt-5.6-luna']);
+assert.equal(config.providers.find((provider) => provider.id === 'chat-3').name, 'Gemini 3.1 Pro');
+assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-3').models, ['gemini-3.1-pro']);
+assert.equal(config.providers.find((provider) => provider.id === 'chat-4').name, 'GPT-5.6 Sol');
+assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-4').models, ['gpt-5.6-sol']);
+assert.equal(config.providers.find((provider) => provider.id === 'chat-5').name, 'Kimi K3');
+assert.deepEqual(config.providers.find((provider) => provider.id === 'chat-5').models, ['kimi-k3']);
 
 for (const provider of config.providers) {
   assert.equal(Object.hasOwn(provider, 'protocol'), false);
@@ -201,6 +211,11 @@ assert.equal(publicText.includes('doubao'), false);
 assert.equal(publicText.includes('seedream'), false);
 assert.equal(publicText.includes('upstreamRoutes'), false);
 assert.equal(publicText.includes('tierProviderIds'), false);
+
+// The legacy 3.7 Flash route keeps its existing fallback order. The
+// AIREITER credential is enabled again below for the dedicated new models.
+const configuredAireiterKey = process.env.AIREITER_API_KEY;
+delete process.env.AIREITER_API_KEY;
 
 // Keep the Atlas credential out of the following generic backup-route tests;
 // those tests intentionally exercise the legacy 302 primary path.
@@ -243,7 +258,7 @@ globalThis.fetch = async (url, options = {}) => {
   throw new Error(`Unexpected image backup URL: ${value}`);
 };
 assert.deepEqual(await generateMedia('image', {
-  providerId: 'image-6',
+  providerId: 'legacy-image-gpt2',
   prompt: 'backup image route',
   size: '1536x1024',
   quality: 'high',
@@ -321,7 +336,7 @@ globalThis.fetch = async (url, options = {}) => {
   return jsonResponse({ error: { message: 'temporary upstream outage' } }, 503);
 };
 await assert.rejects(() => generateMedia('image', {
-  providerId: 'image-6',
+  providerId: 'legacy-image-gpt2',
   prompt: 'ambiguous image route',
   size: '1536x1024',
   quality: 'high',
@@ -346,7 +361,7 @@ globalThis.fetch = async (url, options = {}) => {
   throw new Error(`Unexpected accepted image URL: ${value}`);
 };
 await assert.rejects(() => generateMedia('image', {
-  providerId: 'image-6',
+  providerId: 'legacy-image-gpt2',
   prompt: 'accepted image must stay pinned',
   size: '1536x1024',
   quality: 'high',
@@ -392,7 +407,7 @@ delete process.env.Quick_API_KEY;
 const withoutQuickRouter = publicProviderConfig();
 assert.equal(withoutQuickRouter.providers.some((provider) => provider.id === 'image-1'), false);
 assert.equal(withoutQuickRouter.providers.some((provider) => provider.id === 'image-6'), true);
-assert.equal(withoutQuickRouter.providers.some((provider) => provider.id === 'image-3'), true);
+assert.equal(withoutQuickRouter.providers.some((provider) => provider.id === 'image-3'), false);
 process.env.Quick_API_KEY = configuredQuickRouterKey;
 
 function jsonResponse(payload, status = 200) {
@@ -512,7 +527,7 @@ globalThis.fetch = async (url, options = {}) => {
   return jsonResponse({ data: [{ b64_json: png.toString('base64') }] });
 };
 const gptImage = await generateMedia('image', {
-  providerId: 'image-6',
+  providerId: 'legacy-image-gpt2',
   prompt: 'minimal product photograph',
   size: '1536x1024',
   quality: 'high',
@@ -532,7 +547,7 @@ assert.deepEqual(JSON.parse(gptImageCalls[0].options.body), {
 });
 
 await generateMedia('image', {
-  providerId: 'image-6',
+  providerId: 'legacy-image-gpt2',
   prompt: 'make the background blue',
   size: '1024x1536',
   quality: 'medium',
@@ -636,6 +651,33 @@ assert.equal(chatModelFallbackCalls.length, 2);
 assert.equal(JSON.parse(chatModelFallbackCalls[0].options.body).model, 'gpt-5.6');
 assert.equal(JSON.parse(chatModelFallbackCalls[1].options.body).model, 'gpt-5.6-luna');
 
+const aireiterAgentCalls = [];
+process.env.AIREITER_API_KEY = configuredAireiterKey;
+globalThis.fetch = async (url, options = {}) => {
+  const body = JSON.parse(options.body);
+  aireiterAgentCalls.push({ url: String(url), model: body.model });
+  return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'AIREITER agent reply' } }] });
+};
+for (const [providerId, model] of [
+  ['chat-3', 'gemini-3.1-pro'],
+  ['chat-4', 'gpt-5.6-sol'],
+  ['chat-5', 'kimi-k3']
+]) {
+  assert.deepEqual(await chat({
+    providerId,
+    model,
+    operationId: `aireiter-${providerId}`,
+    endUserId: 'u_0123456789abcdef0123',
+    messages: [{ role: 'user', content: `hello ${model}` }]
+  }), { text: 'AIREITER agent reply', usage: null });
+}
+assert.deepEqual(aireiterAgentCalls, [
+  { url: 'https://aireiter.com/api/v1/chat/completions', model: 'chat-gemini-3.1-pro' },
+  { url: 'https://aireiter.com/api/v1/chat/completions', model: 'chat-gpt-5.6-sol' },
+  { url: 'https://aireiter.com/api/v1/chat/completions', model: 'chat-kimi-k3' }
+]);
+delete process.env.AIREITER_API_KEY;
+
 const miniMaxCalls = [];
 process.env.MINIMAX_API_KEY = 'minimax-secret';
 globalThis.fetch = async (url, options = {}) => {
@@ -656,7 +698,7 @@ globalThis.fetch = async (url, options = {}) => {
   throw new Error(`Unexpected H3 URL: ${value}`);
 };
 await assert.rejects(() => createVideoTask({
-  providerId: 'video-1',
+  providerId: 'legacy-video-minimax-h3',
   prompt: 'H3 requires a first frame',
   resolution: '2K',
   duration: 5,
@@ -668,7 +710,7 @@ assert.equal(miniMaxCalls.length, 0);
 assert.equal(miniMaxCalls.some((call) => call.url.includes('api.atlascloud.ai')), false);
 
 await createVideoTask({
-  providerId: 'video-1',
+  providerId: 'legacy-video-minimax-h3',
   prompt: 'animate between these frames',
   resolution: '768P',
   duration: 4,
@@ -693,7 +735,7 @@ assert.deepEqual(frameRequest.body.content.slice(1), [
 
 await assert.rejects(
   createVideoTask({
-    providerId: 'video-1',
+    providerId: 'legacy-video-minimax-h3',
     prompt: 'invalid frame ratio',
     resolution: '768P',
     duration: 4,
@@ -710,7 +752,7 @@ globalThis.fetch = async () => ({
   text: async () => JSON.stringify({ error: { code: '1008', message: 'Please slow down.' } })
 });
 await assert.rejects(
-  pollVideoTask('video-1', 'h3-task-rate-limited'),
+  pollVideoTask('legacy-video-minimax-h3', 'h3-task-rate-limited'),
   (error) => error
     && error.code === 'provider-rate-limited'
     && error.retryable === true
@@ -720,7 +762,7 @@ await assert.rejects(
 
 await assert.rejects(
   generateMedia('video', {
-    providerId: 'video-1',
+    providerId: 'legacy-video-minimax-h3',
     prompt: 'legacy synchronous path',
     resolution: '768P',
     duration: 4,

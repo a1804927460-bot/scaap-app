@@ -40,33 +40,22 @@ test('provider user IDs are stable, distinct, and contain no account data', () =
   assert.throws(() => providerUserId('user-id', ''), { code: 'provider-user-secret-missing' });
 });
 
-test('AI Reiter image routing uses a caller-owned anonymous task ID and returns the completed file', async () => {
+test('QuickRouter remains the primary Nano Banana Pro route', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({
     AIREITER_API_KEY: 'aireiter-key',
-    AIREITER_TRAFFIC_PERCENT: '100',
-    QUICKROUTER_API_KEY: 'legacy-key'
+    QUICKROUTER_API_KEY: 'quickrouter-key'
   }, async () => {
     const calls = [];
     globalThis.fetch = async (url, options = {}) => {
       const value = String(url);
       calls.push({ url: value, options });
-      if (value.endsWith('/api/openapi/submit')) {
+      if (value.includes('api.quickrouter.ai')) {
         const body = JSON.parse(options.body);
-        assert.equal(body.model, 'nano_banana_pro');
-        assert.equal(body.params.format, undefined);
-        assert.match(body.out_task_id, /^u_[a-f0-9]{20}_[a-f0-9]{32}$/);
-        assert.equal(body.out_task_id.length <= 64, true);
-        assert.equal(options.headers['X-End-User-Id'], 'u_0123456789abcdef0123');
-        return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
-      }
-      if (value.endsWith('/api/openapi/query')) {
-        return jsonResponse({ statusCode: 200, data: {
-          status: 'completed', output: [{ url: 'https://assets.example.com/result.png' }]
-        } });
-      }
-      if (value === 'https://assets.example.com/result.png') {
-        return new Response(PNG, { status: 200, headers: { 'Content-Type': 'image/png' } });
+        assert.equal(body.contents[0].parts[0].text, 'test image');
+        return jsonResponse({ candidates: [{ content: { parts: [{ inlineData: {
+          mimeType: 'image/png', data: PNG.toString('base64')
+        } }] } }] });
       }
       throw new Error(`Unexpected route: ${value}`);
     };
@@ -76,19 +65,15 @@ test('AI Reiter image routing uses a caller-owned anonymous task ID and returns 
       operationId: '11111111-1111-4111-8111-111111111111',
       endUserId: 'u_0123456789abcdef0123',
       prompt: 'test image',
-      size: '2K',
+      size: '1K',
       aspectRatio: '16:9'
     });
     assert.deepEqual(result, PNG);
-    assert.deepEqual(calls.map((call) => call.url), [
-      'https://aireiter.com/api/openapi/submit',
-      'https://aireiter.com/api/openapi/query',
-      'https://assets.example.com/result.png'
-    ]);
+    assert.equal(calls[0].url.includes('api.quickrouter.ai'), true);
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
-test('AI Reiter Nano Banana references use a public relay and documented URL encoding', async () => {
+test('AI Reiter Nano Banana 2 references use a public relay and documented URL encoding', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({
     AIREITER_API_KEY: 'aireiter-key',
@@ -101,9 +86,10 @@ test('AI Reiter Nano Banana references use a public relay and documented URL enc
       if (value.endsWith('/api/openapi/submit')) {
         const body = JSON.parse(options.body);
         submittedParams = body.params;
-        assert.equal(typeof body.params.image_url, 'string');
-        assert.equal(body.params.image_url.startsWith('data:'), false);
-        const relayUrl = new URL(body.params.image_url);
+        assert.equal(Array.isArray(body.params.image_url), true);
+        assert.equal(body.params.image_url.length, 1);
+        assert.equal(body.params.image_url[0].startsWith('data:'), false);
+        const relayUrl = new URL(body.params.image_url[0]);
         assert.equal(relayUrl.origin, 'https://gateway.example.com');
         const relay = getAi302RelayAsset(relayUrl.pathname.split('/').at(-1));
         assert.deepEqual(relay.buffer, VALID_PNG);
@@ -122,7 +108,7 @@ test('AI Reiter Nano Banana references use a public relay and documented URL enc
     };
 
     const result = await generateMedia('image', {
-      providerId: 'image-1',
+      providerId: 'image-2',
       operationId: '22222222-2222-4222-8222-222222222222',
       endUserId: 'u_0123456789abcdef0123',
       prompt: 'edit this image',
@@ -131,7 +117,7 @@ test('AI Reiter Nano Banana references use a public relay and documented URL enc
       aspectRatio: '1:1'
     });
     assert.deepEqual(result, VALID_PNG);
-    assert.equal(submittedParams.image_url.includes(','), false);
+    assert.equal(Array.isArray(submittedParams.image_url), true);
     assert.equal(submittedParams.aspect_ratio, '1:1');
     assert.equal(submittedParams.resolution, '2K');
   }).finally(() => { globalThis.fetch = previousFetch; });
@@ -211,8 +197,8 @@ test('AI Reiter video tasks stay pinned to their accepted route', async () => {
       urls: ['https://assets.example.com/first.png'],
       referenceMediaTypes: ['image']
     });
-    assert.equal(task.providerId, 'aireiter-video-minimax-h3');
-    assert.match(task.taskId, /^messs-route:aireiter-video-minimax-h3:/);
+    assert.equal(task.providerId, 'video-1');
+    assert.match(task.taskId, /^u_0123456789abcdef0123_[a-f0-9]{32}$/);
     assert.deepEqual(await pollVideoTask(task.providerId, task.taskId), {
       status: 'succeeded', resultUrl: 'https://assets.example.com/result.mp4'
     });
@@ -250,7 +236,7 @@ test('100 percent AI Reiter traffic is absolute even without an operation ID', a
       urls: ['https://assets.example.com/first.png'],
       referenceMediaTypes: ['image']
     });
-    assert.equal(task.providerId, 'aireiter-video-minimax-h3');
+    assert.equal(task.providerId, 'video-1');
     assert.deepEqual(calls, ['https://aireiter.com/api/openapi/submit']);
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
@@ -338,7 +324,7 @@ test('Luna uses AI Reiter and its documented upstream model alias', async () => 
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
-test('the default route is AI Reiter primary and remains deterministic', async () => {
+test('Nano Banana Pro remains QuickRouter primary and deterministic', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({
     AIREITER_API_KEY: 'aireiter-key',
@@ -350,18 +336,6 @@ test('the default route is AI Reiter primary and remains deterministic', async (
     const routes = new Map();
     globalThis.fetch = async (url) => {
       const value = String(url);
-      if (value.endsWith('/api/openapi/submit')) {
-        if (!routes.has(activeOperation)) routes.set(activeOperation, 'aireiter');
-        return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
-      }
-      if (value.endsWith('/api/openapi/query')) {
-        return jsonResponse({ statusCode: 200, data: {
-          status: 'completed', output: [{ url: 'https://assets.example.com/weighted.png' }]
-        } });
-      }
-      if (value === 'https://assets.example.com/weighted.png') {
-        return new Response(PNG, { status: 200, headers: { 'Content-Type': 'image/png' } });
-      }
       if (value.includes('api.quickrouter.ai')) {
         if (!routes.has(activeOperation)) routes.set(activeOperation, 'existing');
         return jsonResponse({ candidates: [{ content: { parts: [{ inlineData: {
@@ -378,8 +352,8 @@ test('the default route is AI Reiter primary and remains deterministic', async (
         prompt: 'weighted image', size: '1K', aspectRatio: '1:1'
       });
     }
-    assert.equal([...routes.values()].filter((route) => route === 'aireiter').length, 40);
-    assert.equal([...routes.values()].filter((route) => route === 'existing').length, 0);
+    assert.equal([...routes.values()].filter((route) => route === 'existing').length, 40);
+    assert.equal([...routes.values()].filter((route) => route === 'aireiter').length, 0);
 
     const repeatedOperation = 'weighted-7';
     const originalRoute = routes.get(repeatedOperation);
@@ -452,8 +426,8 @@ test('an interrupted AI Reiter submission resumes from its deterministic task ID
       urls: ['https://assets.example.com/first.png'],
       referenceMediaTypes: ['image']
     });
-    assert.equal(task.providerId, 'aireiter-video-minimax-h3');
-    assert.match(task.taskId, /^messs-route:aireiter-video-minimax-h3:u_/);
+    assert.equal(task.providerId, 'video-1');
+    assert.match(task.taskId, /^u_0123456789abcdef0123_[a-f0-9]{32}$/);
     assert.deepEqual(calls, [
       'https://aireiter.com/api/openapi/submit',
       'https://aireiter.com/api/openapi/query'
@@ -461,11 +435,11 @@ test('an interrupted AI Reiter submission resumes from its deterministic task ID
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
-test('a proven AI Reiter rejection uses the compatible legacy fallback', async () => {
+test('a proven AI Reiter rejection uses Nano Banana 2 legacy fallback', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({
     AIREITER_API_KEY: 'aireiter-key',
-    QUICKROUTER_API_KEY: 'legacy-key'
+    AI302_KEY: 'legacy-key'
   }, async () => {
     const calls = [];
     globalThis.fetch = async (url, options = {}) => {
@@ -474,30 +448,24 @@ test('a proven AI Reiter rejection uses the compatible legacy fallback', async (
       if (value.endsWith('/api/openapi/submit')) {
         return jsonResponse({ statusCode: 429, message: 'busy' });
       }
-      if (value.includes('api.quickrouter.ai')) {
-        return jsonResponse({
-          candidates: [{
-            content: { parts: [{ inlineData: {
-              mimeType: 'image/png', data: PNG.toString('base64')
-            } }] }
-          }]
-        });
+      if (value.includes('api.302.ai')) {
+        return jsonResponse({ data: { url: VALID_PNG_DATA_URL } });
       }
       throw new Error(`Unexpected route: ${value}`);
     };
     assert.deepEqual(await generateMedia('image', {
-      providerId: 'image-1',
+      providerId: 'image-2',
       operationId: '46464646-4646-4464-8464-464646464646',
       prompt: 'fallback image',
       size: '1K',
       aspectRatio: '1:1'
-    }), PNG);
+    }), VALID_PNG);
     assert.equal(calls[0], 'https://aireiter.com/api/openapi/submit');
-    assert.equal(calls[1].includes('api.quickrouter.ai'), true);
+    assert.equal(calls[1].includes('api.302.ai'), true);
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
-test('legacy traffic controls cannot demote AI Reiter and ChaserPro remains untouched', async () => {
+test('legacy traffic controls cannot demote QuickRouter and ChaserPro remains hidden', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({
     AIREITER_API_KEY: 'aireiter-key',
@@ -509,14 +477,6 @@ test('legacy traffic controls cannot demote AI Reiter and ChaserPro remains unto
     globalThis.fetch = async (url) => {
       const value = String(url);
       calls.push(value);
-      if (value.endsWith('/api/openapi/submit')) {
-        return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
-      }
-      if (value.endsWith('/api/openapi/query')) {
-        return jsonResponse({ statusCode: 200, data: { status: 'completed', output: [{
-          url: VALID_PNG_DATA_URL
-        }] } });
-      }
       return jsonResponse({ candidates: [{ content: { parts: [{ inlineData: {
         mimeType: 'image/png', data: PNG.toString('base64')
       } }] } }] });
@@ -527,15 +487,16 @@ test('legacy traffic controls cannot demote AI Reiter and ChaserPro remains unto
       prompt: 'legacy image',
       size: '1K',
       aspectRatio: '1:1'
-    }), VALID_PNG);
-    assert.equal(calls[0].includes('aireiter.com'), true);
-    assert.equal(calls.some((url) => url.includes('api.quickrouter.ai')), false);
+    }), PNG);
+    assert.equal(calls[0].includes('api.quickrouter.ai'), true);
+    assert.equal(calls.some((url) => url.includes('aireiter.com')), false);
 
     const catalog = JSON.parse(await (await import('node:fs/promises')).readFile(
       new URL('../../config/provider-catalog.json', import.meta.url), 'utf8'
     ));
     const chaser = catalog.providers.find((provider) => provider.id === 'image-3');
-    assert.deepEqual(chaser.fallbackProviderIds, undefined);
+    assert.equal(chaser.hidden, true);
+    assert.equal(chaser.name, 'Chaser Pro');
     assert.equal(chaser.endpoint, 'https://api.302.ai/doubao/images/generations');
   }).finally(() => { globalThis.fetch = previousFetch; });
 });

@@ -425,18 +425,8 @@
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
             </button>
             <span id="board-panel-title" class="panel-title">All Canvases</span>
-            <label class="canvas-scope-picker-wrap canvas-library-only">
-              <span class="sr-only">Project type</span>
-              <select id="canvas-scope-picker" class="canvas-scope-picker" aria-label="Project type">
-                <option value="personal">Independent projects</option>
-                <option value="team">Team projects</option>
-              </select>
-            </label>
           </div>
           <div class="panel-tools">
-            <button id="canvas-header-new" class="icon-btn-sm canvas-library-only" type="button" title="New canvas" aria-label="New canvas">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-            </button>
             <button id="board-agent-toggle" class="pill-btn pill-btn-ghost board-workspace-only" type="button" title="Messs Agent" aria-label="Messs Agent" aria-expanded="false">Messs Agent</button>
             <button id="board-mode-toggle" class="icon-btn-sm board-workspace-only" type="button" title="Switch to node mode" aria-label="Switch to node mode" aria-pressed="false">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="6" height="6" rx="1.4"/><rect x="15" y="15" width="6" height="6" rx="1.4"/><path d="M9 6h3a3 3 0 0 1 3 3v6"/><circle cx="15" cy="9" r="1.5"/></svg>
@@ -456,36 +446,47 @@
           </div>
         </header>
         <section id="canvas-library-view" class="canvas-library-view">
-          <aside class="canvas-library-sidebar">
-            <button id="canvas-new" class="canvas-library-action is-primary" type="button">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-              <span>New canvas</span>
-            </button>
-            <button id="canvas-import" class="canvas-library-action" type="button">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
-              <span>Import .Messs</span>
-            </button>
-            <button id="canvas-project-new" class="canvas-library-action" type="button">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 10v6M9 13h6"/></svg>
-              <span>New folder</span>
-            </button>
-            <div class="canvas-library-nav">
-              <button type="button" class="is-active" data-canvas-filter="all">All canvases</button>
-              <button type="button" data-canvas-filter="recent">Recent</button>
-            </div>
-            <div class="canvas-library-project-label">Folders</div>
-            <div id="canvas-library-projects" class="canvas-library-projects"></div>
-          </aside>
           <div class="canvas-library-content">
             <div class="canvas-library-topline">
               <div>
                 <h2 id="canvas-library-heading">All Canvases</h2>
                 <p>Browse and manage your canvases</p>
               </div>
-              <label class="canvas-library-search">
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
-                <input id="canvas-library-search" type="search" placeholder="Search canvases..." autocomplete="off" />
-              </label>
+              <div class="canvas-library-toolbar">
+                <label class="canvas-library-search">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+                  <input id="canvas-library-search" type="search" placeholder="Search canvases..." autocomplete="off" />
+                </label>
+                <div class="canvas-library-nav" role="tablist" aria-label="Canvas filters">
+                  <button type="button" class="is-active" data-canvas-filter="all">All canvases</button>
+                  <button type="button" data-canvas-filter="recent">Recent</button>
+                </div>
+                <label class="canvas-scope-picker-wrap canvas-library-toolbar-scope">
+                  <span class="sr-only">Project type</span>
+                  <select id="canvas-scope-picker" class="canvas-scope-picker" aria-label="Project type">
+                    <option value="personal">Independent projects</option>
+                    <option value="team">Team projects</option>
+                  </select>
+                </label>
+                <div class="canvas-library-project-filter">
+                  <span class="canvas-library-project-label">Folders</span>
+                  <div id="canvas-library-projects" class="canvas-library-projects"></div>
+                </div>
+                <div class="canvas-library-actions">
+                  <button id="canvas-import" class="canvas-library-action" type="button">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+                    <span>Import .Messs</span>
+                  </button>
+                  <button id="canvas-project-new" class="canvas-library-action" type="button">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 10v6M9 13h6"/></svg>
+                    <span>New folder</span>
+                  </button>
+                  <button id="canvas-new" class="canvas-library-action is-primary" type="button">
+                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                    <span>New canvas</span>
+                  </button>
+                </div>
+              </div>
             </div>
             <div id="canvas-library-grid" class="canvas-library-grid"></div>
             <div id="canvas-library-empty" class="canvas-library-empty" hidden>No canvases found</div>

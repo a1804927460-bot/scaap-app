@@ -20,7 +20,13 @@ const AiAssistant = {
 
 const AI_CHAT_HISTORY_KEY = 'messs.ai-chat-history.v1';
 const AI_CHAT_HISTORY_LIMIT = 60;
-const AI_ASSISTANT_CHAT_MODELS = new Set(['gemini-3.7-flash', 'gpt-5.6-luna']);
+const AI_ASSISTANT_CHAT_MODELS = new Set([
+  'gemini-3.7-flash',
+  'gpt-5.6-luna',
+  'gemini-3.1-pro',
+  'gpt-5.6-sol',
+  'kimi-k3'
+]);
 
 function aiChatHistoryDate(value) {
   const date = new Date(value || 0);
@@ -505,7 +511,10 @@ function configuredAssistantProviders(kind) {
     const options = [];
     const displayNames = {
       'gemini-3.7-flash': 'Gemini 3.7 Flash',
-      'gpt-5.6-luna': 'GPT-5.6 Luna'
+      'gpt-5.6-luna': 'GPT-5.6 Luna',
+      'gemini-3.1-pro': 'Gemini 3.1 Pro',
+      'gpt-5.6-sol': 'GPT-5.6 Sol',
+      'kimi-k3': 'Kimi K3'
     };
     chatProviders.forEach((provider) => {
       if (!provider || provider.available === false || !provider.name || !provider.endpoint) return;

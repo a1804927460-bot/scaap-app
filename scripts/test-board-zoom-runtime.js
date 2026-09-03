@@ -116,6 +116,7 @@ async function run() {
         Board.wheelSettleTimer = setTimeout(finishBoardWheelInteraction, 500);
       };
       window.zoomFixtureState = () => ({
+        items: AppState.boardItems.length,
         mounted: Board.mounted.size,
         targetVisible: Board.interactionVisibleIds.size,
         queue: Board.mountQueue.size,
@@ -124,7 +125,9 @@ async function run() {
         zoom: Board.zoom,
         visible: Board.visibleIds.size,
         missingVisible: [...Board.visibleIds].filter((id) => !Board.mounted.has(id)).length,
+        invalidMounted: [...Board.mounted.keys()].filter((id) => !Board.itemsById.has(id)).length,
         unpaintedVisible: unpaintedVisibleBoardIds().size,
+        motionFallbackVisible: Boolean(Board.overviewCanvas && !Board.overviewCanvas.hidden),
         overviewHidden: !Board.overviewCanvas || Board.overviewCanvas.hidden
       });
       window.runSelectionFixture = () => {
@@ -218,7 +221,11 @@ async function run() {
     if (during.targetVisible !== 60 || during.mounted < 24 || !during.wheel) {
       throw new Error(`Target viewport was not pre-mounted during zoom: ${JSON.stringify(during)}`);
     }
-    if (settled.visible !== 60 || settled.missingVisible !== 0 || settled.unpaintedVisible !== 0 ||
+    if (!during.motionFallbackVisible) {
+      throw new Error(`Zoom interaction exposed an empty frame before mounts completed: ${JSON.stringify(during)}`);
+    }
+    if (settled.items !== 60 || settled.visible !== 60 || settled.missingVisible !== 0 ||
+        settled.invalidMounted !== 0 || settled.unpaintedVisible !== 0 ||
         !settled.overviewHidden || Math.abs(settled.zoom - 0.6) > 0.001) {
       throw new Error(`Zoom settled with missing or fallback media: ${JSON.stringify(settled)}`);
     }

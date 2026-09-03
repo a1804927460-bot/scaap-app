@@ -4,27 +4,28 @@
 const BoardEngine = window.MesssBoardEngine;
 const BOARD_ZOOM_MIN = 0.03;
 const BOARD_ZOOM_MAX = 32;
-const BOARD_MOUNTS_PER_FRAME = 6;
+const BOARD_MOUNTS_PER_FRAME = 8;
 const BOARD_MEDIA_MOUNTS_PER_FRAME = 2;
-const BOARD_INTERACTION_MOUNTS_PER_FRAME = 10;
+const BOARD_INTERACTION_MOUNTS_PER_FRAME = 8;
 const BOARD_INTERACTION_MEDIA_MOUNTS_PER_FRAME = 6;
 const BOARD_MOUNT_FRAME_BUDGET_MS = 7;
-const BOARD_DOM_ITEM_LIMIT = 180;
-const BOARD_DOM_ITEM_EXIT_LIMIT = 135;
-const BOARD_DOM_RETAIN_LIMIT = BOARD_DOM_ITEM_LIMIT;
+const BOARD_DOM_ITEM_LIMIT = 96;
+const BOARD_DOM_ITEM_EXIT_LIMIT = 72;
+const BOARD_DOM_RETAIN_LIMIT = 120;
 const BOARD_LIGHTWEIGHT_EFFECTS_ENTER_COUNT = 72;
 const BOARD_LIGHTWEIGHT_EFFECTS_EXIT_COUNT = 48;
 const BOARD_OVERVIEW_ITEM_THRESHOLD = 180;
-const BOARD_FULL_IMAGE_LIMIT = 8;
-const BOARD_FULL_IMAGE_CACHE_LIMIT = 8;
-const BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET = 40_000_000;
-const BOARD_FULL_IMAGE_READY_LIMIT = 400;
+const BOARD_FULL_IMAGE_LIMIT = 4;
+const BOARD_FULL_IMAGE_CACHE_LIMIT = 4;
+const BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET = 24_000_000;
+const BOARD_FULL_IMAGE_READY_LIMIT = 160;
 const BOARD_THUMBNAIL_MAX_EDGE = 400;
 const BOARD_FULL_IMAGE_MIN_SCREEN_EDGE = 220;
 const BOARD_SELECTED_FULL_IMAGE_MIN_SCREEN_EDGE = 150;
 const BOARD_FULL_IMAGE_PREWARM_SCREEN_EDGE = 140;
-const BOARD_QUALITY_SETTLE_MS = 90;
-const BOARD_IMAGE_CROSSFADE_MS = 110;
+const BOARD_QUALITY_SETTLE_MS = 180;
+const BOARD_IMAGE_CROSSFADE_MS = 0;
+const BOARD_INTERACTION_PREFETCH_INTERVAL_MS = 120;
 const BOARD_VIEW_STORAGE_KEY = 'messs.board.viewport.v2';
 const BOARD_OVERVIEW_DPR = 1;
 const BOARD_OVERVIEW_IMAGE_LIMIT = 640;
@@ -106,13 +107,18 @@ const Board = {
   zoomTarget: null,
   zoomLastTime: 0,
   interactionPrefetchFrame: 0,
+  interactionPrefetchTimer: 0,
+  interactionPrefetchLastAt: 0,
   interactionPrefetchView: null,
   interactionVisibleIds: new Set(),
+  interactionFallbackIds: new Set(),
+  interactionFallbackView: null,
   wheelSettleTimer: 0,
   isWheelZooming: false,
   reconcileFrame: 0,
   reconcilePending: false,
   mountFrame: 0,
+  mountQueueAllowedIds: new Set(),
   measureFrame: 0,
   measureQueue: new Map(),
   qualityTimer: 0,
@@ -908,17 +914,21 @@ function transitionBoardImageQuality(element, quality) {
         try { await next.decode(); } catch (err) {}
       }
       if (!next.isConnected || stack.dataset.pendingQuality !== quality) return;
-      await new Promise((resolve) => requestAnimationFrame(resolve));
+      if (BOARD_IMAGE_CROSSFADE_MS > 0) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
       next.style.opacity = '';
       next.classList.remove('is-pending');
       next.classList.add('is-active', 'is-quality-crossfading');
       active.classList.remove('is-active');
       if (quality === 'full') rememberBoardFullImage(element);
       stack.dataset.pendingQuality = '';
-      window.setTimeout(() => {
+      const removePrevious = () => {
         next.classList.remove('is-quality-crossfading');
         if (active.parentNode === stack) active.remove();
-      }, BOARD_IMAGE_CROSSFADE_MS);
+      };
+      if (BOARD_IMAGE_CROSSFADE_MS > 0) window.setTimeout(removePrevious, BOARD_IMAGE_CROSSFADE_MS);
+      else removePrevious();
     };
     next.addEventListener('load', reveal, { once: true });
     next.addEventListener('error', () => {
@@ -1073,8 +1083,13 @@ function scheduleBoardInteractionPrefetch(view) {
     panY: Number(view.panY) || 0,
     zoom: view.zoom
   };
-  if (Board.interactionPrefetchFrame) return;
-  Board.interactionPrefetchFrame = requestAnimationFrame(() => {
+  if (Board.interactionPrefetchFrame || Board.interactionPrefetchTimer) return;
+  const elapsed = Date.now() - Board.interactionPrefetchLastAt;
+  const wait = Math.max(0, BOARD_INTERACTION_PREFETCH_INTERVAL_MS - elapsed);
+  const run = () => {
+    Board.interactionPrefetchTimer = 0;
+    Board.interactionPrefetchLastAt = Date.now();
+    Board.interactionPrefetchFrame = requestAnimationFrame(() => {
     Board.interactionPrefetchFrame = 0;
     const targetView = Board.interactionPrefetchView;
     Board.interactionPrefetchView = null;
@@ -1094,6 +1109,13 @@ function scheduleBoardInteractionPrefetch(view) {
     // levels pre-mount every target-visible item before it enters the screen.
     if (targetIds.size > BOARD_DOM_ITEM_LIMIT) {
       Board.interactionVisibleIds.clear();
+      const overviewIds = Board.spatialIndex.query(regions.visible);
+      Board.interactionFallbackIds = overviewIds;
+      Board.interactionFallbackView = targetView;
+      drawBoardOverview(overviewIds, {
+        width: viewport.clientWidth,
+        height: viewport.clientHeight
+      }, targetView);
       return;
     }
     Board.interactionVisibleIds = targetIds;
@@ -1103,8 +1125,24 @@ function scheduleBoardInteractionPrefetch(view) {
       element.style.visibility = '';
       element.style.pointerEvents = '';
     }
+    const fallbackIds = new Set(
+      [...targetIds].filter((id) => !isBoardElementPaintReady(Board.mounted.get(id)))
+    );
+    Board.interactionFallbackIds = fallbackIds;
+    Board.interactionFallbackView = fallbackIds.size ? targetView : null;
+    if (fallbackIds.size) {
+      drawBoardOverview(fallbackIds, {
+        width: viewport.clientWidth,
+        height: viewport.clientHeight
+      }, targetView);
+    } else if (Board.overviewCanvas && Board.lastZoomBucket !== 'overview') {
+      Board.overviewCanvas.hidden = true;
+    }
     queueBoardMounts(targetIds, regions.visible, true);
-  });
+    });
+  };
+  if (wait > 0) Board.interactionPrefetchTimer = window.setTimeout(run, wait);
+  else run();
 }
 
 function beginBoardWheelInteraction() {
@@ -1155,6 +1193,12 @@ function cancelBoardViewportMotion() {
   Board.zoomTarget = null;
   Board.zoomLastTime = 0;
   Board.interactionPrefetchView = null;
+  Board.interactionFallbackIds.clear();
+  Board.interactionFallbackView = null;
+  if (Board.interactionPrefetchFrame) cancelAnimationFrame(Board.interactionPrefetchFrame);
+  Board.interactionPrefetchFrame = 0;
+  clearTimeout(Board.interactionPrefetchTimer);
+  Board.interactionPrefetchTimer = 0;
 }
 
 function resetBoardZoomTo100() {
@@ -2034,6 +2078,7 @@ function syncMountedBoardViewportStates(visibleIds) {
 
 function clearMountedBoardItems() {
   Board.mountQueue.clear();
+  Board.mountQueueAllowedIds.clear();
   Board.measureQueue.clear();
   if (Board.measureFrame) {
     cancelAnimationFrame(Board.measureFrame);
@@ -2365,7 +2410,14 @@ function scheduleBoardOverviewRedraw() {
     if (!canvas || (canvas.hidden && Board.lastZoomBucket !== 'overview')) return;
     const viewport = document.getElementById('board-viewport');
     const rect = viewport && viewport.getBoundingClientRect();
-    if (rect && rect.width && rect.height) drawBoardOverview(Board.visibleIds, rect);
+    if (rect && rect.width && rect.height) {
+      const useInteractionFallback = isBoardViewportInteracting() && Board.interactionFallbackIds.size;
+      drawBoardOverview(
+        useInteractionFallback ? Board.interactionFallbackIds : Board.visibleIds,
+        rect,
+        useInteractionFallback ? Board.interactionFallbackView : Board
+      );
+    }
   });
 }
 
@@ -2472,9 +2524,12 @@ function drawBoardOverviewImage(ctx, image, x, y, width, height) {
   return true;
 }
 
-function drawBoardOverview(visibleIds, viewportRect) {
+function drawBoardOverview(visibleIds, viewportRect, view = Board) {
   const canvas = ensureBoardOverviewCanvas();
   const dpr = BOARD_OVERVIEW_DPR;
+  const zoom = Number.isFinite(view && view.zoom) ? view.zoom : Board.zoom;
+  const panX = Number.isFinite(view && view.panX) ? view.panX : Board.panX;
+  const panY = Number.isFinite(view && view.panY) ? view.panY : Board.panY;
   const width = Math.max(1, Math.round(viewportRect.width));
   const height = Math.max(1, Math.round(viewportRect.height));
   const pixelWidth = Math.round(width * dpr);
@@ -2498,7 +2553,7 @@ function drawBoardOverview(visibleIds, viewportRect) {
       return { id, item, bounds, file };
     })
     .filter((entry) => entry.item && entry.bounds && boardOverviewThumbnailSource(entry.file) && (
-      Math.max(entry.bounds.w * Board.zoom, entry.bounds.h * Board.zoom) >= BOARD_OVERVIEW_IMAGE_MIN_SCREEN_EDGE
+      Math.max(entry.bounds.w * zoom, entry.bounds.h * zoom) >= BOARD_OVERVIEW_IMAGE_MIN_SCREEN_EDGE
     ))
     .sort((a, b) => {
       const aArea = a.bounds.w * a.bounds.h;
@@ -2523,10 +2578,10 @@ function drawBoardOverview(visibleIds, viewportRect) {
     const item = Board.itemsById.get(id);
     const bounds = Board.spatialIndex.getBounds(id);
     if (!item || !bounds) continue;
-    const x = bounds.x * Board.zoom + Board.panX;
-    const y = bounds.y * Board.zoom + Board.panY;
-    const w = Math.max(2, bounds.w * Board.zoom);
-    const h = Math.max(2, bounds.h * Board.zoom);
+    const x = bounds.x * zoom + panX;
+    const y = bounds.y * zoom + panY;
+    const w = Math.max(2, bounds.w * zoom);
+    const h = Math.max(2, bounds.h * zoom);
     ctx.globalAlpha = item.selected ? 1 : 0.82;
     ctx.fillStyle = boardOverviewColor(item);
     ctx.fillRect(x, y, w, h);
@@ -3086,6 +3141,10 @@ function processBoardMountQueue() {
       Board.mountQueue.delete(id);
       continue;
     }
+    if (Board.mountQueueAllowedIds.size && !Board.mountQueueAllowedIds.has(id)) {
+      Board.mountQueue.delete(id);
+      continue;
+    }
     const isMedia = isBoardMediaItem(item);
     if (isMedia && mountedMediaThisFrame >= mediaMountLimit) continue;
     Board.mountQueue.delete(id);
@@ -3129,6 +3188,7 @@ function processBoardMountQueue() {
 }
 
 function queueBoardMounts(ids, visibleRect, prioritize = false) {
+  Board.mountQueueAllowedIds = new Set(ids);
   const ordered = BoardEngine.prioritizeIdsByViewport(
     [...ids].filter((id) => !Board.mounted.has(id)),
     Board.spatialIndex,
@@ -3153,6 +3213,8 @@ function reconcileBoardViewport(force = false) {
   if (!viewport) return;
   const rect = viewport.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
+  Board.interactionFallbackIds.clear();
+  Board.interactionFallbackView = null;
 
   const regions = BoardEngine.viewportRects(
     Board,
@@ -3229,6 +3291,7 @@ function reconcileBoardViewport(force = false) {
   Board.lastMountHash = mountHash;
   Board.lastKeepHash = keepHash;
   Board.mountQueue.clear();
+  Board.mountQueueAllowedIds.clear();
 
   for (const [id, element] of Board.mounted) {
     if (mountIds.has(id)) {
@@ -4423,7 +4486,7 @@ function buildMiniVideoPlayer(result, f) {
 
   const video = document.createElement('video');
   video.src = result.url;
-  video.preload = 'metadata';
+  video.preload = 'none';
   video.muted = true;
   video.loop = true;
   video.draggable = false;
