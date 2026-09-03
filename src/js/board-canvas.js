@@ -14,7 +14,6 @@ const BOARD_DOM_ITEM_EXIT_LIMIT = 72;
 const BOARD_DOM_RETAIN_LIMIT = 120;
 const BOARD_LIGHTWEIGHT_EFFECTS_ENTER_COUNT = 72;
 const BOARD_LIGHTWEIGHT_EFFECTS_EXIT_COUNT = 48;
-const BOARD_OVERVIEW_ITEM_THRESHOLD = 180;
 const BOARD_FULL_IMAGE_LIMIT = 4;
 const BOARD_FULL_IMAGE_CACHE_LIMIT = 4;
 const BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET = 24_000_000;
@@ -25,20 +24,10 @@ const BOARD_SELECTED_FULL_IMAGE_MIN_SCREEN_EDGE = 150;
 const BOARD_FULL_IMAGE_PREWARM_SCREEN_EDGE = 140;
 const BOARD_QUALITY_SETTLE_MS = 180;
 const BOARD_IMAGE_CROSSFADE_MS = 0;
-const BOARD_INTERACTION_PREFETCH_INTERVAL_MS = 120;
 const BOARD_VIEW_STORAGE_KEY = 'messs.board.viewport.v2';
-const BOARD_OVERVIEW_DEFAULT_DPR = 1;
-const BOARD_OVERVIEW_MIN_DPR = 1;
-const BOARD_OVERVIEW_MAX_DPR = 2;
-const BOARD_OVERVIEW_STABLE_PIXEL_BUDGET = 8_000_000;
-const BOARD_OVERVIEW_LIGHTWEIGHT_PIXEL_BUDGET = 5_000_000;
-const BOARD_OVERVIEW_INTERACTION_PIXEL_BUDGET = 3_000_000;
-const BOARD_OVERVIEW_IMAGE_LIMIT = 640;
-const BOARD_OVERVIEW_IMAGE_CACHE_LIMIT = 800;
-const BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET = 12_000_000;
-const BOARD_OVERVIEW_IMAGE_CONCURRENCY = 4;
-const BOARD_OVERVIEW_IMAGE_MAX_EDGE = 160;
-const BOARD_OVERVIEW_IMAGE_MIN_SCREEN_EDGE = 5;
+const BOARD_LEAFER_MIN_DPR = 1;
+const BOARD_LEAFER_MAX_DPR = 2;
+const BOARD_LEAFER_FULL_IMAGE_MIN_SCREEN_EDGE = 420;
 const BOARD_WHEEL_MAX_DELTA = 96;
 const BOARD_WHEEL_PAN_GAIN = 0.64;
 const BOARD_WHEEL_ZOOM_RATE = 0.001;
@@ -55,7 +44,7 @@ const BOARD_PARTITION_BOTTOM_PADDING = 28;
 const BOARD_PARTITION_MIN_WIDTH = 260;
 const BOARD_PARTITION_MIN_HEIGHT = 190;
 // The board deliberately keeps a small live DOM window. Media outside that
-// window is suspended, while the overview canvas continues to represent it.
+// window is suspended, while Leafer keeps the complete scene available.
 // This is the same broad strategy used by real-time 2D editors: keep input
 // targets live, but do not keep thousands of decoders and textures alive.
 const BOARD_MEDIA_RELEASE_DELAY_MS = 180;
@@ -147,22 +136,13 @@ const Board = {
   lastDragEndedAt: 0,
   lastPanEndedAt: 0,
   visibleIds: new Set(),
-  overviewCanvas: null,
-  overviewPixelRatio: BOARD_OVERVIEW_DEFAULT_DPR,
-  overviewContentRevision: 0,
+  leaferCanvas: null,
+  leaferPixelRatio: BOARD_LEAFER_MIN_DPR,
+  leaferContentRevision: 0,
+  leaferSyncFrame: 0,
   leaferLayer: null,
   leaferInitAttempted: false,
   leaferCanvasId: null,
-  overviewImageCache: new Map(),
-  overviewImagePending: new Map(),
-  overviewImageQueue: [],
-  overviewImageActive: 0,
-  overviewImagePixels: 0,
-  overviewRedrawFrame: 0,
-  overviewFallbackFrame: 0,
-  overviewFallbackRect: null,
-  overviewHideFrame: 0,
-  overviewImageFailed: new Set(),
   fullImageCache: new Map(),
   fullImageCachePixels: 0,
   fullImageReadyFileIds: new Set(),
@@ -662,28 +642,12 @@ function isBoardViewportInteracting() {
   return !!(Board.isWheelZooming || Board.isPanning || Board.zoomFrame || Board.zoomTarget);
 }
 
-function boardOverviewPixelRatio(width, height, interactive = isBoardViewportInteracting()) {
-  const safeWidth = Math.max(1, Number(width) || 1);
-  const safeHeight = Math.max(1, Number(height) || 1);
-  const devicePixelRatio = Math.max(
-    BOARD_OVERVIEW_MIN_DPR,
-    Math.min(BOARD_OVERVIEW_MAX_DPR, Number(window.devicePixelRatio) || 1)
-  );
-  const pixelBudget = interactive
-    ? BOARD_OVERVIEW_INTERACTION_PIXEL_BUDGET
-    : (Board.lightweightEffects
-      ? BOARD_OVERVIEW_LIGHTWEIGHT_PIXEL_BUDGET
-      : BOARD_OVERVIEW_STABLE_PIXEL_BUDGET);
-  const area = safeWidth * safeHeight;
-  const budgetRatio = Math.sqrt(pixelBudget / area);
-  const capped = Math.min(devicePixelRatio, BOARD_OVERVIEW_MAX_DPR, budgetRatio);
-  // Keep the ratio on quarter steps. This prevents tiny window-size changes
-  // from repeatedly reallocating the backing store while preserving useful
-  // high-DPI output on normal displays.
-  return Math.max(
-    BOARD_OVERVIEW_MIN_DPR,
-    Math.floor(Math.max(BOARD_OVERVIEW_MIN_DPR, capped) * 4) / 4
-  );
+function boardLeaferPixelRatio() {
+  // A stable backing ratio prevents a destructive canvas resize in the middle
+  // of wheel/pan input. Leafer owns culling; changing only its world transform
+  // keeps every frame on one renderer and preserves high-DPI image detail.
+  const devicePixelRatio = Number(window.devicePixelRatio) || 1;
+  return Math.max(BOARD_LEAFER_MIN_DPR, Math.min(BOARD_LEAFER_MAX_DPR, devicePixelRatio));
 }
 
 function boardZoomBucket() {
@@ -1127,46 +1091,16 @@ function finishBoardWheelInteraction() {
 }
 
 function scheduleBoardInteractionPrefetch(view) {
-  // Interaction must remain compositor-only. The previous implementation
-  // changed mounted DOM, mount queues and overview state while the transform
-  // was still moving. Those asynchronous writes could arrive out of order
-  // and hide the final viewport. Keep the function name for callers, but it
-  // now only paints a temporary overview for the requested view.
+  // Keep this compatibility hook inert. Leafer owns the complete scene and
+  // the animation frame below already updates its world transform. Querying
+  // the spatial index here would spend work on every wheel event without
+  // improving what is visible on screen.
   if (!view || !Number.isFinite(view.zoom) || view.zoom <= 0) return;
   Board.interactionPrefetchView = {
     panX: Number(view.panX) || 0,
     panY: Number(view.panY) || 0,
     zoom: view.zoom
   };
-  if (Board.interactionPrefetchFrame || Board.interactionPrefetchTimer) return;
-  const elapsed = Date.now() - Board.interactionPrefetchLastAt;
-  const wait = Math.max(0, BOARD_INTERACTION_PREFETCH_INTERVAL_MS - elapsed);
-  const run = () => {
-    Board.interactionPrefetchTimer = 0;
-    Board.interactionPrefetchLastAt = Date.now();
-    Board.interactionPrefetchFrame = requestAnimationFrame(() => {
-      Board.interactionPrefetchFrame = 0;
-      const targetView = Board.interactionPrefetchView;
-      Board.interactionPrefetchView = null;
-      const viewport = document.getElementById('board-viewport');
-      if (!targetView || !viewport || !viewport.clientWidth || !viewport.clientHeight) return;
-      const regions = BoardEngine.viewportRects(
-        targetView,
-        { w: viewport.clientWidth, h: viewport.clientHeight },
-        { mountMarginRatio: 0, keepMarginRatio: 0 }
-      );
-      const targetIds = Board.spatialIndex.query(regions.visible);
-      Board.interactionVisibleIds = targetIds;
-      Board.interactionFallbackIds = targetIds;
-      Board.interactionFallbackView = targetView;
-      drawBoardOverview(targetIds, {
-        width: viewport.clientWidth,
-        height: viewport.clientHeight
-      }, targetView);
-    });
-  };
-  if (wait > 0) Board.interactionPrefetchTimer = window.setTimeout(run, wait);
-  else run();
 }
 
 function clearBoardInteractionOverviewWork() {
@@ -1658,7 +1592,7 @@ function renderBoardItemContent(content, f, item) {
       }
       img.dataset.paintFailed = 'true';
       preview.classList.add('is-thumbnail-failed');
-      scheduleBoardOverviewFallback();
+      scheduleBoardLeaferSync();
     });
     preview.append(img, createBoardVideoDurationBadge(f));
     content.appendChild(preview);
@@ -2075,7 +2009,7 @@ function rebuildBoardSpatialIndex() {
   Board.indexItemCount = AppState.boardItems.length;
   Board.indexFileCount = AppState.files.length;
   Board.indexDirty = false;
-  Board.overviewContentRevision += 1;
+  Board.leaferContentRevision += 1;
   Board.lastMountHash = null;
   Board.lastKeepHash = null;
 }
@@ -2083,7 +2017,7 @@ function rebuildBoardSpatialIndex() {
 function updateBoardItemIndex(item) {
   Board.spatialIndex.set(item.id, boardItemBounds(item));
   Board.itemsById.set(item.id, item);
-  Board.overviewContentRevision += 1;
+  Board.leaferContentRevision += 1;
   Board.lastMountHash = null;
   Board.lastKeepHash = null;
 }
@@ -2148,11 +2082,10 @@ function clearMountedBoardItems() {
     cancelAnimationFrame(Board.measureFrame);
     Board.measureFrame = 0;
   }
-  if (Board.overviewFallbackFrame) {
-    cancelAnimationFrame(Board.overviewFallbackFrame);
-    Board.overviewFallbackFrame = 0;
+  if (Board.leaferSyncFrame) {
+    cancelAnimationFrame(Board.leaferSyncFrame);
+    Board.leaferSyncFrame = 0;
   }
-  Board.overviewFallbackRect = null;
   for (const id of [...Board.mounted.keys()]) destroyMountedBoardItem(id);
 }
 
@@ -2244,86 +2177,6 @@ function isMountableBoardItem(id) {
   return !!(item.isPartition || item.isAiPlaceholder || item.isMoodboard || item.isNote || item.isDoodle || Board.filesById.has(item.fileId));
 }
 
-function isBoardElementPaintReady(element) {
-  if (!element) return false;
-  const images = [...element.querySelectorAll(
-    '.board-image-layer.is-active, .board-video-thumbnail > img, .mini-video-poster, .board-model-thumbnail > img'
-  )];
-  return images.every((image) => (
-    (image.complete && image.naturalWidth > 0) || image.dataset.paintFailed === 'true'
-  ));
-}
-
-function visibleBoardDomReady() {
-  for (const id of Board.visibleIds) {
-    if (!isMountableBoardItem(id)) continue;
-    if (!isBoardElementPaintReady(Board.mounted.get(id))) return false;
-  }
-  return true;
-}
-
-function unpaintedVisibleBoardIds() {
-  const pending = new Set();
-  for (const id of Board.visibleIds) {
-    if (!isMountableBoardItem(id)) continue;
-    if (!isBoardElementPaintReady(Board.mounted.get(id))) pending.add(id);
-  }
-  return pending;
-}
-
-function syncBoardOverviewFallback(viewportRect) {
-  if (Board.lastZoomBucket === 'overview') return;
-  const unpaintedIds = unpaintedVisibleBoardIds();
-  if (!unpaintedIds.size) {
-    if (!Board.overviewCanvas) return;
-    if (Board.overviewHideFrame) return;
-    // Keep the painted fallback for two stable frames after the last media
-    // load. This covers the compositor gap during zoom/virtual remounts.
-    Board.overviewHideFrame = requestAnimationFrame(() => {
-      Board.overviewHideFrame = requestAnimationFrame(() => {
-        Board.overviewHideFrame = 0;
-        if (
-          Board.overviewCanvas && Board.lastZoomBucket !== 'overview' &&
-          visibleBoardDomReady()
-        ) {
-          Board.overviewCanvas.hidden = true;
-        }
-      });
-    });
-    return;
-  }
-  if (Board.overviewHideFrame) {
-    cancelAnimationFrame(Board.overviewHideFrame);
-    Board.overviewHideFrame = 0;
-  }
-  const viewport = document.getElementById('board-viewport');
-  const rect = viewportRect || (viewport && viewport.getBoundingClientRect());
-  // The fallback sits below the media DOM. Drawing only missing/unpainted
-  // items avoids tinting transparent images or softening media that is
-  // already rendered at its real thumbnail/full resolution.
-  if (rect && rect.width && rect.height) drawBoardOverview(unpaintedIds, rect);
-}
-
-function scheduleBoardOverviewFallback(viewportRect) {
-  Board.overviewFallbackRect = viewportRect || Board.overviewFallbackRect || null;
-  if (Board.overviewFallbackFrame) return;
-  Board.overviewFallbackFrame = requestAnimationFrame(() => {
-    Board.overviewFallbackFrame = 0;
-    const rect = Board.overviewFallbackRect;
-    Board.overviewFallbackRect = null;
-    syncBoardOverviewFallback(rect);
-  });
-}
-
-function observeBoardElementPaintReady(element) {
-  element.querySelectorAll('img').forEach((image) => {
-    if (image.complete) return;
-    const settle = () => scheduleBoardOverviewFallback();
-    image.addEventListener('load', settle, { once: true });
-    image.addEventListener('error', settle, { once: true });
-  });
-}
-
 function syncMountedRichContentForLod(previousBucket, nextBucket) {
   if (!previousBucket || previousBucket === nextBucket ||
       previousBucket === 'overview' || nextBucket === 'overview') return;
@@ -2336,76 +2189,7 @@ function syncMountedRichContentForLod(previousBucket, nextBucket) {
     cleanupBoardElement(element);
     content.replaceChildren();
     renderBoardItemContent(content, file, item);
-    observeBoardElementPaintReady(element);
   }
-}
-
-function ensureBoardOverviewCanvas() {
-  if (Board.overviewCanvas) {
-    if (!Board.leaferLayer && !Board.leaferInitAttempted &&
-        window.MesssBoardLeaferLayer) {
-      Board.leaferInitAttempted = true;
-      const viewport = document.getElementById('board-viewport');
-      const rect = viewport && viewport.getBoundingClientRect();
-      const layer = window.MesssBoardLeaferLayer;
-      if (layer.init({
-        canvas: Board.overviewCanvas,
-        width: rect && rect.width,
-        height: rect && rect.height,
-        pixelRatio: boardOverviewPixelRatio(rect && rect.width, rect && rect.height)
-      })) {
-        Board.leaferLayer = layer;
-        Board.overviewPixelRatio = layer.pixelRatio || Board.overviewPixelRatio;
-      }
-    }
-    return Board.overviewCanvas;
-  }
-  const viewport = document.getElementById('board-viewport');
-  const canvas = document.createElement('canvas');
-  canvas.className = 'board-overview-canvas';
-  canvas.hidden = true;
-  viewport.insertBefore(canvas, document.getElementById('board-canvas'));
-  Board.overviewCanvas = canvas;
-  if (!Board.leaferLayer && !Board.leaferInitAttempted &&
-      window.MesssBoardLeaferLayer) {
-    Board.leaferInitAttempted = true;
-    const rect = viewport.getBoundingClientRect();
-    const layer = window.MesssBoardLeaferLayer;
-    if (layer.init({
-      canvas,
-      width: rect.width,
-      height: rect.height,
-      pixelRatio: boardOverviewPixelRatio(rect.width, rect.height)
-    })) {
-      Board.leaferLayer = layer;
-      Board.overviewPixelRatio = layer.pixelRatio || Board.overviewPixelRatio;
-    }
-  }
-  return canvas;
-}
-
-function boardOverviewColor(item) {
-  if (item.isPartition) return 'rgba(125, 135, 152, 0.22)';
-  if (item.isDoodle) return '#9b58e9';
-  if (item.isNote) return '#d7b94b';
-  const file = Board.filesById.get(item.fileId);
-  if (!file) return '#7d8798';
-  if (isVideoExt(file.ext)) return '#3d8fe8';
-  if (isImageExt(file.ext)) return '#47a67c';
-  if (isModelFile(file)) return '#9a7bd1';
-  if (isAudioExt(file.ext)) return '#d76f55';
-  return '#8a91a0';
-}
-
-function boardOverviewThumbnailSource(file) {
-  if (!file) return '';
-  const thumbnail = isModelFile(file)
-    ? String(file.modelPreviewUrl || file.previewUrl || file.thumbUrl || '').trim()
-    : String(file.thumbUrl || file.previewUrl || '').trim();
-  if (thumbnail) return thumbnail;
-  if (isImageExt(file.ext)) return String(file.previewUrl || file.url || '').trim();
-  if (isModelFile(file)) return String(file.modelPreviewUrl || file.previewUrl || '').trim();
-  return '';
 }
 
 // A mount burst can add several nodes in one frame. Measure them together so
@@ -2433,338 +2217,144 @@ function scheduleBoardItemMeasurement(id, element, item) {
   });
 }
 
-function boardOverviewImageRequestKey(fileId, source) {
-  return `${fileId}\n${source}`;
-}
-
-function closeBoardOverviewDrawable(drawable) {
-  if (drawable && typeof drawable.close === 'function') drawable.close();
-}
-
-function cachedBoardOverviewImage(file) {
-  const source = boardOverviewThumbnailSource(file);
-  const cached = file && Board.overviewImageCache.get(file.id);
-  if (!cached) return null;
-  if (!source || cached.source !== source) {
-    closeBoardOverviewDrawable(cached.drawable);
-    Board.overviewImagePixels = Math.max(0, Board.overviewImagePixels - (cached.pixels || 0));
-    Board.overviewImageCache.delete(file.id);
-    return null;
+// The board renderer is intentionally a single Leafer scene. The DOM layer
+// remains only for bounded interaction controls and native media behavior.
+function ensureBoardLeaferCanvas() {
+  const viewport = document.getElementById('board-viewport');
+  let canvas = document.getElementById('board-leafer-canvas');
+  // Older detached windows and imported fixtures may not contain the new
+  // renderer node yet. Create it once so they still enter the same Leafer
+  // path instead of silently falling back to the removed 2D overview.
+  if (!canvas && viewport) {
+    canvas = document.createElement('canvas');
+    canvas.id = 'board-leafer-canvas';
+    canvas.className = 'board-leafer-canvas';
+    canvas.setAttribute('aria-hidden', 'true');
+    viewport.insertBefore(canvas, document.getElementById('board-canvas'));
   }
-  // Refresh insertion order so a dense viewport does not evict thumbnails
-  // that are still visible while the user pans across the board.
-  Board.overviewImageCache.delete(file.id);
-  Board.overviewImageCache.set(file.id, cached);
-  return cached.drawable;
-}
-
-async function createBoardOverviewDrawable(image) {
-  const sourceWidth = image.naturalWidth;
-  const sourceHeight = image.naturalHeight;
-  const longestEdge = Math.max(sourceWidth, sourceHeight);
-  if (typeof createImageBitmap !== 'function' || longestEdge <= BOARD_OVERVIEW_IMAGE_MAX_EDGE) return image;
-  const scale = BOARD_OVERVIEW_IMAGE_MAX_EDGE / longestEdge;
-  try {
-    return await createImageBitmap(image, 0, 0, sourceWidth, sourceHeight, {
-      resizeWidth: Math.max(1, Math.round(sourceWidth * scale)),
-      resizeHeight: Math.max(1, Math.round(sourceHeight * scale)),
-      resizeQuality: 'high'
-    });
-  } catch (error) {
-    return image;
-  }
-}
-
-function cacheBoardOverviewImage(fileId, source, drawable) {
-  const previous = Board.overviewImageCache.get(fileId);
-  if (previous) {
-    Board.overviewImagePixels = Math.max(0, Board.overviewImagePixels - (previous.pixels || 0));
-    if (previous.drawable !== drawable) closeBoardOverviewDrawable(previous.drawable);
-  }
-  const pixels = Math.max(1, Number(drawable && drawable.width) || 1) *
-    Math.max(1, Number(drawable && drawable.height) || 1);
-  Board.overviewImageCache.delete(fileId);
-  Board.overviewImageCache.set(fileId, { source, drawable, pixels });
-  Board.overviewImagePixels += pixels;
-  Board.overviewImageFailed.delete(boardOverviewImageRequestKey(fileId, source));
-  while (
-    Board.overviewImageCache.size > BOARD_OVERVIEW_IMAGE_CACHE_LIMIT ||
-    Board.overviewImagePixels > BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET
-  ) {
-    const oldestId = Board.overviewImageCache.keys().next().value;
-    const oldest = Board.overviewImageCache.get(oldestId);
-    Board.overviewImageCache.delete(oldestId);
-    Board.overviewImagePixels = Math.max(0, Board.overviewImagePixels - (oldest && oldest.pixels || 0));
-    closeBoardOverviewDrawable(oldest && oldest.drawable);
-  }
-}
-
-function scheduleBoardOverviewRedraw() {
-  if (Board.overviewRedrawFrame) return;
-  Board.overviewRedrawFrame = requestAnimationFrame(() => {
-    Board.overviewRedrawFrame = 0;
-    const canvas = Board.overviewCanvas;
-    if (!canvas || (canvas.hidden && Board.lastZoomBucket !== 'overview')) return;
-    const viewport = document.getElementById('board-viewport');
-    const rect = viewport && viewport.getBoundingClientRect();
-    if (rect && rect.width && rect.height) {
-      const useInteractionFallback = isBoardViewportInteracting() && Board.interactionFallbackIds.size;
-      drawBoardOverview(
-        useInteractionFallback ? Board.interactionFallbackIds : Board.visibleIds,
-        rect,
-        useInteractionFallback ? Board.interactionFallbackView : Board
-      );
+  if (!viewport || !canvas) return null;
+  const domInteractionLayer = document.getElementById('board-canvas');
+  if (domInteractionLayer) domInteractionLayer.dataset.boardRenderer = 'leafer';
+  Board.leaferCanvas = canvas;
+  const rect = viewport.getBoundingClientRect();
+  if (!Board.leaferLayer && !Board.leaferInitAttempted && window.MesssBoardLeaferLayer) {
+    Board.leaferInitAttempted = true;
+    const layer = window.MesssBoardLeaferLayer;
+    if (layer.init({
+      canvas,
+      width: Math.max(1, rect.width),
+      height: Math.max(1, rect.height),
+      pixelRatio: boardLeaferPixelRatio()
+    })) {
+      Board.leaferLayer = layer;
+      Board.leaferPixelRatio = layer.pixelRatio || boardLeaferPixelRatio();
+    } else {
+      console.error('Leafer board renderer could not be initialized.');
+      canvas.dataset.boardRenderer = 'unavailable';
     }
-  });
-}
-
-function processBoardOverviewImageQueue() {
-  while (
-    Board.overviewImageActive < BOARD_OVERVIEW_IMAGE_CONCURRENCY &&
-    Board.overviewImageQueue.length
-  ) {
-    const fileId = Board.overviewImageQueue.shift();
-    const request = Board.overviewImagePending.get(fileId);
-    if (!request || request.started) continue;
-    request.started = true;
-    Board.overviewImageActive += 1;
-    const image = new Image();
-    request.image = image;
-    image.decoding = 'async';
-
-    const finish = () => {
-      if (Board.overviewImagePending.get(fileId) === request) {
-        Board.overviewImagePending.delete(fileId);
-      }
-      Board.overviewImageActive = Math.max(0, Board.overviewImageActive - 1);
-      scheduleBoardOverviewRedraw();
-      processBoardOverviewImageQueue();
-    };
-    image.onload = async () => {
-      try {
-        if (
-          image.naturalWidth > 0 && image.naturalHeight > 0 &&
-          Board.overviewImagePending.get(fileId) === request
-        ) {
-          const drawable = await createBoardOverviewDrawable(image);
-          if (Board.overviewImagePending.get(fileId) === request) {
-            cacheBoardOverviewImage(fileId, request.source, drawable);
-          } else {
-            closeBoardOverviewDrawable(drawable);
-          }
-        }
-      } finally {
-        finish();
-      }
-    };
-    image.onerror = () => {
-      Board.overviewImageFailed.add(boardOverviewImageRequestKey(fileId, request.source));
-      finish();
-    };
-    image.src = request.source;
   }
-}
-
-function requestBoardOverviewImage(file, deferStart = false) {
-  const source = boardOverviewThumbnailSource(file);
-  if (!file || !source || cachedBoardOverviewImage(file)) return;
-  if (Board.overviewImageFailed.has(boardOverviewImageRequestKey(file.id, source))) return;
-  const pending = Board.overviewImagePending.get(file.id);
-  if (pending && pending.source === source) {
-    if (!pending.started && !Board.overviewImageQueue.includes(file.id)) {
-      Board.overviewImageQueue.push(file.id);
-    }
-    if (!deferStart) processBoardOverviewImageQueue();
-    return;
-  }
-  const request = { file, source, started: false, image: null };
-  Board.overviewImagePending.set(file.id, request);
-  Board.overviewImageQueue.push(file.id);
-  if (!deferStart) processBoardOverviewImageQueue();
-}
-
-function prioritizeBoardOverviewImageQueue(files) {
-  const prioritized = [];
-  const wantedIds = new Set();
-  for (const file of files) {
-    if (!file || wantedIds.has(file.id)) continue;
-    wantedIds.add(file.id);
-    prioritized.push(file);
-  }
-
-  for (const [fileId, request] of [...Board.overviewImagePending]) {
-    if (!request.started && !wantedIds.has(fileId)) Board.overviewImagePending.delete(fileId);
-  }
-  Board.overviewImageQueue.length = 0;
-  prioritized.forEach((file) => requestBoardOverviewImage(file, true));
-  processBoardOverviewImageQueue();
-}
-
-function drawBoardOverviewImage(ctx, image, x, y, width, height) {
-  const imageWidth = Number(image && (image.naturalWidth || image.width));
-  const imageHeight = Number(image && (image.naturalHeight || image.height));
-  if (!imageWidth || !imageHeight) return false;
-  const sourceRatio = imageWidth / imageHeight;
-  const targetRatio = width / Math.max(1, height);
-  let sourceX = 0;
-  let sourceY = 0;
-  let sourceWidth = imageWidth;
-  let sourceHeight = imageHeight;
-  if (sourceRatio > targetRatio) {
-    sourceWidth = imageHeight * targetRatio;
-    sourceX = (imageWidth - sourceWidth) / 2;
-  } else {
-    sourceHeight = imageWidth / targetRatio;
-    sourceY = (imageHeight - sourceHeight) / 2;
-  }
-  ctx.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, x, y, width, height);
-  return true;
-}
-
-function drawBoardOverviewWithLeafer(visibleIds, viewportRect, view = Board) {
-  const layer = Board.leaferLayer;
-  if (!layer || typeof layer.sync !== 'function') return false;
-  const viewportWidth = Math.max(1, Number(viewportRect && viewportRect.width) || 1);
-  const viewportHeight = Math.max(1, Number(viewportRect && viewportRect.height) || 1);
-  const pixelRatio = boardOverviewPixelRatio(viewportWidth, viewportHeight);
-  if (typeof layer.resize === 'function' && !layer.resize(
-    viewportWidth,
-    viewportHeight,
-    pixelRatio
-  )) return false;
-  Board.overviewPixelRatio = layer.pixelRatio || pixelRatio;
-
-  const items = [...visibleIds]
-    .map((id) => Board.itemsById.get(id))
-    .filter(Boolean);
-  const imageCandidates = items
-    .map((item) => {
-      const bounds = Board.spatialIndex.getBounds(item.id);
-      const file = Board.filesById.get(item.fileId);
-      return { item, bounds, file };
-    })
-    .filter((entry) => entry.bounds && (
-      boardOverviewThumbnailSource(entry.file) ||
-      (entry.item.isDoodle && String(entry.item.imageData || '').trim())
-    ) && (
-      Math.max(entry.bounds.w * (Number(view && view.zoom) || Board.zoom),
-        entry.bounds.h * (Number(view && view.zoom) || Board.zoom)) >= BOARD_OVERVIEW_IMAGE_MIN_SCREEN_EDGE
-    ))
-    .sort((a, b) => {
-      const aArea = a.bounds.w * a.bounds.h;
-      const bArea = b.bounds.w * b.bounds.h;
-      return (b.item.selected ? 1e9 : bArea) - (a.item.selected ? 1e9 : aArea);
-    });
-  const imageIds = new Set(
-    imageCandidates.slice(0, BOARD_OVERVIEW_IMAGE_LIMIT).map((entry) => entry.item.id)
-  );
-  const synced = layer.sync({
-    cacheKey: `${activeCanvasId()}:${Board.overviewContentRevision}:${BoardEngine.hashSet(visibleIds)}`,
-    items,
-    getBounds: (item) => Board.spatialIndex.getBounds(item.id),
-    getFile: (item) => Board.filesById.get(item.fileId),
-    getSource: (file, item) => {
-      if (item && item.isDoodle) return String(item.imageData || '').trim();
-      return imageIds.has(item.id) ? boardOverviewThumbnailSource(file) : '';
-    },
-    getColor: boardOverviewColor
-  });
-  if (!synced) return false;
-  layer.setTransform({
-    panX: Number.isFinite(view && view.panX) ? view.panX : Board.panX,
-    panY: Number.isFinite(view && view.panY) ? view.panY : Board.panY,
-    zoom: Number.isFinite(view && view.zoom) ? view.zoom : Board.zoom
-  });
-  layer.setVisible(true);
-  return true;
-}
-
-function drawBoardOverview(visibleIds, viewportRect, view = Board) {
-  const canvas = ensureBoardOverviewCanvas();
   if (Board.leaferLayer) {
-    try {
-      if (drawBoardOverviewWithLeafer(visibleIds, viewportRect, view)) return;
-    } catch (error) {
-      console.warn('Leafer board layer failed; using the 2D overview fallback.', error);
-      try { Board.leaferLayer.destroy(); } catch (destroyError) {}
-      Board.leaferLayer = null;
-      Board.leaferInitAttempted = true;
-      if (canvas) canvas.hidden = false;
-    }
+    Board.leaferLayer.resize(
+      Math.max(1, rect.width),
+      Math.max(1, rect.height),
+      Board.leaferPixelRatio || boardLeaferPixelRatio()
+    );
+    Board.leaferLayer.setTransform({ panX: Board.panX, panY: Board.panY, zoom: Board.zoom });
+    Board.leaferLayer.setVisible(true);
   }
-  const zoom = Number.isFinite(view && view.zoom) ? view.zoom : Board.zoom;
-  const panX = Number.isFinite(view && view.panX) ? view.panX : Board.panX;
-  const panY = Number.isFinite(view && view.panY) ? view.panY : Board.panY;
-  const width = Math.max(1, Math.round(viewportRect.width));
-  const height = Math.max(1, Math.round(viewportRect.height));
-  const dpr = boardOverviewPixelRatio(width, height);
-  Board.overviewPixelRatio = dpr;
-  const pixelWidth = Math.round(width * dpr);
-  const pixelHeight = Math.round(height * dpr);
-  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
-    canvas.width = pixelWidth;
-    canvas.height = pixelHeight;
-    canvas.style.width = `${width}px`;
-    canvas.style.height = `${height}px`;
-  }
-  canvas.hidden = false;
-  const ctx = canvas.getContext('2d');
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, width, height);
-  ctx.lineWidth = 1;
-  const imageCandidates = [...visibleIds]
-    .map((id) => {
-      const item = Board.itemsById.get(id);
-      const bounds = Board.spatialIndex.getBounds(id);
-      const file = item && Board.filesById.get(item.fileId);
-      return { id, item, bounds, file };
-    })
-    .filter((entry) => entry.item && entry.bounds && boardOverviewThumbnailSource(entry.file) && (
-      Math.max(entry.bounds.w * zoom, entry.bounds.h * zoom) >= BOARD_OVERVIEW_IMAGE_MIN_SCREEN_EDGE
-    ))
-    .sort((a, b) => {
-      const aArea = a.bounds.w * a.bounds.h;
-      const bArea = b.bounds.w * b.bounds.h;
-      return (b.item.selected ? 1e9 : bArea) - (a.item.selected ? 1e9 : aArea);
-    });
-  const prioritizedImages = imageCandidates.slice(0, BOARD_OVERVIEW_IMAGE_LIMIT);
-  // Request only the most useful thumbnails, but continue drawing any cached
-  // image that is already available from a previous nearby viewport.
-  const imageIds = new Set(imageCandidates.map((entry) => entry.id));
-  prioritizeBoardOverviewImageQueue(prioritizedImages.map((entry) => entry.file));
+  return canvas;
+}
 
-  const overviewIds = [...visibleIds].sort((leftId, rightId) => {
-    const left = Board.itemsById.get(leftId);
-    const right = Board.itemsById.get(rightId);
-    if (!!(left && left.isPartition) !== !!(right && right.isPartition)) {
-      return left && left.isPartition ? -1 : 1;
-    }
-    return Number((left && left.zIndex) || 0) - Number((right && right.zIndex) || 0);
-  });
-  for (const id of overviewIds) {
-    const item = Board.itemsById.get(id);
-    const bounds = Board.spatialIndex.getBounds(id);
-    if (!item || !bounds) continue;
-    const x = bounds.x * zoom + panX;
-    const y = bounds.y * zoom + panY;
-    const w = Math.max(2, bounds.w * zoom);
-    const h = Math.max(2, bounds.h * zoom);
-    ctx.globalAlpha = item.selected ? 1 : 0.82;
-    ctx.fillStyle = boardOverviewColor(item);
-    ctx.fillRect(x, y, w, h);
-    const file = Board.filesById.get(item.fileId);
-    if (imageIds.has(id) && file) {
-      const image = cachedBoardOverviewImage(file);
-      if (image) {
-        ctx.globalAlpha = item.selected ? 1 : 0.92;
-        drawBoardOverviewImage(ctx, image, x, y, w, h);
-      }
-    }
-    ctx.globalAlpha = item.selected ? 1 : 0.68;
-    ctx.strokeStyle = item.selected ? '#f5f7fb' : 'rgba(220, 226, 235, 0.78)';
-    ctx.strokeRect(x - 0.5, y - 0.5, w + 1, h + 1);
+function boardLeaferColor(item) {
+  if (item && item.isPartition) return 'rgba(125, 135, 152, 0.22)';
+  if (item && item.isDoodle) return '#9b58e9';
+  if (item && (item.isNote || item.isMoodboard)) return '#d7b94b';
+  const file = item && Board.filesById.get(item.fileId);
+  if (!file) return '#7d8798';
+  if (isVideoExt(file.ext)) return '#3d8fe8';
+  if (isImageExt(file.ext)) return '#47a67c';
+  if (isModelFile(file)) return '#9a7bd1';
+  if (isAudioExt(file.ext)) return '#d76f55';
+  return '#8a91a0';
+}
+
+function boardLeaferSource(file, item) {
+  if (item && item.isDoodle) return String(item.imageData || '').trim();
+  if (!file) return '';
+  if (isImageExt(file.ext)) {
+    const bounds = boardItemBounds(item);
+    const screenEdge = Math.max(bounds.w, bounds.h) * Math.max(0.001, Board.zoom);
+    const preferFull = !isBoardViewportInteracting() && (
+      Boolean(item.selected) || screenEdge >= BOARD_LEAFER_FULL_IMAGE_MIN_SCREEN_EDGE
+    );
+    return String(resolveImageDisplaySource(file, preferFull) || '').trim();
   }
-  ctx.globalAlpha = 1;
+  // Videos and models are represented by their poster/preview in the scene;
+  // their decoders stay out of the canvas until the user opens a preview.
+  if (isVideoExt(file.ext)) {
+    return String(file.thumbUrl || file.previewUrl || '').trim();
+  }
+  if (isModelFile(file)) {
+    return String(file.modelPreviewUrl || file.previewUrl || file.thumbUrl || '').trim();
+  }
+  return '';
+}
+
+function boardLeaferSyncOptions() {
+  return {
+    items: AppState.boardItems,
+    getBounds: (item) => boardItemBounds(item),
+    getFile: (item) => Board.filesById.get(item.fileId),
+    getSource: (file, item) => boardLeaferSource(file, item),
+    getColor: boardLeaferColor
+  };
+}
+
+function syncBoardLeaferScene(force = false) {
+  if (AppState.boardItems.length && (!Board.itemsById.size || Board.indexItemsRef !== AppState.boardItems)) {
+    rebuildBoardSpatialIndex();
+  }
+  const canvas = ensureBoardLeaferCanvas();
+  const layer = Board.leaferLayer;
+  if (!canvas || !layer || typeof layer.sync !== 'function') return false;
+  const viewport = document.getElementById('board-viewport');
+  const rect = viewport && viewport.getBoundingClientRect();
+  if (!rect || !rect.width || !rect.height) return false;
+  const options = boardLeaferSyncOptions();
+  const ids = new Set(AppState.boardItems.map((item) => item && item.id).filter(Boolean));
+  const revision = Number(Board.leaferContentRevision) || 0;
+  const cacheKey = [
+    activeCanvasId(),
+    revision,
+    AppState.boardItems.length,
+    BoardEngine.hashSet(ids),
+    BoardEngine.hashSet(Board.selectedIds)
+  ].join(':');
+  const synced = layer.sync({ ...options, cacheKey });
+  if (!synced) return false;
+  layer.setTransform({ panX: Board.panX, panY: Board.panY, zoom: Board.zoom });
+  layer.setVisible(true);
+  Board.leaferPixelRatio = layer.pixelRatio || Board.leaferPixelRatio;
+  return true;
+}
+
+function syncBoardLeaferItems(items) {
+  const layer = Board.leaferLayer;
+  if (!layer || typeof layer.updateItems !== 'function') return false;
+  const changed = [...new Set((Array.isArray(items) ? items : [items]).filter((item) => item && item.id))];
+  if (!changed.length) return false;
+  if (!ensureBoardLeaferCanvas()) return false;
+  const updated = layer.updateItems(changed, boardLeaferSyncOptions());
+  layer.setTransform({ panX: Board.panX, panY: Board.panY, zoom: Board.zoom });
+  return updated;
+}
+
+function scheduleBoardLeaferSync() {
+  if (Board.leaferSyncFrame) return;
+  Board.leaferSyncFrame = requestAnimationFrame(() => {
+    Board.leaferSyncFrame = 0;
+    syncBoardLeaferScene();
+  });
 }
 
 function isBoardMediaItem(item) {
@@ -2886,6 +2476,7 @@ function makeBoardPartitionDraggable(handle, element, partition) {
           movingElement.style.translate = `${item.x - startLeft}px ${item.y - startTop}px`;
         }
       });
+      syncBoardLeaferItems(movingItems);
     });
     const onMove = (moveEvent) => {
       if (Math.hypot(moveEvent.clientX - startClientX, moveEvent.clientY - startClientY) > 4) moved = true;
@@ -2989,6 +2580,7 @@ function addBoardPartitionResizeHandles(element, partition) {
           const memberElement = memberElements.get(item.id);
           if (memberElement) syncMountedBoardItemGeometry(memberElement, item);
         });
+        syncBoardLeaferItems([partition, ...members]);
       });
       const onMove = (moveEvent) => {
         markBoardInteraction();
@@ -3021,6 +2613,7 @@ function addBoardPartitionResizeHandles(element, partition) {
         if (recordBoardResizeHistory(startFrames)) {
           persistBoardMoveHistory(changedItems, partition.canvasId || activeCanvasId());
         }
+        syncBoardLeaferItems([partition, ...members]);
         scheduleBoardReconcile();
       };
       document.addEventListener('mousemove', onMove);
@@ -3332,7 +2925,6 @@ function processBoardMountQueue() {
     canvas.appendChild(element);
     Board.mounted.set(id, element);
     syncBoardElementViewportState(id, element, Board.visibleIds.has(id));
-    observeBoardElementPaintReady(element);
     mountedThisFrame += 1;
     if (isMedia) mountedMediaThisFrame += 1;
 
@@ -3350,7 +2942,7 @@ function processBoardMountQueue() {
     // while the user is still scrolling.
     scheduleBoardFullImagePrewarm(Board.zoom);
     scheduleMountedImageQuality();
-    scheduleBoardOverviewFallback();
+    scheduleBoardLeaferSync();
   }
 }
 
@@ -3380,52 +2972,25 @@ function reconcileBoardViewport(force = false) {
   if (!viewport) return;
   const rect = viewport.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
-  Board.interactionFallbackIds.clear();
-  Board.interactionFallbackView = null;
 
+  // Leafer is the only board renderer. Keep the complete scene alive while
+  // the DOM remains a bounded interaction layer for controls and hit testing.
+  syncBoardLeaferScene(force);
   const regions = BoardEngine.viewportRects(
     Board,
     { w: rect.width, h: rect.height },
     { mountMarginRatio: 0.45, keepMarginRatio: 1 }
   );
   const zoomBucket = boardZoomBucket();
-  const densityProbeLimit = Board.densityOverview
-    ? BOARD_DOM_ITEM_EXIT_LIMIT + 1
-    : BOARD_DOM_ITEM_LIMIT + 1;
-  // Overscan exists only to make the next pan cheap; it must not force the
-  // currently visible, DOM-manageable media into a blurry overview mode.
-  const visibleCandidateCount = Board.spatialIndex.count(regions.visible, densityProbeLimit);
-  Board.densityOverview = BoardEngine.isOverDomBudget(
-    visibleCandidateCount,
-    Board.densityOverview,
-    { enter: BOARD_DOM_ITEM_LIMIT, exit: BOARD_DOM_ITEM_EXIT_LIMIT }
-  );
-  const useOverview = Board.densityOverview ||
-    (zoomBucket === 'overview' && AppState.boardItems.length > BOARD_OVERVIEW_ITEM_THRESHOLD);
-  const effectiveBucket = useOverview
-    ? 'overview'
-    : (zoomBucket === 'overview' ? 'compact' : zoomBucket);
+  const effectiveBucket = zoomBucket === 'overview' ? 'compact' : zoomBucket;
   const viewportClass = document.getElementById('board-viewport');
-  viewportClass.classList.toggle('is-board-overview', effectiveBucket === 'overview');
+  viewportClass.classList.remove('is-board-overview');
   viewportClass.classList.toggle('is-board-compact', effectiveBucket === 'compact');
-
   if (effectiveBucket !== Board.lastZoomBucket) {
     const previousBucket = Board.lastZoomBucket;
     Board.lastZoomBucket = effectiveBucket;
     syncMountedRichContentForLod(previousBucket, effectiveBucket);
     force = true;
-  }
-
-  if (useOverview) {
-    const visibleIds = Board.spatialIndex.query(regions.visible);
-    Board.visibleIds = visibleIds;
-    // Paint the lightweight representation before removing DOM nodes so a
-    // density/zoom LOD transition never exposes a blank frame.
-    drawBoardOverview(visibleIds, rect);
-    clearMountedBoardItems();
-    Board.lastMountHash = null;
-    Board.lastKeepHash = null;
-    return;
   }
 
   const mountIds = Board.spatialIndex.queryLimited(regions.mount, BOARD_DOM_ITEM_LIMIT);
@@ -3435,9 +3000,7 @@ function reconcileBoardViewport(force = false) {
   const keepCandidates = [];
   for (const id of Board.mounted.keys()) {
     const bounds = Board.spatialIndex.getBounds(id);
-    if (!mountIds.has(id) && bounds && BoardEngine.intersects(bounds, regions.keep)) {
-      keepCandidates.push(id);
-    }
+    if (!mountIds.has(id) && bounds && BoardEngine.intersects(bounds, regions.keep)) keepCandidates.push(id);
   }
   const retainBudget = Math.max(0, BOARD_DOM_RETAIN_LIMIT - mountIds.size);
   const retainedIds = new Set(BoardEngine.prioritizeIdsByViewport(
@@ -3449,17 +3012,13 @@ function reconcileBoardViewport(force = false) {
   const mountHash = BoardEngine.hashSet(mountIds);
   const keepHash = BoardEngine.hashSet(retainedIds);
   if (!force && mountHash === Board.lastMountHash && keepHash === Board.lastKeepHash) {
-    // A failed image creation or an interrupted mount burst must self-heal
-    // even when the viewport hashes did not change.
     queueBoardMounts(mountIds, regions.visible);
-    syncBoardOverviewFallback(rect);
     return;
   }
   Board.lastMountHash = mountHash;
   Board.lastKeepHash = keepHash;
   Board.mountQueue.clear();
   Board.mountQueueAllowedIds.clear();
-
   for (const [id, element] of Board.mounted) {
     if (mountIds.has(id)) {
       element.style.visibility = '';
@@ -3474,7 +3033,6 @@ function reconcileBoardViewport(force = false) {
     }
   }
   queueBoardMounts(mountIds, regions.visible);
-  scheduleBoardOverviewFallback(rect);
 }
 
 function scheduleBoardReconcile() {
@@ -3495,12 +3053,12 @@ function renderBoard() {
   empty.hidden = AppState.boardItems.length > 0;
   // renderBoard is also used after in-place edits (notes, colors and media
   // metadata), so it is an explicit visual revision boundary for Leafer.
-  Board.overviewContentRevision += 1;
+  Board.leaferContentRevision += 1;
   const canvasId = activeCanvasId();
   if (Board.leaferCanvasId && Board.leaferCanvasId !== canvasId && Board.leaferLayer) {
     Board.leaferLayer.clear();
     Board.leaferLayer.setVisible(false);
-    if (Board.overviewCanvas) Board.overviewCanvas.hidden = true;
+    if (Board.leaferCanvas) Board.leaferCanvas.hidden = true;
   }
   Board.leaferCanvasId = canvasId;
   if (!AppState.boardItems.length && Board.leaferLayer) {
@@ -3628,7 +3186,7 @@ function syncBoardSelectionClasses(selectedIdsOverride = null, options = {}) {
   Board.selectedIds = selectedIds;
   Board.selectedCount = selectedIds.size;
   if (BoardEngine.hashSet(selectedIds) !== previousSelectionHash) {
-    Board.overviewContentRevision += 1;
+    Board.leaferContentRevision += 1;
   }
   const syncElement = (element) => {
     if (!element) return;
@@ -3779,6 +3337,7 @@ function makeBoardItemDraggable(el, item) {
           gEl.style.translate = `${gItem.x - startLeft}px ${gItem.y - startTop}px`;
         }
       });
+      syncBoardLeaferItems(groupMates);
       if (selectionGroup) {
         const anchor = groupStartPositions[0];
         const anchorDelta = deltas.get(anchor.item.id) || { dx, dy };
@@ -3887,6 +3446,7 @@ function startBoardSelectionResize(event, corner, group) {
       if (element) syncMountedBoardItemGeometry(element, item);
     });
     syncBoardSelectionGroup();
+    syncBoardLeaferItems(selectedItems);
   });
 
   function onMove(moveEvent) {
@@ -3999,6 +3559,7 @@ function addResizeHandles(el, item) {
         if (signY < 0) item.y = Math.round(startTop - heightDelta);
         el.style.left = item.x + 'px';
         el.style.top = item.y + 'px';
+        syncBoardLeaferItems(item);
       });
       function onMove(ev) {
         markBoardInteraction();
@@ -4179,7 +3740,7 @@ function startBoxSelect(e) {
 function initBoardCanvas() {
   const viewport = document.getElementById('board-viewport');
   restoreBoardViewport();
-  ensureBoardOverviewCanvas();
+  ensureBoardLeaferCanvas();
   resetBoardZoomTo100();
   reconcileBoardViewport(true);
   Board.resizeObserver = new ResizeObserver(() => {
@@ -4666,10 +4227,10 @@ function buildMiniVideoPlayer(result, f) {
   poster.alt = '';
   poster.loading = 'lazy';
   poster.draggable = false;
-  poster.addEventListener('load', () => scheduleBoardOverviewFallback(), { once: true });
+  poster.addEventListener('load', () => scheduleBoardLeaferSync(), { once: true });
   poster.addEventListener('error', () => {
     poster.dataset.paintFailed = 'true';
-    scheduleBoardOverviewFallback();
+    scheduleBoardLeaferSync();
   }, { once: true });
 
   const video = document.createElement('video');
@@ -6039,10 +5600,28 @@ function normalizeAiCameraControl(value = {}) {
   };
 }
 
-function getConfiguredImageProviders(aiConfig) {
-  const providers = Array.isArray(aiConfig.imageProviders)
-    ? aiConfig.imageProviders.filter((provider) => provider && provider.available !== false && provider.name && provider.endpoint)
-    : [];
+function normalizeConfiguredAiProviders(providers, kind, activeProviderId = '') {
+  const seen = new Set();
+  const usable = (Array.isArray(providers) ? providers : []).filter((provider) => {
+    const id = String(provider && provider.id || '').trim();
+    if (!id || seen.has(id) || provider.available === false || provider.hidden === true ||
+        !provider.name || !provider.endpoint) return false;
+    if (kind && provider.kind && provider.kind !== kind) return false;
+    seen.add(id);
+    return true;
+  });
+  if (typeof MesssAiProviderOptions !== 'undefined' && MesssAiProviderOptions.uniqueProviders) {
+    return MesssAiProviderOptions.uniqueProviders(usable, kind, { activeProviderId });
+  }
+  return usable;
+}
+
+function getConfiguredImageProviders(aiConfig = {}) {
+  const providers = normalizeConfiguredAiProviders(
+    aiConfig.imageProviders,
+    'image',
+    aiConfig.activeImageProviderId
+  );
   if (providers.length) return providers;
   if (aiConfig.providerVisibilityEnforced) return [];
   return [{
@@ -6052,10 +5631,12 @@ function getConfiguredImageProviders(aiConfig) {
   }];
 }
 
-function getConfiguredVideoProviders(aiConfig) {
-  const providers = Array.isArray(aiConfig.videoProviders)
-    ? aiConfig.videoProviders.filter((provider) => provider && provider.available !== false && provider.name && provider.endpoint)
-    : [];
+function getConfiguredVideoProviders(aiConfig = {}) {
+  const providers = normalizeConfiguredAiProviders(
+    aiConfig.videoProviders,
+    'video',
+    aiConfig.activeVideoProviderId
+  );
   if (providers.length) return providers;
   if (aiConfig.providerVisibilityEnforced) return [];
   return [{
@@ -9124,14 +8705,11 @@ function enterDoodleMode() {
   btn.classList.add('is-active');
 
   const viewport = document.getElementById('board-viewport');
-  const maximumPixelRatio = Math.sqrt(16_000_000 / Math.max(1, viewport.clientWidth * viewport.clientHeight));
-  doodlePixelRatio = Math.max(1, Math.min(3, maximumPixelRatio, window.devicePixelRatio || 1));
-  canvas.width = Math.max(1, Math.round(viewport.clientWidth * doodlePixelRatio));
-  canvas.height = Math.max(1, Math.round(viewport.clientHeight * doodlePixelRatio));
-  // This layer stores pointer coordinates in CSS pixels, so it must remain
-  // pinned to the viewport while the board camera is zoomed or panned.
+  // The element is input-only. Leafer owns the actual stroke pixels, so the
+  // temporary layer never allocates a second viewport-sized 2D bitmap.
+  doodlePixelRatio = 1;
   lockDoodleCanvasToViewport(canvas);
-  doodleCtx = canvas.getContext('2d', { alpha: true });
+  doodleCtx = null;
   doodleStrokes = [];
 
   let drawing = false;
@@ -9146,7 +8724,7 @@ function enterDoodleMode() {
     return [e.clientX - rect.left, e.clientY - rect.top, pressure];
   }
 
-  function paintSmoothStroke(stroke) {
+  function getStrokeOutline(stroke) {
     if (!stroke || !stroke.points.length || !window.PerfectFreehand) return;
     const outline = window.PerfectFreehand.getStroke(stroke.points, {
       size: stroke.tool === 'eraser' ? stroke.size * 3 : stroke.size,
@@ -9158,26 +8736,16 @@ function enterDoodleMode() {
       start: { cap: true },
       end: { cap: true }
     });
-    if (!outline.length) return;
-    doodleCtx.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
-    doodleCtx.fillStyle = stroke.color;
-    doodleCtx.beginPath();
-    doodleCtx.moveTo(outline[0][0], outline[0][1]);
-    for (let index = 1; index < outline.length; index += 1) {
-      const point = outline[index];
-      const next = outline[(index + 1) % outline.length];
-      doodleCtx.quadraticCurveTo(point[0], point[1], (point[0] + next[0]) / 2, (point[1] + next[1]) / 2);
-    }
-    doodleCtx.closePath();
-    doodleCtx.fill();
+    stroke.outline = outline;
+    return outline;
   }
 
   function renderDoodleStrokes() {
     drawFrameId = 0;
-    doodleCtx.setTransform(1, 0, 0, 1, 0, 0);
-    doodleCtx.clearRect(0, 0, canvas.width, canvas.height);
-    doodleCtx.setTransform(doodlePixelRatio, 0, 0, doodlePixelRatio, 0, 0);
-    doodleStrokes.forEach(paintSmoothStroke);
+    doodleStrokes.forEach(getStrokeOutline);
+    if (Board.leaferLayer && typeof Board.leaferLayer.renderDoodle === 'function') {
+      Board.leaferLayer.renderDoodle(doodleStrokes);
+    }
   }
 
   function scheduleDoodleRender() {
@@ -9290,7 +8858,10 @@ function exitDoodleMode(commit) {
   canvas.onpointermove = null;
   canvas.onpointerup = null;
   canvas.onpointercancel = null;
-  if (doodleCtx) doodleCtx.clearRect(0, 0, canvas.width, canvas.height);
+  if (Board.leaferLayer && typeof Board.leaferLayer.clearDoodle === 'function') {
+    Board.leaferLayer.clearDoodle();
+  }
+   doodleCtx = null;
   doodleStrokes = [];
   doodleHasStrokes = false;
 }
@@ -9301,26 +8872,46 @@ function exitDoodleMode(commit) {
     resetting position/zoom. */
 function commitDoodleToBoard(canvas) {
   const overlayRect = canvas.getBoundingClientRect();
-  const bounds = getDoodleBounds(canvas);
+  const outlines = doodleStrokes
+    .map((stroke) => ({
+      ...stroke,
+      outline: stroke.outline || (window.PerfectFreehand && window.PerfectFreehand.getStroke(stroke.points, {
+        size: stroke.tool === 'eraser' ? stroke.size * 3 : stroke.size,
+        thinning: stroke.tool === 'eraser' ? 0 : 0.38,
+        smoothing: 0.72,
+        streamline: 0.48,
+        simulatePressure: true,
+        last: true,
+        start: { cap: true },
+        end: { cap: true }
+      }))
+    }))
+    .filter((stroke) => stroke.outline && stroke.outline.length);
+  const bounds = getDoodleOutlineBounds(outlines);
   if (!bounds) return;
   // The temporary surface is pinned to the screen. Convert its ink bounds
   // from CSS pixels into the current board camera exactly once at commit time.
   const inkLeft = overlayRect.left + bounds.x / doodlePixelRatio;
   const inkTop = overlayRect.top + bounds.y / doodlePixelRatio;
   const { x, y } = clientToBoardCoords(inkLeft, inkTop);
-  const cropped = document.createElement('canvas');
-  cropped.width = bounds.width;
-  cropped.height = bounds.height;
-  cropped.getContext('2d').drawImage(canvas, bounds.x, bounds.y, bounds.width, bounds.height, 0, 0, bounds.width, bounds.height);
+  const boardZoom = Math.max(0.0001, Number(Board.zoom) || 1);
+  const doodlePaths = outlines.map((stroke) => ({
+    color: stroke.color,
+    tool: stroke.tool,
+    points: stroke.outline.map((point) => [
+      (Number(point[0]) - bounds.x) / boardZoom,
+      (Number(point[1]) - bounds.y) / boardZoom
+    ])
+  }));
   const item = {
     id: 'doodle_' + Math.random().toString(36).slice(2, 10),
     isDoodle: true,
-    imageData: cropped.toDataURL('image/png'),
     x: Math.round(x),
     y: Math.round(y),
-    width: Math.max(1, Math.round(bounds.width / doodlePixelRatio / Board.zoom)),
-    height: Math.max(1, Math.round(bounds.height / doodlePixelRatio / Board.zoom)),
-    doodleTrimVersion: 2,
+    width: Math.max(1, Math.round(bounds.width / doodlePixelRatio / boardZoom)),
+    height: Math.max(1, Math.round(bounds.height / doodlePixelRatio / boardZoom)),
+    doodlePaths,
+    doodleVersion: 3,
     zIndex: AppState.boardItems.length + 1,
     canvasId: activeCanvasId(),
     selected: true
@@ -9334,8 +8925,32 @@ function commitDoodleToBoard(canvas) {
 }
 
 function getDoodleBounds(canvas) {
-  const imageData = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
-  return getAlphaBounds(imageData.data, canvas.width, canvas.height);
+  return getDoodleOutlineBounds(doodleStrokes);
+}
+
+function getDoodleOutlineBounds(strokes) {
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+  (strokes || []).forEach((stroke) => {
+    (stroke && (stroke.outline || stroke.points) || []).forEach((point) => {
+      const x = Number(point && point[0]);
+      const y = Number(point && point[1]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      left = Math.min(left, x);
+      top = Math.min(top, y);
+      right = Math.max(right, x);
+      bottom = Math.max(bottom, y);
+    });
+  });
+  if (![left, top, right, bottom].every(Number.isFinite)) return null;
+  return {
+    x: Math.floor(left),
+    y: Math.floor(top),
+    width: Math.max(1, Math.ceil(right - left + 1)),
+    height: Math.max(1, Math.ceil(bottom - top + 1))
+  };
 }
 
 function getAlphaBounds(pixels, width, height) {

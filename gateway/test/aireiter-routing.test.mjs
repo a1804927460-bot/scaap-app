@@ -158,6 +158,36 @@ test('AI Reiter GPT Image 2 sends resolution with aspect ratio and size by itsel
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
+test('AI Reiter accepts numeric completion status and nested result URLs', async () => {
+  const previousFetch = globalThis.fetch;
+  await withEnvironment({ AIREITER_API_KEY: 'aireiter-key' }, async () => {
+    let queryCount = 0;
+    globalThis.fetch = async (url) => {
+      const value = String(url);
+      if (value.endsWith('/api/openapi/submit')) {
+        return jsonResponse({ statusCode: 200, data: { status: 0 } });
+      }
+      if (value.endsWith('/api/openapi/query')) {
+        queryCount += 1;
+        return jsonResponse({ statusCode: 200, data: queryCount === 1
+          ? { status: 1 }
+          : { status: 2, result: { response: { download_url: VALID_PNG_DATA_URL } } } });
+      }
+      throw new Error(`Unexpected route: ${value}`);
+    };
+
+    const result = await generateMedia('image', {
+      providerId: 'image-2',
+      operationId: '48484848-4848-4484-8484-484848484848',
+      prompt: 'numeric status result',
+      size: '1K',
+      aspectRatio: '1:1'
+    });
+    assert.deepEqual(result, VALID_PNG);
+    assert.equal(queryCount, 2);
+  }).finally(() => { globalThis.fetch = previousFetch; });
+});
+
 test('AI Reiter video tasks stay pinned to their accepted route', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({
@@ -290,6 +320,35 @@ test('Agent mixed routing sends only the anonymous user field', async () => {
       endUserId: 'u_0123456789abcdef0123',
       messages: [{ role: 'user', content: 'hello' }]
     }), { text: 'ok', usage: null });
+  }).finally(() => { globalThis.fetch = previousFetch; });
+});
+
+test('Agent corrects a stale provider when the requested model belongs to another route', async () => {
+  const previousFetch = globalThis.fetch;
+  await withEnvironment({
+    AIREITER_API_KEY: 'aireiter-key',
+    AIREITER_TRAFFIC_PERCENT: '0',
+    AI302_KEY: 'legacy-key'
+  }, async () => {
+    const calls = [];
+    globalThis.fetch = async (url, options = {}) => {
+      const value = String(url);
+      calls.push({ url: value, body: JSON.parse(options.body) });
+      if (value.includes('aireiter.com')) {
+        assert.equal(calls[0].body.model, 'gpt-5.2');
+        return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'corrected' } }] });
+      }
+      throw new Error('Stale provider must not be called: ' + value);
+    };
+    assert.deepEqual(await chat({
+      providerId: 'chat-1',
+      model: 'gpt-5.6-luna',
+      operationId: '36363636-3636-4363-8363-363636363636',
+      endUserId: 'u_0123456789abcdef0123',
+      messages: [{ role: 'user', content: 'hello' }]
+    }), { text: 'corrected', usage: null });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://aireiter.com/api/v1/chat/completions');
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 

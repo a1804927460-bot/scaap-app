@@ -31,7 +31,7 @@ async function run() {
     #board-viewport{position:relative;width:900px;height:600px;overflow:hidden}
     #board-canvas{position:absolute;left:0;top:0;width:1px;height:1px;transform-origin:0 0}
     .board-item{position:absolute}.board-image-layer{display:block;width:100%;height:100%}
-    .board-overview-canvas{position:absolute;inset:0}.board-overview-canvas[hidden]{display:none}
+    .board-leafer-canvas{position:absolute;inset:0}.board-leafer-canvas[hidden]{display:none}
     </style></head><body>
     <div id="board-viewport"><div id="board-canvas"></div><canvas id="board-doodle-canvas" hidden></canvas></div>
     <button id="board-tool-doodle"></button><div id="doodle-color-panel" hidden></div>
@@ -89,6 +89,7 @@ async function run() {
         Board.panY = 0;
         Board.zoomLod = 'detail';
         Board.lastZoomBucket = 'detail';
+        syncBoardLeaferScene(true);
 
         createBoardItemElement = (item) => {
           const element = document.createElement('div');
@@ -131,9 +132,8 @@ async function run() {
         visible: Board.visibleIds.size,
         missingVisible: [...Board.visibleIds].filter((id) => !Board.mounted.has(id)).length,
         invalidMounted: [...Board.mounted.keys()].filter((id) => !Board.itemsById.has(id)).length,
-        unpaintedVisible: unpaintedVisibleBoardIds().size,
-        motionFallbackVisible: Boolean(Board.overviewCanvas && !Board.overviewCanvas.hidden),
-        overviewHidden: !Board.overviewCanvas || Board.overviewCanvas.hidden
+        leaferVisible: Boolean(Board.leaferCanvas && !Board.leaferCanvas.hidden),
+        leaferHidden: !Board.leaferCanvas || Board.leaferCanvas.hidden
       });
       window.runSelectionFixture = () => {
         Board.zoom = 1;
@@ -206,21 +206,8 @@ async function run() {
           bubbles: true, button: 0, buttons: 0, pointerId: 19,
           pointerType: 'mouse', clientX: 220, clientY: 150
         }));
-        const sampleInk = (cssX, cssY) => {
-          const context = canvas.getContext('2d');
-          const ratio = Math.max(1, Number(doodlePixelRatio) || 1);
-          const centerX = Math.round(cssX * ratio);
-          const centerY = Math.round(cssY * ratio);
-          let alpha = 0;
-          for (let y = centerY - Math.ceil(4 * ratio); y <= centerY + Math.ceil(4 * ratio); y += 1) {
-            for (let x = centerX - Math.ceil(4 * ratio); x <= centerX + Math.ceil(4 * ratio); x += 1) {
-              if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) continue;
-              alpha = Math.max(alpha, context.getImageData(x, y, 1, 1).data[3]);
-            }
-          }
-          return alpha;
-        };
-        const beforePixel = sampleInk(170, 150);
+        const sampleInk = () => Board.leaferLayer && Board.leaferLayer.doodleCount;
+        const beforePixel = sampleInk();
         const beforeTransform = getComputedStyle(canvas).transform;
         Board.isWheelZooming = true;
         Board.zoom = 1.8;
@@ -229,7 +216,7 @@ async function run() {
         applyBoardTransform();
         await new Promise((resolve) => setTimeout(resolve, 20));
         const afterRect = canvas.getBoundingClientRect();
-        const afterPixel = sampleInk(170, 150);
+        const afterPixel = sampleInk();
         const afterTransform = getComputedStyle(canvas).transform;
         const boardTransformValue = getComputedStyle(document.getElementById('board-canvas')).transform;
         Board.isWheelZooming = false;
@@ -260,29 +247,26 @@ async function run() {
     await window.loadFile(fixturePath);
     await window.webContents.executeJavaScript('runZoomFixture()');
     try {
-      await waitFor(window, 'zoomFixtureState().wheel && zoomFixtureState().targetVisible === 60 && (zoomFixtureState().mounted >= 6 || zoomFixtureState().leaferItems === 60)', 400);
+      await waitFor(window, 'zoomFixtureState().wheel && zoomFixtureState().leaferItems === 60', 400);
     } catch (error) {
       const state = await window.webContents.executeJavaScript('zoomFixtureState()');
       throw new Error(`${error.message}: ${JSON.stringify(state)}`);
     }
     const during = await window.webContents.executeJavaScript('zoomFixtureState()');
     try {
-      await waitFor(window, '!zoomFixtureState().animating && zoomFixtureState().missingVisible === 0 && zoomFixtureState().unpaintedVisible === 0');
+      await waitFor(window, '!zoomFixtureState().animating && zoomFixtureState().missingVisible === 0');
     } catch (error) {
       const state = await window.webContents.executeJavaScript('zoomFixtureState()');
       throw new Error(`${error.message}: ${JSON.stringify(state)}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 80));
     const settled = await window.webContents.executeJavaScript('zoomFixtureState()');
-    if (during.targetVisible !== 60 || (!during.mounted && during.leaferItems !== 60) || !during.wheel) {
+    if (during.leaferItems !== 60 || !during.wheel) {
       throw new Error(`Target viewport was not represented during zoom: ${JSON.stringify(during)}`);
     }
-    if (!during.motionFallbackVisible) {
-      throw new Error(`Zoom interaction exposed an empty frame before mounts completed: ${JSON.stringify(during)}`);
-    }
     if (settled.items !== 60 || settled.visible !== 60 || settled.missingVisible !== 0 ||
-        settled.invalidMounted !== 0 || settled.unpaintedVisible !== 0 ||
-        !settled.overviewHidden || Math.abs(settled.zoom - 0.6) > 0.001) {
+        settled.invalidMounted !== 0 ||
+        settled.leaferItems !== 60 || Math.abs(settled.zoom - 0.6) > 0.001) {
       throw new Error(`Zoom settled with missing or fallback media: ${JSON.stringify(settled)}`);
     }
     const selection = await window.webContents.executeJavaScript(`(() => {
@@ -306,7 +290,7 @@ async function run() {
         doodle.boardTransformValue === 'none') {
       throw new Error(`Doodle overlay followed board zoom: ${JSON.stringify(doodle)}`);
     }
-    process.stdout.write(`BOARD_ZOOM_RUNTIME_OK during=leafer:${during.leaferItems}/dom:${during.mounted} settled=${settled.mounted}/60 selection=2 drag=50x30 doodle=screen-locked\n`);
+    process.stdout.write(`BOARD_ZOOM_RUNTIME_OK during=leafer:${during.leaferItems}/dom:${during.mounted} settled=leafer:${settled.leaferItems}/dom:${settled.mounted} selection=2 drag=50x30 doodle=screen-locked\n`);
   } finally {
     window.destroy();
     fs.rmSync(tempDir, { recursive: true, force: true });

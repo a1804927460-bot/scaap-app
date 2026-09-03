@@ -6,11 +6,11 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function createBoardLeaferLayer(root) {
   const SCREEN_PIXEL_RATIO = 1;
   const MAX_EXPORT_PIXEL_RATIO = 3;
-  const DEFAULT_RADIUS = 6;
   const state = {
     canvas: null,
     leafer: null,
     group: null,
+    doodleGroup: null,
     entries: new Map(),
     orderSignature: '',
     visible: false,
@@ -21,7 +21,8 @@
     syncCalls: 0,
     lastSyncKey: '',
     lastTransform: null,
-    lastError: null
+    lastError: null,
+    options: null
   };
 
   function finite(value, fallback = 0) {
@@ -44,12 +45,20 @@
     return api;
   }
 
+  function polygonPath(points) {
+    const normalized = (points || []).filter((point) => (
+      point && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1]))
+    ));
+    if (!normalized.length) return '';
+    return `M ${normalized.map((point) => `${finite(point[0])} ${finite(point[1])}`).join(' L ')} Z`;
+  }
+
   function normalizeSource(value) {
     return String(value || '').trim();
   }
 
   function normalizeBounds(item, getBounds) {
-    const source = typeof getBounds === 'function' ? getBounds(item.id) : null;
+    const source = typeof getBounds === 'function' ? getBounds(item) : null;
     const bounds = source || item;
     if (!bounds) return null;
     const width = positive(bounds.w || bounds.width, 1);
@@ -68,17 +77,22 @@
   }
 
   function textForItem(item) {
+    if (item.isPartition) return String(item.partitionName || '');
     if (item.isMoodboard) return String(item.moodboardTitle || item.moodboardText || '');
     if (item.isNote) return String(item.text || '');
+    if (item.fileName) return String(item.fileName);
     return '';
   }
 
   function itemKind(item, file, source) {
     if (item.isPartition) return 'partition';
-    if (item.isDoodle && source) return 'doodle';
+    if (item.isDoodle && Array.isArray(item.doodlePaths) && item.doodlePaths.length) return 'vector-doodle';
+    if (item.isDoodle) return source ? 'doodle' : 'rect';
     if (item.isMoodboard || item.isNote) return 'text';
     if (item.isAiPlaceholder) return 'pending';
-    if (source && file) return 'media';
+    // Keep media as media even while its preview URL is being resolved. The
+    // Leafer scene must retain the object and can upgrade its source later.
+    if (file && source) return 'media';
     return 'rect';
   }
 
@@ -98,7 +112,10 @@
       item.fontFamily || '',
       item.fontSize || '',
       item.fontWeight || '',
-      item.noFill ? 1 : 0
+      item.noFill ? 1 : 0,
+      item.partitionName || '',
+      item.fileName || '',
+      JSON.stringify(item.doodlePaths || '')
     ].join('\u001f');
   }
 
@@ -110,11 +127,115 @@
       width: bounds.width,
       height: bounds.height,
       zIndex: finite(item.zIndex, item.isPartition ? 0 : 1),
-      opacity: item.selected ? 1 : 0.84,
+      opacity: 1,
       hittable: false,
-      cornerRadius: DEFAULT_RADIUS,
+      cornerRadius: 0,
+      lazy: true,
+      renderSpread: 1200,
       placeholderColor: color
     };
+  }
+
+  function textOptions(item, bounds, text, color, extra = {}) {
+    return {
+      id: `messs-board-text-${item.id}`,
+      x: extra.x === undefined ? 8 : extra.x,
+      y: extra.y === undefined ? 8 : extra.y,
+      width: Math.max(1, extra.width === undefined ? bounds.width - 16 : extra.width),
+      height: Math.max(1, extra.height === undefined ? bounds.height - 16 : extra.height),
+      text,
+      fill: color,
+      fontFamily: item.fontFamily || 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
+      fontSize: clamp(finite(extra.fontSize === undefined ? item.fontSize : extra.fontSize, 14), 8, 36),
+      fontWeight: extra.fontWeight || item.fontWeight || 500,
+      textWrap: 'normal',
+      textOverflow: 'ellipsis',
+      verticalAlign: extra.verticalAlign || 'top',
+      padding: extra.padding === undefined ? 0 : extra.padding,
+      hittable: false,
+      cornerRadius: 0
+    };
+  }
+
+  function addChildren(group, children) {
+    const valid = children.filter(Boolean);
+    if (valid.length) group.add(valid);
+    group._messsParts = valid;
+    return group;
+  }
+
+  function createPath(api, id, points, color, tool) {
+    if (!api || typeof api.Path !== 'function') return null;
+    const path = polygonPath(points);
+    if (!path) return null;
+    return new api.Path({
+      id,
+      path,
+      fill: color || '#a855f7',
+      eraser: tool === 'eraser' ? true : undefined,
+      hittable: false
+    });
+  }
+
+  function createPartitionDrawable(api, item, bounds, color) {
+    const group = new api.Group({
+      ...baseOptions(item, bounds, color),
+      opacity: 1,
+      hittable: false
+    });
+    const rect = new api.Rect({
+      id: `messs-board-partition-bg-${item.id}`,
+      x: 0,
+      y: 0,
+      width: bounds.width,
+      height: bounds.height,
+      fill: 'rgba(125, 135, 152, 0.22)',
+      stroke: item.selected ? '#f5f7fb' : 'rgba(190, 198, 212, 0.4)',
+      strokeWidth: item.selected ? 1.2 : 0.8,
+      cornerRadius: 0,
+      hittable: false
+    });
+    const title = new api.Text(textOptions(
+      item,
+      bounds,
+      textForItem(item),
+      '#f5f7fb',
+      { x: 18, y: 14, width: bounds.width - 36, height: 34, fontSize: 15, fontWeight: 720 }
+    ));
+    return addChildren(group, [rect, title]);
+  }
+
+  function createLabelDrawable(api, item, bounds, color, pending = false) {
+    const group = new api.Group({
+      ...baseOptions(item, bounds, color),
+      opacity: 1,
+      hittable: false
+    });
+    const rect = new api.Rect({
+      id: `messs-board-label-bg-${item.id}`,
+      x: 0,
+      y: 0,
+      width: bounds.width,
+      height: bounds.height,
+      fill: pending ? 'rgba(125, 135, 152, 0.3)' : color,
+      stroke: item.selected ? '#f5f7fb' : 'rgba(220, 226, 235, 0.72)',
+      strokeWidth: item.selected ? 1.2 : 0.8,
+      cornerRadius: 0,
+      hittable: false
+    });
+    const label = textForItem(item);
+    const text = label
+      ? new api.Text(textOptions(item, bounds, label, '#f3f5f8', {
+        x: 10,
+        y: 10,
+        width: bounds.width - 20,
+        height: bounds.height - 20,
+        fontSize: 13,
+        fontWeight: 560,
+        verticalAlign: 'middle'
+      }))
+      : null;
+    return addChildren(group, [rect, text]);
   }
 
   function createDrawable(item, file, bounds, source, kind, color) {
@@ -124,18 +245,34 @@
     const stroke = item.selected ? '#f5f7fb' : 'rgba(220, 226, 235, 0.72)';
     const strokeWidth = item.selected ? 1.2 : 0.8;
 
+    if (kind === 'vector-doodle' && api.Path) {
+      const group = new api.Group({ ...options, hittable: false });
+      const paths = (item.doodlePaths || []).map((entry, index) => {
+        return createPath(
+          api,
+          `messs-board-doodle-path-${item.id}-${index}`,
+          entry && entry.points,
+          entry && entry.color || color,
+          entry && entry.tool
+        );
+      }).filter(Boolean);
+      if (paths.length) group.add(paths);
+      group._messsParts = paths;
+      return group;
+    }
+
     if (kind === 'media' || kind === 'doodle') {
       return new api.Image({
         ...options,
         fill: {
           type: 'image',
           url: source,
-          mode: kind === 'doodle' ? 'stretch' : 'cover',
+          mode: 'fit',
           showProgress: false
         },
         stroke,
         strokeWidth,
-        cornerRadius: kind === 'doodle' ? 0 : DEFAULT_RADIUS
+        cornerRadius: 0
       });
     }
 
@@ -144,36 +281,24 @@
       return new api.Text({
         ...options,
         text,
-        fill: item.color || '#e8ebf1',
+        fill: item.noFill ? 'rgba(0,0,0,0)' : (item.color || '#e8ebf1'),
         fontFamily: item.fontFamily || 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
         fontSize: clamp(finite(item.fontSize, 14), 8, 36),
         fontWeight: item.fontWeight || 500,
         textWrap: 'normal',
         textOverflow: 'ellipsis',
         verticalAlign: 'top',
-        padding: 8,
+        padding: item.isNote || item.isMoodboard ? 8 : 0,
         stroke: undefined,
-        cornerRadius: DEFAULT_RADIUS
+        cornerRadius: 0
       });
     }
 
     if (kind === 'partition') {
-      return new api.Rect({
-        ...options,
-        fill: 'rgba(125, 135, 152, 0.22)',
-        stroke: item.selected ? '#f5f7fb' : 'rgba(190, 198, 212, 0.4)',
-        strokeWidth,
-        cornerRadius: 8,
-        opacity: item.selected ? 1 : 0.92
-      });
+      return createPartitionDrawable(api, item, bounds, color);
     }
 
-    return new api.Rect({
-      ...options,
-      fill: kind === 'pending' ? 'rgba(125, 135, 152, 0.3)' : color,
-      stroke,
-      strokeWidth
-    });
+    return createLabelDrawable(api, item, bounds, color, kind === 'pending');
   }
 
   function updateDrawable(drawable, item, bounds, source, kind, color) {
@@ -183,24 +308,75 @@
     drawable.width = bounds.width;
     drawable.height = bounds.height;
     drawable.zIndex = finite(item.zIndex, item.isPartition ? 0 : 1);
-    drawable.opacity = item.selected ? 1 : (kind === 'partition' ? 0.92 : 0.84);
+    drawable.opacity = 1;
     if (kind === 'partition') {
-      drawable.stroke = item.selected ? '#f5f7fb' : 'rgba(190, 198, 212, 0.4)';
-      drawable.fill = 'rgba(125, 135, 152, 0.22)';
+      const [rect, title] = drawable._messsParts || [];
+      if (rect) {
+        rect.width = bounds.width;
+        rect.height = bounds.height;
+        rect.stroke = item.selected ? '#f5f7fb' : 'rgba(190, 198, 212, 0.4)';
+        rect.strokeWidth = item.selected ? 1.2 : 0.8;
+        rect.fill = 'rgba(125, 135, 152, 0.22)';
+      }
+      if (title) {
+        title.x = 18;
+        title.y = 14;
+        title.width = Math.max(1, bounds.width - 36);
+        title.height = 34;
+        title.text = textForItem(item);
+      }
     } else if (kind === 'text') {
       drawable.text = textForItem(item);
-      drawable.fill = item.color || '#e8ebf1';
+      drawable.fill = item.noFill ? 'rgba(0,0,0,0)' : (item.color || '#e8ebf1');
       drawable.fontSize = clamp(finite(item.fontSize, 14), 8, 36);
       drawable.fontWeight = item.fontWeight || 500;
     } else if (kind === 'media' || kind === 'doodle') {
       drawable.fill = source ? {
         type: 'image',
         url: source,
-        mode: kind === 'doodle' ? 'stretch' : 'cover',
+        mode: 'fit',
         showProgress: false
       } : color;
+      drawable.stroke = item.selected ? '#f5f7fb' : 'rgba(220, 226, 235, 0.72)';
+      drawable.strokeWidth = item.selected ? 1.2 : 0.8;
+    } else if (kind === 'vector-doodle') {
+      const api = classes();
+      const entries = item.doodlePaths || [];
+      const paths = drawable._messsParts || [];
+      if (api && typeof api.Path === 'function' && paths.length !== entries.length) {
+        drawable.removeAll(true);
+        const nextPaths = entries.map((entry, index) => createPath(
+          api,
+          `messs-board-doodle-path-${item.id}-${index}`,
+          entry && entry.points,
+          entry && entry.color || color,
+          entry && entry.tool
+        )).filter(Boolean);
+        if (nextPaths.length) drawable.add(nextPaths);
+        drawable._messsParts = nextPaths;
+      } else {
+        entries.forEach((entry, index) => {
+          const path = paths[index];
+          if (!path) return;
+          path.path = polygonPath(entry && entry.points);
+          path.fill = entry && entry.color || color;
+          path.eraser = entry && entry.tool === 'eraser' ? true : undefined;
+        });
+      }
     } else if (kind === 'rect' || kind === 'pending') {
-      drawable.fill = kind === 'pending' ? 'rgba(125, 135, 152, 0.3)' : color;
+      const [rect, label] = drawable._messsParts || [];
+      if (rect) {
+        rect.width = bounds.width;
+        rect.height = bounds.height;
+        rect.fill = kind === 'pending' ? 'rgba(125, 135, 152, 0.3)' : color;
+        rect.stroke = item.selected ? '#f5f7fb' : 'rgba(220, 226, 235, 0.72)';
+        rect.strokeWidth = item.selected ? 1.2 : 0.8;
+      }
+      if (label) {
+        label.text = textForItem(item);
+        label.width = Math.max(1, bounds.width - 20);
+        label.height = Math.max(1, bounds.height - 20);
+      }
     }
   }
 
@@ -256,9 +432,19 @@
       });
       const group = new api.Group({ id: 'messs-board-world', hittable: false });
       leafer.add(group);
+      // Drawing strokes live in viewport coordinates while the board world
+      // moves under the camera. Keeping a dedicated Leafer group outside the
+      // world makes an in-progress stroke stable during wheel zoom and pan.
+      const doodleGroup = new api.Group({
+        id: 'messs-board-doodles',
+        zIndex: 100000,
+        hittable: false
+      });
+      leafer.add(doodleGroup);
       state.canvas = canvas;
       state.leafer = leafer;
       state.group = group;
+      state.doodleGroup = doodleGroup;
       // Leafer has already allocated this exact backing store in its
       // constructor. Record it instead of resizing a second time on init.
       state.width = width;
@@ -267,6 +453,7 @@
       state.resizeCalls = 0;
       state.lastTransform = null;
       state.lastError = null;
+      state.options = null;
       canvas.classList.add('board-leafer-canvas');
       canvas.dataset.boardRenderer = 'leafer';
       canvas.setAttribute('aria-hidden', 'true');
@@ -305,6 +492,7 @@
     if (!state.leafer || !state.group || !Array.isArray(options.items) && !(options.items instanceof Set)) {
       return false;
     }
+    state.options = options;
     const cacheKey = String(options.cacheKey || '');
     if (cacheKey && cacheKey === state.lastSyncKey) {
       setVisible(true);
@@ -320,6 +508,7 @@
       if (!bounds) continue;
       const file = typeof options.getFile === 'function' ? options.getFile(item) : null;
       const source = normalizeSource(typeof options.getSource === 'function' ? options.getSource(file, item) : '');
+      item.fileName = file && file.name ? String(file.name) : item.fileName || '';
       const color = colorForItem(item, options.getColor);
       const kind = itemKind(item, file, source);
       const signature = itemSignature(item, file, bounds, source, kind, color);
@@ -361,6 +550,161 @@
     return true;
   }
 
+  function resolveItem(item, options = null) {
+    if (!item || !item.id) return null;
+    const resolvedOptions = options && Object.keys(options).length ? options : (state.options || {});
+    const bounds = normalizeBounds(item, resolvedOptions.getBounds);
+    if (!bounds) return null;
+    const file = typeof resolvedOptions.getFile === 'function' ? resolvedOptions.getFile(item) : null;
+    const source = normalizeSource(typeof resolvedOptions.getSource === 'function' ? resolvedOptions.getSource(file, item) : '');
+    const color = colorForItem(item, resolvedOptions.getColor);
+    const kind = itemKind(item, file, source);
+    const signature = itemSignature(item, file, bounds, source, kind, color);
+    return { bounds, file, source, color, kind, signature };
+  }
+
+  function updateItem(item, options = {}) {
+    if (!state.leafer || !state.group || !item || !item.id) return false;
+    const resolved = resolveItem(item, options);
+    if (!resolved) return false;
+    item.fileName = resolved.file && resolved.file.name
+      ? String(resolved.file.name)
+      : item.fileName || '';
+    const previous = state.entries.get(item.id);
+    let drawable = previous && previous.kind === resolved.kind ? previous.drawable : null;
+    if (!drawable) {
+      if (previous && previous.drawable) state.group.remove(previous.drawable, true);
+      drawable = createDrawable(
+        item,
+        resolved.file,
+        resolved.bounds,
+        resolved.source,
+        resolved.kind,
+        resolved.color
+      );
+      if (!drawable) return false;
+      state.entries.set(item.id, {
+        drawable,
+        kind: resolved.kind,
+        signature: resolved.signature,
+        item
+      });
+      state.group.add(drawable);
+    } else if (previous.signature !== resolved.signature) {
+      updateDrawable(
+        drawable,
+        item,
+        resolved.bounds,
+        resolved.source,
+        resolved.kind,
+        resolved.color
+      );
+      previous.signature = resolved.signature;
+      previous.item = item;
+    }
+    state.lastSyncKey = '';
+    state.leafer.requestRender(true);
+    return true;
+  }
+
+  function updateItems(items, options = {}) {
+    let changed = false;
+    for (const item of items || []) {
+      if (!state.leafer || !state.group || !item || !item.id) continue;
+      const resolved = resolveItem(item, options);
+      if (!resolved) continue;
+      item.fileName = resolved.file && resolved.file.name
+        ? String(resolved.file.name)
+        : item.fileName || '';
+      const previous = state.entries.get(item.id);
+      let drawable = previous && previous.kind === resolved.kind ? previous.drawable : null;
+      if (!drawable) {
+        if (previous && previous.drawable) state.group.remove(previous.drawable, true);
+        drawable = createDrawable(
+          item,
+          resolved.file,
+          resolved.bounds,
+          resolved.source,
+          resolved.kind,
+          resolved.color
+        );
+        if (!drawable) continue;
+        state.entries.set(item.id, {
+          drawable,
+          kind: resolved.kind,
+          signature: resolved.signature,
+          item
+        });
+        state.group.add(drawable);
+        changed = true;
+      } else if (previous.signature !== resolved.signature) {
+        updateDrawable(
+          drawable,
+          item,
+          resolved.bounds,
+          resolved.source,
+          resolved.kind,
+          resolved.color
+        );
+        previous.signature = resolved.signature;
+        previous.item = item;
+        changed = true;
+      }
+    }
+    if (changed) {
+      state.lastSyncKey = '';
+      state.leafer.requestRender(true);
+    }
+    return changed;
+  }
+
+  function removeItems(ids) {
+    if (!state.group) return false;
+    let changed = false;
+    for (const id of ids || []) {
+      const entry = state.entries.get(id);
+      if (!entry) continue;
+      state.group.remove(entry.drawable, true);
+      state.entries.delete(id);
+      changed = true;
+    }
+    if (changed) {
+      state.orderSignature = '';
+      state.lastSyncKey = '';
+      state.leafer.requestRender(true);
+    }
+    return changed;
+  }
+
+  function renderDoodle(strokes = []) {
+    if (!state.leafer || !state.doodleGroup) return false;
+    const api = classes();
+    if (!api || typeof api.Path !== 'function') return false;
+    const next = (Array.isArray(strokes) ? strokes : [])
+      .map((stroke, index) => createPath(
+        api,
+        `messs-active-doodle-${index}`,
+        stroke && (stroke.outline || stroke.points),
+        stroke && stroke.color,
+        stroke && stroke.tool
+      ))
+      .filter(Boolean);
+    const previous = state.doodleGroup._messsParts || [];
+    if (previous.length) state.doodleGroup.removeAll(true);
+    if (next.length) state.doodleGroup.add(next);
+    state.doodleGroup._messsParts = next;
+    state.leafer.requestRender(true);
+    return true;
+  }
+
+  function clearDoodle() {
+    if (!state.doodleGroup) return false;
+    state.doodleGroup.removeAll(true);
+    state.doodleGroup._messsParts = [];
+    if (state.leafer) state.leafer.requestRender(true);
+    return true;
+  }
+
   function setVisible(value) {
     state.visible = Boolean(value);
     if (state.canvas) state.canvas.hidden = !state.visible;
@@ -369,10 +713,12 @@
 
   function clear() {
     if (state.group) state.group.removeAll(true);
+    clearDoodle();
     state.entries.clear();
     state.orderSignature = '';
     state.lastSyncKey = '';
     state.lastTransform = null;
+    state.options = null;
     setVisible(false);
     if (state.leafer) state.leafer.requestRender(true);
     return true;
@@ -381,31 +727,25 @@
   function toDataURL(options = {}) {
     if (!state.leafer || !state.canvas) return '';
     const requestedRatio = clamp(finite(options.pixelRatio, state.pixelRatio), 1, MAX_EXPORT_PIXEL_RATIO);
-    const fallback = () => {
-      const width = Math.max(1, state.width || state.canvas.clientWidth || state.canvas.width || 1);
-      const height = Math.max(1, state.height || state.canvas.clientHeight || state.canvas.height || 1);
-      if (requestedRatio === state.pixelRatio) return state.canvas.toDataURL('image/png');
-      const document = root && root.document;
-      if (!document || typeof document.createElement !== 'function') {
-        return state.canvas.toDataURL('image/png');
-      }
-      const exportCanvas = document.createElement('canvas');
-      exportCanvas.width = Math.max(1, Math.round(width * requestedRatio));
-      exportCanvas.height = Math.max(1, Math.round(height * requestedRatio));
-      const context = exportCanvas.getContext('2d');
-      if (!context) return state.canvas.toDataURL('image/png');
-      context.imageSmoothingEnabled = options.smooth !== false;
-      context.drawImage(state.canvas, 0, 0, exportCanvas.width, exportCanvas.height);
-      return exportCanvas.toDataURL('image/png');
-    };
+    const fallback = () => state.canvas.toDataURL('image/png');
     const normalizeResult = (result) => {
       if (typeof result === 'string') return result;
+      if (result && result.error) state.lastError = result.error;
+      if (result && typeof result.data === 'string') return result.data;
       if (result && result.data && typeof result.data.toDataURL === 'function') {
         return result.data.toDataURL('image/png');
       }
       return fallback();
     };
     try {
+      if (typeof state.leafer.syncExport === 'function') {
+        return normalizeResult(state.leafer.syncExport('png', {
+          pixelRatio: requestedRatio,
+          smooth: options.smooth !== false,
+          fill: options.fill,
+          clip: options.clip
+        }));
+      }
       if (typeof state.leafer.export === 'function') {
         const result = state.leafer.export('png', {
           pixelRatio: requestedRatio,
@@ -436,6 +776,7 @@
     state.canvas = null;
     state.leafer = null;
     state.group = null;
+    state.doodleGroup = null;
     state.entries.clear();
     state.orderSignature = '';
     state.visible = false;
@@ -454,6 +795,11 @@
     resize,
     setTransform,
     sync,
+    updateItem,
+    updateItems,
+    removeItems,
+    renderDoodle,
+    clearDoodle,
     setVisible,
     clear,
     destroy,
@@ -465,6 +811,7 @@
     get syncCalls() { return state.syncCalls; },
     get visible() { return state.visible; },
     get itemCount() { return state.entries.size; },
+    get doodleCount() { return state.doodleGroup ? (state.doodleGroup._messsParts || []).length : 0; },
     get lastError() { return state.lastError; }
   };
 });

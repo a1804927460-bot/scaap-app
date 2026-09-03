@@ -339,11 +339,24 @@
                 <span>New chat</span>
               </button>
               <div class="ai-chat-history-heading">History</div>
-              <div class="ai-chat-history-filters">
-                <button id="ai-chat-history-favorites" type="button" aria-pressed="false">Pinned</button>
+              <div class="ai-chat-history-sections">
+                <section id="ai-chat-history-favorites" class="ai-chat-history-section ai-chat-history-pinned-section" data-history-section="pinned" aria-labelledby="ai-chat-history-pinned-label">
+                  <div class="ai-chat-history-section-heading">
+                    <span id="ai-chat-history-pinned-label">Pinned</span>
+                    <span class="ai-chat-history-section-count" data-history-count="pinned">0</span>
+                  </div>
+                  <div id="ai-chat-history-pinned-list" class="ai-chat-history-list ai-chat-history-pinned-list"></div>
+                  <div id="ai-chat-history-pinned-empty" class="ai-chat-history-empty">No pinned conversations</div>
+                </section>
+                <section class="ai-chat-history-section ai-chat-history-recent-section" data-history-section="recent" aria-labelledby="ai-chat-history-recent-label">
+                  <div class="ai-chat-history-section-heading">
+                    <span id="ai-chat-history-recent-label">Recent</span>
+                    <span class="ai-chat-history-section-count" data-history-count="recent">0</span>
+                  </div>
+                  <div id="ai-chat-history-list" class="ai-chat-history-list ai-chat-history-recent-list"></div>
+                  <div id="ai-chat-history-empty" class="ai-chat-history-empty">No conversations yet</div>
+                </section>
               </div>
-              <div id="ai-chat-history-list" class="ai-chat-history-list"></div>
-              <div id="ai-chat-history-empty" class="ai-chat-history-empty">No conversations yet</div>
             </aside>
             <div class="ai-assistant-main">
           <div id="ai-assistant-home" class="ai-assistant-home">
@@ -524,8 +537,9 @@
         </section>
         <div id="board-workspace-body" class="board-workspace-body" hidden>
           <div id="board-viewport" class="board-viewport" tabindex="0">
+            <canvas id="board-leafer-canvas" class="board-leafer-canvas" aria-hidden="true"></canvas>
             <div id="board-canvas" class="board-canvas"></div>
-            <canvas id="board-doodle-canvas" class="board-doodle-canvas" hidden></canvas>
+            <div id="board-doodle-canvas" class="board-doodle-canvas" hidden></div>
             <div id="board-empty" class="board-empty">Drag files here to compare, arrange, and generate freely.</div>
             <div id="board-file-drop-indicator" class="board-file-drop-indicator" hidden><span>Drop to place on canvas</span></div>
           </div>
@@ -1473,9 +1487,11 @@
   <script src="js/detail-panel.js"></script>
   <script src="js/board-engine.js"></script>
   <script src="js/board-media-meta.js"></script>
+  <script src="js/ai-provider-options.js"></script>
   <script src="js/canvas-workspace.js"></script>
   <script src="js/vendor/perfect-freehand.js"></script>
   <script src="vendor/leafer-ui.web.min.js"></script>
+  <script src="vendor/leafer-export.min.js"></script>
   <script src="js/board-leafer-layer.js"></script>
   <script src="../node_modules/quill/dist/quill.js"></script>
   <script src="js/moodboard.js"></script>

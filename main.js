@@ -4842,6 +4842,22 @@ async function requireGatewayProvider(kind, providerId) {
   return assertGatewayProvider(catalog, kind, providerId);
 }
 
+async function requireGatewayChatProvider(providerId, model) {
+  const catalog = await getVerifiedGatewayCatalog();
+  const requestedModel = String(model || '').trim().toLowerCase();
+  const providers = Array.isArray(catalog && catalog.providers)
+    ? catalog.providers.filter((entry) => entry && entry.kind === 'chat')
+    : [];
+  const exact = providers.find((entry) => entry.id === String(providerId || '').trim());
+  const matching = requestedModel
+    ? providers.find((entry) => Array.isArray(entry.models)
+      && entry.models.some((candidate) => String(candidate).trim().toLowerCase() === requestedModel))
+    : null;
+  const exactMatchesModel = exact && (!requestedModel || (Array.isArray(exact.models)
+    && exact.models.some((candidate) => String(candidate).trim().toLowerCase() === requestedModel)));
+  return assertGatewayProvider(catalog, 'chat', exactMatchesModel ? exact.id : matching && matching.id);
+}
+
 function assertAiTransportReady() {
   if (runtimeConfig && runtimeConfig.gatewayConfigured) return 'gateway';
   if (runtimeConfig && runtimeConfig.allowDirectAi) return 'direct';
@@ -5059,17 +5075,23 @@ async function generateAiChatReply(prompt, messages, providerId, model) {
   const timeout = setTimeout(() => controller.abort(), 10 * 60 * 1000);
   try {
     if (assertAiTransportReady() === 'gateway') {
-      await requireGatewayProvider('chat', providerId);
+      const provider = await requireGatewayChatProvider(providerId, model);
+      const resolvedModel = String(model || '').trim() || (provider.models && provider.models[0]);
       return await aiGateway.chat({
         prompt,
         messages,
-        providerId,
-        model
+        providerId: provider.id,
+        model: resolvedModel
       }, controller.signal);
     }
     const config = getAiMediaConfig();
+    const requestedModel = String(model || '').trim().toLowerCase();
     const selected = config.chatProviders.find((provider) =>
       provider.id === providerId && provider.name && provider.endpoint
+      && (!requestedModel || provider.models.some((entry) => String(entry).toLowerCase() === requestedModel))
+    ) || config.chatProviders.find((provider) =>
+      provider.name && provider.endpoint
+      && requestedModel && provider.models.some((entry) => String(entry).toLowerCase() === requestedModel)
     ) || config.chatProviders.find((provider) =>
       provider.id === config.activeChatProviderId && provider.name && provider.endpoint
     );

@@ -11,6 +11,7 @@ async function run() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'messs-board-leafer-'));
   const fixturePath = path.join(tempDir, 'fixture.html');
   const leaferUrl = pathToFileURL(path.join(root, 'src', 'vendor', 'leafer-ui.web.min.js')).href;
+  const exportUrl = pathToFileURL(path.join(root, 'src', 'vendor', 'leafer-export.min.js')).href;
   const layerUrl = pathToFileURL(path.join(root, 'src', 'js', 'board-leafer-layer.js')).href;
   const pixel = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XvY7WQAAAABJRU5ErkJggg==';
 
@@ -20,7 +21,7 @@ async function run() {
     #board-overview{position:absolute;inset:0;pointer-events:none}
   </style></head><body>
     <div id="board-viewport"><canvas id="board-overview"></canvas></div>
-    <script src="${leaferUrl}"></script><script src="${layerUrl}"></script><script>
+    <script src="${leaferUrl}"></script><script src="${exportUrl}"></script><script src="${layerUrl}"></script><script>
       window.runLeaferFixture = async () => {
         const canvas = document.getElementById('board-overview');
         const items = [];

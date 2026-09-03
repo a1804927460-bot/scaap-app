@@ -1741,13 +1741,21 @@ function canvasAgentChatProviders() {
     'gpt-5.6-sol': 'GPT-5.6 Sol',
     'kimi-k3': 'Kimi K3'
   };
-  return (Array.isArray(config.chatProviders) ? config.chatProviders : []).flatMap((provider) => {
+  const providers = (Array.isArray(config.chatProviders) ? config.chatProviders : []).flatMap((provider) => {
     if (!provider || provider.available === false || !provider.endpoint) return [];
     return (Array.isArray(provider.models) ? provider.models : [])
       .map((model) => String(model || '').trim())
       .filter((model) => allowedModels.has(model))
       .map((model) => ({ providerId: provider.id, model, name: names[model] || model }));
   });
+  if (typeof MesssAiProviderOptions !== 'undefined' && MesssAiProviderOptions.chatOptions) {
+    return MesssAiProviderOptions.chatOptions(config.chatProviders, {
+      allowedModels,
+      activeProviderId: config.activeChatProviderId,
+      names
+    });
+  }
+  return providers;
 }
 
 function canvasAgentMediaProviders(kind = CanvasWorkspace.agentGenerationKind) {
@@ -1801,14 +1809,11 @@ function renderCanvasAgentModels() {
     button.className = `board-agent-model-option${CanvasWorkspace.agentMode === 'generate' && provider.id === CanvasWorkspace.agentProviderId ? ' is-active' : ''}`;
     button.dataset.providerId = provider.id;
     button.setAttribute('role', 'option');
-    const icon = document.createElement('span');
-    const badgeKind = typeof aiModelBadgeKind === 'function' ? aiModelBadgeKind(provider) : null;
-    if (badgeKind && typeof createAiModelBadge === 'function') icon.appendChild(createAiModelBadge(badgeKind));
     const label = document.createElement('span');
     label.textContent = typeof publicModelLabel === 'function' ? publicModelLabel(provider.name) : provider.name;
     const check = document.createElement('i');
     check.textContent = '✓';
-    button.append(icon, label, check);
+    button.append(label, check);
     list.appendChild(button);
   });
   const selected = providers.find((provider) => provider.id === CanvasWorkspace.agentProviderId);

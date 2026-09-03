@@ -27,6 +27,13 @@ const AI_ASSISTANT_CHAT_MODELS = new Set([
   'gpt-5.6-sol',
   'kimi-k3'
 ]);
+const AI_ASSISTANT_CHAT_MODEL_NAMES = {
+  'gemini-3.7-flash': 'Gemini 3.7 Flash',
+  'gpt-5.6-luna': 'GPT-5.6 Luna',
+  'gemini-3.1-pro': 'Gemini 3.1 Pro',
+  'gpt-5.6-sol': 'GPT-5.6 Sol',
+  'kimi-k3': 'Kimi K3'
+};
 
 function aiChatHistoryDate(value) {
   const date = new Date(value || 0);
@@ -182,17 +189,29 @@ function aiChatSessionMatchesFilter(session) {
 }
 
 function renderAiChatHistory() {
-  const list = document.getElementById('ai-chat-history-list');
-  const empty = document.getElementById('ai-chat-history-empty');
-  if (!list || !empty) return;
-  list.replaceChildren();
+  const recentList = document.getElementById('ai-chat-history-list');
+  const pinnedList = document.getElementById('ai-chat-history-pinned-list');
+  const recentEmpty = document.getElementById('ai-chat-history-empty');
+  const pinnedEmpty = document.getElementById('ai-chat-history-pinned-empty');
+  if (!recentList || !pinnedList || !recentEmpty || !pinnedEmpty) return;
+  recentList.replaceChildren();
+  pinnedList.replaceChildren();
   const sessions = AiAssistant.sessions
     .slice()
     .sort((a, b) => Number(b.favorite) - Number(a.favorite) || new Date(b.updatedAt) - new Date(a.updatedAt))
     .filter(aiChatSessionMatchesFilter);
-  empty.hidden = sessions.length > 0;
-  empty.textContent = t('No conversations found', '\u6ca1\u6709\u627e\u5230\u5bf9\u8bdd');
-  sessions.forEach((session) => {
+  const pinnedSessions = sessions.filter((session) => session.favorite === true);
+  const recentSessions = sessions.filter((session) => session.favorite !== true);
+  recentEmpty.hidden = recentSessions.length > 0;
+  recentEmpty.textContent = sessions.length ? t('No recent conversations', '\u6682\u65e0\u6700\u8fd1\u5bf9\u8bdd') : t('No conversations yet', '\u6682\u65e0\u5bf9\u8bdd');
+  pinnedEmpty.hidden = pinnedSessions.length > 0;
+  pinnedEmpty.textContent = t('No pinned conversations', '\u6682\u65e0\u7f6e\u9876\u5bf9\u8bdd');
+  document.querySelectorAll('[data-history-count]').forEach((count) => {
+    const section = count.dataset.historyCount === 'pinned' ? pinnedSessions : recentSessions;
+    count.textContent = String(section.length);
+  });
+
+  const renderEntry = (session, list) => {
     const entry = document.createElement('div');
     entry.className = 'ai-chat-history-entry';
     entry.dataset.sessionId = session.id;
@@ -204,7 +223,11 @@ function renderAiChatHistory() {
     button.innerHTML = `<span class="ai-chat-history-star" aria-hidden="true">${session.favorite ? '\u2605' : '\u2606'}</span><span class="ai-chat-history-copy"><b></b><small></small></span><span class="ai-chat-history-unread" aria-hidden="true"></span>`;
     button.classList.toggle('is-unread', session.unread === true);
     button.querySelector('b').textContent = session.title || t('New conversation', '\u65b0\u5bf9\u8bdd');
-    button.querySelector('small').textContent = session.unread ? t('Unread', '未读') : t('Recent', '最近');
+    button.querySelector('small').textContent = session.unread
+      ? t('Unread', '未读')
+      : session.favorite
+        ? t('Pinned', '置顶')
+        : t('Recent', '最近');
     button.addEventListener('click', () => loadAiChatSession(session.id));
     const more = document.createElement('button');
     more.type = 'button';
@@ -229,12 +252,9 @@ function renderAiChatHistory() {
     entry.addEventListener('dragend', () => entry.classList.remove('is-dragging'));
     entry.append(button, more);
     list.appendChild(entry);
-  });
-  const favorites = document.getElementById('ai-chat-history-favorites');
-  if (favorites) {
-    favorites.classList.toggle('is-active', AiAssistant.historyFavoritesOnly);
-    favorites.setAttribute('aria-pressed', String(AiAssistant.historyFavoritesOnly));
-  }
+  };
+  pinnedSessions.forEach((session) => renderEntry(session, pinnedList));
+  recentSessions.forEach((session) => renderEntry(session, recentList));
 }
 
 function renameAiChatSession(sessionId) {
@@ -297,7 +317,7 @@ function showAiChatSessionMenu(sessionId, x, y) {
   if (!session || typeof buildAndShowSimpleMenu !== 'function') return;
   buildAndShowSimpleMenu([
     {
-      label: session.favorite ? t('Remove from Favorites', '取消收藏') : t('Add to Favorites', '加入收藏夹'),
+      label: session.favorite ? t('Unpin conversation', '取消置顶') : t('Pin conversation', '置顶'),
       icon: 'M12 3l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3z',
       action: () => {
         session.favorite = !session.favorite;
@@ -333,13 +353,13 @@ function showAiChatSessionMenu(sessionId, x, y) {
   ], x, y, 'ai-chat-session-menu');
 }
 
-function handleAiChatHistoryDrop(event) {
+function handleAiChatHistoryDrop(event, targetSection) {
   const draggedId = event.dataTransfer && event.dataTransfer.getData('text/messs-ai-session');
   const dragged = AiAssistant.sessions.find((entry) => entry.id === draggedId);
   if (!dragged) return;
   event.preventDefault();
-  dragged.favorite = true;
-  dragged.unread = false;
+  const destination = targetSection || event.currentTarget?.dataset.historySection || 'pinned';
+  dragged.favorite = destination === 'pinned';
   persistAiChatHistory();
   renderAiChatHistory();
 }
@@ -540,31 +560,13 @@ function configuredAssistantProviders(kind) {
           endpoint: config.chatEndpoint || '',
           models: [config.chatModel || 'gemini-3.7-flash']
         }];
-    const options = [];
-    const displayNames = {
-      'gemini-3.7-flash': 'Gemini 3.7 Flash',
-      'gpt-5.6-luna': 'GPT-5.6 Luna',
-      'gemini-3.1-pro': 'Gemini 3.1 Pro',
-      'gpt-5.6-sol': 'GPT-5.6 Sol',
-      'kimi-k3': 'Kimi K3'
-    };
-    chatProviders.forEach((provider) => {
-      if (!provider || provider.available === false || !provider.name || !provider.endpoint) return;
-      const models = Array.isArray(provider.models) && provider.models.length
-        ? provider.models
-        : [provider.model || 'gemini-3.7-flash'];
-      models.forEach((model) => {
-        const modelId = String(model || '').trim();
-        if (!AI_ASSISTANT_CHAT_MODELS.has(modelId)) return;
-        options.push({
-          id: `${provider.id}::${modelId}`,
-          providerId: provider.id,
-          model: modelId,
-          name: displayNames[modelId] || modelId,
-          endpoint: provider.endpoint
-        });
-      });
-    });
+    const options = typeof MesssAiProviderOptions !== 'undefined'
+      ? MesssAiProviderOptions.chatOptions(chatProviders, {
+        allowedModels: AI_ASSISTANT_CHAT_MODELS,
+        activeProviderId: config.activeChatProviderId,
+        names: AI_ASSISTANT_CHAT_MODEL_NAMES
+      })
+      : [];
     if (options.length) return options;
     if (config.providerVisibilityEnforced) return [];
   }
@@ -620,7 +622,8 @@ function renderAssistantModels() {
     : AiAssistant.kind === 'video'
       ? config.activeVideoProviderId
       : `${config.activeChatProviderId || 'chat-1'}::${config.chatModel || ''}`;
-  if (providers.some((provider) => provider.id === activeId)) select.value = activeId;
+  const active = providers.find((provider) => provider.id === activeId) || providers[0];
+  select.value = active ? active.id : '';
   // A single configured provider is still a valid selection. Disabling the
   // trigger in that case makes the current model appear broken in the UI.
   select.disabled = providers.length === 0;
@@ -1774,8 +1777,10 @@ function refreshAssistantLanguage() {
   }
   const historyHeading = document.querySelector('.ai-chat-history-heading');
   if (historyHeading) historyHeading.textContent = t('History', '\u5386\u53f2\u8bb0\u5f55');
-  const favorites = document.getElementById('ai-chat-history-favorites');
-  if (favorites) favorites.textContent = t('Favorites', '\u6536\u85cf\u5939');
+  const pinnedLabel = document.getElementById('ai-chat-history-pinned-label');
+  if (pinnedLabel) pinnedLabel.textContent = t('Pinned', '\u7f6e\u9876');
+  const recentLabel = document.getElementById('ai-chat-history-recent-label');
+  if (recentLabel) recentLabel.textContent = t('Recent', '\u6700\u8fd1');
   const historyDate = document.getElementById('ai-chat-history-date');
   if (historyDate) historyDate.setAttribute('aria-label', t('Filter history by date', '\u6309\u65e5\u671f\u7b5b\u9009\u5386\u53f2\u8bb0\u5f55'));
   const chatButton = document.querySelector('[data-assistant-kind="chat"]');
@@ -1915,21 +1920,20 @@ function initAiAssistant() {
     input.focus();
   });
   document.getElementById('ai-chat-new').addEventListener('click', startNewAiChat);
-  document.getElementById('ai-chat-history-favorites').addEventListener('click', () => {
-    AiAssistant.historyFavoritesOnly = !AiAssistant.historyFavoritesOnly;
-    renderAiChatHistory();
-  });
-  const assistantHistoryPinned = document.getElementById('ai-chat-history-favorites');
-  assistantHistoryPinned.addEventListener('dragover', (event) => {
-    if (!event.dataTransfer || !event.dataTransfer.types.includes('text/messs-ai-session')) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-    event.currentTarget.classList.add('is-drop-target');
-  });
-  assistantHistoryPinned.addEventListener('dragleave', (event) => event.currentTarget.classList.remove('is-drop-target'));
-  assistantHistoryPinned.addEventListener('drop', (event) => {
-    event.currentTarget.classList.remove('is-drop-target');
-    handleAiChatHistoryDrop(event);
+  document.querySelectorAll('[data-history-section]').forEach((section) => {
+    section.addEventListener('dragover', (event) => {
+      if (!event.dataTransfer || !event.dataTransfer.types.includes('text/messs-ai-session')) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      event.currentTarget.classList.add('is-drop-target');
+    });
+    section.addEventListener('dragleave', (event) => {
+      if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.classList.remove('is-drop-target');
+    });
+    section.addEventListener('drop', (event) => {
+      event.currentTarget.classList.remove('is-drop-target');
+      handleAiChatHistoryDrop(event, event.currentTarget.dataset.historySection);
+    });
   });
   document.getElementById('ai-assistant-quality-buttons').addEventListener('click', (event) => {
     const button = event.target.closest('[data-quality]');

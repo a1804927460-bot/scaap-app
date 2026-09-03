@@ -65,8 +65,8 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /const BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET = 12_000_000;[\s\S]*?const BOARD_OVERVIEW_IMAGE_CONCURRENCY = 4;/,
-  'Overview thumbnail decoding must stay bounded to protect the renderer and GPU.'
+  /const BOARD_LEAFER_MIN_DPR = 1;[\s\S]*?const BOARD_LEAFER_MAX_DPR = 2;/,
+  'The Leafer renderer must use a bounded device-pixel ratio.'
 );
 const lightweightEffectsSource = boardSource.slice(
   boardSource.indexOf('function syncBoardLightweightEffects()'),
@@ -218,8 +218,8 @@ assert.doesNotMatch(
 );
 assert.match(
   boardSource,
-  /function scheduleBoardInteractionPrefetch\(view\)[\s\S]*?viewportRects\([\s\S]*?const targetIds = Board\.spatialIndex\.query\(regions\.visible\)[\s\S]*?Board\.interactionVisibleIds = targetIds[\s\S]*?drawBoardOverview\(targetIds/,
-  'Zoom and pan must paint the target viewport through the lightweight overview renderer.'
+  /function scheduleBoardInteractionPrefetch\(view\)[\s\S]*?compatibility hook inert[\s\S]*?interactionPrefetchView/,
+  'Zoom and pan must leave scene rendering to Leafer and only retain the latest camera target.'
 );
 assert.doesNotMatch(
   boardSource.slice(
@@ -645,19 +645,10 @@ assert.match(
   /function stepBoardZoom[\s\S]*?Object\.assign\(Board, target\)[\s\S]*?Board\.zoomTarget = null/,
   'Wheel motion must follow each animation frame at a linear rate without an inertial tail.'
 );
-const overviewFallbackSource = boardSource.slice(
-  boardSource.indexOf('function syncBoardOverviewFallback'),
-  boardSource.indexOf('function observeBoardElementPaintReady')
-);
-assert.match(
-  overviewFallbackSource,
-  /Board\.lastZoomBucket !== 'overview'[\s\S]*?visibleBoardDomReady\(\)[\s\S]*?Board\.overviewCanvas\.hidden = true/,
-  'The overview fallback must hide after the mounted canvas is paint-ready.'
-);
 assert.doesNotMatch(
-  overviewFallbackSource,
-  /Board\.zoomFrame|is-transforming/,
-  'An active or recently settled zoom must not leave a stale overview fallback over mounted items.'
+  boardSource,
+  /BOARD_OVERVIEW|board-overview-canvas|drawBoardOverview|syncBoardOverviewFallback/,
+  'The board source must not retain the removed 2D overview renderer.'
 );
 assert.match(boardSource, /function setBoardPanTarget[\s\S]*?requestAnimationFrame\(stepBoardZoom\)/);
 assert.match(
@@ -988,10 +979,8 @@ assert.match(boardSource, /const inkLeft = overlayRect\.left \+ bounds\.x \/ doo
   'Committed doodles must convert the screen-space ink origin exactly once.');
 assert.match(boardStyles, /\.board-doodle-canvas\.is-screen-space\s*\{[\s\S]*?transform:\s*none\s*!important[\s\S]*?scale:\s*none\s*!important/,
   'The active doodle surface must not inherit board camera scaling.');
-assert.match(boardSource, /window\.devicePixelRatio[\s\S]*?canvas\.width[\s\S]*?doodlePixelRatio/,
-  'The doodle surface must render at device pixel ratio.');
-assert.match(boardSource, /16_000_000[\s\S]*?maximumPixelRatio[\s\S]*?doodlePixelRatio/,
-  'High-DPI doodles must retain a bounded backing-store pixel count on large displays.');
+assert.match(boardSource, /doodlePixelRatio = 1[\s\S]*?Board\.leaferLayer\.renderDoodle/,
+  'Active doodles must use Leafer paths instead of allocating a second high-DPI bitmap.');
 assert.match(boardSource, /e\.key === 'Enter'[\s\S]*?commitActiveTextNote\(\)[\s\S]*?document\.addEventListener\('pointerdown'[\s\S]*?commitActiveTextNote\(\)/,
   'Enter and outside pointer clicks must commit text editing.');
 assert.match(boardSource, /content\.contentEditable = 'false'[\s\S]*?beginTextNoteEditing[\s\S]*?contentEl\.contentEditable = 'true'/,
@@ -1066,58 +1055,17 @@ assert.doesNotMatch(
 );
 assert.match(
   boardSource,
-  /const BOARD_DOM_ITEM_LIMIT = 96;[\s\S]*?BoardEngine\.resolveZoomLod[\s\S]*?BoardEngine\.isOverDomBudget[\s\S]*?queryLimited\(regions\.mount, BOARD_DOM_ITEM_LIMIT\)/,
-  'The board must combine a hard DOM budget with zoom and density hysteresis.'
+  /const BOARD_DOM_ITEM_LIMIT = 96;[\s\S]*?syncBoardLeaferScene\(force\)[\s\S]*?queryLimited\(regions\.mount, BOARD_DOM_ITEM_LIMIT\)/,
+  'The board must keep a bounded DOM interaction layer while Leafer renders the complete scene.'
 );
-assert.match(
-  boardSource,
-  /if \(useOverview\) \{[\s\S]*?drawBoardOverview\(visibleIds, rect\);[\s\S]*?clearMountedBoardItems\(\);/,
-  'The overview fallback must paint before dense DOM content is removed.'
-);
-assert.match(
-  boardSource,
-  /const BOARD_OVERVIEW_IMAGE_LIMIT = 640;[\s\S]*?const BOARD_OVERVIEW_IMAGE_CONCURRENCY = 4;/,
-  'Dense boards must retain useful overview thumbnails without starting too many decoders at once.'
-);
-assert.match(
-  boardSource,
-  /function boardOverviewThumbnailSource\(file\)[\s\S]*?isModelFile\(file\)[\s\S]*?file\.modelPreviewUrl[\s\S]*?file\.thumbUrl[\s\S]*?function processBoardOverviewImageQueue/,
-  'Overview rendering must include video posters and model previews in addition to images.'
-);
-assert.match(
-  boardSource,
-  /BOARD_OVERVIEW_IMAGE_MAX_EDGE[\s\S]*?createImageBitmap\(image[\s\S]*?cacheBoardOverviewImage/,
-  'Dense-board thumbnails must be downsampled before entering the long-lived overview cache.'
-);
-assert.match(
-  boardSource,
-  /overviewImageFailed: new Set\(\)[\s\S]*?image\.onerror = \(\) => \{[\s\S]*?overviewImageFailed\.add[\s\S]*?function requestBoardOverviewImage\(file, deferStart = false\)[\s\S]*?overviewImageFailed\.has/,
-  'Broken overview thumbnails must not enter an unbounded retry loop.'
-);
+assert.match(boardSource, /function syncBoardLeaferScene\(force = false\)[\s\S]*?layer\.sync\([\s\S]*?layer\.setTransform/,
+  'Leafer must synchronize the complete board scene before applying its world transform.');
+assert.match(boardSource, /function ensureBoardLeaferCanvas\(\)[\s\S]*?MesssBoardLeaferLayer[\s\S]*?layer\.init/,
+  'The board must initialize one Leafer layer as its renderer.');
 assert.match(
   boardSource,
   /function renderBoard\(\)[\s\S]*?rebuildBoardSpatialIndex\(\);[\s\S]*?reconcileMountedBoardItemsAfterDataChange\(\);[\s\S]*?reconcileBoardViewport\(true\);/,
   'Board data refreshes must preserve unchanged mounted media instead of flashing through a full remount.'
-);
-assert.match(
-  boardSource,
-  /function isBoardElementPaintReady[\s\S]*?image\.naturalWidth > 0[\s\S]*?function syncBoardOverviewFallback[\s\S]*?overviewHideFrame = requestAnimationFrame[\s\S]*?overviewHideFrame = requestAnimationFrame[\s\S]*?visibleBoardDomReady\(\)/,
-  'The painted overview must remain through two stable frames and only yield to successfully decoded DOM media.'
-);
-assert.match(
-  boardSource,
-  /function unpaintedVisibleBoardIds\(\)[\s\S]*?pending\.add\(id\)[\s\S]*?function syncBoardOverviewFallback[\s\S]*?drawBoardOverview\(unpaintedIds, rect\)/,
-  'The fallback must fill only actual holes and never sit below already sharp or transparent media.'
-);
-assert.match(
-  boardSource,
-  /const visibleCandidateCount = Board\.spatialIndex\.count\(regions\.visible, densityProbeLimit\)/,
-  'Offscreen overscan must not force a manageable visible canvas into low-resolution overview mode.'
-);
-assert.match(
-  boardSource,
-  /if \(!force && mountHash === Board\.lastMountHash[\s\S]*?queueBoardMounts\(mountIds, regions\.visible\)[\s\S]*?syncBoardOverviewFallback/,
-  'An interrupted or failed mount burst must retry even when the viewport hash is unchanged.'
 );
 const renderBoardSource = boardSource.slice(
   boardSource.indexOf('function renderBoard()'),
@@ -1150,28 +1098,18 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /function prioritizeBoardOverviewImageQueue\(files\)[\s\S]*?overviewImageQueue\.length = 0;[\s\S]*?requestBoardOverviewImage\(file, true\)[\s\S]*?prioritizeBoardOverviewImageQueue\(prioritizedImages\.map/,
-  'Dense-canvas thumbnail work must be reprioritized for the current viewport.'
+  /function scheduleBoardLeaferSync\(\)[\s\S]*?syncBoardLeaferScene\(\)/,
+  'Media settling must schedule a Leafer scene refresh.'
 );
 assert.match(
   boardSource,
-  /const BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET = 12_000_000;[\s\S]*?overviewImagePixels > BOARD_OVERVIEW_IMAGE_PIXEL_BUDGET/,
-  'Overview thumbnails must respect a decoded-pixel memory budget.'
+  /function boardLeaferPixelRatio\(\)[\s\S]*?BOARD_LEAFER_MAX_DPR[\s\S]*?function ensureBoardLeaferCanvas/,
+  'Leafer rendering must use a stable bounded pixel ratio without reallocating during input.'
 );
 assert.match(
   boardSource,
-  /function boardOverviewPixelRatio\(width, height, interactive = isBoardViewportInteracting\(\)\)[\s\S]*?window\.devicePixelRatio[\s\S]*?Math\.sqrt\(pixelBudget \/ area\)[\s\S]*?Math\.floor\([\s\S]*?\* 4\) \/ 4/,
-  'Overview rendering must choose a bounded, quantized device pixel ratio from the viewport budget.'
-);
-assert.match(
-  boardSource,
-  /function drawBoardOverviewWithLeafer\(visibleIds, viewportRect, view = Board\)[\s\S]*?const pixelRatio = boardOverviewPixelRatio\([\s\S]*?layer\.resize\([\s\S]*?pixelRatio/,
-  'Leafer overview rendering must apply the adaptive pixel ratio without rebuilding the layer every frame.'
-);
-assert.match(
-  boardSource,
-  /cacheKey: `\$\{activeCanvasId\(\)\}:\$\{Board\.overviewContentRevision\}:\$\{BoardEngine\.hashSet\(visibleIds\)\}`/,
-  'Leafer node synchronization must be cached by canvas, data revision, and visible item set.'
+  /const revision = Number\(Board\.leaferContentRevision\)[\s\S]*?const cacheKey = \[[\s\S]*?activeCanvasId\(\)[\s\S]*?BoardEngine\.hashSet\(ids\)/,
+  'Leafer node synchronization must be cached by canvas and data revision.'
 );
 assert.doesNotMatch(
   boardStyles,

@@ -802,17 +802,50 @@ function aireiterPayloadCode(payload) {
 }
 
 function aireiterOutputUrl(payload) {
-  const output = payload && payload.data && payload.data.output;
-  const entries = Array.isArray(output) ? output : output ? [output] : [];
-  for (const entry of entries) {
-    const url = String(entry && (entry.url || entry.output_url || entry.download_url) || entry || '').trim();
-    if (/^https:\/\/\S+$/i.test(url) || /^data:image\//i.test(url)) return url;
-  }
-  return '';
+  const visit = (value, seen = new Set(), depth = 0) => {
+    if (value === null || value === undefined || depth > 8) return '';
+    if (typeof value === 'string') {
+      const source = value.trim();
+      if (/^data:(?:image|video)\//i.test(source) || /^https:\/\/\S+$/i.test(source)) return source;
+      if (/^[\[{]/.test(source)) {
+        try { return visit(JSON.parse(source), seen, depth + 1); } catch (error) { return ''; }
+      }
+      return '';
+    }
+    if (typeof value !== 'object' || seen.has(value)) return '';
+    seen.add(value);
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        const found = visit(entry, seen, depth + 1);
+        if (found) return found;
+      }
+      return '';
+    }
+    for (const key of ['url', 'output_url', 'download_url', 'result_url', 'file_url', 'video_url', 'image_url', 'uri']) {
+      const found = visit(value[key], seen, depth + 1);
+      if (found) return found;
+    }
+    for (const key of ['data', 'result', 'response', 'output', 'outputs', 'task', 'content']) {
+      const found = visit(value[key], seen, depth + 1);
+      if (found) return found;
+    }
+    return '';
+  };
+  return visit(payload);
 }
 
 function aireiterTaskStatus(payload) {
-  return normalizeVideoTaskStatus(payload && payload.data && payload.data.status);
+  const raw = nestedVideoTaskValue(payload, [
+    'task_status', 'taskStatus', 'task_state', 'taskState', 'status', 'state'
+  ]);
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric)) {
+    if (numeric === 2) return 'succeeded';
+    if (numeric === 3 || numeric === 4) return 'failed';
+    if (numeric === 1) return 'running';
+    return 'queued';
+  }
+  return normalizeVideoTaskStatus(raw);
 }
 
 function markAireiterSubmitError(error) {

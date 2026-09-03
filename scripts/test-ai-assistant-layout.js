@@ -122,11 +122,28 @@ assert.match(
 assert.match(assistantSource, /saveAiAssistantHistory/);
 assert.match(
   assistantSource,
-  /historyFavoritesOnly[\s\S]*?historyDate[\s\S]*?Add to Favorites[\s\S]*?session\.favorite = !session\.favorite/,
-  'Agent history must support favorite and date filtering with a right-click favorite action.'
+  /historyFavoritesOnly[\s\S]*?historyDate[\s\S]*?Pin conversation[\s\S]*?session\.favorite = !session\.favorite/,
+  'Agent history must retain compatibility state and provide a right-click pin action.'
 );
 assert.match(html, /id="ai-chat-history-favorites"[\s\S]*?id="ai-chat-history-list"/,
   'The Agent history sidebar must expose pin filtering and the conversation list.');
+assert.match(
+  html,
+  /class="ai-chat-history-sections"[\s\S]*?data-history-section="pinned"[\s\S]*?id="ai-chat-history-pinned-list"[\s\S]*?data-history-section="recent"[\s\S]*?id="ai-chat-history-list"/,
+  'The Agent history sidebar must expose separate text-labeled pinned and recent sections.'
+);
+assert.doesNotMatch(html, /<button id="ai-chat-history-favorites"/,
+  'Pinned must be a history section, not a legacy filter button.');
+assert.match(
+  assistantSource,
+  /const pinnedSessions = sessions\.filter\(\(session\) => session\.favorite === true\)[\s\S]*?const recentSessions = sessions\.filter\(\(session\) => session\.favorite !== true\)[\s\S]*?pinnedSessions\.forEach[\s\S]*?recentSessions\.forEach/,
+  'Agent history must place pinned conversations only in Pinned and all other conversations in Recent.'
+);
+assert.match(
+  assistantSource,
+  /function handleAiChatHistoryDrop\(event, targetSection\)[\s\S]*?dragged\.favorite = destination === 'pinned'/,
+  'Agent history drag-and-drop must explicitly move conversations between the two sections.'
+);
 assert.doesNotMatch(html, /id="ai-chat-history-date"/,
   'The Agent history sidebar must not render the removed date filter.');
 assert.match(storeSource, /canvasAgentHistory:\s*\[\][\s\S]*?aiAssistantHistory:\s*\[\]/,
