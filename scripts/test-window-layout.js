@@ -177,7 +177,7 @@ assert.match(mainCss, /\.sidebar\.is-density-compact \.account-footer-credits sm
 assert.match(mainCss, /\.sidebar\.is-density-minimal[\s\S]*?\.account-footer-copy\s*\{[\s\S]*?display:\s*block;/, 'The minimum sidebar must keep the account name visible.');
 assert.match(mainCss, /\.sidebar\.is-density-minimal[\s\S]*?\.account-footer-credits\s*\{[\s\S]*?display:\s*inline-flex;/, 'The minimum sidebar must keep available points visible.');
 const settingsPopoverIndex = indexHtml.indexOf('<div id="settings-popover"');
-const settingsPopoverEnd = indexHtml.indexOf('</div>\n      </aside>', settingsPopoverIndex);
+const settingsPopoverEnd = indexHtml.indexOf('</aside>', settingsPopoverIndex);
 const softwareUpdateIndex = indexHtml.indexOf('class="ai-provider-section software-update-section"');
 const accountActionsIndex = indexHtml.indexOf('class="ai-provider-section settings-account-actions-section"');
 assert.ok(settingsPopoverIndex >= 0 && settingsPopoverEnd > settingsPopoverIndex && softwareUpdateIndex >= 0
