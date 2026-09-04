@@ -53,11 +53,11 @@ assert.match(workflow, /latest-mac\.yml/);
 assert.match(workflow, /runs-on:\s*macos-14/);
 assert.doesNotMatch(workflow, /runs-on:\s*macos-13/);
 assert.match(workflow, /release\/\*\.dmg/);
-assert.match(workflow, /download\.documentfoundation\.org\/libreoffice\/stable[\s\S]*?Start-Process msiexec\.exe/);
-assert.doesNotMatch(workflow, /choco install libreoffice-fresh/);
+assert.match(workflow, /choco install libreoffice-fresh/);
+assert.match(workflow, /soffice\.exe/);
 assert.match(workflow, /choco install imagemagick\.app/);
 assert.match(workflow, /Copy-Item \$libreOffice build-resources\/tools\/libreoffice -Recurse/);
-assert.match(workflow, /Copy-Item \$imageMagick\.FullName build-resources\/tools\/imagemagick -Recurse/);
+assert.match(workflow, /Copy-Item \$imageMagick build-resources\/tools\/imagemagick -Recurse/);
 assert.match(builder, /extraResources:[\s\S]*?from:\s*build-resources\/tools[\s\S]*?to:\s*tools/);
 assert.match(builder, /asarUnpack:[\s\S]*?node_modules\/pdfjs-dist\/\*\*\/\*/);
 assert.ok(

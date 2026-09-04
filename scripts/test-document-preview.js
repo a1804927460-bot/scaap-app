@@ -40,7 +40,8 @@ assert.match(
   /saved\.schema === PREVIEW_CACHE_SCHEMA[\s\S]*?cached\.schema === PREVIEW_CACHE_SCHEMA/,
   'Preview caches must reject metadata from unsupported cache schemas.'
 );
-assert.match(workflow, /download\.documentfoundation\.org\/libreoffice\/stable[\s\S]*?Start-Process msiexec\.exe/);
+assert.match(workflow, /choco install libreoffice-fresh/);
+assert.match(workflow, /soffice\.exe/);
 assert.match(workflow, /choco install imagemagick\.app/);
 assert.match(workflow, /Copy-Item \$libreOffice build-resources\/tools\/libreoffice -Recurse/);
 assert.match(builder, /from:\s*build-resources\/tools[\s\S]*?to:\s*tools/);

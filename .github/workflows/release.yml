@@ -49,33 +49,32 @@ jobs:
       - name: Bundle document preview tools
         shell: pwsh
         run: |
-          $libreOffice = Join-Path $env:ProgramFiles 'LibreOffice'
-          $libreOfficeExe = Join-Path $libreOffice 'program\soffice.exe'
-          if (-not (Test-Path $libreOfficeExe)) {
-            $libreOfficeVersion = '26.8.0'
-            $libreOfficeMsi = Join-Path $env:RUNNER_TEMP "LibreOffice-$libreOfficeVersion.msi"
-            $libreOfficeUrl = "https://download.documentfoundation.org/libreoffice/stable/$libreOfficeVersion/win/x86_64/LibreOffice_${libreOfficeVersion}_Win_x86-64.msi"
-            # Bound both network and installer waits so a hosted runner cannot
-            # consume the entire workflow indefinitely when a mirror stalls.
-            Invoke-WebRequest -Uri $libreOfficeUrl -OutFile $libreOfficeMsi -UseBasicParsing -TimeoutSec 300
-            $install = Start-Process msiexec.exe -ArgumentList @('/i', $libreOfficeMsi, '/qn', '/norestart') -PassThru
-            if (-not $install.WaitForExit(300000)) {
-              Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue
-              throw 'LibreOffice MSI installation timed out after 300 seconds.'
-            }
-            if ($install.ExitCode -notin @(0, 3010)) { throw "LibreOffice MSI failed with exit code $($install.ExitCode)." }
+          $ErrorActionPreference = 'Stop'
+          $libreOfficeExe = Get-ChildItem @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ChocolateyToolsLocation) -Filter soffice.exe -Recurse -File -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $libreOfficeExe) {
+            choco install libreoffice-fresh --no-progress -y --execution-timeout=600
+            $libreOfficeExe = Get-ChildItem @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ChocolateyToolsLocation) -Filter soffice.exe -Recurse -File -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
           }
+          if (-not $libreOfficeExe) { throw 'LibreOffice soffice.exe was not found after installation.' }
+
           choco install imagemagick.app --no-progress -y --execution-timeout=600
-          $imageMagick = Get-ChildItem -Directory $env:ProgramFiles |
-            Where-Object Name -Like 'ImageMagick-*' |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-          if (-not (Test-Path $libreOfficeExe)) { throw 'LibreOffice was not installed from the official installer.' }
-          if (-not $imageMagick -or -not (Test-Path (Join-Path $imageMagick.FullName 'magick.exe'))) { throw 'ImageMagick was not installed.' }
-          Remove-Item build-resources/tools/libreoffice -Recurse -Force
-          Remove-Item build-resources/tools/imagemagick -Recurse -Force
-          Copy-Item $libreOffice build-resources/tools/libreoffice -Recurse
-          Copy-Item $imageMagick.FullName build-resources/tools/imagemagick -Recurse
+          $imageMagickExe = Get-Command magick.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+          if (-not $imageMagickExe) {
+            $imageMagickExe = Get-ChildItem @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ChocolateyToolsLocation) -Filter magick.exe -Recurse -File -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $imageMagickExe) { throw 'ImageMagick magick.exe was not found after installation.' }
+
+          $libreOffice = Split-Path (Split-Path $libreOfficeExe -Parent) -Parent
+          $imageMagick = Split-Path $imageMagickExe -Parent
+          Remove-Item build-resources/tools/libreoffice -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item build-resources/tools/imagemagick -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item build-resources/tools/libreoffice -ItemType Directory -Force | Out-Null
+          New-Item build-resources/tools/imagemagick -ItemType Directory -Force | Out-Null
+          Copy-Item $libreOffice build-resources/tools/libreoffice -Recurse -Force
+          Copy-Item $imageMagick build-resources/tools/imagemagick -Recurse -Force
 
       - name: Set release version and runtime config
         shell: pwsh
