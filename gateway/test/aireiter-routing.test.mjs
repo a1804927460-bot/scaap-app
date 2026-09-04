@@ -262,6 +262,158 @@ test('AI Reiter video tasks stay pinned to their accepted route', async () => {
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
+test('AI Reiter MiniMax H3 maps first-frame and first-last-frame requests separately', async () => {
+  const previousFetch = globalThis.fetch;
+  await withEnvironment({
+    AIREITER_API_KEY: 'aireiter-key',
+    AIREITER_TRAFFIC_PERCENT: '100'
+  }, async () => {
+    const submissions = [];
+    globalThis.fetch = async (url, options = {}) => {
+      const value = String(url);
+      if (value.endsWith('/api/openapi/submit')) {
+        submissions.push(JSON.parse(options.body));
+        return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
+      }
+      if (value.endsWith('/api/openapi/query')) {
+        return jsonResponse({ statusCode: 200, data: {
+          status: 'completed', output: [{ url: VALID_PNG_DATA_URL }]
+        } });
+      }
+      if (value === VALID_PNG_DATA_URL) {
+        return new Response(VALID_PNG, { status: 200, headers: { 'Content-Type': 'video/mp4' } });
+      }
+      throw new Error(`Unexpected route: ${value}`);
+    };
+
+    // The adapter tests task creation only; the query result is not downloaded
+    // by pollVideoTask, so the response body is intentionally not inspected.
+    await createVideoTask({
+      providerId: 'video-1',
+      operationId: '27272727-2727-4272-8272-272727272727',
+      prompt: 'first frame',
+      resolution: '2K',
+      duration: 5,
+      aspectRatio: '16:9',
+      videoMode: 'first-frame',
+      urls: ['https://assets.example.com/first.png'],
+      referenceMediaTypes: ['image']
+    });
+    await createVideoTask({
+      providerId: 'video-1',
+      operationId: '28282828-2828-4282-8282-282828282828',
+      prompt: 'first and last frame',
+      resolution: '768P',
+      duration: 6,
+      aspectRatio: '9:16',
+      videoMode: 'first-last-frame',
+      urls: ['https://assets.example.com/first.png', 'https://assets.example.com/last.png'],
+      referenceMediaTypes: ['image', 'image']
+    });
+
+    assert.equal(submissions.length, 2);
+    assert.deepEqual(submissions[0].params, {
+      prompt: 'first frame',
+      video_length: 5,
+      type: 'first_last_frame',
+      quality: '2k',
+      image_url: ['https://assets.example.com/first.png']
+    });
+    assert.deepEqual(submissions[1].params, {
+      prompt: 'first and last frame',
+      video_length: 6,
+      type: 'first_last_frame',
+      quality: '768p',
+      image_url: ['https://assets.example.com/first.png', 'https://assets.example.com/last.png']
+    });
+  }).finally(() => { globalThis.fetch = previousFetch; });
+});
+
+test('AI Reiter MiniMax H3 uses all-reference only for mixed reference assets', async () => {
+  const previousFetch = globalThis.fetch;
+  await withEnvironment({
+    AIREITER_API_KEY: 'aireiter-key',
+    AIREITER_TRAFFIC_PERCENT: '100'
+  }, async () => {
+    let submission;
+    globalThis.fetch = async (url, options = {}) => {
+      const value = String(url);
+      if (value.endsWith('/api/openapi/submit')) {
+        submission = JSON.parse(options.body);
+        return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
+      }
+      if (value.endsWith('/api/openapi/query')) {
+        return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
+      }
+      throw new Error(`Unexpected route: ${value}`);
+    };
+
+    await createVideoTask({
+      providerId: 'video-1',
+      operationId: '29292929-2929-4292-8292-292929292929',
+      prompt: 'mixed references',
+      resolution: '2K',
+      duration: 5,
+      aspectRatio: '16:9',
+      videoMode: 'omni',
+      urls: ['https://assets.example.com/reference.png', 'https://assets.example.com/reference.mp4'],
+      referenceMediaTypes: ['image', 'video'],
+      referenceAudioUrls: ['https://assets.example.com/reference.mp3']
+    });
+
+    assert.equal(submission.model, 'minimax_h3');
+    assert.deepEqual(submission.params, {
+      prompt: 'mixed references',
+      video_length: 5,
+      type: 'all_reference',
+      quality: '2k',
+      aspect_ratio: '16:9',
+      image_url: ['https://assets.example.com/reference.png'],
+      video_url: ['https://assets.example.com/reference.mp4'],
+      audio_url: ['https://assets.example.com/reference.mp3']
+    });
+  }).finally(() => { globalThis.fetch = previousFetch; });
+});
+
+test('AI Reiter MiniMax H3 rejects text-to-video and wrong frame counts before submission', async () => {
+  const previousFetch = globalThis.fetch;
+  await withEnvironment({
+    AIREITER_API_KEY: 'aireiter-key',
+    AIREITER_TRAFFIC_PERCENT: '100'
+  }, async () => {
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      throw new Error('No upstream request should be sent.');
+    };
+    const base = {
+      providerId: 'video-1',
+      prompt: 'reference-only video',
+      resolution: '2K',
+      duration: 5,
+      aspectRatio: '16:9'
+    };
+    await assert.rejects(() => createVideoTask({
+      ...base,
+      videoMode: 'text',
+      urls: []
+    }), { code: 'invalid-video-mode' });
+    await assert.rejects(() => createVideoTask({
+      ...base,
+      videoMode: 'first-frame',
+      urls: ['https://assets.example.com/first.png', 'https://assets.example.com/last.png'],
+      referenceMediaTypes: ['image', 'image']
+    }), { code: 'invalid-reference-media' });
+    await assert.rejects(() => createVideoTask({
+      ...base,
+      videoMode: 'first-last-frame',
+      urls: ['https://assets.example.com/first.png'],
+      referenceMediaTypes: ['image']
+    }), { code: 'invalid-reference-media' });
+    assert.equal(calls, 0);
+  }).finally(() => { globalThis.fetch = previousFetch; });
+});
+
 test('100 percent AI Reiter traffic is absolute even without an operation ID', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({

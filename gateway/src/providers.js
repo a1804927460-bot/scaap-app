@@ -2618,31 +2618,45 @@ function aireiterVideoParams(provider, body) {
   };
 
   if (provider.model === 'minimax_h3') {
-    const frameMode = ['first-frame', 'first-last-frame'].includes(mode);
+    if (!['first-frame', 'first-last-frame', 'omni'].includes(mode)) {
+      throw aireiterLocalRejection(
+        'MiniMax H3 requires a first frame, first and last frames, or reference assets.',
+        'invalid-video-mode'
+      );
+    }
     if (!referenceCount) {
       throw aireiterLocalRejection('This video mode requires reference media.', 'reference-required');
     }
-    if (frameMode && (!images.length || images.length > 2 || videos.length || audios.length)) {
+    if (mode === 'first-frame' && (images.length !== 1 || videos.length || audios.length)) {
       throw aireiterLocalRejection(
-        'MiniMax H3 frame generation accepts one or two image references only.',
+        'MiniMax H3 first-frame mode requires exactly one image reference.',
         'invalid-reference-media'
       );
     }
-    if (!frameMode && images.length > 9) {
+    if (mode === 'first-last-frame' && (images.length !== 2 || videos.length || audios.length)) {
+      throw aireiterLocalRejection(
+        'MiniMax H3 first-last-frame mode requires exactly two image references.',
+        'invalid-reference-media'
+      );
+    }
+    if (mode === 'omni' && !images.length && !videos.length && !audios.length) {
+      throw aireiterLocalRejection('MiniMax H3 reference mode requires at least one reference asset.', 'reference-required');
+    }
+    if (mode === 'omni' && images.length > 9) {
       throw aireiterLocalRejection('MiniMax H3 accepts at most 9 reference images.', 'too-many-references');
     }
-    if (!frameMode && videos.length > 1) {
+    if (mode === 'omni' && videos.length > 1) {
       throw aireiterLocalRejection('MiniMax H3 accepts at most 1 reference video.', 'too-many-reference-videos');
     }
-    if (!frameMode && audios.length > 3) {
+    if (mode === 'omni' && audios.length > 3) {
       throw aireiterLocalRejection('MiniMax H3 accepts at most 3 reference audio files.', 'too-many-reference-audios');
     }
     return {
       prompt,
       video_length: common.video_length,
-      type: frameMode ? 'first_last_frame' : 'all_reference',
+      type: mode === 'omni' ? 'all_reference' : 'first_last_frame',
       quality: resolution === '2k' ? '2k' : '768p',
-      ...(!frameMode && common.aspect_ratio ? { aspect_ratio: common.aspect_ratio } : {}),
+      ...(mode === 'omni' && common.aspect_ratio ? { aspect_ratio: common.aspect_ratio } : {}),
       ...(images.length ? { image_url: images } : {}),
       ...(videos.length ? { video_url: videos } : {}),
       ...(audios.length ? { audio_url: audios } : {})
