@@ -178,10 +178,12 @@ assert.match(mainCss, /\.sidebar\.is-density-minimal[\s\S]*?\.account-footer-cop
 assert.match(mainCss, /\.sidebar\.is-density-minimal[\s\S]*?\.account-footer-credits\s*\{[\s\S]*?display:\s*inline-flex;/, 'The minimum sidebar must keep available points visible.');
 const settingsPopoverIndex = indexHtml.indexOf('<div id="settings-popover"');
 const settingsPopoverEnd = indexHtml.indexOf('</div>\n      </aside>', settingsPopoverIndex);
+const softwareUpdateIndex = indexHtml.indexOf('class="ai-provider-section software-update-section"');
 const accountActionsIndex = indexHtml.indexOf('class="ai-provider-section settings-account-actions-section"');
-assert.ok(settingsPopoverIndex >= 0 && settingsPopoverEnd > settingsPopoverIndex && accountActionsIndex > settingsPopoverEnd,
-  'Account sign-out and legal links must live in the full settings screen rather than the shortcut popover.');
-assert.ok(indexHtml.indexOf('software-update-section') < accountActionsIndex,
+assert.ok(settingsPopoverIndex >= 0 && settingsPopoverEnd > settingsPopoverIndex && softwareUpdateIndex >= 0
+  && accountActionsIndex > softwareUpdateIndex && accountActionsIndex > settingsPopoverEnd,
+  'Account sign-out and legal links must live below software updates, outside the shortcut popover.');
+assert.ok(softwareUpdateIndex < accountActionsIndex,
   'Account actions must be placed immediately after the software update section.');
 assert.strictEqual((indexHtml.match(/id="account-sign-out"/g) || []).length, 1,
   'The account sign-out action must remain unique after being moved.');
