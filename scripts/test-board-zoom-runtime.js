@@ -290,7 +290,7 @@ async function run() {
         doodle.boardTransformValue === 'none') {
       throw new Error(`Doodle overlay followed board zoom: ${JSON.stringify(doodle)}`);
     }
-    process.stdout.write(`BOARD_ZOOM_RUNTIME_OK during=leafer:${during.leaferItems}/dom:${during.mounted} settled=leafer:${settled.leaferItems}/dom:${settled.mounted} selection=2 drag=50x30 doodle=screen-locked\n`);
+    process.stdout.write(`BOARD_ZOOM_RUNTIME_OK during=leafer:${during.leaferItems}/dom:${during.mounted} settled=leafer:${settled.leaferItems}/dom:${settled.mounted} selection=2 drag=50x30 doodle=board-scaled\n`);
   } finally {
     window.destroy();
     fs.rmSync(tempDir, { recursive: true, force: true });

@@ -15,7 +15,8 @@ const WorkshopState = {
   publishFileId: null,
   loaded: false,
   loading: false,
-  currentUserId: null
+  currentUserId: null,
+  deletingPostId: null
 };
 
 function workshopText(en, zh) {
@@ -584,7 +585,7 @@ async function openWorkshopPostOnCanvas(mode = 'recreate') {
 
 async function deleteWorkshopPost() {
   const post = WorkshopState.activePost;
-  if (!workshopCanDeletePost(post)) return;
+  if (!workshopCanDeletePost(post) || WorkshopState.deletingPostId) return;
   const confirmed = await showConfirmDialog({
     title: workshopText('Delete work', '删除作品'),
     message: workshopText('This work will be removed from Workshop.', '删除后作品将从创意工坊移除。'),
@@ -594,22 +595,43 @@ async function deleteWorkshopPost() {
   });
   if (!confirmed) return;
 
-  if (post.localOnly || post.ownerId === 'local') {
-    WorkshopState.localPosts = WorkshopState.localPosts.filter((entry) => entry.id !== post.id);
-  } else {
-    const deleteApi = window.messsAPI?.workshop?.delete;
-    const result = deleteApi ? await deleteApi(post.id).catch(() => null) : null;
-    if (!result || !result.ok) {
-      workshopToast(workshopText('Only your own work can be deleted.', '只能删除自己发布的作品。'));
-      return;
-    }
-    WorkshopState.localPosts = WorkshopState.localPosts.filter((entry) => entry.id !== post.id);
+  WorkshopState.deletingPostId = post.id;
+  const deleteButton = document.getElementById('workshop-detail-delete');
+  if (deleteButton) {
+    deleteButton.disabled = true;
+    deleteButton.setAttribute('aria-busy', 'true');
   }
-  saveWorkshopLocalPosts();
-  WorkshopState.posts = WorkshopState.posts.filter((entry) => entry.id !== post.id);
-  closeWorkshopDetail();
-  renderWorkshop();
-  workshopToast(workshopText('Work deleted.', '作品已删除。'));
+  try {
+    if (post.localOnly || post.ownerId === 'local') {
+      WorkshopState.localPosts = WorkshopState.localPosts.filter((entry) => entry.id !== post.id);
+    } else {
+      const deleteApi = window.messsAPI?.workshop?.delete;
+      let result = null;
+      try { result = deleteApi ? await deleteApi(post.id) : null; } catch (error) {}
+      if (!result || !result.ok) {
+        const reason = result && result.reason;
+        const message = reason === 'auth-required'
+          ? workshopText('Sign in before deleting this work.', '请登录后再删除这个作品。')
+          : reason === 'not-owner'
+            ? workshopText('Only your own work can be deleted.', '只能删除自己发布的作品。')
+            : workshopText('The work could not be deleted. Please try again.', '作品删除失败，请稍后重试。');
+        workshopToast(message);
+        return;
+      }
+      WorkshopState.localPosts = WorkshopState.localPosts.filter((entry) => entry.id !== post.id);
+    }
+    saveWorkshopLocalPosts();
+    WorkshopState.posts = WorkshopState.posts.filter((entry) => entry.id !== post.id);
+    closeWorkshopDetail();
+    renderWorkshop();
+    workshopToast(workshopText('Work deleted.', '作品已删除。'));
+  } finally {
+    if (deleteButton) {
+      deleteButton.disabled = false;
+      deleteButton.removeAttribute('aria-busy');
+    }
+    WorkshopState.deletingPostId = null;
+  }
 }
 
 async function loadWorkshopPosts() {

@@ -44,6 +44,16 @@ assert.deepStrictEqual(summary.account, {
 assert.deepStrictEqual(summary.totals, { credits: 120, generations: 3, average: 4 });
 assert.strictEqual(JSON.stringify(summary).includes('providerCost'), false, 'Renderer normalization must discard supplier-cost fields.');
 assert.strictEqual(normalizeUsageSummary({ authenticated: false, summary: null }).authenticated, false);
+assert.throws(
+  () => normalizeUsageSummary({ authenticated: true, summary: { account: {}, totals: {} } }),
+  (error) => error && error.code === 'credit-service-failed',
+  'A missing account balance must be treated as a service failure, not as zero points.'
+);
+assert.strictEqual(
+  normalizeUsageSummary({ authenticated: true, summary: { account: { balance: 0 }, totals: {} } }).account.balance,
+  0,
+  'An explicit server balance of zero must remain a valid zero balance.'
+);
 
 const today = new Date().toISOString().slice(0, 10);
 const sevenDays = fillUsageRange([{ date: today, credits: 12, requests: 1 }], '7');
@@ -80,6 +90,8 @@ assert.match(source, /UsageSettings\.range = 'custom'[\s\S]*loadUsageSummary\(\)
 assert.match(source, /사용량[\s\S]*用量/, 'Usage UI needs Korean and Chinese copy.');
 assert.doesNotMatch(source, /providerCost|provider_cost/, 'Renderer source must not know supplier-cost fields.');
 assert.match(sidebar, /initUsageSettings/);
+assert.match(sidebar, /fallback\.textContent = '3D'/, '3D files need an explicit fallback label.');
+assert.match(sidebar, /file-thumbnail-model-badge/, '3D thumbnails need a stable model badge.');
 assert.match(sidebar, /openAiProviderManager\('general'\)/);
 assert.match(source, /window\.openAiProviderManager\('usage'\)/);
 assert.match(preload, /getUsageSummary:\s*\(range\)\s*=>\s*ipcRenderer\.invoke\('membership:getUsageSummary', range\)/);

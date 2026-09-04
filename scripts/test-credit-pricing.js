@@ -25,7 +25,7 @@ const {
 } = require('../lib/credit-pricing');
 
 assert.strictEqual(POINTS_PER_CNY, 1000 / 70);
-assert.strictEqual(CREDIT_PRICING_VERSION, '202609020001');
+assert.strictEqual(CREDIT_PRICING_VERSION, '202609040001');
 assert.strictEqual(RETAIL_GROSS_MARGIN_PERCENT, 10);
 assert.ok(Math.abs(RETAIL_MARKUP_PERCENT - (100 / 9)) < 1e-12);
 assert.strictEqual(RETAIL_MULTIPLIER, 10 / 9);
@@ -281,6 +281,11 @@ assert.strictEqual(
   'Seedance 2.5 720P must use the verified Atlas primary-route cost.'
 );
 assert.strictEqual(
+  quoteMediaCredits({ kind: 'video', videoProviderId: 'video-3', resolution: '1440P-SR', duration: 6 }).totalCredits,
+  607,
+  'Seedance 2.5 1440P-SR at six seconds must not reuse a stale 720P five-second quote.'
+);
+assert.strictEqual(
   quoteMediaCredits({ kind: 'video', videoProviderId: 'video-3', resolution: '4K-ESR', duration: 10 }).totalCredits,
   3315,
   'Seedance 2.5 4K-ESR must use the observed 23.11727243 PTC per ten-second upstream quote.'
@@ -523,7 +528,9 @@ async function assertGatewayPricingParity() {
     });
   });
 
-  Object.entries(pricing.video).forEach(([providerId, rates]) => {
+  for (const providerId of ['video-1', 'video-2', 'video-3']) {
+    const rates = pricing.video[providerId];
+    assert.ok(rates, `Public video pricing must include ${providerId}.`);
     Object.keys(rates).forEach((resolution) => {
       const request = { kind: 'video', videoProviderId: providerId, resolution, duration: 6 };
       const desktop = quoteMediaCredits(request);
@@ -534,16 +541,13 @@ async function assertGatewayPricingParity() {
         `Desktop and gateway video pricing must match for ${providerId} ${resolution}.`
       );
     });
-  });
+  }
 
-  for (const [providerId, proProviderId] of [['video-10', 'video-11'], ['video-12', 'video-13']]) {
-    const resolution = Object.keys(pricing.video[proProviderId])[0];
-    const request = { kind: 'video', videoProviderId: providerId, serviceTier: 'pro', resolution, duration: 10 };
-    const desktop = quoteMediaCredits(request);
-    const gateway = quoteUsage('video', { ...request, providerId });
-    assert.strictEqual(desktop.providerId, proProviderId);
-    assert.strictEqual(gateway.providerId, proProviderId);
-    assert.strictEqual(desktop.totalCredits, gateway.credits);
+  for (const providerId of ['video-4', 'video-10', 'video-12']) {
+    assert.throws(
+      () => quoteUsage('video', { providerId, resolution: '720P', duration: 6 }),
+      (error) => error && error.code === 'provider-not-allowed'
+    );
   }
 }
 

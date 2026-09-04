@@ -10,7 +10,7 @@ import {
 import { normalizeVideoResolution } from './video-resolution.js';
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
-export const CREDIT_PRICING_VERSION = '202609020001';
+export const CREDIT_PRICING_VERSION = '202609040001';
 const LEGACY_POINTS_PER_CNY = 10;
 const POINTS_PER_CNY = 1000 / 70;
 const POINT_DENOMINATION_SCALE = POINTS_PER_CNY / LEGACY_POINTS_PER_CNY;
@@ -251,8 +251,7 @@ export const VIDEO_CREDITS_PER_SECOND = Object.freeze({
   }),
   // Approved CNY retail prices converted to the current point denomination.
   'video-1': MINIMAX_H3_RETAIL_CREDITS_PER_SECOND,
-  // Logical Seedance billing uses the higher of the Atlas primary price and
-  // the USD/PTC 302 fallback for every resolution the fallback supports.
+  // Logical Seedance billing uses Atlas Cloud's upstream price matrix.
   'video-2': legacyPointRateTable({
     '480P': 8.268929, '720P': 17.7828, '720P-SR': 14.88408, '1080P': 40.0113,
     '1080P-SR': 32.00904, '1440P-SR': 56.90496, '4K': 91.225764
@@ -468,6 +467,9 @@ export function quoteUsage(kind, request = {}) {
   }
   if (normalizedKind === 'video') {
     const requestedProviderId = String(request.providerId || 'video-1').trim().toLowerCase() || 'video-1';
+    if (!['video-1', 'video-2', 'video-3'].includes(requestedProviderId)) {
+      throw Object.assign(new Error('The selected video provider is not allowed.'), { code: 'provider-not-allowed', status: 400 });
+    }
     const providerId = videoBillingProviderId(requestedProviderId, request);
     const rates = VIDEO_CREDITS_PER_SECOND[providerId];
     if (!rates) {
@@ -1130,12 +1132,13 @@ export async function getUsageAccount(userId, fetchImpl = fetch) {
 }
 
 function publicCreditAccount(account = {}) {
-  const balance = nonnegativeNumber(account.balance);
-  const reserved = nonnegativeNumber(account.reserved);
+  const balance = readCreditNumber(account, ['balance', 'credits', 'points', 'creditBalance'], true);
+  const reserved = Math.min(balance, readCreditNumber(account, ['reserved', 'reservedCredits']) ?? 0);
+  const availableValue = readCreditNumber(account, ['availableCredits', 'available', 'usableCredits']);
   return {
     balance,
     reserved,
-    availableCredits: nonnegativeNumber(account.availableCredits ?? Math.max(0, balance - reserved)),
+    availableCredits: Math.min(balance, availableValue ?? Math.max(0, balance - reserved)),
     overseasUnlocked: account.overseasUnlocked === true,
     membershipTier: String(account.membershipTier || 'free').trim().slice(0, 40) || 'free',
     updatedAt: String(account.updatedAt || '').slice(0, 40)
@@ -1185,6 +1188,17 @@ function usageRows(value, maximum, rowMapper) {
   return Array.isArray(value) ? value.slice(0, maximum).map(rowMapper) : [];
 }
 
+function readCreditNumber(source, keys, required = false) {
+  const record = source && typeof source === 'object' ? source : {};
+  for (const key of keys) {
+    if (!Object.hasOwn(record, key) || record[key] === null || record[key] === undefined || record[key] === '') continue;
+    const value = Number(record[key]);
+    if (Number.isFinite(value) && value >= 0) return Math.round(value);
+  }
+  if (required) throw serviceError('credit-service-failed', 'The credit service did not return a valid balance.');
+  return undefined;
+}
+
 function publicUsageSummary(payload, fallbackRange) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw serviceError('usage-service-failed', 'The usage service returned an invalid response.');
@@ -1198,6 +1212,9 @@ function publicUsageSummary(payload, fallbackRange) {
     generations: nonnegativeNumber(row.generations),
     requests: nonnegativeNumber(row.requests)
   });
+  const balance = readCreditNumber(account, ['balance', 'credits', 'points', 'creditBalance'], true);
+  const reserved = Math.min(balance, readCreditNumber(account, ['reserved', 'reservedCredits']) ?? 0);
+  const availableValue = readCreditNumber(account, ['availableCredits', 'available', 'usableCredits']);
   return {
     range: payload.range === 'custom' || fallbackRange && typeof fallbackRange === 'object'
       ? 'custom'
@@ -1209,9 +1226,9 @@ function publicUsageSummary(payload, fallbackRange) {
       days: Math.max(1, nonnegativeNumber(period.days))
     },
     account: {
-      balance: nonnegativeNumber(account.balance),
-      reserved: nonnegativeNumber(account.reserved),
-      availableCredits: nonnegativeNumber(account.availableCredits),
+      balance,
+      reserved,
+      availableCredits: Math.min(balance, availableValue ?? Math.max(0, balance - reserved)),
       membershipTier: String(account.membershipTier || 'free').trim().slice(0, 40) || 'free'
     },
     totals: {

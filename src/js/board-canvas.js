@@ -18,6 +18,7 @@ const BOARD_FULL_IMAGE_LIMIT = 4;
 const BOARD_FULL_IMAGE_CACHE_LIMIT = 4;
 const BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET = 24_000_000;
 const BOARD_FULL_IMAGE_READY_LIMIT = 160;
+const BOARD_FAILED_SOURCE_LIMIT = 256;
 const BOARD_THUMBNAIL_MAX_EDGE = 400;
 const BOARD_FULL_IMAGE_MIN_SCREEN_EDGE = 220;
 const BOARD_SELECTED_FULL_IMAGE_MIN_SCREEN_EDGE = 150;
@@ -28,6 +29,7 @@ const BOARD_VIEW_STORAGE_KEY = 'messs.board.viewport.v2';
 const BOARD_LEAFER_MIN_DPR = 1;
 const BOARD_LEAFER_MAX_DPR = 2;
 const BOARD_LEAFER_FULL_IMAGE_MIN_SCREEN_EDGE = 420;
+const BOARD_LEAFER_FULL_ITEM_LIMIT = 8;
 const BOARD_WHEEL_MAX_DELTA = 96;
 const BOARD_WHEEL_PAN_GAIN = 0.64;
 const BOARD_WHEEL_ZOOM_RATE = 0.001;
@@ -143,6 +145,8 @@ const Board = {
   leaferLayer: null,
   leaferInitAttempted: false,
   leaferCanvasId: null,
+  leaferSourceByItem: new Map(),
+  leaferFullItemIds: new Set(),
   fullImageCache: new Map(),
   fullImageCachePixels: 0,
   fullImageReadyFileIds: new Set(),
@@ -765,6 +769,7 @@ function cacheBoardFullImage(source, image) {
         0,
         Board.fullImageCachePixels - oldest.naturalWidth * oldest.naturalHeight
       );
+      try { oldest.src = ''; } catch (err) {}
     }
   }
 }
@@ -796,7 +801,7 @@ function preloadBoardFullImage(source) {
       } catch (err) {}
       Board.fullImagePending.delete(source);
       if (!image.naturalWidth || !image.naturalHeight) {
-        Board.failedFullImageSources.add(source);
+        rememberFailedBoardFullImage(source);
         resolve(null);
         return;
       }
@@ -805,7 +810,7 @@ function preloadBoardFullImage(source) {
     }, { once: true });
     image.addEventListener('error', () => {
       Board.fullImagePending.delete(source);
-      Board.failedFullImageSources.add(source);
+      rememberFailedBoardFullImage(source);
       resolve(null);
     }, { once: true });
   });
@@ -838,7 +843,7 @@ function mountedFullImageCandidates(zoom, minimumScreenEdge) {
       image,
       source: fullSource,
       screenEdge,
-      priority: (item.selected ? 1000000 : 0) + screenEdge
+      priority: screenEdge
     });
   }
   return candidates.sort((a, b) => b.priority - a.priority);
@@ -855,6 +860,8 @@ function prewarmMountedFullImages(zoom) {
         // A decoded original is ready to paint. Keeping the 400 px thumbnail
         // until wheel settle makes a 4K image visibly soft during zoom.
         transitionBoardImageQuality(element, 'full');
+        Board.leaferFullItemIds.add(entry.id);
+        scheduleBoardLeaferSync();
       });
     });
 }
@@ -930,7 +937,7 @@ function transitionBoardImageQuality(element, quality) {
     };
     next.addEventListener('load', reveal, { once: true });
     next.addEventListener('error', () => {
-      if (quality === 'full') Board.failedFullImageSources.add(source);
+      if (quality === 'full') rememberFailedBoardFullImage(source);
       if (next.parentNode === stack) next.remove();
       if (stack.dataset.pendingQuality === quality) stack.dataset.pendingQuality = '';
     }, { once: true });
@@ -999,7 +1006,7 @@ function syncMountedImageQuality() {
     ? mountedFullImageCandidates(Board.zoom, BOARD_SELECTED_FULL_IMAGE_MIN_SCREEN_EDGE)
       .filter((entry) => {
         const item = Board.itemsById.get(entry.id);
-        return !!item && (item.selected || entry.screenEdge >= BOARD_FULL_IMAGE_MIN_SCREEN_EDGE);
+        return !!item && entry.screenEdge >= BOARD_FULL_IMAGE_MIN_SCREEN_EDGE;
       })
     : [];
   const fullIds = new Set(detailCandidates.slice(0, BOARD_FULL_IMAGE_LIMIT).map((entry) => entry.id));
@@ -1007,9 +1014,12 @@ function syncMountedImageQuality() {
   for (const [id, element] of Board.mounted) {
     const image = activeBoardImage(element);
     if (!image) continue;
-    const quality = fullIds.has(id) ? 'full' : 'thumb';
-    if (image.dataset.quality === quality) continue;
-    transitionBoardImageQuality(element, quality);
+    // Never downgrade a decoded image during a normal selection or viewport
+    // refresh. A thumbnail replacement is visible as a flash and makes a
+    // click appear to change image clarity. Remounting still starts from a
+    // bounded thumbnail when the item leaves the live DOM window.
+    if (!fullIds.has(id) || image.dataset.quality === 'full') continue;
+    transitionBoardImageQuality(element, 'full');
   }
 }
 
@@ -1034,7 +1044,7 @@ function applyBoardTransform() {
     // The active drawing surface is a viewport-space overlay. Keep it out of
     // the board camera transform so wheel zoom changes the canvas underneath
     // the user's in-progress stroke without scaling the stroke itself.
-    if (doodleActive) lockDoodleCanvasToViewport();
+    if (doodleActive) prepareDoodleInputSurface();
     // Wheel and pan frames must stay compositor-only. Grid CSS variables, toolbar
     // geometry, LOD reconciliation and persistence all force extra style or
     // layout work; settle them once after the input burst ends.
@@ -1088,6 +1098,35 @@ function finishBoardWheelInteraction() {
   clearBoardInteractionOverviewWork();
   settleBoardViewportIfIdle();
   applyBoardTransform();
+}
+
+function updateLeaferFullImageWindow() {
+  if (isBoardViewportInteracting()) return;
+  const candidates = [];
+  for (const item of AppState.boardItems || []) {
+    if (!item || !Board.visibleIds.has(item.id)) continue;
+    const file = Board.filesById.get(item.fileId);
+    if (!file || !isImageExt(file.ext)) continue;
+    const fullSource = String(resolveImageDisplaySource(file, true) || '').trim();
+    const thumbSource = String(resolveImageDisplaySource(file, false) || '').trim();
+    if (!fullSource || fullSource === thumbSource) continue;
+    const sourceEdge = Math.max(Number(file.sourceWidth) || 0, Number(file.sourceHeight) || 0);
+    const bounds = boardItemBounds(item);
+    const screenEdge = Math.max(bounds.w, bounds.h) * Math.max(0.001, Board.zoom) *
+      Math.min(2, Number(window.devicePixelRatio) || 1);
+    if (sourceEdge <= BOARD_THUMBNAIL_MAX_EDGE || screenEdge < BOARD_LEAFER_FULL_IMAGE_MIN_SCREEN_EDGE) continue;
+    candidates.push({ id: item.id, screenEdge });
+  }
+  candidates.sort((left, right) => right.screenEdge - left.screenEdge);
+  Board.leaferFullItemIds = new Set(candidates
+    .filter((entry) => {
+      const item = Board.itemsById.get(entry.id);
+      const file = item && Board.filesById.get(item.fileId);
+      const source = String(resolveImageDisplaySource(file, true) || '').trim();
+      return Boolean(cachedBoardFullImage(source));
+    })
+    .slice(0, BOARD_LEAFER_FULL_ITEM_LIMIT)
+    .map((entry) => entry.id));
 }
 
 function scheduleBoardInteractionPrefetch(view) {
@@ -1183,6 +1222,15 @@ function setBoardZoomTarget(screenPoint, factor) {
   if (!Board.zoomFrame) {
     Board.zoomLastTime = 0;
     Board.zoomFrame = requestAnimationFrame(stepBoardZoom);
+  }
+}
+
+function rememberFailedBoardFullImage(source) {
+  if (!source) return;
+  Board.failedFullImageSources.delete(source);
+  Board.failedFullImageSources.add(source);
+  while (Board.failedFullImageSources.size > BOARD_FAILED_SOURCE_LIMIT) {
+    Board.failedFullImageSources.delete(Board.failedFullImageSources.values().next().value);
   }
 }
 
@@ -1507,6 +1555,9 @@ function renderBoardItemContent(content, f, item) {
         ? screenEdge >= BOARD_SELECTED_FULL_IMAGE_MIN_SCREEN_EDGE
         : screenEdge >= BOARD_FULL_IMAGE_MIN_SCREEN_EDGE
     );
+    // Leafer owns visible image detail. Keep the hidden DOM interaction layer
+    // on a thumbnail unless a decoded full image is already cached, avoiding a
+    // second full-resolution decode and preventing a click-triggered reload.
     const quality = fullEligible && cachedBoardFullImage(fullSource) ? 'full' : 'thumb';
     const initialSource = quality === 'full' ? fullSource : thumbSource;
     const stack = document.createElement('div');
@@ -2282,12 +2333,36 @@ function boardLeaferSource(file, item) {
   if (item && item.isDoodle) return String(item.imageData || '').trim();
   if (!file) return '';
   if (isImageExt(file.ext)) {
-    const bounds = boardItemBounds(item);
-    const screenEdge = Math.max(bounds.w, bounds.h) * Math.max(0.001, Board.zoom);
-    const preferFull = !isBoardViewportInteracting() && (
-      Boolean(item.selected) || screenEdge >= BOARD_LEAFER_FULL_IMAGE_MIN_SCREEN_EDGE
-    );
-    return String(resolveImageDisplaySource(file, preferFull) || '').trim();
+    const itemId = String(item && item.id || '');
+    const thumbSource = String(resolveImageDisplaySource(file, false) || '').trim();
+    const fullSource = String(resolveImageDisplaySource(file, true) || '').trim();
+    const existingSource = Board.leaferSourceByItem.get(itemId);
+    // Once a visible item has received its original source, retain it when
+    // the item leaves the viewport. Downgrading the same drawable to a thumb
+    // would make the next visit show a soft frame before switching back.
+    if (existingSource && fullSource && existingSource === fullSource) {
+      return existingSource;
+    }
+    if (isBoardViewportInteracting() && existingSource) {
+      return existingSource;
+    }
+    // Visible Leafer items start from the original source. This prevents a
+    // blurry thumbnail frame from being shown before the image turns sharp.
+    // During camera motion, the existing source remains stable so no texture
+    // replacement or mosaic flash can occur.
+    const source = Board.visibleIds.has(itemId) && fullSource
+      ? fullSource
+      : (Board.leaferFullItemIds.has(itemId)
+        ? (fullSource || thumbSource)
+        : (thumbSource || fullSource));
+    if (itemId) {
+      Board.leaferSourceByItem.delete(itemId);
+      Board.leaferSourceByItem.set(itemId, source);
+      while (Board.leaferSourceByItem.size > 256) {
+        Board.leaferSourceByItem.delete(Board.leaferSourceByItem.keys().next().value);
+      }
+    }
+    return source;
   }
   // Videos and models are represented by their poster/preview in the scene;
   // their decoders stay out of the canvas until the user opens a preview.
@@ -2314,6 +2389,11 @@ function syncBoardLeaferScene(force = false) {
   if (AppState.boardItems.length && (!Board.itemsById.size || Board.indexItemsRef !== AppState.boardItems)) {
     rebuildBoardSpatialIndex();
   }
+  updateLeaferFullImageWindow();
+  const liveIds = new Set((AppState.boardItems || []).map((item) => String(item && item.id || '')).filter(Boolean));
+  Board.leaferSourceByItem.forEach((value, id) => {
+    if (!liveIds.has(id)) Board.leaferSourceByItem.delete(id);
+  });
   const canvas = ensureBoardLeaferCanvas();
   const layer = Board.leaferLayer;
   if (!canvas || !layer || typeof layer.sync !== 'function') return false;
@@ -2328,7 +2408,9 @@ function syncBoardLeaferScene(force = false) {
     revision,
     AppState.boardItems.length,
     BoardEngine.hashSet(ids),
-    BoardEngine.hashSet(Board.selectedIds)
+    BoardEngine.hashSet(Board.visibleIds),
+    BoardEngine.hashSet(Board.selectedIds),
+    BoardEngine.hashSet(Board.leaferFullItemIds)
   ].join(':');
   const synced = layer.sync({ ...options, cacheKey });
   if (!synced) return false;
@@ -2975,7 +3057,6 @@ function reconcileBoardViewport(force = false) {
 
   // Leafer is the only board renderer. Keep the complete scene alive while
   // the DOM remains a bounded interaction layer for controls and hit testing.
-  syncBoardLeaferScene(force);
   const regions = BoardEngine.viewportRects(
     Board,
     { w: rect.width, h: rect.height },
@@ -2996,6 +3077,8 @@ function reconcileBoardViewport(force = false) {
   const mountIds = Board.spatialIndex.queryLimited(regions.mount, BOARD_DOM_ITEM_LIMIT);
   const visibleIds = Board.spatialIndex.query(regions.visible);
   Board.visibleIds = visibleIds;
+  updateLeaferFullImageWindow();
+  syncBoardLeaferScene(force);
   syncMountedBoardViewportStates(visibleIds);
   const keepCandidates = [];
   for (const id of Board.mounted.keys()) {
@@ -8484,6 +8567,8 @@ function beginTextNoteEditing(note, contentEl) {
   if (!note || !contentEl) return;
   if (activeTextNoteId && activeTextNoteId !== note.id) commitActiveTextNote();
   activeTextNoteId = note.id;
+  note.isTextEditing = true;
+  syncBoardLeaferItems(note);
   activeTextNoteOriginalText = String(note.text || '');
   const noteEl = contentEl.closest('.board-text-note');
   if (noteEl) noteEl.classList.add('is-text-editing');
@@ -8511,6 +8596,8 @@ function finishTextNoteEditing({ cancel = false } = {}) {
     contentEl.contentEditable = 'false';
   }
   if (noteEl) noteEl.classList.remove('is-text-editing');
+  note.isTextEditing = false;
+  syncBoardLeaferItems(note);
   hideTextToolPanel();
   if (!note.text.trim()) {
     pendingTextNoteHistoryIds.delete(note.id);
@@ -8670,11 +8757,8 @@ let doodleStrokes = [];
 
 function isDoodleActive() { return doodleActive; }
 
-function lockDoodleCanvasToViewport(canvas = document.getElementById('board-doodle-canvas')) {
+function prepareDoodleInputSurface(canvas = document.getElementById('board-doodle-canvas')) {
   if (!canvas) return;
-  canvas.classList.add('is-screen-space');
-  canvas.style.transform = 'none';
-  canvas.style.transformOrigin = '0 0';
   canvas.style.willChange = 'auto';
 }
 
@@ -8708,7 +8792,6 @@ function enterDoodleMode() {
   // The element is input-only. Leafer owns the actual stroke pixels, so the
   // temporary layer never allocates a second viewport-sized 2D bitmap.
   doodlePixelRatio = 1;
-  lockDoodleCanvasToViewport(canvas);
   doodleCtx = null;
   doodleStrokes = [];
 
@@ -8721,7 +8804,8 @@ function enterDoodleMode() {
     const pressure = e.pointerType === 'pen' && Number.isFinite(e.pressure) && e.pressure > 0
       ? e.pressure
       : undefined;
-    return [e.clientX - rect.left, e.clientY - rect.top, pressure];
+    const point = clientToBoardCoords(e.clientX, e.clientY);
+    return [point.x, point.y, pressure];
   }
 
   function getStrokeOutline(stroke) {
@@ -8766,7 +8850,7 @@ function enterDoodleMode() {
     doodleHasStrokes = true;
     activeStroke = {
       color: DoodleState.color,
-      size: DoodleState.size,
+      size: DoodleState.size / Math.max(0.0001, Board.zoom),
       tool: DoodleState.tool,
       points: [pos(e)],
       complete: false
@@ -8814,19 +8898,11 @@ function enterDoodleMode() {
     if (e.target === canvas || e.target.closest('#doodle-color-panel, #board-tool-doodle')) return;
     exitDoodleMode(true);
   }
-  function keepDoodleScreenSpace() {
-    lockDoodleCanvasToViewport(canvas);
-  }
-  // Do not stop propagation: the viewport still owns wheel zoom. This hook
-  // only reasserts the coordinate-space contract before that zoom is applied.
-  canvas.addEventListener('wheel', keepDoodleScreenSpace, { passive: true });
   canvas._doodleCleanup = () => {
     if (drawFrameId) cancelAnimationFrame(drawFrameId);
     drawFrameId = 0;
     document.removeEventListener('keydown', keyHandler);
     document.removeEventListener('pointerdown', outsideHandler, true);
-    canvas.removeEventListener('wheel', keepDoodleScreenSpace);
-    canvas.classList.remove('is-screen-space');
   };
 
   document.addEventListener('keydown', keyHandler);
@@ -8871,7 +8947,6 @@ function exitDoodleMode(commit) {
     "keep this drawing right here, now move it around freely" rather than
     resetting position/zoom. */
 function commitDoodleToBoard(canvas) {
-  const overlayRect = canvas.getBoundingClientRect();
   const outlines = doodleStrokes
     .map((stroke) => ({
       ...stroke,
@@ -8889,27 +8964,21 @@ function commitDoodleToBoard(canvas) {
     .filter((stroke) => stroke.outline && stroke.outline.length);
   const bounds = getDoodleOutlineBounds(outlines);
   if (!bounds) return;
-  // The temporary surface is pinned to the screen. Convert its ink bounds
-  // from CSS pixels into the current board camera exactly once at commit time.
-  const inkLeft = overlayRect.left + bounds.x / doodlePixelRatio;
-  const inkTop = overlayRect.top + bounds.y / doodlePixelRatio;
-  const { x, y } = clientToBoardCoords(inkLeft, inkTop);
-  const boardZoom = Math.max(0.0001, Number(Board.zoom) || 1);
   const doodlePaths = outlines.map((stroke) => ({
     color: stroke.color,
     tool: stroke.tool,
     points: stroke.outline.map((point) => [
-      (Number(point[0]) - bounds.x) / boardZoom,
-      (Number(point[1]) - bounds.y) / boardZoom
+      Number(point[0]) - bounds.x,
+      Number(point[1]) - bounds.y
     ])
   }));
   const item = {
     id: 'doodle_' + Math.random().toString(36).slice(2, 10),
     isDoodle: true,
-    x: Math.round(x),
-    y: Math.round(y),
-    width: Math.max(1, Math.round(bounds.width / doodlePixelRatio / boardZoom)),
-    height: Math.max(1, Math.round(bounds.height / doodlePixelRatio / boardZoom)),
+    x: Math.round(bounds.x),
+    y: Math.round(bounds.y),
+    width: Math.max(1, Math.round(bounds.width)),
+    height: Math.max(1, Math.round(bounds.height)),
     doodlePaths,
     doodleVersion: 3,
     zIndex: AppState.boardItems.length + 1,

@@ -50,6 +50,10 @@ assert.ok(ids.includes('image-1'));
 assert.ok(ids.includes('video-1'));
 assert.ok(ids.includes('video-2'));
 assert.ok(ids.includes('video-3'));
+assert.deepEqual(
+  config.providers.filter((provider) => provider.kind === 'video').map((provider) => provider.id),
+  ['video-1', 'video-2', 'video-3']
+);
 assert.ok(ids.includes('chat-1'));
 assert.ok(ids.includes('chat-2'));
 assert.ok(ids.includes('chat-3'));
@@ -71,7 +75,7 @@ for (const [id, model] of [['image-17', '8.1'], ['image-18', '8.2']]) {
 for (const id of ['image-4', 'image-5', 'image-7', 'image-8', 'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16']) {
   assert.equal(ids.includes(id), false);
 }
-for (const id of ['video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9']) {
+for (const id of ['video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9', 'video-10', 'video-11', 'video-12', 'video-13']) {
   assert.equal(ids.includes(id), false);
 }
 const gptImage2Provider = config.providers.find((provider) => provider.id === 'image-6');
@@ -311,7 +315,7 @@ globalThis.fetch = async (url, options = {}) => {
   throw new Error(`Unexpected video backup URL: ${value}`);
 };
 const backupVideoTask = await createVideoTask({
-  providerId: 'video-2',
+  providerId: 'video-4',
   prompt: 'backup video route',
   resolution: '720P',
   duration: 4,
@@ -676,6 +680,38 @@ assert.deepEqual(aireiterAgentCalls, [
   { url: 'https://aireiter.com/api/v1/chat/completions', model: 'chat-gpt-5.6-sol' },
   { url: 'https://aireiter.com/api/v1/chat/completions', model: 'chat-kimi-k3' }
 ]);
+
+const aireiterH3Calls = [];
+globalThis.fetch = async (url, options = {}) => {
+  aireiterH3Calls.push({ url: String(url), options });
+  return jsonResponse({ code: 200, data: { status: 'submitted' } });
+};
+const aireiterH3Task = await createVideoTask({
+  providerId: 'video-1',
+  prompt: 'cinematic clouds above a quiet city',
+  resolution: '2K',
+  duration: 7,
+  aspectRatio: '16:9',
+  videoMode: 'text',
+  urls: [],
+  operationId: 'aireiter-h3-primary-route',
+  endUserId: 'u_0123456789abcdef0123'
+});
+assert.equal(aireiterH3Task.providerId, 'video-1');
+assert.equal(aireiterH3Calls.length, 1);
+assert.equal(aireiterH3Calls[0].url, 'https://aireiter.com/api/openapi/submit');
+assert.equal(aireiterH3Calls[0].options.headers.Authorization, 'Bearer aireiter-secret');
+assert.deepEqual(JSON.parse(aireiterH3Calls[0].options.body), {
+  model: 'minimax_h3',
+  params: {
+    prompt: 'cinematic clouds above a quiet city',
+    video_length: 7,
+    type: 'text_to_video',
+    quality: '2k',
+    aspect_ratio: '16:9'
+  },
+  out_task_id: aireiterH3Task.taskId
+});
 delete process.env.AIREITER_API_KEY;
 
 const miniMaxCalls = [];
@@ -777,9 +813,9 @@ delete process.env.ATLASCLOUD_API_KEY;
 // Atlas route must not silently submit the same request to 302 in that case.
 const previousAtlasKey = process.env.ATLASCLOUD_API_KEY;
 process.env.ATLASCLOUD_API_KEY = 'atlas-secret';
-let atlasRejectedRequestCount = 0;
-globalThis.fetch = async (url) => {
-  atlasRejectedRequestCount += 1;
+const atlasRejectedRequests = [];
+globalThis.fetch = async (url, options = {}) => {
+  atlasRejectedRequests.push({ url: String(url), body: JSON.parse(options.body) });
   assert.match(String(url), /api\.atlascloud\.ai\/api\/v1\/model\/generateVideo/);
   return {
     ok: false,
@@ -788,20 +824,26 @@ globalThis.fetch = async (url) => {
     text: async () => JSON.stringify({ error: { code: 'invalid_parameter', message: 'The selected option is invalid.' } })
   };
 };
-await assert.rejects(
-  createVideoTask({
-    providerId: 'video-2',
-    prompt: 'do not switch suppliers on a request error',
-    resolution: '720P',
-    duration: 4,
-    aspectRatio: '16:9',
-    videoMode: 'first-frame',
-    urls: ['https://cdn.example/first.png'],
-    referenceMediaTypes: ['image']
-  }),
-  (error) => error && error.code === 'provider-request-failed' && error.status === 400
-);
-assert.equal(atlasRejectedRequestCount, 1);
+for (const providerId of ['video-2', 'video-3']) {
+  await assert.rejects(
+    createVideoTask({
+      providerId,
+      prompt: 'do not switch suppliers on a request error',
+      resolution: '720P',
+      duration: 4,
+      aspectRatio: '16:9',
+      videoMode: 'first-frame',
+      urls: ['https://cdn.example/first.png'],
+      referenceMediaTypes: ['image']
+    }),
+    (error) => error && error.code === 'provider-request-failed' && error.status === 400
+  );
+}
+assert.equal(atlasRejectedRequests.length, 2);
+assert.deepEqual(atlasRejectedRequests.map((call) => call.body.model), [
+  'bytedance/seedance-2.0/image-to-video',
+  'bytedance/seedance-2.5/image-to-video'
+]);
 if (previousAtlasKey === undefined) delete process.env.ATLASCLOUD_API_KEY;
 else process.env.ATLASCLOUD_API_KEY = previousAtlasKey;
 

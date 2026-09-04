@@ -115,21 +115,17 @@ test('video quote clamps provider parameters, keeps chat free, and no provider r
     kind: 'video', providerId: 'video-3', credits: 218, unitCredits: 43.44227132142857, resolution: '720P', duration: 5, requiresActivation: false
   });
   assert.equal(quoteUsage('video', { providerId: 'video-3', resolution: '720p', duration: 10 }).credits, 435);
+  assert.equal(quoteUsage('video', { providerId: 'video-3', resolution: '1440P-SR', duration: 6 }).credits, 607);
   assert.deepEqual(quoteUsage('video', { providerId: 'video-3', resolution: '4K-ESR', duration: 10 }), {
     kind: 'video', providerId: 'video-3', credits: 3315, unitCredits: 331.48517430875,
     resolution: '4K-ESR', duration: 10, requiresActivation: false
   });
   assert.equal(quoteUsage('video', { providerId: 'video-2', resolution: '720p', duration: 10 }).credits, 350);
-  assert.equal(quoteUsage('video', { providerId: 'video-4', resolution: '720p', duration: 10 }).credits, 243);
-  assert.deepEqual(quoteUsage('video', { providerId: 'video-10', resolution: '1080p', duration: 10 }), {
-    kind: 'video', providerId: 'video-11', credits: 484, unitCredits: 48.32142857142858, resolution: '1080P', duration: 10, requiresActivation: false
-  });
-  assert.equal(quoteUsage('video', {
-    providerId: 'video-12', serviceTier: 'pro', resolution: '1080p', duration: 15
-  }).credits, 775);
-  assert.equal(quoteUsage('video', {
-    providerId: 'video-12', serviceTier: 'standard', resolution: '720p', duration: 15
-  }).credits, 646);
+  for (const providerId of ['video-4', 'video-10', 'video-12']) {
+    assert.throws(() => quoteUsage('video', { providerId, resolution: '720p', duration: 5 }), {
+      code: 'provider-not-allowed'
+    });
+  }
   assert.equal(quoteUsage('chat', { providerId: 'chat-1' }).credits, 0);
   assert.equal(quoteUsage('chat', { providerId: 'chat-2' }).credits, 0);
   assert.equal(quoteUsage('chat', { providerId: 'chat-1' }).requiresActivation, false);
@@ -203,7 +199,7 @@ test('all paid video models use the unified authoritative reservation RPC', asyn
       calls.push({ url, body: JSON.parse(options.body) });
       return jsonResponse({ ok: true, reason: 'reserved', credits: calls.at(-1).body.p_expected_credits });
     };
-    for (const providerId of ['video-2', 'video-3', 'video-4', 'video-5', 'video-10', 'video-12']) {
+    for (const providerId of ['video-1', 'video-2', 'video-3']) {
       await reserveUsage(
         '00000000-0000-4000-8000-000000000021',
         'video',
@@ -212,7 +208,7 @@ test('all paid video models use the unified authoritative reservation RPC', asyn
         fetchMock
       );
     }
-    assert.equal(calls.length, 6);
+    assert.equal(calls.length, 3);
     assert.ok(calls.every((call) => /\/rpc\/reserve_ai_video_credits$/.test(call.url)));
     assert.ok(calls.every((call) => call.body.p_kind === 'video'));
   });
@@ -230,7 +226,7 @@ test('reserve exposes insufficient-credit denials', async () => {
 });
 
 test('retail formula applies the safety buffer and current segmented gross margins, with one PTC treated as one USD', () => {
-  assert.equal(CREDIT_PRICING_VERSION, '202609020001');
+  assert.equal(CREDIT_PRICING_VERSION, '202609040001');
   assert.equal(APP_CREDITS_PER_CNY, 1000 / 70);
   assert.ok(Math.abs(RETAIL_MARKUP_PERCENT - (100 / 9)) < 1e-12);
   assert.equal(RETAIL_MULTIPLIER, 10 / 9);
@@ -790,6 +786,17 @@ test('authoritative pricing migration covers every image and video route', () =>
   assert.match(migration, /settle_ai_video_download[\s\S]*?quote_ai_video_retail_credits/i);
 });
 
+test('retired video migration blocks new reservations but preserves historical pricing', () => {
+  const migration = fs.readFileSync(
+    new URL('../../supabase/migrations/202609040002_retire_legacy_video_models.sql', import.meta.url),
+    'utf8'
+  );
+  assert.match(migration, /normalized_provider not in \('video-1', 'video-2', 'video-3'\)/i);
+  assert.match(migration, /quote_ai_video_retail_credits/i);
+  assert.doesNotMatch(migration, /create or replace function public\.quote_ai_video_retail_credits/i);
+  assert.match(migration, /grant execute on function public\.reserve_ai_video_credits[\s\S]*?to service_role/i);
+});
+
 test('final point-denomination migration matches the deployed redemption-code schema', () => {
   const migration = fs.readFileSync(
     new URL('../../supabase/migrations/202608220003_points70_margin25_pricing.sql', import.meta.url),
@@ -916,6 +923,31 @@ test('redemption hashes the submitted code and account reads remain server-only'
       return jsonResponse({ balance: 100, reserved: 0, availableCredits: 100, overseasUnlocked: true });
     });
     assert.equal(account.overseasUnlocked, true);
+  });
+});
+
+test('account and usage reads fail closed on a missing balance but preserve an explicit zero', async () => {
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
+    await assert.rejects(
+      () => getUsageAccount('u', async () => jsonResponse({ reserved: 0 })),
+      (error) => error && error.code === 'credit-service-failed'
+    );
+    const zero = await getUsageAccount('u', async () => jsonResponse({ balance: 0, reserved: 0 }));
+    assert.equal(zero.balance, 0);
+    assert.equal(zero.availableCredits, 0);
+
+    await assert.rejects(
+      () => getUsageSummary('u', '7d', async () => jsonResponse({
+        range: '7d',
+        period: { from: '2026-08-01', to: '2026-08-07', days: 7 },
+        account: { reserved: 0 },
+        totals: {},
+        byType: [],
+        daily: [],
+        byModel: []
+      })),
+      (error) => error && error.code === 'credit-service-failed'
+    );
   });
 });
 

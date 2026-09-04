@@ -73,7 +73,10 @@ function appendFileThumbnail(container, file, alt = '') {
   if (isModel) {
     const fallback = document.createElement('span');
     fallback.className = 'file-thumbnail-fallback';
-    fallback.textContent = fileIconLabel(file.ext);
+    fallback.textContent = '3D';
+    const badge = document.createElement('span');
+    badge.className = 'file-thumbnail-model-badge';
+    badge.textContent = '3D';
     image.hidden = true;
     container.classList.add('is-model-fallback');
 
@@ -100,7 +103,8 @@ function appendFileThumbnail(container, file, alt = '') {
       image.hidden = true;
       requestModelPreview();
     });
-    container.append(fallback, image);
+    container.classList.add('is-model-thumbnail');
+    container.append(fallback, image, badge);
 
     const initialSource = String(file.modelPreviewUrl || file.previewUrl || '').trim();
     if (initialSource) image.src = initialSource;
@@ -2081,6 +2085,7 @@ async function renderAccountSummary(config) {
   }
   if (!accountUserId || previousAccountUserId !== activeAccountAvatarUserId) {
     renderAccountAvatars(fallbackInitial, null);
+    renderAccountCreditUnavailable();
   }
   let membership = null;
   let avatarDataUrl = null;
@@ -2098,22 +2103,22 @@ async function renderAccountSummary(config) {
     : t('Messs user', 'Messs 用户');
   const displayName = accountProfileDisplayName || accountProfileFallbackName;
   const plan = membership && membership.plan && membership.plan.name || t('Free', '免费');
-  const balance = membership && Number.isFinite(Number(membership.credits && membership.credits.balance))
-    ? Number(membership.credits.balance)
-    : 0;
+  const creditValues = membershipCreditValues(membership, {
+    requireAuthoritative: authenticated,
+    userId: accountUserId
+  });
   const initial = (displayName.trim()[0] || 'M').toUpperCase();
   if (avatarLoadGeneration === accountAvatarLoadGeneration) {
     renderAccountAvatars(initial, avatarDataUrl);
   }
-  const values = {
-    'account-credit-count': balance.toLocaleString(appLocale()),
-    'account-plan-badge': plan
-  };
-  Object.entries(values).forEach(([id, value]) => {
-    const element = document.getElementById(id);
-    if (element) element.textContent = value;
-  });
-  renderAccountFooterCredits(membership);
+  const creditCount = document.getElementById('account-credit-count');
+  const planBadge = document.getElementById('account-plan-badge');
+  if (creditCount) creditCount.textContent = creditValues
+    ? creditValues.balance.toLocaleString(appLocale())
+    : '...';
+  if (planBadge) planBadge.textContent = plan;
+  if (creditValues) renderAccountFooterCredits(membership);
+  else renderAccountCreditUnavailable();
   renderAccountProfileText();
   const google = document.getElementById('account-google-sign-in');
   const signOut = document.getElementById('account-sign-out');
@@ -2122,31 +2127,61 @@ async function renderAccountSummary(config) {
   if (signOut) signOut.hidden = !authenticated;
 }
 
-function renderAccountFooterCredits(membership) {
-  const credits = membership && membership.credits || {};
-  const balance = Number.isFinite(Number(credits.balance)) ? Number(credits.balance) : 0;
-  const reserved = Number.isFinite(Number(credits.reserved)) ? Number(credits.reserved) : 0;
-  const available = Math.max(0, balance - reserved);
+function membershipCreditValues(membership, options = {}) {
+  const credits = membership && membership.credits;
+  const account = membership && membership.account;
+  const balance = Number(credits && credits.balance);
+  const reserved = Number(credits && credits.reserved);
+  if (!Number.isFinite(balance) || balance < 0 || !Number.isFinite(reserved) || reserved < 0) return null;
+  if (options.userId && String(account && account.id || '') !== String(options.userId)) return null;
+  if (options.requireAuthoritative && (account && account.status !== 'authenticated' || credits.isAuthoritative !== true)) return null;
+  return {
+    balance,
+    reserved: Math.min(balance, reserved),
+    available: Math.max(0, balance - reserved)
+  };
+}
+
+function renderAccountCreditUnavailable() {
+  const unavailable = t('Unavailable', '暂不可用', '사용 불가');
+  const creditCount = document.getElementById('account-credit-count');
+  if (creditCount) creditCount.textContent = '...';
   const footerCredits = document.getElementById('account-footer-credits');
   if (!footerCredits) return;
+  const value = footerCredits.querySelector('b');
+  const unit = footerCredits.querySelector('small');
+  if (value) value.textContent = '...';
+  if (unit) unit.textContent = unavailable;
+  footerCredits.title = unavailable;
+  footerCredits.setAttribute('aria-label', unavailable);
+}
+
+function renderAccountFooterCredits(membership) {
+  const values = membershipCreditValues(membership);
+  if (!values) return false;
+  const footerCredits = document.getElementById('account-footer-credits');
+  if (!footerCredits) return false;
   const label = t('Available points', '可用积分', '사용 가능 포인트');
   const unit = t(' points', ' 积分', ' 포인트');
-  const value = available.toLocaleString(appLocale());
+  const value = values.available.toLocaleString(appLocale());
   footerCredits.querySelector('b').textContent = value;
   footerCredits.querySelector('small').textContent = unit;
   footerCredits.title = `${label}: ${value}`;
   footerCredits.setAttribute('aria-label', `${label}: ${value}`);
+  return true;
 }
 
 function renderMembershipBalance(membership) {
   if (!membership) return;
   const plan = membership.plan && membership.plan.name || t('Free', '免费');
-  const balance = Number.isFinite(Number(membership.credits && membership.credits.balance))
-    ? Number(membership.credits.balance)
-    : 0;
+  const creditValues = membershipCreditValues(membership, {
+    requireAuthoritative: Boolean(activeAccountAvatarUserId),
+    userId: activeAccountAvatarUserId || ''
+  });
+  if (!creditValues) return;
   const creditCount = document.getElementById('account-credit-count');
   const planBadge = document.getElementById('account-plan-badge');
-  if (creditCount) creditCount.textContent = balance.toLocaleString(appLocale());
+  if (creditCount) creditCount.textContent = creditValues.balance.toLocaleString(appLocale());
   if (planBadge) planBadge.textContent = plan;
   renderAccountFooterCredits(membership);
 }

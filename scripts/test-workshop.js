@@ -13,6 +13,7 @@ const main = read('main.js');
 const css = read('src', 'styles', 'main.css');
 const migration = read('supabase', 'migrations', '202608220001_workshop_posts.sql');
 const followupMigration = read('supabase', 'migrations', '202608220002_workshop_prompt_and_delete.sql');
+const deleteRpcMigration = read('supabase', 'migrations', '202609040001_workshop_delete_rpc.sql');
 
 assert.match(html, /id="section-workshop" class="app-section workshop-section"/);
 ['workshop-grid', 'workshop-publish-overlay', 'workshop-detail-overlay', 'workshop-select-from-canvas', 'workshop-detail-prompt', 'workshop-copy-title', 'workshop-copy-description', 'workshop-copy-prompt', 'workshop-detail-delete', 'workshop-canvas-target-overlay', 'workshop-canvas-target-list', 'workshop-canvas-target-confirm'].forEach((id) => {
@@ -39,13 +40,20 @@ assert.match(workshop, /canvas\.textContent = workshopText\('Open on canvas', '�
 assert.match(workshop, /copyWorkshopDetailText[\s\S]*?navigator\.clipboard\.writeText/);
 assert.doesNotMatch(html, /id="workshop-detail-reference"/);
 assert.match(workshop, /deleteApi \? await deleteApi\(post\.id\)/);
+assert.match(workshop, /WorkshopState\.deletingPostId[\s\S]*?deleteButton\.disabled = true[\s\S]*?deleteButton\.disabled = false/);
+assert.match(workshop, /reason === 'auth-required'[\s\S]*?reason === 'not-owner'[\s\S]*?作品删除失败/);
 assert.match(workshop, /textContent/);
 assert.match(main, /workshop_increment_click/);
 assert.match(main, /async function deleteWorkshopPost\(postId\)/);
 assert.match(main, /async function importWorkshopPostMedia\(postId, folderId, canvasId\)/);
 assert.match(main, /storage\/v1\/object\/public/);
 assert.match(main, /validateButlerVideoBuffer\(buffer, mimeType\)/);
-assert.match(main, /String\(post\.owner_id \|\| ''\) !== String\(ownerId\)/);
+assert.match(main, /rpc\/workshop_delete_post/);
+assert.match(main, /owner_id', `eq\.\$\{ownerId\}`/);
+assert.match(main, /store\.removeFileById/); // local library deletion remains a separate, explicit action.
+const workshopDeleteSource = main.slice(main.indexOf('async function deleteWorkshopPost(postId)'), main.indexOf('async function sanitizeImageForAi'));
+assert.doesNotMatch(workshopDeleteSource, /store\.removeFileById|unlinkSync\(post\.media_path/,
+  'Deleting a Workshop work must never delete the original local library file.');
 assert.match(main, /method: 'DELETE'/);
 assert.match(css, /\.workshop-grid\s*\{/);
 assert.match(css, /\.workshop-overlay\s*\{/);
@@ -62,5 +70,11 @@ assert.match(migration, /Users can delete their own Workshop posts/);
 assert.match(followupMigration, /add column if not exists prompt/);
 assert.match(followupMigration, /owner_id = auth\.uid\(\)/);
 assert.match(followupMigration, /storage\.foldername\(name\)\)\[1\] = auth\.uid\(\)::text/);
+assert.match(main, /rpc\/workshop_delete_post/);
+assert.match(main, /owner_id', `eq\.\$\{ownerId\}`/);
+assert.match(main, /Prefer: 'return=representation'/);
+assert.match(deleteRpcMigration, /create or replace function public\.workshop_delete_post\(p_post_id uuid\)/);
+assert.match(deleteRpcMigration, /where id = p_post_id and owner_id = current_user_id/);
+assert.match(deleteRpcMigration, /grant execute on function public\.workshop_delete_post\(uuid\) to authenticated/);
 
 process.stdout.write('Workshop checks passed.\n');

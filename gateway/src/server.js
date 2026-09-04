@@ -104,6 +104,7 @@ import {
 
 const port = Math.max(1, Number(process.env.PORT) || 3000);
 const maxBodyBytes = 70 * 1024 * 1024;
+const PUBLIC_VIDEO_PROVIDER_IDS = new Set(['video-1', 'video-2', 'video-3']);
 const rateBuckets = new Map();
 const MAX_RATE_BUCKETS = Math.max(1_000, Math.min(100_000, Number(process.env.GATEWAY_RATE_BUCKET_LIMIT) || 20_000));
 const runIdempotentOperation = createIdempotentOperationRunner();
@@ -424,6 +425,9 @@ function rateAllowed(userId, ip, bucketName = 'default', maximum = null) {
 function validateBody(body, kind) {
   const prompt = String(body.prompt || '').trim();
   const providerId = String(body.providerId || '').trim().toLowerCase().slice(0, 64);
+  if (kind === 'video' && !PUBLIC_VIDEO_PROVIDER_IDS.has(providerId)) {
+    throw invalidOption('provider-not-allowed', 'The selected video model is no longer available.');
+  }
   const capabilities = providerCapabilities(kind, providerId) || {};
   const isAtlasVideo = kind === 'video'
     && (String(capabilities.atlasKind || '').length > 0 || capabilities.atlasRouted === true);
@@ -2309,7 +2313,10 @@ async function handle(request, response) {
     const kind = String(raw && raw.kind || '').trim().toLowerCase() === 'video' ? 'video' : 'image';
     const providerId = String(
       raw && (raw.providerId || (kind === 'video' ? raw.videoProviderId : raw.imageProviderId)) || ''
-    ).trim();
+    ).trim().toLowerCase();
+    if (kind === 'video' && !PUBLIC_VIDEO_PROVIDER_IDS.has(providerId)) {
+      throw invalidOption('provider-not-allowed', 'The selected video model is no longer available.');
+    }
     const count = kind === 'image'
       ? Math.max(1, Math.min(4, Math.round(Number(raw && raw.count) || 1)))
       : 1;

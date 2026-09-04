@@ -105,13 +105,17 @@ assert.deepEqual(
   [
     'MiniMax H3',
     'Seedance 2.0',
-    'Seedance 2.5',
-    'Kling V3',
-    'Kling O3'
+    'Seedance 2.5'
   ]
 );
 const seedance20 = media.videoProviders.find((provider) => provider.id === 'video-2');
+assert.deepEqual(seedance20.capabilities.upstreamRoutes['first-frame'], [
+  'atlas-video-seedance20-i2v', 'aireiter-video-seedance20', 'video-2'
+]);
 const seedance25 = media.videoProviders.find((provider) => provider.id === 'video-3');
+assert.deepEqual(seedance25.capabilities.upstreamRoutes['first-frame'], [
+  'atlas-video-seedance25-i2v', 'aireiter-video-seedance25', 'video-3'
+]);
 assert.equal(seedance20.protocol, 'seedance-video-v3');
 assert.equal(seedance25.protocol, 'seedance-video-v3');
 assert.deepEqual(seedance20.capabilities.resolutions, ['480P', '720P', '720P-SR', '1080P', '1080P-SR', '1440P-SR', '4K']);
@@ -148,8 +152,10 @@ assert.deepEqual(
 assert.equal(require('../lib/provider-catalog').catalogProvider('video-2').keyEnv, 'AI302_KEY');
 assert.equal(require('../lib/provider-catalog').catalogProvider('video-3').keyEnv, 'AI302_KEY');
 assert.match(require('../lib/provider-catalog').catalogProvider('video-10').endpoint, /kling-v3\.0-std\/image-to-video$/);
+assert.equal(require('../lib/provider-catalog').catalogProvider('video-10').hidden, true);
 assert.match(require('../lib/provider-catalog').catalogProvider('video-11').endpoint, /kling-v3\.0-pro\/image-to-video$/);
 assert.match(require('../lib/provider-catalog').catalogProvider('video-12').endpoint, /kling-video-o3-std\/image-to-video$/);
+assert.equal(require('../lib/provider-catalog').catalogProvider('video-12').hidden, true);
 assert.match(require('../lib/provider-catalog').catalogProvider('video-13').endpoint, /kling-video-o3-pro\/image-to-video$/);
 assert.deepEqual(
   require('../lib/provider-catalog').catalogProvider('video-12').capabilities.durations,
@@ -243,7 +249,7 @@ assert.equal(JSON.stringify(outdated).includes('QuickRouter'), false);
 assert.equal(assertGatewayProvider(outdated, 'image', 'image-1').name, 'Nano Banana Pro');
 assert.throws(
   () => assertGatewayProvider(outdated, 'image', 'image-6'),
-  (error) => error && error.code === 'provider-not-configured'
+  (error) => error && error.code === 'gateway-catalog-outdated'
 );
 
 const current = normalizeGatewayCatalog({

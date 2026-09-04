@@ -563,20 +563,7 @@ function buildCanvasMosaic(canvas) {
 
 function filteredCanvases() {
   const query = CanvasWorkspace.libraryQuery.trim().toLowerCase();
-  const now = Date.now();
-  const projectsById = new Map(AppState.canvasProjects.map((project) => [project.id, project]));
   return AppState.canvases
-    .filter((canvas) => {
-      const project = projectsById.get(canvas.projectId);
-      return project && canvasProjectScope(project) === normalizeCanvasProjectScope(CanvasWorkspace.libraryScope);
-    })
-    .filter((canvas) => !CanvasWorkspace.libraryProjectId || canvas.projectId === CanvasWorkspace.libraryProjectId)
-    .filter((canvas) => {
-    if (CanvasWorkspace.libraryFilter !== 'recent') return true;
-      if (canvas.pinned === true) return true;
-      const updated = new Date(canvas.lastOpenedAt || canvas.updatedAt || canvas.createdAt || 0).getTime();
-      return now - updated <= 1000 * 60 * 60 * 24 * 30;
-    })
     .filter((canvas) => !query || canvas.name.toLowerCase().includes(query))
     .sort((a, b) => Number(b.pinned === true) - Number(a.pinned === true)
       || new Date(b.lastOpenedAt || b.updatedAt || b.createdAt || 0) - new Date(a.lastOpenedAt || a.updatedAt || a.createdAt || 0));
@@ -651,9 +638,6 @@ function buildCanvasLibraryCreateCard() {
 function renderCanvasLibrary() {
   const grid = document.getElementById('canvas-library-grid');
   if (!grid) return;
-  document.querySelectorAll('[data-canvas-filter]').forEach((entry) => {
-    entry.classList.toggle('is-active', !CanvasWorkspace.libraryProjectId && entry.dataset.canvasFilter === CanvasWorkspace.libraryFilter);
-  });
   const canvases = filteredCanvases();
   grid.innerHTML = '';
   if (!CanvasWorkspace.libraryQuery.trim()) grid.appendChild(buildCanvasLibraryCreateCard());
@@ -787,12 +771,9 @@ function renderCanvasLibrary() {
   if (empty) {
     empty.hidden = canvases.length > 0 || Boolean(CanvasWorkspace.libraryQuery.trim());
     if (!empty.hidden) {
-      empty.textContent = canvasProjectsForScope().length
-        ? t('No canvases in this project type yet.', '这个项目类型里还没有画布。', '이 프로젝트 유형에는 아직 캔버스가 없습니다.')
-        : t('No projects here yet. Create a project to get started.', '这里还没有项目。创建一个项目即可开始。', '아직 프로젝트가 없습니다. 프로젝트를 만들어 시작하세요.');
+      empty.textContent = t('No canvases found', '没有找到画布');
     }
   }
-  renderCanvasLibraryProjects();
 }
 
 function renderCanvasWorkspaceControls() {
@@ -808,15 +789,14 @@ function renderCanvasWorkspaceControls() {
 
 function syncCanvasLibraryScopePicker() {
   const picker = document.getElementById('canvas-scope-picker');
-  const scope = normalizeCanvasProjectScope(CanvasWorkspace.libraryScope);
   if (picker) {
-    picker.value = scope;
+    picker.value = normalizeCanvasProjectScope(CanvasWorkspace.libraryScope);
     picker.setAttribute('aria-label', t('Project type', '项目类型', '프로젝트 유형'));
   }
   const heading = document.getElementById('canvas-library-heading');
   if (heading) heading.textContent = t('All Canvases', '全部画布', '모든 캔버스');
   const subtitle = document.querySelector('.canvas-library-topline p');
-  if (subtitle) subtitle.textContent = canvasLibraryScopeDescription(scope);
+  if (subtitle) subtitle.textContent = t('Browse and manage your canvases', '浏览和管理你的画布');
 }
 
 function selectCanvasLibraryScope(scope, { render = true } = {}) {
@@ -2252,25 +2232,9 @@ function refreshCanvasWorkspaceLanguage() {
     const element = document.querySelector(selector);
     if (element) element.textContent = t(en, zh);
   };
-  setText('#canvas-new span', 'New canvas', '新建画布');
   setText('#canvas-import span', 'Import .Messs', '导入 .Messs');
   setText('#canvas-project-new span', 'New folder', '新建文件夹');
-  setText('[data-canvas-filter="all"]', 'All canvases', '全部画布');
-  setText('[data-canvas-filter="recent"]', 'Recent', '最近使用');
-  setText('.canvas-library-project-label', 'Projects', '项目');
   setText('.canvas-library-topline h2', 'All Canvases', '全部画布');
-  const scopePicker = document.getElementById('canvas-scope-picker');
-  if (scopePicker) {
-    scopePicker.querySelector('option[value="personal"]').textContent = t('Independent projects', '独立项目', '독립 프로젝트');
-    scopePicker.querySelector('option[value="team"]').textContent = t('Team projects', '团队项目', '팀 프로젝트');
-  }
-  const scope = normalizeCanvasProjectScope(CanvasWorkspace.libraryScope);
-  const scopeSubtitle = document.querySelector('.canvas-library-topline p');
-  if (scopeSubtitle) scopeSubtitle.textContent = canvasLibraryScopeDescription(scope);
-  if (scopePicker) {
-    scopePicker.value = scope;
-    scopePicker.setAttribute('aria-label', t('Project type', '项目类型', '프로젝트 유형'));
-  }
   setText('#canvas-library-empty', 'No canvases found', '没有找到画布');
   const search = document.getElementById('canvas-library-search');
   if (search) search.placeholder = t('Search canvases...', '搜索画布...');
@@ -2339,7 +2303,6 @@ async function initCanvasWorkspace(initial) {
   const activeProject = AppState.canvasProjects.find((project) => project.id === (lastOpenedCanvas || AppState.canvases[0]).projectId);
   CanvasWorkspace.libraryScope = canvasProjectScope(activeProject);
 
-  document.getElementById('canvas-new').addEventListener('click', promptNewCanvas);
   document.getElementById('canvas-import').addEventListener('click', promptImportCanvas);
   document.getElementById('canvas-project-new').addEventListener('click', promptNewProject);
   document.getElementById('canvas-library-back').addEventListener('click', showCanvasLibrary);
@@ -2359,46 +2322,6 @@ async function initCanvasWorkspace(initial) {
     CanvasWorkspace.libraryQuery = event.target.value;
     renderCanvasLibrary();
   });
-  document.getElementById('canvas-scope-picker').addEventListener('change', (event) => {
-    selectCanvasLibraryScope(event.target.value);
-  });
-  document.querySelector('.canvas-library-nav').addEventListener('click', (event) => {
-    const button = event.target.closest('[data-canvas-filter]');
-    if (!button) return;
-    CanvasWorkspace.libraryFilter = button.dataset.canvasFilter;
-    CanvasWorkspace.libraryProjectId = null;
-    document.querySelectorAll('[data-canvas-filter]').forEach((entry) => {
-      entry.classList.toggle('is-active', entry === button);
-    });
-    renderCanvasLibrary();
-  });
-  document.getElementById('canvas-library-projects').addEventListener('click', (event) => {
-    const button = event.target.closest('[data-project-id]');
-    if (!button) return;
-    CanvasWorkspace.libraryProjectId = CanvasWorkspace.libraryProjectId === button.dataset.projectId
-      ? null
-      : button.dataset.projectId;
-    CanvasWorkspace.libraryFilter = 'all';
-    document.querySelectorAll('[data-canvas-filter]').forEach((entry) => {
-      entry.classList.toggle('is-active', entry.dataset.canvasFilter === 'all' && !CanvasWorkspace.libraryProjectId);
-    });
-    renderCanvasLibrary();
-  });
-  document.getElementById('sidebar-project-list').addEventListener('click', (event) => {
-    const button = event.target.closest('[data-project-id]');
-    if (!button) return;
-    CanvasWorkspace.libraryProjectId = CanvasWorkspace.libraryProjectId === button.dataset.projectId
-      ? null
-      : button.dataset.projectId;
-    CanvasWorkspace.libraryFilter = 'all';
-    renderCanvasLibrary();
-  });
-  document.getElementById('sidebar-project-scope').addEventListener('click', (event) => {
-    const button = event.target.closest('[data-sidebar-project-scope]');
-    if (!button) return;
-    selectCanvasLibraryScope(button.dataset.sidebarProjectScope);
-  });
-  document.getElementById('sidebar-project-new').addEventListener('click', promptNewProject);
   document.addEventListener('click', (event) => {
     if (!event.target.closest('.canvas-library-card-menu, .canvas-library-card-menu-trigger')) {
       closeCanvasCardMenus();

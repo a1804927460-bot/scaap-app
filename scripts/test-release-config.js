@@ -92,12 +92,12 @@ assert.deepEqual(
 assert.deepEqual(
   catalog.providers.filter((provider) => provider.kind === 'video' && provider.hidden !== true).map((provider) => provider.name),
   [
-    'MiniMax H3', 'Seedance 2.0', 'Seedance 2.5', 'Kling V3', 'Kling O3'
+    'MiniMax H3', 'Seedance 2.0', 'Seedance 2.5'
   ]
 );
 assert.deepEqual(
   catalog.providers.filter((provider) => provider.hidden === true).map((provider) => provider.id),
-  ['atlas-image-gpt2', 'atlas-video-seedance20-i2v', 'atlas-video-seedance20-ref', 'atlas-video-seedance25-i2v', 'atlas-video-seedance25-ref', 'legacy-image-2', 'image-3', 'image-4', 'image-5', 'legacy-image-gpt2', 'image-7', 'image-8', 'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16', 'atlas-video-minimax-h3-i2v', 'atlas-video-minimax-h3-ref', 'legacy-video-minimax-h3', 'video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9', 'video-11', 'video-13', 'aireiter-image-nano-pro', 'aireiter-image-gpt2', 'aireiter-image-midjourney81', 'aireiter-video-minimax-h3', 'aireiter-video-seedance20', 'aireiter-video-seedance25', 'aireiter-video-kling-v3', 'aireiter-video-kling-o3', 'aireiter-chat-gemini', 'aireiter-chat-luna']
+  ['atlas-image-gpt2', 'atlas-video-seedance20-i2v', 'atlas-video-seedance20-ref', 'atlas-video-seedance25-i2v', 'atlas-video-seedance25-ref', 'legacy-image-2', 'image-3', 'image-4', 'image-5', 'legacy-image-gpt2', 'image-7', 'image-8', 'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16', 'atlas-video-minimax-h3-i2v', 'atlas-video-minimax-h3-ref', 'legacy-video-minimax-h3', 'video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9', 'video-10', 'video-11', 'video-12', 'video-13', 'aireiter-image-nano-pro', 'aireiter-image-gpt2', 'aireiter-image-midjourney81', 'aireiter-video-minimax-h3', 'aireiter-video-seedance20', 'aireiter-video-seedance25', 'aireiter-video-kling-v3', 'aireiter-video-kling-o3', 'aireiter-chat-gemini', 'aireiter-chat-luna']
 );
 assert.equal(catalog.providers.find((provider) => provider.name === 'MiniMax H3').requiresActivation, false);
 const miniMaxH3 = catalog.providers.find((provider) => provider.id === 'video-1');

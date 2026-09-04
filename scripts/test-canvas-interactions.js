@@ -123,6 +123,21 @@ assert.match(
 );
 assert.match(
   boardStyles,
+  /\.board-canvas \.board-item-image:not\(\.is-selected\),[\s\S]*?\.board-canvas \.board-item-video:not\(\.is-selected\)[\s\S]*?border:\s*0;[\s\S]*?outline:\s*none;/,
+  'Unselected image and video items must not show a frame before the user clicks them.'
+);
+assert.match(
+  boardStyles,
+  /\.board-canvas \.board-item-image\.is-selected,[\s\S]*?\.board-canvas \.board-item-video\.is-selected[\s\S]*?outline:\s*var\(--board-selection-width, 1px\) solid var\(--selection-outline\);/,
+  'Selected image and video items must retain their selection outline.'
+);
+assert.match(
+  boardStyles,
+  /\.board-item-image\.is-ai-reference\.is-selected\s*\{/,
+  'An AI reference marker must not create a frame on an unselected media item.'
+);
+assert.match(
+  boardStyles,
   /\.ai-assistant-panel\.is-fullscreen \.ai-assistant-home p\s*\{\s*animation:\s*none;/,
   'Decorative assistant copy must not animate continuously.'
 );
@@ -855,23 +870,26 @@ assert.match(
   'Right-clicking a folder must open its management menu without triggering the folder filter.'
 );
 assert.match(indexHtml, /id="canvas-project-new"[\s\S]*?New folder/,
-  'The canvas library must expose a new-folder entry point.');
+  'The canvas library must expose its retained new-folder entry point.');
 assert.match(
   indexHtml,
-  /id="canvas-library-view"[\s\S]*?canvas-library-toolbar[\s\S]*?id="canvas-library-search"[\s\S]*?canvas-library-actions[\s\S]*?id="canvas-new"[\s\S]*?New canvas/,
-  'Canvas library actions must live beside the search field with new canvas as the primary entry point.'
+  /id="canvas-library-view"[\s\S]*?canvas-library-toolbar[\s\S]*?id="canvas-library-search"[\s\S]*?canvas-library-actions[\s\S]*?id="canvas-import"[\s\S]*?Import \.Messs[\s\S]*?id="canvas-project-new"[\s\S]*?New folder/,
+  'Canvas library must retain search, import, and folder controls beside the search field.'
 );
 assert.doesNotMatch(indexHtml, /id="canvas-header-new"/, 'The duplicate top-right new-canvas plus button must be removed.');
-assert.match(indexHtml, /id="canvas-scope-picker"[\s\S]*?value="personal"[\s\S]*?Independent projects[\s\S]*?value="team"[\s\S]*?Team projects/,
-  'The canvas library must expose independent and team project choices.');
+assert.doesNotMatch(indexHtml, /class="sidebar-projects"/, 'The sidebar project management block must be removed.');
+assert.doesNotMatch(indexHtml, /class="canvas-library-nav"/, 'The canvas all/recent filter must be removed.');
+assert.doesNotMatch(indexHtml, /id="canvas-scope-picker"/, 'The canvas project-type picker must be removed.');
+assert.doesNotMatch(indexHtml, /class="canvas-library-project-filter"/, 'The canvas folder filter must be removed.');
+assert.doesNotMatch(indexHtml, /id="canvas-new"/, 'The duplicate top toolbar new-canvas action must be removed.');
 assert.match(
   workspaceSource,
-  /libraryScope:\s*'personal'[\s\S]*?function normalizeCanvasProjectScope[\s\S]*?function filteredCanvases[\s\S]*?const project = projectsById\.get\(canvas\.projectId\)[\s\S]*?canvasProjectScope\(project\)/,
-  'Canvas library filtering must keep independent and team projects separate.');
-assert.match(
+  /function filteredCanvases\(\)[\s\S]*?return AppState\.canvases[\s\S]*?\.filter\(\(canvas\) => !query/,
+  'Canvas library must show all canvases and only apply the visible search query.');
+assert.doesNotMatch(
   workspaceSource,
-  /document\.getElementById\('canvas-scope-picker'\)\.addEventListener\('change'[\s\S]*?selectCanvasLibraryScope\(event\.target\.value\)/,
-  'Changing the project type must update the active canvas-library scope.');
+  /document\.getElementById\('canvas-scope-picker'\)\.addEventListener\('change'/,
+  'Removed canvas project-type controls must not leave stale event bindings.');
 assert.match(
   mainSource,
   /store\.data\.canvasProjects = projects\.map\([\s\S]*?scope:\s*normalizeCanvasProjectScope\(project\.scope\)/,
@@ -971,16 +989,26 @@ assert.match(indexHtml, /js\/vendor\/perfect-freehand\.js[\s\S]*?js\/board-canva
   'The smooth-stroke library must load before canvas interactions.');
 assert.match(boardSource, /window\.PerfectFreehand\.getStroke[\s\S]*?smoothing:\s*0\.72[\s\S]*?streamline:\s*0\.48/,
   'Doodles must use perfect-freehand smoothing instead of raw pixelated line segments.');
-assert.match(boardSource, /function lockDoodleCanvasToViewport[\s\S]*?canvas\.style\.transform = 'none'[\s\S]*?doodleActive[\s\S]*?lockDoodleCanvasToViewport/,
-  'The in-progress doodle surface must stay in viewport coordinates during board zoom.');
-assert.match(boardSource, /canvas\.addEventListener\('wheel', keepDoodleScreenSpace[\s\S]*?canvas\.removeEventListener\('wheel', keepDoodleScreenSpace/,
-  'Doodle wheel handling must preserve canvas zoom while reasserting the screen-space overlay.');
-assert.match(boardSource, /const inkLeft = overlayRect\.left \+ bounds\.x \/ doodlePixelRatio[\s\S]*?const \{ x, y \} = clientToBoardCoords\(inkLeft, inkTop\)[\s\S]*?x: Math\.round\(x\),[\s\S]*?y: Math\.round\(y\),/,
-  'Committed doodles must convert the screen-space ink origin exactly once.');
-assert.match(boardStyles, /\.board-doodle-canvas\.is-screen-space\s*\{[\s\S]*?transform:\s*none\s*!important[\s\S]*?scale:\s*none\s*!important/,
-  'The active doodle surface must not inherit board camera scaling.');
+assert.match(boardSource, /function pos\(e\)[\s\S]*?clientToBoardCoords\(e\.clientX, e\.clientY\)[\s\S]*?return \[point\.x, point\.y, pressure\]/,
+  'Doodle input must be converted into board coordinates before rendering.');
+assert.doesNotMatch(boardSource, /keepDoodleScreenSpace|canvas\.addEventListener\('wheel'/,
+  'Doodle input must not reassert a screen-locked drawing layer during wheel zoom.');
+assert.match(boardSource, /points: stroke\.outline\.map\(\(point\) => \[[\s\S]*?Number\(point\[0\]\) - bounds\.x[\s\S]*?Number\(point\[1\]\) - bounds\.y/,
+  'Committed doodles must persist local world-coordinate paths.');
+assert.match(boardStyles, /\.board-doodle-canvas\s*\{[\s\S]*?touch-action: none/,
+  'The active doodle input surface must remain pointer-capable without a bitmap overlay.');
 assert.match(boardSource, /doodlePixelRatio = 1[\s\S]*?Board\.leaferLayer\.renderDoodle/,
   'Active doodles must use Leafer paths instead of allocating a second high-DPI bitmap.');
+assert.match(boardSource, /const BOARD_FAILED_SOURCE_LIMIT = 256[\s\S]*?function rememberFailedBoardFullImage[\s\S]*?BOARD_FAILED_SOURCE_LIMIT/,
+  'Failed image sources must be bounded to avoid unbounded memory growth.');
+assert.match(boardSource, /function syncMountedImageQuality[\s\S]*?Never downgrade a decoded image[\s\S]*?transitionBoardImageQuality\(element, 'full'\)/,
+  'Selection refreshes must never downgrade an already decoded image.');
+assert.match(boardSource, /const BOARD_LEAFER_FULL_ITEM_LIMIT = 8[\s\S]*?function updateLeaferFullImageWindow[\s\S]*?cachedBoardFullImage/,
+  'Leafer full-resolution textures must use a bounded decoded-image window.');
+assert.match(boardSource, /function beginTextNoteEditing[\s\S]*?note\.isTextEditing = true[\s\S]*?syncBoardLeaferItems\(note\)/,
+  'Native text editing must temporarily hide the Leafer text copy.');
+assert.match(boardSource, /function finishTextNoteEditing[\s\S]*?note\.isTextEditing = false[\s\S]*?syncBoardLeaferItems\(note\)/,
+  'Leafer text must return after native text editing ends.');
 assert.match(boardSource, /e\.key === 'Enter'[\s\S]*?commitActiveTextNote\(\)[\s\S]*?document\.addEventListener\('pointerdown'[\s\S]*?commitActiveTextNote\(\)/,
   'Enter and outside pointer clicks must commit text editing.');
 assert.match(boardSource, /content\.contentEditable = 'false'[\s\S]*?beginTextNoteEditing[\s\S]*?contentEl\.contentEditable = 'true'/,
@@ -1001,8 +1029,8 @@ assert.match(
 );
 assert.match(
   qualitySource,
-  /const quality = fullIds\.has\(id\) \? 'full' : 'thumb';[\s\S]*?transitionBoardImageQuality\(element, quality\)/,
-  'Image quality must be reconciled against the bounded visible full-resolution set so retained textures can be reclaimed.'
+  /const fullIds = new Set\([\s\S]*?if \(!fullIds\.has\(id\) \|\| image\.dataset\.quality === 'full'\) continue;[\s\S]*?transitionBoardImageQuality\(element, 'full'\)/,
+  'Image quality must only promote the bounded visible full-resolution set without click-time downgrades.'
 );
 assert.match(
   boardSource,
@@ -1055,7 +1083,7 @@ assert.doesNotMatch(
 );
 assert.match(
   boardSource,
-  /const BOARD_DOM_ITEM_LIMIT = 96;[\s\S]*?syncBoardLeaferScene\(force\)[\s\S]*?queryLimited\(regions\.mount, BOARD_DOM_ITEM_LIMIT\)/,
+  /const BOARD_DOM_ITEM_LIMIT = 96;[\s\S]*?queryLimited\(regions\.mount, BOARD_DOM_ITEM_LIMIT\)[\s\S]*?syncBoardLeaferScene\(force\)/,
   'The board must keep a bounded DOM interaction layer while Leafer renders the complete scene.'
 );
 assert.match(boardSource, /function syncBoardLeaferScene\(force = false\)[\s\S]*?layer\.sync\([\s\S]*?layer\.setTransform/,
@@ -1143,8 +1171,8 @@ assert.doesNotMatch(
 );
 assert.match(
   boardStyles,
-  /\.board-image-layer \{[\s\S]*?transition:\s*opacity 90ms/,
-  'Thumbnail-to-original replacement must be short enough that the user does not see a soft blend.'
+  /\.board-image-layer \{[\s\S]*?transition:\s*none;/,
+  'Image quality changes must not fade through a soft intermediate frame.'
 );
 assert.match(
   workspaceSource,

@@ -141,20 +141,6 @@
           <input id="search-input" type="text" placeholder="Search files" autocomplete="off" data-i18n-placeholder-en="Search files" data-i18n-placeholder-zh="搜索文件" />
         </div>
 
-        <section class="sidebar-projects" aria-label="Projects">
-          <div class="sidebar-projects-head">
-            <span class="sidebar-projects-label" data-i18n-en="Projects" data-i18n-zh="项目" data-i18n-ko="프로젝트">Projects</span>
-            <button id="sidebar-project-new" class="icon-btn-sm" type="button" title="New project" aria-label="New project">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>
-            </button>
-          </div>
-          <div id="sidebar-project-scope" class="sidebar-project-scope" role="tablist" aria-label="Project type">
-            <button type="button" data-sidebar-project-scope="personal" class="is-active" role="tab" aria-selected="true" data-i18n-en="Independent" data-i18n-zh="独立项目" data-i18n-ko="독립 프로젝트">Independent</button>
-            <button type="button" data-sidebar-project-scope="team" role="tab" aria-selected="false" data-i18n-en="Team" data-i18n-zh="团队项目" data-i18n-ko="팀">Team</button>
-          </div>
-          <div id="sidebar-project-list" class="sidebar-project-list"></div>
-        </section>
-
         <div class="file-list-header">
           <span class="file-list-label" data-i18n-en="Files" data-i18n-zh="文件">Files</span>
           <div class="file-list-header-actions">
@@ -189,7 +175,7 @@
           <button id="account-menu-open" class="account-footer-main" type="button" aria-label="Account and settings">
             <span id="account-footer-avatar" class="account-avatar">M</span>
             <span class="account-footer-copy"><strong id="account-footer-name" data-profile-field="name">Messs user</strong><small id="account-footer-signature" data-profile-field="signature"></small></span>
-            <span id="account-footer-credits" class="account-footer-credits" aria-label="Available points" title="Available points"><b>0</b><small> points</small></span>
+            <span id="account-footer-credits" class="account-footer-credits" aria-label="Points unavailable" title="Points unavailable"><b>...</b><small>Unavailable</small></span>
           </button>
           <button id="settings-btn" class="account-settings-btn" title="Settings" aria-label="Settings">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
@@ -213,7 +199,7 @@
             </span>
           </div>
           <div class="account-plan-card">
-            <div><strong><span id="account-credit-count">0</span><small> credits</small></strong><span id="account-plan-badge">Free</span></div>
+            <div><strong><span id="account-credit-count">...</span><small> credits</small></strong><span id="account-plan-badge">Free</span></div>
             <p id="account-plan-note">No plan · purchased credits only</p>
             <button id="account-plan-open" class="account-plan-button" type="button">View Plans</button>
           </div>
@@ -258,12 +244,6 @@
           <button id="account-google-sign-in" class="account-menu-row account-auth-row" type="button">
             <span class="google-mark">G</span><span><strong>Continue with Google</strong><small>Secure login through Supabase</small></span>
           </button>
-          <button id="account-sign-out" class="account-sign-out" type="button" hidden>Sign Out</button>
-          <nav class="settings-legal-links" aria-label="Legal documents">
-            <button type="button" data-auth-legal="privacy" data-i18n-en="Privacy" data-i18n-zh="隐私协议" data-i18n-ko="개인정보 보호">Privacy</button>
-            <button type="button" data-auth-legal="terms" data-i18n-en="Terms" data-i18n-zh="用户协议" data-i18n-ko="이용 약관">Terms</button>
-            <button type="button" data-auth-legal="content" data-i18n-en="Content rules" data-i18n-zh="内容规范" data-i18n-ko="콘텐츠 규정">Content rules</button>
-          </nav>
         </div>
       </aside>
 
@@ -500,21 +480,6 @@
                   <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
                   <input id="canvas-library-search" type="search" placeholder="Search canvases..." autocomplete="off" />
                 </label>
-                <div class="canvas-library-nav" role="tablist" aria-label="Canvas filters">
-                  <button type="button" class="is-active" data-canvas-filter="all">All canvases</button>
-                  <button type="button" data-canvas-filter="recent">Recent</button>
-                </div>
-                <label class="canvas-scope-picker-wrap canvas-library-toolbar-scope">
-                  <span class="sr-only">Project type</span>
-                  <select id="canvas-scope-picker" class="canvas-scope-picker" aria-label="Project type">
-                    <option value="personal">Independent projects</option>
-                    <option value="team">Team projects</option>
-                  </select>
-                </label>
-                <div class="canvas-library-project-filter">
-                  <span class="canvas-library-project-label">Folders</span>
-                  <div id="canvas-library-projects" class="canvas-library-projects"></div>
-                </div>
                 <div class="canvas-library-actions">
                   <button id="canvas-import" class="canvas-library-action" type="button">
                     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
@@ -523,10 +488,6 @@
                   <button id="canvas-project-new" class="canvas-library-action" type="button">
                     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 10v6M9 13h6"/></svg>
                     <span>New folder</span>
-                  </button>
-                  <button id="canvas-new" class="canvas-library-action is-primary" type="button">
-                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-                    <span>New canvas</span>
                   </button>
                 </div>
               </div>
@@ -813,6 +774,15 @@
               <label><span><strong>Automatic updates</strong><small>Download updates and install after restart</small></span><span class="switch-control" title="Automatic updates"><input id="software-auto-update-toggle" type="checkbox" checked><span></span></span></label>
               <div><span id="software-update-status">Checking update status...</span><button id="software-check-update-btn" class="pill-btn pill-btn-ghost" type="button">Check Now</button></div>
             </div>
+          </section>
+
+          <section class="ai-provider-section settings-account-actions-section">
+            <button id="account-sign-out" class="account-sign-out" type="button" hidden data-i18n-en="Sign Out" data-i18n-zh="退出登录" data-i18n-ko="로그아웃">Sign Out</button>
+            <nav class="settings-legal-links" aria-label="Legal documents">
+              <button type="button" data-auth-legal="privacy" data-i18n-en="Privacy" data-i18n-zh="隐私协议" data-i18n-ko="개인정보 보호">Privacy</button>
+              <button type="button" data-auth-legal="terms" data-i18n-en="Terms" data-i18n-zh="用户协议" data-i18n-ko="이용 약관">Terms</button>
+              <button type="button" data-auth-legal="content" data-i18n-en="Content rules" data-i18n-zh="内容规范" data-i18n-ko="콘텐츠 규정">Content rules</button>
+            </nav>
           </section>
 
           <section class="ai-provider-section cloud-security-section" hidden aria-hidden="true">

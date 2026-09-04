@@ -161,7 +161,7 @@ assert.match(appJs, /initSidebar\(initial\)/, 'Profile settings must be hydrated
 assert.match(indexHtml, /id="account-popover-name"[^>]*data-profile-field="name"/);
 assert.match(indexHtml, /id="account-popover-signature"[^>]*data-profile-field="signature"/);
 assert.match(indexHtml, /id="account-footer-name"[^>]*data-profile-field="name"/);
-assert.match(indexHtml, /id="account-footer-credits"[^>]*class="account-footer-credits"[^>]*>[\s\S]*?<b>0<\/b>[\s\S]*?<small> points<\/small>/);
+assert.match(indexHtml, /id="account-footer-credits"[^>]*class="account-footer-credits"[^>]*>[\s\S]*?<b>\.\.\.<\/b>[\s\S]*?<small>Unavailable<\/small>/);
 assert.match(sidebarJs, /addEventListener\('dblclick',[\s\S]*?beginAccountProfileEdit/);
 assert.match(sidebarJs, /account-footer-copy[\s\S]*?addEventListener\('dblclick'[\s\S]*?account-popover'\)\.hidden = false[\s\S]*?beginAccountProfileEdit/);
 assert.match(sidebarJs, /event\.key === 'Enter'[\s\S]*?finish\(true\)[\s\S]*?event\.key === 'Escape'[\s\S]*?finish\(false\)/);
@@ -170,12 +170,23 @@ assert.match(main, /ipcMain\.handle\('profile:setSignature'/);
 assert.match(preload, /setProfileDisplayName:\s*\(value\)\s*=>\s*ipcRenderer\.invoke\('profile:setDisplayName',\s*value\)/);
 assert.match(preload, /setProfileSignature:\s*\(value\)\s*=>\s*ipcRenderer\.invoke\('profile:setSignature',\s*value\)/);
 assert.doesNotMatch(sidebarJs, /account-footer-meta/, 'Membership refreshes must not overwrite the personal signature.');
-assert.match(sidebarJs, /function renderAccountFooterCredits\(membership\)[\s\S]*?Math\.max\(0, balance - reserved\)/, 'The sidebar must display available rather than reserved points.');
+assert.match(sidebarJs, /function renderAccountFooterCredits\(membership\)[\s\S]*?values\.available\.toLocaleString/, 'The sidebar must display available rather than reserved points.');
 assert.match(sidebarJs, /function renderMembershipBalance\(membership\)[\s\S]*?renderAccountFooterCredits\(membership\)/, 'Point reservations and settlements must refresh the sidebar label.');
 assert.match(mainCss, /\.account-footer-copy\s*\{[^}]*flex:\s*1 1 auto;[^}]*min-width:\s*0;/);
 assert.match(mainCss, /\.sidebar\.is-density-compact \.account-footer-credits small\s*\{\s*display:\s*none;/);
 assert.match(mainCss, /\.sidebar\.is-density-minimal[\s\S]*?\.account-footer-copy\s*\{[\s\S]*?display:\s*block;/, 'The minimum sidebar must keep the account name visible.');
 assert.match(mainCss, /\.sidebar\.is-density-minimal[\s\S]*?\.account-footer-credits\s*\{[\s\S]*?display:\s*inline-flex;/, 'The minimum sidebar must keep available points visible.');
+const settingsPopoverIndex = indexHtml.indexOf('<div id="settings-popover"');
+const settingsPopoverEnd = indexHtml.indexOf('</div>\n      </aside>', settingsPopoverIndex);
+const accountActionsIndex = indexHtml.indexOf('class="ai-provider-section settings-account-actions-section"');
+assert.ok(settingsPopoverIndex >= 0 && settingsPopoverEnd > settingsPopoverIndex && accountActionsIndex > settingsPopoverEnd,
+  'Account sign-out and legal links must live in the full settings screen rather than the shortcut popover.');
+assert.ok(indexHtml.indexOf('software-update-section') < accountActionsIndex,
+  'Account actions must be placed immediately after the software update section.');
+assert.strictEqual((indexHtml.match(/id="account-sign-out"/g) || []).length, 1,
+  'The account sign-out action must remain unique after being moved.');
+assert.match(indexHtml, /settings-account-actions-section[\s\S]*?id="account-sign-out"[\s\S]*?settings-legal-links/);
+assert.match(mainCss, /\.settings-account-actions-section[\s\S]*?\.settings-account-actions-section \.settings-legal-links[\s\S]*?border-top:\s*1px solid var\(--border-hairline\)/);
 assert.doesNotMatch(main, /mainWindow\.once\('ready-to-show',\s*revealWindow\)/);
 assert.doesNotMatch(themeCss, /html\[data-view="start"\]\s*\{[^}]*--bg-base:/);
 assert.match(themeCss, /html\[data-view="start"\]\s+body\s*\{\s*transition:\s*none;/);

@@ -1,5 +1,5 @@
 {
-  "version": 51,
+  "version": 52,
   "providers": [
     {
       "id": "atlas-image-gpt2",
@@ -181,7 +181,7 @@
       "endpoint": "https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent",
       "protocol": "gemini-native",
       "logicalModel": "nano-banana-pro",
-      "fallbackProviderIds": [],
+      "fallbackProviderIds": ["atlas-video-minimax-h3-i2v", "atlas-video-minimax-h3-ref", "legacy-video-minimax-h3"],
       "requiresActivation": false,
       "capabilities": {
         "sizes": ["1K", "2K", "4K"],
@@ -687,9 +687,9 @@
           "outputFormats": ["mp4"]
         },
         "upstreamRoutes": {
-          "first-frame": ["aireiter-video-seedance20", "atlas-video-seedance20-i2v", "video-2"],
-          "first-last-frame": ["aireiter-video-seedance20", "atlas-video-seedance20-i2v", "video-2"],
-          "omni": ["aireiter-video-seedance20", "atlas-video-seedance20-ref", "video-2"]
+          "first-frame": ["atlas-video-seedance20-i2v", "aireiter-video-seedance20", "video-2"],
+          "first-last-frame": ["atlas-video-seedance20-i2v", "aireiter-video-seedance20", "video-2"],
+          "omni": ["atlas-video-seedance20-ref", "aireiter-video-seedance20", "video-2"]
         }
       },
       "keyEnv": "AI302_KEY"
@@ -757,12 +757,12 @@
           "outputFormats": ["mp4"]
         },
         "upstreamRoutes": {
-          "first-frame": ["aireiter-video-seedance25", "atlas-video-seedance25-i2v", "video-3"],
-          "first-last-frame": ["aireiter-video-seedance25", "atlas-video-seedance25-i2v", "video-3"],
-          "omni": ["aireiter-video-seedance25", "atlas-video-seedance25-ref", "video-3"],
-          "video-reference": ["aireiter-video-seedance25", "atlas-video-seedance25-ref", "video-3"],
-          "video-edit": ["aireiter-video-seedance25", "atlas-video-seedance25-ref", "video-3"],
-          "video-extend": ["aireiter-video-seedance25", "atlas-video-seedance25-ref", "video-3"]
+          "first-frame": ["atlas-video-seedance25-i2v", "aireiter-video-seedance25", "video-3"],
+          "first-last-frame": ["atlas-video-seedance25-i2v", "aireiter-video-seedance25", "video-3"],
+          "omni": ["atlas-video-seedance25-ref", "aireiter-video-seedance25", "video-3"],
+          "video-reference": ["atlas-video-seedance25-ref", "aireiter-video-seedance25", "video-3"],
+          "video-edit": ["atlas-video-seedance25-ref", "aireiter-video-seedance25", "video-3"],
+          "video-extend": ["atlas-video-seedance25-ref", "aireiter-video-seedance25", "video-3"]
         }
       },
       "keyEnv": "AI302_KEY"
@@ -903,6 +903,7 @@
       "id": "video-10",
       "kind": "video",
       "name": "Kling V3",
+      "hidden": true,
       "endpoint": "https://api.302.ai/ws/api/v3/kwaivgi/kling-v3.0-std/image-to-video",
       "resultEndpoint": "https://api.302.ai/ws/api/v3/predictions",
       "protocol": "kling-v3-image-to-video",
@@ -956,6 +957,7 @@
       "id": "video-12",
       "kind": "video",
       "name": "Kling O3",
+      "hidden": true,
       "endpoint": "https://api.302.ai/ws/api/v3/kwaivgi/kling-video-o3-std/image-to-video",
       "resultEndpoint": "https://api.302.ai/ws/api/v3/predictions",
       "model": "std",

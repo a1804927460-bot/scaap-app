@@ -127,25 +127,26 @@ test('start rejects a stale server price below the conservative gateway quote', 
     assert.equal(result.credits, 60);
   });
 });
-test('Kling Pro jobs persist the actual tier provider and reserve the Pro price', async () => {
+test('retired video models are rejected before a credit reservation is created', async () => {
   await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test' }, async () => {
-    let call;
-    await startVideoJob({
-      userId: '00000000-0000-4000-8000-000000000115',
-      operationId: '00000000-0000-4000-8000-000000000116',
-      taskToken: 'kling-pro-task-token-1234567890',
-      body: {
-        prompt: 'test', providerId: 'video-10', serviceTier: 'pro',
-        resolution: '1080P', duration: 10, aspectRatio: 'adaptive'
-      },
-      fetchImpl: async (_url, options) => {
-        call = JSON.parse(options.body);
-        return jsonResponse({ ok: true, reason: 'reserved', credits: 484, status: 'starting' });
-      }
-    });
-    assert.equal(call.p_provider_id, 'video-11');
-    assert.equal(call.p_resolution, '1080P');
-    assert.equal(call.p_expected_credits, 484);
+    let calls = 0;
+    await assert.rejects(
+      startVideoJob({
+        userId: '00000000-0000-4000-8000-000000000115',
+        operationId: '00000000-0000-4000-8000-000000000116',
+        taskToken: 'retired-video-task-token-1234567890',
+        body: {
+          prompt: 'test', providerId: 'video-10', serviceTier: 'pro',
+          resolution: '1080P', duration: 10, aspectRatio: 'adaptive'
+        },
+        fetchImpl: async () => {
+          calls += 1;
+          return jsonResponse({ ok: true, reason: 'reserved', credits: 484, status: 'starting' });
+        }
+      }),
+      (error) => error && error.code === 'provider-not-allowed'
+    );
+    assert.equal(calls, 0);
   });
 });
 

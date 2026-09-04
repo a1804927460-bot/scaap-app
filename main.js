@@ -2852,31 +2852,61 @@ async function deleteWorkshopPost(postId) {
   const ownerId = session && session.user && session.user.id;
   if (!ownerId) throw workshopCloudError('auth-required', 'Sign in before deleting a Workshop work.', 401);
 
-  const lookup = workshopPostUrl();
-  lookup.searchParams.set('id', `eq.${id}`);
-  lookup.searchParams.set('limit', '1');
-  const matches = await workshopCloudRequest(`${lookup.pathname}${lookup.search}`, { method: 'GET' });
-  const post = Array.isArray(matches) ? matches[0] : null;
-  if (!post) throw workshopCloudError('not-found', 'The Workshop work was not found.', 404);
-  if (String(post.owner_id || '') !== String(ownerId)) {
-    throw workshopCloudError('not-owner', 'Only the creator can delete this Workshop work.', 403);
+  let post = null;
+  try {
+    // The RPC performs the owner check and deletion in one database
+    // transaction. This remains reliable when the table policy was created by
+    // an older deployment and the client has not refreshed its schema yet.
+    const deleted = await workshopCloudRequest('/rest/v1/rpc/workshop_delete_post', {
+      method: 'POST',
+      contentType: 'application/json',
+      body: JSON.stringify({ p_post_id: id })
+    });
+    post = Array.isArray(deleted) ? deleted[0] || null : deleted;
+  } catch (error) {
+    const rpcUnavailable = Number(error && error.status) === 404 || error && error.code === 'PGRST202';
+    if (!rpcUnavailable) throw error;
   }
 
-  const deletion = workshopPostUrl();
-  deletion.searchParams.set('id', `eq.${id}`);
-  deletion.searchParams.delete('order');
-  deletion.searchParams.delete('limit');
-  await workshopCloudRequest(`${deletion.pathname}${deletion.search}`, {
-    method: 'DELETE',
-    headers: { Prefer: 'return=minimal' }
-  });
-  if (post.media_path) {
+  if (!post) {
+    // Compatibility path for databases that predate the owner-bound delete
+    // RPC. Both requests remain owner-scoped, so a stale client cannot delete
+    // another user's post.
+    const lookup = workshopPostUrl();
+    lookup.searchParams.set('id', `eq.${id}`);
+    lookup.searchParams.set('owner_id', `eq.${ownerId}`);
+    lookup.searchParams.set('limit', '1');
+    const matches = await workshopCloudRequest(`${lookup.pathname}${lookup.search}`, { method: 'GET' });
+    post = Array.isArray(matches) ? matches[0] || null : null;
+    if (!post) throw workshopCloudError('not-owner', 'Only the creator can delete this Workshop work.', 403);
+
+    const deletion = workshopPostUrl();
+    deletion.searchParams.set('id', `eq.${id}`);
+    deletion.searchParams.set('owner_id', `eq.${ownerId}`);
+    deletion.searchParams.delete('order');
+    deletion.searchParams.delete('limit');
+    const deleted = await workshopCloudRequest(`${deletion.pathname}${deletion.search}`, {
+      method: 'DELETE',
+      headers: { Prefer: 'return=representation' }
+    });
+    if (Array.isArray(deleted) && !deleted.length) {
+      throw workshopCloudError('not-owner', 'Only the creator can delete this Workshop work.', 403);
+    }
+  }
+
+  if (post && post.media_path) {
+    const parts = String(post.media_path).split('/');
+    const safeMediaPath = parts.length >= 2
+      && parts[0] === String(ownerId)
+      && parts.every((part) => part && part !== '.' && part !== '..' && !/[\x00-\x1f]/.test(part));
+    if (!safeMediaPath) return { ok: true, postId: id };
     try {
-      await workshopCloudRequest(`/storage/v1/object/${WORKSHOP_MEDIA_BUCKET}/${String(post.media_path).split('/').map((part) => encodeURIComponent(part)).join('/')}`, {
+      await workshopCloudRequest(`/storage/v1/object/${WORKSHOP_MEDIA_BUCKET}/${parts.map((part) => encodeURIComponent(part)).join('/')}`, {
         method: 'DELETE'
       });
     } catch (error) {
-      // The database row is already gone; the object is orphaned but no longer public.
+      // The database row is already gone; the object is no longer discoverable
+      // even if storage cleanup is temporarily unavailable.
     }
   }
   return { ok: true, postId: id };
@@ -4617,8 +4647,24 @@ function applyGatewayAccount(account) {
   }
   const session = supabaseAuth.getPublicSession();
   const previousAccount = gatewayAccountCache;
-  const balance = Math.max(0, Number(account.balance) || 0);
-  const reserved = Math.max(0, Math.min(balance, Number(account.reserved) || 0));
+  const readAccountNumber = (keys, required = false) => {
+    for (const key of keys) {
+      if (!Object.hasOwn(account, key) || account[key] === null || account[key] === undefined || account[key] === '') continue;
+      const value = Number(account[key]);
+      if (Number.isFinite(value) && value >= 0) return value;
+    }
+    if (required) {
+      const error = new Error('The gateway returned an invalid credit balance.');
+      error.code = 'credit-service-failed';
+      throw error;
+    }
+    return undefined;
+  };
+  // A missing balance is a service failure, never a legitimate zero balance.
+  // Validate before replacing the cache so a degraded gateway cannot erase a
+  // previously trusted balance in the desktop UI.
+  const balance = readAccountNumber(['balance', 'credits', 'points', 'creditBalance'], true);
+  const reserved = Math.max(0, Math.min(balance, readAccountNumber(['reserved', 'reservedCredits']) ?? 0));
   gatewayAccountCache = {
     userId: session.user && session.user.id || null,
     balance,
@@ -5133,6 +5179,13 @@ function sanitizeAiErrorText(value) {
 function conciseAiErrorMessage(error, context = {}) {
   const raw = sanitizeAiErrorText(error && error.message);
   const code = String(error && error.code || '').trim().toLowerCase();
+  if (context.gatewayConfigured && (Number(error && error.status) === 404 || code === 'not-found')) {
+    return localizedMessage(
+      'The secure AI gateway does not have this route available yet. Refresh the model list and retry shortly.',
+      '安全 AI 网关暂时没有这个模型或功能，请刷新模型列表后稍后重试。无需填写上游接口地址。',
+      'The secure AI gateway does not have this route available yet. Refresh the model list and retry shortly.'
+    );
+  }
   if (code === 'provider-auth-failed' || /invalid token(?:\s|\(|$)/i.test(raw)) {
     return localizedMessage(
       'The AI service credential has expired. Please try again later or contact the administrator.',
@@ -9619,7 +9672,10 @@ function registerIpcHandlers() {
       return {
         ok: false,
         reason: err && err.code ? err.code : 'generation-failed',
-        message: conciseAiErrorMessage(err, { kind: request.kind }),
+        message: conciseAiErrorMessage(err, {
+          kind: request.kind,
+          gatewayConfigured: Boolean(runtimeConfig && runtimeConfig.gatewayConfigured)
+        }),
         membership: membershipService.getSnapshot()
       };
     }
@@ -9723,7 +9779,11 @@ function registerIpcHandlers() {
       return {
         ok: false,
         reason: err && err.code ? err.code : 'chat-failed',
-        message: conciseAiErrorMessage(err, { kind: 'chat', model: request.chatModel })
+        message: conciseAiErrorMessage(err, {
+          kind: 'chat',
+          model: request.chatModel,
+          gatewayConfigured: Boolean(runtimeConfig && runtimeConfig.gatewayConfigured)
+        })
       };
     }
   });

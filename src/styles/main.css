@@ -522,6 +522,25 @@
   overflow: hidden;
 }
 .file-item-icon img { width: 100%; height: 100%; object-fit: cover; }
+.file-item-icon.is-model-thumbnail { position: relative; }
+.file-item-icon.is-model-fallback .file-thumbnail-model-badge { display: none; }
+.file-thumbnail-model-badge {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  min-width: 17px;
+  height: 14px;
+  padding: 0 3px;
+  border: 1px solid rgba(255, 255, 255, .2);
+  border-radius: 4px;
+  color: #f7f8fb;
+  background: rgba(17, 19, 23, .86);
+  font-size: 8px;
+  font-weight: 760;
+  line-height: 12px;
+  text-align: center;
+  pointer-events: none;
+}
 .file-item-meta { min-width: 0; flex: 1; }
 .file-item-name {
   font-size: 12.5px; font-weight: 500; color: var(--text-primary);
@@ -5130,15 +5149,35 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 }
 .board-canvas[data-board-renderer="leafer"] .board-item-content,
 .board-canvas[data-board-renderer="leafer"] .board-item-name,
-.board-canvas[data-board-renderer="leafer"] .board-partition-title {
+.board-canvas[data-board-renderer="leafer"] .board-partition-title,
+.board-canvas[data-board-renderer="leafer"] .board-moodboard-header,
+.board-canvas[data-board-renderer="leafer"] .board-moodboard-preview,
+.board-canvas[data-board-renderer="leafer"] .board-moodboard > footer {
   color: transparent;
   background: transparent;
   border-color: transparent;
   text-shadow: none;
 }
 .board-canvas[data-board-renderer="leafer"] .board-item-content > *,
-.board-canvas[data-board-renderer="leafer"] .board-item-name {
+.board-canvas[data-board-renderer="leafer"] .board-item-name,
+.board-canvas[data-board-renderer="leafer"] .board-moodboard-header > *,
+.board-canvas[data-board-renderer="leafer"] .board-moodboard-preview,
+.board-canvas[data-board-renderer="leafer"] .board-moodboard > footer > * {
   opacity: 0;
+}
+.board-canvas[data-board-renderer="leafer"] .board-moodboard-header,
+.board-canvas[data-board-renderer="leafer"] .board-moodboard-preview,
+.board-canvas[data-board-renderer="leafer"] .board-moodboard > footer {
+  pointer-events: none;
+}
+.board-canvas[data-board-renderer="leafer"] .board-moodboard .board-moodboard-open {
+  pointer-events: auto;
+}
+.board-canvas[data-board-renderer="leafer"] .board-text-note-content {
+  opacity: 0;
+}
+.board-canvas[data-board-renderer="leafer"] .board-text-note.is-text-editing .board-text-note-content {
+  opacity: 1;
 }
 .board-canvas[data-board-renderer="leafer"] .board-item.is-selected {
   border-color: transparent;
@@ -5285,7 +5324,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   opacity: 0;
   image-rendering: auto;
   filter: none;
-  transition: opacity 90ms cubic-bezier(.22, 1, .36, 1);
+  transition: none;
 }
 .board-item-video {
   min-width: 0;
@@ -6899,7 +6938,20 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   /* Keep the selected action capsule above neighboring canvas items. */
   z-index: 100000 !important;
 }
-.board-item-image.is-ai-reference {
+.board-item-image.is-ai-reference.is-selected {
+  outline: var(--board-selection-width, 1px) solid var(--selection-outline);
+  outline-offset: 0;
+  box-shadow: none;
+}
+.board-canvas .board-item-image:not(.is-selected),
+.board-canvas .board-item-video:not(.is-selected) {
+  border: 0;
+  outline: none;
+  box-shadow: none;
+}
+.board-canvas .board-item-image.is-selected,
+.board-canvas .board-item-video.is-selected {
+  border: 0;
   outline: var(--board-selection-width, 1px) solid var(--selection-outline);
   outline-offset: 0;
   box-shadow: none;
@@ -7000,18 +7052,6 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   touch-action: none;
   background: transparent;
 }
-/* In-progress strokes are stored in viewport CSS pixels. They intentionally
-   stay screen-locked while the board camera underneath is zoomed or panned. */
-.board-doodle-canvas.is-screen-space {
-  transform: none !important;
-  transform-origin: 0 0 !important;
-  translate: none !important;
-  rotate: none !important;
-  scale: none !important;
-  transition: none !important;
-  will-change: auto !important;
-}
-
 /* The "T" tool armed-but-not-yet-placed state: empty canvas shows a text
    cursor so it's clear where clicking will create a text box. */
 .board-viewport.is-text-armed { cursor: var(--cursor-text); }
@@ -9933,6 +9973,19 @@ body { font-size: var(--font-ui-md); }
 .software-update-settings > label { min-height: 34px; }
 .software-update-settings > div { min-height: 34px; }
 .software-update-settings .pill-btn { min-height: 32px; padding-inline: 12px; }
+.settings-account-actions-section { display: grid; gap: 10px; }
+.settings-account-actions-section .account-sign-out {
+  margin: 0;
+  padding: 2px 0 0;
+  border-top: 0;
+}
+.settings-account-actions-section .settings-legal-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-hairline);
+}
 .activation-settings-section {
   grid-template-columns: 1fr;
   align-items: stretch;
@@ -11060,7 +11113,7 @@ body { font-size: var(--font-ui-md); }
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border-hairline));
   border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-surface-2) 82%, var(--accent-soft) 18%);
+  background: var(--bg-surface-2);
   box-shadow: 0 10px 26px rgba(7, 10, 16, .12), inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
   cursor: var(--cursor-grab);
 }
@@ -11077,7 +11130,7 @@ body { font-size: var(--font-ui-md); }
   min-width: 0;
   padding: 0 10px;
   border-bottom: 1px solid var(--border-hairline);
-  background: color-mix(in srgb, var(--bg-elevated) 78%, transparent);
+  background: var(--bg-elevated);
 }
 .board-moodboard-icon {
   display: grid;
@@ -11114,10 +11167,10 @@ body { font-size: var(--font-ui-md); }
   overflow: hidden;
   color: var(--text-secondary);
   font-size: 12.5px;
-  line-height: 1.72;
+  line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
-  mask-image: linear-gradient(to bottom, #000 72%, transparent 100%);
+  overflow-wrap: anywhere;
 }
 .board-moodboard > footer {
   display: flex;

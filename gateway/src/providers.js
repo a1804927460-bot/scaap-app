@@ -436,8 +436,9 @@ function orderMixedRouteIds(routeIds, byId, requested) {
   const aireiter = unique.filter((id) => isAireiterProvider(byId.get(id)));
   const existing = unique.filter((id) => !aireiter.includes(id) && !atlas.includes(id));
   if (requested && requested.routingPolicy === 'atlas-primary') {
-    // Seedance is explicitly Atlas-first. AI Reiter and the legacy route stay
-    // available as fallbacks after a proven pre-submission rejection.
+    // Seedance is explicitly Atlas-first. Approved fallbacks are attempted
+    // only after a proven pre-submission rejection; accepted or ambiguous
+    // submissions are never replayed on another route.
     return [...atlas, ...aireiter, ...existing];
   }
   // AI Reiter is the product's fixed primary route. Legacy providers remain

@@ -168,6 +168,21 @@ function safeUsageRows(value, mapper) {
   return Array.isArray(value) ? value.map(mapper).filter(Boolean) : [];
 }
 
+function readUsageNumber(source, keys, { required = false } = {}) {
+  const record = source && typeof source === 'object' ? source : {};
+  for (const key of keys) {
+    if (!Object.hasOwn(record, key) || record[key] === null || record[key] === undefined || record[key] === '') continue;
+    const value = Number(record[key]);
+    if (Number.isFinite(value) && value >= 0) return value;
+  }
+  if (required) {
+    const error = new Error('The credit service did not return a balance.');
+    error.code = 'credit-service-failed';
+    throw error;
+  }
+  return undefined;
+}
+
 function normalizeUsageSummary(payload) {
   const envelope = payload && typeof payload === 'object' ? payload : {};
   const raw = envelope.summary && typeof envelope.summary === 'object' ? envelope.summary : envelope;
@@ -177,9 +192,12 @@ function normalizeUsageSummary(payload) {
   const accountRaw = raw.account && typeof raw.account === 'object' ? raw.account : {};
   const totalsRaw = raw.totals && typeof raw.totals === 'object' ? raw.totals : {};
   const periodRaw = raw.period && typeof raw.period === 'object' ? raw.period : {};
-  const balance = Math.max(0, Number(accountRaw.balance) || 0);
-  const reserved = Math.max(0, Math.min(balance, Number(accountRaw.reserved) || 0));
-  const available = Math.max(0, Number(accountRaw.availableCredits ?? accountRaw.available) || balance - reserved);
+  const balance = authenticated
+    ? readUsageNumber(accountRaw, ['balance', 'credits', 'points', 'creditBalance'], { required: true })
+    : 0;
+  const reserved = Math.max(0, Math.min(balance, readUsageNumber(accountRaw, ['reserved', 'reservedCredits']) ?? 0));
+  const availableValue = readUsageNumber(accountRaw, ['availableCredits', 'available', 'usableCredits']);
+  const available = Math.max(0, Math.min(balance, availableValue ?? balance - reserved));
   const credits = Math.max(0, Number(totalsRaw.credits ?? totalsRaw.creditsConsumed) || 0);
   const generations = Math.max(0, Number(totalsRaw.generations ?? totalsRaw.generationCount) || 0);
   const average = Math.max(0, Number(totalsRaw.averagePerDay ?? totalsRaw.dailyAverage) || 0);

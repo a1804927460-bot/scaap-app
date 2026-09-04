@@ -84,11 +84,27 @@
     return '';
   }
 
+  function moodboardBodyForItem(item) {
+    if (!item) return '';
+    if (item.moodboardText) return String(item.moodboardText);
+    const delta = item.moodboardDelta;
+    if (!delta || !Array.isArray(delta.ops)) return '';
+    return delta.ops.map((op) => {
+      if (!op || typeof op.insert !== 'string') return '';
+      return op.insert;
+    }).join('').replace(/\n+$/, '');
+  }
+
+  function moodboardTitleForItem(item) {
+    return String(item && item.moodboardTitle || 'Text moodboard');
+  }
+
   function itemKind(item, file, source) {
     if (item.isPartition) return 'partition';
     if (item.isDoodle && Array.isArray(item.doodlePaths) && item.doodlePaths.length) return 'vector-doodle';
     if (item.isDoodle) return source ? 'doodle' : 'rect';
-    if (item.isMoodboard || item.isNote) return 'text';
+    if (item.isMoodboard) return 'moodboard';
+    if (item.isNote) return 'text';
     if (item.isAiPlaceholder) return 'pending';
     // Keep media as media even while its preview URL is being resolved. The
     // Leafer scene must retain the object and can upgrade its source later.
@@ -109,6 +125,8 @@
       source,
       color,
       textForItem(item),
+      item.isMoodboard ? moodboardBodyForItem(item) : '',
+      item.isTextEditing ? 1 : 0,
       item.fontFamily || '',
       item.fontSize || '',
       item.fontWeight || '',
@@ -148,6 +166,7 @@
       fontFamily: item.fontFamily || 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
       fontSize: clamp(finite(extra.fontSize === undefined ? item.fontSize : extra.fontSize, 14), 8, 36),
       fontWeight: extra.fontWeight || item.fontWeight || 500,
+      lineHeight: extra.lineHeight,
       textWrap: 'normal',
       textOverflow: 'ellipsis',
       verticalAlign: extra.verticalAlign || 'top',
@@ -238,12 +257,52 @@
     return addChildren(group, [rect, text]);
   }
 
+  function createMoodboardDrawable(api, item, bounds) {
+    const group = new api.Group({
+      ...baseOptions(item, bounds, '#1d2430'),
+      hittable: false
+    });
+    const background = new api.Rect({
+      id: `messs-board-moodboard-bg-${item.id}`,
+      x: 0,
+      y: 0,
+      width: bounds.width,
+      height: bounds.height,
+      fill: '#1d2430',
+      stroke: item.selected ? '#f5f7fb' : undefined,
+      strokeWidth: item.selected ? 1.2 : 0,
+      cornerRadius: 0,
+      hittable: false
+    });
+    const title = new api.Text(textOptions(item, bounds, moodboardTitleForItem(item), '#f3f5f8', {
+      x: 16,
+      y: 14,
+      width: Math.max(1, bounds.width - 32),
+      height: 28,
+      fontSize: 15,
+      fontWeight: 680,
+      textOverflow: 'ellipsis'
+    }));
+    const body = new api.Text(textOptions(item, bounds, moodboardBodyForItem(item), '#d7dee9', {
+      x: 16,
+      y: 52,
+      width: Math.max(1, bounds.width - 32),
+      height: Math.max(1, bounds.height - 68),
+      fontSize: 13,
+      fontWeight: 500,
+      lineHeight: 20,
+      verticalAlign: 'top',
+      textOverflow: 'ellipsis'
+    }));
+    return addChildren(group, [background, title, body]);
+  }
+
   function createDrawable(item, file, bounds, source, kind, color) {
     const api = classes();
     if (!api) return null;
     const options = baseOptions(item, bounds, color);
-    const stroke = item.selected ? '#f5f7fb' : 'rgba(220, 226, 235, 0.72)';
-    const strokeWidth = item.selected ? 1.2 : 0.8;
+    const stroke = item.selected ? '#f5f7fb' : undefined;
+    const strokeWidth = item.selected ? 1.2 : 0;
 
     if (kind === 'vector-doodle' && api.Path) {
       const group = new api.Group({ ...options, hittable: false });
@@ -262,7 +321,7 @@
     }
 
     if (kind === 'media' || kind === 'doodle') {
-      return new api.Image({
+      const image = new api.Image({
         ...options,
         fill: {
           type: 'image',
@@ -274,6 +333,10 @@
         strokeWidth,
         cornerRadius: 0
       });
+      // Geometry and selection updates are frequent. Do not reassign the
+      // same image fill because Leafer may start a duplicate texture upload.
+      image._messsSource = normalizeSource(source);
+      return image;
     }
 
     if (kind === 'text') {
@@ -290,8 +353,13 @@
         verticalAlign: 'top',
         padding: item.isNote || item.isMoodboard ? 8 : 0,
         stroke: undefined,
-        cornerRadius: 0
+        cornerRadius: 0,
+        opacity: item.isTextEditing ? 0 : 1
       });
+    }
+
+    if (kind === 'moodboard') {
+      return createMoodboardDrawable(api, item, bounds);
     }
 
     if (kind === 'partition') {
@@ -325,20 +393,42 @@
         title.height = 34;
         title.text = textForItem(item);
       }
+    } else if (kind === 'moodboard') {
+      const [background, title, body] = drawable._messsParts || [];
+      if (background) {
+        background.width = bounds.width;
+        background.height = bounds.height;
+        background.stroke = item.selected ? '#f5f7fb' : undefined;
+        background.strokeWidth = item.selected ? 1.2 : 0;
+      }
+      if (title) {
+        title.width = Math.max(1, bounds.width - 32);
+        title.text = moodboardTitleForItem(item);
+      }
+      if (body) {
+        body.width = Math.max(1, bounds.width - 32);
+        body.height = Math.max(1, bounds.height - 68);
+        body.text = moodboardBodyForItem(item);
+      }
     } else if (kind === 'text') {
       drawable.text = textForItem(item);
       drawable.fill = item.noFill ? 'rgba(0,0,0,0)' : (item.color || '#e8ebf1');
       drawable.fontSize = clamp(finite(item.fontSize, 14), 8, 36);
       drawable.fontWeight = item.fontWeight || 500;
+      drawable.opacity = item.isTextEditing ? 0 : 1;
     } else if (kind === 'media' || kind === 'doodle') {
-      drawable.fill = source ? {
-        type: 'image',
-        url: source,
-        mode: 'fit',
-        showProgress: false
-      } : color;
-      drawable.stroke = item.selected ? '#f5f7fb' : 'rgba(220, 226, 235, 0.72)';
-      drawable.strokeWidth = item.selected ? 1.2 : 0.8;
+      const nextSource = normalizeSource(source);
+      if (nextSource && nextSource !== drawable._messsSource) {
+        drawable.fill = {
+          type: 'image',
+          url: nextSource,
+          mode: 'fit',
+          showProgress: false
+        };
+        drawable._messsSource = nextSource;
+      }
+      drawable.stroke = item.selected ? '#f5f7fb' : undefined;
+      drawable.strokeWidth = item.selected ? 1.2 : 0;
     } else if (kind === 'vector-doodle') {
       const api = classes();
       const entries = item.doodlePaths || [];
@@ -369,8 +459,8 @@
         rect.width = bounds.width;
         rect.height = bounds.height;
         rect.fill = kind === 'pending' ? 'rgba(125, 135, 152, 0.3)' : color;
-        rect.stroke = item.selected ? '#f5f7fb' : 'rgba(220, 226, 235, 0.72)';
-        rect.strokeWidth = item.selected ? 1.2 : 0.8;
+        rect.stroke = item.selected ? '#f5f7fb' : undefined;
+        rect.strokeWidth = item.selected ? 1.2 : 0;
       }
       if (label) {
         label.text = textForItem(item);
@@ -425,16 +515,13 @@
         width,
         height,
         pixelRatio,
-        smooth: false,
+        smooth: true,
         hittable: false,
         lazySpeard: 1200,
         start: true
       });
       const group = new api.Group({ id: 'messs-board-world', hittable: false });
       leafer.add(group);
-      // Drawing strokes live in viewport coordinates while the board world
-      // moves under the camera. Keeping a dedicated Leafer group outside the
-      // world makes an in-progress stroke stable during wheel zoom and pan.
       const doodleGroup = new api.Group({
         id: 'messs-board-doodles',
         zIndex: 100000,
@@ -484,6 +571,10 @@
     state.group.y = next.y;
     state.group.scaleX = next.scaleX;
     state.group.scaleY = next.scaleY;
+    state.doodleGroup.x = next.x;
+    state.doodleGroup.y = next.y;
+    state.doodleGroup.scaleX = next.scaleX;
+    state.doodleGroup.scaleY = next.scaleY;
     state.lastTransform = next;
     return true;
   }
@@ -680,18 +771,25 @@
     if (!state.leafer || !state.doodleGroup) return false;
     const api = classes();
     if (!api || typeof api.Path !== 'function') return false;
-    const next = (Array.isArray(strokes) ? strokes : [])
-      .map((stroke, index) => createPath(
+    const previous = state.doodleGroup._messsParts || [];
+    const entries = Array.isArray(strokes) ? strokes : [];
+    const next = [];
+    entries.forEach((stroke, index) => {
+      const path = previous[index] || createPath(
         api,
         `messs-active-doodle-${index}`,
         stroke && (stroke.outline || stroke.points),
         stroke && stroke.color,
         stroke && stroke.tool
-      ))
-      .filter(Boolean);
-    const previous = state.doodleGroup._messsParts || [];
-    if (previous.length) state.doodleGroup.removeAll(true);
-    if (next.length) state.doodleGroup.add(next);
+      );
+      if (!path) return;
+      path.path = polygonPath(stroke && (stroke.outline || stroke.points));
+      path.fill = stroke && stroke.color || '#a855f7';
+      path.eraser = stroke && stroke.tool === 'eraser' ? true : undefined;
+      if (!previous[index]) state.doodleGroup.add(path);
+      next.push(path);
+    });
+    previous.slice(next.length).forEach((path) => state.doodleGroup.remove(path, true));
     state.doodleGroup._messsParts = next;
     state.leafer.requestRender(true);
     return true;
