@@ -53,7 +53,7 @@ assert.match(workflow, /latest-mac\.yml/);
 assert.match(workflow, /runs-on:\s*macos-14/);
 assert.doesNotMatch(workflow, /runs-on:\s*macos-13/);
 assert.match(workflow, /release\/\*\.dmg/);
-assert.match(workflow, /choco install libreoffice-fresh/);
+assert.match(workflow, /choco install libreoffice --no-progress/);
 assert.match(workflow, /soffice\.exe/);
 assert.match(workflow, /choco install imagemagick\.app/);
 assert.match(workflow, /Copy-Item \$libreOffice build-resources\/tools\/libreoffice -Recurse/);

@@ -50,19 +50,30 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $libreOfficeExe = Get-ChildItem @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ChocolateyToolsLocation) -Filter soffice.exe -Recurse -File -ErrorAction SilentlyContinue |
-            Select-Object -First 1 -ExpandProperty FullName
+          $searchRoots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ChocolateyInstall, $env:ChocolateyToolsLocation) | Where-Object { $_ -and (Test-Path $_) }
+          $libreOfficeExe = Get-Command soffice.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
           if (-not $libreOfficeExe) {
-            choco install libreoffice-fresh --no-progress -y --execution-timeout=600
-            $libreOfficeExe = Get-ChildItem @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ChocolateyToolsLocation) -Filter soffice.exe -Recurse -File -ErrorAction SilentlyContinue |
+            $libreOfficeExe = Get-ChildItem $searchRoots -Filter soffice.exe -Recurse -File -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $libreOfficeExe) {
+            choco install libreoffice --no-progress -y --force --execution-timeout=600
+            Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1" -ErrorAction SilentlyContinue
+            refreshenv
+            $libreOfficeExe = Get-Command soffice.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+          }
+          if (-not $libreOfficeExe) {
+            $libreOfficeExe = Get-ChildItem $searchRoots -Filter soffice.exe -Recurse -File -ErrorAction SilentlyContinue |
               Select-Object -First 1 -ExpandProperty FullName
           }
           if (-not $libreOfficeExe) { throw 'LibreOffice soffice.exe was not found after installation.' }
 
           choco install imagemagick.app --no-progress -y --execution-timeout=600
+          Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1" -ErrorAction SilentlyContinue
+          refreshenv
           $imageMagickExe = Get-Command magick.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
           if (-not $imageMagickExe) {
-            $imageMagickExe = Get-ChildItem @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ChocolateyToolsLocation) -Filter magick.exe -Recurse -File -ErrorAction SilentlyContinue |
+            $imageMagickExe = Get-ChildItem $searchRoots -Filter magick.exe -Recurse -File -ErrorAction SilentlyContinue |
               Select-Object -First 1 -ExpandProperty FullName
           }
           if (-not $imageMagickExe) { throw 'ImageMagick magick.exe was not found after installation.' }
