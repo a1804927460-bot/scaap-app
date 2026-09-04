@@ -40,7 +40,7 @@ assert.deepEqual(
 );
 const nanoBananaPro = media.imageProviders.find((provider) => provider.id === 'image-1');
 assert.ok(nanoBananaPro);
-assert.equal(nanoBananaPro.endpoint, 'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent');
+assert.equal(nanoBananaPro.endpoint, 'https://api.quickrouter.ai/v1');
 assert.equal(nanoBananaPro.protocol, 'gemini-native');
 assert.deepEqual(nanoBananaPro.capabilities.sizes, ['1K', '2K', '4K']);
 assert.equal(nanoBananaPro.capabilities.ratios.includes('auto'), false);

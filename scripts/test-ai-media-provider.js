@@ -476,6 +476,10 @@ function testGeminiImageBody() {
     ),
     'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image:generateContent'
   );
+  assert.strictEqual(
+    resolveGeminiMediaEndpoint('https://api.quickrouter.ai/v1'),
+    'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent'
+  );
 }
 
 async function testQuickRouterNativeGeminiImageFlow() {
@@ -483,7 +487,7 @@ async function testQuickRouterNativeGeminiImageFlow() {
   const provider = catalogProvider('image-1');
   assert.ok(provider);
   assert.strictEqual(provider.name, 'Nano Banana Pro');
-  assert.strictEqual(provider.endpoint, 'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent');
+  assert.strictEqual(provider.endpoint, 'https://api.quickrouter.ai/v1');
   let attempts = 0;
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url, options });
@@ -504,7 +508,7 @@ async function testQuickRouterNativeGeminiImageFlow() {
   assert.strictEqual(calls.length, 1);
   assert.strictEqual(
     calls[0].url,
-    provider.endpoint
+    'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent'
   );
   assert.strictEqual(calls[0].options.headers.Authorization, 'Bearer secret');
   assert.strictEqual(calls[0].options.headers['x-goog-api-key'], undefined);

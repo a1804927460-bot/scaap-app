@@ -51,6 +51,7 @@ test('QuickRouter remains the primary Nano Banana Pro route', async () => {
       const value = String(url);
       calls.push({ url: value, options });
       if (value.includes('api.quickrouter.ai')) {
+        assert.equal(value, 'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent');
         const body = JSON.parse(options.body);
         assert.equal(body.contents[0].parts[0].text, 'test image');
         return jsonResponse({ candidates: [{ content: { parts: [{ inlineData: {

@@ -27,7 +27,8 @@ async function run() {
         const items = [];
         const bounds = new Map();
         const files = new Map([
-          ['image-file', { id: 'image-file', thumbUrl: ${JSON.stringify(pixel)} }]
+          ['image-file', { id: 'image-file', kind: 'image', thumbUrl: ${JSON.stringify(pixel)} }],
+          ['image-pending', { id: 'image-pending', kind: 'image', thumbUrl: '' }]
         ]);
         for (let index = 0; index < 5000; index += 1) {
           const item = {
@@ -41,6 +42,7 @@ async function run() {
           if (index === 0) item.isPartition = true;
           if (index === 1) { item.isNote = true; item.text = 'Leafer note'; item.color = '#f1f3f7'; }
           if (index === 2) { item.fileId = 'image-file'; }
+          if (index === 3) { item.fileId = 'image-pending'; }
           items.push(item);
           bounds.set(item.id, { x: item.x, y: item.y, w: item.width, h: item.height });
         }
@@ -128,6 +130,10 @@ async function run() {
         result.exportImage.width !== 1600 || result.exportImage.height !== 1000 ||
         !result.exportPrefix.startsWith('data:image/') || result.exportLength < 100) {
       throw new Error(`Leafer layer fixture failed: ${JSON.stringify(result)}`);
+    }
+    const source = fs.readFileSync(path.join(root, 'src', 'js', 'board-leafer-layer.js'), 'utf8');
+    if (!source.includes("placeholderColor: 'rgba(0, 0, 0, 0)'")) {
+      throw new Error('Leafer media placeholders must remain transparent during async decode.');
     }
     process.stdout.write(`BOARD_LEAFER_LAYER_OK items=${result.itemCount} resize=${result.afterResize.width}x${result.afterResize.height}\n`);
   } finally {

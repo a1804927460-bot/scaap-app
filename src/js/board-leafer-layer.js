@@ -106,9 +106,10 @@
     if (item.isMoodboard) return 'moodboard';
     if (item.isNote) return 'text';
     if (item.isAiPlaceholder) return 'pending';
-    // Keep media as media even while its preview URL is being resolved. The
-    // Leafer scene must retain the object and can upgrade its source later.
-    if (file && source) return 'media';
+    // Keep media as media while its preview URL is being resolved. Falling
+    // back to a colored rectangle creates false image flashes on first paint.
+    if (file && (source || ['image', 'video', 'model'].includes(file.kind) ||
+        /\.(?:avif|bmp|gif|jpe?g|png|webp)$/i.test(String(file.ext || '')))) return 'media';
     return 'rect';
   }
 
@@ -150,7 +151,9 @@
       cornerRadius: 0,
       lazy: true,
       renderSpread: 1200,
-      placeholderColor: color
+      // Media textures can be decoded asynchronously. A colored placeholder
+      // becomes a false image flash during the first frame and camera motion.
+      placeholderColor: 'rgba(0, 0, 0, 0)'
     };
   }
 

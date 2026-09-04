@@ -178,7 +178,7 @@
       "id": "image-1",
       "kind": "image",
       "name": "Nano Banana Pro",
-      "endpoint": "https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent",
+      "endpoint": "https://api.quickrouter.ai/v1",
       "protocol": "gemini-native",
       "logicalModel": "nano-banana-pro",
       "fallbackProviderIds": [],
