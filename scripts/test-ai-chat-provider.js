@@ -129,7 +129,7 @@ assert.strictEqual(
     return response({ choices: [{ message: { content: 'Document attachment.' } }] });
   }, {
     chatEndpoint: 'https://api.example.com/v1',
-    chatModel: 'gemini-3.7-flash',
+    chatModel: 'gemini-3.1-pro',
     apiKey: 'secret'
   }, {
     prompt: 'Summarize the attachment',

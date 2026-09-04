@@ -103,7 +103,9 @@ const { normalizeFirstLastFrameDataUrls } = require('./lib/ai-frame-reference');
 
 const DEFAULT_CATALOG_IMAGE = providerCatalog('image')[0];
 const DEFAULT_CATALOG_VIDEO = providerCatalog('video')[0];
-const DEFAULT_CATALOG_CHAT = providerCatalog('chat')[0];
+const DEFAULT_CATALOG_CHAT = providerCatalog('chat').find((provider) => provider.hidden !== true) || providerCatalog('chat')[0];
+const DEFAULT_CHAT_PROVIDER_ID = DEFAULT_CATALOG_CHAT.id || 'chat-3';
+const DEFAULT_CHAT_MODEL = DEFAULT_CATALOG_CHAT.models?.[0] || 'gemini-3.1-pro';
 const AI_IMAGE_SIZES = new Set([
   '1K', '2K', '4K', 'Default', 'adaptive', 'original',
   '1024x1024', '1536x1024', '1024x1536', 'auto',
@@ -3893,11 +3895,15 @@ function normalizeImageProviders(value, fallbackEndpoint) {
   const source = Array.isArray(value) ? value : [];
   return Array.from({ length: Math.max(10, source.length) }, (_, index) => {
     const saved = source[index] || {};
+    const providerId = String(saved.id || `image-${index + 1}`).trim().toLowerCase();
     const endpoint = normalizeProviderEndpoint(
       saved.endpoint || (index === 0 ? fallbackEndpoint || DEFAULT_IMAGE_ENDPOINT : '')
     );
     return {
-      id: `image-${index + 1}`,
+      // Hidden catalog routes occupy array positions too. Preserve the
+      // canonical ID so they cannot shift public products onto another
+      // provider's endpoint, pricing, or selected-state cache.
+      id: providerId,
       name: String(saved.name || (index === 0 ? DEFAULT_CATALOG_IMAGE.name : endpoint ? deriveProviderName(endpoint) : '')).trim().slice(0, 40),
       endpoint,
       model: String(saved.model || '').trim().slice(0, 120),
@@ -4506,7 +4512,7 @@ function normalizeChatProviders(value, legacy = {}) {
   const hasStableIds = savedById.size > 0;
   const legacyEndpoint = normalizeProviderEndpoint(legacy.endpoint);
   const legacyProvider = {
-    id: 'chat-1',
+    id: DEFAULT_CHAT_PROVIDER_ID,
     name: String(legacy.name || (legacyEndpoint ? deriveProviderName(legacyEndpoint) : DEFAULT_CATALOG_CHAT.name)).trim().slice(0, 40) || DEFAULT_CATALOG_CHAT.name,
     endpoint: legacyEndpoint,
     models: normalizeChatModels(legacy.model, DEFAULT_CATALOG_CHAT.models[0])
@@ -4561,7 +4567,7 @@ function getAiMediaConfig() {
   );
   const activeChatProviderId = configuredChatProviders.some((provider) => provider.id === saved.activeChatProviderId)
     ? saved.activeChatProviderId
-    : (configuredChatProviders[0] ? configuredChatProviders[0].id : 'chat-1');
+    : (configuredChatProviders[0] ? configuredChatProviders[0].id : DEFAULT_CHAT_PROVIDER_ID);
   const activeChatProvider = chatProviders.find((provider) => provider.id === activeChatProviderId) || chatProviders[0];
   const normalized = normalizeAiMediaConfig({
     imageEndpoint: activeProvider.endpoint || DEFAULT_IMAGE_ENDPOINT,
@@ -8268,8 +8274,8 @@ function registerIpcHandlers() {
   ipcMain.handle('settings:discoverAiModels', async (_evt, request = {}) => {
     if (runtimeConfig.gatewayConfigured) {
       try {
-        await requireGatewayProvider('chat', String(request.providerId || 'chat-1'));
-        return { ok: true, ...(await aiGateway.discoverModels(String(request.providerId || 'chat-1'))) };
+        await requireGatewayProvider('chat', String(request.providerId || DEFAULT_CHAT_PROVIDER_ID));
+        return { ok: true, ...(await aiGateway.discoverModels(String(request.providerId || DEFAULT_CHAT_PROVIDER_ID))) };
       } catch (err) {
         return { ok: false, reason: err.code || 'model-discovery-failed', message: err.message, models: [] };
       }
@@ -8320,7 +8326,7 @@ function registerIpcHandlers() {
     );
     const activeChatProviderId = configuredChatProviders.some((provider) => provider.id === next.activeChatProviderId)
       ? next.activeChatProviderId
-      : (configuredChatProviders[0] ? configuredChatProviders[0].id : 'chat-1');
+      : (configuredChatProviders[0] ? configuredChatProviders[0].id : DEFAULT_CHAT_PROVIDER_ID);
     const activeChatProvider = chatProviders.find((provider) => provider.id === activeChatProviderId) || chatProviders[0];
     const normalized = normalizeAiMediaConfig({
       imageEndpoint: activeProvider.endpoint || DEFAULT_IMAGE_ENDPOINT,

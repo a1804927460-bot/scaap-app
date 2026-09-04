@@ -1708,15 +1708,11 @@ function activeCanvasAgentProvider() {
 function canvasAgentChatProviders() {
   const config = CanvasWorkspace.config || {};
   const allowedModels = new Set([
-    'gemini-3.7-flash',
-    'gpt-5.6-luna',
     'gemini-3.1-pro',
     'gpt-5.6-sol',
     'kimi-k3'
   ]);
   const names = {
-    'gemini-3.7-flash': 'Gemini 3.7 Flash',
-    'gpt-5.6-luna': 'GPT-5.6 Luna',
     'gemini-3.1-pro': 'Gemini 3.1 Pro',
     'gpt-5.6-sol': 'GPT-5.6 Sol',
     'kimi-k3': 'Kimi K3'
@@ -1755,7 +1751,7 @@ function renderCanvasAgentModels() {
   if (!chatProviders.some((entry) => (
     entry.providerId === CanvasWorkspace.agentChatProviderId && entry.model === CanvasWorkspace.agentChatModel
   ))) {
-    const preferred = chatProviders.find((entry) => entry.model === 'gemini-3.7-flash') || chatProviders[0] || null;
+    const preferred = chatProviders.find((entry) => entry.model === 'gemini-3.1-pro') || chatProviders[0] || null;
     CanvasWorkspace.agentChatProviderId = preferred && preferred.providerId;
     CanvasWorkspace.agentChatModel = preferred && preferred.model;
   }

@@ -64,7 +64,7 @@ test('start is idempotency-bound to operation, owner token, and canonical reques
         reason: calls.length === 1 ? 'reserved' : 'already-started',
         requestId: operationId,
         status: 'starting',
-        credits: 189
+        credits: 194
       });
     };
 
@@ -73,13 +73,13 @@ test('start is idempotency-bound to operation, owner token, and canonical reques
 
     assert.equal(created.created, true);
     assert.equal(repeated.created, false);
-    assert.equal(created.credits, 189);
+    assert.equal(created.credits, 194);
     assert.match(calls[0].url, /\/rpc\/start_ai_video_job$/);
     assert.equal(calls[0].body.p_request_id, operationId);
     assert.equal(calls[0].body.p_user_id, userId);
     assert.equal(calls[0].body.p_token_hash, hashVideoTaskToken(taskToken));
     assert.equal(calls[0].body.p_request_hash, calls[1].body.p_request_hash);
-    assert.equal(calls[0].body.p_expected_credits, 189);
+    assert.equal(calls[0].body.p_expected_credits, 194);
     assert.equal(JSON.stringify(calls[0].body).includes(taskToken), false);
     assert.equal(JSON.stringify(calls[0].body).includes('private prompt text'), false);
   });
@@ -101,7 +101,7 @@ test('start accepts only a higher server-authorized price without exposing an ac
       }
     });
     assert.equal(calls.length, 2);
-    assert.equal(calls[0].p_expected_credits, 189);
+    assert.equal(calls[0].p_expected_credits, 194);
     assert.equal(calls[1].p_expected_credits, 210);
     assert.equal(created.credits, 210);
     assert.equal(JSON.stringify(created).includes('pricingTier'), false);
@@ -346,7 +346,7 @@ test('worker fails closed after one clear error when the asynchronous schema is 
   });
 });
 
-test('MiniMax H3 sends the official multimodal contract and preserves usage', async () => {
+test('legacy MiniMax H3 adapter preserves official multimodal recovery', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({ MINIMAX_API_KEY: 'minimax-test-key' }, async () => {
     const calls = [];
@@ -368,7 +368,7 @@ test('MiniMax H3 sends the official multimodal contract and preserves usage', as
     };
     try {
       const created = await createVideoTask({
-        providerId: 'video-1', prompt: 'multimodal', resolution: '768P', duration: 6,
+        providerId: 'legacy-video-minimax-h3', prompt: 'multimodal', resolution: '768P', duration: 6,
         aspectRatio: '16:9', videoMode: 'omni',
         urls: ['https://cdn.example.test/reference.png', 'https://cdn.example.test/reference.mp4'],
         referenceMediaTypes: ['image', 'video'],
@@ -400,7 +400,7 @@ test('MiniMax H3 sends the official multimodal contract and preserves usage', as
   });
 });
 
-test('MiniMax H3 official frame routes use only documented fields', async () => {
+test('legacy MiniMax H3 adapter keeps documented frame fields for recovery', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({ MINIMAX_API_KEY: 'minimax-test-key' }, async () => {
     const calls = [];
@@ -416,7 +416,7 @@ test('MiniMax H3 official frame routes use only documented fields', async () => 
     };
     try {
       await createVideoTask({
-        providerId: 'video-1', prompt: 'frame route', resolution: '768P', duration: 4,
+        providerId: 'legacy-video-minimax-h3', prompt: 'frame route', resolution: '768P', duration: 4,
         aspectRatio: 'adaptive', videoMode: 'first-last-frame',
         urls: ['https://cdn.example.test/first.png', 'https://cdn.example.test/last.png'],
         referenceMediaTypes: ['image', 'image']
@@ -454,7 +454,7 @@ test('MiniMax H3 rejects legacy empty frame requests before upstream submission'
     };
     try {
       await assert.rejects(() => createVideoTask({
-        providerId: 'video-1', prompt: 'legacy H3 prompt', resolution: '2K', duration: 5,
+        providerId: 'legacy-video-minimax-h3', prompt: 'legacy H3 prompt', resolution: '2K', duration: 5,
         aspectRatio: 'adaptive', videoMode: 'first-last-frame', urls: []
       }), (error) => error && error.code === 'reference-required');
       assert.equal(calls.length, 0);
@@ -478,7 +478,7 @@ test('MiniMax H3 sends validated local first and last frames inline without a me
     };
     try {
       await createVideoTask({
-        providerId: 'video-1', prompt: 'local first and last frames', resolution: '768P',
+        providerId: 'legacy-video-minimax-h3', prompt: 'local first and last frames', resolution: '768P',
         duration: 4, aspectRatio: 'adaptive', videoMode: 'first-last-frame',
         urls: [localFrame, localFrame], referenceMediaTypes: ['image', 'image']
       });
@@ -503,7 +503,7 @@ test('MiniMax H3 official submission outages remain ambiguous after the paid req
     try {
       await assert.rejects(
         createVideoTask({
-          providerId: 'video-1', prompt: 'local reference', resolution: '768P',
+          providerId: 'legacy-video-minimax-h3', prompt: 'local reference', resolution: '768P',
           duration: 4, aspectRatio: 'adaptive', videoMode: 'first-frame',
           urls: ['https://cdn.example.test/reference.png'], referenceMediaTypes: ['image']
         }),
@@ -534,7 +534,7 @@ test('MiniMax H3 official polling waits for output and reports terminal failures
     };
     try {
       const created = await createVideoTask({
-        providerId: 'video-1', prompt: 'failed result', resolution: '768P',
+        providerId: 'legacy-video-minimax-h3', prompt: 'failed result', resolution: '768P',
         duration: 4, aspectRatio: 'adaptive', videoMode: 'first-frame',
         urls: ['https://cdn.example.test/moderation-reference.png'],
         referenceMediaTypes: ['image']
@@ -614,7 +614,7 @@ test('legacy synchronous video compatibility still creates, polls, and downloads
     };
     try {
       const result = await generateLegacyVideo({
-        providerId: 'video-1',
+        providerId: 'legacy-video-minimax-h3',
         prompt: 'legacy compatibility',
         resolution: '768P',
         duration: 5,
@@ -653,7 +653,7 @@ test('legacy synchronous video compatibility rejects an HTTP 200 error page', as
     try {
       await assert.rejects(
         generateLegacyVideo({
-          providerId: 'video-1', prompt: 'invalid legacy result', resolution: '768P',
+          providerId: 'legacy-video-minimax-h3', prompt: 'invalid legacy result', resolution: '768P',
           duration: 5, aspectRatio: 'adaptive', videoMode: 'first-frame',
           urls: ['https://cdn.example.test/error-reference.png'], referenceMediaTypes: ['image']
         }),

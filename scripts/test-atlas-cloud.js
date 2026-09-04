@@ -32,9 +32,10 @@ function glbFixture() {
   const relayAssets = await import('../gateway/src/ai302-tools.js');
   const config = providers.publicProviderConfig();
   const ids = config.providers.map((provider) => provider.id);
-  for (const id of ['image-6', 'video-2', 'video-3']) {
+  for (const id of ['video-2', 'video-3']) {
     assert.ok(ids.includes(id), `${id} must be exposed when ATLASCLOUD_API_KEY is configured`);
   }
+  assert.equal(ids.includes('image-6'), false, 'GPT Image 2 must stay unavailable without its AI Reiter credential');
   for (const id of [
     'atlas-image-gpt2', 'atlas-video-seedance20-i2v', 'atlas-video-seedance20-ref',
     'atlas-video-seedance25-i2v', 'atlas-video-seedance25-ref'
@@ -42,7 +43,6 @@ function glbFixture() {
 
   const originalFetch = global.fetch;
   const requests = [];
-  let atlasImage = pngHeader(1920, 1072);
   let uploadedMediaCount = 0;
   let atlasThreeDTaskCount = 0;
   const atlasGlb = glbFixture();
@@ -70,14 +70,11 @@ function glbFixture() {
         atlasThreeDTaskCount += 1;
         return new Response(JSON.stringify({ request_id: `atlas-3d-request-${atlasThreeDTaskCount}` }), { status: 200 });
       }
-      return new Response(JSON.stringify({ request_id: 'atlas-image-request' }), { status: 200 });
+      throw new Error('Atlas must not receive GPT Image 2 generation requests.');
     }
     if (endpoint.endsWith('/generateVideo')) {
       requests.push({ endpoint, body: JSON.parse(options.body) });
       return new Response(JSON.stringify({ id: 'atlas-video-request', status: 'created' }), { status: 200 });
-    }
-    if (endpoint.includes('/prediction/atlas-image-request') || endpoint.includes('/prediction?id=atlas-image-request')) {
-      return new Response(JSON.stringify({ data: { status: 'completed', outputs: [{ url: 'https://cdn.atlascloud.ai/image.png' }] } }), { status: 200 });
     }
     if (endpoint.includes('/prediction/atlas-video-request') || endpoint.includes('/prediction?id=atlas-video-request')) {
       return new Response(JSON.stringify({ data: { id: 'atlas-video-request', status: 'completed', outputs: ['https://cdn.atlascloud.ai/video.mp4'] } }), { status: 200 });
@@ -95,9 +92,6 @@ function glbFixture() {
         }
       }), { status: 200 });
     }
-    if (endpoint === 'https://cdn.atlascloud.ai/image.png') {
-      return new Response(atlasImage, { status: 200, headers: { 'content-type': 'image/png' } });
-    }
     if (endpoint === 'https://storage.atlascloud.ai/models/result.glb') {
       return new Response(atlasGlb, { status: 200, headers: { 'content-type': 'model/gltf-binary' } });
     }
@@ -105,81 +99,6 @@ function glbFixture() {
   };
 
   try {
-    const image = await providers.generateMedia('image', {
-      providerId: 'image-6', prompt: 'test image', size: '1920x1080',
-      quality: 'high', outputFormat: 'png', urls: []
-    });
-    assert.deepEqual(image, atlasImage);
-
-    atlasImage = pngHeader(1024, 1024);
-    const automaticQualityImage = await providers.generateMedia('image', {
-      providerId: 'image-6', prompt: 'automatic quality', size: '1K',
-      aspectRatio: '1:1', quality: 'auto', outputFormat: 'png', urls: []
-    });
-    assert.deepEqual(automaticQualityImage, atlasImage);
-
-    atlasImage = Buffer.from('not-an-image');
-    await assert.rejects(
-      providers.generateMedia('image', {
-        providerId: 'image-6', prompt: 'reject damaged result', size: '1K',
-        aspectRatio: '1:1', quality: 'medium', outputFormat: 'png', urls: []
-      }),
-      (error) => error && error.code === 'invalid-media'
-    );
-
-    atlasImage = pngHeader(1024, 576);
-    await assert.rejects(
-      providers.generateMedia('image', {
-        providerId: 'image-6', prompt: 'reject fake 4K', size: '4K',
-        aspectRatio: '16:9', quality: 'high', outputFormat: 'png', urls: []
-      }),
-      (error) => error && error.code === 'image-resolution-mismatch'
-        && error.actualWidth === 1024 && error.actualHeight === 576
-    );
-
-    atlasImage = pngHeader(3840, 3840);
-    await assert.rejects(
-      providers.generateMedia('image', {
-        providerId: 'image-6', prompt: 'reject wrong crop', size: '4K',
-        aspectRatio: '16:9', quality: 'high', outputFormat: 'png', urls: []
-      }),
-      (error) => error && error.code === 'image-resolution-mismatch'
-    );
-
-    atlasImage = pngHeader(2880, 2880);
-    assert.deepEqual(await providers.generateMedia('image', {
-      providerId: 'image-6', prompt: 'valid square 4K', size: '4K',
-      aspectRatio: '1:1', quality: 'high', outputFormat: 'png', urls: []
-    }), atlasImage);
-
-    // GPT Image 2 keeps the same logical provider when Atlas rejects a
-    // rotated credential; the configured 302 route may safely complete it.
-    process.env.AI302_KEY = 'gpt-image-fallback-test-key';
-    const fallbackImage = pngHeader(1024, 1024);
-    const imageFallbackCalls = [];
-    const atlasFetch = global.fetch;
-    global.fetch = async (url, options = {}) => {
-      const endpoint = String(url);
-      imageFallbackCalls.push(endpoint);
-      if (endpoint.endsWith('/generateImage')) {
-        return new Response(JSON.stringify({ message: 'Atlas credential rejected.' }), { status: 401 });
-      }
-      if (endpoint === 'https://api.302.ai/v1/images/generations') {
-        return new Response(JSON.stringify({
-          data: [{ b64_json: fallbackImage.toString('base64') }]
-        }), { status: 200 });
-      }
-      throw new Error(`Unexpected GPT Image 2 fallback request: ${endpoint}`);
-    };
-    assert.deepEqual(await providers.generateMedia('image', {
-      providerId: 'image-6', prompt: 'use the same GPT Image 2 route', size: '1K',
-      aspectRatio: '1:1', quality: 'medium', outputFormat: 'png', urls: []
-    }), fallbackImage);
-    assert.equal(imageFallbackCalls.some((endpoint) => endpoint.endsWith('/generateImage')), true);
-    assert.equal(imageFallbackCalls.includes('https://api.302.ai/v1/images/generations'), true);
-    delete process.env.AI302_KEY;
-    global.fetch = atlasFetch;
-
     const localReference = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
     for (const providerId of ['hunyuan3d', 'hyper3d', 'tripo3d']) {
       const task = await relayAssets.createThreeDTask({
@@ -304,12 +223,8 @@ function glbFixture() {
       outputFormat: 'mp4'
     });
 
-    const imageRequest = requests.find((entry) => entry.endpoint.endsWith('/generateImage'));
-    assert.equal(imageRequest.body.model, 'openai/gpt-image-2/text-to-image');
-    assert.equal(imageRequest.body.size, '1920x1072');
-    assert.equal(imageRequest.body.output_format, 'png');
-    const automaticQualityRequest = requests.find((entry) => entry.endpoint.endsWith('/generateImage') && entry.body.prompt === 'automatic quality');
-    assert.equal(automaticQualityRequest.body.quality, 'medium');
+    assert.equal(requests.some((entry) => entry.endpoint.endsWith('/generateImage')
+      && !/image-to-3d$/i.test(String(entry.body && entry.body.model || ''))), false);
     const frameRequest = requests.find((entry) => entry.endpoint.endsWith('/generateVideo')
       && entry.body.model === 'bytedance/seedance-2.5/image-to-video' && entry.body.last_image);
     assert.equal(frameRequest.body.model, 'bytedance/seedance-2.5/image-to-video');
@@ -462,7 +377,7 @@ function glbFixture() {
         videoMode: 'first-frame', resolution: '4K-ESR', aspectRatio: 'adaptive', duration: 8,
         outputFormat: 'mp4'
       }),
-      (error) => error && error.code === 'invalid-resolution'
+      (error) => error && error.code === 'provider-secret-missing'
     );
     assert.equal(fallbackCalls.some((endpoint) => endpoint.includes('api.302.ai')), false);
     process.env.ATLASCLOUD_API_KEY = 'atlas-test-key';

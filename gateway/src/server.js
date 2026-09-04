@@ -1538,7 +1538,7 @@ async function handle(request, response) {
     return send(response, 200, publicProviderConfig());
   }
   if (request.method === 'GET' && url.pathname === '/v1/models') {
-    const requestedProviderId = String(url.searchParams.get('providerId') || 'chat-1').trim().toLowerCase();
+    const requestedProviderId = String(url.searchParams.get('providerId') || 'chat-3').trim().toLowerCase();
     return send(response, 200, await models(requestedProviderId));
   }
   if (request.method === 'POST' && url.pathname === '/v1/media/video/reference-uploads') {
@@ -2642,6 +2642,7 @@ const server = http.createServer((request, response) => {
       'redemption-service-failed': 'Code redemption is temporarily unavailable.',
       'provider-not-configured': 'The selected AI model is not configured on the server.',
       'provider-secret-missing': 'The selected AI model is missing its server credential.',
+      'provider-route-retired': 'This model route is no longer available. Please refresh the model list. No points were charged.',
       'provider-auth-failed': 'The selected AI service rejected its server credential.',
       'api-error': 'The AI generation request was rejected. Please check the model settings and try again.',
       'provider-request-failed': 'The generation request was not accepted. Check the reference files and settings, then try again.',

@@ -18,6 +18,8 @@ const {
   IMAGE_QUALITY_RESOLUTION_PRICES,
   IMAGE_RESOLUTION_PRICES,
   VIDEO_RATES,
+  IMAGE_OPERATING_COST_RETAIL_CREDITS,
+  VIDEO_OPERATING_COST_RETAIL_CREDITS,
   conservativeMediaCreditQuote,
   quoteMediaCredits,
   retailCreditsFromUpstreamCny,
@@ -25,7 +27,7 @@ const {
 } = require('../lib/credit-pricing');
 
 assert.strictEqual(POINTS_PER_CNY, 1000 / 70);
-assert.strictEqual(CREDIT_PRICING_VERSION, '202609040001');
+assert.strictEqual(CREDIT_PRICING_VERSION, '202609040003');
 assert.strictEqual(RETAIL_GROSS_MARGIN_PERCENT, 10);
 assert.ok(Math.abs(RETAIL_MARKUP_PERCENT - (100 / 9)) < 1e-12);
 assert.strictEqual(RETAIL_MULTIPLIER, 10 / 9);
@@ -90,7 +92,7 @@ assert.equal(
   conservativeMediaCreditQuote(currentVideoQuote, {
     providerId: 'video-3', unitCredits: 22.78, totalCredits: 151, duration: 6
   }).totalCredits,
-  3315,
+  3320,
   'A stale 151-point Seedance quote must never lower the current six-second estimate.'
 );
 const localVideoQuote = quoteMediaCredits({
@@ -130,7 +132,7 @@ assert.strictEqual(quoteMediaCredits({
 }).totalCredits, 16);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-8', size: '1080p', count: 4
-}).totalCredits, 28);
+}).totalCredits, 32);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-1', size: '4K'
 }).totalCredits, 62);
@@ -145,11 +147,11 @@ assert.strictEqual(quoteMediaCredits({
 }).totalCredits, 11);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-18', size: '2K'
-}).totalCredits, 41);
+}).totalCredits, 42);
 
 const imageResolutionMatrix = {
-  'image-1': { '1K': 18, '2K': 31, '4K': 62 },
-  'image-2': { '1K': 7, '2K': 11, '4K': 14 },
+  'image-1': { '1K': 19, '2K': 31, '4K': 62 },
+  'image-2': { '1K': 7, '2K': 10, '4K': 14 },
   'image-3': { '2K': 5, '4K': 8 }
 };
 Object.entries(imageResolutionMatrix).forEach(([imageProviderId, resolutions]) => {
@@ -184,32 +186,32 @@ assert.deepStrictEqual(quoteMediaCredits({
   units: 6,
   unit: 'second',
   unitCredits: 27,
-  fixedCredits: 0,
+  fixedCredits: 5,
   minimumCredits: 0,
-  totalCredits: 162
+  totalCredits: 167
 });
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'video',
   resolution: '768P',
   duration: undefined
-}).totalCredits, 102, 'Invalid duration must use the six-second default.');
+}).totalCredits, 107, 'Invalid duration must use the six-second default.');
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'video',
   resolution: '768P',
   duration: 0
-}).totalCredits, 68, 'Video billing must enforce the four-second minimum.');
+}).totalCredits, 73, 'Video billing must enforce the four-second minimum.');
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'video', videoProviderId: 'video-1', resolution: '768P', duration: 6,
   referenceMediaTypes: ['video']
-}).totalCredits, 357, 'A MiniMax reference video must reserve the documented 15-second input maximum.');
+}).totalCredits, 362, 'A MiniMax reference video must reserve the documented 15-second input maximum.');
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'video', videoProviderId: 'video-1', resolution: '2K', duration: 6,
   referenceMediaTypes: Array(9).fill('image')
-}).totalCredits, 194, 'MiniMax must reserve the documented image charge after the first five.');
+}).totalCredits, 199, 'MiniMax must reserve the documented image charge after the first five.');
 
 assert.deepStrictEqual(quoteMediaCredits({
   kind: 'video',
@@ -223,10 +225,10 @@ assert.deepStrictEqual(quoteMediaCredits({
   duration: 5,
   units: 5,
   unit: 'second',
-  unitCredits: 16.242539107142857,
+  unitCredits: 17.224681964285715,
   fixedCredits: 0,
   minimumCredits: 0,
-  totalCredits: 82
+  totalCredits: 87
 });
 
 assert.strictEqual(quoteMediaCredits({
@@ -234,7 +236,7 @@ assert.strictEqual(quoteMediaCredits({
   videoProviderId: 'video-3',
   resolution: '720P',
   duration: 5
-}).totalCredits, 218);
+}).totalCredits, 223);
 
 assert.deepStrictEqual(
   {
@@ -245,7 +247,7 @@ assert.deepStrictEqual(
       kind: 'video', videoProviderId: 'video-2', resolution: '720P', duration: -1
     }).totalCredits
   },
-  { duration: 15, totalCredits: 524 },
+  { duration: 15, totalCredits: 529 },
   'Seedance 2.0 automatic duration must reserve its full 15-second maximum.'
 );
 
@@ -258,7 +260,7 @@ assert.deepStrictEqual(
       kind: 'video', videoProviderId: 'video-3', resolution: '720P', duration: -1
     }).totalCredits
   },
-  { duration: 30, totalCredits: 1304 },
+  { duration: 30, totalCredits: 1309 },
   'Seedance 2.5 automatic duration must reserve its full 30-second maximum.'
 );
 
@@ -267,42 +269,42 @@ assert.strictEqual(quoteMediaCredits({
   videoProviderId: 'video-2',
   resolution: 'unsupported',
   duration: 6
-}).totalCredits, 210, 'Unknown Seedance resolutions must use that provider\'s default 720P rate.');
+}).totalCredits, 215, 'Unknown Seedance resolutions must use that provider\'s default 720P rate.');
 
 assert.strictEqual(
   quoteMediaCredits({ kind: 'video', videoProviderId: 'video-3', resolution: '480P', duration: 30 }).totalCredits,
-  606,
+  611,
   'Seedance 2.5 must support 30 seconds and apply the proportional markup once.'
 );
 
 assert.strictEqual(
   quoteMediaCredits({ kind: 'video', videoProviderId: 'video-3', resolution: '720P', duration: 10 }).totalCredits,
-  435,
+  440,
   'Seedance 2.5 720P must use the verified Atlas primary-route cost.'
 );
 assert.strictEqual(
   quoteMediaCredits({ kind: 'video', videoProviderId: 'video-3', resolution: '1440P-SR', duration: 6 }).totalCredits,
-  607,
+  612,
   'Seedance 2.5 1440P-SR at six seconds must not reuse a stale 720P five-second quote.'
 );
 assert.strictEqual(
   quoteMediaCredits({ kind: 'video', videoProviderId: 'video-3', resolution: '4K-ESR', duration: 10 }).totalCredits,
-  3315,
+  3320,
   'Seedance 2.5 4K-ESR must use the observed 23.11727243 PTC per ten-second upstream quote.'
 );
 assert.strictEqual(
   quoteMediaCredits({ kind: 'video', videoProviderId: 'video-3', resolution: '4K-ESR', duration: 6 }).totalCredits,
-  3315,
+  3320,
   'Seedance 2.5 4K-ESR at the default six seconds must not use the retired 151-point quote.'
 );
 assert.strictEqual(
   quoteMediaCredits({ kind: 'video', videoProviderId: 'video-2', resolution: '720P', duration: 10 }).totalCredits,
-  350,
+  355,
   'Seedance 2.0 must use the verified Atlas primary-route cost.'
 );
 assert.strictEqual(
   quoteMediaCredits({ kind: 'video', videoProviderId: 'video-4', resolution: '720P', duration: 10 }).totalCredits,
-  243,
+  248,
   'Seedance 2.0 Fast must use its documented 6.516 PTC/M-token multiplier.'
 );
 
@@ -312,8 +314,8 @@ assert.deepStrictEqual(
   }),
   {
     kind: 'video', providerId: 'video-11', resolution: '1080P', duration: 10,
-    units: 10, unit: 'second', unitCredits: 48.32142857142858, fixedCredits: 0,
-    minimumCredits: 0, totalCredits: 484
+    units: 10, unit: 'second', unitCredits: 48.8125, fixedCredits: 0,
+    minimumCredits: 0, totalCredits: 489
   },
   'Kling V3 1080P must quote and reserve against the Pro route.'
 );
@@ -321,14 +323,14 @@ assert.strictEqual(
   quoteMediaCredits({
     kind: 'video', videoProviderId: 'video-12', serviceTier: 'pro', resolution: '1080P', duration: 15
   }).totalCredits,
-  775,
+  780,
   'Kling O3 Pro must never be quoted at the Standard route price.'
 );
 assert.strictEqual(
   quoteMediaCredits({
     kind: 'video', videoProviderId: 'video-12', serviceTier: 'standard', resolution: '720P', duration: 15
   }).totalCredits,
-  646,
+  651,
   'Kling O3 Standard must retain its own route price.'
 );
 
@@ -342,6 +344,11 @@ assert.strictEqual(publicPricing.upstreamCostSafetyPercent, 10);
 assert.strictEqual(publicPricing.chat, 0);
 assert.strictEqual(publicPricing.profitPerRequestCny, 0);
 assert.strictEqual(publicPricing.minimumVideoCredits, 0);
+assert.strictEqual(IMAGE_OPERATING_COST_RETAIL_CREDITS, 1);
+assert.strictEqual(VIDEO_OPERATING_COST_RETAIL_CREDITS, 5);
+assert.strictEqual(publicPricing.operatingCostPricingVersion, CREDIT_PRICING_VERSION);
+assert.ok(Math.abs(publicPricing.operatingCosts.image.total - 0.013) < 1e-12);
+assert.strictEqual(publicPricing.operatingCosts.video.total, 0.25);
 assert.strictEqual(publicPricing.image['image-5'], 4);
 assert.strictEqual(publicPricing.image['image-9'], 6);
 assert.strictEqual(publicPricing.image['image-3'], 5);

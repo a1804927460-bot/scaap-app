@@ -2,8 +2,6 @@
   'use strict';
 
   const CHAT_MODEL_NAMES = {
-    'gemini-3.7-flash': 'Gemini 3.7 Flash',
-    'gpt-5.6-luna': 'GPT-5.6 Luna',
     'gemini-3.1-pro': 'Gemini 3.1 Pro',
     'gpt-5.6-sol': 'GPT-5.6 Sol',
     'kimi-k3': 'Kimi K3'

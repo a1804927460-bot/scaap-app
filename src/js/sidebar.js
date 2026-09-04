@@ -2379,7 +2379,7 @@ function collectAiMediaSettings(extra = {}) {
       videoProviders,
       activeVideoProviderId: selectedVideo ? selectedVideo.value : (firstConfiguredVideo ? firstConfiguredVideo.id : 'video-1'),
       chatProviders,
-      activeChatProviderId: selectedChat ? selectedChat.value : (firstConfiguredChat ? firstConfiguredChat.id : 'chat-1'),
+      activeChatProviderId: selectedChat ? selectedChat.value : (firstConfiguredChat ? firstConfiguredChat.id : 'chat-3'),
       chatProviderName: firstConfiguredChat ? firstConfiguredChat.name : '',
       chatEndpoint: firstConfiguredChat ? firstConfiguredChat.endpoint : '',
       chatModel: firstConfiguredChat && firstConfiguredChat.models[0] || 'gpt-4o-mini',

@@ -12,18 +12,18 @@ const options = context.globalThis.MesssAiProviderOptions;
 assert.ok(options);
 
 const providers = [
-  { id: 'chat-1', name: 'Messs AI', endpoint: 'https://primary.test', models: ['gemini-3.7-flash'] },
-  { id: 'chat-2', name: 'Backup', endpoint: 'https://backup.test', models: ['gemini-3.7-flash', 'kimi-k3'] },
-  { id: 'chat-3', name: 'Sol', endpoint: 'https://sol.test', models: ['gpt-5.6-sol'] }
+  { id: 'chat-3', name: 'Gemini', endpoint: 'https://primary.test', models: ['gemini-3.1-pro'] },
+  { id: 'chat-4', name: 'Sol', endpoint: 'https://sol.test', models: ['gpt-5.6-sol'] },
+  { id: 'chat-5', name: 'Kimi', endpoint: 'https://kimi.test', models: ['kimi-k3'] }
 ];
 const chat = options.chatOptions(providers, {
-  allowedModels: new Set(['gemini-3.7-flash', 'kimi-k3', 'gpt-5.6-sol']),
-  activeProviderId: 'chat-2'
+  allowedModels: new Set(['gemini-3.1-pro', 'kimi-k3', 'gpt-5.6-sol']),
+  activeProviderId: 'chat-3'
 });
 assert.equal(JSON.stringify(chat.map((entry) => entry.model)), JSON.stringify([
-  'gemini-3.7-flash', 'kimi-k3', 'gpt-5.6-sol'
+  'gemini-3.1-pro', 'gpt-5.6-sol', 'kimi-k3'
 ]));
-assert.equal(chat.find((entry) => entry.model === 'gemini-3.7-flash').providerId, 'chat-2');
+assert.equal(chat.find((entry) => entry.model === 'gemini-3.1-pro').providerId, 'chat-3');
 assert.equal(options.uniqueProviders([
   { id: 'image-1', name: 'Nano Banana Pro', endpoint: 'https://one.test' },
   { id: 'legacy', name: 'Nano Banana Pro legacy route', endpoint: 'https://two.test' }

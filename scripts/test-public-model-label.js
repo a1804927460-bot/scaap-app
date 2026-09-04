@@ -15,7 +15,7 @@ assert.equal(sanitizePublicModelLabel('GPT Image 2 (Atlas Cloud)'), 'GPT Image 2
 assert.equal(sanitizePublicModelLabel('Seedance 2.5 · QuickRouter'), 'Seedance 2.5');
 assert.equal(sanitizePublicModelLabel('Nano Banana Pro'), 'Nano Banana Pro');
 assert.equal(sanitizePublicModelLabel('MiniMax H3'), 'MiniMax H3');
-assert.equal(sanitizePublicModelLabel('Gemini 3.7 Flash'), 'Gemini 3.7 Flash');
+assert.equal(sanitizePublicModelLabel('Gemini 3.1 Pro'), 'Gemini 3.1 Pro');
 assert.doesNotMatch(sanitizePublicAiError('The 302 tool service rejected this request.'), /302/i);
 assert.doesNotMatch(sanitizePublicAiError('QuickRouter Gemini API rejected HTTP 502.'), /quickrouter|gemini|502/i);
 assert.equal(neutralProviderName('GPT Image 2 (Atlas Cloud)'), 'GPT Image 2');

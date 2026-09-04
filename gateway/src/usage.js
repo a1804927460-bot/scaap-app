@@ -8,9 +8,10 @@ import {
   quoteThreeDRetailCredits
 } from './tool-pricing.js';
 import { normalizeVideoResolution } from './video-resolution.js';
+import operatingCosts from '../../lib/operating-costs.js';
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
-export const CREDIT_PRICING_VERSION = '202609040001';
+export const CREDIT_PRICING_VERSION = '202609040003';
 const LEGACY_POINTS_PER_CNY = 10;
 const POINTS_PER_CNY = 1000 / 70;
 const POINT_DENOMINATION_SCALE = POINTS_PER_CNY / LEGACY_POINTS_PER_CNY;
@@ -26,6 +27,8 @@ export const UPSTREAM_COST_SAFETY_PERCENT = 10;
 export const UPSTREAM_COST_SAFETY_MULTIPLIER = 1 + UPSTREAM_COST_SAFETY_PERCENT / 100;
 export const USD_TO_CNY = 7.3;
 const PTC_TO_CREDITS = USD_TO_CNY * POINTS_PER_CNY;
+const IMAGE_OPERATING_COST_UPSTREAM_CREDITS = operatingCosts.operatingCostCny('image') * POINTS_PER_CNY;
+const VIDEO_OPERATING_COST_UPSTREAM_CREDITS = operatingCosts.operatingCostCny('video') * POINTS_PER_CNY;
 // AI Reiter's published MiniMax H3 rates, converted to credits with the
 // upstream safety buffer and the video gross-margin formula.
 const MINIMAX_H3_RETAIL_CREDITS_PER_SECOND = Object.freeze({
@@ -62,9 +65,16 @@ function retailVideoCreditsFromUpstreamCny(upstreamCny) {
   return Math.ceil(normalized * UPSTREAM_COST_SAFETY_MULTIPLIER * VIDEO_RETAIL_MULTIPLIER * POINTS_PER_CNY);
 }
 
+export const IMAGE_OPERATING_COST_RETAIL_CREDITS = retailCreditsFromUpstreamPoints(
+  IMAGE_OPERATING_COST_UPSTREAM_CREDITS
+);
+export const VIDEO_OPERATING_COST_RETAIL_CREDITS = Math.ceil(
+  VIDEO_OPERATING_COST_UPSTREAM_CREDITS * UPSTREAM_COST_SAFETY_MULTIPLIER * VIDEO_RETAIL_MULTIPLIER
+);
+
 function retailRateTable(upstreamRates) {
   return Object.freeze(Object.fromEntries(Object.entries(upstreamRates).map(([key, value]) => [
-    key, retailCreditsFromUpstreamPoints(value)
+    key, retailCreditsFromUpstreamPoints(Number(value) + IMAGE_OPERATING_COST_UPSTREAM_CREDITS)
   ])));
 }
 
@@ -86,7 +96,7 @@ function legacyPointRateTable(rates) {
 export const IMAGE_UPSTREAM_CREDITS = Object.freeze({
   'atlas-image-gpt2': 1 * POINT_DENOMINATION_SCALE,
   'atlas-image-gpt2-edit': 2 * POINT_DENOMINATION_SCALE,
-  'image-1': 0.24 * PTC_TO_CREDITS, 'image-2': 6 * POINT_DENOMINATION_SCALE,
+  'image-1': 0.24 * PTC_TO_CREDITS, 'image-2': 0.072 * PTC_TO_CREDITS,
   'image-3': 0.28 * POINTS_PER_CNY, 'image-4': 2 * POINT_DENOMINATION_SCALE,
   'image-5': 2 * POINT_DENOMINATION_SCALE, 'image-6': 2 * POINT_DENOMINATION_SCALE,
   'image-7': 2 * POINT_DENOMINATION_SCALE, 'image-8': 2 * POINT_DENOMINATION_SCALE,
@@ -151,7 +161,12 @@ export const IMAGE_RESOLUTION_UPSTREAM_CREDITS = Object.freeze({
     '2k': 0.24 * PTC_TO_CREDITS,
     '4k': 0.48 * PTC_TO_CREDITS
   }),
-  'image-2': legacyPointRateTable({ '1k': 4, '2k': 6, '4k': 8 }),
+  // AI Reiter Nano Banana 2 Plus: USD 0.048 / 0.072 / 0.108.
+  'image-2': Object.freeze({
+    '1k': 0.048 * PTC_TO_CREDITS,
+    '2k': 0.072 * PTC_TO_CREDITS,
+    '4k': 0.108 * PTC_TO_CREDITS
+  }),
   'image-3': Object.freeze({ '2k': 0.28 * POINTS_PER_CNY, '4k': 0.50 * POINTS_PER_CNY }),
   'image-7': legacyPointRateTable({ '720p': 2, '1080p': 4 }),
   'image-8': legacyPointRateTable({ '720p': 2, '1080p': 4 }),
@@ -416,7 +431,7 @@ export function filterProviderConfigForAccount(config, account) {
 export function quoteUsage(kind, request = {}) {
   const normalizedKind = String(kind || '').trim().toLowerCase();
   if (normalizedKind === 'chat') {
-    const providerId = String(request.providerId || 'chat-1').trim().toLowerCase() || 'chat-1';
+    const providerId = String(request.providerId || 'chat-3').trim().toLowerCase() || 'chat-3';
     return { kind: 'chat', providerId, credits: CHAT_CREDITS, resolution: null, duration: null, requiresActivation: false };
   }
   if (normalizedKind === 'image') {
@@ -490,10 +505,11 @@ export function quoteUsage(kind, request = {}) {
     const duration = requestedDuration === -1
       ? durationLimits.maximum
       : boundedInteger(request.duration, 6, durationLimits.minimum, durationLimits.maximum);
-    const upstreamCredits = Math.max(
+    const modelUpstreamCredits = Math.max(
       rates[resolution] * duration,
       Number(VIDEO_MINIMUM_UPSTREAM_CREDITS[providerId]?.[resolution]) || 0
     );
+    const upstreamCredits = modelUpstreamCredits + VIDEO_OPERATING_COST_UPSTREAM_CREDITS;
     const guardedMultiplier = UPSTREAM_COST_SAFETY_MULTIPLIER * VIDEO_RETAIL_MULTIPLIER;
     const unitCredits = providerId === 'video-1'
       ? rates[resolution]
@@ -511,14 +527,18 @@ export function quoteUsage(kind, request = {}) {
     const baseCredits = providerId === 'video-1'
       ? unitCredits * duration
       : Math.ceil(upstreamCredits * guardedMultiplier);
+    const operationCredits = providerId === 'video-1'
+      ? VIDEO_OPERATING_COST_RETAIL_CREDITS
+      : 0;
     return {
       kind: 'video',
       providerId,
       credits: Math.max(
         MINIMUM_VIDEO_CREDITS,
-        baseCredits + inputVideoReserveCredits + extraImageCredits
+        baseCredits + inputVideoReserveCredits + extraImageCredits + operationCredits
       ),
       unitCredits,
+      fixedCredits: inputVideoReserveCredits + extraImageCredits + operationCredits,
       resolution,
       duration,
       requiresActivation: providerRequiresActivation('video', providerId)

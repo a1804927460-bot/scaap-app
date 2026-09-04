@@ -85,6 +85,7 @@ test('AI Reiter Nano Banana 2 references use a public relay and documented URL e
       const value = String(url);
       if (value.endsWith('/api/openapi/submit')) {
         const body = JSON.parse(options.body);
+        assert.equal(body.model, 'nano_banana_v2_plus');
         submittedParams = body.params;
         assert.equal(Array.isArray(body.params.image_url), true);
         assert.equal(body.params.image_url.length, 1);
@@ -155,6 +156,31 @@ test('AI Reiter GPT Image 2 sends resolution with aspect ratio and size by itsel
     assert.equal(submissions[0].params.aspect_ratio, '16:9');
     assert.equal(submissions[0].params.resolution, '2K');
     assert.equal(submissions[0].params.size, undefined);
+  }).finally(() => { globalThis.fetch = previousFetch; });
+});
+
+test('GPT Image 2 rejects retired provider routes before any upstream call', async () => {
+  const previousFetch = globalThis.fetch;
+  await withEnvironment({
+    AIREITER_API_KEY: 'aireiter-key',
+    AI302_KEY: 'legacy-key',
+    ATLASCLOUD_API_KEY: 'atlas-key'
+  }, async () => {
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      throw new Error('A retired GPT Image 2 route was called.');
+    };
+    for (const providerId of ['legacy-image-gpt2', 'atlas-image-gpt2', 'aireiter-image-gpt2']) {
+      await assert.rejects(() => generateMedia('image', {
+        providerId,
+        operationId: '49494949-4949-4494-8494-494949494949',
+        prompt: 'must not use retired route',
+        size: '1K',
+        aspectRatio: '1:1'
+      }), { code: 'provider-route-retired' });
+    }
+    assert.equal(calls, 0);
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
@@ -298,88 +324,38 @@ test('AI Reiter MiniMax H3 rejects unsupported frame media before submission', a
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
-test('Agent mixed routing sends only the anonymous user field', async () => {
+test('retired Gemini 3.7 Flash requests are rejected before any upstream call', async () => {
   const previousFetch = globalThis.fetch;
-  await withEnvironment({
-    AIREITER_API_KEY: 'aireiter-key',
-    AIREITER_TRAFFIC_PERCENT: '100',
-    AI302_KEY: 'legacy-key'
-  }, async () => {
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; return jsonResponse({}); };
+  await assert.rejects(() => chat({
+    providerId: 'chat-1',
+    model: 'gemini-3.7-flash',
+    messages: [{ role: 'user', content: 'hello' }]
+  }), { code: 'model-retired' });
+  assert.equal(calls, 0);
+  globalThis.fetch = previousFetch;
+});
+
+test('AI Reiter Agent models use the three published model routes', async () => {
+  const previousFetch = globalThis.fetch;
+  await withEnvironment({ AIREITER_API_KEY: 'aireiter-key' }, async () => {
+    const calls = [];
     globalThis.fetch = async (url, options = {}) => {
-      assert.equal(String(url), 'https://aireiter.com/api/v1/chat/completions');
       const body = JSON.parse(options.body);
-      assert.equal(body.model, 'gpt-5.2');
-      assert.equal(body.user, 'u_0123456789abcdef0123');
-      assert.equal(JSON.stringify(body).includes('@example.com'), false);
+      calls.push({ url: String(url), model: body.model, user: body.user });
       return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'ok' } }] });
     };
-    assert.deepEqual(await chat({
-      providerId: 'chat-1',
-      model: 'gemini-3.7-flash',
-      operationId: '33333333-3333-4333-8333-333333333333',
-      endUserId: 'u_0123456789abcdef0123',
-      messages: [{ role: 'user', content: 'hello' }]
-    }), { text: 'ok', usage: null });
-  }).finally(() => { globalThis.fetch = previousFetch; });
-});
-
-test('Agent corrects a stale provider when the requested model belongs to another route', async () => {
-  const previousFetch = globalThis.fetch;
-  await withEnvironment({
-    AIREITER_API_KEY: 'aireiter-key',
-    AIREITER_TRAFFIC_PERCENT: '0',
-    AI302_KEY: 'legacy-key'
-  }, async () => {
-    const calls = [];
-    globalThis.fetch = async (url, options = {}) => {
-      const value = String(url);
-      calls.push({ url: value, body: JSON.parse(options.body) });
-      if (value.includes('aireiter.com')) {
-        assert.equal(calls[0].body.model, 'gpt-5.2');
-        return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'corrected' } }] });
-      }
-      throw new Error('Stale provider must not be called: ' + value);
-    };
-    assert.deepEqual(await chat({
-      providerId: 'chat-1',
-      model: 'gpt-5.6-luna',
-      operationId: '36363636-3636-4363-8363-363636363636',
-      endUserId: 'u_0123456789abcdef0123',
-      messages: [{ role: 'user', content: 'hello' }]
-    }), { text: 'corrected', usage: null });
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].url, 'https://aireiter.com/api/v1/chat/completions');
-  }).finally(() => { globalThis.fetch = previousFetch; });
-});
-
-test('Luna uses AI Reiter and its documented upstream model alias', async () => {
-  const previousFetch = globalThis.fetch;
-  await withEnvironment({
-    AIREITER_API_KEY: 'aireiter-key',
-    AIREITER_TRAFFIC_PERCENT: '0',
-    QUICKROUTER_API_KEY: 'legacy-key'
-  }, async () => {
-    const calls = [];
-    globalThis.fetch = async (url, options = {}) => {
-      const value = String(url);
-      const body = JSON.parse(options.body);
-      calls.push({ url: value, model: body.model });
-      if (value.includes('aireiter.com')) {
-        assert.equal(body.model, 'gpt-5.2');
-        return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'Luna is ready.' } }] });
-      }
-      throw new Error(`Unexpected route: ${value}`);
-    };
-
-    assert.deepEqual(await chat({
-      providerId: 'chat-2',
-      model: 'gpt-5.6-luna',
-      operationId: '34343434-3434-4343-8343-343434343434',
-      endUserId: 'u_0123456789abcdef0123',
-      messages: [{ role: 'user', content: 'hello' }]
-    }), { text: 'Luna is ready.', usage: null });
-    assert.deepEqual(calls.map((call) => call.model), ['gpt-5.2']);
-    assert.equal(calls[0].url.includes('aireiter.com'), true);
+    for (const [providerId, model, upstreamModel] of [
+      ['chat-3', 'gemini-3.1-pro', 'chat-gemini-3.1-pro'],
+      ['chat-4', 'gpt-5.6-sol', 'chat-gpt-5.6-sol'],
+      ['chat-5', 'kimi-k3', 'chat-kimi-k3']
+    ]) {
+      await chat({ providerId, model, endUserId: 'u_0123456789abcdef0123', messages: [{ role: 'user', content: model }] });
+      assert.equal(calls.at(-1).url, 'https://aireiter.com/api/v1/chat/completions');
+      assert.equal(calls.at(-1).model, upstreamModel);
+      assert.equal(calls.at(-1).user, 'u_0123456789abcdef0123');
+    }
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
@@ -494,7 +470,7 @@ test('an interrupted AI Reiter submission resumes from its deterministic task ID
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
-test('a proven AI Reiter rejection uses Nano Banana 2 legacy fallback', async () => {
+test('a proven AI Reiter rejection never replays Nano Banana 2 on a legacy route', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({
     AIREITER_API_KEY: 'aireiter-key',
@@ -512,15 +488,14 @@ test('a proven AI Reiter rejection uses Nano Banana 2 legacy fallback', async ()
       }
       throw new Error(`Unexpected route: ${value}`);
     };
-    assert.deepEqual(await generateMedia('image', {
+    await assert.rejects(generateMedia('image', {
       providerId: 'image-2',
       operationId: '46464646-4646-4464-8464-464646464646',
-      prompt: 'fallback image',
+      prompt: 'locked image route',
       size: '1K',
       aspectRatio: '1:1'
-    }), VALID_PNG);
-    assert.equal(calls[0], 'https://aireiter.com/api/openapi/submit');
-    assert.equal(calls[1].includes('api.302.ai'), true);
+    }), (error) => error && error.code === 'provider-request-failed');
+    assert.deepEqual(calls, ['https://aireiter.com/api/openapi/submit']);
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 

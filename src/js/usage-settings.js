@@ -53,8 +53,6 @@ const USAGE_MODEL_NAMES = Object.freeze({
   'topaz-image-denoise': '图片降噪',
   'topaz-image-restore': '图片修复',
   'topaz-image-lighting': '图片补光',
-  'chat-1': 'Messs AI',
-  'chat-2': 'AI Chat',
   'chat-3': 'Gemini 3.1 Pro',
   'chat-4': 'GPT-5.6 Sol',
   'chat-5': 'Kimi K3',

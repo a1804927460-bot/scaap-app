@@ -28,6 +28,12 @@ const DEFAULT_RESULT_ENDPOINT = `${QUICKROUTER_BASE_URL}/v1/videos`;
 const PROVIDER_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const PROVIDER_KEY_ENV = /^[A-Z][A-Z0-9_]{1,80}$/;
 const MAX_PROVIDERS = 100;
+const GPT_IMAGE_2_PROVIDER_ID = 'image-6';
+const RETIRED_GPT_IMAGE_2_ROUTE_IDS = new Set([
+  'atlas-image-gpt2',
+  'legacy-image-gpt2',
+  'aireiter-image-gpt2'
+]);
 const ASYNC_VIDEO_PROTOCOLS = new Set([
   'minimax-video-v2',
   'atlas-minimax-h3-video',
@@ -181,11 +187,15 @@ function configuredProviders() {
   for (const raw of [...builtinProviders(), ...extra].slice(0, MAX_PROVIDERS)) {
     const id = String(raw.id || '').trim().toLowerCase();
     const builtin = byId.get(id);
+    const lockedGptImage2 = id === GPT_IMAGE_2_PROVIDER_ID && builtin && builtin.kind === 'image';
     const kind = ['chat', 'image', 'video'].includes(raw.kind)
       ? raw.kind
       : (builtin && builtin.kind) || '';
-    const endpoint = safeServerEndpoint(raw.endpoint || (builtin && builtin.endpoint));
-    const keyEnv = String(raw.keyEnv || (builtin && builtin.keyEnv) || '').trim();
+    // GPT Image 2 is intentionally a single AI Reiter route. Do not let an
+    // old Railway AI_PROVIDERS_JSON entry replace its endpoint, protocol, or
+    // credential and silently create a billable request on another service.
+    const endpoint = safeServerEndpoint(lockedGptImage2 ? builtin.endpoint : raw.endpoint || (builtin && builtin.endpoint));
+    const keyEnv = String(lockedGptImage2 ? builtin.keyEnv : raw.keyEnv || (builtin && builtin.keyEnv) || '').trim();
     if (!PROVIDER_ID.test(id) || !kind || !endpoint || !PROVIDER_KEY_ENV.test(keyEnv)) continue;
     const models = Array.isArray(raw.models)
       ? raw.models.map(String).map((v) => v.trim()).filter(Boolean).slice(0, 30)
@@ -199,19 +209,19 @@ function configuredProviders() {
       id, kind,
       name: String(raw.name || (builtin && builtin.name) || id).trim().slice(0, 80),
       endpoint,
-      resultEndpoint: safeServerEndpoint(raw.resultEndpoint || (builtin && builtin.resultEndpoint)) || DEFAULT_RESULT_ENDPOINT,
+      resultEndpoint: safeServerEndpoint(lockedGptImage2 ? builtin.resultEndpoint : raw.resultEndpoint || (builtin && builtin.resultEndpoint)) || DEFAULT_RESULT_ENDPOINT,
       models,
       upstreamModels,
       // This is an internal routing hint. It is deliberately removed from
       // publicProviderConfig so the renderer only sees product model labels.
       logicalModel: String(raw.logicalModel || (builtin && builtin.logicalModel) || '').trim().slice(0, 120),
-      fallbackProviderIds: [...new Set([
-        ...((builtin && builtin.fallbackProviderIds) || []),
-        ...(Array.isArray(raw.fallbackProviderIds) ? raw.fallbackProviderIds : [])
-      ].map((value) => String(value || '').trim().toLowerCase())
+      fallbackProviderIds: [...new Set((builtin
+        ? (builtin.fallbackProviderIds || [])
+        : (Array.isArray(raw.fallbackProviderIds) ? raw.fallbackProviderIds : []))
+        .map((value) => String(value || '').trim().toLowerCase())
         .filter((value) => PROVIDER_ID.test(value)))].slice(0, 20),
-      model: String(raw.model || (builtin && builtin.model) || '').trim().slice(0, 120),
-      protocol: String(raw.protocol || (builtin && builtin.protocol) || '').trim().slice(0, 40),
+      model: String(lockedGptImage2 ? builtin.model : raw.model || (builtin && builtin.model) || '').trim().slice(0, 120),
+      protocol: String(lockedGptImage2 ? builtin.protocol : raw.protocol || (builtin && builtin.protocol) || '').trim().slice(0, 40),
       // Capabilities for catalog models are versioned with the application.
       // Deployment overrides may replace endpoints or credentials, but must
       // not revive a stale resolution/mode matrix for a built-in model.
@@ -363,6 +373,10 @@ function providerFor(kind, id) {
 }
 
 function requestRouteIds(provider, body = {}) {
+  // GPT Image 2 is a single-provider product. Its old 302 and Atlas entries
+  // remain catalogued only for historical task/accounting compatibility and
+  // must never become new generation candidates.
+  if (provider && provider.id === GPT_IMAGE_2_PROVIDER_ID) return [provider.id];
   const capabilities = provider && provider.capabilities && typeof provider.capabilities === 'object'
     ? provider.capabilities
     : {};
@@ -429,6 +443,9 @@ function isAireiterProvider(provider) {
 
 function orderMixedRouteIds(routeIds, byId, requested) {
   const unique = [...new Set(routeIds.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))];
+  // These product IDs own their selected primary routes. Do not reorder a
+  // hidden compatibility route ahead of the endpoint declared by the model.
+  if (requested && requested.kind === 'chat' && requested.hidden === true) return unique;
   const atlas = unique.filter((id) => {
     const provider = byId.get(id);
     return provider && (/^atlas[-_]/i.test(id) || /^atlas[-_]/i.test(String(provider.protocol || '')));
@@ -441,10 +458,11 @@ function orderMixedRouteIds(routeIds, byId, requested) {
     // submissions are never replayed on another route.
     return [...atlas, ...aireiter, ...existing];
   }
-  // AI Reiter is the product's fixed primary route. Legacy providers remain
-  // in the list only as compatible fallbacks after a proven pre-submission
-  // rejection; traffic percentages must never silently demote the primary.
-  return [...aireiter, ...existing];
+  // AI Reiter is the product's fixed primary route. Atlas and other
+  // compatible routes remain available as ordered fallbacks after a proven
+  // pre-submission rejection; traffic percentages must never demote the
+  // primary or make a configured backup disappear.
+  return [...aireiter, ...atlas, ...existing];
 }
 
 function compactProviderIdentity(value) {
@@ -522,6 +540,15 @@ function providersForRequest(kind, id, body = {}) {
   const requested = configuredProvider(kind, id);
   if (!requested) {
     throw Object.assign(new Error(`No ${kind} provider is configured.`), { code: 'provider-not-configured' });
+  }
+  if (kind === 'image' && (
+    RETIRED_GPT_IMAGE_2_ROUTE_IDS.has(requested.id)
+    || (requested.logicalModel === 'gpt-image-2' && requested.id !== GPT_IMAGE_2_PROVIDER_ID)
+  )) {
+    throw Object.assign(new Error('The selected GPT Image 2 route has been retired.'), {
+      code: 'provider-route-retired',
+      status: 400
+    });
   }
   const configured = configuredProviders();
   const byId = new Map(configured.filter((provider) => provider.kind === kind).map((provider) => [provider.id, provider]));
@@ -928,8 +955,8 @@ function aireiterImageParams(provider, body) {
   const urls = Array.isArray(body.urls) ? body.urls.map(String).map((value) => value.trim()).filter(Boolean) : [];
   const ratio = String(body.aspectRatio || '').trim();
   const resolution = String(body.size || body.resolution || '2K').trim().toUpperCase();
-  if (provider.model === 'nano_banana_v2') {
-    if (urls.length > 14) throw aireiterLocalRejection('This route accepts at most 14 reference images.', 'too-many-references');
+  if (['nano_banana_v2', 'nano_banana_v2_plus'].includes(provider.model)) {
+    if (urls.length > 9) throw aireiterLocalRejection('This route accepts at most 9 reference images.', 'too-many-references');
     return {
       prompt,
       ...(urls.length ? { image_url: urls } : {}),
@@ -2592,11 +2619,7 @@ function aireiterVideoParams(provider, body) {
 
   if (provider.model === 'minimax_h3') {
     const frameMode = ['first-frame', 'first-last-frame'].includes(mode);
-    const textMode = mode === 'text' || (!mode && !referenceCount);
-    if (textMode && referenceCount) {
-      throw aireiterLocalRejection('Text-to-video mode does not accept reference media.', 'invalid-reference-media');
-    }
-    if (!textMode && !referenceCount) {
+    if (!referenceCount) {
       throw aireiterLocalRejection('This video mode requires reference media.', 'reference-required');
     }
     if (frameMode && (!images.length || images.length > 2 || videos.length || audios.length)) {
@@ -2617,7 +2640,7 @@ function aireiterVideoParams(provider, body) {
     return {
       prompt,
       video_length: common.video_length,
-      type: textMode ? 'text_to_video' : frameMode ? 'first_last_frame' : 'all_reference',
+      type: frameMode ? 'first_last_frame' : 'all_reference',
       quality: resolution === '2k' ? '2k' : '768p',
       ...(!frameMode && common.aspect_ratio ? { aspect_ratio: common.aspect_ratio } : {}),
       ...(images.length ? { image_url: images } : {}),
@@ -2977,6 +3000,12 @@ export async function pollVideoTask(providerId, taskId, signal) {
 export async function chat(body, signal) {
   const requestedProviderId = String(body.providerId || '').trim().toLowerCase();
   const requestedModel = String(body.model || '').trim();
+  if (requestedModel.toLowerCase() === 'gemini-3.7-flash') {
+    throw Object.assign(new Error('This chat model has been retired. Please select an available model.'), {
+      code: 'model-retired',
+      status: 400
+    });
+  }
   const configured = configuredProviders().filter((entry) => entry.kind === 'chat');
   const requestedProvider = configured.find((entry) => entry.id === requestedProviderId);
   const modelMatches = (provider, model = requestedModel) => {
@@ -2988,9 +3017,8 @@ export async function chat(body, signal) {
       String(entry).trim().toLowerCase() === normalizedModel
     )));
   };
-  // Older desktop builds could send chat-1 together with the model selected
-  // from chat-2. Correct that mismatch server-side so a stale local setting
-  // cannot make Luna appear unavailable.
+  // A missing provider ID is an older-client request. Resolve it to the first
+  // configured public model, while preserving an explicitly selected model.
   const matchingProvider = configured.find((entry) => (
     !entry.hidden && providerApiKey(entry) && modelMatches(entry)
   )) || configured.find((entry) => providerApiKey(entry) && modelMatches(entry));

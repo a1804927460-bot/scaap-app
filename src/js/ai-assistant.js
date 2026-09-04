@@ -21,15 +21,11 @@ const AiAssistant = {
 const AI_CHAT_HISTORY_KEY = 'messs.ai-chat-history.v1';
 const AI_CHAT_HISTORY_LIMIT = 60;
 const AI_ASSISTANT_CHAT_MODELS = new Set([
-  'gemini-3.7-flash',
-  'gpt-5.6-luna',
   'gemini-3.1-pro',
   'gpt-5.6-sol',
   'kimi-k3'
 ]);
 const AI_ASSISTANT_CHAT_MODEL_NAMES = {
-  'gemini-3.7-flash': 'Gemini 3.7 Flash',
-  'gpt-5.6-luna': 'GPT-5.6 Luna',
   'gemini-3.1-pro': 'Gemini 3.1 Pro',
   'gpt-5.6-sol': 'GPT-5.6 Sol',
   'kimi-k3': 'Kimi K3'
@@ -555,10 +551,10 @@ function configuredAssistantProviders(kind) {
       : config.providerVisibilityEnforced
         ? []
         : [{
-          id: 'chat-1',
+          id: 'chat-3',
           name: config.chatProviderName || 'OpenAI Compatible',
           endpoint: config.chatEndpoint || '',
-          models: [config.chatModel || 'gemini-3.7-flash']
+          models: [config.chatModel || 'gemini-3.1-pro']
         }];
     const options = typeof MesssAiProviderOptions !== 'undefined'
       ? MesssAiProviderOptions.chatOptions(chatProviders, {
@@ -621,7 +617,7 @@ function renderAssistantModels() {
     ? config.activeImageProviderId
     : AiAssistant.kind === 'video'
       ? config.activeVideoProviderId
-      : `${config.activeChatProviderId || 'chat-1'}::${config.chatModel || ''}`;
+      : `${config.activeChatProviderId || 'chat-3'}::${config.chatModel || 'gemini-3.1-pro'}`;
   const active = providers.find((provider) => provider.id === activeId) || providers[0];
   select.value = active ? active.id : '';
   // A single configured provider is still a valid selection. Disabling the
