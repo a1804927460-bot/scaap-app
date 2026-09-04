@@ -653,21 +653,29 @@ test('a proven AI Reiter rejection never replays Nano Banana 2 on a legacy route
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
-test('legacy traffic controls cannot demote QuickRouter and ChaserPro remains hidden', async () => {
+test('legacy traffic controls cannot demote AI Reiter and ChaserPro remains hidden', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({
     AIREITER_API_KEY: 'aireiter-key',
     AIREITER_TRAFFIC_PERCENT: '0',
-    QUICKROUTER_API_KEY: 'legacy-key',
     AI302_KEY: 'legacy-302-key'
   }, async () => {
     const calls = [];
-    globalThis.fetch = async (url) => {
+    globalThis.fetch = async (url, options = {}) => {
       const value = String(url);
       calls.push(value);
-      return jsonResponse({ candidates: [{ content: { parts: [{ inlineData: {
-        mimeType: 'image/png', data: PNG.toString('base64')
-      } }] } }] });
+      if (value.endsWith('/api/openapi/submit')) {
+        const body = JSON.parse(options.body);
+        assert.equal(body.model, 'nano_banana_pro');
+        return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
+      }
+      if (value.endsWith('/api/openapi/query')) {
+        return jsonResponse({
+          statusCode: 200,
+          data: { status: 'completed', output: [{ url: VALID_PNG_DATA_URL }] }
+        });
+      }
+      throw new Error(`Unexpected route: ${value}`);
     };
     assert.deepEqual(await generateMedia('image', {
       providerId: 'image-1',
@@ -675,9 +683,9 @@ test('legacy traffic controls cannot demote QuickRouter and ChaserPro remains hi
       prompt: 'legacy image',
       size: '1K',
       aspectRatio: '1:1'
-    }), PNG);
-    assert.equal(calls[0].includes('api.quickrouter.ai'), true);
-    assert.equal(calls.some((url) => url.includes('aireiter.com')), false);
+    }), VALID_PNG);
+    assert.equal(calls[0], 'https://aireiter.com/api/openapi/submit');
+    assert.equal(calls.some((url) => url.includes('api.quickrouter.ai')), false);
 
     const catalog = JSON.parse(await (await import('node:fs/promises')).readFile(
       new URL('../../config/provider-catalog.json', import.meta.url), 'utf8'

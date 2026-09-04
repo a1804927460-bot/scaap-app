@@ -74,7 +74,9 @@ test('locked built-in media routes ignore deployment-supplied fallback overrides
     globalThis.fetch = async (url, options = {}) => {
       const value = String(url);
       calls.push({ url: value, options });
-      if (value.includes('api.quickrouter.ai')) return jsonResponse({ error: { message: 'busy' } }, 429);
+      if (value === 'https://aireiter.com/api/openapi/submit') {
+        return jsonResponse({ statusCode: 429, message: 'busy' }, 429);
+      }
       if (value === 'https://backup.example.com/v1beta/models/gemini-3-pro-image-preview:generateContent') {
         return jsonResponse({ candidates: [{ content: { parts: [{ inlineData: {
           mimeType: 'image/png', data: PNG.toString('base64')
@@ -88,10 +90,9 @@ test('locked built-in media routes ignore deployment-supplied fallback overrides
       size: '1K',
       aspectRatio: '1:1',
       operationId: 'locked-image'
-    }), (error) => error && error.code === 'api-error');
+    }), (error) => error && error.code === 'provider-rate-limited');
     assert.deepEqual(calls.map((call) => call.url), [
-      'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent',
-      'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent'
+      'https://aireiter.com/api/openapi/submit'
     ]);
 
     calls.length = 0;
