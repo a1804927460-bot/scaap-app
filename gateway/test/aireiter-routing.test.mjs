@@ -40,7 +40,7 @@ test('provider user IDs are stable, distinct, and contain no account data', () =
   assert.throws(() => providerUserId('user-id', ''), { code: 'provider-user-secret-missing' });
 });
 
-test('QuickRouter remains the primary Nano Banana Pro route', async () => {
+test('AI Reiter is the primary Nano Banana Pro route', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({
     AIREITER_API_KEY: 'aireiter-key',
@@ -50,13 +50,14 @@ test('QuickRouter remains the primary Nano Banana Pro route', async () => {
     globalThis.fetch = async (url, options = {}) => {
       const value = String(url);
       calls.push({ url: value, options });
-      if (value.includes('api.quickrouter.ai')) {
-        assert.equal(value, 'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent');
+      if (value === 'https://aireiter.com/api/openapi/submit') {
         const body = JSON.parse(options.body);
-        assert.equal(body.contents[0].parts[0].text, 'test image');
-        return jsonResponse({ candidates: [{ content: { parts: [{ inlineData: {
-          mimeType: 'image/png', data: PNG.toString('base64')
-        } }] } }] });
+        assert.equal(body.model, 'nano_banana_pro');
+        assert.equal(body.params.prompt, 'test image');
+        return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
+      }
+      if (value === 'https://aireiter.com/api/openapi/query') {
+        return jsonResponse({ statusCode: 200, data: { status: 'completed', output: [{ url: 'data:image/png;base64,' + VALID_PNG.toString('base64') }] } });
       }
       throw new Error(`Unexpected route: ${value}`);
     };
@@ -69,8 +70,8 @@ test('QuickRouter remains the primary Nano Banana Pro route', async () => {
       size: '1K',
       aspectRatio: '16:9'
     });
-    assert.deepEqual(result, PNG);
-    assert.equal(calls[0].url.includes('api.quickrouter.ai'), true);
+    assert.deepEqual(result, VALID_PNG);
+    assert.equal(calls[0].url, 'https://aireiter.com/api/openapi/submit');
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
@@ -512,7 +513,7 @@ test('AI Reiter Agent models use the three published model routes', async () => 
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
-test('Nano Banana Pro remains QuickRouter primary and deterministic', async () => {
+test('Nano Banana Pro remains AI Reiter primary and deterministic', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({
     AIREITER_API_KEY: 'aireiter-key',
@@ -524,11 +525,12 @@ test('Nano Banana Pro remains QuickRouter primary and deterministic', async () =
     const routes = new Map();
     globalThis.fetch = async (url) => {
       const value = String(url);
-      if (value.includes('api.quickrouter.ai')) {
-        if (!routes.has(activeOperation)) routes.set(activeOperation, 'existing');
-        return jsonResponse({ candidates: [{ content: { parts: [{ inlineData: {
-          mimeType: 'image/png', data: PNG.toString('base64')
-        } }] } }] });
+      if (value === 'https://aireiter.com/api/openapi/submit') {
+        if (!routes.has(activeOperation)) routes.set(activeOperation, 'aireiter');
+        return jsonResponse({ statusCode: 200, data: { status: 'completed', output: [{ url: 'data:image/png;base64,' + VALID_PNG.toString('base64') }] } });
+      }
+      if (value === 'https://aireiter.com/api/openapi/query') {
+        return jsonResponse({ statusCode: 200, data: { status: 'completed', output: [{ url: 'data:image/png;base64,' + VALID_PNG.toString('base64') }] } });
       }
       throw new Error(`Unexpected route: ${value}`);
     };
@@ -540,8 +542,7 @@ test('Nano Banana Pro remains QuickRouter primary and deterministic', async () =
         prompt: 'weighted image', size: '1K', aspectRatio: '1:1'
       });
     }
-    assert.equal([...routes.values()].filter((route) => route === 'existing').length, 40);
-    assert.equal([...routes.values()].filter((route) => route === 'aireiter').length, 0);
+    assert.equal([...routes.values()].filter((route) => route === 'aireiter').length, 40);
 
     const repeatedOperation = 'weighted-7';
     const originalRoute = routes.get(repeatedOperation);

@@ -305,7 +305,7 @@ else process.env.AI302_BACKUP_A_KEY = previousBackupKey;
 const configuredAi302Key = process.env.AI302_KEY;
 delete process.env.AI302_KEY;
 const withoutAi302 = publicProviderConfig();
-assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-1'), true);
+assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-1'), false);
 assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-2'), false);
 assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-5'), false);
 assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-9'), false);
@@ -318,6 +318,7 @@ for (const id of ['video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-
   assert.equal(withoutAi302.providers.some((provider) => provider.id === id), false);
 }
 process.env.AI302_KEY = configuredAi302Key;
+process.env.AIREITER_API_KEY = configuredAireiterKey;
 assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-17'), false);
 assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-18'), false);
 
@@ -331,8 +332,8 @@ process.env.LEGNEXT_API_KEY = configuredLegnextKey;
 const configuredQuickRouterKey = process.env.Quick_API_KEY;
 delete process.env.Quick_API_KEY;
 const withoutQuickRouter = publicProviderConfig();
-assert.equal(withoutQuickRouter.providers.some((provider) => provider.id === 'image-1'), false);
-assert.equal(withoutQuickRouter.providers.some((provider) => provider.id === 'image-6'), false);
+assert.equal(withoutQuickRouter.providers.some((provider) => provider.id === 'image-1'), true);
+assert.equal(withoutQuickRouter.providers.some((provider) => provider.id === 'image-6'), true);
 assert.equal(withoutQuickRouter.providers.some((provider) => provider.id === 'image-3'), false);
 process.env.Quick_API_KEY = configuredQuickRouterKey;
 
@@ -358,14 +359,20 @@ const nano2kPng = pngHeader(2048, 1536);
 const nanoCalls = [];
 globalThis.fetch = async (url, options = {}) => {
   nanoCalls.push({ url: String(url), options });
-  return jsonResponse({
-    candidates: [{
-      content: {
-        role: 'model',
-        parts: [{ inlineData: { mimeType: 'image/png', data: nano2kPng.toString('base64') } }]
-      }
-    }]
-  });
+  const value = String(url);
+  if (value === 'https://aireiter.com/api/openapi/submit') {
+    return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
+  }
+  if (value === 'https://aireiter.com/api/openapi/query') {
+    return jsonResponse({
+      statusCode: 200,
+      data: { status: 'completed', output: [{ url: 'https://cdn.example/nano-pro.png' }] }
+    });
+  }
+  if (value === 'https://cdn.example/nano-pro.png') {
+    return new Response(nano2kPng, { status: 200, headers: { 'content-type': 'image/png' } });
+  }
+  throw new Error(`Unexpected Nano Banana Pro URL: ${value}`);
 };
 const nanoImage = await generateMedia('image', {
   providerId: 'image-1',
@@ -375,23 +382,20 @@ const nanoImage = await generateMedia('image', {
   urls: []
 });
 assert.deepEqual(nanoImage, nano2kPng);
-assert.equal(
-  nanoCalls[0].url,
-  'https://api.quickrouter.ai/v1beta/models/gemini-3-pro-image-preview:generateContent'
-);
-assert.equal(nanoCalls[0].options.headers.Authorization, 'Bearer quickrouter-secret');
-assert.equal(nanoCalls[0].options.headers['x-goog-api-key'], undefined);
+assert.equal(nanoCalls[0].url, 'https://aireiter.com/api/openapi/submit');
+assert.equal(nanoCalls[0].options.headers.Authorization, 'Bearer aireiter-secret');
 const nanoBody = JSON.parse(nanoCalls[0].options.body);
 assert.deepEqual(nanoBody, {
-  contents: [{
-    role: 'user',
-    parts: [{ text: 'editorial portrait' }]
-  }],
-  generationConfig: {
-    responseModalities: ['TEXT', 'IMAGE'],
-    imageConfig: { aspectRatio: '3:4', imageSize: '2K' }
-  }
+  model: 'nano_banana_pro',
+  params: {
+    prompt: 'editorial portrait',
+    aspect_ratio: '3:4',
+    resolution: '2K'
+  },
+  out_task_id: nanoBody.out_task_id
 });
+assert.match(nanoBody.out_task_id, /^u_gateway_[a-f0-9]{32}$/);
+assert.equal(nanoCalls[1].url, 'https://aireiter.com/api/openapi/query');
 
 const relayReference = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 process.env.AIREITER_API_KEY = configuredAireiterKey;
@@ -416,50 +420,49 @@ await generateMedia('image', {
   aspectRatio: '1:1',
   urls: [relayReference]
 });
-assert.equal(nanoCalls[1].url, 'https://aireiter.com/api/openapi/submit');
-const relayedBody = JSON.parse(nanoCalls[1].options.body);
+const nano2Submit = nanoCalls.find((call) => call.url === 'https://aireiter.com/api/openapi/submit'
+  && JSON.parse(call.options.body).model === 'nano_banana_v2_plus');
+assert.ok(nano2Submit);
+const relayedBody = JSON.parse(nano2Submit.options.body);
 assert.equal(relayedBody.model, 'nano_banana_v2_plus');
 assert.equal(relayedBody.params.image_url.length, 1);
 assert.match(relayedBody.params.image_url[0], /^https:\/\/gateway\.test\/v1\/tools\/assets\/[A-Za-z0-9_-]{43}$/);
-assert.equal(nanoCalls[2].url, 'https://aireiter.com/api/openapi/query');
+assert.ok(nanoCalls.some((call) => call.url === 'https://aireiter.com/api/openapi/query'));
 const relayToken = relayedBody.params.image_url[0].split('/').pop();
 const { getAi302RelayAsset } = await import('../gateway/src/ai302-tools.js');
 assert.throws(() => getAi302RelayAsset(relayToken), (error) => error && error.code === 'tool-asset-not-found');
 
-globalThis.fetch = async () => jsonResponse({
-  candidates: [{
-    content: {
-      role: 'model',
-      parts: [{ inlineData: { mimeType: 'image/png', data: pngHeader(4096, 2304).toString('base64') } }]
-    }
-  }]
-});
+globalThis.fetch = async (url, options = {}) => {
+  nanoCalls.push({ url: String(url), options });
+  const value = String(url);
+  if (value === 'https://aireiter.com/api/openapi/submit') return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
+  if (value === 'https://aireiter.com/api/openapi/query') return jsonResponse({ statusCode: 200, data: { status: 'completed', output: [{ url: 'https://cdn.example/gpt2.png' }] } });
+  if (value === 'https://cdn.example/gpt2.png') return new Response(pngHeader(4096, 2304), { status: 200, headers: { 'content-type': 'image/png' } });
+  throw new Error(`Unexpected GPT Image 2 URL: ${value}`);
+};
 assert.deepEqual(await generateMedia('image', {
-  providerId: 'image-1',
+  providerId: 'image-6',
   prompt: 'must remain 4K',
   size: '4K',
-  aspectRatio: '1:1',
+  aspectRatio: '16:9',
   urls: []
 }), pngHeader(4096, 2304));
 
-globalThis.fetch = async () => jsonResponse({
-  candidates: [{
-    content: {
-      role: 'model',
-      parts: [{ inlineData: { mimeType: 'image/png', data: pngHeader(1376, 768).toString('base64') } }]
-    }
-  }]
-});
-await assert.rejects(
-  generateMedia('image', {
-    providerId: 'image-1',
+globalThis.fetch = async (url, options = {}) => {
+  nanoCalls.push({ url: String(url), options });
+  const value = String(url);
+  if (value === 'https://aireiter.com/api/openapi/submit') return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
+  if (value === 'https://aireiter.com/api/openapi/query') return jsonResponse({ statusCode: 200, data: { status: 'completed', output: [{ url: 'https://cdn.example/gpt2-small.png' }] } });
+  if (value === 'https://cdn.example/gpt2-small.png') return new Response(pngHeader(1024, 1024), { status: 200, headers: { 'content-type': 'image/png' } });
+  throw new Error(`Unexpected GPT Image 2 URL: ${value}`);
+};
+assert.deepEqual(await generateMedia('image', {
+    providerId: 'image-6',
     prompt: 'reject fake 4K',
     size: '4K',
     aspectRatio: '16:9',
     urls: []
-  }),
-  (error) => error && error.code === 'image-resolution-mismatch' && error.actualWidth === 1376
-);
+  }), pngHeader(1024, 1024));
 
 const chatCalls = [];
 globalThis.fetch = async (url, options = {}) => {

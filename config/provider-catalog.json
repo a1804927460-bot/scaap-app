@@ -1,5 +1,5 @@
 {
-  "version": 54,
+  "version": 55,
   "providers": [
     {
       "id": "atlas-image-gpt2",
@@ -178,8 +178,10 @@
       "id": "image-1",
       "kind": "image",
       "name": "Nano Banana Pro",
-      "endpoint": "https://api.quickrouter.ai/v1",
-      "protocol": "gemini-native",
+      "endpoint": "https://aireiter.com/api/openapi/submit",
+      "resultEndpoint": "https://aireiter.com/api/openapi/query",
+      "model": "nano_banana_pro",
+      "protocol": "aireiter-async",
       "logicalModel": "nano-banana-pro",
       "fallbackProviderIds": [],
       "requiresActivation": false,
@@ -189,7 +191,7 @@
         "maxReferenceImages": 8,
         "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
       },
-      "keyEnv": "QUICKROUTER_API_KEY"
+      "keyEnv": "AIREITER_API_KEY"
     },
     {
       "id": "image-2",

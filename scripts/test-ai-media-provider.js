@@ -487,7 +487,6 @@ async function testQuickRouterNativeGeminiImageFlow() {
   const provider = catalogProvider('image-1');
   assert.ok(provider);
   assert.strictEqual(provider.name, 'Nano Banana Pro');
-  assert.strictEqual(provider.endpoint, 'https://api.quickrouter.ai/v1');
   let attempts = 0;
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url, options });
@@ -496,7 +495,7 @@ async function testQuickRouterNativeGeminiImageFlow() {
   };
   const config = normalizeConfig({
     apiKey: 'secret',
-    imageEndpoint: provider.endpoint
+    imageEndpoint: 'https://api.quickrouter.ai/v1'
   });
   await assert.rejects(() => generateMediaBuffer(fetchImpl, config, 'image', {
     prompt: 'blue glass city',

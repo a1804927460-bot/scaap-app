@@ -40,8 +40,10 @@ assert.deepEqual(
 );
 const nanoBananaPro = media.imageProviders.find((provider) => provider.id === 'image-1');
 assert.ok(nanoBananaPro);
-assert.equal(nanoBananaPro.endpoint, 'https://api.quickrouter.ai/v1');
-assert.equal(nanoBananaPro.protocol, 'gemini-native');
+assert.equal(nanoBananaPro.endpoint, 'https://aireiter.com/api/openapi/submit');
+assert.equal(nanoBananaPro.resultEndpoint, 'https://aireiter.com/api/openapi/query');
+assert.equal(nanoBananaPro.model, 'nano_banana_pro');
+assert.equal(nanoBananaPro.protocol, 'aireiter-async');
 assert.deepEqual(nanoBananaPro.capabilities.sizes, ['1K', '2K', '4K']);
 assert.equal(nanoBananaPro.capabilities.ratios.includes('auto'), false);
 for (const id of ['image-4', 'image-5', 'image-7', 'image-8', 'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16']) {
@@ -52,7 +54,7 @@ const chaserCatalog = require('../lib/provider-catalog').catalogProvider('image-
 assert.equal(chaserCatalog.model, 'doubao-seedream-5-0-pro-260628');
 assert.equal(chaserCatalog.icon, 'chaser-pro');
 assert.equal(chaserPro.name, '');
-assert.equal(require('../lib/provider-catalog').catalogProvider('image-1').keyEnv, 'QUICKROUTER_API_KEY');
+assert.equal(require('../lib/provider-catalog').catalogProvider('image-1').keyEnv, 'AIREITER_API_KEY');
 assert.equal(require('../lib/provider-catalog').catalogProvider('image-2').keyEnv, 'AIREITER_API_KEY');
 assert.equal(require('../lib/provider-catalog').catalogProvider('image-2').model, 'nano_banana_v2_plus');
 assert.deepEqual(require('../lib/provider-catalog').catalogProvider('image-1').fallbackProviderIds, []);
