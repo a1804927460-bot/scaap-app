@@ -676,6 +676,23 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
     ? 'reserve_ai_media_credits'
     : 'reserve_ai_video_credits';
   let { response, payload } = await reserveCredits(headers, requestBody, fetchImpl, reserveRpc);
+  // Keep image generation available while the additive media-credit RPC is
+  // being rolled out. Older databases already expose reserve_ai_credits;
+  // retrying that server-side function is safe because the request id keeps
+  // the reservation idempotent. Never use this path for videos because their
+  // reference-media parameters are not represented by the legacy signature.
+  if (!response.ok && quote.kind === 'image' && response.status === 404) {
+    const legacyBody = JSON.stringify({
+      p_user_id: userId,
+      p_kind: quote.kind,
+      p_provider_id: quote.providerId,
+      p_request_id: requestId,
+      p_resolution: quote.billingResolution || quote.resolution,
+      p_duration: quote.duration,
+      p_expected_credits: quote.credits
+    });
+    ({ response, payload } = await reserveCredits(headers, legacyBody, fetchImpl, 'reserve_ai_credits'));
+  }
   if (response.ok && payload && payload.ok === false && payload.reason === 'pricing-mismatch'
       && Number.isInteger(Number(payload.credits)) && Number(payload.credits) >= quote.credits) {
     requestBody = JSON.stringify({
