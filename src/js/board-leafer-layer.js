@@ -131,6 +131,8 @@
       item.fontFamily || '',
       item.fontSize || '',
       item.fontWeight || '',
+      item.color || '',
+      item.colorMode || '',
       item.noFill ? 1 : 0,
       item.partitionName || '',
       item.fileName || '',
@@ -167,7 +169,11 @@
       text,
       fill: color,
       fontFamily: item.fontFamily || 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
-      fontSize: clamp(finite(extra.fontSize === undefined ? item.fontSize : extra.fontSize, 14), 8, 36),
+      fontSize: clamp(
+        finite(extra.fontSize === undefined ? item.fontSize : extra.fontSize, item.isNote ? 32 : 14),
+        item.isNote ? 10 : 8,
+        item.isNote ? 160 : 36
+      ),
       fontWeight: extra.fontWeight || item.fontWeight || 500,
       lineHeight: extra.lineHeight,
       textWrap: 'normal',
@@ -177,6 +183,19 @@
       hittable: false,
       cornerRadius: 0
     };
+  }
+
+  function textColorForItem(item) {
+    if (item && item.isNote && !item.noFill) {
+      const color = String(item.color || '').trim().toLowerCase();
+      const colorMode = String(item.colorMode || '').trim().toLowerCase();
+      if (colorMode === 'auto' || (!colorMode && color === '#15171c')) return '#f3f5f8';
+    }
+    return item && item.noFill ? 'rgba(0,0,0,0)' : (item && item.color || '#e8ebf1');
+  }
+
+  function textFontSizeForItem(item) {
+    return clamp(finite(item && item.fontSize, item && item.isNote ? 32 : 14), item && item.isNote ? 10 : 8, item && item.isNote ? 160 : 36);
   }
 
   function addChildren(group, children) {
@@ -282,18 +301,18 @@
       y: 14,
       width: Math.max(1, bounds.width - 32),
       height: 28,
-      fontSize: 15,
-      fontWeight: 680,
+      fontSize: 18,
+      fontWeight: 720,
       textOverflow: 'ellipsis'
     }));
-    const body = new api.Text(textOptions(item, bounds, moodboardBodyForItem(item), '#d7dee9', {
+    const body = new api.Text(textOptions(item, bounds, moodboardBodyForItem(item), '#f3f5f8', {
       x: 16,
       y: 52,
       width: Math.max(1, bounds.width - 32),
       height: Math.max(1, bounds.height - 68),
-      fontSize: 13,
-      fontWeight: 500,
-      lineHeight: 20,
+      fontSize: 18,
+      fontWeight: 560,
+      lineHeight: 28,
       verticalAlign: 'top',
       textOverflow: 'ellipsis'
     }));
@@ -347,9 +366,9 @@
       return new api.Text({
         ...options,
         text,
-        fill: item.noFill ? 'rgba(0,0,0,0)' : (item.color || '#e8ebf1'),
+        fill: textColorForItem(item),
         fontFamily: item.fontFamily || 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
-        fontSize: clamp(finite(item.fontSize, 14), 8, 36),
+        fontSize: textFontSizeForItem(item),
         fontWeight: item.fontWeight || 500,
         textWrap: 'normal',
         textOverflow: 'ellipsis',
@@ -415,8 +434,8 @@
       }
     } else if (kind === 'text') {
       drawable.text = textForItem(item);
-      drawable.fill = item.noFill ? 'rgba(0,0,0,0)' : (item.color || '#e8ebf1');
-      drawable.fontSize = clamp(finite(item.fontSize, 14), 8, 36);
+      drawable.fill = textColorForItem(item);
+      drawable.fontSize = textFontSizeForItem(item);
       drawable.fontWeight = item.fontWeight || 500;
       drawable.opacity = item.isTextEditing ? 0 : 1;
     } else if (kind === 'media' || kind === 'doodle') {

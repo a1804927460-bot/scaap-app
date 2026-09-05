@@ -825,7 +825,12 @@ function aireiterTaskIdentity(body = {}) {
 }
 
 function aireiterPayloadCode(payload) {
-  const value = Number(payload && (payload.statusCode ?? payload.code));
+  const value = Number(payload && (
+    payload.statusCode
+    ?? payload.code
+    ?? (payload.error && payload.error.code)
+    ?? (payload.data && payload.data.code)
+  ));
   return Number.isFinite(value) ? value : 200;
 }
 

@@ -1786,6 +1786,7 @@ function fileToPayload(f, aiDeliveryToken = null) {
     id: f.id,
     name: f.name,
     importedAt: f.importedAt,
+    lastDownloadedAt: f.lastDownloadedAt || null,
     sourceFolder: f.sourceFolder,
     canvasId: f.canvasId || null,
     sizeBytes: f.sizeBytes,
@@ -10038,7 +10039,15 @@ function registerIpcHandlers() {
       notifyAchievements();
     }
 
-    return matches.map(fileToPayload);
+    return matches
+      .slice()
+      .sort((left, right) => {
+        const leftActivity = new Date(left.lastDownloadedAt || left.importedAt).getTime();
+        const rightActivity = new Date(right.lastDownloadedAt || right.importedAt).getTime();
+        return (Number.isFinite(rightActivity) ? rightActivity : 0)
+          - (Number.isFinite(leftActivity) ? leftActivity : 0);
+      })
+      .map(fileToPayload);
   });
 
   ipcMain.handle('files:deletePermanently', (_evt, id) => {
@@ -10463,7 +10472,16 @@ function registerIpcHandlers() {
     if (result.canceled || !result.filePath) return { ok: false };
     try {
       await copyFileAtomically(f.storedPath, result.filePath);
-      return { ok: true, path: result.filePath };
+      f.lastDownloadedAt = new Date().toISOString();
+      store.scheduleSave();
+      try {
+        await flushStoreDurably();
+      } catch (saveError) {
+        console.error('Failed to persist file download time:', saveError.message);
+      }
+      const file = fileToPayload(f);
+      broadcastRendererEvent('files:changed', { file });
+      return { ok: true, path: result.filePath, file };
     } catch (err) {
       const reason = String(err && err.code || 'file-export-failed');
       return {

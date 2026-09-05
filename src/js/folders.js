@@ -497,7 +497,7 @@ function currentFileListScope() {
   const files = contextId === null
     ? AppState.files.filter((f) => !f.folderId)
     : AppState.files.filter((f) => f.folderId === contextId);
-  return filterFilesByActiveDateFolder(files);
+  return filterFilesByActiveDateFolder(files).sort(compareFilesByActivity);
 }
 
 function exitToDefaultFolder() {

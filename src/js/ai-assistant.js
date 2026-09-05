@@ -1598,15 +1598,6 @@ async function submitAssistantMessage() {
   });
   persistActiveAiChatSession();
 
-  if (false) {
-    AiAssistant.messages.push({ role: 'user', content: prompt, images: attachments.map((item) => item.dataUrl) });
-    const greeting = 'Hi, I am here. You can ask me to make images, edit images, make videos, or just think through an idea.';
-    const zhGreeting = '你好，我在这里。你可以让我生成图片、编辑图片、制作视频，或者一起梳理一个想法。';
-    AiAssistant.messages.push({ role: 'assistant', content: greeting });
-    appendAssistantText('assistant', t(greeting, zhGreeting));
-    return;
-  }
-
   setAssistantBusy(true);
   const modelName = submittedProvider
     ? (typeof publicModelLabel === 'function' ? publicModelLabel(submittedProvider.name) : submittedProvider.name)

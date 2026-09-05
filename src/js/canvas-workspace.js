@@ -20,6 +20,7 @@ const CanvasWorkspace = {
   libraryScope: 'personal',
   libraryProjectId: null,
   libraryQuery: '',
+  draggingCanvasId: null,
   boardItemIndex: new Map(),
   boardItemIndexRef: null,
   boardItemIndexCount: -1,
@@ -564,9 +565,93 @@ function buildCanvasMosaic(canvas) {
 function filteredCanvases() {
   const query = CanvasWorkspace.libraryQuery.trim().toLowerCase();
   return AppState.canvases
-    .filter((canvas) => !query || canvas.name.toLowerCase().includes(query))
+    .filter((canvas) => (!CanvasWorkspace.libraryProjectId || canvas.projectId === CanvasWorkspace.libraryProjectId)
+      && (!query || canvas.name.toLowerCase().includes(query)))
     .sort((a, b) => Number(b.pinned === true) - Number(a.pinned === true)
       || new Date(b.lastOpenedAt || b.updatedAt || b.createdAt || 0) - new Date(a.lastOpenedAt || a.updatedAt || a.createdAt || 0));
+}
+
+function filteredCanvasProjects() {
+  const query = CanvasWorkspace.libraryQuery.trim().toLowerCase();
+  if (CanvasWorkspace.libraryProjectId) return [];
+  return AppState.canvasProjects
+    .filter((project) => !query || project.name.toLowerCase().includes(query));
+}
+
+function canvasFolderIconMarkup() {
+  return '<svg viewBox="0 0 64 64" width="64" height="64" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 18.5A5.5 5.5 0 0 1 12.5 13h14l6 6H51.5A5.5 5.5 0 0 1 57 24.5v23A5.5 5.5 0 0 1 51.5 53h-39A5.5 5.5 0 0 1 7 47.5z"/><path d="M8 23h48"/></svg>';
+}
+
+function buildCanvasLibraryFolderCard(project) {
+  const card = document.createElement('article');
+  card.className = 'canvas-library-folder-card';
+  card.dataset.projectId = project.id;
+  card.tabIndex = 0;
+  card.setAttribute('role', 'button');
+  card.setAttribute('aria-label', t(`Open folder ${project.name}`, `打开文件夹“${project.name}”`));
+
+  const icon = document.createElement('span');
+  icon.className = 'canvas-library-folder-icon';
+  icon.innerHTML = canvasFolderIconMarkup();
+  const title = document.createElement('strong');
+  title.className = 'canvas-library-folder-title';
+  title.textContent = project.name;
+  const count = document.createElement('span');
+  count.className = 'canvas-library-folder-count';
+  const canvasCount = AppState.canvases.filter((canvas) => canvas.projectId === project.id).length;
+  count.textContent = t(`${canvasCount} canvas${canvasCount === 1 ? '' : 'es'}`, `${canvasCount} 个画布`);
+  const hint = document.createElement('small');
+  hint.className = 'canvas-library-folder-hint';
+  hint.textContent = t('Drop canvas here', '将画布拖到这里');
+
+  card.append(icon, title, count, hint);
+  card.addEventListener('click', () => {
+    CanvasWorkspace.libraryProjectId = project.id;
+    CanvasWorkspace.libraryQuery = '';
+    const search = document.getElementById('canvas-library-search');
+    if (search) search.value = '';
+    renderCanvasLibrary();
+  });
+  card.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    card.click();
+  });
+  card.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    buildAndShowSimpleMenu([
+      {
+        label: t('Rename folder', '重命名文件夹'),
+        icon: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
+        action: () => promptRenameCanvasProject(project.id)
+      },
+      {
+        label: t('Delete folder', '删除文件夹'),
+        icon: 'M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13',
+        danger: true,
+        action: () => promptDeleteCanvasProject(project.id)
+      }
+    ], event.clientX, event.clientY, 'canvas-project-context-menu');
+  });
+  card.addEventListener('dragover', (event) => {
+    if (!event.dataTransfer || !event.dataTransfer.types.includes('text/messs-canvas-id')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    card.classList.add('is-drop-target');
+  });
+  card.addEventListener('dragleave', (event) => {
+    if (event.relatedTarget && card.contains(event.relatedTarget)) return;
+    card.classList.remove('is-drop-target');
+  });
+  card.addEventListener('drop', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    card.classList.remove('is-drop-target');
+    const canvasId = event.dataTransfer && event.dataTransfer.getData('text/messs-canvas-id');
+    if (canvasId) void moveCanvasToProject(canvasId, project.id, { notify: true });
+  });
+  return card;
 }
 
 function renderCanvasProjectList(list) {
@@ -639,14 +724,31 @@ function renderCanvasLibrary() {
   const grid = document.getElementById('canvas-library-grid');
   if (!grid) return;
   const canvases = filteredCanvases();
+  const projects = filteredCanvasProjects();
   grid.innerHTML = '';
   if (!CanvasWorkspace.libraryQuery.trim()) grid.appendChild(buildCanvasLibraryCreateCard());
+  projects.forEach((project) => grid.appendChild(buildCanvasLibraryFolderCard(project)));
+  const folderBack = document.getElementById('canvas-library-folder-back');
+  const folder = CanvasWorkspace.libraryProjectId
+    ? AppState.canvasProjects.find((project) => project.id === CanvasWorkspace.libraryProjectId)
+    : null;
+  if (folderBack) {
+    folderBack.hidden = !folder;
+    folderBack.querySelector('span').textContent = t('All canvases', '全部画布');
+  }
+  const heading = document.getElementById('canvas-library-heading');
+  if (heading) heading.textContent = folder ? folder.name : t('All Canvases', '全部画布');
+  const subtitle = document.querySelector('.canvas-library-topline p');
+  if (subtitle) subtitle.textContent = folder
+    ? t('Canvas files in this folder', '此文件夹中的画布文件')
+    : t('Browse and manage your canvases', '浏览和管理你的画布');
   canvases.forEach((canvas) => {
     const project = AppState.canvasProjects.find((entry) => entry.id === canvas.projectId);
     const card = document.createElement('article');
     card.className = 'canvas-library-card';
     card.classList.toggle('is-pinned', canvas.pinned === true);
     card.dataset.canvasId = canvas.id;
+    card.draggable = true;
     card.tabIndex = 0;
     card.setAttribute('role', 'button');
 
@@ -759,6 +861,19 @@ function renderCanvasLibrary() {
       ], event.clientX, event.clientY, 'canvas-card-context-menu');
     });
     card.addEventListener('click', () => switchCanvas(canvas.id, { enterWorkspace: true }));
+    card.addEventListener('dragstart', (event) => {
+      CanvasWorkspace.draggingCanvasId = canvas.id;
+      card.classList.add('is-dragging');
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/messs-canvas-id', canvas.id);
+    });
+    card.addEventListener('dragend', () => {
+      CanvasWorkspace.draggingCanvasId = null;
+      card.classList.remove('is-dragging');
+      document.querySelectorAll('.canvas-library-folder-card.is-drop-target').forEach((folderCard) => {
+        folderCard.classList.remove('is-drop-target');
+      });
+    });
     card.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
@@ -769,11 +884,19 @@ function renderCanvasLibrary() {
   });
   const empty = document.getElementById('canvas-library-empty');
   if (empty) {
-    empty.hidden = canvases.length > 0 || Boolean(CanvasWorkspace.libraryQuery.trim());
+    empty.hidden = canvases.length > 0 || projects.length > 0 || Boolean(CanvasWorkspace.libraryQuery.trim());
     if (!empty.hidden) {
       empty.textContent = t('No canvases found', '没有找到画布');
     }
   }
+}
+
+function selectAllCanvasLibraryItems() {
+  CanvasWorkspace.libraryProjectId = null;
+  CanvasWorkspace.libraryQuery = '';
+  const search = document.getElementById('canvas-library-search');
+  if (search) search.value = '';
+  renderCanvasLibrary();
 }
 
 function renderCanvasWorkspaceControls() {
@@ -1107,8 +1230,9 @@ async function promptNewProject() {
   AppState.canvasProjects = [...previousProjects, project];
   try {
     await canvasWorkspaceSave();
+    // Keep the all-items view open so the new folder is visible immediately.
     CanvasWorkspace.libraryScope = project.scope;
-    CanvasWorkspace.libraryProjectId = project.id;
+    CanvasWorkspace.libraryProjectId = null;
     CanvasWorkspace.libraryFilter = 'all';
     renderCanvasWorkspaceControls();
     showCanvasLibrary();
@@ -1168,19 +1292,28 @@ async function promptMoveCanvasToFolder(canvasId) {
     projectId: canvas.projectId
   });
   if (!projectId || projectId === canvas.projectId) return;
+  await moveCanvasToProject(canvasId, projectId, { notify: true });
+}
+
+async function moveCanvasToProject(canvasId, projectId, { notify = false } = {}) {
+  const canvas = AppState.canvases.find((entry) => entry.id === canvasId);
+  const project = AppState.canvasProjects.find((entry) => entry.id === projectId);
+  if (!canvas || !project || canvas.projectId === project.id) return false;
   const previousProjectId = canvas.projectId;
   const previousUpdatedAt = canvas.updatedAt;
-  canvas.projectId = projectId;
+  canvas.projectId = project.id;
   canvas.updatedAt = new Date().toISOString();
   try {
     await canvasWorkspaceSave();
     renderCanvasWorkspaceControls();
-    showToast(t('Canvas moved to folder.', '画布已移动到文件夹。'), 'Canvas');
+    if (notify) showToast(t('Canvas moved to folder.', '画布已移动到文件夹。'), 'Canvas');
+    return true;
   } catch (err) {
     canvas.projectId = previousProjectId;
     canvas.updatedAt = previousUpdatedAt;
     renderCanvasWorkspaceControls();
-    showToast(err && err.message ? err.message : t('Canvas move failed.', '画布移动失败。'), 'Canvas');
+    if (notify) showToast(err && err.message ? err.message : t('Canvas move failed.', '画布移动失败。'), 'Canvas');
+    return false;
   }
 }
 
@@ -2302,6 +2435,7 @@ async function initCanvasWorkspace(initial) {
   document.getElementById('canvas-import').addEventListener('click', promptImportCanvas);
   document.getElementById('canvas-project-new').addEventListener('click', promptNewProject);
   document.getElementById('canvas-library-back').addEventListener('click', showCanvasLibrary);
+  document.getElementById('canvas-library-folder-back').addEventListener('click', selectAllCanvasLibraryItems);
   document.getElementById('board-detach-window').addEventListener('click', () => {
     void openActiveCanvasInDetachedWindow();
   });
@@ -2324,6 +2458,28 @@ async function initCanvasWorkspace(initial) {
     }
   });
   document.addEventListener('keydown', (event) => {
+    const target = event.target instanceof Element ? event.target : document.activeElement;
+    const isEditableTarget = target && (
+      ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) ||
+      target.isContentEditable ||
+      target.closest('[contenteditable="true"], .ql-editor, [role="textbox"]')
+    );
+    if (
+      event.code === 'Space' &&
+      (event.ctrlKey || event.metaKey) &&
+      !event.altKey &&
+      !event.shiftKey &&
+      !event.repeat &&
+      !isEditableTarget &&
+      document.getElementById('board-panel')?.classList.contains('is-fullscreen') &&
+      !document.getElementById('board-panel')?.classList.contains('is-canvas-library') &&
+      !document.getElementById('board-workspace-body')?.hidden
+    ) {
+      event.preventDefault();
+      const agent = document.getElementById('board-agent-panel');
+      setCanvasAgentOpen(!!agent?.classList.contains('is-hidden'), { focus: true });
+      return;
+    }
     if (event.key === 'Escape') closeCanvasCardMenus();
   });
 

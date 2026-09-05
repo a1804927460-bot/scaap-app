@@ -80,10 +80,16 @@ import {
   finalizeVideoJob,
   getVideoDownload,
   getVideoJob,
+  recordVideoStorage,
   settleVideoDownload,
   startVideoJob,
   startVideoJobWorker
 } from './video-jobs.js';
+import {
+  isStoredVideoResult,
+  readStoredVideoResult,
+  storeVideoResult
+} from './video-result-storage.js';
 import { normalizeVideoResolution } from './video-resolution.js';
 import { createIdempotentOperationRunner } from './idempotent-operation.js';
 import { providerUserId } from './provider-user.js';
@@ -1161,14 +1167,15 @@ function queuePendingImageTaskAttachment(details) {
   return entry;
 }
 
-function createImageJobTracker(userId, requestId, body, existingJob = null) {
+function createImageJobTracker(userId, requestId, body, existingJob = null, options = {}) {
   const state = {
     accepted: Boolean(existingJob),
     // A production gateway must be able to resume a paid request before it
     // contacts an upstream. Local development without a service key keeps the
     // previous non-durable behavior.
     durable: true,
-    trackingRequired: Boolean(String(process.env.SUPABASE_SECRET_KEY || '').trim()),
+    trackingRequired: Boolean(String(process.env.SUPABASE_SECRET_KEY || '').trim())
+      && options.imageJobTrackingAvailable !== false,
     taskId: String(existingJob && existingJob.providerTaskId || '').trim(),
     providerId: String(existingJob && existingJob.providerId || '').trim().toLowerCase(),
     requestHash: hashImageRequest(body),
@@ -1247,10 +1254,12 @@ async function loadImageJob(userId, requestId) {
   try {
     return await getImageJob(userId, requestId);
   } catch (error) {
-    // Local development and pre-migration gateways do not have the durable
-    // image table. Production RPC outages must still fail closed before a
-    // new paid submission is attempted.
-    if (String(error && error.code || '') === 'image-job-service-not-configured') return null;
+    // The image-job table is an optional recovery layer. A missing table must
+    // not block a fresh paid request; transient RPC failures still fail
+    // closed because they cannot prove that an earlier task is absent.
+    if (['image-job-service-not-configured', 'image-job-schema-missing'].includes(
+      String(error && error.code || '')
+    )) return null;
     throw error;
   }
 }
@@ -2257,9 +2266,15 @@ async function handle(request, response) {
         message: notFound ? 'Video task not found.' : 'The video is not ready to download.'
       });
     }
-    let downloadUrl = publicDownloadUrl(result.url);
     let downloaded = null;
-    let lastDownloadError = null;
+    if (result.storageRef && isStoredVideoResult(result.storageRef, user.id, result.requestId)) {
+      try {
+        downloaded = await readStoredVideoResult(user.id, result.requestId, result.storageRef);
+      } catch (error) {
+        if (!['video-result-storage-missing', 'video-result-storage-unavailable'].includes(String(error && error.code || ''))) throw error;
+      }
+    }
+    let downloadUrl = publicDownloadUrl(result.url);
     for (let attempt = 0; attempt < 3 && !downloaded; attempt += 1) {
       if (result.providerId && result.providerTaskId) {
         try {
@@ -2272,7 +2287,6 @@ async function handle(request, response) {
       try {
         downloaded = await downloadValidatedVideo(downloadUrl);
       } catch (error) {
-        lastDownloadError = error;
         if (error && error.retryable === false) break;
         if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
       }
@@ -2282,6 +2296,13 @@ async function handle(request, response) {
       // reservation intact; a later request can retry the same task without
       // creating a second provider job or losing a paid result.
       throw videoDeliveryRecoveryPendingError();
+    }
+    if (!result.storageRef) {
+      const storageRef = await storeVideoResult(user.id, result.requestId, downloaded.buffer, downloaded.contentType);
+      await recordVideoStorage(result.requestId, storageRef, {
+        contentType: downloaded.contentType,
+        bytes: downloaded.buffer.length
+      });
     }
     const deferredDelivery = String(body.taskToken).startsWith('d_');
     const settlement = deferredDelivery ? null : await settleVideoDownload(user.id, body.taskToken, {
@@ -2368,6 +2389,7 @@ async function handle(request, response) {
 
       let reservation = null;
       let claimedJob = null;
+      let imageJobTrackingAvailable = true;
       if (!existingJob) {
         reservation = await reserveUsage(user.id, kind, requestId, body);
         if (!reservation.ok) {
@@ -2385,10 +2407,15 @@ async function handle(request, response) {
             deadlineAt: new Date(Date.now() + 25 * 60_000).toISOString()
           });
         } catch (error) {
-          // Development and pre-durable gateways have no image-job service.
-          // Preserve their existing local flow; production failures must first
-          // check whether the claim actually committed before releasing points.
-          if (String(error && error.code || '') === 'image-job-service-not-configured') {
+          // The recovery table is optional during rollout. Its absence is
+          // deterministic and does not mean the upstream request failed, so
+          // allow the normal generation path to continue without recovery
+          // persistence. Other service errors must first check whether the
+          // claim actually committed before releasing points.
+          if (['image-job-service-not-configured', 'image-job-schema-missing'].includes(
+            String(error && error.code || '')
+          )) {
+            imageJobTrackingAvailable = false;
             claimedJob = null;
           } else {
             let recoveryJob = null;
@@ -2404,7 +2431,10 @@ async function handle(request, response) {
               }
               throw imageRecoveryPendingError();
             }
-            if (lookupError) {
+            if (lookupError && String(lookupError.code || '') === 'image-job-schema-missing') {
+              imageJobTrackingAvailable = false;
+              claimedJob = null;
+            } else if (lookupError) {
               // A failed lookup cannot prove that the reservation was never
               // claimed. Fail closed and let a later retry recover it.
               console.error(JSON.stringify({
@@ -2439,7 +2469,9 @@ async function handle(request, response) {
         throw imageRecoveryPendingError();
       }
       if (body.canvasId) await tagUsageCanvas(user.id, requestId, body.canvasId);
-      const tracker = createImageJobTracker(user.id, requestId, body, recoverJob);
+      const tracker = createImageJobTracker(user.id, requestId, body, recoverJob, {
+        imageJobTrackingAvailable
+      });
       tracker.state.requestHash = requestHash;
       const startedAt = Date.now();
       try {

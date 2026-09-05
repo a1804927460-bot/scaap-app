@@ -273,6 +273,11 @@ contextBridge.exposeInMainWorld('messsAPI', {
     ipcRenderer.on('canvas:stateChanged', listener);
     return () => ipcRenderer.removeListener('canvas:stateChanged', listener);
   },
+  onFilesChanged: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('files:changed', listener);
+    return () => ipcRenderer.removeListener('files:changed', listener);
+  },
 
   renderPdfPage: (pdfPath, pageNumber, scale) => renderPdfPage(pdfPath, pageNumber, scale),
 

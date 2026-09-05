@@ -2,7 +2,7 @@
 /* Shared in-renderer state + small utilities used across modules. */
 
 const AppState = {
-  files: [],          // [{id,name,importedAt,sourceFolder,sizeBytes,ext,url,folderId}]
+  files: [],          // [{id,name,importedAt,lastDownloadedAt,sourceFolder,sizeBytes,ext,url,folderId}]
   folders: [],        // [{id,name,createdAt}]
   defaultFolderName: 'Library',
   boardItems: [],
@@ -153,9 +153,26 @@ function formatDuration(totalSeconds) {
   return `${s}s`;
 }
 
+function fileActivityTimestamp(file) {
+  const downloadedValue = file && file.lastDownloadedAt;
+  const downloadedAt = downloadedValue ? new Date(downloadedValue).getTime() : NaN;
+  if (Number.isFinite(downloadedAt)) return downloadedAt;
+  const importedAt = new Date(file && file.importedAt).getTime();
+  return Number.isFinite(importedAt) ? importedAt : 0;
+}
+
+function compareFilesByActivity(left, right) {
+  const activityDifference = fileActivityTimestamp(right) - fileActivityTimestamp(left);
+  if (activityDifference) return activityDifference;
+  const importedDifference = new Date(right && right.importedAt).getTime()
+    - new Date(left && left.importedAt).getTime();
+  if (Number.isFinite(importedDifference) && importedDifference) return importedDifference;
+  return String(left && left.id || '').localeCompare(String(right && right.id || ''));
+}
+
 function groupFilesByDay(files) {
   const groups = new Map();
-  const sorted = [...files].sort((a, b) => new Date(b.importedAt) - new Date(a.importedAt));
+  const sorted = [...files].sort(compareFilesByActivity);
   for (const f of sorted) {
     const day = fileDayKey(f.importedAt);
     if (!groups.has(day)) groups.set(day, []);

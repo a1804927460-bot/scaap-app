@@ -293,6 +293,15 @@ export async function getVideoDownload(userId, taskToken, fetchImpl = fetch) {
   }, fetchImpl));
 }
 
+export async function recordVideoStorage(requestId, storageRef, details = {}, fetchImpl = fetch) {
+  return requireObject(await rpc('record_ai_video_provider_storage', {
+    p_request_id: requestId,
+    p_storage_ref: String(storageRef || ''),
+    p_result_content_type: String(details.contentType || 'video/mp4').slice(0, 128),
+    p_result_bytes: Number.isFinite(Number(details.bytes)) ? Math.max(0, Math.round(Number(details.bytes))) : null
+  }, fetchImpl));
+}
+
 function providerStatus(result) {
   return String(result && (result.status || result.state || result.task && result.task.status) || '').trim().toLowerCase();
 }

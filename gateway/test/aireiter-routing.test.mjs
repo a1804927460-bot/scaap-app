@@ -216,6 +216,25 @@ test('AI Reiter accepts numeric completion status and nested result URLs', async
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
+test('AI Reiter nested authentication and balance errors are rejected before polling', async () => {
+  const previousFetch = globalThis.fetch;
+  await withEnvironment({ AIREITER_API_KEY: 'aireiter-key' }, async () => {
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return jsonResponse({ error: { code: 401, message: 'Authentication failed' } });
+    };
+    await assert.rejects(() => generateMedia('image', {
+      providerId: 'image-2',
+      operationId: '49494949-4949-4494-8494-494949494949',
+      prompt: 'nested error',
+      size: '1K',
+      aspectRatio: '1:1'
+    }), (error) => error && error.code === 'provider-request-failed' && error.preSubmissionFailure === true);
+    assert.equal(calls, 1);
+  }).finally(() => { globalThis.fetch = previousFetch; });
+});
+
 test('AI Reiter video tasks stay pinned to their accepted route', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({

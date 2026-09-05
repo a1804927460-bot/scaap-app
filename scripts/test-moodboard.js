@@ -75,5 +75,11 @@ assert.match(main, /b\.isNote \|\| b\.isDoodle \|\| b\.isMoodboard/,
 assert.match(styles, /\.board-moodboard \{[\s\S]*?border-radius: 8px[\s\S]*?\.moodboard-overlay \{[\s\S]*?place-items: center[\s\S]*?\.moodboard-editor-panel[\s\S]*?width: min\(72vw, 980px\)[\s\S]*?height: min\(76vh, 760px\)[\s\S]*?border-radius: 8px/,
   'The moodboard editor must open as a centered, rounded half-screen dialog.');
 assert.match(styles, /moodboard-editor-workspace:has\(\.moodboard-agent-suggestion:not\(\[hidden\]\)\)[\s\S]*?grid-template-columns/);
+assert.match(styles, /\.moodboard-editor \.ql-editor \{[\s\S]*?font-size: 18px[\s\S]*?line-height: 1\.72/,
+  'Moodboard editor text must remain large and readable.');
+assert.match(styles, /\.board-canvas\[data-board-renderer="leafer"\] \.board-text-note-content \{[\s\S]*?color: #f3f5f8[\s\S]*?font-size: 32px/,
+  'Confirmed text notes must keep a large white canvas fallback style.');
+assert.match(fs.readFileSync(path.join(root, 'src', 'js', 'board-leafer-layer.js'), 'utf8'), /function textColorForItem[\s\S]*?colorMode === 'auto'[\s\S]*?return '#f3f5f8'/,
+  'Leafer must render automatic text-note colors as white.');
 
 process.stdout.write('Text moodboard tests passed.\n');

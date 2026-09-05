@@ -135,6 +135,16 @@ async function run() {
     if (!source.includes("placeholderColor: 'rgba(0, 0, 0, 0)'")) {
       throw new Error('Leafer media placeholders must remain transparent during async decode.');
     }
+    if (!source.includes("colorMode === 'auto' || (!colorMode && color === '#15171c')")) {
+      throw new Error('Auto-colored text notes must stay readable after switching to Leafer.');
+    }
+    if (!source.includes("item.isNote ? 160 : 36")) {
+      throw new Error('Leafer text notes must preserve the large editor font range.');
+    }
+    if (!source.includes("moodboardBodyForItem(item), '#f3f5f8'") ||
+        !source.includes('fontSize: 18') || !source.includes('lineHeight: 28')) {
+      throw new Error('Leafer moodboard text must use the readable large-text style.');
+    }
     process.stdout.write(`BOARD_LEAFER_LAYER_OK items=${result.itemCount} resize=${result.afterResize.width}x${result.afterResize.height}\n`);
   } finally {
     window.destroy();

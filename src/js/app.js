@@ -34,6 +34,25 @@ function bootstrapMainApp(initial) {
   initAiAssistant();
   initFullscreenOverlay();
   if (typeof restoreBoardButlerTasks === 'function') restoreBoardButlerTasks(initial.butlerTasks);
+  if (window.messsAPI && typeof window.messsAPI.onFilesChanged === 'function') {
+    window.messsAPI.onFilesChanged(applyRemoteFileChange);
+  }
+}
+
+function applyRemoteFileChange(payload = {}) {
+  const file = payload && payload.file;
+  if (!file || !file.id) return;
+  const index = AppState.files.findIndex((entry) => entry.id === file.id);
+  const merged = index === -1 ? file : { ...AppState.files[index], ...file };
+  if (index === -1) AppState.files.push(merged);
+  else AppState.files[index] = merged;
+  if (typeof Board !== 'undefined' && Board.filesById instanceof Map) {
+    Board.filesById.set(file.id, merged);
+  }
+  if (typeof renderFileList === 'function' && typeof currentFileListScope === 'function') {
+    renderFileList(currentFileListScope());
+  }
+  if (typeof renderFolderGridIfActive === 'function') renderFolderGridIfActive();
 }
 
 document.addEventListener('DOMContentLoaded', async () => {

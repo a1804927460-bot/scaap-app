@@ -540,7 +540,7 @@ function removeReleasedBoardButlerFiles(fileIds) {
     removedFiles.forEach((fileId) => Board.filesById.delete(fileId));
   }
   if (typeof BoardPreviewCache !== 'undefined') {
-    removedFiles.forEach((fileId) => BoardPreviewCache.delete(fileId));
+    removedFiles.forEach((fileId) => invalidateBoardPreview(fileId));
   }
   renderBoard();
   if (typeof renderFileList === 'function') renderFileList(currentFileListScope());

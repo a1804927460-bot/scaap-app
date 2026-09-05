@@ -36,6 +36,9 @@ const BOARD_WHEEL_ZOOM_RATE = 0.001;
 const BOARD_WHEEL_SMOOTHING = 0.28;
 const BOARD_WHEEL_SETTLE_EPSILON = 0.12;
 const BOARD_MOVE_HISTORY_LIMIT = 100;
+const BOARD_MOVE_HISTORY_CANVAS_LIMIT = 48;
+const BOARD_MOVE_HISTORY_TOTAL_LIMIT = 240;
+const BOARD_MOVE_HISTORY_MEMORY_LIMIT = 16 * 1024 * 1024;
 const BOARD_TOOLBAR_COMPACT_START_ZOOM = 1.6;
 const BOARD_TOOLBAR_COMPACT_END_ZOOM = 3.2;
 const BOARD_TOOLBAR_MIN_SCREEN_SCALE = 0.86;
@@ -106,6 +109,7 @@ const Board = {
   interactionPrefetchTimer: 0,
   interactionPrefetchLastAt: 0,
   interactionPrefetchView: null,
+  wheelViewportRect: null,
   interactionVisibleIds: new Set(),
   interactionFallbackIds: new Set(),
   interactionFallbackView: null,
@@ -114,6 +118,7 @@ const Board = {
   reconcileFrame: 0,
   reconcilePending: false,
   mountFrame: 0,
+  mountBoostUntil: 0,
   mountQueueAllowedIds: new Set(),
   measureFrame: 0,
   measureQueue: new Map(),
@@ -165,16 +170,58 @@ const Board = {
   indexItemCount: -1,
   indexFileCount: -1,
   indexDirty: true,
-  mediaReleaseTimers: new Map()
+  mediaReleaseTimers: new Map(),
+  initialized: false,
+  disposed: false,
+  lifecycleToken: 0,
+  fullImagePendingImages: new Map(),
+  previewGenerations: new Map()
 };
 
 const BoardMoveHistory = new Map();
+let boardMoveHistoryTotalEntries = 0;
+let boardMoveHistoryTotalBytes = 0;
+
+function boardHistoryEntryBytes(value, seen = new Set()) {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === 'string') return value.length * 2;
+  if (typeof value !== 'object' || seen.has(value)) return 0;
+  seen.add(value);
+  if (Array.isArray(value)) return value.reduce((total, entry) => total + boardHistoryEntryBytes(entry, seen), 0);
+  return Object.entries(value).reduce((total, [key, entry]) => (
+    total + key.length * 2 + boardHistoryEntryBytes(entry, seen)
+  ), 0);
+}
+
+function dropBoardHistoryEntry(state, stack) {
+  const entry = stack.shift();
+  if (!entry) return;
+  const bytes = Number(entry.__boardHistoryBytes) || 0;
+  state.bytes = Math.max(0, (Number(state.bytes) || 0) - bytes);
+  boardMoveHistoryTotalEntries = Math.max(0, boardMoveHistoryTotalEntries - 1);
+  boardMoveHistoryTotalBytes = Math.max(0, boardMoveHistoryTotalBytes - bytes);
+}
+
+function clearBoardHistoryStack(state, stack) {
+  while (stack.length) dropBoardHistoryEntry(state, stack);
+}
 
 function boardMoveHistoryState(canvasId = activeCanvasId()) {
   if (!BoardMoveHistory.has(canvasId)) {
-    BoardMoveHistory.set(canvasId, { undo: [], redo: [] });
+    BoardMoveHistory.set(canvasId, { undo: [], redo: [], bytes: 0, lastUsedAt: Date.now() });
   }
-  return BoardMoveHistory.get(canvasId);
+  const state = BoardMoveHistory.get(canvasId);
+  state.lastUsedAt = Date.now();
+  while (BoardMoveHistory.size > BOARD_MOVE_HISTORY_CANVAS_LIMIT) {
+    const oldest = [...BoardMoveHistory.entries()]
+      .filter(([id]) => id !== canvasId)
+      .sort((left, right) => (left[1].lastUsedAt || 0) - (right[1].lastUsedAt || 0))[0];
+    if (!oldest) break;
+    clearBoardHistoryStack(oldest[1], oldest[1].undo);
+    clearBoardHistoryStack(oldest[1], oldest[1].redo);
+    BoardMoveHistory.delete(oldest[0]);
+  }
+  return state;
 }
 
 function cloneBoardHistoryItem(item) {
@@ -187,9 +234,18 @@ function cloneBoardHistoryItem(item) {
 function recordBoardHistoryEntry(entry, canvasId = activeCanvasId()) {
   if (!entry) return false;
   const state = boardMoveHistoryState(canvasId);
+  const bytes = boardHistoryEntryBytes(entry);
+  Object.defineProperty(entry, '__boardHistoryBytes', { value: bytes, configurable: true });
   state.undo.push(entry);
-  if (state.undo.length > BOARD_MOVE_HISTORY_LIMIT) state.undo.shift();
-  state.redo.length = 0;
+  state.bytes += bytes;
+  boardMoveHistoryTotalEntries += 1;
+  boardMoveHistoryTotalBytes += bytes;
+  clearBoardHistoryStack(state, state.redo);
+  while (
+    state.undo.length > BOARD_MOVE_HISTORY_LIMIT ||
+    boardMoveHistoryTotalEntries > BOARD_MOVE_HISTORY_TOTAL_LIMIT ||
+    boardMoveHistoryTotalBytes > BOARD_MOVE_HISTORY_MEMORY_LIMIT
+  ) dropBoardHistoryEntry(state, state.undo);
   return true;
 }
 
@@ -626,12 +682,42 @@ function pasteBoardClipboard(atX, atY, placementOptions = {}) {
 const BoardPreviewCache = new Map();
 const BoardPreviewPending = new Map();
 const BOARD_PREVIEW_CACHE_LIMIT = 200;
+const BOARD_PREVIEW_CACHE_MEMORY_LIMIT = 32 * 1024 * 1024;
+let boardPreviewCacheBytes = 0;
+
+function boardPreviewResultBytes(result) {
+  if (!result || typeof result !== 'object') return 0;
+  return Object.entries(result).reduce((total, [key, value]) => {
+    if (typeof value === 'string') return total + key.length * 2 + value.length * 2;
+    if (Array.isArray(value)) return total + value.reduce((sum, entry) => (
+      sum + (typeof entry === 'string' ? entry.length * 2 : 0)
+    ), 0);
+    return total;
+  }, 0);
+}
+
+function deleteBoardPreviewCache(fileId) {
+  const previous = BoardPreviewCache.get(fileId);
+  if (!previous) return false;
+  boardPreviewCacheBytes = Math.max(0, boardPreviewCacheBytes - (Number(previous.__boardCacheBytes) || 0));
+  BoardPreviewCache.delete(fileId);
+  return true;
+}
 
 function cacheBoardPreview(fileId, result) {
-  if (BoardPreviewCache.has(fileId)) BoardPreviewCache.delete(fileId);
+  if (Board.disposed) return;
+  deleteBoardPreviewCache(fileId);
+  const bytes = boardPreviewResultBytes(result);
+  if (result && typeof result === 'object') {
+    try { Object.defineProperty(result, '__boardCacheBytes', { value: bytes, configurable: true }); } catch (error) {}
+  }
   BoardPreviewCache.set(fileId, result);
-  while (BoardPreviewCache.size > BOARD_PREVIEW_CACHE_LIMIT) {
-    BoardPreviewCache.delete(BoardPreviewCache.keys().next().value);
+  boardPreviewCacheBytes += bytes;
+  while (BoardPreviewCache.size > BOARD_PREVIEW_CACHE_LIMIT || boardPreviewCacheBytes > BOARD_PREVIEW_CACHE_MEMORY_LIMIT) {
+    const oldestFileId = BoardPreviewCache.keys().next().value;
+    const oldest = BoardPreviewCache.get(oldestFileId);
+    boardPreviewCacheBytes = Math.max(0, boardPreviewCacheBytes - (Number(oldest && oldest.__boardCacheBytes) || 0));
+    BoardPreviewCache.delete(oldestFileId);
   }
 }
 
@@ -786,12 +872,14 @@ function rememberBoardFullImage(element) {
 }
 
 function preloadBoardFullImage(source) {
-  if (!source || Board.failedFullImageSources.has(source)) return Promise.resolve(null);
+  const lifecycleToken = Board.lifecycleToken;
+  if (Board.disposed || !source || Board.failedFullImageSources.has(source)) return Promise.resolve(null);
   const cached = cachedBoardFullImage(source);
   if (cached) return Promise.resolve(cached);
   if (Board.fullImagePending.has(source)) return Board.fullImagePending.get(source);
 
   const image = new Image();
+  Board.fullImagePendingImages.set(source, image);
   image.decoding = 'async';
   image.fetchPriority = 'high';
   const request = new Promise((resolve) => {
@@ -800,6 +888,12 @@ function preloadBoardFullImage(source) {
         if (typeof image.decode === 'function') await image.decode();
       } catch (err) {}
       Board.fullImagePending.delete(source);
+      Board.fullImagePendingImages.delete(source);
+      if (Board.disposed || lifecycleToken !== Board.lifecycleToken) {
+        try { image.src = ''; } catch (err) {}
+        resolve(null);
+        return;
+      }
       if (!image.naturalWidth || !image.naturalHeight) {
         rememberFailedBoardFullImage(source);
         resolve(null);
@@ -810,6 +904,11 @@ function preloadBoardFullImage(source) {
     }, { once: true });
     image.addEventListener('error', () => {
       Board.fullImagePending.delete(source);
+      Board.fullImagePendingImages.delete(source);
+      if (Board.disposed || lifecycleToken !== Board.lifecycleToken) {
+        resolve(null);
+        return;
+      }
       rememberFailedBoardFullImage(source);
       resolve(null);
     }, { once: true });
@@ -950,14 +1049,19 @@ function transitionBoardImageQuality(element, quality) {
 function loadBoardPreview(fileId) {
   if (BoardPreviewCache.has(fileId)) return Promise.resolve(BoardPreviewCache.get(fileId));
   if (BoardPreviewPending.has(fileId)) return BoardPreviewPending.get(fileId);
+  const lifecycleToken = Board.lifecycleToken;
+  const generation = Number(Board.previewGenerations.get(fileId) || 0);
   const request = Promise.resolve(window.messsAPI.getPreview(fileId))
     .then((result) => {
-      cacheBoardPreview(fileId, result);
-      BoardPreviewPending.delete(fileId);
+      if (!Board.disposed && lifecycleToken === Board.lifecycleToken &&
+        generation === Number(Board.previewGenerations.get(fileId) || 0)) {
+        cacheBoardPreview(fileId, result);
+      }
+      if (BoardPreviewPending.get(fileId) === request) BoardPreviewPending.delete(fileId);
       return result;
     })
     .catch((error) => {
-      BoardPreviewPending.delete(fileId);
+      if (BoardPreviewPending.get(fileId) === request) BoardPreviewPending.delete(fileId);
       throw error;
     });
   BoardPreviewPending.set(fileId, request);
@@ -986,7 +1090,8 @@ function scheduleMountedImageQuality(delay = BOARD_QUALITY_SETTLE_MS) {
 }
 
 function invalidateBoardPreview(fileId) {
-  BoardPreviewCache.delete(fileId);
+  deleteBoardPreviewCache(fileId);
+  Board.previewGenerations.set(fileId, Number(Board.previewGenerations.get(fileId) || 0) + 1);
   BoardPreviewPending.delete(fileId);
 }
 
@@ -1023,68 +1128,71 @@ function syncMountedImageQuality() {
   }
 }
 
+function applyBoardTransformNow() {
+  Board.transformFrame = 0;
+  const canvas = document.getElementById('board-canvas');
+  if (!canvas) return;
+  const lightweight = Board.isWheelZooming || Board.isPanning || Board.zoomFrame || Board.zoomTarget;
+  canvas.classList.add('is-transforming');
+  canvas.style.transform = boardTransform();
+  // Leafer owns the lightweight overview transform. Updating one world
+  // group keeps pan/zoom on the renderer path instead of touching every
+  // overview item while the pointer is moving.
+  if (Board.leaferLayer) {
+    Board.leaferLayer.setTransform({
+      panX: Board.panX,
+      panY: Board.panY,
+      zoom: Board.zoom
+    });
+  }
+  // The active drawing surface is a viewport-space overlay. Keep it out of
+  // the board camera transform so wheel zoom changes the canvas underneath
+  // the user's in-progress stroke without scaling the stroke itself.
+  if (doodleActive && !lightweight) prepareDoodleInputSurface();
+  // Wheel and pan frames must stay compositor-only. Grid CSS variables, toolbar
+  // geometry, LOD reconciliation and persistence all force extra style or
+  // layout work; settle them once after the input burst ends.
+  if (lightweight) {
+    const zoomLabel = document.getElementById('board-zoom-label');
+    const zoomText = Math.round(Board.zoom * 100) + '%';
+    if (zoomLabel && zoomLabel.textContent !== zoomText) zoomLabel.textContent = zoomText;
+    return;
+  }
+  canvas.style.setProperty(
+    '--board-toolbar-scale',
+    String(boardToolbarScreenScale(Board.zoom) / Math.max(Board.zoom, 0.001))
+  );
+  // Keep the edit hint and media metadata at the same screen size as the
+  // Butler capsule instead of letting them grow with the zoomed canvas.
+  canvas.style.setProperty('--board-label-scale', 'var(--board-toolbar-scale)');
+  canvas.style.setProperty(
+    '--board-toolbar-gap',
+    `${BOARD_TOOLBAR_SCREEN_GAP / Math.max(Board.zoom, 0.001)}px`
+  );
+  canvas.style.setProperty(
+    '--board-selection-width',
+    `${Math.min(40, Math.max(0.2, 1.2 / Math.max(Board.zoom, 0.001)))}px`
+  );
+  canvas.style.setProperty('--board-expand-hit-size', `${18 / Math.max(Board.zoom, 0.001)}px`);
+  canvas.style.setProperty('--board-expand-grip-thickness', `${4 / Math.max(Board.zoom, 0.001)}px`);
+  canvas.style.setProperty('--board-expand-grip-length', `${30 / Math.max(Board.zoom, 0.001)}px`);
+  const zoomLabel = document.getElementById('board-zoom-label');
+  if (zoomLabel) zoomLabel.textContent = Math.round(Board.zoom * 100) + '%';
+  updateInfiniteGrid();
+  clearTimeout(Board.transformSettleTimer);
+  Board.transformSettleTimer = window.setTimeout(() => {
+    canvas.classList.remove('is-transforming');
+  }, BOARD_QUALITY_SETTLE_MS + 30);
+  scheduleBoardReconcile();
+  scheduleBoardViewportSave();
+  scheduleBoardFullImagePrewarm(Board.zoom);
+  scheduleMountedImageQuality();
+}
+
 function applyBoardTransform() {
   if (Board.transformFrame) return;
   Board.transformFrame = requestAnimationFrame(() => {
-    Board.transformFrame = 0;
-    const canvas = document.getElementById('board-canvas');
-    const lightweight = Board.isWheelZooming || Board.isPanning || Board.zoomFrame || Board.zoomTarget;
-    canvas.classList.add('is-transforming');
-    canvas.style.transform = boardTransform();
-    // Leafer owns the lightweight overview transform. Updating one world
-    // group keeps pan/zoom on the renderer path instead of touching every
-    // overview item while the pointer is moving.
-    if (Board.leaferLayer) {
-      Board.leaferLayer.setTransform({
-        panX: Board.panX,
-        panY: Board.panY,
-        zoom: Board.zoom
-      });
-    }
-    // The active drawing surface is a viewport-space overlay. Keep it out of
-    // the board camera transform so wheel zoom changes the canvas underneath
-    // the user's in-progress stroke without scaling the stroke itself.
-    if (doodleActive) prepareDoodleInputSurface();
-    // Wheel and pan frames must stay compositor-only. Grid CSS variables, toolbar
-    // geometry, LOD reconciliation and persistence all force extra style or
-    // layout work; settle them once after the input burst ends.
-    if (lightweight) {
-      const zoomLabel = document.getElementById('board-zoom-label');
-      if (zoomLabel) zoomLabel.textContent = Math.round(Board.zoom * 100) + '%';
-      clearTimeout(Board.transformSettleTimer);
-      Board.transformSettleTimer = window.setTimeout(() => {
-        canvas.classList.remove('is-transforming');
-      }, BOARD_QUALITY_SETTLE_MS + 30);
-      return;
-    }
-    canvas.style.setProperty(
-      '--board-toolbar-scale',
-      String(boardToolbarScreenScale(Board.zoom) / Math.max(Board.zoom, 0.001))
-    );
-    // Keep the edit hint and media metadata at the same screen size as the
-    // Butler capsule instead of letting them grow with the zoomed canvas.
-    canvas.style.setProperty('--board-label-scale', 'var(--board-toolbar-scale)');
-    canvas.style.setProperty(
-      '--board-toolbar-gap',
-      `${BOARD_TOOLBAR_SCREEN_GAP / Math.max(Board.zoom, 0.001)}px`
-    );
-    canvas.style.setProperty(
-      '--board-selection-width',
-      `${Math.min(40, Math.max(0.2, 1.2 / Math.max(Board.zoom, 0.001)))}px`
-    );
-    canvas.style.setProperty('--board-expand-hit-size', `${18 / Math.max(Board.zoom, 0.001)}px`);
-    canvas.style.setProperty('--board-expand-grip-thickness', `${4 / Math.max(Board.zoom, 0.001)}px`);
-    canvas.style.setProperty('--board-expand-grip-length', `${30 / Math.max(Board.zoom, 0.001)}px`);
-    document.getElementById('board-zoom-label').textContent = Math.round(Board.zoom * 100) + '%';
-    updateInfiniteGrid();
-    clearTimeout(Board.transformSettleTimer);
-    Board.transformSettleTimer = window.setTimeout(() => {
-      canvas.classList.remove('is-transforming');
-    }, BOARD_QUALITY_SETTLE_MS + 30);
-    scheduleBoardReconcile();
-    scheduleBoardViewportSave();
-    scheduleBoardFullImagePrewarm(Board.zoom);
-    scheduleMountedImageQuality();
+    applyBoardTransformNow();
   });
 }
 
@@ -1096,8 +1204,13 @@ function finishBoardWheelInteraction() {
   // interaction reconciliation here: the zoom animation may still be
   // settling. The final idle path below owns the one authoritative rebuild.
   clearBoardInteractionOverviewWork();
+  Board.wheelViewportRect = null;
+  Board.mountBoostUntil = performance.now() + 180;
+  document.getElementById('board-canvas')?.classList.remove('is-transforming');
   settleBoardViewportIfIdle();
-  applyBoardTransform();
+  // The zoom step already runs in an animation frame. Apply the camera in
+  // this same frame instead of queueing a second RAF during a wheel burst.
+  applyBoardTransformNow();
 }
 
 function updateLeaferFullImageWindow() {
@@ -1156,6 +1269,7 @@ function clearBoardInteractionOverviewWork() {
 }
 
 function pauseBoardMountQueueForInteraction() {
+  Board.mountBoostUntil = 0;
   Board.mountQueue.clear();
   Board.mountQueueAllowedIds.clear();
   if (Board.mountFrame) {
@@ -1185,6 +1299,8 @@ function settleBoardViewportIfIdle() {
 
 function beginBoardWheelInteraction() {
   if (!Board.isWheelZooming) {
+    const viewport = document.getElementById('board-viewport');
+    Board.wheelViewportRect = viewport ? viewport.getBoundingClientRect() : null;
     pauseBoardMountQueueForInteraction();
     clearBoardInteractionOverviewWork();
     clearTimeout(Board.qualityTimer);
@@ -1242,6 +1358,7 @@ function cancelBoardViewportMotion() {
   Board.zoomFrame = 0;
   Board.zoomTarget = null;
   Board.zoomLastTime = 0;
+  Board.wheelViewportRect = null;
   clearBoardInteractionOverviewWork();
 }
 
@@ -1303,7 +1420,7 @@ function stepBoardZoom(now) {
   } else {
     Board.zoomFrame = requestAnimationFrame(stepBoardZoom);
   }
-  applyBoardTransform();
+  applyBoardTransformNow();
 }
 
 function clientToBoardCoords(clientX, clientY) {
@@ -1482,7 +1599,7 @@ function removeBoardItemsForFile(fileId) {
   const removed = AppState.allBoardItems.filter((b) => b.fileId === fileId).map((b) => b.id);
   AppState.boardItems = AppState.boardItems.filter((b) => b.fileId !== fileId);
   canvasWorkspaceRemoveItems(removed);
-  BoardPreviewCache.delete(fileId);
+  invalidateBoardPreview(fileId);
   renderBoard();
 }
 
@@ -2138,6 +2255,72 @@ function clearMountedBoardItems() {
     Board.leaferSyncFrame = 0;
   }
   for (const id of [...Board.mounted.keys()]) destroyMountedBoardItem(id);
+}
+
+function disposeBoardCanvas() {
+  if (Board.disposed) return;
+  Board.disposed = true;
+  Board.lifecycleToken += 1;
+  clearTimeout(Board.transformSettleTimer);
+  clearTimeout(Board.wheelSettleTimer);
+  clearTimeout(Board.interactionPrefetchTimer);
+  clearTimeout(Board.persistTimer);
+  clearTimeout(Board.qualityTimer);
+  clearTimeout(Board.fullImagePrewarmTimer);
+  Board.transformSettleTimer = 0;
+  Board.wheelSettleTimer = 0;
+  Board.interactionPrefetchTimer = 0;
+  Board.persistTimer = 0;
+  Board.qualityTimer = 0;
+  Board.fullImagePrewarmTimer = 0;
+  if (Board.qualityIdle && typeof cancelIdleCallback === 'function') {
+    cancelIdleCallback(Board.qualityIdle);
+  }
+  Board.qualityIdle = 0;
+  [
+    'transformFrame', 'zoomFrame', 'interactionPrefetchFrame', 'reconcileFrame',
+    'mountFrame', 'measureFrame', 'leaferSyncFrame'
+  ].forEach((key) => {
+    if (Board[key]) cancelAnimationFrame(Board[key]);
+    Board[key] = 0;
+  });
+  clearTimeout(Board.clipboardPasteTimer);
+  Board.clipboardPasteTimer = 0;
+  for (const timer of Board.mediaReleaseTimers.values()) clearTimeout(timer);
+  Board.mediaReleaseTimers.clear();
+  for (const image of Board.fullImagePendingImages.values()) {
+    try { image.src = ''; } catch (err) {}
+  }
+  Board.fullImagePendingImages.clear();
+  Board.fullImagePending.clear();
+  Board.fullImageCache.forEach((image) => {
+    try { image.src = ''; } catch (err) {}
+  });
+  Board.fullImageCache.clear();
+  Board.fullImageCachePixels = 0;
+  Board.fullImageReadyFileIds.clear();
+  Board.failedFullImageSources.clear();
+  BoardPreviewPending.clear();
+  BoardPreviewCache.clear();
+  boardPreviewCacheBytes = 0;
+  Board.previewGenerations.clear();
+  clearMountedBoardItems();
+  if (Board.resizeObserver) Board.resizeObserver.disconnect();
+  Board.resizeObserver = null;
+  if (Board.leaferLayer && typeof Board.leaferLayer.destroy === 'function') {
+    Board.leaferLayer.destroy();
+  }
+  Board.leaferLayer = null;
+  Board.leaferCanvas = null;
+  Board.leaferCanvasId = null;
+  Board.leaferSourceByItem.clear();
+  Board.leaferFullItemIds.clear();
+  Board.visibleIds.clear();
+  Board.interactionVisibleIds.clear();
+  Board.interactionFallbackIds.clear();
+  Board.spatialIndex.clear();
+  Board.itemsById.clear();
+  Board.filesById.clear();
 }
 
 function boardRenderMetadata(value) {
@@ -2965,7 +3148,8 @@ function processBoardMountQueue() {
   let mountedThisFrame = 0;
   let mountedMediaThisFrame = 0;
   const frameStartedAt = performance.now();
-  const interactionActive = isBoardViewportInteracting() || Board.interactionVisibleIds.size > 0;
+  const interactionActive = isBoardViewportInteracting() ||
+    Board.interactionVisibleIds.size > 0 || performance.now() < Board.mountBoostUntil;
   const mountLimit = interactionActive
     ? BOARD_INTERACTION_MOUNTS_PER_FRAME
     : BOARD_MOUNTS_PER_FRAME;
@@ -3821,7 +4005,15 @@ function startBoxSelect(e) {
 }
 
 function initBoardCanvas() {
+  if (Board.initialized) return;
+  Board.initialized = true;
+  Board.disposed = false;
+  Board.lifecycleToken += 1;
   const viewport = document.getElementById('board-viewport');
+  if (!viewport) {
+    Board.initialized = false;
+    return;
+  }
   restoreBoardViewport();
   ensureBoardLeaferCanvas();
   resetBoardZoomTo100();
@@ -3866,7 +4058,6 @@ function initBoardCanvas() {
         : (selectedBoardImageItems().length ? 'image' : '');
       if (!editKind) return;
       e.preventDefault();
-      closeBoardQuickGenerate();
       void openAiComposerForSelection(editKind);
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
       e.preventDefault();
@@ -4047,7 +4238,7 @@ function initBoardCanvas() {
       setBoardPanTarget(horizontalDelta, 0);
       return;
     }
-    const rect = viewport.getBoundingClientRect();
+    const rect = Board.wheelViewportRect || viewport.getBoundingClientRect();
     setBoardZoomTarget(
       { x: e.clientX - rect.left, y: e.clientY - rect.top },
       Math.exp(-deltaY * BOARD_WHEEL_ZOOM_RATE)
@@ -4110,6 +4301,7 @@ function initBoardCanvas() {
   initBoardQuickGenerate();
   initDoodleColorPanel();
   initTextToolPanel();
+  window.addEventListener('pagehide', disposeBoardCanvas, { once: true });
 
   const dropIndicator = document.getElementById('board-file-drop-indicator');
   let boardDragDepth = 0;
@@ -4336,6 +4528,7 @@ function buildMiniVideoPlayer(result, f) {
   let activePlayPromise = null;
   let readyRetryRequest = 0;
   let playbackRetries = 0;
+  let retryTimer = 0;
   let cleanedUp = false;
   let currentSource = result.url;
   let currentTranscoded = result.transcoded === true;
@@ -4345,11 +4538,17 @@ function buildMiniVideoPlayer(result, f) {
     playbackWatchdog = 0;
   }
 
+  function clearRetryTimer() {
+    clearTimeout(retryTimer);
+    retryTimer = 0;
+  }
+
   function installVideoSource(url, transcoded = false) {
     if (!url || cleanedUp || !video.isConnected) return;
     currentSource = url;
     currentTranscoded = transcoded;
     clearPlaybackWatchdog();
+    clearRetryTimer();
     video.pause();
     playRequest += 1;
     activePlayPromise = null;
@@ -4445,7 +4644,13 @@ function buildMiniVideoPlayer(result, f) {
         }
         armReadyPlaybackRetry(request);
         if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) video.load();
-        else window.setTimeout(() => requestPlayback(request), 120 * playbackRetries);
+        else {
+          clearRetryTimer();
+          retryTimer = window.setTimeout(() => {
+            retryTimer = 0;
+            requestPlayback(request);
+          }, 120 * playbackRetries);
+        }
       })
       .finally(() => {
         if (activePlayPromise === settledPlay) activePlayPromise = null;
@@ -4481,6 +4686,7 @@ function buildMiniVideoPlayer(result, f) {
     readyRetryRequest = 0;
     playbackRetries = 0;
     clearPlaybackWatchdog();
+    clearRetryTimer();
     video.pause();
     video.removeAttribute('src');
     video.load();
@@ -4493,6 +4699,7 @@ function buildMiniVideoPlayer(result, f) {
   wrap._boardCleanup = () => {
     cleanedUp = true;
     clearPlaybackWatchdog();
+    clearRetryTimer();
     abortController.abort();
     wrap._boardStopPreview();
     video.removeAttribute('src');

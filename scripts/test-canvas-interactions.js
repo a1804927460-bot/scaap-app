@@ -723,6 +723,16 @@ assert.match(
   /function setCanvasAgentOpen[\s\S]*?board\.classList\.contains\('is-fullscreen'\)[\s\S]*?agent\.classList\.toggle\('is-hidden', !allowed\)/,
   'Messs Agent must reject attempts to open outside fullscreen canvas mode.'
 );
+assert.match(
+  workspaceSource,
+  /event\.code === 'Space'[\s\S]*?event\.ctrlKey \|\| event\.metaKey[\s\S]*?!event\.repeat[\s\S]*?setCanvasAgentOpen\(!!agent\?\.classList\.contains\('is-hidden'\), \{ focus: true \}\)/,
+  'Ctrl or Command plus Space must toggle Messs Agent in the fullscreen canvas.'
+);
+assert.match(
+  workspaceSource,
+  /isEditableTarget[\s\S]*?target\.isContentEditable[\s\S]*?target\.closest\('\[contenteditable="true"\], \.ql-editor, \[role="textbox"\]'\)[\s\S]*?!isEditableTarget/,
+  'The Agent shortcut must not interrupt text fields or moodboard editors.'
+);
 assert.match(indexHtml, /id="board-agent-welcome"[\s\S]*?assets\/logo-mark\.png[\s\S]*?Messs Agent/);
 assert.match(
   boardStyles,
@@ -884,8 +894,8 @@ assert.doesNotMatch(indexHtml, /class="canvas-library-project-filter"/, 'The can
 assert.doesNotMatch(indexHtml, /id="canvas-new"/, 'The duplicate top toolbar new-canvas action must be removed.');
 assert.match(
   workspaceSource,
-  /function filteredCanvases\(\)[\s\S]*?return AppState\.canvases[\s\S]*?\.filter\(\(canvas\) => !query/,
-  'Canvas library must show all canvases and only apply the visible search query.');
+  /function filteredCanvases\(\)[\s\S]*?return AppState\.canvases[\s\S]*?CanvasWorkspace\.libraryProjectId[\s\S]*?canvas\.name\.toLowerCase\(\)\.includes\(query\)/,
+  'Canvas library must apply folder scope and the visible search query.');
 assert.doesNotMatch(
   workspaceSource,
   /document\.getElementById\('canvas-scope-picker'\)\.addEventListener\('change'/,
@@ -911,7 +921,7 @@ assert.match(
 );
 assert.match(
   workspaceSource,
-  /async function promptNewProject[\s\S]*?uniqueCanvasProjectName\(result\.name\)[\s\S]*?canvasWorkspaceSave\(\)[\s\S]*?Folder created/,
+  /async function promptNewProject[\s\S]*?uniqueCanvasProjectName\(result\.name\)[\s\S]*?canvasWorkspaceSave\(\)[\s\S]*?libraryProjectId = null[\s\S]*?Folder created/,
   'Creating a folder must normalize its name and persist it without creating an unrelated canvas.'
 );
 assert.match(
@@ -926,8 +936,34 @@ assert.match(
 );
 assert.match(
   workspaceSource,
-  /async function promptMoveCanvasToFolder[\s\S]*?canvas\.projectId = projectId[\s\S]*?canvasWorkspaceSave\(\)/,
+  /async function promptMoveCanvasToFolder[\s\S]*?moveCanvasToProject\(canvasId, projectId[\s\S]*?async function moveCanvasToProject[\s\S]*?canvas\.projectId = project\.id[\s\S]*?canvasWorkspaceSave\(\)/,
   'Moving a canvas must update its folder and persist the change.'
+);
+assert.match(
+  workspaceSource,
+  /function buildCanvasLibraryFolderCard[\s\S]*?text\/messs-canvas-id[\s\S]*?moveCanvasToProject\(canvasId, project\.id[\s\S]*?async function moveCanvasToProject[\s\S]*?canvas\.projectId = project\.id[\s\S]*?canvasWorkspaceSave\(\)/,
+  'Canvas library folders must accept dragged canvas cards and persist the destination folder.'
+);
+assert.match(
+  workspaceSource,
+  /card\.draggable = true[\s\S]*?dragstart[\s\S]*?setData\('text\/messs-canvas-id', canvas\.id\)[\s\S]*?dragend/,
+  'Canvas library files must expose a native drag source for folder drops.'
+);
+assert.match(
+  workspaceSource,
+  /function filteredCanvasProjects[\s\S]*?canvasProjectsForScope\(\)[\s\S]*?function renderCanvasLibrary[\s\S]*?projects\.forEach\(\(project\) => grid\.appendChild\(buildCanvasLibraryFolderCard\(project\)\)/,
+  'Folders must render in the same library grid as canvas files.'
+);
+assert.match(
+  workspaceSource,
+  /canvas-library-folder-back[\s\S]*?selectAllCanvasLibraryItems/,
+  'Opening a folder must provide a reliable return-to-all-canvases control.'
+);
+assert.match(indexHtml, /id="canvas-library-folder-back"[^>]*All canvases/);
+assert.match(
+  boardStyles,
+  /\.canvas-library-folder-card \{[\s\S]*?min-height:\s*188px;[\s\S]*?\.canvas-library-folder-icon \{[\s\S]*?width:\s*78px;[\s\S]*?height:\s*78px;/,
+  'Folders in the canvas library must use a large, easy-to-recognize icon card.'
 );
 assert.match(
   workspaceSource,
