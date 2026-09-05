@@ -44,7 +44,8 @@ test('AI Reiter is the primary Nano Banana Pro route', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({
     AIREITER_API_KEY: 'aireiter-key',
-    QUICKROUTER_API_KEY: 'quickrouter-key'
+    QUICKROUTER_API_KEY: 'quickrouter-key',
+    AI_GATEWAY_PUBLIC_URL: 'https://gateway.example.com'
   }, async () => {
     const calls = [];
     globalThis.fetch = async (url, options = {}) => {
@@ -54,6 +55,7 @@ test('AI Reiter is the primary Nano Banana Pro route', async () => {
         const body = JSON.parse(options.body);
         assert.equal(body.model, 'nano_banana_pro');
         assert.equal(body.params.prompt, 'test image');
+        assert.deepEqual(body.params.image_url, ['https://assets.example.com/reference.png']);
         return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
       }
       if (value === 'https://aireiter.com/api/openapi/query') {
@@ -68,7 +70,8 @@ test('AI Reiter is the primary Nano Banana Pro route', async () => {
       endUserId: 'u_0123456789abcdef0123',
       prompt: 'test image',
       size: '1K',
-      aspectRatio: '16:9'
+      aspectRatio: '16:9',
+      urls: ['https://assets.example.com/reference.png']
     });
     assert.deepEqual(result, VALID_PNG);
     assert.equal(calls[0].url, 'https://aireiter.com/api/openapi/submit');

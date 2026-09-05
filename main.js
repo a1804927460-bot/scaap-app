@@ -3946,6 +3946,9 @@ async function resolveAiVideoReferences(request) {
   const fileIds = Array.isArray(request && request.referenceFileIds)
     ? request.referenceFileIds.slice(0, 50)
     : [];
+  const attachmentTokens = Array.isArray(request && request.attachmentTokens)
+    ? request.attachmentTokens.slice(0, 50)
+    : [];
   const requestedTypes = Array.isArray(request && request.referenceMediaTypes)
     ? request.referenceMediaTypes.slice(0, fileIds.length).map((value) => String(value || '').toLowerCase())
     : [];
@@ -4009,6 +4012,17 @@ async function resolveAiVideoReferences(request) {
     const dataUrl = await fileToSafeAiDataUrl(file.id);
     if (!dataUrl) continue;
     urls.push(dataUrl);
+    mediaTypes.push('image');
+  }
+  // Pasted Agent images live in the transient attachment store rather than
+  // the persistent file store. They must still become H3/Seedance reference
+  // images before the request is sanitized, otherwise the upstream receives
+  // a text-only generation request.
+  for (const token of attachmentTokens) {
+    const record = transientAiAttachments.get(String(token || ''));
+    if (!record || record.expiresAt <= Date.now()) continue;
+    if (!/^data:image\/(?:png|jpeg|webp);base64,/i.test(String(record.dataUrl || ''))) continue;
+    urls.push(record.dataUrl);
     mediaTypes.push('image');
   }
   const requestedMode = String(request && request.videoMode || '').trim().toLowerCase();

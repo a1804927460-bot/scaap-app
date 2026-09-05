@@ -973,9 +973,9 @@ function aireiterImageParams(provider, body) {
     if (urls.length > 8) throw aireiterLocalRejection('This route accepts at most 8 reference images.', 'too-many-references');
     return {
       prompt,
-      // AI Reiter's documented contract is a comma-separated string, not
-      // the array accepted by some of the legacy image relays.
-      ...(urls.length ? { image_url: urls.join(',') } : {}),
+      // AI Reiter expects reference images as a JSON string array. Keeping
+      // the values separate also preserves URL encoding for signed relays.
+      ...(urls.length ? { image_url: urls } : {}),
       ...(/^\d+:\d+$/.test(ratio) ? { aspect_ratio: ratio } : {}),
       resolution: ['1K', '2K', '4K'].includes(resolution) ? resolution : '2K'
     };
