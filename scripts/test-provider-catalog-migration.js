@@ -45,7 +45,12 @@ assert.equal(nanoBananaPro.resultEndpoint, 'https://aireiter.com/api/openapi/que
 assert.equal(nanoBananaPro.model, 'nano_banana_pro');
 assert.equal(nanoBananaPro.protocol, 'aireiter-async');
 assert.deepEqual(nanoBananaPro.capabilities.sizes, ['1K', '2K', '4K']);
-assert.equal(nanoBananaPro.capabilities.ratios.includes('auto'), false);
+assert.equal(nanoBananaPro.capabilities.ratios.includes('auto'), true);
+assert.equal(nanoBananaPro.capabilities.maxReferenceImages, 8);
+const nanoBanana2 = media.imageProviders.find((provider) => provider.id === 'image-2');
+assert.ok(nanoBanana2);
+assert.equal(nanoBanana2.capabilities.ratios.includes('auto'), true);
+assert.equal(nanoBanana2.capabilities.maxReferenceImages, 8);
 for (const id of ['image-4', 'image-5', 'image-7', 'image-8', 'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16']) {
   assert.equal(media.imageProviders.find((provider) => provider.id === id).name, '');
 }
@@ -98,7 +103,7 @@ assert.equal(gptImage2.capabilities.minimumAspectRatio, 1 / 3);
 assert.equal(gptImage2.capabilities.maximumAspectRatio, 3);
 assert.equal(gptImage2.capabilities.sizeMultiple, 16);
 assert.equal(gptImage2.capabilities.maxSizeEdge, 3840);
-assert.equal(gptImage2.capabilities.maxSizePixels, 8_300_000);
+assert.equal(gptImage2.capabilities.maxSizePixels, 8_294_400);
 assert.equal(gptImage2.capabilities.promptMaxCharacters, 32000);
 assert.equal(gptImage2.capabilities.referencePromptMaxCharacters, 32000);
 for (const id of ['image-7', 'image-8']) {
@@ -114,6 +119,12 @@ assert.equal(miniMaxH3.resultEndpoint, 'https://aireiter.com/api/openapi/query')
 assert.equal(miniMaxH3.protocol, 'aireiter-async');
 assert.equal(require('../lib/provider-catalog').catalogProvider('video-1').keyEnv, 'AIREITER_API_KEY');
 assert.equal(miniMaxH3.capabilities.videoModes.some((mode) => mode.id === 'text'), false);
+assert.equal(miniMaxH3.capabilities.maxReferenceVideos, 1);
+assert.equal(miniMaxH3.capabilities.maxTotalReferences, 13);
+const miniMaxH3OmniMode = miniMaxH3.capabilities.videoModes.find((mode) => mode.id === 'omni');
+assert.ok(miniMaxH3OmniMode);
+assert.equal(miniMaxH3OmniMode.maxReferences, 13);
+assert.equal(miniMaxH3OmniMode.maxReferenceVideos, 1);
 assert.deepEqual(
   media.videoProviders.filter((provider) => provider.name).map((provider) => provider.name),
   [

@@ -4,9 +4,9 @@ export const USD_TO_CNY = 7.3;
 // Topaz reports provider credits, not PTC. One Topaz credit costs 0.15 PTC.
 export const TOPAZ_PROVIDER_PTC_PER_POINT = 0.15;
 export const APP_CREDITS_PER_CNY = 1000 / 70;
-// Capsule generation tools use the image/tool policy: a 10% cost buffer and
-// a 10% gross margin. Agent and chat are handled separately as free features.
-export const RETAIL_GROSS_MARGIN_PERCENT = 10;
+// Capsule generation tools use the same guarded media policy: a 10% cost
+// buffer and a 20% gross margin. Agent and chat remain free features.
+export const RETAIL_GROSS_MARGIN_PERCENT = 20;
 export const RETAIL_MULTIPLIER = 1 / (1 - RETAIL_GROSS_MARGIN_PERCENT / 100);
 export const RETAIL_MARKUP_PERCENT = (RETAIL_MULTIPLIER - 1) * 100;
 export const UPSTREAM_COST_SAFETY_PERCENT = 10;

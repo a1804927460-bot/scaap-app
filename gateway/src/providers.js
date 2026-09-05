@@ -959,13 +959,14 @@ function aireiterImageParams(provider, body) {
   const prompt = String(body.prompt || '').trim();
   const urls = Array.isArray(body.urls) ? body.urls.map(String).map((value) => value.trim()).filter(Boolean) : [];
   const ratio = String(body.aspectRatio || '').trim();
+  const submittedRatio = ratio === 'auto' || /^\d+:\d+$/.test(ratio) ? ratio : '';
   const resolution = String(body.size || body.resolution || '2K').trim().toUpperCase();
   if (['nano_banana_v2', 'nano_banana_v2_plus'].includes(provider.model)) {
-    if (urls.length > 9) throw aireiterLocalRejection('This route accepts at most 9 reference images.', 'too-many-references');
+    if (urls.length > 8) throw aireiterLocalRejection('This route accepts at most 8 reference images.', 'too-many-references');
     return {
       prompt,
       ...(urls.length ? { image_url: urls } : {}),
-      ...(/^\d+:\d+$/.test(ratio) ? { aspect_ratio: ratio } : {}),
+      ...(submittedRatio ? { aspect_ratio: submittedRatio } : {}),
       resolution: ['1K', '2K', '4K'].includes(resolution) ? resolution : '2K'
     };
   }
@@ -976,7 +977,7 @@ function aireiterImageParams(provider, body) {
       // AI Reiter expects reference images as a JSON string array. Keeping
       // the values separate also preserves URL encoding for signed relays.
       ...(urls.length ? { image_url: urls } : {}),
-      ...(/^\d+:\d+$/.test(ratio) ? { aspect_ratio: ratio } : {}),
+      ...(submittedRatio ? { aspect_ratio: submittedRatio } : {}),
       resolution: ['1K', '2K', '4K'].includes(resolution) ? resolution : '2K'
     };
   }
@@ -991,7 +992,7 @@ function aireiterImageParams(provider, body) {
       ...(customSize
         ? { size: customSize }
         : {
-            ...(/^\d+:\d+$/.test(ratio) ? { aspect_ratio: ratio } : {}),
+            ...(submittedRatio ? { aspect_ratio: submittedRatio } : {}),
             resolution: ['1K', '2K', '4K'].includes(resolution) ? resolution : '2K'
           })
     };

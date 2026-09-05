@@ -105,8 +105,10 @@ async function testTempRecovery(root, store) {
   const boardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'board-canvas.js'), 'utf8');
   const assistantSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'ai-assistant.js'), 'utf8');
   assert.match(boardSource, /aiDeliveryConfirmationAttempted = true/);
-  assert.match(boardSource, /generatedFiles\.length && err && err\.aiDeliveryConfirmationAttempted !== true/);
-  assert.match(assistantSource, /generatedMediaFiles\.length && err && err\.aiDeliveryConfirmationAttempted !== true/);
+  assert.match(boardSource, /if \(generatedFiles\.length\)[\s\S]*?result is saved and canvas synchronization will resume automatically/i);
+  assert.doesNotMatch(boardSource, /generatedFiles\.length && err && err\.aiDeliveryConfirmationAttempted !== true/);
+  assert.match(assistantSource, /if \(generatedMediaFiles\.length\)[\s\S]*?result is saved and canvas synchronization will resume automatically/i);
+  assert.doesNotMatch(assistantSource, /generatedMediaFiles\.length && err && err\.aiDeliveryConfirmationAttempted !== true/);
   console.log('AI media persistence tests passed.');
 })().catch((error) => {
   console.error(error);

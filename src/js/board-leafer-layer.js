@@ -152,7 +152,6 @@
       hittable: false,
       cornerRadius: 0,
       lazy: true,
-      renderSpread: 1200,
       // Media textures can be decoded asynchronously. A colored placeholder
       // becomes a false image flash during the first frame and camera motion.
       placeholderColor: 'rgba(0, 0, 0, 0)'
@@ -168,7 +167,7 @@
       height: Math.max(1, extra.height === undefined ? bounds.height - 16 : extra.height),
       text,
       fill: color,
-      fontFamily: item.fontFamily || 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
+      fontFamily: textFontFamilyForItem(item),
       fontSize: clamp(
         finite(extra.fontSize === undefined ? item.fontSize : extra.fontSize, item.isNote ? 32 : 14),
         item.isNote ? 10 : 8,
@@ -192,6 +191,13 @@
       if (colorMode === 'auto' || (!colorMode && color === '#15171c')) return '#f3f5f8';
     }
     return item && item.noFill ? 'rgba(0,0,0,0)' : (item && item.color || '#e8ebf1');
+  }
+
+  function textFontFamilyForItem(item) {
+    const family = String(item && item.fontFamily || '').trim();
+    return family && family !== 'inherit'
+      ? family
+      : 'Segoe UI, PingFang SC, Microsoft YaHei, Arial, sans-serif';
   }
 
   function textFontSizeForItem(item) {
@@ -301,8 +307,9 @@
       y: 14,
       width: Math.max(1, bounds.width - 32),
       height: 28,
-      fontSize: 18,
+      fontSize: 20,
       fontWeight: 720,
+      lineHeight: { type: 'percent', value: 1.25 },
       textOverflow: 'ellipsis'
     }));
     const body = new api.Text(textOptions(item, bounds, moodboardBodyForItem(item), '#f3f5f8', {
@@ -310,9 +317,9 @@
       y: 52,
       width: Math.max(1, bounds.width - 32),
       height: Math.max(1, bounds.height - 68),
-      fontSize: 18,
+      fontSize: 17,
       fontWeight: 560,
-      lineHeight: 28,
+      lineHeight: { type: 'percent', value: 1.5 },
       verticalAlign: 'top',
       textOverflow: 'ellipsis'
     }));
@@ -343,6 +350,7 @@
     }
 
     if (kind === 'media' || kind === 'doodle') {
+      const showSelectionStroke = kind === 'doodle';
       const image = new api.Image({
         ...options,
         fill: {
@@ -351,8 +359,8 @@
           mode: 'fit',
           showProgress: false
         },
-        stroke,
-        strokeWidth,
+        stroke: showSelectionStroke ? stroke : undefined,
+        strokeWidth: showSelectionStroke ? strokeWidth : 0,
         cornerRadius: 0
       });
       // Geometry and selection updates are frequent. Do not reassign the
@@ -367,7 +375,7 @@
         ...options,
         text,
         fill: textColorForItem(item),
-        fontFamily: item.fontFamily || 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
+        fontFamily: textFontFamilyForItem(item),
         fontSize: textFontSizeForItem(item),
         fontWeight: item.fontWeight || 500,
         textWrap: 'normal',
@@ -449,8 +457,8 @@
         };
         drawable._messsSource = nextSource;
       }
-      drawable.stroke = item.selected ? '#f5f7fb' : undefined;
-      drawable.strokeWidth = item.selected ? 1.2 : 0;
+      drawable.stroke = kind === 'doodle' && item.selected ? '#f5f7fb' : undefined;
+      drawable.strokeWidth = kind === 'doodle' && item.selected ? 1.2 : 0;
     } else if (kind === 'vector-doodle') {
       const api = classes();
       const entries = item.doodlePaths || [];

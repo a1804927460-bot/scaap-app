@@ -11,11 +11,11 @@ import { normalizeVideoResolution } from './video-resolution.js';
 import operatingCosts from '../../lib/operating-costs.js';
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
-export const CREDIT_PRICING_VERSION = '202609040003';
+export const CREDIT_PRICING_VERSION = '202609050002';
 const LEGACY_POINTS_PER_CNY = 10;
 const POINTS_PER_CNY = 1000 / 70;
 const POINT_DENOMINATION_SCALE = POINTS_PER_CNY / LEGACY_POINTS_PER_CNY;
-export const IMAGE_GROSS_MARGIN_PERCENT = 10;
+export const IMAGE_GROSS_MARGIN_PERCENT = 20;
 export const VIDEO_GROSS_MARGIN_PERCENT = 20;
 // Existing callers use these names for image quotes. Video quotes below use
 // their dedicated margin multiplier.

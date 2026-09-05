@@ -9,9 +9,9 @@ const BOARD_MEDIA_MOUNTS_PER_FRAME = 2;
 const BOARD_INTERACTION_MOUNTS_PER_FRAME = 8;
 const BOARD_INTERACTION_MEDIA_MOUNTS_PER_FRAME = 6;
 const BOARD_MOUNT_FRAME_BUDGET_MS = 7;
-const BOARD_DOM_ITEM_LIMIT = 96;
-const BOARD_DOM_ITEM_EXIT_LIMIT = 72;
-const BOARD_DOM_RETAIN_LIMIT = 120;
+const BOARD_DOM_ITEM_LIMIT = 72;
+const BOARD_DOM_ITEM_EXIT_LIMIT = 56;
+const BOARD_DOM_RETAIN_LIMIT = 88;
 const BOARD_LIGHTWEIGHT_EFFECTS_ENTER_COUNT = 72;
 const BOARD_LIGHTWEIGHT_EFFECTS_EXIT_COUNT = 48;
 const BOARD_FULL_IMAGE_LIMIT = 4;
@@ -1133,7 +1133,7 @@ function applyBoardTransformNow() {
   const canvas = document.getElementById('board-canvas');
   if (!canvas) return;
   const lightweight = Board.isWheelZooming || Board.isPanning || Board.zoomFrame || Board.zoomTarget;
-  canvas.classList.add('is-transforming');
+  canvas.classList.toggle('is-transforming', Boolean(lightweight));
   canvas.style.transform = boardTransform();
   // Leafer owns the lightweight overview transform. Updating one world
   // group keeps pan/zoom on the renderer path instead of touching every
@@ -2520,24 +2520,18 @@ function boardLeaferSource(file, item) {
     const thumbSource = String(resolveImageDisplaySource(file, false) || '').trim();
     const fullSource = String(resolveImageDisplaySource(file, true) || '').trim();
     const existingSource = Board.leaferSourceByItem.get(itemId);
-    // Once a visible item has received its original source, retain it when
-    // the item leaves the viewport. Downgrading the same drawable to a thumb
-    // would make the next visit show a soft frame before switching back.
-    if (existingSource && fullSource && existingSource === fullSource) {
-      return existingSource;
-    }
+    // Never replace a texture while the camera is moving. Loading or
+    // releasing a GPU image in the middle of a wheel burst is the main cause
+    // of mosaic frames and system-wide stalls on image-heavy boards.
     if (isBoardViewportInteracting() && existingSource) {
       return existingSource;
     }
-    // Visible Leafer items start from the original source. This prevents a
-    // blurry thumbnail frame from being shown before the image turns sharp.
-    // During camera motion, the existing source remains stable so no texture
-    // replacement or mosaic flash can occur.
-    const source = Board.visibleIds.has(itemId) && fullSource
-      ? fullSource
-      : (Board.leaferFullItemIds.has(itemId)
-        ? (fullSource || thumbSource)
-        : (thumbSource || fullSource));
+    // Thumbnails are the stable scene texture. Only the bounded prewarm
+    // window may promote an item to its decoded original; otherwise a single
+    // viewport can upload dozens of 2K/4K textures and exhaust GPU memory.
+    const source = Board.leaferFullItemIds.has(itemId)
+      ? (fullSource || thumbSource)
+      : (thumbSource || fullSource);
     if (itemId) {
       Board.leaferSourceByItem.delete(itemId);
       Board.leaferSourceByItem.set(itemId, source);
@@ -3877,10 +3871,14 @@ function isBoardWorkspaceActive() {
 
 function enterBoardFullscreen() {
   document.getElementById('board-panel').classList.add('is-fullscreen');
-  document.getElementById('board-fullscreen-icon').outerHTML = ICON_COMPRESS.replace('<svg ', '<svg id="board-fullscreen-icon" ');
+  const icon = document.getElementById('board-fullscreen-icon');
+  if (icon) icon.outerHTML = ICON_COMPRESS.replace('<svg ', '<svg id="board-fullscreen-icon" ');
   const fullscreenTitle = boardFullscreenToggleTitle();
-  document.getElementById('board-fullscreen-toggle').title = fullscreenTitle;
-  document.getElementById('board-fullscreen-toggle').setAttribute('aria-label', fullscreenTitle);
+  const toggle = document.getElementById('board-fullscreen-toggle');
+  if (toggle) {
+    toggle.title = fullscreenTitle;
+    toggle.setAttribute('aria-label', fullscreenTitle);
+  }
   document.getElementById('board-bottom-bar').hidden = false;
   syncBoardBottomZoomLabel();
   syncAiComposerFullscreenState();
@@ -3891,10 +3889,14 @@ function exitBoardFullscreen() {
   if (!isBoardFullscreen()) return;
   if (typeof setCanvasAgentOpen === 'function') setCanvasAgentOpen(false);
   document.getElementById('board-panel').classList.remove('is-fullscreen');
-  document.getElementById('board-fullscreen-icon').outerHTML = ICON_EXPAND.replace('<svg ', '<svg id="board-fullscreen-icon" ');
+  const icon = document.getElementById('board-fullscreen-icon');
+  if (icon) icon.outerHTML = ICON_EXPAND.replace('<svg ', '<svg id="board-fullscreen-icon" ');
   const fullscreenTitle = boardFullscreenToggleTitle();
-  document.getElementById('board-fullscreen-toggle').title = fullscreenTitle;
-  document.getElementById('board-fullscreen-toggle').setAttribute('aria-label', fullscreenTitle);
+  const toggle = document.getElementById('board-fullscreen-toggle');
+  if (toggle) {
+    toggle.title = fullscreenTitle;
+    toggle.setAttribute('aria-label', fullscreenTitle);
+  }
   document.getElementById('board-bottom-bar').hidden = false;
   syncAiComposerFullscreenState();
 }
@@ -4055,9 +4057,9 @@ function initBoardCanvas() {
     } else if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
       const editKind = selectedBoardVideoItems().length
         ? 'video'
-        : (selectedBoardImageItems().length ? 'image' : '');
-      if (!editKind) return;
+        : 'image';
       e.preventDefault();
+      e.stopPropagation();
       void openAiComposerForSelection(editKind);
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
       e.preventDefault();
@@ -4296,7 +4298,7 @@ function initBoardCanvas() {
     );
   });
   document.getElementById('board-fit-all').addEventListener('click', locateBoardImages);
-  document.getElementById('board-fullscreen-toggle').addEventListener('click', toggleBoardFullscreen);
+  document.getElementById('board-fullscreen-toggle')?.addEventListener('click', toggleBoardFullscreen);
   initBoardBottomBar();
   initBoardQuickGenerate();
   initDoodleColorPanel();
@@ -5409,6 +5411,7 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
     const seconds = Math.floor((Date.now() - startedAt) / 1000);
     submitBtn.textContent = `生成中 ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
   }, 1000);
+  let generatedFiles = [];
 
   try {
     const folderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
@@ -5432,6 +5435,7 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
     });
 
     const files = res && Array.isArray(res.files) ? res.files : (res && res.file ? [res.file] : []);
+    generatedFiles = files;
     if (!res || !res.ok || !files.length) {
       const msg = res && res.reason === 'missing-api-key'
         ? '请先在设置中保存速创 API 密钥。'
@@ -5456,8 +5460,18 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
     showToast(request.kind === 'video' ? 'AI 视频已加入画布' : 'AI 图片已加入画布', 'AI');
     closeAiImagePopover();
   } catch (err) {
-    removeAiPlaceholders(placeholders);
-    showToast(err && err.message ? err.message : 'AI 生成失败。', 'AI');
+    if (generatedFiles.length) {
+      AppState.files = [
+        ...generatedFiles,
+        ...AppState.files.filter((file) => !generatedFiles.some((next) => next.id === file.id))
+      ];
+      renderFileList(currentFileListScope());
+      renderFolderGridIfActive();
+      showToast('生成结果已安全保存，画布同步将自动恢复。', 'AI');
+    } else {
+      removeAiPlaceholders(placeholders);
+      showToast(err && err.message ? err.message : 'AI 生成失败。', 'AI');
+    }
   } finally {
     clearInterval(progressTimer);
     finishAiMediaTask(taskId);
@@ -6143,13 +6157,17 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
       updates.push(item);
     });
   }
-  // Persist the final board items before replacing the in-memory placeholders.
-  // A failed IPC write must leave the placeholder visible so the caller can
-  // release the gateway reservation instead of charging a vanished result.
-  if (typeof window.messsAPI.upsertBoardItems === 'function') {
-    await window.messsAPI.upsertBoardItems(updates);
-  } else {
-    await Promise.all(updates.map((item) => window.messsAPI.upsertBoardItem(item)));
+  // The main process has already written generated files and their board
+  // records before returning them. Renderer-side reconciliation must never
+  // discard that durable result merely because a second IPC write is slow.
+  try {
+    if (typeof window.messsAPI.upsertBoardItems === 'function') {
+      await window.messsAPI.upsertBoardItems(updates);
+    } else {
+      await Promise.all(updates.map((item) => window.messsAPI.upsertBoardItem(item)));
+    }
+  } catch (error) {
+    console.warn('AI result is durable; board reconciliation will resume from local storage:', error && error.message || error);
   }
   AppState.allBoardItems = workingBoardItems.filter((item) =>
     !placeholderIds.has(item.id) || replacedIds.has(item.id)
@@ -7947,13 +7965,18 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
     if (fallbackNotice) showToast(fallbackNotice, 'AI');
     closeAiImagePopover();
   } catch (err) {
-    if (generatedFiles.length && err && err.aiDeliveryConfirmationAttempted !== true) {
-      try { await releaseAiMediaDeliveries(generatedFiles); } catch (releaseError) {
-        console.error('Could not release a failed AI media result:', releaseError);
-      }
+    if (generatedFiles.length) {
+      AppState.files = [
+        ...generatedFiles,
+        ...AppState.files.filter((file) => !generatedFiles.some((next) => next.id === file.id))
+      ];
+      renderFileList(currentFileListScope());
+      renderFolderGridIfActive();
+      showToast('生成结果已安全保存，画布同步将自动恢复。', 'AI');
+    } else {
+      removeAiPlaceholders(placeholders);
+      showToast(err && err.message ? err.message : 'AI 生成失败。', 'AI');
     }
-    removeAiPlaceholders(placeholders);
-    showToast(err && err.message ? err.message : 'AI 生成失败。', 'AI');
   } finally {
     clearInterval(progressTimer);
     finishAiMediaTask(taskId);
@@ -8038,10 +8061,21 @@ async function generateAiMediaForBoardV3(request) {
     if (fallbackNotice) showToast(fallbackNotice, 'AI');
     return generatedFiles;
   } catch (err) {
-    if (generatedFiles.length && err && err.aiDeliveryConfirmationAttempted !== true) {
-      try { await releaseAiMediaDeliveries(generatedFiles); } catch (releaseError) {
-        console.error('Could not release a failed AI media result:', releaseError);
-      }
+    if (generatedFiles.length) {
+      // At this point the gateway archive and atomic local write have both
+      // completed. Confirmation or renderer failures are recoverable and
+      // must not roll back a paid result that the user already owns.
+      AppState.files = [
+        ...generatedFiles,
+        ...AppState.files.filter((file) => !generatedFiles.some((next) => next.id === file.id))
+      ];
+      renderFileList(currentFileListScope());
+      renderFolderGridIfActive();
+      showToast(t(
+        'The result is saved and canvas synchronization will resume automatically.',
+        '生成结果已安全保存，画布同步将自动恢复。'
+      ), 'AI');
+      return generatedFiles;
     }
     removeAiPlaceholders(placeholders);
     showToast(err && err.message ? err.message : t('AI generation failed.', 'AI 生成失败。'), 'AI');
@@ -8572,7 +8606,7 @@ async function showAiImagePopover(initialKind = 'image') {
     );
     if (agentInteraction || e.target.closest?.('#board-agent-panel, #board-agent-history-drawer, .agent-text-context-menu')) return;
     if (nodeComposer && e.target.closest('#board-node-editor .drawflow-node')) return;
-    if (e.target.closest('#board-mode-toggle, #board-tool-ai-image, #board-tool-ai-video, #board-fullscreen-toggle, #board-bottom-fullscreen-toggle')) return;
+    if (e.target.closest('#board-mode-toggle, #board-tool-ai-image, #board-tool-ai-video')) return;
     // Canvas images toggle AI reference state; they must not dismiss the active composer.
     if (e.target.closest('#board-canvas .board-item-image, #board-canvas .board-item-video')) return;
     if (e.target.closest('#board-viewport') && boardReferenceMediaItemAtClientPoint(e.clientX, e.clientY)) return;
@@ -8634,7 +8668,7 @@ function initBoardBottomBar() {
   document.getElementById('board-bottom-zoom-in').addEventListener('click', () => document.getElementById('board-zoom-in').click());
   document.getElementById('board-bottom-zoom-label').addEventListener('click', resetBoardZoomTo100);
   document.getElementById('board-zoom-label').addEventListener('click', resetBoardZoomTo100);
-  document.getElementById('board-bottom-fullscreen-toggle').addEventListener('click', toggleBoardFullscreen);
+  document.getElementById('board-bottom-fullscreen-toggle')?.addEventListener('click', toggleBoardFullscreen);
 
   const origZoomLabel = document.getElementById('board-zoom-label');
   new MutationObserver(syncBoardBottomZoomLabel).observe(origZoomLabel, { childList: true, characterData: true, subtree: true });
@@ -8677,7 +8711,7 @@ function textNoteUsesThemeColor(note) {
 
 function textNoteDisplayColor(note) {
   return textNoteUsesThemeColor(note)
-    ? 'var(--text-primary)'
+    ? '#f3f5f8'
     : (note.color || TEXT_NOTE_DEFAULT_COLOR);
 }
 
@@ -8831,9 +8865,13 @@ function cancelActiveTextNoteEditing() {
 function applyTextNoteStyle(note, contentEl) {
   const el = contentEl || document.querySelector(`.board-text-note[data-board-id="${note.id}"] .board-text-note-content`);
   if (!el) return;
-  el.style.fontFamily = note.fontFamily;
-  el.style.fontSize = note.fontSize + 'px';
-  el.style.fontWeight = note.fontWeight;
+  const fontSize = Math.max(10, Math.min(160, Number(note.fontSize) || 32));
+  const fontWeight = String(note.fontWeight || '400');
+  note.fontSize = fontSize;
+  note.fontWeight = fontWeight;
+  el.style.fontFamily = note.fontFamily && note.fontFamily !== 'inherit' ? note.fontFamily : 'var(--font-body)';
+  el.style.fontSize = `${fontSize}px`;
+  el.style.fontWeight = fontWeight;
   const displayColor = textNoteDisplayColor(note);
   el.style.color = note.noFill ? 'transparent' : displayColor;
   el.style.webkitTextStroke = note.noFill ? '1px ' + displayColor : '';

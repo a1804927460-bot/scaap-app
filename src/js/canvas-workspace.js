@@ -131,6 +131,14 @@ function canvasProjectScope(project) {
   return normalizeCanvasProjectScope(project && project.scope);
 }
 
+function isSystemCanvasProject(project) {
+  if (!project) return false;
+  if (project.system === true || project.isSystem === true || project.id === 'project-1') return true;
+  const firstProject = AppState.canvasProjects && AppState.canvasProjects[0];
+  const legacyName = String(project.name || '').trim().toLowerCase();
+  return firstProject && firstProject.id === project.id && ['general', '常规', '新项目'].includes(legacyName);
+}
+
 function canvasProjectsForScope(scope = CanvasWorkspace.libraryScope) {
   const targetScope = normalizeCanvasProjectScope(scope);
   return AppState.canvasProjects.filter((project) => canvasProjectScope(project) === targetScope);
@@ -564,8 +572,13 @@ function buildCanvasMosaic(canvas) {
 
 function filteredCanvases() {
   const query = CanvasWorkspace.libraryQuery.trim().toLowerCase();
+  const rootProjectIds = new Set(
+    canvasProjectsForScope().filter(isSystemCanvasProject).map((project) => project.id)
+  );
   return AppState.canvases
-    .filter((canvas) => (!CanvasWorkspace.libraryProjectId || canvas.projectId === CanvasWorkspace.libraryProjectId)
+    .filter((canvas) => (CanvasWorkspace.libraryProjectId
+      ? canvas.projectId === CanvasWorkspace.libraryProjectId
+      : (!canvas.projectId || rootProjectIds.has(canvas.projectId)))
       && (!query || canvas.name.toLowerCase().includes(query)))
     .sort((a, b) => Number(b.pinned === true) - Number(a.pinned === true)
       || new Date(b.lastOpenedAt || b.updatedAt || b.createdAt || 0) - new Date(a.lastOpenedAt || a.updatedAt || a.createdAt || 0));
@@ -575,6 +588,7 @@ function filteredCanvasProjects() {
   const query = CanvasWorkspace.libraryQuery.trim().toLowerCase();
   if (CanvasWorkspace.libraryProjectId) return [];
   return AppState.canvasProjects
+    .filter((project) => !isSystemCanvasProject(project))
     .filter((project) => !query || project.name.toLowerCase().includes(query));
 }
 
@@ -657,7 +671,7 @@ function buildCanvasLibraryFolderCard(project) {
 function renderCanvasProjectList(list) {
   if (!list) return;
   list.innerHTML = '';
-  canvasProjectsForScope().forEach((project) => {
+  canvasProjectsForScope().filter((project) => !isSystemCanvasProject(project)).forEach((project) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.dataset.projectId = project.id;
@@ -709,24 +723,12 @@ function closeCanvasCardMenus(exceptMenu = null) {
   });
 }
 
-function buildCanvasLibraryCreateCard() {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'canvas-library-create-card';
-  button.setAttribute('aria-label', t('New canvas', '新建画布'));
-  button.innerHTML = '<span class="canvas-library-create-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg></span><span class="canvas-library-create-label"></span>';
-  button.querySelector('.canvas-library-create-label').textContent = t('New canvas', '新建画布');
-  button.addEventListener('click', () => promptNewCanvas());
-  return button;
-}
-
 function renderCanvasLibrary() {
   const grid = document.getElementById('canvas-library-grid');
   if (!grid) return;
   const canvases = filteredCanvases();
   const projects = filteredCanvasProjects();
   grid.innerHTML = '';
-  if (!CanvasWorkspace.libraryQuery.trim()) grid.appendChild(buildCanvasLibraryCreateCard());
   projects.forEach((project) => grid.appendChild(buildCanvasLibraryFolderCard(project)));
   const folderBack = document.getElementById('canvas-library-folder-back');
   const folder = CanvasWorkspace.libraryProjectId
@@ -759,7 +761,9 @@ function renderCanvasLibrary() {
     const meta = document.createElement('div');
     meta.className = 'canvas-library-card-meta';
     const projectName = document.createElement('span');
-    projectName.textContent = project ? project.name : t('General', '常规');
+    projectName.textContent = !project || isSystemCanvasProject(project)
+      ? t('Unfiled', '未归类')
+      : project.name;
     const updated = document.createElement('span');
     updated.textContent = relativeCanvasTime(canvas.updatedAt || canvas.createdAt);
     meta.append(projectName, updated);
@@ -1188,12 +1192,16 @@ async function promptNewCanvas() {
   const active = activeCanvasRecord();
   const selectedProjectRecord = AppState.canvasProjects.find((project) => project.id === CanvasWorkspace.libraryProjectId);
   const activeProject = AppState.canvasProjects.find((project) => active && project.id === active.projectId);
-  const scopedProject = canvasProjectsForScope()[0];
+  const scopedProjects = canvasProjectsForScope();
+  const rootProject = scopedProjects.find(isSystemCanvasProject);
+  const scopedProject = rootProject || scopedProjects[0];
   const selectedProject = selectedProjectRecord && canvasProjectScope(selectedProjectRecord) === CanvasWorkspace.libraryScope
     ? selectedProjectRecord.id
-    : (activeProject && canvasProjectScope(activeProject) === CanvasWorkspace.libraryScope
+    : (!CanvasWorkspace.libraryProjectId && rootProject
+      ? rootProject.id
+      : (activeProject && canvasProjectScope(activeProject) === CanvasWorkspace.libraryScope
       ? activeProject.id
-      : (scopedProject && scopedProject.id));
+      : (scopedProject && scopedProject.id)));
   if (!selectedProject) {
     showToast(
       t('Create a team project first, then create a canvas.', '请先创建团队项目，再新建画布。', '먼저 팀 프로젝트를 만든 다음 캔버스를 만드세요.'),
@@ -1385,7 +1393,7 @@ async function promptDeleteCanvasProject(projectId) {
     return;
   }
 
-  const fallback = AppState.canvasProjects.find((entry) => entry.id !== projectId && entry.name === 'General')
+  const fallback = AppState.canvasProjects.find((entry) => entry.id !== projectId && isSystemCanvasProject(entry))
     || AppState.canvasProjects.find((entry) => entry.id !== projectId);
   if (!fallback) return;
   const canvasCount = AppState.canvases.filter((canvas) => canvas.projectId === projectId).length;
@@ -1779,8 +1787,7 @@ function setCanvasAgentOpen(open, options = {}) {
   const board = document.getElementById('board-panel');
   const toggle = document.getElementById('board-agent-toggle');
   if (!agent || !board) return false;
-  const allowed = !!open && board.classList.contains('is-fullscreen') &&
-    !board.classList.contains('is-canvas-library');
+  const allowed = !!open && !board.classList.contains('is-canvas-library');
   agent.classList.toggle('is-hidden', !allowed);
   if (toggle) toggle.setAttribute('aria-expanded', String(allowed));
   const historyDrawer = document.getElementById('board-agent-history-drawer');
@@ -2458,20 +2465,12 @@ async function initCanvasWorkspace(initial) {
     }
   });
   document.addEventListener('keydown', (event) => {
-    const target = event.target instanceof Element ? event.target : document.activeElement;
-    const isEditableTarget = target && (
-      ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) ||
-      target.isContentEditable ||
-      target.closest('[contenteditable="true"], .ql-editor, [role="textbox"]')
-    );
     if (
       event.code === 'Space' &&
       (event.ctrlKey || event.metaKey) &&
       !event.altKey &&
       !event.shiftKey &&
       !event.repeat &&
-      !isEditableTarget &&
-      document.getElementById('board-panel')?.classList.contains('is-fullscreen') &&
       !document.getElementById('board-panel')?.classList.contains('is-canvas-library') &&
       !document.getElementById('board-workspace-body')?.hidden
     ) {

@@ -210,7 +210,7 @@ function imageDimensionsWithinCapabilities(size, capabilities = {}) {
   const width = Number(match[1]);
   const height = Number(match[2]);
   const maxEdge = Math.max(1, Math.min(3840, Number(capabilities.maxSizeEdge) || 3840));
-  const maxPixels = Math.max(1, Math.min(8_300_000, Number(capabilities.maxSizePixels) || 8_300_000));
+  const maxPixels = Math.max(1, Math.min(8_294_400, Number(capabilities.maxSizePixels) || 8_294_400));
   return width % 16 === 0 && height % 16 === 0
     && width <= maxEdge && height <= maxEdge && width * height <= maxPixels;
 }

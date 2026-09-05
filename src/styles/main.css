@@ -24,7 +24,7 @@
     "sidebar board   board";
   gap: 8px;
   padding: 10px;
-  background: var(--bg-base);
+  background: var(--bg-surface);
   opacity: 0;
   transform: scale(1.02);
   transition: opacity var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-out),
@@ -151,7 +151,7 @@
 .sidebar {
   grid-area: sidebar;
   background: var(--bg-surface);
-  border: 1px solid transparent;
+  border: 1px solid var(--bg-surface);
   border-radius: var(--radius-lg);
   padding: 20px 16px;
   display: flex;
@@ -1222,7 +1222,7 @@ body.is-activation-locked .section-tabs { pointer-events: none; opacity: .45; }
 /* -------- Shared panel chrome -------- */
 .preview-panel, .stats-panel, .board-panel {
   background: var(--bg-surface);
-  border: 1px solid transparent;
+  border: 1px solid var(--bg-surface);
   border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
@@ -3417,44 +3417,6 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   border-color: color-mix(in srgb, var(--accent) 38%, var(--border-hairline));
   box-shadow: 0 12px 30px rgba(0,0,0,.12);
 }
-.canvas-library-create-card {
-  min-width: 0;
-  min-height: 188px;
-  display: grid;
-  place-items: center;
-  align-content: center;
-  gap: 10px;
-  padding: 18px;
-  border: 1px dashed color-mix(in srgb, var(--accent) 32%, var(--border-hairline));
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 4%, var(--bg-elevated));
-  color: var(--text-tertiary);
-  font: inherit;
-  cursor: var(--cursor-click);
-  transition: transform 220ms var(--ease-spring), border-color 160ms var(--ease-out), background-color 160ms var(--ease-out), color 160ms var(--ease-out);
-}
-.canvas-library-create-card:hover,
-.canvas-library-create-card:focus-visible {
-  transform: translateY(-2px);
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 9%, var(--bg-elevated));
-  color: var(--accent);
-  outline: none;
-}
-.canvas-library-create-icon {
-  width: 42px;
-  height: 42px;
-  display: grid;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border-hairline));
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-}
-.canvas-library-create-label {
-  color: currentColor;
-  font-size: 11px;
-  font-weight: 700;
-}
 .canvas-library-folder-card {
   min-width: 0;
   min-height: 188px;
@@ -4568,11 +4530,9 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   pointer-events: none;
   border-width: 0;
 }
-.board-panel:not(.is-fullscreen) #board-agent-toggle,
-.board-panel:not(.is-fullscreen) .board-agent-panel,
-.board-panel:not(.is-fullscreen) #resize-handle-board-agent {
-  display: none;
-}
+.board-panel.is-canvas-library #board-agent-toggle,
+.board-panel.is-canvas-library .board-agent-panel,
+.board-panel.is-canvas-library #resize-handle-board-agent { display: none; }
 .board-agent-close {
   position: absolute;
   top: 14px;
@@ -5163,8 +5123,8 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   backdrop-filter: none !important;
 }
 .board-canvas.is-transforming .board-item {
-  visibility: visible !important;
-  pointer-events: auto !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 .board-canvas.is-transforming .board-item:not(.is-selected) { box-shadow: none; }
 .board-canvas.is-transforming .board-partition-border-beam { visibility: hidden; }
@@ -7032,8 +6992,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .board-canvas .board-item-image.is-selected,
 .board-canvas .board-item-video.is-selected {
   border: 0;
-  outline: var(--board-selection-width, 1px) solid var(--selection-outline);
-  outline-offset: 0;
+  outline: none;
   box-shadow: none;
 }
 .board-item-doodle.is-selected { border-radius: 0; }
@@ -7113,7 +7072,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 /* The toolbar is a child of the full board panel while the drawable viewport
    shares that panel with the Agent. Offset it by the live Agent width so its
    visual centre stays on the canvas as the sidebar is opened or resized. */
-.board-panel.is-fullscreen:has(.board-agent-panel:not(.is-hidden)) .board-bottom-bar {
+.board-panel:has(.board-agent-panel:not(.is-hidden)) .board-bottom-bar {
   left: calc((100% - var(--agent-w, 420px)) / 2);
 }
 .board-bottom-group { display: flex; align-items: center; gap: 4px; padding: 0 4px; }
@@ -7153,8 +7112,8 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .board-text-note.is-text-editing {
   min-width: 180px;
   padding: 8px 10px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-hairline);
+  background: #171a20;
+  border: 1px solid rgba(255, 255, 255, .14);
   box-shadow: 0 8px 24px rgba(15, 18, 26, .12);
 }
 .board-text-note-content {
@@ -11191,13 +11150,13 @@ body { font-size: var(--font-ui-md); }
   min-height: 170px;
   padding: 0;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border-hairline));
+  border: 1px solid transparent;
   border-radius: 8px;
-  background: var(--bg-surface-2);
+  background: #1d2430;
   box-shadow: 0 10px 26px rgba(7, 10, 16, .12), inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
   cursor: var(--cursor-grab);
 }
-.board-moodboard:hover { border-color: color-mix(in srgb, var(--accent) 38%, var(--border-hairline)); }
+.board-moodboard:hover { border-color: transparent; }
 .board-moodboard.is-selected {
   border-color: var(--selection-outline);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--selection-outline) 30%, transparent), 0 12px 30px rgba(7, 10, 16, .16);
@@ -11210,7 +11169,7 @@ body { font-size: var(--font-ui-md); }
   min-width: 0;
   padding: 0 10px;
   border-bottom: 1px solid var(--border-hairline);
-  background: var(--bg-elevated);
+  background: #171d27;
 }
 .board-moodboard-icon {
   display: grid;
@@ -11221,10 +11180,10 @@ body { font-size: var(--font-ui-md); }
 }
 .board-moodboard-title {
   overflow: hidden;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 680;
-  line-height: 1.2;
+  color: #f3f5f8;
+  font-size: 20px;
+  font-weight: 720;
+  line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -11245,9 +11204,9 @@ body { font-size: var(--font-ui-md); }
   min-height: 0;
   padding: 15px 16px;
   overflow: hidden;
-  color: var(--text-secondary);
-  font-size: 12.5px;
-  line-height: 1.55;
+  color: #f3f5f8;
+  font-size: 17px;
+  line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;

@@ -89,7 +89,7 @@ assert.deepEqual(gptImage2Provider.capabilities.ratios, [
 assert.equal(gptImage2Provider.capabilities.arbitrarySizes, true);
 assert.equal(gptImage2Provider.capabilities.arbitraryRatios, true);
 assert.equal(gptImage2Provider.capabilities.maxSizeEdge, 3840);
-assert.equal(gptImage2Provider.capabilities.maxSizePixels, 8_300_000);
+assert.equal(gptImage2Provider.capabilities.maxSizePixels, 8_294_400);
 assert.equal(gptImage2Provider.capabilities.minimumAspectRatio, 1 / 3);
 assert.equal(gptImage2Provider.capabilities.maximumAspectRatio, 3);
 assert.equal(gptImage2Provider.capabilities.sizeMultiple, 16);
@@ -397,6 +397,29 @@ assert.deepEqual(nanoBody, {
 assert.match(nanoBody.out_task_id, /^u_gateway_[a-f0-9]{32}$/);
 assert.equal(nanoCalls[1].url, 'https://aireiter.com/api/openapi/query');
 
+globalThis.fetch = async (url, options = {}) => {
+  nanoCalls.push({ url: String(url), options });
+  const value = String(url);
+  if (value === 'https://aireiter.com/api/openapi/submit') {
+    return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
+  }
+  if (value === 'https://aireiter.com/api/openapi/query') {
+    return jsonResponse({
+      statusCode: 200,
+      data: { status: 'completed', output: [{ url: 'https://cdn.example/nano-pro-auto.png' }] }
+    });
+  }
+  if (value === 'https://cdn.example/nano-pro-auto.png') {
+    return new Response(nano2kPng, { status: 200, headers: { 'content-type': 'image/png' } });
+  }
+  throw new Error(`Unexpected Nano Banana Pro auto-ratio URL: ${value}`);
+};
+await generateMedia('image', {
+  providerId: 'image-1', prompt: 'automatic ratio', size: '2K', aspectRatio: 'auto', urls: []
+});
+const nanoAutoSubmit = [...nanoCalls].reverse().find((call) => call.url === 'https://aireiter.com/api/openapi/submit');
+assert.equal(JSON.parse(nanoAutoSubmit.options.body).params.aspect_ratio, 'auto');
+
 const relayReference = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 process.env.AIREITER_API_KEY = configuredAireiterKey;
 globalThis.fetch = async (url, options = {}) => {
@@ -431,6 +454,14 @@ assert.ok(nanoCalls.some((call) => call.url === 'https://aireiter.com/api/openap
 const relayToken = relayedBody.params.image_url[0].split('/').pop();
 const { getAi302RelayAsset } = await import('../gateway/src/ai302-tools.js');
 assert.throws(() => getAi302RelayAsset(relayToken), (error) => error && error.code === 'tool-asset-not-found');
+
+await assert.rejects(
+  generateMedia('image', {
+    providerId: 'image-2', prompt: 'too many references', size: '2K', aspectRatio: 'auto',
+    urls: Array.from({ length: 9 }, (_value, index) => `https://cdn.example/reference-${index}.png`)
+  }),
+  (error) => error && error.code === 'too-many-references'
+);
 
 globalThis.fetch = async (url, options = {}) => {
   nanoCalls.push({ url: String(url), options });
@@ -576,6 +607,16 @@ assert.deepEqual(JSON.parse(aireiterH3Calls[0].options.body), {
   },
   out_task_id: aireiterH3Task.taskId
 });
+await assert.rejects(
+  createVideoTask({
+    providerId: 'video-1', prompt: 'too many video references', resolution: '2K', duration: 7,
+    aspectRatio: '16:9', videoMode: 'omni',
+    urls: ['https://cdn.example/one.mp4', 'https://cdn.example/two.mp4'],
+    referenceMediaTypes: ['video', 'video']
+  }),
+  (error) => error && error.code === 'too-many-reference-videos'
+);
+assert.equal(aireiterH3Calls.length, 1);
 delete process.env.AIREITER_API_KEY;
 
 const miniMaxCalls = [];

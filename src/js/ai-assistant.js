@@ -1716,21 +1716,31 @@ async function submitAssistantMessage() {
       persistActiveAiChatSession();
     }
   } catch (err) {
-    if (generatedMediaFiles.length && err && err.aiDeliveryConfirmationAttempted !== true) {
-      try { await releaseAiMediaDeliveries(generatedMediaFiles); } catch (releaseError) {
-        console.error('Could not release a failed AI media result:', releaseError);
-      }
-    }
-    if (mediaPlaceholders.length && typeof removeAiPlaceholders === 'function') {
+    if (generatedMediaFiles.length) {
+      AppState.files = [
+        ...generatedMediaFiles,
+        ...AppState.files.filter((file) => !generatedMediaFiles.some((next) => next.id === file.id))
+      ];
+      renderFileList(currentFileListScope());
+      renderFolderGridIfActive();
+      pending.classList.remove('is-pending');
+      pending.querySelector('.ai-assistant-message-body').textContent = t(
+        'The result is saved and canvas synchronization will resume automatically.',
+        '生成结果已安全保存，画布同步将自动恢复。'
+      );
+      appendAssistantMedia(generatedMediaFiles, submittedKind);
+    } else if (mediaPlaceholders.length && typeof removeAiPlaceholders === 'function') {
       removeAiPlaceholders(mediaPlaceholders);
       mediaPlaceholders = [];
     }
-    pending.classList.remove('is-pending');
-    pending.classList.add('is-error');
-    pending.querySelector('.ai-assistant-message-body').textContent =
-      typeof publicAiErrorMessage === 'function'
-        ? publicAiErrorMessage(err && err.message, t('Request failed. Please try again.', '请求失败，请重试。'))
-        : (err && err.message ? err.message : t('Request failed. Please try again.', '请求失败，请重试。'));
+    if (!generatedMediaFiles.length) {
+      pending.classList.remove('is-pending');
+      pending.classList.add('is-error');
+      pending.querySelector('.ai-assistant-message-body').textContent =
+        typeof publicAiErrorMessage === 'function'
+          ? publicAiErrorMessage(err && err.message, t('Request failed. Please try again.', '请求失败，请重试。'))
+          : (err && err.message ? err.message : t('Request failed. Please try again.', '请求失败，请重试。'));
+    }
   } finally {
     clearInterval(progress);
     setAssistantBusy(false);

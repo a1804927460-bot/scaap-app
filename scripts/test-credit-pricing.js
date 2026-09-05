@@ -27,15 +27,15 @@ const {
 } = require('../lib/credit-pricing');
 
 assert.strictEqual(POINTS_PER_CNY, 1000 / 70);
-assert.strictEqual(CREDIT_PRICING_VERSION, '202609040003');
-assert.strictEqual(RETAIL_GROSS_MARGIN_PERCENT, 10);
-assert.ok(Math.abs(RETAIL_MARKUP_PERCENT - (100 / 9)) < 1e-12);
-assert.strictEqual(RETAIL_MULTIPLIER, 10 / 9);
+assert.strictEqual(CREDIT_PRICING_VERSION, '202609050002');
+assert.strictEqual(RETAIL_GROSS_MARGIN_PERCENT, 20);
+assert.strictEqual(RETAIL_MARKUP_PERCENT, 25);
+assert.strictEqual(RETAIL_MULTIPLIER, 1.25);
 assert.strictEqual(PROFIT_PER_REQUEST_CNY, 0);
 assert.strictEqual(PROFIT_PER_REQUEST_CREDITS, 0);
 assert.strictEqual(USD_TO_CNY, 7.3);
 assert.strictEqual(MINIMUM_VIDEO_CREDITS, 0);
-assert.strictEqual(retailCreditsFromUpstreamCny(1.5), 27, 'CNY upstream cost must include the 10% estimate buffer and preserve a 10% image gross margin.');
+assert.strictEqual(retailCreditsFromUpstreamCny(1.5), 30, 'CNY upstream cost must include the 10% estimate buffer and preserve a 20% gross margin.');
 assert.strictEqual(retailCreditsFromUpstreamCny(0), 0, 'A zero-cost operation must not receive a fixed charge.');
 assert.throws(() => retailCreditsFromUpstreamCny(-0.01), TypeError);
 
@@ -50,15 +50,15 @@ assert.deepStrictEqual(quoteMediaCredits({
   count: 2,
   units: 2,
   unit: 'image',
-  unitCredits: 31,
-  totalCredits: 62
+  unitCredits: 35,
+  totalCredits: 70
 });
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'image',
   imageProviderId: 'image-4',
   count: 99
-}).totalCredits, 16, 'Image count must be capped at four.');
+}).totalCredits, 20, 'Image count must be capped at four.');
 
 const localBatchQuote = quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-2', count: 4, size: '2K'
@@ -118,40 +118,40 @@ assert.deepStrictEqual(quoteMediaCredits({
   count: 2,
   units: 2,
   unit: 'image',
-  unitCredits: 30,
-  totalCredits: 60
+  unitCredits: 34,
+  totalCredits: 68
 });
 assert.strictEqual(quoteMediaCredits({
   kind: 'image',
   imageProviderId: 'image-6',
   quality: 'invalid'
-}).totalCredits, 11, 'Unknown GPT Image 2 quality must use the automatic-quality price.');
+}).totalCredits, 13, 'Unknown GPT Image 2 quality must use the automatic-quality price.');
 
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-7', resolution: '720p', count: 4
-}).totalCredits, 16);
+}).totalCredits, 20);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-8', size: '1080p', count: 4
-}).totalCredits, 32);
+}).totalCredits, 36);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-1', size: '4K'
-}).totalCredits, 62);
+}).totalCredits, 70);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-2', size: '1K'
-}).totalCredits, 7);
+}).totalCredits, 8);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-9'
-}).totalCredits, 6);
+}).totalCredits, 7);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-17'
-}).totalCredits, 11);
+}).totalCredits, 12);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-18', size: '2K'
-}).totalCredits, 42);
+}).totalCredits, 47);
 
 const imageResolutionMatrix = {
-  'image-1': { '1K': 19, '2K': 31, '4K': 62 },
-  'image-2': { '1K': 7, '2K': 10, '4K': 14 },
+  'image-1': { '1K': 21, '2K': 35, '4K': 70 },
+  'image-2': { '1K': 8, '2K': 11, '4K': 16 },
   'image-3': { '2K': 5, '4K': 8 }
 };
 Object.entries(imageResolutionMatrix).forEach(([imageProviderId, resolutions]) => {
@@ -337,9 +337,9 @@ assert.strictEqual(
 const publicPricing = publicCreditPricing();
 assert.strictEqual(publicPricing.pricingVersion, CREDIT_PRICING_VERSION);
 assert.strictEqual(publicPricing.pointsPerCny, 1000 / 70);
-assert.strictEqual(publicPricing.grossMarginPercent, 10);
-assert.ok(Math.abs(publicPricing.retailMarkupPercent - (100 / 9)) < 1e-12);
-assert.strictEqual(publicPricing.retailMultiplier, 10 / 9);
+assert.strictEqual(publicPricing.grossMarginPercent, 20);
+assert.strictEqual(publicPricing.retailMarkupPercent, 25);
+assert.strictEqual(publicPricing.retailMultiplier, 1.25);
 assert.strictEqual(publicPricing.upstreamCostSafetyPercent, 10);
 assert.strictEqual(publicPricing.chat, 0);
 assert.strictEqual(publicPricing.profitPerRequestCny, 0);
@@ -349,10 +349,10 @@ assert.strictEqual(VIDEO_OPERATING_COST_RETAIL_CREDITS, 5);
 assert.strictEqual(publicPricing.operatingCostPricingVersion, CREDIT_PRICING_VERSION);
 assert.ok(Math.abs(publicPricing.operatingCosts.image.total - 0.013) < 1e-12);
 assert.strictEqual(publicPricing.operatingCosts.video.total, 0.25);
-assert.strictEqual(publicPricing.image['image-5'], 4);
-assert.strictEqual(publicPricing.image['image-9'], 6);
+assert.strictEqual(publicPricing.image['image-5'], 5);
+assert.strictEqual(publicPricing.image['image-9'], 7);
 assert.strictEqual(publicPricing.image['image-3'], 5);
-assert.strictEqual(publicPricing.image['image-6'], 11);
+assert.strictEqual(publicPricing.image['image-6'], 13);
 assert.deepStrictEqual(publicPricing.imageQuality['image-6'], IMAGE_QUALITY_PRICES['image-6']);
 assert.deepStrictEqual(publicPricing.imageQualityResolution['image-6'], IMAGE_QUALITY_RESOLUTION_PRICES['image-6']);
 assert.deepStrictEqual(publicPricing.imageResolution['image-7'], IMAGE_RESOLUTION_PRICES['image-7']);
@@ -407,6 +407,7 @@ const proportionalPricingMigration = fs.readFileSync(path.join(__dirname, '..', 
 const approvedPricingMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608220002_approved_retail_pricing.sql'), 'utf8');
 const settledUsageReportMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608220007_reprice_settled_usage_reporting.sql'), 'utf8');
 const authoritativeUsageReportMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608230002_authoritative_settled_usage_reporting.sql'), 'utf8');
+const unifiedMediaMarginMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202609050002_unified_media_margin.sql'), 'utf8');
 const legnextMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608180005_legnext_midjourney_credits.sql'), 'utf8');
 const redemptionMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608180002_three_666_credit_codes.sql'), 'utf8');
 const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
@@ -485,6 +486,21 @@ assert.match(authoritativeUsageReportMigration, /create or replace function publ
 assert.match(authoritativeUsageReportMigration, /greatest\(0, coalesce\(usage_row\.credits_charged, 0\)\)/i);
 assert.match(authoritativeUsageReportMigration, /get_canvas_ai_usage_summary_legacy_repriced/i);
 assert.doesNotMatch(authoritativeUsageReportMigration, /current_policy_ai_usage_credits/i);
+assert.match(unifiedMediaMarginMigration, /\* \(10\.0 \/ 7\.0\) \* 1\.10 \/ 0\.80/);
+assert.match(unifiedMediaMarginMigration, /when '1k' then 0\.14 \* 7\.3 \* 10\.0/);
+assert.match(unifiedMediaMarginMigration, /when '1k' then 0\.048 \* 7\.3 \* 10\.0/);
+assert.doesNotMatch(
+  unifiedMediaMarginMigration,
+  /0\.(?:14|048|24|072|48|108) \* 7\.3 \* \(1000\.0 \/ 70\.0\)/,
+  'AI Reiter USD image prices must enter the legacy-point quote helper exactly once.'
+);
+assert.match(unifiedMediaMarginMigration, /quote_image_operating_cost_upstream_points\(\)[\s\S]*?0\.013 \* 10\.0/);
+assert.match(unifiedMediaMarginMigration, /quote_video_operating_cost_upstream_points\(\)[\s\S]*?0\.250 \* 10\.0/);
+assert.doesNotMatch(
+  unifiedMediaMarginMigration,
+  /quote_(?:image|video)_operating_cost_upstream_points\(\)[\s\S]{0,120}?1000\.0 \/ 70\.0/,
+  'Operating costs must be converted to legacy upstream points before the single denomination conversion.'
+);
 assert.doesNotMatch(unifiedPricingMigration, /Chaser0713|staff15/);
 assert.strictEqual((redemptionMigration.match(/, 666, false, 1, null, true\)/g) || []).length, 3);
 assert.strictEqual((redemptionMigration.match(/'[0-9a-f]{64}'/g) || []).length, 3);

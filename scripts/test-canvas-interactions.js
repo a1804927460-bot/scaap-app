@@ -21,6 +21,7 @@ const boardMediaMetaSource = fs.readFileSync(path.join(root, 'src', 'js', 'board
 const modelViewerSource = fs.readFileSync(path.join(root, 'src', 'js', 'model-viewer.js'), 'utf8');
 const usageSettingsSource = fs.readFileSync(path.join(root, 'src', 'js', 'usage-settings.js'), 'utf8');
 const documentEditorSource = fs.readFileSync(path.join(root, 'src', 'js', 'document-editor.js'), 'utf8');
+const leaferLayerSource = fs.readFileSync(path.join(root, 'src', 'js', 'board-leafer-layer.js'), 'utf8');
 
 assert.match(
   boardStyles,
@@ -128,8 +129,8 @@ assert.match(
 );
 assert.match(
   boardStyles,
-  /\.board-canvas \.board-item-image\.is-selected,[\s\S]*?\.board-canvas \.board-item-video\.is-selected[\s\S]*?outline:\s*var\(--board-selection-width, 1px\) solid var\(--selection-outline\);/,
-  'Selected image and video items must retain their selection outline.'
+  /\.board-canvas \.board-item-image\.is-selected,[\s\S]*?\.board-canvas \.board-item-video\.is-selected[\s\S]*?outline:\s*none;/,
+  'Selected image and video items must remain borderless.'
 );
 assert.match(
   boardStyles,
@@ -325,7 +326,7 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /aiImagePopoverClickCloser = \(e\) => \{[\s\S]*?e\.composedPath[\s\S]*?eventPath\.includes\(pop\)[\s\S]*?#board-fullscreen-toggle[\s\S]*?#board-bottom-fullscreen-toggle[\s\S]*?board-item-image, #board-canvas \.board-item-video[\s\S]*?closeAiImagePopover\(\);/,
+  /aiImagePopoverClickCloser = \(e\) => \{[\s\S]*?e\.composedPath[\s\S]*?eventPath\.includes\(pop\)[\s\S]*?#board-tool-ai-image[\s\S]*?board-item-image, #board-canvas \.board-item-video[\s\S]*?closeAiImagePopover\(\);/,
   'Selecting or removing image/video references must keep the AI composer open while other outside clicks still close it.'
 );
 assert.match(
@@ -713,31 +714,28 @@ assert.match(
   /function showCanvasLibrary\(\)[\s\S]*?exitBoardFullscreen\(\)[\s\S]*?panel\.classList\.add\('is-canvas-library'\)/,
   'Leaving a maximized canvas for the library must restore compact mode before fullscreen controls are hidden.'
 );
-assert.match(
-  boardSource,
-  /function enterBoardFullscreen[\s\S]*?setCanvasAgentOpen\(true\)[\s\S]*?function exitBoardFullscreen[\s\S]*?setCanvasAgentOpen\(false\)/,
-  'Messs Agent must open with fullscreen canvas and close when fullscreen ends.'
-);
+assert.doesNotMatch(indexHtml, /id="board-(?:bottom-)?fullscreen-toggle"/,
+  'Canvas fullscreen controls must not be rendered.');
 assert.match(
   workspaceSource,
-  /function setCanvasAgentOpen[\s\S]*?board\.classList\.contains\('is-fullscreen'\)[\s\S]*?agent\.classList\.toggle\('is-hidden', !allowed\)/,
-  'Messs Agent must reject attempts to open outside fullscreen canvas mode.'
+  /function setCanvasAgentOpen[\s\S]*?!!open && !board\.classList\.contains\('is-canvas-library'\)[\s\S]*?agent\.classList\.toggle\('is-hidden', !allowed\)/,
+  'Messs Agent must open beside a normal canvas without requiring fullscreen.'
 );
 assert.match(
   workspaceSource,
   /event\.code === 'Space'[\s\S]*?event\.ctrlKey \|\| event\.metaKey[\s\S]*?!event\.repeat[\s\S]*?setCanvasAgentOpen\(!!agent\?\.classList\.contains\('is-hidden'\), \{ focus: true \}\)/,
-  'Ctrl or Command plus Space must toggle Messs Agent in the fullscreen canvas.'
+  'Ctrl or Command plus Space must toggle Messs Agent in the canvas workspace.'
 );
-assert.match(
+assert.doesNotMatch(
   workspaceSource,
-  /isEditableTarget[\s\S]*?target\.isContentEditable[\s\S]*?target\.closest\('\[contenteditable="true"\], \.ql-editor, \[role="textbox"\]'\)[\s\S]*?!isEditableTarget/,
-  'The Agent shortcut must not interrupt text fields or moodboard editors.'
+  /isEditableTarget[\s\S]*?!isEditableTarget/,
+  'Ctrl+Space must remain a reliable Agent toggle even when an editor has focus.'
 );
 assert.match(indexHtml, /id="board-agent-welcome"[\s\S]*?assets\/logo-mark\.png[\s\S]*?Messs Agent/);
 assert.match(
   boardStyles,
-  /\.board-panel:not\(\.is-fullscreen\) #board-agent-toggle[\s\S]*?display:\s*none;/,
-  'The Agent control must disappear on the compact canvas.'
+  /\.board-panel\.is-canvas-library #board-agent-toggle[\s\S]*?display:\s*none;/,
+  'The Agent control must disappear in the canvas library but remain available in the workspace.'
 );
 assert.match(
   boardStyles,
@@ -751,8 +749,8 @@ assert.match(
 );
 assert.match(
   boardStyles,
-  /\.board-panel\.is-fullscreen:has\(\.board-agent-panel:not\(\.is-hidden\)\) \.board-bottom-bar \{[\s\S]*?left:\s*calc\(\(100% - var\(--agent-w, 420px\)\) \/ 2\)/,
-  'The fullscreen toolbar must stay centered in the drawable canvas when Agent is open.'
+  /\.board-panel:has\(\.board-agent-panel:not\(\.is-hidden\)\) \.board-bottom-bar \{[\s\S]*?left:\s*calc\(\(100% - var\(--agent-w, 420px\)\) \/ 2\)/,
+  'The toolbar must stay centered in the drawable canvas when Agent is open.'
 );
 assert.match(
   boardStyles,
@@ -904,15 +902,10 @@ assert.match(
   mainSource,
   /store\.data\.canvasProjects = projects\.map\([\s\S]*?scope:\s*normalizeCanvasProjectScope\(project\.scope\)/,
   'Canvas project scope must be normalized before it is persisted.');
-assert.match(
+assert.doesNotMatch(
   workspaceSource,
-  /function buildCanvasLibraryCreateCard\(\)[\s\S]*?canvas-library-create-card[\s\S]*?promptNewCanvas\(\)[\s\S]*?grid\.appendChild\(buildCanvasLibraryCreateCard\(\)\)/,
-  'The canvas library must expose a create-canvas action in the empty grid area.'
-);
-assert.match(
-  boardStyles,
-  /\.canvas-library-create-card \{[\s\S]*?border:\s*1px dashed[\s\S]*?\.canvas-library-create-card:hover/,
-  'The empty grid create-canvas action must have a clear, keyboard-visible affordance.'
+  /buildCanvasLibraryCreateCard|grid\.appendChild\(buildCanvasLibraryCreateCard\(\)\)/,
+  'The canvas library must not inject a duplicate create-canvas card.'
 );
 assert.match(
   boardStyles,
@@ -951,8 +944,8 @@ assert.match(
 );
 assert.match(
   workspaceSource,
-  /function filteredCanvasProjects[\s\S]*?canvasProjectsForScope\(\)[\s\S]*?function renderCanvasLibrary[\s\S]*?projects\.forEach\(\(project\) => grid\.appendChild\(buildCanvasLibraryFolderCard\(project\)\)/,
-  'Folders must render in the same library grid as canvas files.'
+  /function filteredCanvasProjects[\s\S]*?!isSystemCanvasProject\(project\)[\s\S]*?function renderCanvasLibrary[\s\S]*?projects\.forEach\(\(project\) => grid\.appendChild\(buildCanvasLibraryFolderCard\(project\)\)/,
+  'User folders must render with root canvases while the system folder remains hidden.'
 );
 assert.match(
   workspaceSource,
@@ -1011,7 +1004,7 @@ assert.match(projectDeleteSource, /AppState\.canvasProjects\.length <= 1/,
   'Deleting a project must preserve at least one project.');
 assert.match(
   projectDeleteSource,
-  /entry\.name === 'General'[\s\S]*?affectedCanvases[\s\S]*?canvas\.projectId = fallback\.id[\s\S]*?canvasWorkspaceSave\(\)/,
+  /isSystemCanvasProject\(entry\)[\s\S]*?affectedCanvases[\s\S]*?canvas\.projectId = fallback\.id[\s\S]*?canvasWorkspaceSave\(\)/,
   'Deleting a project must move its canvases to a remaining project before saving.'
 );
 assert.match(
@@ -1119,8 +1112,28 @@ assert.doesNotMatch(
 );
 assert.match(
   boardSource,
-  /const BOARD_DOM_ITEM_LIMIT = 96;[\s\S]*?queryLimited\(regions\.mount, BOARD_DOM_ITEM_LIMIT\)[\s\S]*?syncBoardLeaferScene\(force\)/,
+  /const BOARD_DOM_ITEM_LIMIT = 72;[\s\S]*?queryLimited\(regions\.mount, BOARD_DOM_ITEM_LIMIT\)[\s\S]*?syncBoardLeaferScene\(force\)/,
   'The board must keep a bounded DOM interaction layer while Leafer renders the complete scene.'
+);
+assert.match(
+  boardSource,
+  /const source = Board\.leaferFullItemIds\.has\(itemId\)[\s\S]*?\(thumbSource \|\| fullSource\)/,
+  'Leafer must keep thumbnails as its normal scene texture and only promote a bounded decoded window.'
+);
+assert.doesNotMatch(
+  leaferLayerSource,
+  /renderSpread\s*:/,
+  'Individual Leafer items must not expand the renderer culling area.'
+);
+assert.match(
+  leaferLayerSource,
+  /const showSelectionStroke = kind === 'doodle'[\s\S]*?stroke: showSelectionStroke \? stroke : undefined/,
+  'Leafer image and video nodes must never draw a selection border.'
+);
+assert.match(
+  boardStyles,
+  /\.board-canvas \.board-item-image\.is-selected,[\s\S]*?\.board-item-video\.is-selected \{[\s\S]*?outline:\s*none/,
+  'Selected image and video DOM targets must remain borderless.'
 );
 assert.match(boardSource, /function syncBoardLeaferScene\(force = false\)[\s\S]*?layer\.sync\([\s\S]*?layer\.setTransform/,
   'Leafer must synchronize the complete board scene before applying its world transform.');
