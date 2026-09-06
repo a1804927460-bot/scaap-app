@@ -1,6 +1,7 @@
 'use strict';
 
 const MARKET_ITEMS = [
+  { id: 'phasex', type: 'software', title: 'PHASE X 舞美工作台', description: '舞美项目、屏幕画面、时间段与会议记录管理。Windows 64 位便携版，所有人免费下载，无需积分。', version: '1.0.0 · Windows x64 · 99.4 MB', tone: 'phasex', featured: 100, image: 'assets/phasex-wordmark.png', downloadUrl: 'https://github.com/a1804927460-bot/messs-releases/releases/download/phasex-v1.0.0/PHASE-X-1.0.0-Windows-x64.exe' },
   { id: 'workflow-kit', type: 'plugin', title: 'Workflow Kit', description: 'Batch naming, export queues and reusable production actions.', version: 'v1.0', tone: 'blue', featured: 9 },
   { id: 'canvas-notes', type: 'plugin', title: 'Canvas Notes', description: 'Structured notes and review markers that stay attached to canvas items.', version: 'v1.0', tone: 'green', featured: 8 },
   { id: 'film-color', type: 'preset', title: 'Film Color', description: 'A restrained collection of cinematic color treatments for still images.', version: '24 looks', tone: 'amber', featured: 10 },
@@ -11,10 +12,11 @@ const MARKET_ITEMS = [
   { id: 'asset-audit', type: 'plugin', title: 'Asset Audit', description: 'Find duplicates, missing links and oversized source files before delivery.', version: 'v1.0', tone: 'slate', featured: 7 }
 ];
 
-const MarketState = { category: 'all', query: '', sort: 'featured' };
+const MarketState = { category: 'all', query: '', sort: 'featured', detailItem: null };
 
 function marketLabel(type) {
   const labels = {
+    software: t('Software', '软件'),
     plugin: t('Plugin', '\u63d2\u4ef6'),
     preset: t('Preset', '\u9884\u8bbe'),
     template: t('Template', '\u6a21\u677f')
@@ -60,22 +62,49 @@ function renderMarket() {
       </button>`;
     card.querySelector('h2').textContent = item.title;
     card.querySelector('p').textContent = item.description;
+    if (item.image) renderMarketProductImage(card.querySelector('.market-card-visual'), item);
+    if (item.downloadUrl) card.querySelector('.market-card-copy strong').textContent = t('Free download', '免费下载');
     card.querySelector('button').addEventListener('click', () => openMarketDetail(item));
     grid.appendChild(card);
   });
 }
 
 function openMarketDetail(item) {
+  MarketState.detailItem = item;
   const overlay = document.getElementById('market-detail-overlay');
   const visual = document.getElementById('market-detail-visual');
   visual.className = `market-detail-visual is-${item.tone}`;
   visual.innerHTML = `<span>${marketIcon(item.type)}</span><i></i><i></i><i></i>`;
+  if (item.image) renderMarketProductImage(visual, item);
   document.getElementById('market-detail-category').textContent = marketLabel(item.type);
   document.getElementById('market-detail-title').textContent = item.title;
   document.getElementById('market-detail-description').textContent = item.description;
   document.getElementById('market-detail-version').textContent = item.version;
+  refreshMarketDownloadAction();
   overlay.hidden = false;
   requestAnimationFrame(() => overlay.classList.add('is-visible'));
+}
+
+function renderMarketProductImage(element, item) {
+  const image = document.createElement('img');
+  image.src = item.image;
+  image.alt = item.title;
+  image.loading = 'lazy';
+  image.decoding = 'async';
+  element.replaceChildren(image);
+}
+
+function refreshMarketDownloadAction() {
+  const action = document.getElementById('market-detail-action');
+  const available = Boolean(MarketState.detailItem?.downloadUrl);
+  action.disabled = !available;
+  action.textContent = available ? t('Free download', '免费下载') : t('Coming soon', '即将上架');
+}
+
+function downloadMarketItem() {
+  const url = MarketState.detailItem?.downloadUrl;
+  if (!url || !url.startsWith('https://github.com/a1804927460-bot/messs-releases/releases/download/')) return;
+  window.open(url, '_blank', 'noopener,noreferrer');
 }
 
 function closeMarketDetail() {
@@ -86,6 +115,7 @@ function closeMarketDetail() {
 
 function refreshMarketLanguage() {
   const labels = [
+    ['software', t('Software', '软件')],
     ['all', t('All', '\u5168\u90e8')],
     ['plugin', t('Plugins', '\u63d2\u4ef6')],
     ['preset', t('Presets', '\u9884\u8bbe')],
@@ -96,10 +126,10 @@ function refreshMarketLanguage() {
     if (button) button.textContent = label;
   });
   const heading = document.querySelector('.market-heading h1');
-  if (heading) heading.textContent = t('Plugins, presets and templates', '\u63d2\u4ef6\u3001\u9884\u8bbe\u548c\u6a21\u677f');
+  if (heading) heading.textContent = t('Software, plugins, presets and templates', '软件、插件、预设和模板');
   const search = document.getElementById('market-search-input');
   if (search) search.placeholder = t('Search market', '\u641c\u7d22\u5e02\u573a');
-  document.getElementById('market-detail-action').textContent = t('Coming soon', '\u5373\u5c06\u4e0a\u67b6');
+  refreshMarketDownloadAction();
   document.getElementById('market-empty').textContent = t('No matching items.', '\u6ca1\u6709\u5339\u914d\u7684\u5546\u54c1\u3002');
   renderMarket();
 }
@@ -127,6 +157,7 @@ function initMarket() {
     renderMarket();
   });
   document.getElementById('market-detail-close').addEventListener('click', closeMarketDetail);
+  document.getElementById('market-detail-action').addEventListener('click', downloadMarketItem);
   document.getElementById('market-detail-overlay').addEventListener('click', (event) => {
     if (event.target === event.currentTarget) closeMarketDetail();
   });

@@ -11,12 +11,28 @@
 .moodboard-editor-panel .moodboard-agent-custom { min-width: 140px; }
 .moodboard-editor-panel .ql-toolbar { display: flex; flex-wrap: wrap; padding: 8px 12px; }
 .moodboard-editor-panel .ql-editor { padding: 20px; font-size: 16px; line-height: 1.7; color: var(--text-primary); }
-.board-moodboard { background: #202122; }
+.board-moodboard {
+  background: #202223; border: 1px solid #36393b; border-radius: 8px;
+  box-shadow: none; grid-template-rows: 61px minmax(0, 1fr);
+}
+.board-moodboard.is-selected { border-color: #53b8dd; box-shadow: none; }
+.board-moodboard-header {
+  display: flex; padding: 0 58px 0 24px; margin: 0;
+  background: transparent; border: 0; position: relative;
+}
+.board-moodboard-header::after { content: ''; position: absolute; left: 24px; right: 24px; bottom: 0; height: 1px; background: #383c3e; }
+.board-moodboard-icon { display: none; }
+.board-moodboard-title { font-size: 18px; font-weight: 600; line-height: 1.25; }
+.board-moodboard-preview { padding: 19px 24px 24px; font-size: 17px; font-weight: 400; line-height: 1.65; }
+.board-moodboard > footer { display: none; }
+.board-canvas[data-board-renderer="leafer"] .board-moodboard-header::after { display: none; }
+.board-canvas[data-board-renderer="leafer"] .board-moodboard.is-selected { outline: none; border-color: transparent; box-shadow: none; }
 .board-moodboard .board-moodboard-generate {
-  position: absolute; right: 12px; top: 12px;
-  height: 30px; min-width: 66px; padding: 0 12px;
-  border-radius: 999px; border: 1px solid #565b60;
-  background: #303336; color: #f3f5f8;
+  position: absolute; right: 16px; top: 16px;
+  display: grid; place-items: center;
+  width: 30px; height: 30px; min-width: 30px; padding: 0;
+  border-radius: 8px; border: 1px solid #424749;
+  background: #2c3032; color: #f3f5f8;
   font: inherit; font-size: 13px; cursor: var(--cursor-click);
 }
 #board-canvas[data-board-renderer="leafer"] .board-moodboard .board-moodboard-generate {
@@ -24,3 +40,31 @@
 }
 .board-moodboard .board-moodboard-generate:hover { background: #41464b; }
 .board-moodboard .board-moodboard-open { display: none; }
+.board-moodboard-generate img { filter: invert(1); pointer-events: none; }
+.ai-image-popover.ai-composer.is-moodboard-composer {
+  transform: none; animation: none; transition: none;
+  min-width: 0; height: auto; overflow-y: auto; border-radius: 12px;
+  padding: 16px; background: var(--bg-elevated); color: var(--text-primary);
+}
+.is-moodboard-composer .ai-composer-form { display: flex; height: auto; padding: 0; flex-direction: column; gap: 14px; }
+.is-moodboard-composer .ai-composer-mode-row { padding-right: 28px; }
+.is-moodboard-composer .ai-composer-mode { display: flex; width: 100%; }
+.is-moodboard-composer .ai-composer-mode button { flex: 1; justify-content: center; }
+.is-moodboard-composer .ai-model-picker,
+.is-moodboard-composer .ai-video-mode-picker { width: 100%; max-width: none; }
+.is-moodboard-composer .ai-model-picker-trigger,
+.is-moodboard-composer .ai-video-mode-trigger { width: 100%; max-width: none; justify-content: space-between; }
+.is-moodboard-composer .ai-model-picker-menu,
+.is-moodboard-composer .ai-video-mode-menu { top: calc(100% + 6px); bottom: auto; width: 100%; min-width: 0; }
+.is-moodboard-composer .ai-composer-prompt { min-height: 58px; height: 72px; max-height: 120px; font-size: 13px; }
+.ai-composer.is-moodboard-composer .ai-options-panel {
+  display: block; position: static; width: 100%; max-height: none;
+  margin: 0; padding: 0; border: 0; border-radius: 0;
+  box-shadow: none; background: transparent; animation: none;
+}
+.is-moodboard-composer .ai-ratio-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.is-moodboard-composer .ai-options-toggle { display: none; }
+.is-moodboard-composer .ai-composer-footer { flex-direction: column; align-items: stretch; gap: 10px; }
+.is-moodboard-composer .ai-composer-submit-wrap { width: 100%; }
+.is-moodboard-composer .ai-composer-submit { width: 100%; justify-content: center; gap: 10px; }
+.is-moodboard-composer .ai-submit-logo { display: none; }

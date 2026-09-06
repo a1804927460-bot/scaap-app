@@ -133,6 +133,7 @@
       item.fontWeight || '',
       item.color || '',
       item.colorMode || '',
+      item.isNote ? textColorForItem(item) : '',
       item.noFill ? 1 : 0,
       item.partitionName || '',
       item.fileName || '',
@@ -175,7 +176,7 @@
       ),
       fontWeight: extra.fontWeight || item.fontWeight || 500,
       lineHeight: extra.lineHeight,
-      textWrap: 'normal',
+      textWrap: 'break',
       textOverflow: 'ellipsis',
       verticalAlign: extra.verticalAlign || 'top',
       padding: extra.padding === undefined ? 0 : extra.padding,
@@ -188,7 +189,9 @@
     if (item && item.isNote && !item.noFill) {
       const color = String(item.color || '').trim().toLowerCase();
       const colorMode = String(item.colorMode || '').trim().toLowerCase();
-      if (colorMode === 'auto' || (!colorMode && color === '#15171c')) return '#f3f5f8';
+      if (colorMode === 'auto' || (!colorMode && color === '#15171c')) {
+        return document.documentElement.dataset.theme === 'light' ? '#15171c' : '#f3f5f8';
+      }
     }
     return item && item.noFill ? 'rgba(0,0,0,0)' : (item && item.color || '#e8ebf1');
   }
@@ -265,8 +268,8 @@
       width: bounds.width,
       height: bounds.height,
       fill: pending ? 'rgba(125, 135, 152, 0.3)' : color,
-      stroke: item.selected ? '#f5f7fb' : 'rgba(220, 226, 235, 0.72)',
-      strokeWidth: item.selected ? 1.2 : 0.8,
+      stroke: pending ? undefined : (item.selected ? '#f5f7fb' : 'rgba(220, 226, 235, 0.72)'),
+      strokeWidth: pending ? 0 : (item.selected ? 1.2 : 0.8),
       cornerRadius: 0,
       hittable: false
     });
@@ -296,34 +299,35 @@
       y: 0,
       width: bounds.width,
       height: bounds.height,
-      fill: '#202122',
-      stroke: item.selected ? '#f5f7fb' : undefined,
-      strokeWidth: item.selected ? 1.2 : 0,
-      cornerRadius: 0,
+      fill: '#202223',
+      stroke: item.selected ? '#53b8dd' : '#36393b',
+      strokeWidth: 1,
+      cornerRadius: 8,
       hittable: false
     });
     const title = new api.Text(textOptions(item, bounds, moodboardTitleForItem(item), '#f3f5f8', {
-      x: 16,
-      y: 14,
-      width: Math.max(1, bounds.width - 120),
+      x: 24,
+      y: 20,
+      width: Math.max(1, bounds.width - 82),
       height: 28,
       fontSize: 18,
-      fontWeight: 720,
+      fontWeight: 600,
       lineHeight: { type: 'percent', value: 1.25 },
       textOverflow: 'ellipsis'
     }));
     const body = new api.Text(textOptions(item, bounds, moodboardBodyForItem(item), '#f3f5f8', {
-      x: 16,
-      y: 52,
-      width: Math.max(1, bounds.width - 32),
-      height: Math.max(1, bounds.height - 68),
+      x: 24,
+      y: 80,
+      width: Math.max(1, bounds.width - 48),
+      height: Math.max(1, bounds.height - 104),
       fontSize: 17,
-      fontWeight: 560,
-      lineHeight: { type: 'percent', value: 1.5 },
+      fontWeight: 400,
+      lineHeight: { type: 'percent', value: 1.65 },
       verticalAlign: 'top',
       textOverflow: 'ellipsis'
     }));
-    return addChildren(group, [background, title, body]);
+    const divider = new api.Rect({ x: 24, y: 60, width: Math.max(1, bounds.width - 48), height: 1, fill: '#383c3e', hittable: false });
+    return addChildren(group, [background, title, body, divider]);
   }
 
   function createDrawable(item, file, bounds, source, kind, color) {
@@ -378,7 +382,7 @@
         fontFamily: textFontFamilyForItem(item),
         fontSize: textFontSizeForItem(item),
         fontWeight: item.fontWeight || 500,
-        textWrap: 'normal',
+        textWrap: 'break',
         textOverflow: 'ellipsis',
         verticalAlign: 'top',
         padding: item.isNote || item.isMoodboard ? 8 : 0,
@@ -428,18 +432,20 @@
       if (background) {
         background.width = bounds.width;
         background.height = bounds.height;
-        background.stroke = item.selected ? '#f5f7fb' : undefined;
-        background.strokeWidth = item.selected ? 1.2 : 0;
+        background.stroke = item.selected ? '#53b8dd' : '#36393b';
+        background.strokeWidth = 1;
       }
       if (title) {
-        title.width = Math.max(1, bounds.width - 120);
+        title.width = Math.max(1, bounds.width - 82);
         title.text = moodboardTitleForItem(item);
       }
       if (body) {
-        body.width = Math.max(1, bounds.width - 32);
-        body.height = Math.max(1, bounds.height - 68);
+        body.width = Math.max(1, bounds.width - 48);
+        body.height = Math.max(1, bounds.height - 104);
         body.text = moodboardBodyForItem(item);
       }
+      const divider = drawable._messsParts?.[3];
+      if (divider) divider.width = Math.max(1, bounds.width - 48);
     } else if (kind === 'text') {
       drawable.text = textForItem(item);
       drawable.fill = textColorForItem(item);
@@ -489,8 +495,8 @@
         rect.width = bounds.width;
         rect.height = bounds.height;
         rect.fill = kind === 'pending' ? 'rgba(125, 135, 152, 0.3)' : color;
-        rect.stroke = item.selected ? '#f5f7fb' : undefined;
-        rect.strokeWidth = item.selected ? 1.2 : 0;
+        rect.stroke = kind !== 'pending' && item.selected ? '#f5f7fb' : undefined;
+        rect.strokeWidth = kind !== 'pending' && item.selected ? 1.2 : 0;
       }
       if (label) {
         label.text = textForItem(item);
@@ -614,7 +620,7 @@
       return false;
     }
     state.options = options;
-    const cacheKey = String(options.cacheKey || '');
+    const cacheKey = options.cacheKey ? `${options.cacheKey}:${document.documentElement.dataset.theme || 'dark'}` : '';
     if (cacheKey && cacheKey === state.lastSyncKey) {
       setVisible(true);
       return true;
@@ -623,6 +629,7 @@
     const items = options.items instanceof Set ? [...options.items] : options.items;
     const nextIds = new Set();
     const nextEntries = [];
+    let drawablesChanged = false;
     for (const item of items) {
       if (!item || !item.id) continue;
       const bounds = normalizeBounds(item, options.getBounds);
@@ -640,6 +647,7 @@
         drawable = createDrawable(item, file, bounds, source, kind, color);
         if (!drawable) continue;
         state.entries.set(item.id, { drawable, kind, signature });
+        drawablesChanged = true;
       } else if (previous.signature !== signature) {
         updateDrawable(drawable, item, bounds, source, kind, color);
         previous.signature = signature;
@@ -660,7 +668,9 @@
       String(left.id).localeCompare(String(right.id))
     ));
     const orderSignature = nextEntries.map((entry) => entry.id).join('\u001f');
-    if (orderSignature !== state.orderSignature) {
+    // Placeholder replacement keeps its ID, but creates a new scene node.
+    // An unchanged ID order must not leave that replacement detached.
+    if (drawablesChanged || orderSignature !== state.orderSignature) {
       state.group.removeAll(false);
       state.group.add(nextEntries.map((entry) => entry.drawable));
       state.orderSignature = orderSignature;

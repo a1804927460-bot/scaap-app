@@ -33,8 +33,12 @@ function isDetachedCanvasWindow() {
 }
 
 async function openActiveCanvasInDetachedWindow(launchPoint = {}) {
+  return openCanvasInDetachedWindow(activeCanvasRecord()?.id, launchPoint);
+}
+
+async function openCanvasInDetachedWindow(canvasId, launchPoint = {}) {
   if (isDetachedCanvasWindow() || CanvasWorkspace.detachInFlight) return { ok: true, reused: true };
-  const canvas = activeCanvasRecord();
+  const canvas = AppState.canvases.find((entry) => entry.id === canvasId);
   if (!canvas || !window.messsAPI || typeof window.messsAPI.openDetachedCanvas !== 'function') {
     return { ok: false, reason: 'unavailable' };
   }
@@ -140,38 +144,25 @@ function isSystemCanvasProject(project) {
 }
 
 function canvasProjectsForScope(scope = CanvasWorkspace.libraryScope) {
-  const targetScope = normalizeCanvasProjectScope(scope);
-  return AppState.canvasProjects.filter((project) => canvasProjectScope(project) === targetScope);
+  return AppState.canvasProjects;
 }
 
 function canvasLibraryScopeLabel(scope = CanvasWorkspace.libraryScope) {
-  return normalizeCanvasProjectScope(scope) === 'team'
-    ? t('Team projects', '团队项目', '팀 프로젝트')
-    : t('Independent projects', '独立项目', '독립 프로젝트');
+  return t('All Canvases', '全部画布', '모든 캔버스');
 }
 
 function canvasLibraryScopeDescription(scope = CanvasWorkspace.libraryScope) {
-  return normalizeCanvasProjectScope(scope) === 'team'
-    ? t('Browse and manage your team projects', '浏览和管理你的团队项目', '팀 프로젝트를 둘러보고 관리하세요')
-    : t('Browse and manage your independent projects', '浏览和管理你的独立项目', '독립 프로젝트를 둘러보고 관리하세요');
+  return t('Browse and manage your canvases', '浏览和管理你的画布');
 }
 
 function appendCanvasProjectOptions(select, projects, selectedId = null) {
-  const groups = ['personal', 'team'];
-  groups.forEach((scope) => {
-    const scopedProjects = projects.filter((project) => canvasProjectScope(project) === scope);
-    if (!scopedProjects.length) return;
-    const group = document.createElement('optgroup');
-    group.label = canvasLibraryScopeLabel(scope);
-    scopedProjects.forEach((project) => {
+    projects.forEach((project) => {
       const option = document.createElement('option');
       option.value = project.id;
       option.textContent = project.name;
       option.selected = project.id === selectedId;
-      group.appendChild(option);
+      select.appendChild(option);
     });
-    select.appendChild(group);
-  });
 }
 
 const CANVAS_AGENT_HISTORY_KEY = 'messs.canvas-agent-history.v1';
@@ -553,6 +544,7 @@ function buildCanvasMosaic(canvas) {
       if (index === 0) cell.textContent = t('Empty canvas', '空白画布');
     } else if (entry.kind === 'video') {
       const video = document.createElement('video');
+      video.draggable = false;
       video.src = entry.src;
       video.muted = true;
       video.preload = 'metadata';
@@ -560,6 +552,7 @@ function buildCanvasMosaic(canvas) {
       cell.appendChild(video);
     } else {
       const image = document.createElement('img');
+      image.draggable = false;
       image.src = entry.src;
       image.alt = entry.name;
       image.loading = 'lazy';
@@ -592,6 +585,50 @@ function filteredCanvasProjects() {
     .filter((project) => !query || project.name.toLowerCase().includes(query));
 }
 
+function bindCanvasLibraryInlineRename(title, record, rename) {
+  title.addEventListener('click', (event) => event.stopPropagation());
+  title.addEventListener('dblclick', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (title.querySelector('input')) return;
+    const card = title.closest('article');
+    const wasDraggable = card && card.draggable;
+    if (card) card.draggable = false;
+    const input = document.createElement('input');
+    input.className = 'canvas-library-rename-input';
+    input.value = record.name;
+    input.setAttribute('aria-label', t('Name', '名称'));
+    input.draggable = false;
+    title.replaceChildren(input);
+    let finished = false;
+    const finish = async (cancel) => {
+      if (finished) return;
+      finished = true;
+      const name = input.value.trim();
+      if (card) card.draggable = wasDraggable;
+      title.textContent = record.name;
+      if (!cancel && name && name !== record.name) {
+        try { await rename(name); }
+        catch (error) { showToast(error.message || t('Rename failed.', '重命名失败。'), 'Canvas'); }
+      }
+      title.textContent = record.name;
+      title.title = record.name;
+    };
+    input.addEventListener('keydown', (keyEvent) => {
+      keyEvent.stopPropagation();
+      if (keyEvent.isComposing) return;
+      if (keyEvent.key === 'Enter' || keyEvent.key === 'Escape') {
+        keyEvent.preventDefault();
+        void finish(keyEvent.key === 'Escape');
+      }
+    });
+    input.addEventListener('blur', () => { void finish(false); });
+    input.addEventListener('dragstart', (dragEvent) => { dragEvent.preventDefault(); dragEvent.stopPropagation(); });
+    input.focus();
+    input.select();
+  });
+}
+
 function buildCanvasLibraryFolderCard(project) {
   const card = document.createElement('article');
   card.className = 'canvas-library-folder-card';
@@ -603,7 +640,7 @@ function buildCanvasLibraryFolderCard(project) {
   const icon = document.createElement('span');
   icon.className = 'canvas-library-folder-icon';
   const folderImage = document.createElement('img');
-  folderImage.src = 'assets/canvas-folder-3d.png';
+  folderImage.src = 'assets/canvas-folder-brand-3d.png';
   folderImage.alt = '';
   folderImage.width = 128;
   folderImage.height = 128;
@@ -612,6 +649,7 @@ function buildCanvasLibraryFolderCard(project) {
   const title = document.createElement('strong');
   title.className = 'canvas-library-folder-title';
   title.textContent = project.name;
+  bindCanvasLibraryInlineRename(title, project, (name) => promptRenameCanvasProject(project.id, name));
   const canvasCount = AppState.canvases.filter((canvas) => canvas.projectId === project.id).length;
   card.title = t(`${canvasCount} canvas${canvasCount === 1 ? '' : 'es'}`, `${canvasCount} 个画布`);
 
@@ -722,11 +760,51 @@ function closeCanvasCardMenus(exceptMenu = null) {
   });
 }
 
+let canvasCardDensityObserver = null;
+let canvasCardTextMeasure = null;
+
+function syncCanvasCardDensity(headers) {
+  const textWidth = element => {
+    canvasCardTextMeasure ||= document.createElement('canvas').getContext('2d');
+    const style = getComputedStyle(element);
+    canvasCardTextMeasure.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    return canvasCardTextMeasure.measureText(element.textContent).width;
+  };
+  const changes = headers.map(header => {
+    const title = header.querySelector('.canvas-library-card-title');
+    const menu = header.querySelector('.canvas-library-card-menu-trigger');
+    const pin = header.querySelector('.canvas-library-card-pin');
+    if (!title || !menu || !pin || !header.clientWidth) return null;
+    const gap = parseFloat(getComputedStyle(header).gap) || 0;
+    const pinWidth = parseFloat(getComputedStyle(pin).flexBasis) || 22;
+    const hidePin = textWidth(title) > header.clientWidth - menu.offsetWidth - pinWidth - gap * 2;
+    const meta = header.parentElement.querySelector('.canvas-library-card-meta');
+    const labels = meta ? [...meta.children] : [];
+    const hideMeta = labels.length === 2 && labels.reduce((sum, el) => sum + textWidth(el), 0) + (parseFloat(getComputedStyle(meta).gap) || 0) > meta.clientWidth;
+    return { header, hidePin, meta, hideMeta };
+  });
+  changes.filter(Boolean).forEach(({ header, hidePin, meta, hideMeta }) => {
+    header.classList.toggle('is-title-priority', hidePin);
+    meta?.classList.toggle('is-time-priority', hideMeta);
+  });
+}
+
+function observeCanvasCardDensity(grid) {
+  canvasCardDensityObserver?.disconnect();
+  if (typeof ResizeObserver === 'undefined') return;
+  canvasCardDensityObserver = new ResizeObserver(entries => {
+    const headers = [...new Set(entries.map(entry => entry.target.closest('.canvas-library-card-header') || entry.target.parentElement.querySelector('.canvas-library-card-header')).filter(Boolean))];
+    syncCanvasCardDensity(headers);
+  });
+  grid.querySelectorAll('.canvas-library-card-header, .canvas-library-card-title, .canvas-library-card-meta').forEach(element => canvasCardDensityObserver.observe(element));
+}
+
 function renderCanvasLibrary() {
   const grid = document.getElementById('canvas-library-grid');
   if (!grid) return;
   const canvases = filteredCanvases();
   const projects = filteredCanvasProjects();
+  canvasCardDensityObserver?.disconnect();
   grid.innerHTML = '';
   projects.forEach((project) => grid.appendChild(buildCanvasLibraryFolderCard(project)));
   const folderBack = document.getElementById('canvas-library-folder-back');
@@ -756,16 +834,19 @@ function renderCanvasLibrary() {
     const title = document.createElement('div');
     title.className = 'canvas-library-card-title';
     title.textContent = canvas.name;
+    title.title = canvas.name;
 
     const meta = document.createElement('div');
     meta.className = 'canvas-library-card-meta';
     const projectName = document.createElement('span');
     projectName.textContent = !project || isSystemCanvasProject(project)
-      ? t('Unfiled', '未归类')
+      ? ''
       : project.name;
     const updated = document.createElement('span');
     updated.textContent = relativeCanvasTime(canvas.updatedAt || canvas.createdAt);
-    meta.append(projectName, updated);
+    if (projectName.textContent) meta.append(projectName);
+    meta.append(updated);
+    meta.title = [projectName.textContent, updated.textContent].filter(Boolean).join(' · ');
 
     const pinBadge = document.createElement('span');
     pinBadge.className = 'canvas-library-card-pin';
@@ -809,6 +890,11 @@ function renderCanvasLibrary() {
         icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>'
       },
       {
+        action: 'usage',
+        label: t('View points usage', '查看积分用量'),
+        icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18M7 14v3M12 9v8M17 5v12"/></svg>'
+      },
+      {
         action: 'delete',
         label: t('Delete canvas', '删除画布'),
         danger: true,
@@ -841,11 +927,16 @@ function renderCanvasLibrary() {
       if (button.dataset.canvasAction === 'rename') promptRenameCanvas(canvas.id);
       if (button.dataset.canvasAction === 'move-folder') promptMoveCanvasToFolder(canvas.id);
       if (button.dataset.canvasAction === 'export') exportCanvasFile(canvas.id);
+      if (button.dataset.canvasAction === 'usage') void openCanvasUsageDetails(canvas.id);
       if (button.dataset.canvasAction === 'delete') promptDeleteCanvas(canvas.id);
       if (button.dataset.canvasAction === 'toggle-pin') toggleCanvasPinned(canvas.id);
     });
 
-    card.append(title, meta, buildCanvasMosaic(canvas), pinBadge, menuTrigger, menu);
+    const header = document.createElement('div');
+    header.className = 'canvas-library-card-header';
+    header.append(title, pinBadge, menuTrigger);
+    bindCanvasLibraryInlineRename(title, canvas, (name) => promptRenameCanvas(canvas.id, name));
+    card.append(header, meta, buildCanvasMosaic(canvas), menu);
     card.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -864,18 +955,43 @@ function renderCanvasLibrary() {
       ], event.clientX, event.clientY, 'canvas-card-context-menu');
     });
     card.addEventListener('click', () => switchCanvas(canvas.id, { enterWorkspace: true }));
+    let tearOffDrag = null;
     card.addEventListener('dragstart', (event) => {
+      if (!event.dataTransfer || card.querySelector('.canvas-library-rename-input')) {
+        event.preventDefault();
+        return;
+      }
       CanvasWorkspace.draggingCanvasId = canvas.id;
+      tearOffDrag?.controller.abort();
+      const controller = new AbortController();
+      const drag = tearOffDrag = { controller, canceled: false, dropped: false };
+      window.addEventListener('keydown', (keyEvent) => {
+        if (keyEvent.key === 'Escape') drag.canceled = true;
+      }, { capture: true, signal: controller.signal });
+      window.addEventListener('drop', () => { drag.dropped = true; }, { capture: true, signal: controller.signal });
       card.classList.add('is-dragging');
       event.dataTransfer.effectAllowed = 'move';
       event.dataTransfer.setData('text/messs-canvas-id', canvas.id);
+      const rect = card.getBoundingClientRect();
+      event.dataTransfer.setDragImage(card, event.clientX - rect.left, event.clientY - rect.top);
     });
-    card.addEventListener('dragend', () => {
+    card.addEventListener('dragend', (event) => {
+      const drag = tearOffDrag;
+      tearOffDrag = null;
+      drag?.controller.abort();
       CanvasWorkspace.draggingCanvasId = null;
       card.classList.remove('is-dragging');
       document.querySelectorAll('.canvas-library-folder-card.is-drop-target').forEach((folderCard) => {
         folderCard.classList.remove('is-drop-target');
       });
+      // Native dragend supplies screen coordinates even when released outside the window.
+      const x = event.screenX, y = event.screenY;
+      const outside = x < window.screenX || y < window.screenY
+        || x >= window.screenX + window.outerWidth || y >= window.screenY + window.outerHeight;
+      if (drag && !drag.canceled && !drag.dropped && outside
+        && (x !== 0 || y !== 0) && event.dataTransfer?.dropEffect === 'none') {
+        void openCanvasInDetachedWindow(canvas.id, { x, y });
+      }
     });
     card.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' || event.key === ' ') {
@@ -885,6 +1001,7 @@ function renderCanvasLibrary() {
     });
     grid.appendChild(card);
   });
+  observeCanvasCardDensity(grid);
   const empty = document.getElementById('canvas-library-empty');
   if (empty) {
     empty.hidden = canvases.length > 0 || projects.length > 0 || Boolean(CanvasWorkspace.libraryQuery.trim());
@@ -918,8 +1035,7 @@ function renderCanvasWorkspaceControls() {
 function syncCanvasLibraryScopePicker() {
   const picker = document.getElementById('canvas-scope-picker');
   if (picker) {
-    picker.value = normalizeCanvasProjectScope(CanvasWorkspace.libraryScope);
-    picker.setAttribute('aria-label', t('Project type', '项目类型', '프로젝트 유형'));
+    picker.hidden = true;
   }
   const heading = document.getElementById('canvas-library-heading');
   if (heading) heading.textContent = t('All Canvases', '全部画布', '모든 캔버스');
@@ -1023,9 +1139,7 @@ function showCanvasTextDialog({
   label,
   initialValue = '',
   projectId = null,
-  includeProject = false,
-  includeScope = false,
-  scope = CanvasWorkspace.libraryScope
+  includeProject = false
 }) {
   return new Promise((resolve) => {
     const old = document.getElementById('canvas-name-dialog');
@@ -1038,10 +1152,6 @@ function showCanvasTextDialog({
         <h3>${escapeHtml(title)}</h3>
         <label><span>${escapeHtml(label)}</span><input class="canvas-name-input" maxlength="80" /></label>
         <label class="canvas-project-field"><span>${escapeHtml(t('Folder', '文件夹'))}</span><select class="canvas-project-input"></select></label>
-        <label class="canvas-scope-field"><span>${escapeHtml(t('Project type', '项目类型', '프로젝트 유형'))}</span><select class="canvas-scope-input">
-          <option value="personal">${escapeHtml(t('Independent projects', '独立项目', '독립 프로젝트'))}</option>
-          <option value="team">${escapeHtml(t('Team projects', '团队项目', '팀 프로젝트'))}</option>
-        </select></label>
         <div class="canvas-name-dialog-actions">
           <button type="button" class="pill-btn pill-btn-ghost canvas-name-cancel">${escapeHtml(t('Cancel', '取消'))}</button>
           <button type="submit" class="pill-btn canvas-name-confirm">${escapeHtml(t('Create', '创建'))}</button>
@@ -1053,17 +1163,13 @@ function showCanvasTextDialog({
     const input = overlay.querySelector('.canvas-name-input');
     const projectField = overlay.querySelector('.canvas-project-field');
     const projectSelect = overlay.querySelector('.canvas-project-input');
-    const scopeField = overlay.querySelector('.canvas-scope-field');
-    const scopeSelect = overlay.querySelector('.canvas-scope-input');
     input.value = initialValue;
     projectField.hidden = !includeProject;
-    scopeField.hidden = !includeScope;
     if (includeProject) {
       const projectOptions = canvasProjectsForScope();
       appendCanvasProjectOptions(projectSelect, projectOptions, projectId || null);
       projectSelect.value = projectId || (projectOptions[0] && projectOptions[0].id) || '';
     }
-    scopeSelect.value = normalizeCanvasProjectScope(scope);
     requestAnimationFrame(() => overlay.classList.add('is-visible'));
 
     function close(value) {
@@ -1084,8 +1190,7 @@ function showCanvasTextDialog({
       }
       close({
         name: value,
-        projectId: projectSelect.value || projectId,
-        scope: normalizeCanvasProjectScope(scopeSelect.value)
+        projectId: projectSelect.value || projectId
       });
     });
     input.focus();
@@ -1196,16 +1301,16 @@ async function promptNewCanvas() {
   const scopedProjects = canvasProjectsForScope();
   const rootProject = scopedProjects.find(isSystemCanvasProject);
   const scopedProject = rootProject || scopedProjects[0];
-  const selectedProject = selectedProjectRecord && canvasProjectScope(selectedProjectRecord) === CanvasWorkspace.libraryScope
+  const selectedProject = selectedProjectRecord
     ? selectedProjectRecord.id
     : (!CanvasWorkspace.libraryProjectId && rootProject
       ? rootProject.id
-      : (activeProject && canvasProjectScope(activeProject) === CanvasWorkspace.libraryScope
+      : (activeProject
       ? activeProject.id
       : (scopedProject && scopedProject.id)));
   if (!selectedProject) {
     showToast(
-      t('Create a team project first, then create a canvas.', '请先创建团队项目，再新建画布。', '먼저 팀 프로젝트를 만든 다음 캔버스를 만드세요.'),
+      t('Create a folder first, then create a canvas.', '请先创建文件夹，再新建画布。'),
       'Canvas'
     );
     return;
@@ -1224,15 +1329,13 @@ async function promptNewProject() {
   const result = await showCanvasTextDialog({
     title: t('New folder', '新建文件夹'),
     label: t('Folder name', '文件夹名称'),
-    initialValue: t('New folder', '新文件夹'),
-    includeScope: true,
-    scope: CanvasWorkspace.libraryScope
+    initialValue: t('New folder', '新文件夹')
   });
   if (!result) return;
   const project = {
     id: `project-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     name: uniqueCanvasProjectName(result.name),
-    scope: normalizeCanvasProjectScope(result.scope || CanvasWorkspace.libraryScope),
+    scope: 'personal',
     createdAt: new Date().toISOString()
   };
   const previousProjects = AppState.canvasProjects;
@@ -1267,10 +1370,10 @@ function uniqueCanvasProjectName(value, exceptId = null) {
   return candidate;
 }
 
-async function promptRenameCanvasProject(projectId) {
+async function promptRenameCanvasProject(projectId, inlineName) {
   const project = AppState.canvasProjects.find((entry) => entry.id === projectId);
   if (!project) return;
-  const result = await showCanvasTextDialog({
+  const result = typeof inlineName === 'string' ? { name: inlineName } : await showCanvasTextDialog({
     title: t('Rename folder', '重命名文件夹'),
     label: t('Folder name', '文件夹名称'),
     initialValue: project.name
@@ -1330,7 +1433,7 @@ async function promptImportCanvas() {
   const scopedProjects = canvasProjectsForScope();
   if (!scopedProjects.length) {
     showToast(
-      t('Create a project in this type before importing a canvas.', '请先在这个项目类型下创建项目，再导入画布。', '이 유형에 프로젝트를 만든 다음 캔버스를 가져오세요.'),
+      t('Create a folder before importing a canvas.', '请先创建文件夹，再导入画布。'),
       'Canvas'
     );
     return;
@@ -1338,9 +1441,9 @@ async function promptImportCanvas() {
   const active = activeCanvasRecord();
   const activeProject = AppState.canvasProjects.find((project) => active && project.id === active.projectId);
   const selectedProject = AppState.canvasProjects.find((project) => project.id === CanvasWorkspace.libraryProjectId);
-  const targetProjectId = selectedProject && canvasProjectScope(selectedProject) === CanvasWorkspace.libraryScope
+  const targetProjectId = selectedProject
     ? selectedProject.id
-    : (activeProject && canvasProjectScope(activeProject) === CanvasWorkspace.libraryScope
+    : (activeProject
       ? activeProject.id
       : scopedProjects[0].id);
   const projectId = await showCanvasFolderDialog({
@@ -1440,18 +1543,27 @@ async function promptDeleteCanvasProject(projectId) {
   }
 }
 
-async function promptRenameCanvas(canvasId = activeCanvasId()) {
+async function promptRenameCanvas(canvasId = activeCanvasId(), inlineName) {
   const canvas = AppState.canvases.find((entry) => entry.id === canvasId);
   if (!canvas) return;
-  const result = await showCanvasTextDialog({
+  const result = typeof inlineName === 'string' ? { name: inlineName } : await showCanvasTextDialog({
     title: t('Rename canvas', '重命名画布'),
     label: t('Canvas name', '画布名称'),
     initialValue: canvas.name
   });
   if (!result) return;
+  const previousName = canvas.name;
+  const previousUpdatedAt = canvas.updatedAt;
   canvas.name = uniqueCanvasName(result.name, canvas.id);
   canvas.updatedAt = new Date().toISOString();
-  await canvasWorkspaceSave();
+  try {
+    await canvasWorkspaceSave();
+  } catch (error) {
+    canvas.name = previousName;
+    canvas.updatedAt = previousUpdatedAt;
+    renderCanvasWorkspaceControls();
+    throw error;
+  }
   renderCanvasWorkspaceControls();
   if (typeof renderFileList === 'function' && typeof currentFileListScope === 'function') {
     renderFileList(currentFileListScope());
@@ -1534,7 +1646,8 @@ function appendCanvasAgentMessage(role, text) {
   if (welcome) welcome.hidden = true;
   const row = document.createElement('div');
   row.className = `board-agent-message is-${role}`;
-  row.textContent = text;
+  if (role === 'assistant') renderAgentMessageContent(row, text);
+  else row.textContent = text;
   list.appendChild(row);
   list.scrollTop = list.scrollHeight;
   return row;
@@ -1620,7 +1733,7 @@ function renderCanvasAgentHistory() {
     button.type = 'button';
     button.className = 'board-agent-history-item';
     button.classList.toggle('is-active', session.id === CanvasWorkspace.activeAgentSessionId);
-    button.innerHTML = `<span class="board-agent-history-star" aria-hidden="true">${session.favorite ? '\u2605' : '\u2606'}</span><span class="board-agent-history-copy"><b></b><small></small></span><span class="board-agent-history-unread" aria-hidden="true"></span>`;
+    button.innerHTML = `<span class="board-agent-history-star" aria-hidden="true">${session.favorite ? '\u2605' : ''}</span><span class="board-agent-history-copy"><b></b><small></small></span><span class="board-agent-history-unread" aria-hidden="true"></span>`;
     button.classList.toggle('is-unread', session.unread === true);
     button.querySelector('b').textContent = session.title || t('New conversation', '\u65b0\u5bf9\u8bdd');
     button.querySelector('small').textContent = session.unread
@@ -1919,6 +2032,13 @@ function renderCanvasAgentModels() {
     CanvasWorkspace.agentChatModel = preferred && preferred.model;
   }
   chatList.replaceChildren();
+  MesssAiProviderOptions.appendChatPresets(chatList, chatProviders,
+    CanvasWorkspace.agentMode === 'chat' ? CanvasWorkspace.agentChatModel : null,
+    (entry) => {
+      [...chatList.querySelectorAll('[data-agent-chat-model]')]
+        .find((button) => button.dataset.agentChatModel === entry.model
+          && button.dataset.agentChatProviderId === entry.providerId)?.click();
+    }, t);
   chatProviders.forEach((entry) => {
     const button = document.createElement('button');
     const active = CanvasWorkspace.agentMode === 'chat'
@@ -2243,7 +2363,7 @@ async function requestCanvasAgentText(options = {}) {
     CanvasWorkspace.agentMessages.push({ role: 'assistant', content: response.text, displayContent: response.text });
     persistActiveCanvasAgentSession();
     pending.classList.remove('is-pending');
-    pending.textContent = response.text;
+    renderAgentMessageContent(pending, response.text);
     if (typeof appendAssistantOutputFiles === 'function') appendAssistantOutputFiles(pending, response.files);
     if (typeof options.onResponse === 'function') await options.onResponse(response.text, response);
     return response;
@@ -2335,7 +2455,7 @@ async function submitCanvasAgentMessage() {
     CanvasWorkspace.agentMessages.push({ role: 'assistant', content: response.text, displayContent: response.text });
     persistActiveCanvasAgentSession();
     pending.classList.remove('is-pending');
-    pending.textContent = response.text;
+    renderAgentMessageContent(pending, response.text);
     if (typeof appendAssistantOutputFiles === 'function') appendAssistantOutputFiles(pending, response.files);
   } catch (err) {
     pending.remove();

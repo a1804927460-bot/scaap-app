@@ -1,19 +1,63 @@
-/* Inline parameters stay below the composer controls at every panel width. */
+/* Keep generation settings out of the composer's layout flow. */
 .ai-assistant-panel #ai-assistant-options {
-  position: relative;
-  inset: auto;
-  width: 100%;
+  position: absolute;
+  inset: auto 12px 64px auto;
+  width: min(440px, calc(100% - 24px));
+  max-height: min(560px, 65vh);
+  overflow-y: auto;
   box-sizing: border-box;
-  margin-top: 12px;
-  padding: 12px 0 0;
-  border: 0;
-  border-top: 1px solid var(--border-hairline);
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--border-hairline);
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-elevated);
   animation: none;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  z-index: 12;
 }
+#ai-assistant-options .ai-assistant-option-trigger { display: none; }
+#ai-assistant-options .ai-assistant-option-menu {
+  position: static;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(48px, 1fr));
+  gap: 4px;
+  width: 100%;
+  max-height: none;
+  margin: 8px 0 0;
+  padding: 3px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--bg-surface-2);
+  box-shadow: none;
+}
+#ai-assistant-options .ai-assistant-option-choice {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--text-secondary);
+}
+#ai-assistant-options .ai-assistant-option-choice[aria-selected="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+#ai-assistant-options .ai-assistant-option-choice > i { display: none; }
+#ai-assistant-options [data-option-picker="ai-assistant-ratio"] .ai-assistant-option-menu {
+  grid-template-columns: repeat(auto-fit, minmax(56px, 1fr));
+  background: transparent;
+  padding: 0;
+}
+#ai-assistant-options .is-ratio-choice { flex-direction: column; gap: 8px; min-height: 66px; }
+.assistant-ratio-shape { display: block; flex: none; border: 1.5px solid currentColor; border-radius: 3px; }
+.assistant-ratio-shape.is-auto { border-style: dashed; }
+#ai-assistant-options .ai-assistant-option-group-label { grid-column: 1 / -1; }
 .ai-assistant-panel .ai-assistant-kind-icon { width: auto; min-width: 44px; padding-inline: 10px; font-size: 12px; }
 .flatpickr-calendar {
   background: var(--bg-elevated);

@@ -1,6 +1,6 @@
 {
   "name": "messs",
-  "version": "0.0.108",
+  "version": "0.0.109",
   "description": "Messs. — Resolve your confusion. A file preview & organizing desktop app.",
   "main": "main.js",
   "author": "Messs.",
@@ -43,8 +43,11 @@
     "htmlparser2": "8.0.2",
     "leafer-ui": "^2.2.9",
     "mammoth": "^1.8.0",
+    "marked": "15.0.12",
     "pdfjs-dist": "4.10.38",
     "perfect-freehand": "1.2.3",
+    "pptxgenjs": "^4.0.1",
+    "quickjs-emscripten": "^0.32.0",
     "quill": "2.0.3",
     "sanitize-html": "^2.17.0",
     "sharp": "^0.35.3"

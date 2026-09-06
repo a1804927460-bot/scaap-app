@@ -13,6 +13,7 @@ const WorkshopState = {
   canvasTargetResolver: null,
   publishFileIds: [],
   publishFileId: null,
+  awaitingCanvasSelection: false,
   loaded: false,
   loading: false,
   currentUserId: null,
@@ -223,12 +224,14 @@ function renderWorkshop() {
 function setWorkshopOverlay(id, visible) {
   const overlay = document.getElementById(id);
   if (!overlay) return;
+  clearTimeout(overlay._workshopHideTimer);
+  cancelAnimationFrame(overlay._workshopShowFrame);
   if (visible) {
     overlay.hidden = false;
-    requestAnimationFrame(() => overlay.classList.add('is-visible'));
+    overlay._workshopShowFrame = requestAnimationFrame(() => overlay.classList.add('is-visible'));
   } else {
     overlay.classList.remove('is-visible');
-    window.setTimeout(() => { overlay.hidden = true; }, 170);
+    overlay._workshopHideTimer = window.setTimeout(() => { overlay.hidden = true; }, 170);
   }
 }
 
@@ -275,10 +278,12 @@ function renderWorkshopPublishSelection() {
 }
 
 function openWorkshopPublish() {
+  const preserveDraft = WorkshopState.awaitingCanvasSelection;
+  WorkshopState.awaitingCanvasSelection = false;
   WorkshopState.publishFileIds = selectedWorkshopFileIds();
   WorkshopState.publishFileId = WorkshopState.publishFileIds[0] || null;
   const form = document.getElementById('workshop-publish-form');
-  if (form) form.reset();
+  if (form && !preserveDraft) form.reset();
   const status = document.getElementById('workshop-publish-status');
   if (status) status.textContent = '';
   renderWorkshopPublishSelection();
@@ -286,13 +291,13 @@ function openWorkshopPublish() {
 }
 
 function closeWorkshopPublish() {
+  WorkshopState.awaitingCanvasSelection = false;
   setWorkshopOverlay('workshop-publish-overlay', false);
 }
 
 function workshopBeginCanvasSelection() {
-  closeWorkshopPublish();
-  WorkshopState.publishFileIds = [];
-  WorkshopState.publishFileId = null;
+  WorkshopState.awaitingCanvasSelection = true;
+  setWorkshopOverlay('workshop-publish-overlay', false);
   document.querySelector('.section-tab[data-section="messs"]')?.click();
   if (typeof showCanvasWorkspace === 'function') showCanvasWorkspace();
   workshopToast(workshopText('Select an image or video on the canvas, then return here to share it.', '请在画布选中图片或视频，再返回这里分享。'));
@@ -729,6 +734,9 @@ function refreshWorkshopLanguage() {
 function initWorkshop() {
   if (!document.getElementById('workshop-grid')) return;
   document.getElementById('workshop-publish-open')?.addEventListener('click', openWorkshopPublish);
+  document.querySelector('.section-tab[data-section="workshop"]')?.addEventListener('click', () => {
+    if (WorkshopState.awaitingCanvasSelection) openWorkshopPublish();
+  });
   document.getElementById('workshop-publish-close')?.addEventListener('click', closeWorkshopPublish);
   document.getElementById('workshop-detail-close')?.addEventListener('click', closeWorkshopDetail);
   document.getElementById('workshop-select-from-canvas')?.addEventListener('click', workshopBeginCanvasSelection);

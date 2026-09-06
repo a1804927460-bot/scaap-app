@@ -11,6 +11,7 @@ const toast = {
   hidden: true,
   children: [],
   attributes: {},
+  style: {},
   classList: {
     values: new Set(),
     add(value) { this.values.add(value); },
@@ -43,8 +44,10 @@ const sandbox = {
       };
     },
     addEventListener() {}
+    ,querySelectorAll() { return []; }
   },
-  window: {},
+  window: {addEventListener() {}, removeEventListener() {}},
+  ResizeObserver: class { observe() {} disconnect() {} },
   requestAnimationFrame(callback) { callback(); return 1; },
   cancelAnimationFrame() {},
   setTimeout(callback, delay) { timers.push({ callback, delay }); return timers.length; },
@@ -60,7 +63,8 @@ assert.strictEqual(toast.attributes.role, 'alert');
 assert.strictEqual(timers.length, 0, 'AI failure notifications must not auto-dismiss');
 const dismiss = toast.children.find((child) => child.className === 'toast-dismiss');
 assert.ok(dismiss, 'persistent notifications need a cancel button');
-assert.strictEqual(dismiss.textContent, '取消');
+assert.strictEqual(dismiss.textContent, '关闭');
+assert.ok(toast.children.some(child => child.className === 'toast-brand-logo' && child.src === 'assets/logo-mark.png'));
 dismiss.listeners.click();
 assert.strictEqual(timers.length, 1, 'dismiss should only schedule the transition after a click');
 timers[0].callback();
@@ -68,9 +72,9 @@ assert.strictEqual(toast.hidden, true);
 
 toast.children = [];
 sandbox.__showToast('AI 图片已加入画布', 'AI');
-assert.strictEqual(toast.classList.contains('is-persistent'), false);
-assert.strictEqual(toast.children.some((child) => child.className === 'toast-dismiss'), false);
-assert.strictEqual(timers.length, 2, 'success notifications retain their normal timer');
+assert.strictEqual(toast.classList.contains('is-persistent'), true);
+assert.strictEqual(toast.children.some((child) => child.className === 'toast-dismiss'), true);
+assert.strictEqual(timers.length, 1, 'success notifications also wait for dismissal');
 
 assert.match(css, /\.toast\.is-persistent\s*\{/);
 assert.match(css, /\.toast-dismiss\s*\{/);

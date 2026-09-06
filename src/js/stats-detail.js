@@ -125,9 +125,13 @@ function setAssistantFullscreen(expanded, options = {}) {
   }
   panel.classList.toggle('is-fullscreen', expanded);
   document.body.classList.toggle('is-ai-assistant-fullscreen', expanded);
-  button.title = expanded ? t('Exit fullscreen chat', '退出全屏对话') : t('Open fullscreen chat', '打开全屏对话');
+  button.title = t('Return to chat home', '返回对话首页');
   button.setAttribute('aria-label', button.title);
-  button.setAttribute('aria-pressed', String(expanded));
+  const homeButton = document.getElementById('ai-assistant-home-button');
+  if (homeButton) {
+    homeButton.title = button.title;
+    homeButton.setAttribute('aria-label', button.title);
+  }
   button.innerHTML = expanded ? ASSISTANT_ICON_COMPRESS : ASSISTANT_ICON_EXPAND;
   if (options.syncNavigation === true) syncAssistantFullscreenNavigation(expanded);
   updateAssistantCompactState();
@@ -140,6 +144,11 @@ function refreshStatsLanguage() {
   if (panel) setAssistantFullscreen(panel.classList.contains('is-fullscreen'));
 }
 
+function returnToAssistantHome() {
+  startNewAiChat();
+  setAssistantFullscreen(true, { syncNavigation: true });
+}
+
 function initStatsDetail() {
   const statsPanel = document.querySelector('.stats-panel');
   if (statsPanel && typeof ResizeObserver !== 'undefined') {
@@ -147,10 +156,8 @@ function initStatsDetail() {
     compactObserver.observe(statsPanel);
   }
   updateAssistantCompactState();
-  document.getElementById('ai-assistant-history').addEventListener('click', () => {
-    const panel = document.getElementById('ai-assistant-panel');
-    setAssistantFullscreen(!assistantOccupiesFullscreenLayer(panel), { syncNavigation: true });
-  });
+  document.getElementById('ai-assistant-history').addEventListener('click', returnToAssistantHome);
+  document.getElementById('ai-assistant-home-button').addEventListener('click', returnToAssistantHome);
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
     const panel = document.getElementById('ai-assistant-panel');

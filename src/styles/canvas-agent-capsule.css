@@ -1,10 +1,41 @@
-/* Agent uses a rounded dock without animating the canvas layout. */
+/* Keep the dock flush; only messages and the composer use capsule corners. */
+.ai-assistant-message.is-pending.is-chat-thinking::before,
+#board-agent-panel .board-agent-message.is-pending::before {
+  content: 'Messs.';
+  display: block;
+  min-height: 24px;
+  padding-left: 32px;
+  margin-bottom: 10px;
+  background: url('../assets/logo-mark.png') no-repeat left center / 24px 24px;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 24px;
+  letter-spacing: 0;
+  text-align: left;
+}
 #board-agent-panel {
-  margin: 10px 12px 10px 0;
-  border-radius: 28px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
   background: var(--bg-elevated);
   backdrop-filter: none;
   transition: none;
+}
+#resize-handle-board-agent::before {
+  left: 10px;
+  width: 1px;
+  background: var(--border-hairline);
+  opacity: 1;
+  filter: none;
+  transform: none;
+}
+#resize-handle-board-agent:hover::before,
+#resize-handle-board-agent.is-active::before {
+  background: var(--brand-blue-bright);
+  opacity: 1;
+  filter: none;
 }
 #board-agent-panel.is-hidden {
   margin: 0;

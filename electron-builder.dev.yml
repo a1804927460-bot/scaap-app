@@ -32,6 +32,10 @@ files:
   - "!release{,/**/*}"
   - "!release-dev{,/**/*}"
 asarUnpack:
+  - lib/ai-work-worker.cjs
+  - node_modules/quickjs-emscripten/**/*
+  - node_modules/quickjs-emscripten-core/**/*
+  - node_modules/@jitl/**/*
   - node_modules/ffmpeg-static/**/*
   - node_modules/sharp/**/*
   - node_modules/@img/**/*

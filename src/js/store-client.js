@@ -283,6 +283,27 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+function positionCanvasToast() {
+  const toast = document.getElementById('toast');
+  if (!toast || toast.hidden) return;
+  const viewport = document.getElementById('board-viewport');
+  const rect = viewport && viewport.getBoundingClientRect();
+  if (!rect || rect.width <= 0 || rect.height <= 0) {
+    toast.style.left = '50%'; toast.style.bottom = '28px'; toast.style.maxWidth = 'min(680px, calc(100vw - 28px))';
+    return;
+  }
+  let bottomEdge = rect.bottom - 16;
+  for (const element of document.querySelectorAll('.board-bottom-bar, .ai-composer')) {
+    const box = element.getBoundingClientRect();
+    if (box.width && box.height && box.right > rect.left && box.left < rect.right && box.top < rect.bottom && box.bottom > rect.top) {
+      bottomEdge = Math.min(bottomEdge, box.top - 16);
+    }
+  }
+  toast.style.maxWidth = `${Math.max(1, Math.min(680, rect.width - 24))}px`;
+  toast.style.left = `${rect.left + rect.width / 2}px`;
+  toast.style.bottom = `${Math.max(16, innerHeight - bottomEdge)}px`;
+}
+
 function showToast(message, emoji, options = {}) {
   const toast = document.getElementById('toast');
   if (!toast) return;
@@ -291,12 +312,11 @@ function showToast(message, emoji, options = {}) {
   showToast._t = 0;
   showToast._hideT = 0;
   toast.innerHTML = '';
-  if (emoji) {
-    const e = document.createElement('span');
-    e.className = 'toast-emoji';
-    e.textContent = emoji;
-    toast.appendChild(e);
-  }
+  const logo = document.createElement('img');
+  logo.className = 'toast-brand-logo';
+  logo.src = 'assets/logo-mark.png';
+  logo.alt = '';
+  toast.appendChild(logo);
   const span = document.createElement('span');
   span.className = 'toast-message';
   span.textContent = typeof window.publicAiErrorMessage === 'function'
@@ -306,8 +326,7 @@ function showToast(message, emoji, options = {}) {
   const rawDuration = Number(options && options.durationMs);
   const aiFailure = emoji === 'AI' && /(?:fail|error|unavailable|busy|timeout|rejected|not\s+(?:be\s+)?accepted|restricted|generation\s+request|失败|错误|不可用|繁忙|超时|拒绝|未被接受|未扣积分|受限|版权|실패|오류|사용할 수 없|거부)/i
     .test(String(message || ''));
-  const persistent = options && options.persistent === true
-    || (aiFailure && options && options.persistent !== false);
+  const persistent = options.persistent !== false;
   toast.classList.toggle('is-persistent', persistent);
   toast.setAttribute('role', persistent ? 'alert' : 'status');
   toast.setAttribute('aria-live', persistent ? 'assertive' : 'polite');
@@ -315,13 +334,19 @@ function showToast(message, emoji, options = {}) {
     const dismiss = document.createElement('button');
     dismiss.className = 'toast-dismiss';
     dismiss.type = 'button';
-    dismiss.textContent = t('Cancel', '取消', '취소');
+    dismiss.textContent = t('Close', '关闭', '닫기');
     dismiss.title = t('Dismiss notification', '取消提示', '알림 닫기');
     dismiss.setAttribute('aria-label', dismiss.title);
     dismiss.addEventListener('click', dismissToast);
     toast.appendChild(dismiss);
   }
   toast.hidden = false;
+  if (showToast._stopPosition) showToast._stopPosition();
+  const observer = new ResizeObserver(positionCanvasToast);
+  for (const element of document.querySelectorAll('#board-viewport, .board-bottom-bar, .ai-composer')) observer.observe(element);
+  window.addEventListener('resize', positionCanvasToast);
+  showToast._stopPosition = () => { observer.disconnect(); window.removeEventListener('resize', positionCanvasToast); };
+  positionCanvasToast();
   requestAnimationFrame(() => toast.classList.add('is-visible'));
   if (persistent) return;
   const durationMs = Number.isFinite(rawDuration) && rawDuration > 0
@@ -332,6 +357,7 @@ function showToast(message, emoji, options = {}) {
     showToast._t = 0;
     showToast._hideT = setTimeout(() => {
       toast.hidden = true;
+      if (showToast._stopPosition) showToast._stopPosition();
       showToast._hideT = 0;
     }, 320);
   }, durationMs);
@@ -340,6 +366,7 @@ function showToast(message, emoji, options = {}) {
 function dismissToast() {
   const toast = document.getElementById('toast');
   if (!toast) return;
+  if (showToast._stopPosition) showToast._stopPosition();
   clearTimeout(showToast._t);
   clearTimeout(showToast._hideT);
   showToast._t = 0;

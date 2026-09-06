@@ -18,7 +18,7 @@ assert.match(sidebarSource, /accountUserId && typeof window\.messsAPI\.getProfil
 assert.match(sidebarSource, /avatarButton\.disabled = !accountUserId/);
 assert.match(sidebarSource, /messs:profile-avatar-updated[\s\S]*?renderAccountAvatars/);
 assert.match(sidebarSource, /document\.addEventListener\('messs:profile-avatar-updated'[\s\S]*?accountUserId/);
-assert.match(sidebarSource, /async function signOutCloudAccount\(\)[\s\S]*?activeAccountAvatarUserId = null;[\s\S]*?renderAccountAvatars\('M', null\);[\s\S]*?signOutCloud\(\)/);
+assert.match(sidebarSource, /async function signOutCloudAccount\(\)[\s\S]*?await window\.messsAPI\.signOutCloud\(\);[\s\S]*?activeAccountAvatarUserId = null;[\s\S]*?renderAccountAvatars\('M', null\);/);
 assert.match(indexSource, /id="account-popover-avatar"[^>]*disabled/);
 assert.match(indexSource, /class="account-avatar-edit-badge"[\s\S]*?<svg/);
 

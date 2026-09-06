@@ -30,9 +30,11 @@ assert.doesNotMatch(
 );
 assert.match(
   assistantSource,
-  /const submittedKind = AiAssistant\.kind;[\s\S]*?kind: submittedKind/,
+  /kind: AiAssistant\.kind[\s\S]*?const submittedKind = item\.kind;[\s\S]*?kind: submittedKind/,
   'Each assistant task must capture its own generation mode.'
 );
+assert.match(assistantSource, /canvasId: activeCanvasId\(\)[\s\S]*?canvasId: item\.canvasId/,
+  'Queued generation must retain the canvas captured at submission.');
 assert.match(
   assistantSource,
   /activeTasks: 0[\s\S]*?AiAssistant\.activeTasks = Math\.max\(0, AiAssistant\.activeTasks \+ \(busy \? 1 : -1\)\)/,

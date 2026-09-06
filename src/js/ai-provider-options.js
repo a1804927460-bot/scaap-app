@@ -95,7 +95,43 @@
     });
   }
 
+  const CHAT_PRESETS = [
+    { model: 'gemini-3.8-flash', en: 'Fast', zh: '快速', icon: 'zap' },
+    { model: 'gemini-3.1-pro', en: 'Balanced', zh: '均衡', icon: 'circle-check' },
+    { model: 'gpt-5.6-sol', en: 'Ultimate', zh: '极致', icon: 'gem' }
+  ];
+
+  function appendChatPresets(container, providers, selectedModel, onSelect, translate) {
+    CHAT_PRESETS.forEach((preset) => {
+      const provider = providers.find((entry) => entry.model === preset.model);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'ai-chat-preset';
+      button.dataset.presetModel = preset.model;
+      button.setAttribute('role', 'option');
+      button.setAttribute('aria-selected', String(selectedModel === preset.model));
+      button.classList.toggle('is-active', selectedModel === preset.model);
+      button.disabled = !provider;
+      button.title = CHAT_MODEL_NAMES[preset.model];
+      const icon = document.createElement('img');
+      icon.className = 'ai-chat-preset-icon';
+      icon.src = `assets/icons/lucide/${preset.icon}.svg`;
+      icon.alt = '';
+      icon.setAttribute('aria-hidden', 'true');
+      const label = document.createElement('span');
+      label.textContent = translate(preset.en, preset.zh);
+      button.append(icon, label);
+      button.addEventListener('click', () => { if (provider) onSelect(provider); });
+      container.appendChild(button);
+    });
+    const separator = document.createElement('div');
+    separator.className = 'ai-chat-preset-divider';
+    separator.setAttribute('role', 'presentation');
+    container.appendChild(separator);
+  }
+
   global.MesssAiProviderOptions = {
+    appendChatPresets,
     chatOptions,
     logicalModel,
     uniqueProviders

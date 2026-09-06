@@ -5,6 +5,10 @@ const AiAssistant = {
   kind: 'chat',
   busy: false,
   activeTasks: 0,
+  queue: [],
+  queueRunning: false,
+  queuePaused: false,
+  queueEditing: null,
   messages: [],
   attachments: [],
   sessions: [],
@@ -218,7 +222,7 @@ function renderAiChatHistory() {
     button.type = 'button';
     button.className = 'ai-chat-history-item';
     button.classList.toggle('is-active', session.id === AiAssistant.activeSessionId);
-    button.innerHTML = `<span class="ai-chat-history-star" aria-hidden="true">${session.favorite ? '\u2605' : '\u2606'}</span><span class="ai-chat-history-copy"><b></b><small></small></span><span class="ai-chat-history-unread" aria-hidden="true"></span>`;
+    button.innerHTML = `<span class="ai-chat-history-star" aria-hidden="true">${session.favorite ? '\u2605' : ''}</span><span class="ai-chat-history-copy"><b></b><small></small></span><span class="ai-chat-history-unread" aria-hidden="true"></span>`;
     button.classList.toggle('is-unread', session.unread === true);
     button.querySelector('b').textContent = session.title || t('New conversation', '\u65b0\u5bf9\u8bdd');
     button.querySelector('small').textContent = session.unread
@@ -288,6 +292,7 @@ function renameAiChatSession(sessionId) {
 }
 
 async function deleteAiChatSession(sessionId) {
+  if (assistantQueueBlocksNavigation()) return;
   const session = AiAssistant.sessions.find((entry) => entry.id === sessionId);
   if (!session) return;
   const confirmed = await showConfirmDialog({
@@ -297,6 +302,7 @@ async function deleteAiChatSession(sessionId) {
     danger: true
   });
   if (!confirmed) return;
+  if (assistantQueueBlocksNavigation()) return;
   AiAssistant.sessions = AiAssistant.sessions.filter((entry) => entry.id !== sessionId);
   if (AiAssistant.activeSessionId === sessionId) startNewAiChat();
   persistAiChatHistory();
@@ -363,6 +369,7 @@ function handleAiChatHistoryDrop(event, targetSection) {
 }
 
 function loadAiChatSession(sessionId) {
+  if (assistantQueueBlocksNavigation()) return;
   const session = AiAssistant.sessions.find((entry) => entry.id === sessionId);
   if (!session) return;
   AiAssistant.activeSessionId = session.id;
@@ -385,6 +392,7 @@ function loadAiChatSession(sessionId) {
 }
 
 function startNewAiChat() {
+  if (assistantQueueBlocksNavigation()) return;
   AiAssistant.activeSessionId = null;
   AiAssistant.messages = [];
   AiAssistant.attachments = [];
@@ -585,6 +593,13 @@ function renderAssistantModels() {
   select.innerHTML = '';
   menu.innerHTML = '';
 
+  if (AiAssistant.kind === 'chat') {
+    MesssAiProviderOptions.appendChatPresets(menu, providers, null, (provider) => {
+      [...menu.querySelectorAll('.ai-model-picker-option')]
+        .find((item) => item.dataset.value === provider.id)?.click();
+    }, t);
+  }
+
   providers.forEach((provider) => {
     const option = document.createElement('option');
     option.value = provider.id;
@@ -610,6 +625,11 @@ function renderAssistantModels() {
       menu.hidden = true;
       trigger.setAttribute('aria-expanded', 'false');
       syncAssistantMediaOptions();
+      menu.querySelectorAll('[data-preset-model]').forEach((item) => {
+        const active = item.dataset.presetModel === provider.model;
+        item.classList.toggle('is-active', active);
+        item.setAttribute('aria-selected', String(active));
+      });
     });
     menu.appendChild(menuOption);
   });
@@ -634,6 +654,11 @@ function renderAssistantModels() {
     ? (typeof publicModelLabel === 'function' ? publicModelLabel(selected.name) : selected.name)
     : t('No provider configured', '未配置服务商');
   if (selected) appendAiModelLabel(label, selected);
+  menu.querySelectorAll('[data-preset-model]').forEach((item) => {
+    const active = item.dataset.presetModel === selected?.model;
+    item.classList.toggle('is-active', active);
+    item.setAttribute('aria-selected', String(active));
+  });
   document.getElementById('ai-assistant-submit').disabled = !selected;
   menu.querySelectorAll('.ai-model-picker-option').forEach((option) => {
     const active = selected && option.dataset.value === selected.id;
@@ -816,9 +841,9 @@ async function loadAssistantImageAttachmentDimensions(attachment) {
   });
 }
 
-async function resolveAssistantImageGenerationOptions(options, attachments) {
-  if (AiAssistant.kind !== 'image') return options;
-  const capabilities = assistantImageCapabilities();
+async function resolveAssistantImageGenerationOptions(options, attachments, snapshot = null) {
+  if (!snapshot && AiAssistant.kind !== 'image') return options;
+  const capabilities = snapshot ? snapshot.capabilities : assistantImageCapabilities();
   const referenceImages = attachments.filter((attachment) => assistantFileKind(attachment) === 'image');
   let aspectRatio = String(options.aspectRatio || '').trim();
   let size = String(options.size || '').trim();
@@ -826,18 +851,18 @@ async function resolveAssistantImageGenerationOptions(options, attachments) {
   if (referenceImages.length && aspectRatio === 'auto') {
     const dimensions = await loadAssistantImageAttachmentDimensions(referenceImages[0]);
     const sourceRatio = dimensions ? `${dimensions.width}:${dimensions.height}` : '';
-    const savedRatio = AiAssistant.referenceAutoState && AiAssistant.referenceAutoState.ratio;
+    const savedRatio = snapshot ? snapshot.ratio : AiAssistant.referenceAutoState && AiAssistant.referenceAutoState.ratio;
     aspectRatio = supportedImageAspectRatio(
-      sourceRatio || savedRatio || (AiAssistant.config && AiAssistant.config.imageAspectRatio) || '1:1',
+      sourceRatio || savedRatio || (snapshot ? snapshot.defaultRatio : AiAssistant.config && AiAssistant.config.imageAspectRatio) || '1:1',
       capabilities,
       true
     );
   }
 
   if (referenceImages.length && size === 'auto') {
-    const savedSize = AiAssistant.referenceAutoState && AiAssistant.referenceAutoState.size;
+    const savedSize = snapshot ? snapshot.size : AiAssistant.referenceAutoState && AiAssistant.referenceAutoState.size;
     size = supportedImageSizeForRatio(
-      savedSize || (AiAssistant.config && AiAssistant.config.imageSize) || '1K',
+      savedSize || (snapshot ? snapshot.defaultSize : AiAssistant.config && AiAssistant.config.imageSize) || '1K',
       aspectRatio,
       capabilities,
       referenceImages.length
@@ -1276,7 +1301,7 @@ function syncAssistantImageSizeRatio(source) {
 
 function closeAssistantOptionMenus(except = null) {
   document.querySelectorAll('.ai-assistant-option-menu:not([hidden])').forEach((menu) => {
-    if (menu === except) return;
+    if (menu === except || menu.closest('#ai-assistant-options')) return;
     menu.hidden = true;
     const trigger = menu.parentElement && menu.parentElement.querySelector('.ai-assistant-option-trigger');
     if (trigger) trigger.setAttribute('aria-expanded', 'false');
@@ -1295,6 +1320,7 @@ function renderAssistantOptionPicker(picker) {
   trigger.disabled = select.disabled || select.options.length < 1;
   trigger.setAttribute('aria-disabled', String(trigger.disabled));
   menu.replaceChildren();
+  menu.hidden = false;
 
   const appendOption = (option) => {
     const button = document.createElement('button');
@@ -1306,6 +1332,18 @@ function renderAssistantOptionPicker(picker) {
     button.disabled = option.disabled;
     button.innerHTML = '<span></span><i aria-hidden="true">✓</i>';
     button.querySelector('span').textContent = option.textContent;
+    if (select.id === 'ai-assistant-ratio') {
+      button.classList.add('is-ratio-choice');
+      const shape = document.createElement('b');
+      const automatic = ['auto', 'adaptive'].includes(option.value);
+      const parts = option.value.split(':').map(Number);
+      const ratio = parts[0] > 0 && parts[1] > 0 ? parts[0] / parts[1] : 1;
+      shape.className = `assistant-ratio-shape${automatic ? ' is-auto' : ''}`;
+      shape.style.width = `${ratio >= 1 ? 26 : 26 * ratio}px`;
+      shape.style.height = `${ratio >= 1 ? 26 / ratio : 26}px`;
+      shape.setAttribute('aria-hidden', 'true');
+      button.prepend(shape);
+    }
     button.querySelector('i').hidden = option.value !== select.value;
     menu.appendChild(button);
   };
@@ -1356,14 +1394,49 @@ function initAssistantOptionPickers() {
   });
   document.addEventListener('pointerdown', (event) => {
     if (!event.target.closest('.ai-assistant-option-picker')) closeAssistantOptionMenus();
+    if (!event.target.closest('#ai-assistant-options, #ai-assistant-options-toggle')) setAssistantOptionsOpen(false);
   }, true);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !options.hidden) {
+      setAssistantOptionsOpen(false);
+      document.getElementById('ai-assistant-options-toggle').focus();
+    }
+  });
+  window.addEventListener('resize', () => { if (!options.hidden) positionAssistantOptions(); });
   refreshAssistantOptionPickers();
+}
+
+function positionAssistantOptions() {
+  const panel = document.getElementById('ai-assistant-options');
+  const trigger = document.getElementById('ai-assistant-options-toggle');
+  const parent = panel.offsetParent;
+  if (!parent) return;
+  const anchor = trigger.getBoundingClientRect();
+  const bounds = parent.getBoundingClientRect();
+  panel.style.bottom = `${Math.max(8, bounds.bottom - anchor.top + 10)}px`;
+  panel.style.right = `${Math.max(12, Math.min(bounds.right - anchor.right, bounds.width - panel.offsetWidth - 12))}px`;
+  panel.style.maxHeight = `${Math.max(80, anchor.top - 24)}px`;
+}
+
+function setAssistantOptionsOpen(open) {
+  const panel = document.getElementById('ai-assistant-options');
+  const trigger = document.getElementById('ai-assistant-options-toggle');
+  panel.hidden = !open;
+  trigger.classList.toggle('is-active', open);
+  trigger.setAttribute('aria-expanded', String(open));
+  if (open) {
+    refreshAssistantOptionPickers();
+    positionAssistantOptions();
+    document.getElementById('ai-assistant-model-menu').hidden = true;
+    document.getElementById('ai-assistant-model-trigger').setAttribute('aria-expanded', 'false');
+  }
 }
 
 function refreshAssistantOptionSummary() {
   const toggle = document.getElementById('ai-assistant-options-toggle');
   if (!toggle) return;
-  const ratio = document.getElementById('ai-assistant-ratio').value || 'auto';
+  const rawRatio = document.getElementById('ai-assistant-ratio').value || 'auto';
+  const ratio = ['auto', 'adaptive'].includes(rawRatio) ? t('Auto', '自动') : rawRatio;
   if (AiAssistant.kind === 'video') {
     const duration = document.getElementById('ai-assistant-duration').value || '6';
     const durationLabel = Number(duration) === -1 ? t('Auto', '\u81ea\u52a8') : `${duration}s`;
@@ -1530,22 +1603,158 @@ function setAssistantBusy(busy) {
   submit.disabled = !selectedAssistantProvider();
 }
 
-async function submitAssistantMessage() {
-  const input = document.getElementById('ai-assistant-input');
-  const submittedKind = AiAssistant.kind;
-  const submittedProvider = selectedAssistantProvider();
-  const attachments = AiAssistant.attachments.map((attachment) => ({ ...attachment }));
-  let submittedMediaOptions = {
-    aspectRatio: document.getElementById('ai-assistant-ratio').value,
-    size: document.getElementById('ai-assistant-size').value,
-    quality: document.getElementById('ai-assistant-quality').value,
-    count: Number(document.getElementById('ai-assistant-count').value),
-    duration: Number(document.getElementById('ai-assistant-duration').value)
+function assistantQueueBlocksNavigation() {
+  if (!AiAssistant.queueRunning && !AiAssistant.queue.length) return false;
+  showToast(t('Finish the request or clear the waiting queue before switching conversations.', '\u8bf7\u7b49\u5f85\u5f53\u524d\u8bf7\u6c42\u7ed3\u675f\u5e76\u5904\u7406\u5f85\u53d1\u961f\u5217\u540e\u5207\u6362\u5bf9\u8bdd\u3002'));
+  return true;
+}
+
+function renderAssistantQueue() {
+  const form = document.getElementById('ai-assistant-form');
+  if (!form) return;
+  let list = document.getElementById('ai-assistant-queue');
+  if (!list) {
+    list = document.createElement('div');
+    list.id = 'ai-assistant-queue';
+    form.prepend(list);
+  }
+  const previousIds = new Set(Array.from(list.querySelectorAll('[data-queue-id]'), row => row.dataset.queueId));
+  list.replaceChildren();
+  list.hidden = !AiAssistant.queue.length;
+  if (list.hidden) return;
+  const heading = document.createElement('div');
+  heading.className = 'assistant-queue-heading';
+  heading.textContent = t('Queued', '\u5f85\u53d1\u9001') + ` (${AiAssistant.queue.length})`;
+  list.append(heading);
+  const action = (row, symbol, label, callback) => {
+    const button = document.createElement('button');
+    button.type = 'button'; button.textContent = symbol;
+    button.title = label; button.setAttribute('aria-label', label);
+    button.addEventListener('click', callback); row.append(button);
+    return button;
   };
+  if (AiAssistant.queuePaused) {
+    action(heading, '\u25b6', t('Continue queue', '\u7ee7\u7eed\u53d1\u9001'), () => {
+      AiAssistant.queuePaused = false; void drainAssistantQueue();
+    });
+  }
+  for (const [index, item] of AiAssistant.queue.entries()) {
+    const row = document.createElement('div'); row.className = 'assistant-queue-item';
+    row.dataset.queueId = item.id;
+    row.classList.toggle('is-queue-enter', !previousIds.has(item.id));
+    const copy = document.createElement('div'); copy.className = 'assistant-queue-copy';
+    if (AiAssistant.queueEditing === item.id) {
+      const editor = document.createElement('textarea'); editor.value = item.editDraft ?? item.prompt;
+      editor.setAttribute('aria-label', t('Edit queued message', '\u7f16\u8f91\u5f85\u53d1\u6d88\u606f'));
+      editor.addEventListener('input', () => { item.editDraft = editor.value; });
+      copy.append(editor);
+      action(row, '\u2713', t('Save', '\u4fdd\u5b58'), () => {
+        const value = (item.editDraft ?? item.prompt).trim();
+        if (!value && !item.attachments.length) { editor.focus(); return; }
+        item.prompt = value; delete item.editDraft; AiAssistant.queueEditing = null;
+        renderAssistantQueue(); void drainAssistantQueue();
+      });
+      action(row, '\u21b6', t('Cancel edit', '\u53d6\u6d88\u7f16\u8f91'), () => {
+        delete item.editDraft; AiAssistant.queueEditing = null;
+        renderAssistantQueue(); void drainAssistantQueue();
+      });
+    } else {
+      const text = document.createElement('div'); text.textContent = item.prompt || t('Attachments', '\u9644\u4ef6');
+      copy.append(text);
+      action(row, '\u270e', t('Edit', '\u7f16\u8f91'), () => {
+        AiAssistant.queueEditing = item.id; renderAssistantQueue();
+        list.querySelector('textarea')?.focus();
+      });
+    }
+    const meta = document.createElement('small');
+    meta.textContent = [item.provider?.name, ...item.attachments.map(file => file.name)].filter(Boolean).join(' / ');
+    copy.append(meta); row.prepend(copy);
+    for (const [delta, symbol, label] of [[-1, '\u2191', t('Move up', '\u4e0a\u79fb')], [1, '\u2193', t('Move down', '\u4e0b\u79fb')]]) {
+      const button = action(row, symbol, label, () => {
+        const next = index + delta;
+        [AiAssistant.queue[index], AiAssistant.queue[next]] = [AiAssistant.queue[next], AiAssistant.queue[index]];
+        renderAssistantQueue();
+      });
+      button.disabled = index + delta < 0 || index + delta >= AiAssistant.queue.length;
+    }
+    action(row, '\u00d7', t('Delete queued message', '\u5220\u9664\u5f85\u53d1\u6d88\u606f'), () => {
+      AiAssistant.queue = AiAssistant.queue.filter(entry => entry.id !== item.id);
+      if (AiAssistant.queueEditing === item.id) AiAssistant.queueEditing = null;
+      if (!AiAssistant.queue.length) AiAssistant.queuePaused = false;
+      renderAssistantQueue(); void drainAssistantQueue();
+    });
+    list.append(row);
+  }
+}
+
+async function drainAssistantQueue() {
+  if (AiAssistant.queueRunning || AiAssistant.queuePaused || AiAssistant.queueEditing) return;
+  AiAssistant.queueRunning = true;
+  try {
+    while (AiAssistant.queue.length && !AiAssistant.queuePaused && !AiAssistant.queueEditing) {
+      const item = AiAssistant.queue.shift();
+      renderAssistantQueue();
+      try {
+        if (await executeAssistantMessage(item) !== true) {
+          if (!item.started) AiAssistant.queue.unshift(item);
+          AiAssistant.queuePaused = true;
+        }
+      } catch (error) {
+        if (!item.started) AiAssistant.queue.unshift(item);
+        showToast(error?.message || t('Request failed', '\u8bf7\u6c42\u5931\u8d25'));
+        AiAssistant.queuePaused = true;
+      }
+    }
+  } finally {
+    AiAssistant.queueRunning = false;
+    if (!AiAssistant.queue.length) AiAssistant.queuePaused = false;
+    renderAssistantQueue();
+  }
+}
+
+function submitAssistantMessage() {
+  const input = document.getElementById('ai-assistant-input');
+  const prompt = input.value.trim();
+  const provider = selectedAssistantProvider();
+  if (!provider || (!prompt && !AiAssistant.attachments.length)) return;
+  if (AiAssistant.queue.length >= 50) {
+    showToast(t('The waiting queue is full. Send or remove queued messages first.', '\u5f85\u53d1\u961f\u5217\u5df2\u6ee1\uff0c\u8bf7\u5148\u53d1\u9001\u6216\u5220\u9664\u90e8\u5206\u6d88\u606f\u3002'));
+    return;
+  }
+  const attachments = AiAssistant.attachments.map(file => ({ ...file }));
+  const videoMode = AiAssistant.kind === 'video' ? assistantVideoModeForAttachments(attachments) : null;
+  AiAssistant.queue.push({
+    id: crypto.randomUUID(), prompt, provider: { ...provider }, attachments, kind: AiAssistant.kind,
+    canvasId: activeCanvasId(),
+    folderId: AppState.activeFolderId && AppState.activeFolderId !== 'default' ? AppState.activeFolderId : null,
+    videoMode, videoCapabilities: AiAssistant.kind === 'video' ? assistantVideoCapabilities() : null,
+    imageSnapshot: AiAssistant.kind === 'image' ? structuredClone({
+      capabilities: assistantImageCapabilities(), ...AiAssistant.referenceAutoState,
+      defaultRatio: AiAssistant.config?.imageAspectRatio, defaultSize: AiAssistant.config?.imageSize
+    }) : null,
+    options: {
+      aspectRatio: document.getElementById('ai-assistant-ratio').value,
+      size: document.getElementById('ai-assistant-size').value,
+      quality: document.getElementById('ai-assistant-quality').value,
+      count: Number(document.getElementById('ai-assistant-count').value),
+      duration: Number(document.getElementById('ai-assistant-duration').value)
+    }
+  });
+  input.value = ''; AiAssistant.attachments = [];
+  renderAssistantAttachments(); renderAssistantQueue();
+  void drainAssistantQueue();
+}
+
+async function executeAssistantMessage(item) {
+  const input = document.getElementById('ai-assistant-input');
+  const submittedKind = item.kind;
+  const submittedProvider = item.provider;
+  const attachments = item.attachments;
+  let submittedMediaOptions = { ...item.options };
   if (submittedKind === 'image') {
-    submittedMediaOptions = await resolveAssistantImageGenerationOptions(submittedMediaOptions, attachments);
+    submittedMediaOptions = await resolveAssistantImageGenerationOptions(submittedMediaOptions, attachments, item.imageSnapshot);
   } else if (submittedKind === 'video') {
-    const selectedVideoMode = assistantVideoModeForAttachments(attachments);
+    const selectedVideoMode = item.videoMode;
     if (!selectedVideoMode) {
       showToast(t('Add the reference image or video required by this model.', '请先添加此模型所需的参考图片或视频。'), 'AI');
       return;
@@ -1559,10 +1768,10 @@ async function submitAssistantMessage() {
     submittedMediaOptions.aspectRatio = supportedAssistantVideoRatio(
       submittedMediaOptions.aspectRatio,
       selectedVideoMode,
-      assistantVideoCapabilities()
+      item.videoCapabilities
     );
   }
-  let prompt = input.value.trim();
+  let prompt = item.prompt;
   if (!prompt && !attachments.length) {
     input.focus();
     return;
@@ -1584,11 +1793,8 @@ async function submitAssistantMessage() {
     });
     if (!creditAccess.ok) return;
   }
-  input.value = '';
-  AiAssistant.attachments = [];
-  renderAssistantAttachments();
-  syncAssistantMediaOptions();
   ensureAiChatSession(prompt);
+  item.started = true;
   const userRow = appendAssistantText('user', prompt);
   appendAssistantMessageAttachments(userRow, attachments);
   AiAssistant.messages.push({
@@ -1619,14 +1825,23 @@ async function submitAssistantMessage() {
     submittedKind === 'chat'
       ? t('Thinking...', '思考中...')
       : t(`Using ${modelName} to generate ${submittedKind === 'video' ? 'video' : 'image'}...`, `正在使用 ${modelNameZh} 生成${submittedKind === 'video' ? '视频' : '图片'}...`),
-    'is-pending'
+    submittedKind === 'chat' ? 'is-pending is-chat-thinking' : 'is-pending'
   );
   const startedAt = Date.now();
+  const workRequestId = crypto.randomUUID();
+  let workPhase = '';
+  const stopWorkProgress = submittedKind === 'chat' && window.messsAPI.onAiWorkProgress
+    ? window.messsAPI.onAiWorkProgress(event => {
+      if (event.requestId === workRequestId) workPhase = event.phase;
+    }) : null;
   const progress = setInterval(() => {
     const seconds = Math.floor((Date.now() - startedAt) / 1000);
     pending.querySelector('.ai-assistant-message-body').textContent =
       submittedKind === 'chat'
-        ? t(`Thinking... ${seconds}s`, `思考中... ${seconds} 秒`)
+        ? (workPhase === 'approval' ? t('Waiting for execution approval...', '等待执行确认...')
+          : workPhase === 'executing' ? t('Executing file task...', '正在执行文件任务...')
+            : workPhase === 'saving' ? t('Saving generated files...', '正在保存生成文件...')
+              : t(`Thinking... ${seconds}s`, `思考中... ${seconds} 秒`))
         : t(`Using ${modelName} for ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`, `正在使用 ${modelNameZh} 生成 ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`);
   }, 1000);
   let mediaPlaceholders = [];
@@ -1635,6 +1850,7 @@ async function submitAssistantMessage() {
   try {
     if (submittedKind === 'chat') {
       const response = await window.messsAPI.chatWithAi({
+        workRequestId,
         prompt,
         messages: AiAssistant.messages,
         attachmentFileIds: attachments.filter((item) => !item.attachmentToken).map((item) => item.id),
@@ -1672,10 +1888,8 @@ async function submitAssistantMessage() {
         urls: [],
         imageProviderId: submittedKind === 'image' && submittedProvider ? submittedProvider.id : null,
         videoProviderId: submittedKind === 'video' && submittedProvider ? submittedProvider.id : null,
-        canvasId: activeCanvasId(),
-        folderId: AppState.activeFolderId && AppState.activeFolderId !== 'default'
-          ? AppState.activeFolderId
-          : null
+        canvasId: item.canvasId,
+        folderId: item.folderId
       };
       if (typeof createAiPlaceholders === 'function') {
         mediaPlaceholders = createAiPlaceholders(request);
@@ -1702,7 +1916,7 @@ async function submitAssistantMessage() {
       AppState.files = [...files, ...AppState.files.filter((file) =>
         !files.some((generated) => generated.id === file.id)
       )];
-      if (mediaPlaceholders.length && typeof replaceAiPlaceholders === 'function') {
+      if (typeof replaceAiPlaceholders === 'function') {
         await replaceAiPlaceholders(mediaPlaceholders, files, request, response.boardItems || []);
         mediaPlaceholders = [];
       } else {
@@ -1724,6 +1938,7 @@ async function submitAssistantMessage() {
       });
       persistActiveAiChatSession();
     }
+    return true;
   } catch (err) {
     if (generatedMediaFiles.length) {
       AppState.files = [
@@ -1752,8 +1967,9 @@ async function submitAssistantMessage() {
     }
   } finally {
     clearInterval(progress);
+    if (stopWorkProgress) stopWorkProgress();
     setAssistantBusy(false);
-    input.focus();
+    if (!AiAssistant.queueEditing && document.activeElement === document.body) input.focus();
   }
 }
 
@@ -1902,9 +2118,7 @@ function initAiAssistant() {
   });
   document.getElementById('ai-assistant-options-toggle').addEventListener('click', (event) => {
     const options = document.getElementById('ai-assistant-options');
-    options.hidden = !options.hidden;
-    event.currentTarget.classList.toggle('is-active', !options.hidden);
-    event.currentTarget.setAttribute('aria-expanded', String(!options.hidden));
+    setAssistantOptionsOpen(options.hidden);
   });
   ['ai-assistant-ratio', 'ai-assistant-size', 'ai-assistant-count', 'ai-assistant-duration'].forEach((id) => {
     document.getElementById(id).addEventListener('change', () => {

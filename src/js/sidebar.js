@@ -931,6 +931,8 @@ function renderAccountProfileText() {
   const values = {
     'account-footer-name': displayName,
     'account-footer-signature': accountProfileSignature,
+    'ai-account-footer-name': displayName,
+    'ai-account-footer-signature': accountProfileSignature,
     'account-popover-name': displayName,
     'account-popover-signature': accountProfileSignature
   };
@@ -2021,7 +2023,7 @@ function updateAiChatConfigHint() {
 }
 
 function renderAccountAvatars(initial, dataUrl) {
-  ['account-footer-avatar', 'account-popover-avatar'].forEach((id) => {
+  ['account-footer-avatar', 'ai-account-footer-avatar', 'account-popover-avatar'].forEach((id) => {
     const element = document.getElementById(id);
     if (!element) return;
     element.dataset.fallbackInitial = initial;
@@ -2079,6 +2081,7 @@ async function renderAccountSummary(config) {
   const accountUserId = authenticated && session.user && String(session.user.id || '').trim() || '';
   const previousAccountUserId = activeAccountAvatarUserId;
   activeAccountAvatarUserId = accountUserId || null;
+  if (typeof refreshProfileMood === 'function') void refreshProfileMood();
   const fallbackName = authenticated ? (email.split('@')[0] || 'Messs user') : t('Messs user', 'Messs 用户');
   const fallbackInitial = (fallbackName.trim()[0] || 'M').toUpperCase();
   const avatarButton = document.getElementById('account-popover-avatar');
@@ -2149,28 +2152,28 @@ function renderAccountCreditUnavailable() {
   const unavailable = t('Unavailable', '暂不可用', '사용 불가');
   const creditCount = document.getElementById('account-credit-count');
   if (creditCount) creditCount.textContent = '...';
-  const footerCredits = document.getElementById('account-footer-credits');
-  if (!footerCredits) return;
+  for (const footerCredits of document.querySelectorAll('.account-footer-credits')) {
   const value = footerCredits.querySelector('b');
   const unit = footerCredits.querySelector('small');
   if (value) value.textContent = '...';
   if (unit) unit.textContent = unavailable;
   footerCredits.title = unavailable;
   footerCredits.setAttribute('aria-label', unavailable);
+  }
 }
 
 function renderAccountFooterCredits(membership) {
   const values = membershipCreditValues(membership);
   if (!values) return false;
-  const footerCredits = document.getElementById('account-footer-credits');
-  if (!footerCredits) return false;
   const label = t('Available points', '可用积分', '사용 가능 포인트');
   const unit = t(' points', ' 积分', ' 포인트');
   const value = values.available.toLocaleString(appLocale());
+  for (const footerCredits of document.querySelectorAll('.account-footer-credits')) {
   footerCredits.querySelector('b').textContent = value;
   footerCredits.querySelector('small').textContent = unit;
   footerCredits.title = `${label}: ${value}`;
   footerCredits.setAttribute('aria-label', `${label}: ${value}`);
+  }
   return true;
 }
 
@@ -2254,7 +2257,48 @@ async function signInCloudWithGoogle(button) {
   }
 }
 
+function confirmSignOutCloudAccount() {
+  if (document.getElementById('sign-out-dialog')) return;
+  const previousFocus = document.activeElement;
+  const dialog = document.createElement('dialog');
+  dialog.id = 'sign-out-dialog';
+  dialog.setAttribute('aria-labelledby', 'sign-out-title');
+  dialog.setAttribute('aria-describedby', 'sign-out-description');
+  dialog.innerHTML = `<form method="dialog">
+    <img class="sign-out-brand" src="assets/logo-mark.png" alt="Messs">
+    <h2 id="sign-out-title">${t('Sign out of Messs?', '退出 Messs 登录？', 'Messs에서 로그아웃할까요?')}</h2>
+    <p id="sign-out-description">${t('You will need to sign in again to use account services.', '退出后，使用账户服务需要重新登录。', '계정 서비스를 사용하려면 다시 로그인해야 합니다.')}</p>
+    <p class="sign-out-error" role="alert"></p>
+    <footer><button type="button" data-sign-out-cancel>${t('Cancel', '取消', '취소')}</button><button type="submit" class="sign-out-confirm">${t('Sign out', '退出登录', '로그아웃')}</button></footer>
+  </form>`;
+  document.body.append(dialog);
+  let busy = false;
+  const close = () => { if (busy) return; dialog.close(); dialog.remove(); previousFocus?.focus(); };
+  dialog.querySelector('[data-sign-out-cancel]').onclick = close;
+  dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
+  dialog.querySelector('form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (busy) return;
+    busy = true;
+    const confirm = dialog.querySelector('.sign-out-confirm');
+    dialog.querySelectorAll('button').forEach(button => { button.disabled = true; });
+    confirm.textContent = t('Signing out...', '正在退出…', '로그아웃 중...');
+    dialog.querySelector('.sign-out-error').textContent = '';
+    try { await signOutCloudAccount(); busy = false; close(); }
+    catch {
+      dialog.querySelector('.sign-out-error').textContent = t('Could not sign out. Please try again.', '退出失败，请稍后重试。', '로그아웃하지 못했습니다. 다시 시도하세요.');
+    } finally {
+      busy = false;
+      dialog.querySelectorAll('button').forEach(button => { button.disabled = false; });
+      confirm.textContent = t('Sign out', '退出登录', '로그아웃');
+    }
+  });
+  dialog.showModal();
+  dialog.querySelector('[data-sign-out-cancel]').focus();
+}
+
 async function signOutCloudAccount() {
+  await window.messsAPI.signOutCloud();
   ++accountSummaryRenderGeneration;
   ++accountAvatarLoadGeneration;
   activeAccountAvatarUserId = null;
@@ -2264,7 +2308,6 @@ async function signOutCloudAccount() {
     avatarButton.disabled = true;
   }
   renderAccountAvatars('M', null);
-  await window.messsAPI.signOutCloud();
   setAccountAuthStatus(t('Signed out. Sign in to continue.', '已退出登录，请登录后继续。', '로그아웃되었습니다. 계속하려면 로그인하세요.'));
   const config = await refreshAiMediaSettings();
   document.dispatchEvent(new CustomEvent('messs:ai-config-updated', { detail: config }));
@@ -2515,8 +2558,8 @@ async function initAiMediaSettings() {
   });
   document.getElementById('cloud-account-sign-in').addEventListener('click', () => submitCloudAccount('signin'));
   document.getElementById('cloud-account-sign-up').addEventListener('click', () => submitCloudAccount('signup'));
-  document.getElementById('cloud-account-sign-out').addEventListener('click', signOutCloudAccount);
-  document.getElementById('account-sign-out').addEventListener('click', signOutCloudAccount);
+  document.getElementById('cloud-account-sign-out').addEventListener('click', confirmSignOutCloudAccount);
+  document.getElementById('account-sign-out').addEventListener('click', confirmSignOutCloudAccount);
   document.getElementById('cloud-account-google').addEventListener('click', (event) => signInCloudWithGoogle(event.currentTarget));
   document.getElementById('account-google-sign-in').addEventListener('click', (event) => signInCloudWithGoogle(event.currentTarget));
   document.getElementById('account-plan-open').addEventListener('click', () => {

@@ -61,6 +61,14 @@ const {
   parseAiArtifacts,
   prepareTextAttachment
 } = require('./lib/ai-attachments');
+const { WORK_INSTRUCTION, parseWork, executeWork, materialize, createArtifactStore } = require('./lib/ai-workspace');
+let aiWorkspaceBusy = false;
+function aiWorkspaceOwner() {
+  return supabaseAuth?.getPublicSession()?.user?.id || 'guest';
+}
+function aiWorkspaceStore(owner = aiWorkspaceOwner()) {
+  return createArtifactStore(path.join(app.getPath('userData'), 'ai-workspace'), owner);
+}
 const {
   PROVIDER_CATALOG_VERSION,
   providerCatalog,
@@ -5792,7 +5800,11 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
         error.code = 'generated-video-invalid';
         throw error;
       }
-      await preview.transcodeVideoToWebCompatible(storedPath, previewCacheDir, id);
+      // Native containers can return immediately after validation. The player
+      // retains codec-error/stall recovery for files requiring a transcode.
+      if (preview.needsVideoTranscode(`.${extension}`)) {
+        await preview.transcodeVideoToWebCompatible(storedPath, previewCacheDir, id);
+      }
       videoPreviewReady = true;
     } catch (error) {
       await fs.promises.rm(path.join(previewCacheDir, id), { recursive: true, force: true }).catch(() => {});
@@ -8257,6 +8269,10 @@ function registerIpcHandlers() {
   ipcMain.handle('membership:quoteMedia', (_evt, request = {}) => quoteMediaCreditsForAccount(request));
 
   ipcMain.handle('profile:getAvatar', () => readProfileAvatarDataUrl());
+  ipcMain.handle('profile:getMood', () => {
+    const userId = authenticatedUserId(supabaseAuth.getPublicSession());
+    return { userId, mood: userId ? store.data.settings.profileMoods?.[userId] || '' : '' };
+  });
   ipcMain.handle('profile:previewAvatar', async () => {
     try { return await chooseProfileAvatar({ previewOnly: true }); }
     catch { return { ok: false, reason: 'invalid-image' }; }
@@ -8268,6 +8284,8 @@ function registerIpcHandlers() {
     const name = String(draft.name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
     const signature = String(draft.signature || '').replace(/\s+/g, ' ').trim().slice(0, 120);
     if (!name) return { ok: false, reason: 'empty-name' };
+    const mood = String(draft.mood || '');
+    if (!['', 'focus', 'inspired', 'happy', 'busy', 'rest'].includes(mood)) return { ok: false, reason: 'invalid-mood' };
     let temporaryPath;
     try {
       let input;
@@ -8290,8 +8308,9 @@ function registerIpcHandlers() {
       if (authenticatedUserId(supabaseAuth.getPublicSession()) !== userId) return { ok: false, reason: 'account-changed' };
       store.data.settings.profileDisplayName = name;
       store.data.settings.profileSignature = signature;
+      store.data.settings.profileMoods = { ...store.data.settings.profileMoods, [userId]: mood };
       store.scheduleSave();
-      return { ok: true, name, signature, dataUrl: readProfileAvatarDataUrl(), userId };
+      return { ok: true, name, signature, mood, dataUrl: readProfileAvatarDataUrl(), userId };
     } catch { return { ok: false, reason: 'save-failed' }; }
     finally { if (temporaryPath) await fs.promises.unlink(temporaryPath).catch(() => {}); }
   });
@@ -9770,6 +9789,9 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('ai:chat', async (_evt, request = {}) => {
+    const workspaceOwner = aiWorkspaceOwner();
+    const workRequestId = String(request.workRequestId || '').slice(0, 100);
+    const reportWork = phase => { if (!_evt.sender.isDestroyed()) _evt.sender.send('ai:workProgress', {requestId:workRequestId,phase}); };
     let safeRequest;
     try {
       const sourceMessages = Array.isArray(request.messages) ? request.messages.slice(-40) : [];
@@ -9831,7 +9853,7 @@ function registerIpcHandlers() {
 
     try {
       const providerMessages = [
-        { role: 'system', content: AI_ARTIFACT_INSTRUCTION, images: [], attachments: [] },
+        { role: 'system', content: AI_ARTIFACT_INSTRUCTION + '\n' + WORK_INSTRUCTION, images: [], attachments: [] },
         ...request.messages.slice(-19)
       ];
       const rawText = await generateAiChatReply(
@@ -9840,16 +9862,42 @@ function registerIpcHandlers() {
         String(request.chatProviderId || '').trim(),
         String(request.chatModel || '').trim()
       );
-      const parsed = parseAiArtifacts(rawText);
-      const files = parsed.artifacts.map((artifact) => {
-        const token = crypto.randomUUID();
-        transientAiOutputFiles.set(token, {
-          ...artifact,
-          expiresAt: Date.now() + 60 * 60_000
-        });
-        return { token, name: artifact.name, mimeType: artifact.mimeType, sizeBytes: artifact.sizeBytes };
-      });
-      const text = parsed.text || (files.length ? localizedMessage('File ready.', '文件已生成。', '파일이 준비되었습니다.') : '');
+      const work = parseWork(rawText);
+      const parsed = parseAiArtifacts(work ? work.text : rawText);
+      let files = [], executionMessage = '';
+      if (work || parsed.artifacts.length) {
+        if (aiWorkspaceBusy) throw new Error('另一个文件任务正在执行，请稍后重试。');
+        aiWorkspaceBusy = true;
+        try {
+          if (workspaceOwner !== aiWorkspaceOwner()) throw new Error('账号已切换，请重新提交任务。');
+          if (work) {
+            reportWork('approval');
+            const approval = await dialog.showMessageBox(BrowserWindow.fromWebContents(_evt.sender) || mainWindow, {
+              type:'question', title:'Messs 文件任务',
+              message:'允许执行本次 AI 文件任务？',
+              detail:'将在隔离环境中处理本轮上传的文本并生成文件，不允许访问系统命令、网络或其他本地文件。最长执行 8 秒。\n\n代码预览：\n' + work.code.slice(0, 4000),
+              buttons:['取消','执行'], defaultId:0, cancelId:0, noLink:true
+            });
+            if (approval.response !== 1) executionMessage = '已取消执行，没有生成文件。';
+            else {
+              reportWork('executing');
+              const latestUser = [...request.messages].reverse().find(message => message.role === 'user');
+              const uploads = (latestUser?.attachments || []).map(file => ({ name:file.name, content:String(file.content || '').slice(0,80000) })).slice(0,6);
+              const output = await executeWork(work.code, uploads);
+              const produced = await materialize(output);
+              reportWork('saving');
+              if (workspaceOwner !== aiWorkspaceOwner()) throw new Error('账号已切换，任务结果未保存到当前账号。');
+              files = await aiWorkspaceStore(workspaceOwner).save(produced);
+              executionMessage = `执行完成，已保存 ${files.length} 个文件，可点击下方文件下载。`;
+            }
+          } else {
+            files = await aiWorkspaceStore(workspaceOwner).save(parsed.artifacts.map(file => ({...file,data:Buffer.from(file.content,'utf8')})));
+          }
+        } catch (error) {
+          executionMessage = `文件任务未完成：${String(error.message || error).slice(0,500)}`;
+        } finally { aiWorkspaceBusy = false; }
+      }
+      const text = [parsed.text, executionMessage].filter(Boolean).join('\n\n') || (files.length ? localizedMessage('File ready.', '文件已生成。', '파일이 준비되었습니다.') : '');
       membershipService.finishUsage(usage.usageId, {
         status: 'succeeded',
         resultUnits: 1,
@@ -9878,6 +9926,19 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:saveGeneratedFile', async (_evt, rawToken) => {
     const token = String(rawToken || '');
+    if (token.startsWith('work-')) {
+      try {
+        const owner = aiWorkspaceOwner();
+        const record = await aiWorkspaceStore(owner).read(token);
+        const result = await dialog.showSaveDialog(BrowserWindow.fromWebContents(_evt.sender) || mainWindow, {
+          title:'保存生成文件', defaultPath:record.name
+        });
+        if (result.canceled || !result.filePath) return {ok:false,canceled:true};
+        if (owner !== aiWorkspaceOwner()) return {ok:false,message:'账号已切换，请重新下载。'};
+        await fs.promises.writeFile(result.filePath,record.data);
+        return {ok:true,filePath:result.filePath};
+      } catch (error) { return {ok:false,message:'无法读取或保存生成文件，请检查存储位置。'}; }
+    }
     const record = transientAiOutputFiles.get(token);
     if (!record || record.expiresAt <= Date.now()) {
       return { ok: false, reason: 'expired', message: 'This generated file has expired. Ask AI to create it again.' };

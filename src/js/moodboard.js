@@ -411,27 +411,23 @@ function buildBoardMoodboardElement(item) {
   const generate = document.createElement('button');
   generate.type = 'button';
   generate.className = 'board-moodboard-generate';
-  generate.textContent = t('Generate', '生成');
-  generate.setAttribute('aria-haspopup', 'menu');
+  generate.innerHTML = '<img src="assets/icons/lucide/sparkles.svg" width="17" height="17" alt="" aria-hidden="true">';
+  generate.setAttribute('aria-haspopup', 'dialog');
   generate.title = t('Generate from moodboard', '根据情绪板生成');
+  generate.setAttribute('aria-label', generate.title);
   generate.addEventListener('pointerdown', event => event.stopPropagation());
   generate.addEventListener('mousedown', event => event.stopPropagation());
   generate.addEventListener('click', event => {
     event.stopPropagation();
-    const rect = generate.getBoundingClientRect();
-    const choose = kind => {
-      const prompt = moodboardPlainText(item).trim();
-      if (!prompt) {
-        showToast(t('Add text to the moodboard first.', '请先填写情绪板内容。'), 'Messs');
-        openMoodboardEditor(item);
-        return;
-      }
-      void openAiComposerForSelection(kind, prompt, { referenceFileIds: [] });
-    };
-    buildAndShowSimpleMenu([
-      { label: t('Generate image', '生成图片'), action: () => choose('image') },
-      { label: t('Generate video', '生成视频'), action: () => choose('video') }
-    ], rect.left, rect.bottom + 6, 'moodboard-generation-menu');
+    const prompt = moodboardPlainText(item).trim();
+    if (!prompt) {
+      showToast(t('Add text to the moodboard first.', '请先填写情绪板内容。'), 'Messs');
+      openMoodboardEditor(item);
+      return;
+    }
+    void openAiComposerForSelection('image', prompt, {
+      referenceFileIds: [], moodboardAnchor: generate.getBoundingClientRect()
+    }).catch(error => showToast(error.message || t('Could not open generation settings.', '无法打开生成设置。'), 'AI'));
   });
   header.append(icon, title, open, generate);
 

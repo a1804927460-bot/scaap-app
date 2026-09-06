@@ -261,6 +261,11 @@ textarea,
   outline-offset: 2px;
 }
 
+/* The viewport receives shortcut focus; its outline leaks behind the Agent dock. */
+#board-viewport:focus-visible {
+  outline: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

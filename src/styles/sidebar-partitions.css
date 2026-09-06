@@ -5,33 +5,18 @@
 }
 .sidebar-partition-wheel::backdrop { background: rgba(0, 0, 0, .18); }
 .partition-wheel-stage { position: relative; width: 100%; height: 100%; }
-.partition-wheel-logo { position: absolute; width: 54px; height: 54px; object-fit: contain; left: 121px; top: 100px; }
-.partition-slot { position: absolute; display: grid; place-items: center; border-radius: 999px; background: var(--bg-elevated); box-shadow: 0 4px 16px #0003; }
-.partition-slot.slot-top { width: 128px; height: 48px; left: 84px; top: 24px; }
-.partition-slot.slot-left { width: 48px; height: 112px; left: 24px; top: 80px; }
-.partition-slot.slot-right { width: 48px; height: 112px; right: 24px; top: 80px; }
-.partition-slot.slot-current { width: 136px; height: 48px; left: 80px; bottom: 16px; border: 1px solid var(--accent); color: var(--text-primary); background: var(--bg-surface-2); font: inherit; font-size: 14px; cursor: var(--cursor-click); }
-.slot-current:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.partition-wheel-surfaces { position: absolute; inset: 0; pointer-events: none; }
-.partition-wheel-stage > .partition-slot { background: transparent; box-shadow: none; }
-.partition-wheel-surfaces .slot-current { border: 0; background: var(--bg-surface-2); }
-.slot-top { --join-x: 0px; --join-y: 84px; }
-.slot-left { --join-x: 100px; --join-y: 0px; }
-.slot-right { --join-x: -100px; --join-y: 0px; }
-.slot-current { --join-x: 0px; --join-y: -100px; }
-.sidebar-partition-wheel[open] .partition-slot { animation: partition-split 400ms cubic-bezier(.16,1,.3,1) both; }
-.sidebar-partition-wheel[open] .partition-wheel-surfaces { animation: partition-goo 400ms linear; }
-.sidebar-partition-wheel.is-closing .partition-slot { animation: partition-join 220ms cubic-bezier(.4,0,.8,.3) both; }
-.sidebar-partition-wheel.is-closing .partition-wheel-surfaces { animation: partition-goo 220ms linear; }
-@keyframes partition-goo { from, to { filter: url(#partition-goo); } }
-@keyframes partition-split {
-  from { opacity: 0; transform: translate(var(--join-x), var(--join-y)) scale(.35); }
-  70% { opacity: 1; }
-  to { opacity: 1; transform: translate(0, 0) scale(1); }
+.partition-wheel-logo { position: absolute; width: 54px; height: 54px; object-fit: contain; left: calc(50% - 27px); top: calc(50% - 27px); pointer-events: none; }
+.partition-slot {
+  position: absolute; display: grid; place-items: center; padding: 0;
+  border: 1px solid var(--border-hairline); border-radius: 999px;
+  background: var(--bg-elevated); color: var(--text-primary);
+  box-shadow: 0 8px 20px #0002; font: inherit; font-size: 14px;
+  transform-origin: center; opacity: 0;
 }
-@keyframes partition-join {
-  from { opacity: 1; transform: translate(0, 0) scale(1); }
-  to { opacity: 0; transform: translate(var(--join-x), var(--join-y)) scale(.35); }
-}
-@media (prefers-reduced-motion: reduce) { .sidebar-partition-wheel[open] .partition-slot { animation: none; } }
-@media (prefers-reduced-motion: reduce) { .sidebar-partition-wheel[open] .partition-wheel-surfaces { animation: none; } }
+.partition-slot:disabled { cursor: var(--cursor-default); }
+.partition-slot.slot-top { width: 136px; height: 48px; left: calc(50% - 68px); top: 8px; --join-x: 0px; --join-y: 106px; }
+.partition-slot.slot-right { width: 48px; height: 112px; right: 8px; top: calc(50% - 56px); --join-x: -116px; --join-y: 0px; }
+.partition-slot.slot-current { width: 136px; height: 48px; left: calc(50% - 68px); bottom: 8px; --join-x: 0px; --join-y: -106px; border-color: var(--brand-blue-bright); cursor: var(--cursor-click); }
+.partition-slot.slot-left { width: 48px; height: 112px; left: 8px; top: calc(50% - 56px); --join-x: 116px; --join-y: 0px; }
+.slot-current:focus-visible { outline: 2px solid var(--brand-blue-bright); outline-offset: 3px; }
+.sidebar-partition-wheel.is-closing { pointer-events: none; }

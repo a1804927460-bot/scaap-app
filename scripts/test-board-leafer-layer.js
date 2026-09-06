@@ -143,7 +143,7 @@ async function run() {
     }
     if (!source.includes("moodboardBodyForItem(item), '#f3f5f8'") ||
         !source.includes('fontSize: 18') || !source.includes('fontSize: 17') ||
-        !source.includes("lineHeight: { type: 'percent', value: 1.5 }")) {
+        !source.includes("lineHeight: { type: 'percent', value: 1.65 }")) {
       throw new Error('Leafer moodboard text must use the readable large-text style.');
     }
     process.stdout.write(`BOARD_LEAFER_LAYER_OK items=${result.itemCount} resize=${result.afterResize.width}x${result.afterResize.height}\n`);

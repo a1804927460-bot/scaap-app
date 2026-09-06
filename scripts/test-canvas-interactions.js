@@ -212,8 +212,8 @@ assert.match(boardStyles, /\.board-canvas\.is-transforming\s*\{\s*will-change:\s
   'Transforming the infinite canvas must not force a single oversized GPU layer.');
 assert.match(
   boardSource,
-  /const groupMates = item\.isPartition[\s\S]*?: \(item\.selected && selectedMates\.length > 1\)[\s\S]*?\? selectedMates[\s\S]*?: item\.groupId/,
-  'The current multi-selection must take priority over an older explicit group when dragging.');
+  /const groupMates = item\.isPartition[\s\S]*?: \(item\.selected && selectedMates\.length > 1\)[\s\S]*?\? selectedMates\s*: \[item\]/,
+  'Dragging must use the current selection, never a legacy explicit group.');
 assert.match(
   boardSource,
   /function onUp\(ev\) \{[\s\S]*?selectRunner\.push\(\{ clientX: ev\.clientX, clientY: ev\.clientY \}\);[\s\S]*?selectRunner\.flush\(\);/,
@@ -262,9 +262,12 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /upsertBoardItems\(updates\)[\s\S]*?AppState\.allBoardItems = workingBoardItems[\s\S]*?renderBoard\(\);/,
-  'Generated media must persist the final board item before confirming delivery.'
+  /function replaceAiPlaceholders[\s\S]*?AppState\.allBoardItems = workingBoardItems[\s\S]*?renderBoard\(\);[\s\S]*?await window\.messsAPI\.upsertBoardItems\(updates\)/,
+  'Durable generated media must display before the duplicate reconciliation write.'
 );
+assert.match(boardSource,
+  /await replaceAiPlaceholders\(placeholders, files, request, res\.boardItems \|\| \[\]\);\s*generatedFiles = await confirmAiMediaDeliveries\(files\);/,
+  'Delivery confirmation must still follow awaited board reconciliation.');
 assert.match(
   boardSource,
   /function removeAiPlaceholders\(placeholders\)[\s\S]*?live\.isAiPlaceholder[\s\S]*?if \(!ids\.size\) return/,
@@ -1224,7 +1227,7 @@ assert.match(
 );
 assert.match(
   workspaceSource,
-  /function canvasAgentThinkingText[\s\S]*?Thinking\.\.\.[\s\S]*?const pending = appendCanvasAgentMessage\('assistant', canvasAgentThinkingText\(\)\)[\s\S]*?setInterval[\s\S]*?pending\.textContent = response\.text[\s\S]*?clearInterval\(thinkingTimer\)/,
+  /function canvasAgentThinkingText[\s\S]*?Thinking\.\.\.[\s\S]*?const pending = appendCanvasAgentMessage\('assistant', canvasAgentThinkingText\(\)\)[\s\S]*?setInterval[\s\S]*?renderAgentMessageContent\(pending, response\.text\)[\s\S]*?clearInterval\(thinkingTimer\)/,
   'Canvas Agent must show an elapsed thinking state until the response replaces it in place.'
 );
 assert.match(boardSource, /--board-selection-width[\s\S]*?1\.2 \/ Math\.max\(Board\.zoom/);
@@ -1548,8 +1551,8 @@ assert.match(
 );
 assert.match(
   contextMenuSource,
-  /function openCanvasUsageDetails\(\)[\s\S]*?getCanvasCreditUsage\(activeCanvasId\(\)\)[\s\S]*?renderCanvasUsageDetails/,
-  'Canvas usage must query the active canvas instead of opening account-wide totals.'
+  /function openCanvasUsageDetails\(canvasId\)[\s\S]*?requestedCanvasId = [^;]*activeCanvasId\(\)[\s\S]*?getCanvasCreditUsage\(requestedCanvasId\)[\s\S]*?renderCanvasUsageDetails/,
+  'Canvas usage must query the requested canvas, defaulting to the active canvas.'
 );
 assert.match(
   contextMenuSource,

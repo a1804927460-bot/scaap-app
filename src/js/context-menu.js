@@ -737,7 +737,11 @@ function renderCanvasUsageDetails(result) {
   document.getElementById('canvas-usage-done').textContent = t('Done', '\u5b8c\u6210');
 }
 
-async function openCanvasUsageDetails() {
+let canvasUsageRequestId = 0;
+
+async function openCanvasUsageDetails(canvasId) {
+  const requestedCanvasId = typeof canvasId === 'string' && canvasId ? canvasId : activeCanvasId();
+  const requestId = ++canvasUsageRequestId;
   const overlay = initCanvasUsageDialog();
   if (!overlay || !window.messsAPI || typeof window.messsAPI.getCanvasCreditUsage !== 'function') {
     if (typeof window.openUsageSettings === 'function') window.openUsageSettings();
@@ -752,12 +756,14 @@ async function openCanvasUsageDetails() {
   requestAnimationFrame(() => overlay.classList.add('is-visible'));
   document.getElementById('canvas-usage-close').focus({ preventScroll: true });
   try {
-    const result = await window.messsAPI.getCanvasCreditUsage(activeCanvasId());
+    const result = await window.messsAPI.getCanvasCreditUsage(requestedCanvasId);
+    if (requestId !== canvasUsageRequestId) return;
     if (!result || !result.ok) throw new Error(result && result.reason || 'usage-unavailable');
     renderCanvasUsageDetails(result);
     loading.hidden = true;
     content.hidden = false;
   } catch (error) {
+    if (requestId !== canvasUsageRequestId) return;
     loading.textContent = t('Canvas usage could not be loaded.', '\u65e0\u6cd5\u52a0\u8f7d\u753b\u5e03\u7528\u91cf\u3002');
   }
 }
@@ -913,6 +919,7 @@ function showBoardItemContextMenu(item, x, y) {
 }
 
 const MULTI_MENU_ITEMS = [
+  { key: 'secondary-partition', label: ['Secondary partition', '二级分区'] },
   { key: 'copy', label: ['Copy', '复制'] },
   { key: 'cut', label: ['Cut', '剪切'] },
   { key: 'paste', label: ['Paste', '粘贴'] },
@@ -928,17 +935,8 @@ const MULTI_MENU_ITEMS = [
   ] },
   { key: 'download', label: ['Export', '导出'] },
   { key: 'usage', label: ['View points usage', '\u67e5\u770b\u79ef\u5206\u7528\u91cf'] },
-  { key: 'secondary-partition', label: ['Secondary partition', '二级分区'] },
-  { key: 'group', label: ['Group', '成组'] },
-  { key: 'ungroup', label: ['Ungroup', '取消成组'] },
   { key: 'delete', label: ['Delete', '删除'], danger: true }
 ];
-
-function selectionGroupState() {
-  const selected = AppState.boardItems.filter((item) => item.selected);
-  const groupIds = new Set(selected.map((item) => item.groupId).filter(Boolean));
-  return { isGrouped: groupIds.size === 1 && selected.every((item) => item.groupId) };
-}
 
 function showBoardMultiContextMenu(x, y) {
   const existing = document.getElementById('board-multi-menu');
@@ -946,7 +944,6 @@ function showBoardMultiContextMenu(x, y) {
   const existingSub = document.getElementById('board-multi-submenu');
   if (existingSub) existingSub.remove();
 
-  const { isGrouped } = selectionGroupState();
   const partitionSelection = AppState.boardItems.filter((item) => item.selected);
   const canCreatePartition = partitionSelection.length >= 2 && partitionSelection.every((item) => {
     const file = AppState.files.find((entry) => entry.id === item.fileId);
@@ -968,8 +965,6 @@ function showBoardMultiContextMenu(x, y) {
   }
 
   for (const item of MULTI_MENU_ITEMS) {
-    if (item.key === 'group' && isGrouped) continue;
-    if (item.key === 'ungroup' && !isGrouped) continue;
     if (item.key === 'secondary-partition' && !canCreatePartition) continue;
 
     const li = document.createElement('li');
@@ -1078,16 +1073,6 @@ async function runMultiMenuAction(key, x, y) {
       break;
     case 'secondary-partition':
       createSecondaryPartition(selected);
-      break;
-    case 'group': {
-      const groupId = 'g_' + Math.random().toString(36).slice(2, 10);
-      selected.forEach((item) => { item.groupId = groupId; window.messsAPI.upsertBoardItem(item); });
-      showToast(t(`Grouped ${selected.length} item${selected.length === 1 ? '' : 's'}`, `已成组 ${selected.length} 个项目`));
-      break;
-    }
-    case 'ungroup':
-      selected.forEach((item) => { delete item.groupId; window.messsAPI.upsertBoardItem(item); });
-      showToast(t('Ungrouped', '已取消成组'));
       break;
     case 'delete':
       removeBoardItemsWithHistory(selected);

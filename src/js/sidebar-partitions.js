@@ -8,23 +8,33 @@ function initSidebarPartitions() {
   const dialog = document.createElement('dialog');
   dialog.className = 'sidebar-partition-wheel';
   dialog.setAttribute('aria-label', '切换分区');
-  dialog.innerHTML = '<div class="partition-wheel-stage"><span class="partition-slot slot-top" aria-hidden="true"></span><span class="partition-slot slot-left" aria-hidden="true"></span><span class="partition-slot slot-right" aria-hidden="true"></span><img class="partition-wheel-logo" src="assets/logo-mark.png" alt=""><button class="partition-slot slot-current" type="button" aria-current="true">所有文件</button></div>';
+  dialog.innerHTML = '<div class="partition-wheel-stage"><button class="partition-slot slot-top" type="button" disabled aria-label="预留分区"></button><button class="partition-slot slot-right" type="button" disabled aria-label="预留分区"></button><button class="partition-slot slot-current" type="button" aria-current="true">所有文件</button><button class="partition-slot slot-left" type="button" disabled aria-label="预留分区"></button><img class="partition-wheel-logo" src="assets/logo-mark.png" alt=""></div>';
   document.body.append(dialog);
-  const surfaces = document.createElement('div');
-  surfaces.className = 'partition-wheel-surfaces';
-  surfaces.setAttribute('aria-hidden', 'true');
-  surfaces.innerHTML = '<svg width="0" height="0"><defs><filter id="partition-goo" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur"/><feColorMatrix in="blur" type="matrix" values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 20 -10"/><feComposite in="SourceGraphic" operator="atop"/></filter></defs></svg>';
-  for (const direction of ['top', 'left', 'right', 'current']) {
-    const surface = document.createElement('span');
-    surface.className = `partition-slot slot-${direction}`;
-    surfaces.append(surface);
-  }
-  dialog.querySelector('.partition-wheel-stage').prepend(surfaces);
+  // Use one surface per capsule; filtering duplicate surfaces blurs their edges.
+  const slots = [...dialog.querySelectorAll('.partition-slot')];
+  let animations = [];
+  const animateWheel = (closing = false) => {
+    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const current = slots.map(slot => ({transform: getComputedStyle(slot).transform, opacity: getComputedStyle(slot).opacity}));
+    animations.forEach(animation => animation.cancel());
+    animations = slots.map((slot, index) => {
+      const style = getComputedStyle(slot);
+      const joined = `translate(${style.getPropertyValue('--join-x')}, ${style.getPropertyValue('--join-y')}) rotate(-60deg) scale(.28)`;
+      const frames = closing ? [current[index], {transform:joined,opacity:0}] : [
+        {transform:joined,opacity:0,offset:0},
+        {transform:'translate(0, 0) rotate(-3deg) scale(1.04)',opacity:1,offset:.72},
+        {transform:'translate(0, 0) rotate(0deg) scale(1)',opacity:1,offset:1}
+      ];
+      return slot.animate(frames, {duration:reduced ? 0 : closing ? 240 : 620,
+        delay:reduced ? 0 : (closing ? 3-index : index)*35, easing:'cubic-bezier(.22,1,.36,1)',fill:'both'});
+    });
+  };
   let closeTimer;
   const close = () => {
     if (!dialog.open || dialog.classList.contains('is-closing')) return;
     dialog.classList.add('is-closing');
-    closeTimer = setTimeout(() => dialog.close(), matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 220);
+    animateWheel(true);
+    closeTimer = setTimeout(() => dialog.close(), matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 350);
   };
   let timer = null;
   let origin = null;
@@ -38,6 +48,7 @@ function initSidebarPartitions() {
     dialog.style.top = `${Math.max(8, Math.min(innerHeight - 292, rect.top))}px`;
     dialog.showModal();
     dialog.classList.remove('is-closing');
+    animateWheel();
     brand.setAttribute('aria-expanded', 'true');
   };
   brand.addEventListener('pointerdown', event => {
@@ -69,6 +80,8 @@ function initSidebarPartitions() {
   dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
   dialog.addEventListener('close', () => {
     clearTimeout(closeTimer);
+    animations.forEach(animation => animation.cancel());
+    animations = [];
     dialog.classList.remove('is-closing');
     brand.setAttribute('aria-expanded', 'false');
     brand.focus({ preventScroll: true });

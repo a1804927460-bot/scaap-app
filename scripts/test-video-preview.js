@@ -15,6 +15,9 @@ const mediaMetaSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 
 const mainSource = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
 const gatewayServerSource = fs.readFileSync(path.join(__dirname, '..', 'gateway', 'src', 'server.js'), 'utf8');
 const localFileResponseSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'local-file-response.js'), 'utf8');
+assert.match(mainSource,
+  /if \(preview\.needsVideoTranscode\(`\.\$\{extension\}`\)\) \{\s*await preview\.transcodeVideoToWebCompatible\(storedPath, previewCacheDir, id\);/,
+  'Generated native video containers must not wait for an unconditional full transcode.');
 
 assert.match(
   boardSource,

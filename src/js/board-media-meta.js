@@ -1639,7 +1639,8 @@ function keepBoardButlerExpandEditorInViewport(editor) {
 }
 
 function openBoardButlerExpandPanel(anchor, file, item) {
-  const { body } = createBoardButlerConfigPanel(anchor, BOARD_BUTLER_ICONS.imageLayer, t('Resize image', '修改尺寸'), '');
+  const { panel, body } = createBoardButlerConfigPanel(anchor, BOARD_BUTLER_ICONS.imageLayer, t('Resize image', '修改尺寸'), '');
+  panel.classList.add('board-smart-resize-panel');
   const form = document.createElement('form');
   form.className = 'board-butler-config-form';
   for (const [name, label, initial] of [
@@ -1669,6 +1670,107 @@ function openBoardButlerExpandPanel(anchor, file, item) {
     if (launchBoardButlerImageTool('imageExpand', file, item, options)) closeBoardButlerPanel();
   });
   body.appendChild(form);
+  installBoardSmartResizeEditor(panel, form, file);
+}
+
+function installBoardSmartResizeEditor(panel, form, file) {
+  const widthInput = form.querySelector('[name="width"]');
+  const heightInput = form.querySelector('[name="height"]');
+  const initial = { width: Number(widthInput.value), height: Number(heightInput.value) };
+  const controls = document.createElement('div');
+  controls.className = 'board-smart-resize-ratios';
+  controls.setAttribute('role', 'group');
+  controls.setAttribute('aria-label', t('Aspect ratio', '尺寸比例'));
+  const stage = document.createElement('div');
+  stage.className = 'board-smart-resize-stage';
+  const frame = document.createElement('div');
+  frame.className = 'board-smart-resize-frame';
+  const image = document.createElement('img');
+  image.alt = file.name || '';
+  image.draggable = false;
+  image.src = String(file.thumbUrl || file.previewUrl || (typeof resolveImageDisplaySource === 'function' ? resolveImageDisplaySource(file, false) : '') || '');
+  image.addEventListener('error', () => { image.hidden = true; });
+  frame.appendChild(image);
+  const dimensions = document.createElement('output');
+  dimensions.className = 'board-smart-resize-dimensions';
+  stage.append(frame, dimensions);
+  form.prepend(controls, stage);
+  let ratio = 0;
+  let scale = 1;
+  let drag = null;
+  const buttons = [];
+  const paint = () => {
+    const width = Number(widthInput.value) || initial.width;
+    const height = Number(heightInput.value) || initial.height;
+    if (!drag) scale = Math.min((stage.clientWidth - 36) / Math.max(initial.width * 1.2, width), (stage.clientHeight - 48) / Math.max(initial.height * 1.2, height));
+    scale = Math.max(0.001, scale);
+    frame.style.width = `${width * scale}px`;
+    frame.style.height = `${height * scale}px`;
+    dimensions.textContent = `${Math.round(width)} × ${Math.round(height)} px`;
+    buttons.forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.ratio) === ratio)));
+  };
+  const setSize = (width, height, axis = 'width') => {
+    if (ratio) {
+      if (axis === 'height') width = height * ratio;
+      else height = width / ratio;
+      const factor = Math.min(1, 4096 / Math.max(width, height));
+      width *= factor; height *= factor;
+      const minimum = Math.max(1, 64 / Math.min(width, height));
+      width *= minimum; height *= minimum;
+    }
+    widthInput.value = String(Math.max(64, Math.min(4096, Math.round(width))));
+    heightInput.value = String(Math.max(64, Math.min(4096, Math.round(height))));
+    form.dispatchEvent(new Event('input', { bubbles: true }));
+    paint();
+  };
+  const sourceRatio = Math.max(1 / 64, Math.min(64, (Number(file.sourceWidth) || initial.width) / (Number(file.sourceHeight) || initial.height)));
+  for (const [label, value] of [[t('Free', '自由'), 0], [t('Original', '原比例'), sourceRatio], ['1:1', 1], ['4:3', 4/3], ['3:4', 3/4], ['16:9', 16/9], ['9:16', 9/16]]) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.textContent = label; button.dataset.ratio = value;
+    button.addEventListener('click', () => { ratio = value; setSize(Number(widthInput.value), Number(heightInput.value)); });
+    buttons.push(button); controls.appendChild(button);
+  }
+  for (const [name, x, y] of [['nw', -1, -1], ['ne', 1, -1], ['sw', -1, 1], ['se', 1, 1]]) {
+    const handle = document.createElement('button');
+    handle.type = 'button'; handle.className = `board-smart-resize-handle is-${name}`;
+    handle.setAttribute('aria-label', t(`Resize ${name}`, `调整尺寸 ${name}`));
+    handle.title = t('Resize', '调整尺寸');
+    handle.addEventListener('pointerdown', event => {
+      if (event.button !== 0) return;
+      event.preventDefault(); event.stopPropagation();
+      drag = { id:event.pointerId, x:event.clientX, y:event.clientY, width:Number(widthInput.value), height:Number(heightInput.value), scale };
+      handle.setPointerCapture(event.pointerId);
+    });
+    handle.addEventListener('pointermove', event => {
+      if (!drag || drag.id !== event.pointerId) return;
+      const dx = (event.clientX - drag.x) * x * 2 / drag.scale;
+      const dy = (event.clientY - drag.y) * y * 2 / drag.scale;
+      setSize(Math.max(64, drag.width + dx), Math.max(64, drag.height + dy), Math.abs(dy) > Math.abs(dx) ? 'height' : 'width');
+    });
+    const stop = () => { drag = null; paint(); };
+    handle.addEventListener('pointerup', stop);
+    handle.addEventListener('pointercancel', stop);
+    handle.addEventListener('lostpointercapture', stop);
+    handle.addEventListener('keydown', event => {
+      if (!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) return;
+      event.preventDefault(); event.stopPropagation();
+      const step = event.shiftKey ? 100 : 10;
+      const vertical = ['ArrowUp','ArrowDown'].includes(event.key);
+      const delta = ['ArrowLeft','ArrowUp'].includes(event.key) ? -step : step;
+      setSize(Number(widthInput.value) + (vertical ? 0 : delta), Number(heightInput.value) + (vertical ? delta : 0), vertical ? 'height' : 'width');
+    });
+    frame.appendChild(handle);
+  }
+  for (const [input, axis] of [[widthInput, 'width'], [heightInput, 'height']]) {
+    input.addEventListener('input', () => {
+      if (input.validity.valid && input.value) setSize(Number(widthInput.value), Number(heightInput.value), axis);
+    });
+  }
+  const observer = new ResizeObserver(paint);
+  observer.observe(stage);
+  const cleanup = panel._cleanup;
+  panel._cleanup = () => { observer.disconnect(); drag = null; if (cleanup) cleanup(); };
+  paint();
 }
 
 function openBoardButlerRetiredExpandEditor(anchor, file, item) {

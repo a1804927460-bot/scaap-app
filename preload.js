@@ -191,6 +191,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
     return () => ipcRenderer.removeListener('activation:updated', listener);
   },
   getProfileAvatar: () => ipcRenderer.invoke('profile:getAvatar'),
+  getProfileMood: () => ipcRenderer.invoke('profile:getMood'),
   previewProfileAvatar: () => ipcRenderer.invoke('profile:previewAvatar'),
   saveProfileDraft: (draft) => ipcRenderer.invoke('profile:saveDraft', draft),
   chooseProfileAvatar: () => ipcRenderer.invoke('profile:chooseAvatar'),
@@ -295,6 +296,11 @@ contextBridge.exposeInMainWorld('messsAPI', {
   confirmAiMediaDelivery: (deliveryToken) => ipcRenderer.invoke('ai:confirmMediaDelivery', deliveryToken),
   releaseAiMediaDelivery: (deliveryToken) => ipcRenderer.invoke('ai:releaseMediaDelivery', deliveryToken),
   chatWithAi: (request) => ipcRenderer.invoke('ai:chat', request),
+  onAiWorkProgress: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('ai:workProgress', listener);
+    return () => ipcRenderer.removeListener('ai:workProgress', listener);
+  },
   saveGeneratedAiFile: (token) => ipcRenderer.invoke('ai:saveGeneratedFile', token),
   exportAiChat: (session) => ipcRenderer.invoke('ai:exportChat', session),
   getCanvasAgentHistory: () => ipcRenderer.invoke('canvas-agent:getHistory'),

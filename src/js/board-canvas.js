@@ -28,7 +28,8 @@ const BOARD_IMAGE_CROSSFADE_MS = 0;
 const BOARD_VIEW_STORAGE_KEY = 'messs.board.viewport.v2';
 const BOARD_LEAFER_MIN_DPR = 1;
 const BOARD_LEAFER_MAX_DPR = 2;
-const BOARD_LEAFER_FULL_IMAGE_MIN_SCREEN_EDGE = 420;
+const BOARD_LEAFER_FULL_IMAGE_MIN_SCREEN_EDGE = 220;
+const BOARD_LEAFER_FULL_IMAGE_EXIT_SCREEN_EDGE = 140;
 const BOARD_LEAFER_FULL_ITEM_LIMIT = 8;
 const BOARD_WHEEL_MAX_DELTA = 96;
 const BOARD_WHEEL_PAN_GAIN = 0.64;
@@ -959,7 +960,6 @@ function prewarmMountedFullImages(zoom) {
         // A decoded original is ready to paint. Keeping the 400 px thumbnail
         // until wheel settle makes a 4K image visibly soft during zoom.
         transitionBoardImageQuality(element, 'full');
-        Board.leaferFullItemIds.add(entry.id);
         scheduleBoardLeaferSync();
       });
     });
@@ -1227,19 +1227,35 @@ function updateLeaferFullImageWindow() {
     const bounds = boardItemBounds(item);
     const screenEdge = Math.max(bounds.w, bounds.h) * Math.max(0.001, Board.zoom) *
       Math.min(2, Number(window.devicePixelRatio) || 1);
-    if (sourceEdge <= BOARD_THUMBNAIL_MAX_EDGE || screenEdge < BOARD_LEAFER_FULL_IMAGE_MIN_SCREEN_EDGE) continue;
-    candidates.push({ id: item.id, screenEdge });
+    const retained = Board.leaferFullItemIds.has(item.id) && Board.leaferSourceByItem.get(String(item.id)) === fullSource;
+    const threshold = retained ? BOARD_LEAFER_FULL_IMAGE_EXIT_SCREEN_EDGE : BOARD_LEAFER_FULL_IMAGE_MIN_SCREEN_EDGE;
+    if ((sourceEdge > 0 && sourceEdge <= BOARD_THUMBNAIL_MAX_EDGE) || screenEdge < threshold) continue;
+    candidates.push({ id: item.id, screenEdge, source: fullSource, retained,
+      pixels: Math.max(1, Number(file.sourceWidth) || 4096) * Math.max(1, Number(file.sourceHeight) || 4096) });
   }
   candidates.sort((left, right) => right.screenEdge - left.screenEdge);
-  Board.leaferFullItemIds = new Set(candidates
-    .filter((entry) => {
-      const item = Board.itemsById.get(entry.id);
-      const file = item && Board.filesById.get(item.fileId);
-      const source = String(resolveImageDisplaySource(file, true) || '').trim();
-      return Boolean(cachedBoardFullImage(source));
-    })
-    .slice(0, BOARD_LEAFER_FULL_ITEM_LIMIT)
-    .map((entry) => entry.id));
+  const next = new Set();
+  let pixels = 0;
+  for (const entry of candidates) {
+    if (next.size >= BOARD_LEAFER_FULL_ITEM_LIMIT) break;
+    if (pixels + entry.pixels > BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET) continue;
+    if (entry.retained || cachedBoardFullImage(entry.source)) {
+      next.add(entry.id);
+      pixels += entry.pixels;
+      continue;
+    }
+    // Prewarm directly from the scene, independent of DOM virtualization.
+    // One completion triggers a new bounded pass; never decode the whole board.
+    if (Board.fullImagePending.size === 0 && !Board.failedFullImageSources.has(entry.source)) {
+      const lifecycle = Board.lifecycleToken;
+      void preloadBoardFullImage(entry.source).then(decoded => {
+        if (!decoded || Board.disposed || lifecycle !== Board.lifecycleToken) return;
+        Board.leaferContentRevision += 1;
+        scheduleBoardLeaferSync();
+      });
+    }
+  }
+  Board.leaferFullItemIds = next;
 }
 
 function scheduleBoardInteractionPrefetch(view) {
@@ -1504,6 +1520,7 @@ async function addFileToBoard(fileId, x, y, options = {}) {
 async function addFilesToBoard(fileIds, x, y, options = {}) {
   const ids = [...new Set(fileIds.filter(Boolean))];
   if (!ids.length) return;
+  const placementFiles = new Map(AppState.files.map(file => [file.id, file]));
   const targetPartition = boardPartitionById(options.partitionId) || boardPartitionAtPoint({ x, y });
   const columns = Math.max(1, Math.ceil(Math.sqrt(ids.length)));
   const changed = [];
@@ -1521,7 +1538,7 @@ async function addFilesToBoard(fileIds, x, y, options = {}) {
     const itemX = Math.round(x - 110 + column * 244);
     const itemY = Math.round(y - 110 + row * 244);
     const exists = options.duplicateExisting ? null : existingByFileId.get(fileId);
-    const file = Board.filesById.get(fileId) || AppState.files.find((entry) => entry.id === fileId);
+    const file = placementFiles.get(fileId);
     const sourceWidth = Number(file && file.sourceWidth);
     const sourceHeight = Number(file && file.sourceHeight);
     const hasMediaDimensions = !!file && (isImageExt(file.ext) || isVideoExt(file.ext)) &&
@@ -1582,7 +1599,7 @@ async function addFilesToBoard(fileIds, x, y, options = {}) {
     // already received the generated file, so persistence must not block the
     // first visible frame on the canvas.
     renderBoard();
-    if (typeof renderCanvasLibrary === 'function') renderCanvasLibrary();
+    if (typeof renderCanvasLibrary === 'function' && document.getElementById('canvas-library-view')?.getClientRects().length) renderCanvasLibrary();
     await window.messsAPI.upsertBoardItems(changed);
   } else {
     renderBoard();
@@ -1630,6 +1647,9 @@ function createBoardVideoDurationBadge(file) {
 }
 
 function syncBoardMediaIntrinsicRatio(content, file, item, media) {
+  // A thumbnail's intrinsic pixels are not the source image's dimensions.
+  if (media && media.dataset && media.dataset.quality === 'thumb' &&
+      (!(Number(file.sourceWidth) > 0) || !(Number(file.sourceHeight) > 0))) return;
   const sourceWidth = Number(file.sourceWidth) || Number(media && (media.naturalWidth || media.videoWidth));
   const sourceHeight = Number(file.sourceHeight) || Number(media && (media.naturalHeight || media.videoHeight));
   if (!(sourceWidth > 0 && sourceHeight > 0)) return;
@@ -1733,7 +1753,17 @@ function renderBoardItemContent(content, f, item) {
     const mark = document.createElement('span');
     mark.className = 'board-model-thumbnail-mark';
     mark.innerHTML = '<svg viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" stroke-width="1.45"><path d="m12 2 8 4.5v9L12 20l-8-4.5v-9L12 2Z"></path><path d="m4 6.5 8 4.5 8-4.5M12 11v9"></path></svg><strong>3D</strong>';
+    mark.title = t('3D model', '3D 模型');
+    const caption = document.createElement('div');
+    caption.className = 'board-model-caption';
+    const name = document.createElement('span');
+    name.textContent = f.name || t('3D model', '3D 模型');
+    name.title = name.textContent;
+    const format = document.createElement('b');
+    format.textContent = String(f.ext || '').replace(/^\./, '').toUpperCase() || '3D';
+    caption.append(name, format);
     preview.appendChild(mark);
+    preview.appendChild(caption);
     content.appendChild(preview);
     return;
   }
@@ -1775,6 +1805,12 @@ function renderBoardItemContent(content, f, item) {
       playerRequest += 1;
       const player = content.querySelector('.mini-video-player');
       if (player && typeof player._boardCleanup === 'function') player._boardCleanup();
+      const badge = preview.querySelector('.board-video-duration');
+      const duration = boardVideoDurationSeconds(f);
+      if (badge && duration > 0) {
+        badge.textContent = formatBoardVideoDuration(duration);
+        badge.hidden = false;
+      }
       if (content.firstElementChild !== preview) content.replaceChildren(preview);
       playerPromise = null;
     };
@@ -2061,6 +2097,7 @@ function fitBoardItemsIntoPartitions(items) {
 
 function constrainedBoardMoveDeltas(startPositions, dx, dy) {
   const result = new Map();
+  let minDx = -Infinity, maxDx = Infinity, minDy = -Infinity, maxDy = Infinity;
   const movingPartitionIds = new Set(startPositions
     .filter(({ item }) => item && item.isPartition)
     .map(({ item }) => item.id));
@@ -2068,7 +2105,6 @@ function constrainedBoardMoveDeltas(startPositions, dx, dy) {
   startPositions.forEach((entry) => {
     const partitionId = entry.item && entry.item.partitionId;
     if (!partitionId || movingPartitionIds.has(partitionId)) {
-      result.set(entry.item.id, { dx, dy });
       return;
     }
     if (!groups.has(partitionId)) groups.set(partitionId, []);
@@ -2083,13 +2119,17 @@ function constrainedBoardMoveDeltas(startPositions, dx, dy) {
     });
     const bounds = boardSelectionBounds(syntheticItems);
     if (!inner || !bounds) {
-      entries.forEach(({ item }) => result.set(item.id, { dx, dy }));
       return;
     }
-    const safeDx = Math.max(inner.x - bounds.x, Math.min(dx, inner.x + inner.w - bounds.x - bounds.w));
-    const safeDy = Math.max(inner.y - bounds.y, Math.min(dy, inner.y + inner.h - bounds.y - bounds.h));
-    entries.forEach(({ item }) => result.set(item.id, { dx: safeDx, dy: safeDy }));
+    minDx = Math.max(minDx, inner.x - bounds.x);
+    maxDx = Math.min(maxDx, inner.x + inner.w - bounds.x - bounds.w);
+    minDy = Math.max(minDy, inner.y - bounds.y);
+    maxDy = Math.min(maxDy, inner.y + inner.h - bounds.y - bounds.h);
   });
+  // A multi-selection is one rigid move, including members in different partitions.
+  const sharedDx = minDx <= maxDx ? Math.max(minDx, Math.min(dx, maxDx)) : 0;
+  const sharedDy = minDy <= maxDy ? Math.max(minDy, Math.min(dy, maxDy)) : 0;
+  startPositions.forEach(({ item }) => result.set(item.id, { dx: sharedDx, dy: sharedDy }));
   return result;
 }
 
@@ -2259,6 +2299,7 @@ function clearMountedBoardItems() {
 
 function disposeBoardCanvas() {
   if (Board.disposed) return;
+  if (Board.disposeFileDrop) Board.disposeFileDrop();
   Board.disposed = true;
   Board.lifecycleToken += 1;
   clearTimeout(Board.transformSettleTimer);
@@ -2589,7 +2630,7 @@ function syncBoardLeaferScene(force = false) {
     BoardEngine.hashSet(Board.selectedIds),
     BoardEngine.hashSet(Board.leaferFullItemIds)
   ].join(':');
-  const synced = layer.sync({ ...options, cacheKey });
+  const synced = layer.sync({ ...options, cacheKey: force ? '' : cacheKey });
   if (!synced) return false;
   layer.setTransform({ panX: Board.panX, panY: Board.panY, zoom: Board.zoom });
   layer.setVisible(true);
@@ -3214,6 +3255,8 @@ function queueBoardMounts(ids, visibleRect, prioritize = false) {
     visibleRect,
     BOARD_DOM_ITEM_LIMIT
   );
+  ordered.sort((left, right) => Number(Board.selectedIds.has(right)) - Number(Board.selectedIds.has(left)));
+  prioritize = prioritize || ordered.some(id => Board.selectedIds.has(id));
   if (prioritize && ordered.length) {
     const pending = [...Board.mountQueue];
     Board.mountQueue.clear();
@@ -3225,6 +3268,19 @@ function queueBoardMounts(ids, visibleRect, prioritize = false) {
   if (Board.mountQueue.size && !Board.mountFrame) {
     Board.mountFrame = requestAnimationFrame(processBoardMountQueue);
   }
+}
+
+function prioritizeSelectedBoardMounts(mountIds, visibleRect) {
+  const selected = [...Board.selectedIds].filter(id => {
+    const bounds = Board.spatialIndex.getBounds(id);
+    return bounds && BoardEngine.intersects(bounds, visibleRect) && isMountableBoardItem(id);
+  }).slice(0, BOARD_DOM_ITEM_LIMIT);
+  const priority = new Set(selected);
+  for (const id of mountIds) {
+    if (priority.size >= BOARD_DOM_ITEM_LIMIT) break;
+    priority.add(id);
+  }
+  return priority;
 }
 
 function reconcileBoardViewport(force = false) {
@@ -3252,7 +3308,9 @@ function reconcileBoardViewport(force = false) {
     force = true;
   }
 
-  const mountIds = Board.spatialIndex.queryLimited(regions.mount, BOARD_DOM_ITEM_LIMIT);
+  const mountIds = prioritizeSelectedBoardMounts(
+    Board.spatialIndex.queryLimited(regions.mount, BOARD_DOM_ITEM_LIMIT), regions.visible
+  );
   const visibleIds = Board.spatialIndex.query(regions.visible);
   Board.visibleIds = visibleIds;
   updateLeaferFullImageWindow();
@@ -3480,6 +3538,7 @@ function syncBoardSelectionClasses(selectedIdsOverride = null, options = {}) {
     syncCanvasAgentReferencesToSelection();
   }
   if (!options.deferQuality) scheduleMountedImageQuality(0);
+  if (BoardEngine.hashSet(selectedIds) !== previousSelectionHash && !options.deferGroup) scheduleBoardReconcile();
 }
 
 function appendBoardEditHint(element, kind = 'image') {
@@ -3543,6 +3602,8 @@ function stopOtherBoardVideos(currentVideo) {
 
 function makeBoardItemDraggable(el, item) {
   el.addEventListener('mousedown', (e) => {
+    item = AppState.boardItems.find(entry => entry.id === el.dataset.boardId);
+    if (!item) return;
     // Middle-button and Alt+left gestures always belong to canvas panning,
     // even when they begin over an image or video.
     if (e.button !== 0 || e.altKey) return;
@@ -3562,22 +3623,13 @@ function makeBoardItemDraggable(el, item) {
     const startClientY = e.clientY;
     let moved = false;
 
-    // Dragging a grouped item moves every item sharing its groupId together
-    // �?that's the whole point of grouping. Each item's own starting
-    // position is recorded so the relative layout within the group is
-    // preserved while dragging, not just the one item the cursor grabbed.
-    // Absent an explicit group, a multi-selection (e.g. after Ctrl+A or a
-    // box-select) behaves the same way: dragging any one selected item
-    // drags the whole selection together, rather than peeling just that
-    // one item away from the rest.
+    // Move the current selection or partition members as one rigid selection.
     const selectedMates = AppState.boardItems.filter((b) => b.selected);
     const partitionMates = item.isPartition ? boardPartitionMembers(item) : [];
     const groupMates = item.isPartition
       ? [item, ...partitionMates]
       : (item.selected && selectedMates.length > 1)
       ? selectedMates
-      : item.groupId
-      ? AppState.boardItems.filter((b) => b.groupId === item.groupId)
       : [item];
     const groupStartPositions = groupMates.map((b) => ({ item: b, startLeft: b.x, startTop: b.y }));
     const selectionGroup = groupMates.length > 1 && !item.isPartition
@@ -4281,33 +4333,47 @@ function initBoardCanvas() {
   window.addEventListener('pagehide', disposeBoardCanvas, { once: true });
 
   const dropIndicator = document.getElementById('board-file-drop-indicator');
-  let boardDragDepth = 0;
+  let dropFrame = 0;
+  let dropPoint = null;
+  const dropController = new AbortController();
   function clearBoardFileDrop() {
-    boardDragDepth = 0;
+    if (dropFrame) cancelAnimationFrame(dropFrame);
+    dropFrame = 0;
+    dropPoint = null;
     viewport.classList.remove('is-file-drag-over');
     if (dropIndicator) dropIndicator.hidden = true;
   }
   function updateBoardFileDrop(event) {
+    if (!event.dataTransfer) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'copy';
-    viewport.classList.add('is-file-drag-over');
-    if (!dropIndicator) return;
-    const rect = viewport.getBoundingClientRect();
-    dropIndicator.style.left = `${event.clientX - rect.left}px`;
-    dropIndicator.style.top = `${event.clientY - rect.top}px`;
-    dropIndicator.hidden = false;
+    dropPoint = { x: event.clientX, y: event.clientY };
+    if (dropFrame) return;
+    dropFrame = requestAnimationFrame(() => {
+      dropFrame = 0;
+      if (!dropPoint) return;
+      const rect = viewport.getBoundingClientRect();
+      viewport.classList.add('is-file-drag-over');
+      if (!dropIndicator) return;
+      dropIndicator.style.left = `${dropPoint.x - rect.left}px`;
+      dropIndicator.style.top = `${dropPoint.y - rect.top}px`;
+      dropIndicator.hidden = false;
+    });
   }
 
   viewport.addEventListener('dragenter', (event) => {
-    boardDragDepth += 1;
     updateBoardFileDrop(event);
   });
   viewport.addEventListener('dragover', updateBoardFileDrop);
   viewport.addEventListener('dragleave', (event) => {
     if (event.relatedTarget && viewport.contains(event.relatedTarget)) return;
-    boardDragDepth = Math.max(0, boardDragDepth - 1);
-    if (!boardDragDepth) clearBoardFileDrop();
+    clearBoardFileDrop();
   });
+  document.addEventListener('dragend', clearBoardFileDrop, {capture:true, signal:dropController.signal});
+  document.addEventListener('drop', clearBoardFileDrop, {capture:true, signal:dropController.signal});
+  window.addEventListener('blur', clearBoardFileDrop, {signal:dropController.signal});
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') clearBoardFileDrop(); }, {signal:dropController.signal});
+  Board.disposeFileDrop = () => { clearBoardFileDrop(); dropController.abort(); };
 
   viewport.addEventListener('contextmenu', (e) => {
     if (isBoardUiEventTarget(e.target)) return;
@@ -4324,6 +4390,7 @@ function initBoardCanvas() {
 
   viewport.addEventListener('drop', async (e) => {
     e.preventDefault();
+    e.stopPropagation();
     clearBoardFileDrop();
     const internalId = e.dataTransfer.getData('application/x-messs-file-id');
     let internalIds = [];
@@ -4635,6 +4702,14 @@ function buildMiniVideoPlayer(result, f) {
     activePlayPromise = settledPlay;
   }
   wrap._boardPlayPreview = () => {
+    if (cleanedUp) return;
+    if (!video.getAttribute('src')) wrap._boardResume();
+    // preload=none can remain NETWORK_IDLE forever while we wait for loadeddata.
+    // Only the hovered player may start buffering; all other cards stay posters.
+    if (video.preload === 'none') {
+      video.preload = 'auto';
+      video.load();
+    }
     if (!wantsPreview) {
       wantsPreview = true;
       playRequest += 1;
@@ -4685,6 +4760,7 @@ function buildMiniVideoPlayer(result, f) {
 
   video.addEventListener('loadedmetadata', () => {
     if (!Number.isFinite(video.duration) || video.duration <= 0) return;
+    f.sourceDuration = video.duration;
     durationBadge.textContent = formatBoardVideoDuration(video.duration);
     durationBadge.hidden = false;
   }, { signal: abortController.signal });
@@ -5072,6 +5148,7 @@ function closeAiImagePopover() {
   const pop = document.getElementById('ai-image-popover');
   if (pop) {
     if (typeof pop._disposeNodeAnchor === 'function') pop._disposeNodeAnchor();
+    if (typeof pop._disposeMoodboardLayout === 'function') pop._disposeMoodboardLayout();
     if (pop.classList.contains('ai-composer')) {
       pop.classList.add('is-closing');
       setTimeout(() => pop.remove(), 180);
@@ -6107,6 +6184,22 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
       24
     );
     missingFiles.forEach((file, index) => {
+      const targetCanvasId = request.canvasId || placeholders[0]?.canvasId || activeCanvasId();
+      const durableItem = persistedItems.find((entry) => entry && entry.fileId === file.id
+        && (entry.canvasId || targetCanvasId) === targetCanvasId);
+      const existingIndex = workingBoardItems.findIndex((entry) =>
+        durableItem ? entry.id === durableItem.id
+          : entry.fileId === file.id && entry.canvasId === targetCanvasId);
+      // Recovery may arrive without the original placeholder. Reuse the durable
+      // identity (and any locally moved geometry), never create another copy.
+      if (durableItem || existingIndex >= 0) {
+        const recovered = { ...durableItem, ...(existingIndex >= 0 ? workingBoardItems[existingIndex] : {}), fileId: file.id, canvasId: targetCanvasId };
+        delete recovered.isAiPlaceholder;
+        if (existingIndex >= 0) workingBoardItems[existingIndex] = recovered;
+        else workingBoardItems.push(recovered);
+        updates.push(recovered);
+        return;
+      }
       const sourceWidth = Number(file.sourceWidth || file.width || 0);
       const sourceHeight = Number(file.sourceHeight || file.height || 0);
       const sourceRatio = sourceWidth > 0 && sourceHeight > 0
@@ -6115,7 +6208,7 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
       const item = {
         id: 'b_' + Math.random().toString(36).slice(2, 10),
         fileId: file.id,
-        canvasId: request.canvasId || activeCanvasId(),
+        canvasId: targetCanvasId,
         x: fallbackPositions[index].x,
         y: fallbackPositions[index].y,
         width: fallbackSize.width,
@@ -6135,6 +6228,16 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
   // The main process has already written generated files and their board
   // records before returning them. Renderer-side reconciliation must never
   // discard that durable result merely because a second IPC write is slow.
+  AppState.allBoardItems = workingBoardItems.filter((item) =>
+    !placeholderIds.has(item.id) || replacedIds.has(item.id)
+  );
+  AppState.boardItems = AppState.allBoardItems.filter((item) => (item.canvasId || 'canvas-1') === activeCanvasId());
+  const resultPartitionId = request.partitionId || placeholders.find((placeholder) => placeholder.partitionId)?.partitionId || null;
+  if ((request.canvasId || placeholders[0]?.canvasId || activeCanvasId()) === activeCanvasId()) {
+    setActiveBoardPartition(resultPartitionId);
+  }
+  renderBoard();
+  if (typeof renderCanvasLibrary === 'function') renderCanvasLibrary();
   try {
     if (typeof window.messsAPI.upsertBoardItems === 'function') {
       await window.messsAPI.upsertBoardItems(updates);
@@ -6144,14 +6247,6 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
   } catch (error) {
     console.warn('AI result is durable; board reconciliation will resume from local storage:', error && error.message || error);
   }
-  AppState.allBoardItems = workingBoardItems.filter((item) =>
-    !placeholderIds.has(item.id) || replacedIds.has(item.id)
-  );
-  AppState.boardItems = AppState.allBoardItems.filter((item) => (item.canvasId || 'canvas-1') === activeCanvasId());
-  const resultPartitionId = request.partitionId || placeholders.find((placeholder) => placeholder.partitionId)?.partitionId || null;
-  setActiveBoardPartition(resultPartitionId);
-  renderBoard();
-  if (typeof renderCanvasLibrary === 'function') renderCanvasLibrary();
   canvasWorkspaceTouch(request.canvasId || activeCanvasId());
   try {
     await canvasWorkspaceSave();
@@ -6326,10 +6421,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
         </div>
       </section>
       <div class="ai-options-panel" hidden>
-        <div class="ai-options-heading"><strong>画面比例</strong><span class="ai-ratio-value"></span></div>
+        <div class="ai-options-heading"><strong data-generation-heading="ratio">画面比例</strong><span class="ai-ratio-value"></span></div>
         <div class="ai-ratio-grid"></div>
         <div class="ai-option-block ai-resolution-block">
-          <div class="ai-options-heading"><strong>分辨率</strong><span class="ai-resolution-hint">≈ 1024 px</span></div>
+          <div class="ai-options-heading"><strong data-generation-heading="resolution">分辨率</strong><span class="ai-resolution-hint">≈ 1024 px</span></div>
           <div class="ai-segmented" data-option="size">
             <button type="button" data-value="1K">1K</button>
             <button type="button" data-value="2K">2K</button>
@@ -6337,7 +6432,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
           </div>
         </div>
         <div class="ai-option-block ai-quality-block" hidden>
-          <div class="ai-options-heading"><strong>${t('Quality', '精细度')}</strong></div>
+          <div class="ai-options-heading"><strong data-generation-heading="quality">${t('Quality', '精细度')}</strong></div>
           <div class="ai-segmented" data-option="quality">
             <button type="button" data-value="low">${t('Low', '低')}</button>
             <button type="button" data-value="medium">${t('Medium', '中')}</button>
@@ -6345,7 +6440,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
           </div>
         </div>
         <div class="ai-option-block ai-count-block">
-          <div class="ai-options-heading"><strong>数量</strong><span class="ai-count-value">× 1</span></div>
+          <div class="ai-options-heading"><strong data-generation-heading="count">数量</strong><span class="ai-count-value">× 1</span></div>
           <div class="ai-segmented" data-option="count">
             <button type="button" data-value="1">1</button>
             <button type="button" data-value="2">2</button>
@@ -6373,7 +6468,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
           </label>
         </div>
         <div class="ai-option-block ai-duration-block" hidden>
-          <div class="ai-options-heading"><strong>时长</strong><span class="ai-duration-value">6 秒</span></div>
+          <div class="ai-options-heading"><strong data-generation-heading="duration">时长</strong><span class="ai-duration-value">6 秒</span></div>
           <input class="ai-duration-range" type="range" min="6" max="15" value="6" step="1">
         </div>
       </div>
@@ -6978,7 +7073,6 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const mode = pop.querySelector('.ai-composer-mode');
     const imageButton = pop.querySelector('[data-ai-kind="image"]');
     const videoButton = pop.querySelector('[data-ai-kind="video"]');
-    const headings = pop.querySelectorAll('.ai-options-heading strong');
     const px = resolutionDisplayHint(size);
     const autoLabel = t('Auto', '自动');
 
@@ -7018,10 +7112,16 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       '采用开源 CameraCtrl 运镜体系'
     );
 
-    if (headings[0]) headings[0].textContent = t('Aspect ratio', '画面比例');
-    if (headings[1]) headings[1].textContent = t('Resolution', '分辨率');
-    if (headings[2]) headings[2].textContent = t('Count', '数量');
-    if (headings[3]) headings[3].textContent = t('Duration', '时长');
+    const headingLabels = {
+      ratio: t('Aspect ratio', '画面比例'),
+      resolution: t('Resolution', '分辨率'),
+      quality: t('Quality', '精细度'),
+      count: t('Count', '数量'),
+      duration: t('Duration', '时长')
+    };
+    pop.querySelectorAll('[data-generation-heading]').forEach((heading) => {
+      heading.textContent = headingLabels[heading.dataset.generationHeading];
+    });
     pop.querySelector('.ai-ratio-value').textContent = ratio === 'adaptive'
       ? adaptiveRatioDisplayLabel()
       : ratio === 'auto' ? autoLabel : ratio;
@@ -8260,6 +8360,11 @@ function sourceImageGenerationOptionsForFile(file) {
 
 async function openAiComposerForSelection(kind, promptText = '', options = {}) {
   let pop = activeAiComposer();
+  if (pop && pop.classList.contains('is-moodboard-composer') && !options.moodboardAnchor) {
+    closeAiImagePopover();
+    pop.remove();
+    pop = null;
+  }
   if (!pop) {
     await showAiImagePopover(kind);
     pop = activeAiComposer();
@@ -8292,7 +8397,52 @@ async function openAiComposerForSelection(kind, promptText = '', options = {}) {
 
   const prompt = pop.querySelector('.ai-composer-prompt');
   if (promptText) prompt.value = promptText;
+  if (options.moodboardAnchor) layoutMoodboardComposer(pop, options.moodboardAnchor);
   prompt.focus();
+}
+
+function layoutMoodboardComposer(pop, anchor) {
+  pop._moodboardAnchor = anchor;
+  if (!pop._disposeMoodboardLayout) {
+    const reposition = () => { if (pop.isConnected) layoutMoodboardComposer(pop, pop._moodboardAnchor); };
+    const stopWheel = event => event.stopPropagation();
+    window.addEventListener('resize', reposition);
+    pop.addEventListener('wheel', stopWheel, { passive: true });
+    pop._disposeMoodboardLayout = () => {
+      window.removeEventListener('resize', reposition);
+      pop.removeEventListener('wheel', stopWheel);
+    };
+  }
+  pop.classList.add('is-moodboard-composer');
+  pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-label', t('Moodboard generation', '情绪板生成'));
+  const form = pop.querySelector('.ai-composer-form');
+  const mode = pop.querySelector('.ai-composer-mode-row');
+  const model = pop.querySelector('.ai-model-picker');
+  const videoMode = pop.querySelector('.ai-video-mode-picker');
+  mode.after(model);
+  model.after(videoMode);
+  const footer = pop.querySelector('.ai-composer-footer');
+  form.insertBefore(pop.querySelector('.ai-options-panel'), footer);
+  if (!pop.querySelector('.moodboard-submit-label')) {
+    const label = document.createElement('span');
+    label.className = 'moodboard-submit-label';
+    label.textContent = t('Generate', '生成');
+    pop.querySelector('.ai-composer-submit').append(label);
+  }
+  const bounds = pop.offsetParent?.getBoundingClientRect() || { left: 0, top: 0, width: innerWidth, height: innerHeight };
+  const width = Math.min(360, bounds.width - 24);
+  const preferredLeft = anchor.right + 12;
+  const left = preferredLeft + width <= Math.min(innerWidth, bounds.left + bounds.width) - 12
+    ? preferredLeft : anchor.left - width - 12;
+  pop.style.width = `${width}px`;
+  pop.style.left = `${Math.max(12, Math.min(left - bounds.left, bounds.width - width - 12))}px`;
+  pop.style.right = 'auto';
+  pop.style.bottom = 'auto';
+  pop.style.maxHeight = `${Math.min(innerHeight, bounds.height) - 24}px`;
+  const top = Math.max(12, Math.min(anchor.top - bounds.top, bounds.height - pop.offsetHeight - 12));
+  pop.style.top = `${top}px`;
+  pop.style.maxHeight = `${Math.max(80, Math.min(innerHeight - bounds.top, bounds.height) - top - 12)}px`;
 }
 
 async function generatedReferenceData(fileIds) {
@@ -8685,7 +8835,7 @@ function textNoteUsesThemeColor(note) {
 
 function textNoteDisplayColor(note) {
   return textNoteUsesThemeColor(note)
-    ? '#f3f5f8'
+    ? (document.documentElement.dataset.theme === 'light' ? '#15171c' : '#f3f5f8')
     : (note.color || TEXT_NOTE_DEFAULT_COLOR);
 }
 
