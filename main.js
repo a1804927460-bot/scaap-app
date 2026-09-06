@@ -20,6 +20,7 @@ try {
 }
 
 const { Store } = require('./lib/store');
+const { quoteFalTool } = require('./lib/fal-pricing');
 const {
   normalizeColorProfile,
   chromiumColorProfile,
@@ -718,10 +719,10 @@ function butlerRetailCreditsFromPtc(ptc) {
 }
 
 const BUTLER_IMAGE_TOOL_CREDITS = Object.freeze({
-  'background-remove': butlerRetailCreditsFromPtc(0.50),
+  'background-remove': quoteFalTool('background-remove').credits,
   'seededit-v3': butlerRetailCreditsFromPtc(0.05),
   'kling-image-expand': butlerRetailCreditsFromPtc(0.50),
-  'clipdrop-uncrop': butlerRetailCreditsFromPtc(0.50),
+  'clipdrop-uncrop': quoteFalTool('clipdrop-uncrop').credits,
   cleanup: butlerRetailCreditsFromPtc(0.50),
   'clipdrop-upscale': butlerRetailCreditsFromPtc(0.50),
   'generative-upscale': butlerRetailCreditsFromPtc(0.80),
@@ -6638,6 +6639,14 @@ function supportsImageAspectRatio(value, capabilities = {}) {
   return ratio >= 1 / 16 && ratio <= 16;
 }
 
+function supportsImageResolutionRatio(size, ratio, capabilities = {}) {
+  const matrix = capabilities.resolutionRatios;
+  if (!matrix || typeof matrix !== 'object' || Array.isArray(matrix)) return true;
+  const values = matrix[String(size || '').trim().toUpperCase()];
+  if (!Array.isArray(values) || !values.length) return true;
+  return values.map((value) => String(value || '').trim()).includes(String(ratio || '').trim());
+}
+
 function normalizeAiMediaGenerationRequest(request, kind) {
   const normalized = { ...request };
   if (kind === 'image') {
@@ -6716,20 +6725,25 @@ function normalizeAiMediaGenerationRequest(request, kind) {
         .map((value) => String(value || '').trim())
         .filter(Boolean)
     );
-    if (supportedRatios.size && !supportedRatios.has(aspectRatio) && !supportsImageAspectRatio(aspectRatio, capabilities)) {
+    if (aspectRatio === 'auto' && !supportedRatios.has('auto')) normalized.aspectRatio = '1:1';
+    const effectiveAspectRatio = normalized.aspectRatio;
+    if (supportedRatios.size && !supportedRatios.has(effectiveAspectRatio) && !supportsImageAspectRatio(effectiveAspectRatio, capabilities)) {
       throw invalidAiMediaOption('invalid-aspect-ratio', 'The selected image model does not support this aspect ratio.');
     }
     const sizeRatios = capabilities.sizeRatios;
     const mappedRatio = sizeRatios && typeof sizeRatios === 'object' && !Array.isArray(sizeRatios)
       ? String(sizeRatios[size] || '').trim()
       : '';
-    if (mappedRatio && mappedRatio !== aspectRatio) {
+    if (mappedRatio && mappedRatio !== effectiveAspectRatio) {
       throw invalidAiMediaOption('invalid-size-ratio', 'The selected image resolution does not match the aspect ratio.');
+    }
+    if (!supportsImageResolutionRatio(size, effectiveAspectRatio, capabilities)) {
+      throw invalidAiMediaOption('invalid-size-ratio', 'The selected image resolution does not support this aspect ratio.');
     }
     normalized.imageProviderId = providerId;
     normalized.size = size;
     normalized.quality = quality;
-    normalized.aspectRatio = aspectRatio;
+    normalized.aspectRatio = effectiveAspectRatio;
     normalized.enhancePrompt = request.enhancePrompt !== false;
     const seed = Math.round(Number(request.seed));
     normalized.seed = Number.isInteger(seed) && seed >= 1 && seed <= 1_000_000 ? seed : null;
@@ -6958,7 +6972,7 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   return normalized;
 }
 
-async function chooseProfileAvatar() {
+async function chooseProfileAvatar({ previewOnly = false } = {}) {
   const session = supabaseAuth && supabaseAuth.getPublicSession();
   const accountUserId = authenticatedUserId(session);
   const avatarPath = profileAvatarPath(store.dir, session);
@@ -6974,6 +6988,12 @@ async function chooseProfileAvatar() {
     return { ok: false, reason: 'account-changed' };
   }
   const profileDir = path.dirname(avatarPath);
+  if (previewOnly) {
+    const image = await sharp(result.filePaths[0], { limitInputPixels: 40_000_000 })
+      .rotate().resize(256, 256, { fit: 'cover', position: 'attention' }).webp({ quality: 88 }).toBuffer();
+    if (authenticatedUserId(supabaseAuth.getPublicSession()) !== accountUserId) return { ok: false, reason: 'account-changed' };
+    return { ok: true, dataUrl: `data:image/webp;base64,${image.toString('base64')}` };
+  }
   const temporaryPath = path.join(profileDir, `avatar-${crypto.randomUUID()}.tmp.webp`);
   await fs.promises.mkdir(profileDir, { recursive: true });
   try {
@@ -7028,6 +7048,14 @@ function normalizeButlerImageOptions(modelId, requested = {}) {
     };
   }
   if (modelId === 'kling-image-expand' || modelId === 'clipdrop-uncrop') {
+    if (modelId === 'clipdrop-uncrop' && source.width !== undefined && source.height !== undefined) {
+      const width = Number(source.width);
+      const height = Number(source.height);
+      if (![width, height].every(value => Number.isInteger(value) && value >= 64 && value <= 4096)) {
+        throw Object.assign(new Error('宽度和高度须为 64 至 4096 的整数。'), { code: 'invalid-image-tool-options' });
+      }
+      return { width, height };
+    }
     const boundedPixels = (value) => Math.max(0, Math.min(2000, Math.round(finiteOr(value, 0))));
     const options = {
       up: boundedPixels(source.up),
@@ -7794,7 +7822,8 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('app:getInitialState', async () => {
-    pruneMissingFiles();
+    // Do not synchronously probe every file or delete records on launch.
+    // Removable/network storage can be temporarily unavailable at startup.
     // Disk probes and cloud refreshes are maintenance, not prerequisites for
     // clicking the canvas. Defer them until after the interactive first paint.
     setTimeout(() => {
@@ -8228,6 +8257,44 @@ function registerIpcHandlers() {
   ipcMain.handle('membership:quoteMedia', (_evt, request = {}) => quoteMediaCreditsForAccount(request));
 
   ipcMain.handle('profile:getAvatar', () => readProfileAvatarDataUrl());
+  ipcMain.handle('profile:previewAvatar', async () => {
+    try { return await chooseProfileAvatar({ previewOnly: true }); }
+    catch { return { ok: false, reason: 'invalid-image' }; }
+  });
+  ipcMain.handle('profile:saveDraft', async (_event, draft = {}) => {
+    const session = supabaseAuth.getPublicSession();
+    const userId = authenticatedUserId(session);
+    if (!userId || draft.userId !== userId) return { ok: false, reason: 'account-changed' };
+    const name = String(draft.name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    const signature = String(draft.signature || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    if (!name) return { ok: false, reason: 'empty-name' };
+    let temporaryPath;
+    try {
+      let input;
+      if (Number.isInteger(draft.preset) && draft.preset >= 1 && draft.preset <= 12) {
+        input = path.join(__dirname, 'src', 'assets', 'avatars', `avatar-${draft.preset}.png`);
+      } else if (draft.avatarDataUrl) {
+        const match = /^data:image\/webp;base64,([A-Za-z0-9+/=]+)$/.exec(String(draft.avatarDataUrl));
+        if (!match || match[1].length > 2_000_000) return { ok: false, reason: 'invalid-image' };
+        input = Buffer.from(match[1], 'base64');
+      }
+      if (input) {
+        const avatarPath = profileAvatarPath(store.dir, session);
+        await fs.promises.mkdir(path.dirname(avatarPath), { recursive: true });
+        temporaryPath = path.join(path.dirname(avatarPath), `avatar-${crypto.randomUUID()}.tmp.webp`);
+        await sharp(input, { limitInputPixels: 40_000_000 }).rotate().resize(256, 256, { fit: 'cover' }).webp({ quality: 88 }).toFile(temporaryPath);
+        if (authenticatedUserId(supabaseAuth.getPublicSession()) !== userId) return { ok: false, reason: 'account-changed' };
+        // Rename and update the associated text without yielding to an account switch.
+        fs.renameSync(temporaryPath, avatarPath);
+      }
+      if (authenticatedUserId(supabaseAuth.getPublicSession()) !== userId) return { ok: false, reason: 'account-changed' };
+      store.data.settings.profileDisplayName = name;
+      store.data.settings.profileSignature = signature;
+      store.scheduleSave();
+      return { ok: true, name, signature, dataUrl: readProfileAvatarDataUrl(), userId };
+    } catch { return { ok: false, reason: 'save-failed' }; }
+    finally { if (temporaryPath) await fs.promises.unlink(temporaryPath).catch(() => {}); }
+  });
 
   ipcMain.handle('profile:chooseAvatar', () => chooseProfileAvatar());
 

@@ -42,7 +42,7 @@ const nanoBananaPro = media.imageProviders.find((provider) => provider.id === 'i
 assert.ok(nanoBananaPro);
 assert.equal(nanoBananaPro.endpoint, 'https://aireiter.com/api/openapi/submit');
 assert.equal(nanoBananaPro.resultEndpoint, 'https://aireiter.com/api/openapi/query');
-assert.equal(nanoBananaPro.model, 'nano_banana_pro');
+assert.equal(nanoBananaPro.model, 'nano_banana_pro_max');
 assert.equal(nanoBananaPro.protocol, 'aireiter-async');
 assert.deepEqual(nanoBananaPro.capabilities.sizes, ['1K', '2K', '4K']);
 assert.equal(nanoBananaPro.capabilities.ratios.includes('auto'), true);
@@ -61,7 +61,7 @@ assert.equal(chaserCatalog.icon, 'chaser-pro');
 assert.equal(chaserPro.name, '');
 assert.equal(require('../lib/provider-catalog').catalogProvider('image-1').keyEnv, 'AIREITER_API_KEY');
 assert.equal(require('../lib/provider-catalog').catalogProvider('image-2').keyEnv, 'AIREITER_API_KEY');
-assert.equal(require('../lib/provider-catalog').catalogProvider('image-2').model, 'nano_banana_v2_plus');
+assert.equal(require('../lib/provider-catalog').catalogProvider('image-2').model, 'nano_banana_v2_max');
 assert.deepEqual(require('../lib/provider-catalog').catalogProvider('image-1').fallbackProviderIds, []);
 assert.deepEqual(require('../lib/provider-catalog').catalogProvider('image-2').fallbackProviderIds, []);
 assert.deepEqual(require('../lib/provider-catalog').catalogProvider('video-1').fallbackProviderIds, []);
@@ -92,18 +92,14 @@ for (const id of ['image-17', 'image-18']) {
 }
 const gptImage2 = media.imageProviders.find((provider) => provider.id === 'image-6');
 assert.ok(gptImage2);
-assert.equal(gptImage2.model, 'gpt_image_2');
+assert.equal(gptImage2.model, 'gpt_image_2_official');
 assert.equal(gptImage2.endpoint, 'https://aireiter.com/api/openapi/submit');
 assert.deepEqual(gptImage2.capabilities.resolutionPresets, ['1K', '2K', '4K']);
 assert.deepEqual(gptImage2.capabilities.sizes, ['1K', '2K', '4K']);
-assert.deepEqual(gptImage2.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
-assert.equal(gptImage2.capabilities.arbitrarySizes, true);
-assert.equal(gptImage2.capabilities.arbitraryRatios, true);
-assert.equal(gptImage2.capabilities.minimumAspectRatio, 1 / 3);
-assert.equal(gptImage2.capabilities.maximumAspectRatio, 3);
-assert.equal(gptImage2.capabilities.sizeMultiple, 16);
-assert.equal(gptImage2.capabilities.maxSizeEdge, 3840);
-assert.equal(gptImage2.capabilities.maxSizePixels, 8_294_400);
+assert.deepEqual(gptImage2.capabilities.qualities, ['low', 'medium', 'high']);
+assert.equal(gptImage2.capabilities.arbitrarySizes, false);
+assert.equal(gptImage2.capabilities.arbitraryRatios, false);
+assert.deepEqual(gptImage2.capabilities.resolutionRatios['4K'], ['16:9', '9:16', '2:1', '1:2', '21:9', '9:21']);
 assert.equal(gptImage2.capabilities.promptMaxCharacters, 32000);
 assert.equal(gptImage2.capabilities.referencePromptMaxCharacters, 32000);
 for (const id of ['image-7', 'image-8']) {

@@ -3438,6 +3438,7 @@ function syncBoardSelectionGroup(selectedItems = null) {
 }
 
 function syncBoardSelectionClasses(selectedIdsOverride = null, options = {}) {
+  const previousSelectedIds = Board.selectedIds;
   const previousSingleSelection = Board.selectedCount === 1;
   const previousSelectionHash = BoardEngine.hashSet(Board.selectedIds);
   const selectedIds = selectedIdsOverride instanceof Set
@@ -3454,13 +3455,18 @@ function syncBoardSelectionClasses(selectedIdsOverride = null, options = {}) {
     const selected = selectedIds.has(element.dataset.boardId);
     element.classList.toggle('is-selected', selected);
     element.classList.toggle('is-single-selection', selected && hasSingleSelection);
+    if (!selected && document.activeElement === element) element.blur();
     if (!options.deferControls && selected && hasSingleSelection && typeof element._boardEnsureMediaControls === 'function') {
       element._boardEnsureMediaControls();
     } else if ((!selected || !hasSingleSelection) && typeof element._boardRemoveMediaControls === 'function') {
       element._boardRemoveMediaControls();
     }
   };
-  const changedIds = options.changedIds instanceof Set ? options.changedIds : null;
+  const changedIds = options.changedIds instanceof Set ? new Set(options.changedIds) : null;
+  if (changedIds) {
+    previousSelectedIds.forEach(id => { if (!selectedIds.has(id)) changedIds.add(id); });
+    selectedIds.forEach(id => { if (!previousSelectedIds.has(id)) changedIds.add(id); });
+  }
   if (!changedIds || previousSingleSelection !== hasSingleSelection) {
     Board.mounted.forEach(syncElement);
   } else {
@@ -3869,41 +3875,11 @@ function isBoardWorkspaceActive() {
   );
 }
 
-function enterBoardFullscreen() {
-  document.getElementById('board-panel').classList.add('is-fullscreen');
-  const icon = document.getElementById('board-fullscreen-icon');
-  if (icon) icon.outerHTML = ICON_COMPRESS.replace('<svg ', '<svg id="board-fullscreen-icon" ');
-  const fullscreenTitle = boardFullscreenToggleTitle();
-  const toggle = document.getElementById('board-fullscreen-toggle');
-  if (toggle) {
-    toggle.title = fullscreenTitle;
-    toggle.setAttribute('aria-label', fullscreenTitle);
-  }
-  document.getElementById('board-bottom-bar').hidden = false;
-  syncBoardBottomZoomLabel();
-  syncAiComposerFullscreenState();
-  if (typeof setCanvasAgentOpen === 'function') setCanvasAgentOpen(true);
-}
-
 function exitBoardFullscreen() {
   if (!isBoardFullscreen()) return;
-  if (typeof setCanvasAgentOpen === 'function') setCanvasAgentOpen(false);
   document.getElementById('board-panel').classList.remove('is-fullscreen');
-  const icon = document.getElementById('board-fullscreen-icon');
-  if (icon) icon.outerHTML = ICON_EXPAND.replace('<svg ', '<svg id="board-fullscreen-icon" ');
-  const fullscreenTitle = boardFullscreenToggleTitle();
-  const toggle = document.getElementById('board-fullscreen-toggle');
-  if (toggle) {
-    toggle.title = fullscreenTitle;
-    toggle.setAttribute('aria-label', fullscreenTitle);
-  }
   document.getElementById('board-bottom-bar').hidden = false;
   syncAiComposerFullscreenState();
-}
-
-function toggleBoardFullscreen() {
-  if (isBoardFullscreen()) exitBoardFullscreen();
-  else enterBoardFullscreen();
 }
 
 /** Click-and-drag on empty canvas space draws a selection box; everything
@@ -4298,7 +4274,6 @@ function initBoardCanvas() {
     );
   });
   document.getElementById('board-fit-all').addEventListener('click', locateBoardImages);
-  document.getElementById('board-fullscreen-toggle')?.addEventListener('click', toggleBoardFullscreen);
   initBoardBottomBar();
   initBoardQuickGenerate();
   initDoodleColorPanel();
@@ -8668,7 +8643,6 @@ function initBoardBottomBar() {
   document.getElementById('board-bottom-zoom-in').addEventListener('click', () => document.getElementById('board-zoom-in').click());
   document.getElementById('board-bottom-zoom-label').addEventListener('click', resetBoardZoomTo100);
   document.getElementById('board-zoom-label').addEventListener('click', resetBoardZoomTo100);
-  document.getElementById('board-bottom-fullscreen-toggle')?.addEventListener('click', toggleBoardFullscreen);
 
   const origZoomLabel = document.getElementById('board-zoom-label');
   new MutationObserver(syncBoardBottomZoomLabel).observe(origZoomLabel, { childList: true, characterData: true, subtree: true });

@@ -56,6 +56,7 @@ const USAGE_MODEL_NAMES = Object.freeze({
   'chat-3': 'Gemini 3.1 Pro',
   'chat-4': 'GPT-5.6 Sol',
   'chat-5': 'Kimi K3',
+  'chat-6': 'Gemini 3.8 Flash',
   'topaz-video-upscale': '视频超分',
   hunyuan3d: 'Hunyuan3D',
   hyper3d: 'Hyper3D',
@@ -644,6 +645,19 @@ function initUsageSettings() {
     customTo.max = today;
     customFrom.value = UsageSettings.customFrom || localUsageIsoDate(monthAgo);
     customTo.value = UsageSettings.customTo || today;
+    if (typeof flatpickr === 'function') {
+      [customFrom, customTo].forEach((input) => {
+        input._flatpickr?.destroy();
+        flatpickr(input, {
+          dateFormat: 'Y-m-d', disableMobile: true, maxDate: today,
+          locale: usageText('default', 'zh', 'ko'),
+          monthSelectorType: 'dropdown',
+          onOpen: (_dates, _text, picker) => {
+            picker.set('locale', usageText('default', 'zh', 'ko'));
+          }
+        });
+      });
+    }
     customForm.addEventListener('submit', (event) => {
       event.preventDefault();
       const from = String(customFrom.value || '');

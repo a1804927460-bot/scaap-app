@@ -1,0 +1,45 @@
+/* Keep the filter off text and disable it when the short transition ends. */
+.gooey-search:is(.canvas-library-search, .market-search, .workshop-search) {
+  --search-surface: var(--bg-elevated);
+  position: relative;
+  isolation: isolate;
+  height: 42px;
+  min-width: 160px;
+  padding: 0 14px 0 42px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: var(--text-secondary);
+  overflow: visible;
+  cursor: var(--cursor-text);
+}
+.gooey-search::before, .gooey-search::after { display: none; }
+.gooey-search .gooey-search-surfaces {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+.gooey-search-pill, .gooey-search-bubble {
+  position: absolute;
+  height: 42px;
+  background: var(--search-surface);
+  border: 1px solid var(--border-hairline);
+  border-radius: 24px;
+}
+.gooey-search-pill { left: 0; right: 0; transition: left 400ms cubic-bezier(.2,.8,.2,1); }
+.gooey-search-bubble { left: 0; width: 42px; transform: scale(.5); opacity: 0; transition: transform 400ms cubic-bezier(.2,.8,.2,1), opacity 200ms; }
+.gooey-search > svg { position: absolute; left: 14px; width: 16px; height: 16px; pointer-events: none; }
+.gooey-search input { position: relative; height: 100%; font-size: 14px; padding: 0; transition: padding-left 400ms cubic-bezier(.2,.8,.2,1); }
+.gooey-search.is-expanded input { padding-left: 24px; }
+.gooey-search.is-expanded .gooey-search-pill { left: 52px; }
+.gooey-search.is-expanded .gooey-search-bubble { opacity: 1; transform: scale(1); }
+.gooey-search:focus-within .gooey-search-pill { border-color: var(--accent); }
+.gooey-search:focus-within .gooey-search-surfaces { animation: gooey-search-morph 400ms; }
+@keyframes gooey-search-morph {
+  from { filter: var(--gooey-filter); }
+  to { filter: var(--gooey-filter); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gooey-search *, .gooey-search:focus-within .gooey-search-surfaces { animation: none; transition: none; }
+}

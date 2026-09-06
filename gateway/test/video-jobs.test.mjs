@@ -17,6 +17,7 @@ import {
   startVideoJob,
   startVideoJobWorker
 } from '../src/video-jobs.js';
+import { downloadProviderVideoResult, storeVideoResult } from '../src/video-result-storage.js';
 
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -79,7 +80,7 @@ test('start is idempotency-bound to operation, owner token, and canonical reques
     assert.equal(calls[0].body.p_user_id, userId);
     assert.equal(calls[0].body.p_token_hash, hashVideoTaskToken(taskToken));
     assert.equal(calls[0].body.p_request_hash, calls[1].body.p_request_hash);
-    assert.equal(calls[0].body.p_expected_credits, 194);
+    assert.equal(calls[0].body.p_expected_credits, 201);
     assert.equal(JSON.stringify(calls[0].body).includes(taskToken), false);
     assert.equal(JSON.stringify(calls[0].body).includes('private prompt text'), false);
   });
@@ -101,7 +102,7 @@ test('start accepts only a higher server-authorized price without exposing an ac
       }
     });
     assert.equal(calls.length, 2);
-    assert.equal(calls[0].p_expected_credits, 194);
+    assert.equal(calls[0].p_expected_credits, 201);
     assert.equal(calls[1].p_expected_credits, 210);
     assert.equal(created.credits, 210);
     assert.equal(JSON.stringify(created).includes('pricingTier'), false);
@@ -397,6 +398,30 @@ test('legacy MiniMax H3 adapter preserves official multimodal recovery', async (
     } finally {
       globalThis.fetch = previousFetch;
     }
+  });
+});
+
+test('result download and storage expose transient failures as retryable', async () => {
+  await assert.rejects(
+    () => downloadProviderVideoResult('https://cdn.example.test/result.mp4', async () => {
+      throw new Error('temporary network reset');
+    }),
+    (error) => error && error.retryable === true
+  );
+
+  await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test' }, async () => {
+    const video = Buffer.alloc(12);
+    video.write('ftyp', 4, 'ascii');
+    await assert.rejects(
+      () => storeVideoResult(
+        '00000000-0000-4000-8000-000000000117',
+        '00000000-0000-4000-8000-000000000118',
+        video,
+        'video/mp4',
+        async () => new Response(null, { status: 503 })
+      ),
+      (error) => error && error.retryable === true
+    );
   });
 });
 

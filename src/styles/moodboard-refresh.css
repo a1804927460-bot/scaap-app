@@ -1,0 +1,26 @@
+#moodboard-overlay .moodboard-editor-panel,
+.moodboard-overlay .moodboard-editor-panel {
+  width: min(680px, calc(100vw - 32px));
+  min-width: 0;
+  height: min(540px, calc(100vh - 64px));
+  border-radius: 16px;
+  grid-template-rows: 48px auto auto minmax(0, 1fr) 30px;
+}
+.moodboard-editor-panel .moodboard-editor-header { padding-inline: 14px; }
+.moodboard-editor-panel .moodboard-agent-bar { flex-wrap: wrap; background: var(--bg-surface); }
+.moodboard-editor-panel .moodboard-agent-custom { min-width: 140px; }
+.moodboard-editor-panel .ql-toolbar { display: flex; flex-wrap: wrap; padding: 8px 12px; }
+.moodboard-editor-panel .ql-editor { padding: 20px; font-size: 16px; line-height: 1.7; color: var(--text-primary); }
+.board-moodboard { background: #202122; }
+.board-moodboard .board-moodboard-generate {
+  position: absolute; right: 12px; top: 12px;
+  height: 30px; min-width: 66px; padding: 0 12px;
+  border-radius: 999px; border: 1px solid #565b60;
+  background: #303336; color: #f3f5f8;
+  font: inherit; font-size: 13px; cursor: var(--cursor-click);
+}
+#board-canvas[data-board-renderer="leafer"] .board-moodboard .board-moodboard-generate {
+  opacity: 1; pointer-events: auto;
+}
+.board-moodboard .board-moodboard-generate:hover { background: #41464b; }
+.board-moodboard .board-moodboard-open { display: none; }

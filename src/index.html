@@ -8,9 +8,16 @@
   <link rel="stylesheet" href="styles/theme.css" />
   <link rel="stylesheet" href="styles/start.css" />
   <link rel="stylesheet" href="styles/main.css" />
+  <link rel="stylesheet" href="styles/moodboard-refresh.css" />
+  <link rel="stylesheet" href="styles/sidebar-partitions.css" />
+  <script src="js/sidebar-partitions.js" defer></script>
+  <link rel="stylesheet" href="styles/canvas-agent-capsule.css" />
+  <link rel="stylesheet" href="styles/workspace-responsive.css" />
   <link rel="stylesheet" href="styles/account-avatar.css" />
-  <link rel="stylesheet" href="../node_modules/drawflow/dist/drawflow.min.css" />
   <link rel="stylesheet" href="../node_modules/quill/dist/quill.snow.css" />
+  <link rel="stylesheet" href="styles/gooey-search.css" />
+  <link rel="stylesheet" href="../node_modules/flatpickr/dist/flatpickr.min.css" />
+  <link rel="stylesheet" href="styles/generation-controls.css" />
 </head>
 <body>
   <div id="app-titlebar" class="app-titlebar">
@@ -451,9 +458,6 @@
           </div>
           <div class="panel-tools">
             <button id="board-agent-toggle" class="pill-btn pill-btn-ghost board-workspace-only" type="button" title="Messs Agent" aria-label="Messs Agent" aria-expanded="false">Messs Agent</button>
-            <button id="board-mode-toggle" class="icon-btn-sm board-workspace-only" type="button" title="Switch to node mode" aria-label="Switch to node mode" aria-pressed="false">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="6" height="6" rx="1.4"/><rect x="15" y="15" width="6" height="6" rx="1.4"/><path d="M9 6h3a3 3 0 0 1 3 3v6"/><circle cx="15" cy="9" r="1.5"/></svg>
-            </button>
             <button id="board-zoom-out" class="icon-btn-sm board-workspace-only" title="Zoom out" aria-label="Zoom out">-</button>
             <button id="board-zoom-label" class="zoom-label zoom-reset-button board-workspace-only" type="button" title="Reset to 100%" aria-label="Reset canvas zoom to 100%">100%</button>
             <button id="board-zoom-in" class="icon-btn-sm board-workspace-only" title="Zoom in" aria-label="Zoom in">+</button>
@@ -477,14 +481,17 @@
                 <p>Browse and manage your canvases</p>
               </div>
               <div class="canvas-library-toolbar">
-                <label class="canvas-library-search">
+                <label class="canvas-library-search canvas-library-search-gooey">
                   <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
                   <input id="canvas-library-search" type="search" placeholder="Search canvases..." autocomplete="off" />
+                  <button id="canvas-library-search-clear" class="canvas-library-search-clear" type="button" title="Clear search" aria-label="Clear search" hidden>
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m7 7 10 10M17 7 7 17"/></svg>
+                  </button>
                 </label>
                 <div class="canvas-library-actions">
                   <button id="canvas-import" class="canvas-library-action" type="button">
                     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
-                    <span>Import .Messs</span>
+                    <span>Import canvas</span>
                   </button>
                   <button id="canvas-project-new" class="canvas-library-action" type="button">
                     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 10v6M9 13h6"/></svg>
@@ -504,18 +511,6 @@
             <div id="board-doodle-canvas" class="board-doodle-canvas" hidden></div>
             <div id="board-empty" class="board-empty">Drag files here to compare, arrange, and generate freely.</div>
             <div id="board-file-drop-indicator" class="board-file-drop-indicator" hidden><span>Drop to place on canvas</span></div>
-          </div>
-          <div id="board-node-mode" class="board-node-mode" hidden>
-            <div id="board-node-editor" class="board-node-editor" aria-label="Node canvas"></div>
-            <div id="board-node-empty" class="board-node-empty" hidden>No files on this canvas</div>
-            <div id="board-node-add-menu" class="board-node-add-menu" role="menu" aria-label="Add node" hidden>
-              <strong class="board-node-add-title">Add node</strong>
-              <button type="button" role="menuitem" data-add-node="text"><span class="board-node-menu-icon">T</span><span class="board-node-menu-copy"><b>Text</b></span></button>
-              <button type="button" role="menuitem" data-add-node="image"><span class="board-node-menu-icon" data-node-menu-icon="image"></span><span class="board-node-menu-copy"><b>Image</b><small>Poster, cover, campaign visual</small></span></button>
-              <button type="button" role="menuitem" data-add-node="video"><span class="board-node-menu-icon" data-node-menu-icon="video"></span><span class="board-node-menu-copy"><b>Video</b></span></button>
-              <button type="button" role="menuitem" data-add-node="audio"><span class="board-node-menu-icon" data-node-menu-icon="audio"></span><span class="board-node-menu-copy"><b>Audio</b></span></button>
-              <button type="button" role="menuitem" data-add-node="model"><span class="board-node-menu-icon" data-node-menu-icon="model"></span><span class="board-node-menu-copy"><b>3D</b></span></button>
-            </div>
           </div>
           <div id="resize-handle-board-agent" class="resize-handle resize-handle-v board-agent-resize-handle" data-target="agent" role="separator" aria-orientation="vertical" aria-label="Resize Canvas Agent"></div>
           <aside id="board-agent-panel" class="board-agent-panel is-hidden" data-board-ui-layer="true">
@@ -1439,6 +1434,9 @@
   <script src="js/model-viewer.js"></script>
   <script src="js/confirm-dialog.js"></script>
   <script src="js/credit-access.js"></script>
+  <script src="../node_modules/flatpickr/dist/flatpickr.min.js"></script>
+  <script src="../node_modules/flatpickr/dist/l10n/zh.js"></script>
+  <script src="../node_modules/flatpickr/dist/l10n/ko.js"></script>
   <script src="js/usage-settings.js"></script>
   <script src="js/model-badges.js"></script>
   <script src="js/titlebar.js"></script>
@@ -1464,8 +1462,6 @@
   <script src="../node_modules/quill/dist/quill.js"></script>
   <script src="js/moodboard.js"></script>
   <script src="js/board-canvas.js"></script>
-  <script src="../node_modules/drawflow/dist/drawflow.min.js"></script>
-  <script src="js/canvas-node-mode.js"></script>
   <script src="js/panel-resize.js"></script>
   <script src="js/panel-layout.js"></script>
   <script src="js/stats-detail.js"></script>
@@ -1473,5 +1469,6 @@
   <script src="js/updater.js"></script>
   <script src="js/activation.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/gooey-search.js"></script>
 </body>
 </html>

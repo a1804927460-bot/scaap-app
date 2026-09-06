@@ -1,8 +1,11 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { assertFalConfigured, normalizeFalResizeOptions } from './fal-image-tools.js';
+import { runDurableFalImageTool } from './durable-fal-image-tools.js';
 import { FairConcurrencyGate } from './fair-concurrency-gate.js';
 import { authenticate } from './auth.js';
 import { publicGatewayError } from './public-errors.js';
+import { moderateGenerationPrompt, requiresPromptModeration } from './moderation.js';
 import {
   appendVideoUploadChunk,
   appendAudioUploadChunk,
@@ -151,6 +154,7 @@ const sharedGateOptions = Object.freeze({
 const imageGenerationGate = new FairConcurrencyGate({
   name: 'image-generation',
   ...sharedGateOptions,
+  timeoutMs: Math.max(90_000, Number(process.env.GATEWAY_QUEUE_TIMEOUT_MS) || 15 * 60_000),
   maxConcurrent: Math.max(1, Number(process.env.GATEWAY_IMAGE_CONCURRENCY) || 6)
 });
 const videoGenerationGate = new FairConcurrencyGate({
@@ -258,6 +262,14 @@ function supportsImageAspectRatio(value, capabilities = {}) {
   if (Number.isFinite(maximum) && ratio > maximum) return false;
   if (capabilities.arbitraryRatios !== true) return imageRatios.has(normalized);
   return ratio >= 1 / 16 && ratio <= 16;
+}
+
+function supportsImageResolutionRatio(size, ratio, capabilities = {}) {
+  const matrix = capabilities.resolutionRatios;
+  if (!matrix || typeof matrix !== 'object' || Array.isArray(matrix)) return true;
+  const values = matrix[String(size || '').trim().toUpperCase()];
+  if (!Array.isArray(values) || !values.length) return true;
+  return values.map((value) => String(value || '').trim()).includes(String(ratio || '').trim());
 }
 
 function base64DecodedBytes(value) {
@@ -397,7 +409,10 @@ function sendRelayAsset(request, response, asset) {
   return response.end(asset.buffer.subarray(start, end + 1));
 }
 
+const parsedRequestBodies = new WeakMap();
+
 async function readJson(request) {
+  if (parsedRequestBodies.has(request)) return parsedRequestBodies.get(request);
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
@@ -405,7 +420,11 @@ async function readJson(request) {
     if (size > maxBodyBytes) throw Object.assign(new Error('Request body is too large.'), { status: 413, code: 'body-too-large' });
     chunks.push(chunk);
   }
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); }
+  try {
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+    parsedRequestBodies.set(request, body);
+    return body;
+  }
   catch (error) { throw Object.assign(new Error('Request body must be valid JSON.'), { status: 400, code: 'invalid-json' }); }
 }
 
@@ -705,6 +724,7 @@ function validateBody(body, kind) {
     if (!allowedSizes.has(requestedSize) && !imageDimensionsWithinCapabilities(requestedSize, capabilities)) {
       throw invalidOption('invalid-size', 'The selected image resolution is not supported.');
     }
+    if (requestedRatio === 'auto' && !allowedRatios.has('auto')) requestedRatio = '1:1';
     if (!allowedRatios.has(requestedRatio) && !supportsImageAspectRatio(requestedRatio, capabilities)) {
       throw invalidOption(
         'invalid-aspect-ratio',
@@ -719,6 +739,9 @@ function validateBody(body, kind) {
       : '';
     if (mappedRatio && mappedRatio !== requestedRatio) {
       throw invalidOption('invalid-size-ratio', 'The selected image resolution does not match the aspect ratio.');
+    }
+    if (!supportsImageResolutionRatio(requestedSize, requestedRatio, capabilities)) {
+      throw invalidOption('invalid-size-ratio', 'The selected image resolution does not support this aspect ratio.');
     }
   }
   if (kind === 'video') {
@@ -893,6 +916,7 @@ async function reserveFixedTool(userId, providerId, requestId, options = {}) {
     : null;
   const reservation = await reserveToolUsage(userId, requestId, {
     providerId: normalizedProvider,
+    options,
     ...(providerCost !== null ? { providerCost, options } : {})
   });
   if (!reservation || reservation.ok !== true) {
@@ -1503,6 +1527,10 @@ async function handle(request, response) {
     return send(response, 429, { code: 'rate-limited', message: 'Too many requests. Please wait before trying again.' }, { 'Retry-After': statusMaximum ? '10' : '60' });
   }
 
+  if (url.pathname !== '/v1/media/image' && requiresPromptModeration(request.method, url.pathname)) {
+    await moderateGenerationPrompt(await readJson(request), { userId: user.id, requestId });
+  }
+
   if (request.method === 'GET' && url.pathname === '/v1/account') {
     return send(response, 200, { account: await getUsageAccount(user.id) });
   }
@@ -1603,16 +1631,14 @@ async function handle(request, response) {
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/tools/background/remove') {
-    if (!ai302Enabled(AI302_FLAGS.background)) return disabledTool(response);
+    assertFalConfigured();
     const body = await readJson(request);
     const deferredDelivery = body && body.deliveryConfirmation === true;
     const png = await runIdempotentImageOperation(user.id, requestId, async () => {
       const usage = await reserveFixedTool(user.id, 'background-remove', requestId);
       try {
-        const result = await removeBackground({
-          imageDataUrl: body && body.imageDataUrl,
-          toolOptions: body && body.options
-        }, { accountingRequestId: usage.requestId });
+        const result = await runDurableFalImageTool({ userId: user.id, requestId,
+          model: 'feynobg', imageDataUrl: body && body.imageDataUrl });
         const settlement = deferredDelivery ? null : await settleReservedTool(user.id, usage);
         return annotateToolDelivery(result, {
           requestId: usage.requestId,
@@ -1667,11 +1693,12 @@ async function handle(request, response) {
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/tools/image/expand') {
-    if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
+    assertFalConfigured();
     const body = await readJson(request);
+    body.options = await normalizeFalResizeOptions(body && body.imageDataUrl, body && body.options);
     const deferredDelivery = body && body.deliveryConfirmation === true;
     const modelId = String(body && body.modelId || '').trim().toLowerCase();
-    if (!['clipdrop-uncrop', 'kling-image-expand'].includes(modelId)) {
+    if (modelId !== 'clipdrop-uncrop') {
       throw invalidOption('invalid-image-tool', 'The selected image tool is not supported.');
     }
     if (modelId === 'kling-image-expand') {
@@ -1699,12 +1726,10 @@ async function handle(request, response) {
     }
     const providerId = 'clipdrop-uncrop';
     const png = await runIdempotentImageOperation(user.id, requestId, async () => {
-      const usage = await reserveFixedTool(user.id, providerId, requestId);
+      const usage = await reserveFixedTool(user.id, providerId, requestId, body && body.options);
       try {
-        const output = await uncropImage({
-          imageDataUrl: body && body.imageDataUrl,
-          toolOptions: body && body.options
-        }, { accountingRequestId: usage.requestId });
+        const output = await runDurableFalImageTool({ userId: user.id, requestId,
+          model: 'smart-resize', imageDataUrl: body && body.imageDataUrl, options: body && body.options });
         const settlement = deferredDelivery ? null : await settleReservedTool(user.id, usage);
         return annotateToolDelivery(output, {
           requestId: usage.requestId,
@@ -2298,11 +2323,17 @@ async function handle(request, response) {
       throw videoDeliveryRecoveryPendingError();
     }
     if (!result.storageRef) {
-      const storageRef = await storeVideoResult(user.id, result.requestId, downloaded.buffer, downloaded.contentType);
-      await recordVideoStorage(result.requestId, storageRef, {
-        contentType: downloaded.contentType,
-        bytes: downloaded.buffer.length
-      });
+      try {
+        const storageRef = await storeVideoResult(user.id, result.requestId, downloaded.buffer, downloaded.contentType);
+        await recordVideoStorage(result.requestId, storageRef, {
+          contentType: downloaded.contentType,
+          bytes: downloaded.buffer.length
+        });
+      } catch (error) {
+        // The provider result and reservation remain recoverable in the ready
+        // job. Do not release or settle credits while durable storage is down.
+        throw videoDeliveryRecoveryPendingError();
+      }
     }
     const deferredDelivery = String(body.taskToken).startsWith('d_');
     const settlement = deferredDelivery ? null : await settleVideoDownload(user.id, body.taskToken, {
@@ -2373,7 +2404,7 @@ async function handle(request, response) {
 
   const body = validateBody(await readJson(request), kind);
   if (kind === 'image') {
-    const media = await runIdempotentImageOperation(user.id, requestId, async () => {
+    const media = await runIdempotentImageOperation(user.id, requestId, () => imageGenerationGate.run(user.id, async () => {
       const requestHash = hashImageRequest(body);
       const existingJob = await loadImageJob(user.id, requestId);
       if (existingJob && existingJob.requestHash && existingJob.requestHash !== requestHash) {
@@ -2391,6 +2422,7 @@ async function handle(request, response) {
       let claimedJob = null;
       let imageJobTrackingAvailable = true;
       if (!existingJob) {
+        await moderateGenerationPrompt(body, { userId: user.id, requestId });
         reservation = await reserveUsage(user.id, kind, requestId, body);
         if (!reservation.ok) {
           const error = new Error(String(reservation.reason || 'The image request was not accepted.'));
@@ -2485,7 +2517,7 @@ async function handle(request, response) {
         // not cancel the paid upstream task merely because the response edge
         // closes; the desktop can reconnect with the same operation ID.
         try {
-          const result = await imageGenerationGate.run(user.id, async () => {
+          const result = await (async () => {
             if (recoverJob) {
               const stored = await recoverStoredImageResult(user.id, requestId, recoverJob);
               if (stored) return stored;
@@ -2503,7 +2535,7 @@ async function handle(request, response) {
               controller.signal,
               tracker.hooks
             );
-          }, { signal: controller.signal });
+          })();
           if (!Buffer.isBuffer(result) || result.length === 0) {
             throw Object.assign(new Error('The generated image was empty.'), {
               code: 'invalid-media',
@@ -2577,7 +2609,7 @@ async function handle(request, response) {
         }
         throw error;
       }
-    });
+    }));
     return send(response, 200, media, {
       'Content-Type': 'application/octet-stream',
       'X-Messs-Credits-Estimated': String(Math.max(0, Number(media.estimatedCredits) || 0)),

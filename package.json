@@ -39,6 +39,7 @@
     "electron-updater": "^6.3.9",
     "emoji-picker-element": "^1.29.1",
     "ffmpeg-static": "^5.2.0",
+    "flatpickr": "4.6.13",
     "htmlparser2": "8.0.2",
     "leafer-ui": "^2.2.9",
     "mammoth": "^1.8.0",

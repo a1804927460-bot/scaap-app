@@ -1324,10 +1324,13 @@ function applyLanguageChoice(language, options = {}) {
   if (typeof refreshTitlebarLanguage === 'function') refreshTitlebarLanguage();
   if (options.rerender !== false) refreshLanguageDependentViews();
   document.dispatchEvent(new CustomEvent('messs:language-changed', { detail: { language: lang } }));
+  document.documentElement.dataset.localizedLanguage = lang;
 }
 
 function initLanguageSettings() {
-  applyLanguageChoice(AppState.language || 'ko', { rerender: false });
+  if (document.documentElement.dataset.localizedLanguage !== normalizeAppLanguage(AppState.language)) {
+    applyLanguageChoice(AppState.language || 'ko', { rerender: false });
+  }
   document.querySelectorAll('.language-opt').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const choice = normalizeAppLanguage(btn.dataset.languageChoice);

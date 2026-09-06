@@ -15,6 +15,7 @@ files:
   - vendor/**/*
   - node_modules/@napi-rs/**/*
   - node_modules/pdfjs-dist/**/*
+  - node_modules/flatpickr/dist/**/*
   - node_modules/electron-screenshots/**/*
   - node_modules/node-screenshots/**/*
   - node_modules/node-screenshots-win32-x64-msvc/**/*

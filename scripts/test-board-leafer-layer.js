@@ -142,7 +142,7 @@ async function run() {
       throw new Error('Leafer text notes must preserve the large editor font range.');
     }
     if (!source.includes("moodboardBodyForItem(item), '#f3f5f8'") ||
-        !source.includes('fontSize: 20') || !source.includes('fontSize: 17') ||
+        !source.includes('fontSize: 18') || !source.includes('fontSize: 17') ||
         !source.includes("lineHeight: { type: 'percent', value: 1.5 }")) {
       throw new Error('Leafer moodboard text must use the readable large-text style.');
     }

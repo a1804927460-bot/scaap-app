@@ -408,7 +408,32 @@ function buildBoardMoodboardElement(item) {
     event.stopPropagation();
     openMoodboardEditor(item);
   });
-  header.append(icon, title, open);
+  const generate = document.createElement('button');
+  generate.type = 'button';
+  generate.className = 'board-moodboard-generate';
+  generate.textContent = t('Generate', '生成');
+  generate.setAttribute('aria-haspopup', 'menu');
+  generate.title = t('Generate from moodboard', '根据情绪板生成');
+  generate.addEventListener('pointerdown', event => event.stopPropagation());
+  generate.addEventListener('mousedown', event => event.stopPropagation());
+  generate.addEventListener('click', event => {
+    event.stopPropagation();
+    const rect = generate.getBoundingClientRect();
+    const choose = kind => {
+      const prompt = moodboardPlainText(item).trim();
+      if (!prompt) {
+        showToast(t('Add text to the moodboard first.', '请先填写情绪板内容。'), 'Messs');
+        openMoodboardEditor(item);
+        return;
+      }
+      void openAiComposerForSelection(kind, prompt, { referenceFileIds: [] });
+    };
+    buildAndShowSimpleMenu([
+      { label: t('Generate image', '生成图片'), action: () => choose('image') },
+      { label: t('Generate video', '生成视频'), action: () => choose('video') }
+    ], rect.left, rect.bottom + 6, 'moodboard-generation-menu');
+  });
+  header.append(icon, title, open, generate);
 
   const preview = document.createElement('div');
   preview.className = 'board-moodboard-preview';

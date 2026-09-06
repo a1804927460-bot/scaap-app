@@ -117,11 +117,28 @@ async function run() {
     webPreferences: { contextIsolation: false, nodeIntegration: false, sandbox: false, offscreen: true, backgroundThrottling: false }
   });
   await window.loadFile(htmlPath);
+  await window.webContents.executeJavaScript(`(async () => {
+    for (const href of ${JSON.stringify(['node_modules/flatpickr/dist/flatpickr.min.css', 'src/styles/generation-controls.css'].map(p => pathToFileURL(path.join(root, p)).href))}) {
+      const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = href; document.head.appendChild(link);
+    }
+    const script = document.createElement('script');
+    script.src = ${JSON.stringify(pathToFileURL(path.join(root, 'node_modules/flatpickr/dist/flatpickr.min.js')).href)};
+    await new Promise((resolve, reject) => { script.onload=resolve; script.onerror=reject; document.head.appendChild(script); });
+    flatpickr('#usage-custom-from', { dateFormat: 'Y-m-d', disableMobile: true });
+  })()`);
   await wait(250);
   const desktop = await inspectLayout(window, 'desktop-dark');
 
   const screenshotDir = path.join(root, 'test-artifacts');
   fs.mkdirSync(screenshotDir, { recursive: true });
+  const calendarReady = await window.webContents.executeJavaScript(`(() => {
+    const picker = document.getElementById('usage-custom-from')._flatpickr;
+    picker.open(); return picker.isOpen && picker.calendarContainer.querySelectorAll('.flatpickr-day').length >= 28;
+  })()`);
+  if (!calendarReady) throw new Error('Custom calendar did not open.');
+  await wait(100);
+  fs.writeFileSync(path.join(screenshotDir, 'usage-calendar-dark.png'), (await window.webContents.capturePage()).toPNG());
+  await window.webContents.executeJavaScript("document.getElementById('usage-custom-from')._flatpickr.close()");
   await window.webContents.executeJavaScript("document.getElementById('settings-usage-view').scrollTo({ top: 0, behavior: 'auto' })");
   await wait(100);
   fs.writeFileSync(path.join(screenshotDir, 'usage-settings-desktop-dark.png'), (await window.webContents.capturePage()).toPNG());

@@ -137,9 +137,9 @@ function boardButlerCreditsFromPtc(ptc) {
 }
 
 const BOARD_BUTLER_RETAIL_CREDITS = Object.freeze({
-  removeBackground: boardButlerCreditsFromPtc(0.50),
+  removeBackground: boardButlerCreditsFromPtc(0.001 + 0.013 / 7.3),
   imageEdit: boardButlerCreditsFromPtc(0.05),
-  imageExpand: boardButlerCreditsFromPtc(0.50),
+  imageExpand: boardButlerCreditsFromPtc(0.20 + 0.013 / 7.3),
   imageEnhance: boardButlerCreditsFromPtc(0.50),
   eraseObject: boardButlerCreditsFromPtc(0.50),
   topazImage: boardButlerCreditsFromPtc(6 * 0.15),
@@ -1329,7 +1329,7 @@ function openBoardButlerLegacyExpandPanel(anchor, file, item) {
   const { body } = createBoardButlerConfigPanel(
     anchor,
     BOARD_BUTLER_ICONS.imageLayer,
-    t('Expand image', '图片扩展', '이미지 확장'),
+    t('Resize image', '修改尺寸', '크기 변경'),
     'Kling Images Expand'
   );
   const form = document.createElement('form');
@@ -1400,7 +1400,7 @@ function openBoardButlerExpandPanelLegacyPreview(anchor, file, item) {
   const { body } = createBoardButlerConfigPanel(
     anchor,
     BOARD_BUTLER_ICONS.imageLayer,
-    t('Expand image', '图片扩展', '이미지 확장'),
+    t('Resize image', '修改尺寸', '크기 변경'),
     'Clipdrop Uncrop'
   );
   const form = document.createElement('form');
@@ -1639,6 +1639,39 @@ function keepBoardButlerExpandEditorInViewport(editor) {
 }
 
 function openBoardButlerExpandPanel(anchor, file, item) {
+  const { body } = createBoardButlerConfigPanel(anchor, BOARD_BUTLER_ICONS.imageLayer, t('Resize image', '修改尺寸'), '');
+  const form = document.createElement('form');
+  form.className = 'board-butler-config-form';
+  for (const [name, label, initial] of [
+    ['width', t('Width', '宽度'), file.sourceWidth],
+    ['height', t('Height', '高度'), file.sourceHeight]
+  ]) {
+    form.appendChild(boardButlerNumberField(BOARD_BUTLER_ICONS.imageLayer, label, name, {
+      min: 64, max: 4096, step: 1, value: Math.max(64, Math.min(4096, Number(initial) || 1024))
+    }));
+  }
+  const estimate = document.createElement('output');
+  const refreshEstimate = () => {
+    const data = new FormData(form);
+    const is4K = Math.max(Number(data.get('width')), Number(data.get('height'))) > 2048;
+    const credits = boardButlerCreditsFromPtc((is4K ? 0.35 : 0.20) + 0.013 / 7.3);
+    estimate.textContent = `${credits} ${t('credits', '积分')}`;
+  };
+  form.appendChild(estimate);
+  form.addEventListener('input', refreshEstimate);
+  refreshEstimate();
+  appendBoardButlerFormActions(form, t('Resize image', '修改尺寸'));
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    const data = new FormData(form);
+    const options = { width: Number(data.get('width')), height: Number(data.get('height')) };
+    if (![options.width, options.height].every(value => Number.isInteger(value) && value >= 64 && value <= 4096)) return;
+    if (launchBoardButlerImageTool('imageExpand', file, item, options)) closeBoardButlerPanel();
+  });
+  body.appendChild(form);
+}
+
+function openBoardButlerRetiredExpandEditor(anchor, file, item) {
   const sourceWidth = Math.max(1, Math.round(Number(file && file.sourceWidth) || 1024));
   const sourceHeight = Math.max(1, Math.round(Number(file && file.sourceHeight) || 1024));
   const initialWidth = sourceWidth + Math.min(1000, Math.max(160, Math.round(sourceWidth * 0.25)));
@@ -2834,7 +2867,7 @@ function openBoardButlerMenu(trigger, file, item) {
       file,
       'imageExpand',
       BOARD_BUTLER_ICONS.imageLayer,
-      t('Expand image', '图片扩展', '이미지 확장'),
+      t('Resize image', '修改尺寸', '크기 변경'),
       (button) => openBoardButlerExpandPanel(button, file, item),
       { popup: 'dialog', credits: BOARD_BUTLER_RETAIL_CREDITS.imageExpand }
     ));

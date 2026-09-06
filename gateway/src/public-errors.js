@@ -3,6 +3,7 @@ const USER_AUTH_CODES = new Set(['invalid-session', 'auth-required']);
 const PROVIDER_ERROR_CODES = new Set(['api-error', 'provider-request-failed', 'ai302-unauthorized']);
 const SUPPLIER_NAME_RE = /\b(?:api\.atlascloud\.ai|atlas\s*cloud|atlascloud|302(?:\.ai)?|ai302|quick\s*router|topaz(?:\s+labs)?|higgsfield|google|gemini|kling|jimeng|dreamina|minimax|doubao|seedream|seedance|hyper3d|tripo(?:3d)?|hunyuan|qwen|clipdrop|legnext|rodin|openai|anthropic|volcengine|bytedance|kwaivgi|replicate|siliconflow|aliyun|deepseek)\b/gi;
 const KNOWN_PUBLIC_CODES = new Set([
+  'moderation-unavailable', 'prompt-rejected',
   'invalid-session', 'auth-required', 'account-suspended', 'request-id-conflict', 'delivery-status-conflict',
   'invalid-delivery-confirmation', 'quota-not-configured', 'quota-service-failed',
   'credit-service-not-configured', 'credit-schema-missing', 'credit-service-failed',
@@ -73,6 +74,7 @@ const PUBLIC_MESSAGES = Object.freeze({
 });
 
 function classifiedProviderCode(code, status, message) {
+  if (code === 'moderation-unavailable' || code === 'prompt-rejected') return code;
   const text = `${code} ${message}`;
   if (/copyright|restricted content|sensitive content|policy|moderation|InputImageSensitiveContentDetected/i.test(text)) {
     return 'reference-policy-rejected';

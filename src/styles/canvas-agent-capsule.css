@@ -1,0 +1,68 @@
+/* Agent uses a rounded dock without animating the canvas layout. */
+#board-agent-panel {
+  margin: 10px 12px 10px 0;
+  border-radius: 28px;
+  background: var(--bg-elevated);
+  backdrop-filter: none;
+  transition: none;
+}
+#board-agent-panel.is-hidden {
+  margin: 0;
+  visibility: hidden;
+}
+#board-agent-panel .board-agent-messages {
+  margin-top: 54px;
+  padding: 8px 16px 18px;
+  gap: 14px;
+  overscroll-behavior: contain;
+}
+#board-agent-panel .board-agent-message {
+  flex-shrink: 0;
+  min-width: 0;
+  max-width: 92%;
+  border-radius: 22px;
+  padding: 12px 16px;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.65;
+}
+#board-agent-panel .board-agent-message.is-user {
+  background: var(--bg-surface-2);
+}
+#board-agent-panel .board-agent-message-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  white-space: normal;
+}
+#board-agent-panel .board-agent-message-files > img {
+  display: block;
+  width: 64px;
+  height: 64px;
+  flex: 0 0 64px;
+  object-fit: cover;
+  border-radius: 12px;
+}
+#board-agent-panel .board-agent-message-file { max-width: 100%; min-width: 0; }
+#board-agent-panel .board-agent-form {
+  flex-shrink: 0;
+  margin: 0 12px 12px;
+  padding: 14px;
+  border-radius: 26px;
+  box-shadow: none;
+}
+#board-agent-panel .board-agent-form textarea { font-size: 14px; }
+#board-agent-panel .board-agent-tool-btn,
+#board-agent-panel .board-agent-form button[type="submit"] {
+  border-radius: 50%;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+#board-agent-panel .board-agent-model-trigger {
+  border-radius: 999px;
+  padding-inline: 10px;
+}
+#board-agent-panel .board-agent-close,
+#board-agent-panel .board-agent-history-toggle { background: var(--bg-surface-2); }
+#board-agent-panel .board-agent-history-drawer { border-radius: 22px; backdrop-filter: none; }

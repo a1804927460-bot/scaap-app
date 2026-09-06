@@ -82,7 +82,7 @@ assert.match(boardMedia, /BOARD_BUTLER_ICONS\.imageLayer/, 'Image expansion must
   );
 });
 assert.match(boardMedia, /SeedEdit 3\.0/, 'Image edit must identify SeedEdit 3.0.');
-assert.match(boardMedia, /imageEdit: boardButlerCreditsFromPtc\(0\.05\)[\s\S]*imageExpand: boardButlerCreditsFromPtc\(0\.50\)/, 'Image edit and expansion must derive the gateway-aligned paid prices from protected provider cost.');
+assert.match(boardMedia, /imageEdit: boardButlerCreditsFromPtc\(0\.05\)[\s\S]*imageExpand: boardButlerCreditsFromPtc\(0\.20 \+ 0\.013 \/ 7\.3\)/, 'Image edit and FAL resize must derive gateway-aligned prices including operating cost.');
 assert.doesNotMatch(boardMedia, /Free · SeedEdit|免费 · SeedEdit|무료 · SeedEdit/, 'SeedEdit must never be presented as free.');
 assert.doesNotMatch(boardMedia, /\$\{t\('Free', '免费', '무료'\)\}/, 'Paid expansion must never be presented as free.');
 assert.match(boardMedia, /Clipdrop Uncrop/, 'Image expansion must identify the documented Clipdrop endpoint.');

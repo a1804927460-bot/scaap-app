@@ -1,0 +1,36 @@
+/* Size the library by its available pane, including a resized sidebar. */
+#canvas-library-view { container-type: inline-size; container-name: canvas-library; }
+#canvas-library-view .canvas-library-content { padding: clamp(12px, 2cqi, 24px); scrollbar-gutter: stable; }
+#canvas-library-view .canvas-library-topline { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 14px; }
+#canvas-library-view .canvas-library-topline > div:first-child { flex: 1 0 180px; min-width: 0; }
+#canvas-library-view .canvas-library-toolbar { flex: 1 1 440px; gap: 8px; }
+#canvas-library-view .canvas-library-search { flex: 1 1 180px; width: auto; max-width: 360px; min-width: 140px; }
+#canvas-library-view .canvas-library-actions { width: auto; flex: 0 0 auto; }
+#canvas-library-view .canvas-library-topline h2 { font-size: 22px; line-height: 1.3; }
+#canvas-library-view .canvas-library-topline p { font-size: 13px; line-height: 1.5; }
+#canvas-library-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, clamp(172px, 22cqi, 260px)), 1fr));
+  gap: clamp(10px, 1.4cqi, 20px);
+  align-items: stretch;
+}
+#canvas-library-grid .canvas-library-card { gap: 8px; padding: 10px; transition: background-color 120ms ease; }
+#canvas-library-grid .canvas-library-card:hover { transform: none; }
+#canvas-library-grid .canvas-library-card-title { font-size: 14px; line-height: 1.4; }
+#canvas-library-grid .canvas-library-card-meta { font-size: 12px; gap: 8px; min-width: 0; }
+#canvas-library-grid .canvas-library-card-meta > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#canvas-library-grid .canvas-library-mosaic { aspect-ratio: 16 / 10; gap: 4px; }
+#canvas-library-grid .canvas-library-folder-card { min-height: 170px; padding: 14px; }
+#canvas-library-grid .canvas-library-folder-icon,
+#canvas-library-grid .canvas-library-folder-icon img { width: clamp(80px, 12cqi, 128px); height: clamp(80px, 12cqi, 128px); }
+#canvas-library-grid .canvas-library-folder-title { font-size: 14px; }
+@container canvas-library (max-width: 620px) {
+  #canvas-library-view .canvas-library-topline { flex-direction: column; align-items: stretch; }
+  #canvas-library-view .canvas-library-topline > div:first-child { flex: none; }
+  #canvas-library-view .canvas-library-toolbar { flex: none; width: 100%; }
+  #canvas-library-view .canvas-library-search { max-width: none; }
+  #canvas-library-view .canvas-library-actions .canvas-library-action { min-height: 34px; padding-inline: 9px; }
+}
+@container canvas-library (max-width: 380px) {
+  #canvas-library-view .canvas-library-actions { width: 100%; }
+  #canvas-library-view .canvas-library-actions > button { flex: 1; justify-content: center; }
+}

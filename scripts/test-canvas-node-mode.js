@@ -21,7 +21,8 @@ function functionBody(text, name, nextName) {
 }
 
 assert.strictEqual(pkg.dependencies.drawflow, '0.0.60');
-assert.match(html, /node_modules\/drawflow\/dist\/drawflow\.min\.css/);
+assert.doesNotMatch(html, /drawflow|canvas-node-mode\.js|data-add-node=/,
+  'Retired node mode must not be loaded or exposed by the desktop.');
 assert.match(source, /new Drawflow\(host\)/);
 assert.match(source, /messs\.canvas\.nodes\.v2/, 'Node graphs must use the independent empty layout namespace.');
 
@@ -59,9 +60,7 @@ assert.doesNotMatch(importPaths, /importFilesDirectlyToBoard|addFilesToBoard|App
 assert.match(source, /function importCanvasNodeEntries[\s\S]*?MesssFileDrop\.importEntries/);
 assert.match(source, /bindCanvasNodeFileDrop[\s\S]*?MesssFileDrop\.entries\(event\.dataTransfer\)[\s\S]*?importCanvasNodeEntries/);
 
-['text', 'image', 'video', 'audio', 'model'].forEach((action) => {
-  assert.match(html, new RegExp(`data-add-node="${action}"`), `Missing ${action} node action.`);
-});
+// The retained module is checked only for legacy data compatibility, not UI availability.
 assert.doesNotMatch(html, /id="board-node-add-toggle"/,
   'Node mode must not show the ordinary bottom add capsule.');
 assert.match(source, /addEventListener\('contextmenu'[\s\S]*?openCanvasNodeAddMenu\(event\.clientX, event\.clientY\)/);

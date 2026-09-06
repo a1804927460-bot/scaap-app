@@ -53,7 +53,7 @@ test('AI Reiter is the primary Nano Banana Pro route', async () => {
       calls.push({ url: value, options });
       if (value === 'https://aireiter.com/api/openapi/submit') {
         const body = JSON.parse(options.body);
-        assert.equal(body.model, 'nano_banana_pro');
+        assert.equal(body.model, 'nano_banana_pro_max');
         assert.equal(body.params.prompt, 'test image');
         assert.deepEqual(body.params.image_url, ['https://assets.example.com/reference.png']);
         return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
@@ -75,6 +75,7 @@ test('AI Reiter is the primary Nano Banana Pro route', async () => {
     });
     assert.deepEqual(result, VALID_PNG);
     assert.equal(calls[0].url, 'https://aireiter.com/api/openapi/submit');
+    assert.equal(JSON.parse(calls[0].options.body).model, 'nano_banana_pro_max');
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
@@ -90,7 +91,7 @@ test('AI Reiter Nano Banana 2 references use a public relay and documented URL e
       const value = String(url);
       if (value.endsWith('/api/openapi/submit')) {
         const body = JSON.parse(options.body);
-        assert.equal(body.model, 'nano_banana_v2_plus');
+        assert.equal(body.model, 'nano_banana_v2_max');
         submittedParams = body.params;
         assert.equal(Array.isArray(body.params.image_url), true);
         assert.equal(body.params.image_url.length, 1);
@@ -129,7 +130,7 @@ test('AI Reiter Nano Banana 2 references use a public relay and documented URL e
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
-test('AI Reiter GPT Image 2 sends resolution with aspect ratio and size by itself', async () => {
+test('AI Reiter GPT Image 2 official sends documented resolution and rejects unsupported combinations', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({
     AIREITER_API_KEY: 'aireiter-key',
@@ -154,13 +155,23 @@ test('AI Reiter GPT Image 2 sends resolution with aspect ratio and size by itsel
       providerId: 'image-6',
       operationId: '47474747-4747-4474-8474-474747474747',
       prompt: 'documented ratio',
-      size: 'auto',
+      size: '2K',
       aspectRatio: '16:9'
     });
-    assert.equal(submissions[0].model, 'gpt_image_2');
+    assert.equal(submissions[0].model, 'gpt_image_2_official');
     assert.equal(submissions[0].params.aspect_ratio, '16:9');
     assert.equal(submissions[0].params.resolution, '2K');
     assert.equal(submissions[0].params.size, undefined);
+    for (const [size, aspectRatio, code] of [
+      ['1024x1024', '1:1', 'invalid-size'],
+      ['4K', '1:1', 'invalid-aspect-ratio'],
+      ['2K', '7:3', 'invalid-aspect-ratio']
+    ]) {
+      await assert.rejects(generateMedia('image', {
+        providerId: 'image-6', prompt: 'invalid combination', size, aspectRatio
+      }), { code });
+    }
+    assert.equal(submissions.length, 1);
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
@@ -513,7 +524,7 @@ test('retired Gemini 3.7 Flash requests are rejected before any upstream call', 
   globalThis.fetch = previousFetch;
 });
 
-test('AI Reiter Agent models use the three published model routes', async () => {
+test('AI Reiter Agent models use their configured model routes', async () => {
   const previousFetch = globalThis.fetch;
   await withEnvironment({ AIREITER_API_KEY: 'aireiter-key' }, async () => {
     const calls = [];
@@ -525,7 +536,8 @@ test('AI Reiter Agent models use the three published model routes', async () => 
     for (const [providerId, model, upstreamModel] of [
       ['chat-3', 'gemini-3.1-pro', 'chat-gemini-3.1-pro'],
       ['chat-4', 'gpt-5.6-sol', 'chat-gpt-5.6-sol'],
-      ['chat-5', 'kimi-k3', 'chat-kimi-k3']
+      ['chat-5', 'kimi-k3', 'chat-kimi-k3'],
+      ['chat-6', 'gemini-3.8-flash', 'chat-gemini-3.8-flash']
     ]) {
       await chat({ providerId, model, endUserId: 'u_0123456789abcdef0123', messages: [{ role: 'user', content: model }] });
       assert.equal(calls.at(-1).url, 'https://aireiter.com/api/v1/chat/completions');
@@ -688,7 +700,7 @@ test('legacy traffic controls cannot demote AI Reiter and ChaserPro remains hidd
       calls.push(value);
       if (value.endsWith('/api/openapi/submit')) {
         const body = JSON.parse(options.body);
-        assert.equal(body.model, 'nano_banana_pro');
+        assert.equal(body.model, 'nano_banana_pro_max');
         return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
       }
       if (value.endsWith('/api/openapi/query')) {

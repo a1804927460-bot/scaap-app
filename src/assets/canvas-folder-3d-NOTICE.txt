@@ -1,0 +1,4 @@
+File folder 3D artwork: Microsoft Fluent Emoji
+https://github.com/microsoft/fluentui-emoji/tree/main/assets/File%20folder
+Copyright (c) Microsoft Corporation. MIT license.
+See canvas-folder-3d-LICENSE.txt.

@@ -4,6 +4,7 @@ const UUID = '[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}';
 const STORAGE_REF = new RegExp(`^storage://${VIDEO_RESULT_BUCKET}/(${UUID})/(${UUID})\\.(mp4|webm|mov)$`, 'i');
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
+const MAX_PROVIDER_DOWNLOAD_BYTES = MAX_VIDEO_RESULT_BYTES;
 
 function serviceError(code, message, status = 503) {
   return Object.assign(new Error(message), { code, status });
@@ -23,7 +24,7 @@ function validUuid(value) {
 }
 
 function videoType(buffer, suppliedType = '') {
-  const bytes = Buffer.from(buffer || []);
+  const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
   const normalized = String(suppliedType || '').toLowerCase().split(';', 1)[0];
   if (bytes.length >= 12 && bytes.subarray(4, 8).toString('ascii') === 'ftyp') {
     const extension = normalized === 'video/quicktime' ? 'mov' : 'mp4';
@@ -49,6 +50,69 @@ function parseReference(reference, userId, requestId) {
   };
 }
 
+function publicProviderUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    const host = url.hostname.toLowerCase();
+    if (url.protocol !== 'https:' || url.username || url.password || url.port) return '';
+    if (host === 'localhost' || host === '0.0.0.0' || host.endsWith('.local')) return '';
+    if (/^(?:10|127|169\.254|192\.168)\./.test(host)) return '';
+    const private172 = /^172\.(\d{1,3})\./.exec(host);
+    if (private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31) return '';
+    return url.toString();
+  } catch {
+    return '';
+  }
+}
+
+export async function downloadProviderVideoResult(downloadUrl, fetchImpl = fetch) {
+  const safeUrl = publicProviderUrl(downloadUrl);
+  if (!safeUrl) throw serviceError('video-result-download-failed', 'The provider video URL is invalid.', 502);
+  let response;
+  try {
+    response = await fetchImpl(safeUrl, {
+      redirect: 'follow',
+      headers: { Accept: 'video/mp4,video/quicktime,video/webm,application/octet-stream' },
+      signal: AbortSignal.timeout(120_000)
+    });
+  } catch (error) {
+    throw Object.assign(
+      serviceError('video-result-download-failed', 'The provider video could not be downloaded.', 502),
+      { retryable: true }
+    );
+  }
+  if (!response.ok) {
+    const retryable = response.status === 408 || response.status === 429 || response.status >= 500;
+    throw Object.assign(serviceError('video-result-download-failed', 'The provider video could not be downloaded.', 502), { retryable });
+  }
+  const redirectedUrl = publicProviderUrl(response.url || safeUrl);
+  if (!redirectedUrl) {
+    if (response.body?.cancel) await response.body.cancel().catch(() => {});
+    throw serviceError('video-result-download-failed', 'The provider video redirect is invalid.', 502);
+  }
+  const advertised = Number(response.headers?.get('content-length')) || 0;
+  if (advertised > MAX_PROVIDER_DOWNLOAD_BYTES) {
+    if (response.body?.cancel) await response.body.cancel().catch(() => {});
+    throw serviceError('video-result-download-failed', 'The provider video is too large.', 502);
+  }
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of response.body || []) {
+    const part = Buffer.from(chunk);
+    total += part.length;
+    if (total > MAX_PROVIDER_DOWNLOAD_BYTES) {
+      if (response.body?.cancel) await response.body.cancel().catch(() => {});
+      throw serviceError('video-result-download-failed', 'The provider video is too large.', 502);
+    }
+    chunks.push(part);
+  }
+  const buffer = Buffer.concat(chunks, total);
+  const suppliedType = String(response.headers?.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
+  const type = videoType(buffer, suppliedType);
+  if (!type || !buffer.length) throw serviceError('video-result-download-failed', 'The provider returned an invalid video.', 502);
+  return { buffer, contentType: type.contentType };
+}
+
 export function isStoredVideoResult(reference, userId, requestId) {
   return Boolean(parseReference(reference, userId, requestId));
 }
@@ -57,7 +121,7 @@ export async function storeVideoResult(userId, requestId, buffer, contentType = 
   if (!validUuid(userId) || !validUuid(requestId)) {
     throw serviceError('video-result-storage-failed', 'The video result identity is invalid.', 400);
   }
-  const video = Buffer.from(buffer || []);
+  const video = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
   const type = videoType(video, contentType);
   if (!type || !video.length || video.length > MAX_VIDEO_RESULT_BYTES) {
     throw serviceError('video-result-storage-failed', 'The generated video cannot be stored safely.', 502);
@@ -77,9 +141,18 @@ export async function storeVideoResult(userId, requestId, buffer, contentType = 
       signal: AbortSignal.timeout(90_000)
     });
   } catch (error) {
-    throw serviceError('video-result-storage-failed', 'The generated video could not be stored safely.');
+    throw Object.assign(
+      serviceError('video-result-storage-failed', 'The generated video could not be stored safely.'),
+      { retryable: true }
+    );
   }
-  if (!response.ok) throw serviceError('video-result-storage-failed', 'The generated video could not be stored safely.');
+  if (!response.ok) {
+    const retryable = response.status === 408 || response.status === 429 || response.status >= 500;
+    throw Object.assign(
+      serviceError('video-result-storage-failed', 'The generated video could not be stored safely.'),
+      { retryable }
+    );
+  }
   return `storage://${VIDEO_RESULT_BUCKET}/${key}`;
 }
 
@@ -102,7 +175,22 @@ export async function readStoredVideoResult(userId, requestId, reference, fetchI
   if (!response.ok) throw serviceError('video-result-storage-unavailable', 'The saved video result is temporarily unavailable.');
   const advertised = Number(response.headers.get('content-length')) || 0;
   if (advertised > MAX_VIDEO_RESULT_BYTES) throw serviceError('video-result-storage-invalid', 'The saved video result is too large.', 502);
-  const bytes = Buffer.from(await response.arrayBuffer());
+  // Enforce the limit while reading; chunked storage responses may omit size.
+  const chunks = [];
+  let total = 0;
+  try {
+    for await (const chunk of response.body || []) {
+      total += chunk.length;
+      if (total > MAX_VIDEO_RESULT_BYTES) {
+        throw serviceError('video-result-storage-invalid', 'The saved video result is too large.', 502);
+      }
+      chunks.push(chunk);
+    }
+  } catch (error) {
+    if (error.code === 'video-result-storage-invalid') throw error;
+    throw serviceError('video-result-storage-unavailable', 'The saved video download was interrupted.');
+  }
+  const bytes = Buffer.concat(chunks, total);
   const type = videoType(bytes, response.headers.get('content-type'));
   if (!type || !bytes.length || bytes.length > MAX_VIDEO_RESULT_BYTES) {
     throw serviceError('video-result-storage-invalid', 'The saved video result is invalid.', 502);

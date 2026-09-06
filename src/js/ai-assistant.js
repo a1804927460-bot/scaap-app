@@ -21,11 +21,13 @@ const AiAssistant = {
 const AI_CHAT_HISTORY_KEY = 'messs.ai-chat-history.v1';
 const AI_CHAT_HISTORY_LIMIT = 60;
 const AI_ASSISTANT_CHAT_MODELS = new Set([
+  'gemini-3.8-flash',
   'gemini-3.1-pro',
   'gpt-5.6-sol',
   'kimi-k3'
 ]);
 const AI_ASSISTANT_CHAT_MODEL_NAMES = {
+  'gemini-3.8-flash': 'Gemini 3.8 Flash',
   'gemini-3.1-pro': 'Gemini 3.1 Pro',
   'gpt-5.6-sol': 'GPT-5.6 Sol',
   'kimi-k3': 'Kimi K3'
@@ -1379,6 +1381,13 @@ function refreshAssistantOptionSummary() {
 }
 
 function setAssistantKind(kind) {
+  const optionsPanel = document.getElementById('ai-assistant-options');
+  const optionsButton = document.getElementById('ai-assistant-options-toggle');
+  if (optionsPanel) optionsPanel.hidden = true;
+  if (optionsButton) {
+    optionsButton.classList.remove('is-active');
+    optionsButton.setAttribute('aria-expanded', 'false');
+  }
   const panel = document.getElementById('ai-assistant-panel');
   if (panel && panel.classList.contains('is-chat-only-compact') && kind !== 'chat') {
     kind = 'chat';
@@ -1790,6 +1799,7 @@ function refreshAssistantLanguage() {
     if (!button) return;
     button.title = label;
     button.setAttribute('aria-label', label);
+    button.textContent = label;
   });
   const home = document.getElementById('ai-assistant-home');
   const messages = document.getElementById('ai-assistant-messages');
@@ -1894,6 +1904,7 @@ function initAiAssistant() {
     const options = document.getElementById('ai-assistant-options');
     options.hidden = !options.hidden;
     event.currentTarget.classList.toggle('is-active', !options.hidden);
+    event.currentTarget.setAttribute('aria-expanded', String(!options.hidden));
   });
   ['ai-assistant-ratio', 'ai-assistant-size', 'ai-assistant-count', 'ai-assistant-duration'].forEach((id) => {
     document.getElementById(id).addEventListener('change', () => {

@@ -81,6 +81,12 @@ function sanitizePublicCapabilityValue(value, nested = false) {
 function publicCapabilities(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const result = sanitizePublicCapabilityValue(value);
+  if (value.resolutionRatios && typeof value.resolutionRatios === 'object') {
+    result.resolutionRatios = Object.fromEntries(Object.entries(value.resolutionRatios)
+      .filter(([resolution, ratios]) => /^(1K|2K|4K)$/.test(resolution) && Array.isArray(ratios))
+      .map(([resolution, ratios]) => [resolution, ratios
+        .filter(ratio => typeof ratio === 'string' && /^\d{1,2}:\d{1,2}$/.test(ratio)).slice(0, 32)]));
+  }
   // Service tier names are safe product configuration, but their provider
   // mapping is intentionally never sent to the client.
   if (value.tierResolutions && typeof value.tierResolutions === 'object') {
@@ -961,7 +967,7 @@ function aireiterImageParams(provider, body) {
   const ratio = String(body.aspectRatio || '').trim();
   const submittedRatio = ratio === 'auto' || /^\d+:\d+$/.test(ratio) ? ratio : '';
   const resolution = String(body.size || body.resolution || '2K').trim().toUpperCase();
-  if (['nano_banana_v2', 'nano_banana_v2_plus'].includes(provider.model)) {
+  if (['nano_banana_v2', 'nano_banana_v2_plus', 'nano_banana_v2_max'].includes(provider.model)) {
     if (urls.length > 8) throw aireiterLocalRejection('This route accepts at most 8 reference images.', 'too-many-references');
     return {
       prompt,
@@ -970,7 +976,7 @@ function aireiterImageParams(provider, body) {
       resolution: ['1K', '2K', '4K'].includes(resolution) ? resolution : '2K'
     };
   }
-  if (provider.model === 'nano_banana_pro') {
+  if (['nano_banana_pro', 'nano_banana_pro_max'].includes(provider.model)) {
     if (urls.length > 8) throw aireiterLocalRejection('This route accepts at most 8 reference images.', 'too-many-references');
     return {
       prompt,
@@ -981,20 +987,26 @@ function aireiterImageParams(provider, body) {
       resolution: ['1K', '2K', '4K'].includes(resolution) ? resolution : '2K'
     };
   }
-  if (provider.model === 'gpt_image_2') {
-    if (urls.length > 10) throw aireiterLocalRejection('This route accepts at most 10 reference images.', 'too-many-references');
-    const customSize = /^\d{2,4}x\d{2,4}$/i.test(String(body.size || '').trim())
-      ? gptImage2Size(body)
-      : '';
+  if (['gpt_image_2', 'gpt_image_2_official'].includes(provider.model)) {
+    if (urls.length > 9) throw aireiterLocalRejection('This route accepts at most 9 reference images.', 'too-many-references');
+    if (!['low', 'medium', 'high'].includes(String(body.quality || 'medium').trim().toLowerCase())) {
+      throw aireiterLocalRejection('GPT Image 2 quality must be low, medium, or high.', 'invalid-quality');
+    }
+    if (!['1K', '2K', '4K'].includes(resolution)) {
+      throw aireiterLocalRejection('GPT Image 2 resolution must be 1K, 2K, or 4K.', 'invalid-size');
+    }
+    const supportedRatios = resolution === '4K'
+      ? new Set(['16:9', '9:16', '2:1', '1:2', '21:9', '9:21'])
+      : new Set(['1:1', '3:2', '2:3', '4:3', '3:4', '5:4', '4:5', '16:9', '9:16', '2:1', '1:2', '21:9', '9:21']);
+    if (ratio && ratio !== 'auto' && !supportedRatios.has(ratio)) {
+      throw aireiterLocalRejection('GPT Image 2 does not support this aspect ratio at the selected resolution.', 'invalid-aspect-ratio');
+    }
     return {
       prompt,
       ...(urls.length ? { image_url: urls } : {}),
-      ...(customSize
-        ? { size: customSize }
-        : {
-            ...(submittedRatio ? { aspect_ratio: submittedRatio } : {}),
-            resolution: ['1K', '2K', '4K'].includes(resolution) ? resolution : '2K'
-          })
+      ...(submittedRatio && submittedRatio !== 'auto' ? { aspect_ratio: submittedRatio } : {}),
+      resolution,
+      quality: String(body.quality || 'medium').trim().toLowerCase()
     };
   }
   if (provider.model === 'mj_v8_1') {

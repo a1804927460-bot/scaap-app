@@ -81,18 +81,14 @@ const gptImage2Provider = config.providers.find((provider) => provider.id === 'i
 assert.equal(gptImage2Provider.name, 'GPT Image 2');
 assert.deepEqual(gptImage2Provider.capabilities.sizes, ['1K', '2K', '4K']);
 assert.deepEqual(gptImage2Provider.capabilities.resolutionPresets, ['1K', '2K', '4K']);
-assert.deepEqual(gptImage2Provider.capabilities.qualities, ['low', 'medium', 'high', 'auto']);
+assert.deepEqual(gptImage2Provider.capabilities.qualities, ['low', 'medium', 'high']);
 assert.deepEqual(gptImage2Provider.capabilities.ratios, [
-  'auto', '1:1', '3:2', '2:3', '4:3', '3:4', '5:4', '4:5', '16:9',
+  '1:1', '3:2', '2:3', '4:3', '3:4', '5:4', '4:5', '16:9',
   '9:16', '2:1', '1:2', '21:9', '9:21'
 ]);
-assert.equal(gptImage2Provider.capabilities.arbitrarySizes, true);
-assert.equal(gptImage2Provider.capabilities.arbitraryRatios, true);
-assert.equal(gptImage2Provider.capabilities.maxSizeEdge, 3840);
-assert.equal(gptImage2Provider.capabilities.maxSizePixels, 8_294_400);
-assert.equal(gptImage2Provider.capabilities.minimumAspectRatio, 1 / 3);
-assert.equal(gptImage2Provider.capabilities.maximumAspectRatio, 3);
-assert.equal(gptImage2Provider.capabilities.sizeMultiple, 16);
+assert.equal(gptImage2Provider.capabilities.arbitrarySizes, false);
+assert.equal(gptImage2Provider.capabilities.arbitraryRatios, false);
+assert.deepEqual(gptImage2Provider.capabilities.resolutionRatios['4K'], ['16:9', '9:16', '2:1', '1:2', '21:9', '9:21']);
 assert.equal(gptImage2Provider.capabilities.promptMaxCharacters, 32000);
 assert.equal(gptImage2Provider.capabilities.referencePromptMaxCharacters, 32000);
 assert.deepEqual(gptImage2Provider.capabilities.referenceMimeTypes, ['image/png', 'image/jpeg', 'image/webp']);
@@ -386,7 +382,7 @@ assert.equal(nanoCalls[0].url, 'https://aireiter.com/api/openapi/submit');
 assert.equal(nanoCalls[0].options.headers.Authorization, 'Bearer aireiter-secret');
 const nanoBody = JSON.parse(nanoCalls[0].options.body);
 assert.deepEqual(nanoBody, {
-  model: 'nano_banana_pro',
+  model: 'nano_banana_pro_max',
   params: {
     prompt: 'editorial portrait',
     aspect_ratio: '3:4',
@@ -444,10 +440,10 @@ await generateMedia('image', {
   urls: [relayReference]
 });
 const nano2Submit = nanoCalls.find((call) => call.url === 'https://aireiter.com/api/openapi/submit'
-  && JSON.parse(call.options.body).model === 'nano_banana_v2_plus');
+  && JSON.parse(call.options.body).model === 'nano_banana_v2_max');
 assert.ok(nano2Submit);
 const relayedBody = JSON.parse(nano2Submit.options.body);
-assert.equal(relayedBody.model, 'nano_banana_v2_plus');
+assert.equal(relayedBody.model, 'nano_banana_v2_max');
 assert.equal(relayedBody.params.image_url.length, 1);
 assert.match(relayedBody.params.image_url[0], /^https:\/\/gateway\.test\/v1\/tools\/assets\/[A-Za-z0-9_-]{43}$/);
 assert.ok(nanoCalls.some((call) => call.url === 'https://aireiter.com/api/openapi/query'));

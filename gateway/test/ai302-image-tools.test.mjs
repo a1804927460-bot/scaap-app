@@ -788,7 +788,7 @@ test('gateway charges image tools while retaining opaque asynchronous result dow
   );
   assert.match(
     server,
-    /url\.pathname === '\/v1\/tools\/image\/expand'[\s\S]*?clipdrop-uncrop[\s\S]*?reserveFixedTool\(user\.id, providerId, requestId\)[\s\S]*?uncropImage[\s\S]*?settleReservedTool\(user\.id, usage\)/
+    /url\.pathname === '\/v1\/tools\/image\/expand'[\s\S]*?clipdrop-uncrop[\s\S]*?reserveFixedTool\(user\.id, providerId, requestId, body && body\.options\)[\s\S]*?runDurableFalImageTool[\s\S]*?model: 'smart-resize'[\s\S]*?settleReservedTool\(user\.id, usage\)/
   );
   assert.match(
     server,

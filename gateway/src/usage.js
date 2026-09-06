@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import falPricing from '../../lib/fal-pricing.js';
 import {
   BUTLER_FIXED_RETAIL_CREDITS,
   FREE_BUTLER_PROVIDERS,
@@ -9,14 +10,15 @@ import {
 } from './tool-pricing.js';
 import { normalizeVideoResolution } from './video-resolution.js';
 import operatingCosts from '../../lib/operating-costs.js';
+import creditPricing from '../../lib/credit-pricing.js';
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
-export const CREDIT_PRICING_VERSION = '202609050002';
+export const CREDIT_PRICING_VERSION = '202609060001';
 const LEGACY_POINTS_PER_CNY = 10;
 const POINTS_PER_CNY = 1000 / 70;
 const POINT_DENOMINATION_SCALE = POINTS_PER_CNY / LEGACY_POINTS_PER_CNY;
-export const IMAGE_GROSS_MARGIN_PERCENT = 20;
-export const VIDEO_GROSS_MARGIN_PERCENT = 20;
+export const IMAGE_GROSS_MARGIN_PERCENT = 25;
+export const VIDEO_GROSS_MARGIN_PERCENT = 25;
 // Existing callers use these names for image quotes. Video quotes below use
 // their dedicated margin multiplier.
 export const RETAIL_GROSS_MARGIN_PERCENT = IMAGE_GROSS_MARGIN_PERCENT;
@@ -96,9 +98,9 @@ function legacyPointRateTable(rates) {
 export const IMAGE_UPSTREAM_CREDITS = Object.freeze({
   'atlas-image-gpt2': 1 * POINT_DENOMINATION_SCALE,
   'atlas-image-gpt2-edit': 2 * POINT_DENOMINATION_SCALE,
-  'image-1': 0.24 * PTC_TO_CREDITS, 'image-2': 0.072 * PTC_TO_CREDITS,
+  'image-1': 0.165 * PTC_TO_CREDITS, 'image-2': 0.1155 * PTC_TO_CREDITS,
   'image-3': 0.28 * POINTS_PER_CNY, 'image-4': 2 * POINT_DENOMINATION_SCALE,
-  'image-5': 2 * POINT_DENOMINATION_SCALE, 'image-6': 2 * POINT_DENOMINATION_SCALE,
+  'image-5': 2 * POINT_DENOMINATION_SCALE, 'image-6': 0.10 * PTC_TO_CREDITS,
   'image-7': 2 * POINT_DENOMINATION_SCALE, 'image-8': 2 * POINT_DENOMINATION_SCALE,
   'image-9': 3 * POINT_DENOMINATION_SCALE, 'image-10': 4 * POINT_DENOMINATION_SCALE,
   'image-11': 3 * POINT_DENOMINATION_SCALE, 'image-12': 2 * POINT_DENOMINATION_SCALE,
@@ -109,32 +111,30 @@ export const IMAGE_UPSTREAM_CREDITS = Object.freeze({
 const IMAGE_CREDITS_BASE = retailRateTable(IMAGE_UPSTREAM_CREDITS);
 
 const GPT_IMAGE_2_GENERATE_UPSTREAM_POINTS = Object.freeze({
-  low: Object.freeze({ '1k': 1, '2k': 2, '4k': 2 }),
-  medium: Object.freeze({ '1k': 5, '2k': 9, '4k': 9 }),
-  high: Object.freeze({ '1k': 16, '2k': 32, '4k': 32 }),
-  auto: Object.freeze({ '1k': 5, '2k': 9, '4k': 9 })
+  low: Object.freeze({ '1k': 0.022, '2k': 0.029, '4k': 0.036 }),
+  medium: Object.freeze({ '1k': 0.092, '2k': 0.10, '4k': 0.17 }),
+  high: Object.freeze({ '1k': 0.33, '2k': 0.35, '4k': 0.62 }),
 });
 const GPT_IMAGE_2_EDIT_UPSTREAM_POINTS = Object.freeze({
-  low: Object.freeze({ '1k': 2, '2k': 3, '4k': 3 }),
-  medium: Object.freeze({ '1k': 6, '2k': 10, '4k': 10 }),
-  high: Object.freeze({ '1k': 17, '2k': 33, '4k': 33 }),
-  auto: Object.freeze({ '1k': 6, '2k': 10, '4k': 10 })
+  low: Object.freeze({ '1k': 0.022, '2k': 0.029, '4k': 0.036 }),
+  medium: Object.freeze({ '1k': 0.092, '2k': 0.10, '4k': 0.17 }),
+  high: Object.freeze({ '1k': 0.33, '2k': 0.35, '4k': 0.62 }),
 });
 const scaleGptImage2Upstream = (matrix) => Object.freeze(Object.fromEntries(
   Object.entries(matrix).map(([quality, rates]) => [quality, Object.freeze(Object.fromEntries(
-    Object.entries(rates).map(([resolution, points]) => [resolution, points * POINT_DENOMINATION_SCALE])
+    Object.entries(rates).map(([resolution, usd]) => [resolution, usd * PTC_TO_CREDITS])
   ))])
 ));
 const GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS = scaleGptImage2Upstream(GPT_IMAGE_2_GENERATE_UPSTREAM_POINTS);
 const GPT_IMAGE_2_EDIT_UPSTREAM_CREDITS = scaleGptImage2Upstream(GPT_IMAGE_2_EDIT_UPSTREAM_POINTS);
 const GPT_IMAGE_2_GENERATE_RETAIL_CREDITS = retailNestedRateTable(GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS);
 const GPT_IMAGE_2_EDIT_RETAIL_CREDITS = retailNestedRateTable(GPT_IMAGE_2_EDIT_UPSTREAM_CREDITS);
-const GPT_IMAGE_2_RETAIL_CREDITS = GPT_IMAGE_2_EDIT_RETAIL_CREDITS;
+const GPT_IMAGE_2_RETAIL_CREDITS = GPT_IMAGE_2_GENERATE_RETAIL_CREDITS;
 export const GPT_IMAGE_2_MAX_INPUT_RETAIL_CREDITS = 0;
 export const GPT_IMAGE_2_OUTPUT_RETAIL_CREDITS = GPT_IMAGE_2_RETAIL_CREDITS;
 
 export const IMAGE_QUALITY_UPSTREAM_CREDITS = Object.freeze({
-  'image-6': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_EDIT_UPSTREAM_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
+  'image-6': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
   'atlas-image-gpt2': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
   'atlas-image-gpt2-edit': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_EDIT_UPSTREAM_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
 });
@@ -145,27 +145,27 @@ export const IMAGE_QUALITY_CREDITS = Object.freeze({
 });
 
 export const IMAGE_QUALITY_RESOLUTION_UPSTREAM_CREDITS = Object.freeze({
-  'image-6': GPT_IMAGE_2_EDIT_UPSTREAM_CREDITS,
+  'image-6': GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS,
   'atlas-image-gpt2': GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS,
   'atlas-image-gpt2-edit': GPT_IMAGE_2_EDIT_UPSTREAM_CREDITS
 });
 export const IMAGE_QUALITY_RESOLUTION_CREDITS = Object.freeze({
-  'image-6': GPT_IMAGE_2_RETAIL_CREDITS,
+  'image-6': GPT_IMAGE_2_GENERATE_RETAIL_CREDITS,
   'atlas-image-gpt2': GPT_IMAGE_2_GENERATE_RETAIL_CREDITS,
   'atlas-image-gpt2-edit': GPT_IMAGE_2_EDIT_RETAIL_CREDITS
 });
 
 export const IMAGE_RESOLUTION_UPSTREAM_CREDITS = Object.freeze({
   'image-1': Object.freeze({
-    '1k': 0.14 * PTC_TO_CREDITS,
-    '2k': 0.24 * PTC_TO_CREDITS,
-    '4k': 0.48 * PTC_TO_CREDITS
+    '1k': 0.165 * PTC_TO_CREDITS,
+    '2k': 0.165 * PTC_TO_CREDITS,
+    '4k': 0.33 * PTC_TO_CREDITS
   }),
   // AI Reiter Nano Banana 2 Plus: USD 0.048 / 0.072 / 0.108.
   'image-2': Object.freeze({
-    '1k': 0.048 * PTC_TO_CREDITS,
-    '2k': 0.072 * PTC_TO_CREDITS,
-    '4k': 0.108 * PTC_TO_CREDITS
+    '1k': 0.077 * PTC_TO_CREDITS,
+    '2k': 0.1155 * PTC_TO_CREDITS,
+    '4k': 0.154 * PTC_TO_CREDITS
   }),
   'image-3': Object.freeze({ '2k': 0.28 * POINTS_PER_CNY, '4k': 0.50 * POINTS_PER_CNY }),
   'image-7': legacyPointRateTable({ '720p': 2, '1080p': 4 }),
@@ -187,9 +187,9 @@ export const IMAGE_CREDITS = Object.freeze({
   ...IMAGE_CREDITS_BASE,
   'image-1': IMAGE_RESOLUTION_CREDITS['image-1']['2k'],
   'image-3': IMAGE_RESOLUTION_CREDITS['image-3']['2k'],
-  'image-6': GPT_IMAGE_2_RETAIL_CREDITS.auto['1k'],
-  'atlas-image-gpt2': GPT_IMAGE_2_GENERATE_RETAIL_CREDITS.auto['1k'],
-  'atlas-image-gpt2-edit': GPT_IMAGE_2_EDIT_RETAIL_CREDITS.auto['1k'],
+  'image-6': GPT_IMAGE_2_RETAIL_CREDITS.medium['1k'],
+  'atlas-image-gpt2': GPT_IMAGE_2_GENERATE_RETAIL_CREDITS.medium['1k'],
+  'atlas-image-gpt2-edit': GPT_IMAGE_2_EDIT_RETAIL_CREDITS.medium['1k'],
   'image-17': IMAGE_RESOLUTION_CREDITS['image-17']['1k'],
   'image-18': IMAGE_RESOLUTION_CREDITS['image-18']['1k']
 });
@@ -439,43 +439,23 @@ export function quoteUsage(kind, request = {}) {
     if (!Object.hasOwn(IMAGE_CREDITS, providerId)) {
       throw Object.assign(new Error('The selected image provider is not allowed.'), { code: 'provider-not-allowed', status: 400 });
     }
-    const qualityRates = IMAGE_QUALITY_CREDITS[providerId];
-    const qualityResolutionRates = IMAGE_QUALITY_RESOLUTION_CREDITS[providerId];
-    const resolutionRates = IMAGE_RESOLUTION_CREDITS[providerId];
-    const requestedQuality = String(request.quality || 'auto').trim().toLowerCase();
-    const quality = qualityRates && Object.hasOwn(qualityRates, requestedQuality) ? requestedQuality : 'auto';
-    const defaultResolution = qualityResolutionRates
-      ? '1k'
-      : resolutionRates
-      ? (IMAGE_DEFAULT_RESOLUTIONS[providerId] || (Object.hasOwn(resolutionRates, '2k') ? '2k' : Object.keys(resolutionRates)[0]))
-      : '720p';
-    const requestedResolution = String(request.resolution || request.size || defaultResolution).trim().toLowerCase();
-    const selectedQualityRates = qualityResolutionRates && qualityResolutionRates[quality];
-    const resolution = selectedQualityRates && Object.hasOwn(selectedQualityRates, requestedResolution)
-      ? requestedResolution
-      : qualityResolutionRates
-        ? defaultResolution
-        : resolutionRates && Object.hasOwn(resolutionRates, requestedResolution)
-      ? requestedResolution
-      : defaultResolution;
-    const unitCredits = qualityRates
-      ? (selectedQualityRates ? selectedQualityRates[resolution] : qualityRates[quality])
-      : resolutionRates
-        ? resolutionRates[resolution]
-        : IMAGE_CREDITS[providerId];
-    const count = boundedInteger(request.count, 1, 1, 4);
-    const totalCredits = Math.ceil(Number(unitCredits) * count);
+    const sharedQuote = creditPricing.quoteMediaCredits({
+      kind: 'image', providerId, count: request.count, quality: request.quality,
+      resolution: request.resolution, size: request.size
+    });
     return {
       kind: 'image',
-      providerId,
-      credits: totalCredits,
-      unitCredits,
-      totalCredits,
-      count,
-      resolution: qualityRates ? quality : resolutionRates ? resolution : null,
-      ...(qualityRates ? { quality } : {}),
-      ...((qualityResolutionRates || resolutionRates) ? { imageResolution: resolution } : {}),
-      ...(qualityResolutionRates ? { billingResolution: `${quality}:${resolution}` } : {}),
+      providerId: sharedQuote.providerId,
+      credits: Math.ceil(Number(sharedQuote.totalCredits) || 0),
+      unitCredits: sharedQuote.unitCredits,
+      totalCredits: Math.ceil(Number(sharedQuote.totalCredits) || 0),
+      count: sharedQuote.count,
+      resolution: sharedQuote.quality || sharedQuote.resolution || null,
+      ...(sharedQuote.quality ? { quality: sharedQuote.quality } : {}),
+      ...(sharedQuote.resolution ? { imageResolution: sharedQuote.resolution } : {}),
+      ...(sharedQuote.quality && sharedQuote.resolution
+        ? { billingResolution: `${sharedQuote.quality}:${sharedQuote.resolution}` }
+        : {}),
       duration: null,
       requiresActivation: false
     };
@@ -485,63 +465,21 @@ export function quoteUsage(kind, request = {}) {
     if (!['video-1', 'video-2', 'video-3'].includes(requestedProviderId)) {
       throw Object.assign(new Error('The selected video provider is not allowed.'), { code: 'provider-not-allowed', status: 400 });
     }
-    const providerId = videoBillingProviderId(requestedProviderId, request);
-    const rates = VIDEO_CREDITS_PER_SECOND[providerId];
-    if (!rates) {
-      throw Object.assign(new Error('The selected video provider is not allowed.'), { code: 'provider-not-allowed', status: 400 });
-    }
-    const requestedResolution = normalizeVideoResolution(
-      request.resolution || request.size,
-      requestedProviderId,
-      request.model
-    );
-    const defaultResolution = VIDEO_DEFAULT_RESOLUTIONS[providerId];
-    const resolution = Object.hasOwn(rates, requestedResolution) ? requestedResolution : defaultResolution;
-    const durationLimits = VIDEO_DURATION_LIMITS[providerId] || VIDEO_DURATION_LIMITS['video-1'];
-    const requestedDuration = Number(request.duration);
-    // Atlas edit/extend and auto-duration tasks do not reveal their final
-    // length before submission. Reserve against the maximum supported length
-    // so a completed job can never exceed the customer's reservation.
-    const duration = requestedDuration === -1
-      ? durationLimits.maximum
-      : boundedInteger(request.duration, 6, durationLimits.minimum, durationLimits.maximum);
-    const modelUpstreamCredits = Math.max(
-      rates[resolution] * duration,
-      Number(VIDEO_MINIMUM_UPSTREAM_CREDITS[providerId]?.[resolution]) || 0
-    );
-    const upstreamCredits = modelUpstreamCredits + VIDEO_OPERATING_COST_UPSTREAM_CREDITS;
-    const guardedMultiplier = UPSTREAM_COST_SAFETY_MULTIPLIER * VIDEO_RETAIL_MULTIPLIER;
-    const unitCredits = providerId === 'video-1'
-      ? rates[resolution]
-      : (upstreamCredits / duration) * guardedMultiplier;
-    const referenceMediaTypes = Array.isArray(request.referenceMediaTypes)
-      ? request.referenceMediaTypes.map((value) => String(value || '').trim().toLowerCase())
-      : [];
-    const referenceImageCount = referenceMediaTypes.filter((value) => value === 'image').length;
-    const inputVideoReserveCredits = providerId === 'video-1' && referenceMediaTypes.includes('video')
-      ? unitCredits * 15
-      : 0;
-    const extraImageCredits = providerId === 'video-1'
-      ? Math.max(0, referenceImageCount - 5) * MINIMAX_H3_EXTRA_IMAGE_RETAIL_CREDITS
-      : 0;
-    const baseCredits = providerId === 'video-1'
-      ? unitCredits * duration
-      : Math.ceil(upstreamCredits * guardedMultiplier);
-    const operationCredits = providerId === 'video-1'
-      ? VIDEO_OPERATING_COST_RETAIL_CREDITS
-      : 0;
+    const sharedQuote = creditPricing.quoteMediaCredits({
+      kind: 'video', providerId: requestedProviderId, resolution: request.resolution,
+      size: request.size, duration: request.duration, serviceTier: request.serviceTier,
+      model: request.model, referenceMediaTypes: request.referenceMediaTypes
+    });
     return {
       kind: 'video',
-      providerId,
-      credits: Math.max(
-        MINIMUM_VIDEO_CREDITS,
-        baseCredits + inputVideoReserveCredits + extraImageCredits + operationCredits
-      ),
-      unitCredits,
-      fixedCredits: inputVideoReserveCredits + extraImageCredits + operationCredits,
-      resolution,
-      duration,
-      requiresActivation: providerRequiresActivation('video', providerId)
+      providerId: sharedQuote.providerId,
+      credits: Math.ceil(Number(sharedQuote.totalCredits) || 0),
+      unitCredits: sharedQuote.unitCredits,
+      fixedCredits: sharedQuote.fixedCredits || 0,
+      minimumCredits: sharedQuote.minimumCredits || MINIMUM_VIDEO_CREDITS,
+      resolution: sharedQuote.resolution,
+      duration: sharedQuote.duration,
+      requiresActivation: false
     };
   }
   throw Object.assign(new Error('The requested AI usage kind is not allowed.'), { code: 'provider-not-allowed', status: 400 });
@@ -878,6 +816,19 @@ export async function confirmUsageDelivery(userId, requestId, delivered = true, 
 
 export async function reserveToolUsage(userId, requestId, request = {}, fetchImpl = fetch) {
   const providerId = String(request.providerId || '').trim().toLowerCase();
+  if (['background-remove', 'clipdrop-uncrop'].includes(providerId)) {
+    const quote = falPricing.quoteFalTool(providerId, request.options || {});
+    const headers = serviceHeaders();
+    if (!headers) throw serviceError('credit-service-not-configured', 'FAL requires durable billing.');
+    const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/reserve_fal_tool_credits`, {
+      method: 'POST', headers, signal: AbortSignal.timeout(DURABLE_TIMEOUT_MS),
+      body: JSON.stringify({ p_user_id: userId, p_request_id: requestId, p_provider_id: providerId,
+        p_resolution: quote.resolution, p_expected_credits: quote.credits })
+    });
+    const payload = await responsePayload(response);
+    if (!response.ok) throw serviceError('credit-service-failed', 'FAL credit reservation failed.');
+    return payload;
+  }
   const hasRequestedCredits = request.credits !== null && request.credits !== undefined;
   const requestedCredits = hasRequestedCredits ? Number(request.credits) : null;
   const isTopaz = TOPAZ_DYNAMIC_PROVIDERS.has(providerId);

@@ -287,7 +287,7 @@
 
   function createMoodboardDrawable(api, item, bounds) {
     const group = new api.Group({
-      ...baseOptions(item, bounds, '#1d2430'),
+      ...baseOptions(item, bounds, '#202122'),
       hittable: false
     });
     const background = new api.Rect({
@@ -296,7 +296,7 @@
       y: 0,
       width: bounds.width,
       height: bounds.height,
-      fill: '#1d2430',
+      fill: '#202122',
       stroke: item.selected ? '#f5f7fb' : undefined,
       strokeWidth: item.selected ? 1.2 : 0,
       cornerRadius: 0,
@@ -305,9 +305,9 @@
     const title = new api.Text(textOptions(item, bounds, moodboardTitleForItem(item), '#f3f5f8', {
       x: 16,
       y: 14,
-      width: Math.max(1, bounds.width - 32),
+      width: Math.max(1, bounds.width - 120),
       height: 28,
-      fontSize: 20,
+      fontSize: 18,
       fontWeight: 720,
       lineHeight: { type: 'percent', value: 1.25 },
       textOverflow: 'ellipsis'
@@ -432,7 +432,7 @@
         background.strokeWidth = item.selected ? 1.2 : 0;
       }
       if (title) {
-        title.width = Math.max(1, bounds.width - 32);
+        title.width = Math.max(1, bounds.width - 120);
         title.text = moodboardTitleForItem(item);
       }
       if (body) {

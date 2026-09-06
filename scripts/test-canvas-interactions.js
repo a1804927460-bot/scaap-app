@@ -359,11 +359,10 @@ assert.match(
   /function syncAiComposerFullscreenState\(\)[\s\S]*?selectionStart[\s\S]*?classList\.toggle\('is-panel-popover', !isBoardFullscreen\(\)\)[\s\S]*?prompt\.focus\(\{ preventScroll: true \}\)[\s\S]*?setSelectionRange/,
   'Fullscreen changes must preserve the open composer, prompt focus, and caret selection.'
 );
-assert.match(
-  boardSource,
-  /function enterBoardFullscreen\(\)[\s\S]*?syncAiComposerFullscreenState\(\)[\s\S]*?function exitBoardFullscreen\(\)[\s\S]*?syncAiComposerFullscreenState\(\)/,
-  'Entering and leaving fullscreen must reflow the existing composer instead of recreating it.'
-);
+assert.doesNotMatch(boardSource, /function enterBoardFullscreen\(/,
+  'The removed fullscreen entry point must not return.');
+assert.match(boardSource, /function exitBoardFullscreen\(\)[\s\S]*?syncAiComposerFullscreenState\(\)/,
+  'Legacy fullscreen cleanup must preserve the composer.');
 assert.match(
   boardSource,
   /function setBoardReferenceOrder[\s\S]*?function commitBoardReferenceOrder[\s\S]*?referenceStrip\.addEventListener\('dragover'[\s\S]*?insertBefore\(dragged,[\s\S]*?referenceStrip\.addEventListener\('drop'[\s\S]*?commitBoardReferenceOrder\(\)/,
@@ -613,7 +612,7 @@ assert.match(
 assert.match(workspaceSource, /submitCanvasAgentGeneration[\s\S]*?supportedImageSizeForRatio\(config\.imageSize, original\.aspectRatio, capabilities, references\.referenceFileIds\.length\)/);
 assert.match(
   mainSource,
-  /const sizeRatios = capabilities\.sizeRatios[\s\S]*?mappedRatio !== aspectRatio[\s\S]*?invalid-size-ratio/,
+  /const sizeRatios = capabilities\.sizeRatios[\s\S]*?mappedRatio !== effectiveAspectRatio[\s\S]*?invalid-size-ratio/,
   'Desktop validation must reject contradictory mapped image sizes and ratios.'
 );
 assert.match(
@@ -723,7 +722,7 @@ assert.match(
 );
 assert.match(
   workspaceSource,
-  /event\.code === 'Space'[\s\S]*?event\.ctrlKey \|\| event\.metaKey[\s\S]*?!event\.repeat[\s\S]*?setCanvasAgentOpen\(!!agent\?\.classList\.contains\('is-hidden'\), \{ focus: true \}\)/,
+  /function handleCanvasAgentShortcut[\s\S]*?event\.code !== 'Space'[\s\S]*?event\.ctrlKey \|\| event\.metaKey[\s\S]*?event\.repeat \|\| event\.isComposing[\s\S]*?setCanvasAgentOpen\(!!agent\?\.classList\.contains\('is-hidden'\), \{ focus: true \}\)/,
   'Ctrl or Command plus Space must toggle Messs Agent in the canvas workspace.'
 );
 assert.doesNotMatch(
@@ -869,8 +868,8 @@ assert.match(
 );
 assert.match(
   boardStyles,
-  /\.canvas-library-card \{[\s\S]*?backdrop-filter:\s*blur\(/,
-  'Canvas library cards must use the restrained glass surface.'
+  /\.canvas-library-card \{[\s\S]*?backdrop-filter:\s*none/,
+  'Canvas library cards must not require backdrop compositing.'
 );
 assert.match(
   workspaceSource,
@@ -881,7 +880,7 @@ assert.match(indexHtml, /id="canvas-project-new"[\s\S]*?New folder/,
   'The canvas library must expose its retained new-folder entry point.');
 assert.match(
   indexHtml,
-  /id="canvas-library-view"[\s\S]*?canvas-library-toolbar[\s\S]*?id="canvas-library-search"[\s\S]*?canvas-library-actions[\s\S]*?id="canvas-import"[\s\S]*?Import \.Messs[\s\S]*?id="canvas-project-new"[\s\S]*?New folder/,
+  /id="canvas-library-view"[\s\S]*?canvas-library-toolbar[\s\S]*?id="canvas-library-search"[\s\S]*?canvas-library-actions[\s\S]*?id="canvas-import"[\s\S]*?Import canvas[\s\S]*?id="canvas-project-new"[\s\S]*?New folder/,
   'Canvas library must retain search, import, and folder controls beside the search field.'
 );
 assert.doesNotMatch(indexHtml, /id="canvas-header-new"/, 'The duplicate top-right new-canvas plus button must be removed.');
@@ -980,7 +979,7 @@ assert.match(
 );
 assert.match(mainSource, /lastOpenedAt: canvas\.lastOpenedAt \|\| null,[\s\S]*?pinned: canvas\.pinned === true/,
   'Canvas pin state must survive the main-process canvas-state normalization.');
-assert.match(indexHtml, /id="canvas-import"[\s\S]*?Import \.Messs/,
+assert.match(indexHtml, /id="canvas-import"[\s\S]*?Import canvas/,
   'The canvas library must expose a .Messs import entry point.');
 assert.match(workspaceSource, /async function promptImportCanvas[\s\S]*?window\.messsAPI\.importCanvas\(projectId\)[\s\S]*?switchCanvas\(result\.canvas\.id/,
   'Importing a .Messs package must merge its files and layout, then open the imported canvas.');

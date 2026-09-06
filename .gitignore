@@ -1,5 +1,6 @@
 node_modules/
 gateway/node_modules/
+supabase/.temp/
 release/
 release-dev/
 release-*/

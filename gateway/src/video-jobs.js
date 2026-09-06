@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { quoteUsage } from './usage.js';
 import { FairConcurrencyGate } from './fair-concurrency-gate.js';
+import { downloadProviderVideoResult, storeVideoResult } from './video-result-storage.js';
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
 const RPC_TIMEOUT_MS = 8_000;
@@ -78,7 +79,12 @@ async function rpc(name, body, fetchImpl = fetch) {
         signal: AbortSignal.timeout(RPC_TIMEOUT_MS)
       });
     } catch (error) {
-      if (attempt + 1 >= RPC_MAX_ATTEMPTS) break;
+      if (attempt + 1 >= RPC_MAX_ATTEMPTS) {
+        throw Object.assign(
+          serviceError('video-job-service-failed', 'The asynchronous video service is temporarily unavailable.'),
+          { retryable: true }
+        );
+      }
       await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
       continue;
     }
@@ -90,14 +96,20 @@ async function rpc(name, body, fetchImpl = fetch) {
       continue;
     }
     if (!response.ok) {
-      throw serviceError(
+      const failure = serviceError(
         missing ? 'video-job-schema-missing' : 'video-job-service-failed',
-        missing ? 'The asynchronous video schema is not installed.' : 'The asynchronous video service rejected the request.'
+        missing ? 'The asynchronous video schema is not installed.' : 'The asynchronous video service rejected the request.',
+        missing ? 503 : response.status
       );
+      if (retryable) failure.retryable = true;
+      throw failure;
     }
     return payload;
   }
-  throw serviceError('video-job-service-failed', 'The asynchronous video service is temporarily unavailable.');
+  throw Object.assign(
+    serviceError('video-job-service-failed', 'The asynchronous video service is temporarily unavailable.'),
+    { retryable: true }
+  );
 }
 
 function requireObject(payload) {
@@ -151,6 +163,7 @@ export async function attachVideoTask(requestId, providerTaskId, fetchImpl = fet
 function normalizedClaim(row) {
   return {
     requestId: String(row.request_id || row.requestId || ''),
+    userId: String(row.user_id || row.userId || ''),
     providerId: String(row.provider_id || row.providerId || ''),
     providerTaskId: String(row.provider_task_id || row.providerTaskId || ''),
     status: String(row.status || ''),
@@ -293,6 +306,35 @@ export async function getVideoDownload(userId, taskToken, fetchImpl = fetch) {
   }, fetchImpl));
 }
 
+export async function markVideoJobStored({
+  requestId,
+  leaseToken,
+  resultUrl,
+  storageRef,
+  usage = null,
+  contentType = 'video/mp4',
+  bytes = null,
+  durationMs = 0,
+  fetchImpl = fetch
+}) {
+  const normalizedUsage = usage && typeof usage === 'object' ? usage : {};
+  const payload = requireObject(await rpc('record_ai_video_provider_result', {
+    p_request_id: requestId,
+    p_lease_token: leaseToken || null,
+    p_result_url: String(resultUrl || ''),
+    p_storage_ref: String(storageRef || ''),
+    p_result_content_type: String(contentType || 'video/mp4').slice(0, 128),
+    p_result_bytes: Number.isFinite(Number(bytes)) ? Math.max(0, Math.round(Number(bytes))) : null,
+    p_total_seconds: Number.isFinite(Number(normalizedUsage.totalSeconds)) ? Math.max(0, Math.round(Number(normalizedUsage.totalSeconds))) : null,
+    p_input_seconds: Number.isFinite(Number(normalizedUsage.inputSeconds)) ? Math.max(0, Math.round(Number(normalizedUsage.inputSeconds))) : null,
+    p_output_seconds: Number.isFinite(Number(normalizedUsage.outputSeconds)) ? Math.max(0, Math.round(Number(normalizedUsage.outputSeconds))) : null,
+    p_input_image_count: Number.isFinite(Number(normalizedUsage.inputImageCount)) ? Math.max(0, Math.round(Number(normalizedUsage.inputImageCount))) : null,
+    p_duration_ms: Math.max(0, Math.round(Number(durationMs) || 0))
+  }, fetchImpl));
+  if (payload.ok !== true) throw serviceError('video-job-finalization-failed', 'The stored video result could not be persisted.');
+  return payload;
+}
+
 export async function recordVideoStorage(requestId, storageRef, details = {}, fetchImpl = fetch) {
   return requireObject(await rpc('record_ai_video_provider_storage', {
     p_request_id: requestId,
@@ -362,11 +404,22 @@ async function processClaimedJob(job, pollVideoTask, fetchImpl, now) {
         });
         return 'failed';
       }
-      await markVideoJobReady({
+      const downloaded = await downloadProviderVideoResult(resultUrl, fetchImpl);
+      const storageRef = await storeVideoResult(
+        job.userId,
+        job.requestId,
+        downloaded.buffer,
+        downloaded.contentType,
+        fetchImpl
+      );
+      await markVideoJobStored({
         requestId: job.requestId,
         leaseToken: job.leaseToken,
         resultUrl,
+        storageRef,
         usage: result && result.usage,
+        contentType: downloaded.contentType,
+        bytes: downloaded.buffer.length,
         durationMs: elapsedMs(),
         fetchImpl
       });
@@ -422,7 +475,7 @@ export async function runVideoJobWorkerCycle({
   workerId = `gateway-${process.pid}`,
   concurrency = 4,
   providerPollConcurrency = 2,
-  leaseSeconds = 60,
+  leaseSeconds = 300,
   now = Date.now
 } = {}) {
   if (typeof pollVideoTask !== 'function') throw new TypeError('pollVideoTask must be a function.');
@@ -434,7 +487,7 @@ export async function runVideoJobWorkerCycle({
     maxConcurrent: Math.max(1, Math.min(32, Math.round(Number(providerPollConcurrency) || 2))),
     maxPerKey: 1,
     maxQueue: Math.max(1, jobs.length),
-    timeoutMs: 120_000
+    timeoutMs: 30_000
   });
   const gatedPoll = (job) => pollGate.run(job.providerId || 'unknown', () => pollVideoTask(job));
   const results = await Promise.allSettled(jobs.map((job) => processClaimedJob(job, gatedPoll, fetchImpl, now)));

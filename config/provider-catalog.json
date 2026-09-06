@@ -1,5 +1,5 @@
 {
-  "version": 55,
+  "version": 57,
   "providers": [
     {
       "id": "atlas-image-gpt2",
@@ -180,7 +180,7 @@
       "name": "Nano Banana Pro",
       "endpoint": "https://aireiter.com/api/openapi/submit",
       "resultEndpoint": "https://aireiter.com/api/openapi/query",
-      "model": "nano_banana_pro",
+      "model": "nano_banana_pro_max",
       "protocol": "aireiter-async",
       "logicalModel": "nano-banana-pro",
       "fallbackProviderIds": [],
@@ -199,7 +199,7 @@
       "name": "Nano Banana 2",
       "endpoint": "https://aireiter.com/api/openapi/submit",
       "resultEndpoint": "https://aireiter.com/api/openapi/query",
-      "model": "nano_banana_v2_plus",
+      "model": "nano_banana_v2_max",
       "protocol": "aireiter-async",
       "logicalModel": "nano-banana-2",
       "fallbackProviderIds": [],
@@ -224,7 +224,7 @@
       "capabilities": {
         "sizes": ["1K", "2K", "4K"],
         "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"],
-        "maxReferenceImages": 9,
+        "maxReferenceImages": 10,
         "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
       },
       "keyEnv": "AI302_KEY"
@@ -284,7 +284,7 @@
       "name": "GPT Image 2",
       "endpoint": "https://aireiter.com/api/openapi/submit",
       "resultEndpoint": "https://aireiter.com/api/openapi/query",
-      "model": "gpt_image_2",
+      "model": "gpt_image_2_official",
       "protocol": "aireiter-async",
       "logicalModel": "gpt-image-2",
       "fallbackProviderIds": [],
@@ -292,18 +292,18 @@
       "capabilities": {
         "resolutionPresets": ["1K", "2K", "4K"],
         "sizes": ["1K", "2K", "4K"],
-        "qualities": ["low", "medium", "high", "auto"],
-        "ratios": ["auto", "1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "2:1", "1:2", "21:9", "9:21"],
-        "arbitraryRatios": true,
-        "arbitrarySizes": true,
-        "minimumAspectRatio": 0.3333333333333333,
-        "maximumAspectRatio": 3,
-        "sizeMultiple": 16,
-        "maxSizeEdge": 3840,
-        "maxSizePixels": 8294400,
+        "qualities": ["low", "medium", "high"],
+        "ratios": ["1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "2:1", "1:2", "21:9", "9:21"],
+        "resolutionRatios": {
+          "1K": ["1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "2:1", "1:2", "21:9", "9:21"],
+          "2K": ["1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "2:1", "1:2", "21:9", "9:21"],
+          "4K": ["16:9", "9:16", "2:1", "1:2", "21:9", "9:21"]
+        },
+        "arbitraryRatios": false,
+        "arbitrarySizes": false,
         "promptMaxCharacters": 32000,
         "referencePromptMaxCharacters": 32000,
-        "maxReferenceImages": 10,
+        "maxReferenceImages": 9,
         "maxReferenceImageBytes": 26214399,
         "referenceDataUrlsOnly": true,
         "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
@@ -334,7 +334,7 @@
         "maxSizePixels": 8300000,
         "promptMaxCharacters": 32000,
         "referencePromptMaxCharacters": 32000,
-        "maxReferenceImages": 10,
+        "maxReferenceImages": 9,
         "maxReferenceImageBytes": 26214399,
         "referenceDataUrlsOnly": true,
         "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
@@ -410,7 +410,7 @@
       "capabilities": {
         "sizes": ["2K", "4K"],
         "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9"],
-        "maxReferenceImages": 10,
+        "maxReferenceImages": 9,
         "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
       },
       "keyEnv": "AI302_KEY"
@@ -427,7 +427,7 @@
       "capabilities": {
         "sizes": ["2K", "4K"],
         "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9"],
-        "maxReferenceImages": 10,
+        "maxReferenceImages": 9,
         "referenceMimeTypes": ["image/png", "image/jpeg", "image/webp"]
       },
       "keyEnv": "AI302_KEY"
@@ -1206,6 +1206,17 @@
       "endpoint": "https://aireiter.com/api/v1/chat/completions",
       "models": ["gpt-5.6-sol"],
       "upstreamModels": { "gpt-5.6-sol": "chat-gpt-5.6-sol" },
+      "protocol": "openai-chat",
+      "requiresActivation": false,
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
+      "id": "chat-6",
+      "kind": "chat",
+      "name": "Gemini 3.8 Flash",
+      "endpoint": "https://aireiter.com/api/v1/chat/completions",
+      "models": ["gemini-3.8-flash"],
+      "upstreamModels": { "gemini-3.8-flash": "chat-gemini-3.8-flash" },
       "protocol": "openai-chat",
       "requiresActivation": false,
       "keyEnv": "AIREITER_API_KEY"

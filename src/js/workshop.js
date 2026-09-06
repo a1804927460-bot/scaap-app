@@ -115,7 +115,7 @@ function workshopVisiblePosts() {
   const query = WorkshopState.query.toLowerCase();
   const filtered = WorkshopState.posts.filter((post) => {
     const categoryMatch = WorkshopState.category === 'all'
-      || (WorkshopState.category === 'mine' && (post.localOnly || post.ownerId === 'local' || post.ownerId === WorkshopState.currentUserId))
+      || (WorkshopState.category === 'mine' && workshopCanDeletePost(post))
       || post.kind === WorkshopState.category;
     const haystack = `${post.title} ${post.description} ${post.tags.join(' ')} ${post.sourceFileName}`.toLowerCase();
     return categoryMatch && (!query || haystack.includes(query));
@@ -196,6 +196,18 @@ function workshopBuildCard(post) {
   button.appendChild(copy);
   button.addEventListener('click', () => openWorkshopDetail(post));
   card.appendChild(button);
+  if (workshopCanDeletePost(post)) {
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'workshop-card-delete';
+    remove.textContent = workshopText('Delete work', '删除作品');
+    remove.disabled = WorkshopState.deletingPostId !== null;
+    remove.addEventListener('click', (event) => {
+      event.stopPropagation();
+      void deleteWorkshopPost(post);
+    });
+    card.appendChild(remove);
+  }
   return card;
 }
 
@@ -583,9 +595,10 @@ async function openWorkshopPostOnCanvas(mode = 'recreate') {
   }
 }
 
-async function deleteWorkshopPost() {
-  const post = WorkshopState.activePost;
+async function deleteWorkshopPost(post = WorkshopState.activePost) {
   if (!workshopCanDeletePost(post) || WorkshopState.deletingPostId) return;
+  WorkshopState.deletingPostId = post.id;
+  try {
   const confirmed = await showConfirmDialog({
     title: workshopText('Delete work', '删除作品'),
     message: workshopText('This work will be removed from Workshop.', '删除后作品将从创意工坊移除。'),
@@ -593,7 +606,7 @@ async function deleteWorkshopPost() {
     cancelLabel: workshopText('Cancel', '取消'),
     danger: true
   });
-  if (!confirmed) return;
+  if (!confirmed || !workshopCanDeletePost(post)) return;
 
   WorkshopState.deletingPostId = post.id;
   const deleteButton = document.getElementById('workshop-detail-delete');
@@ -622,7 +635,7 @@ async function deleteWorkshopPost() {
     }
     saveWorkshopLocalPosts();
     WorkshopState.posts = WorkshopState.posts.filter((entry) => entry.id !== post.id);
-    closeWorkshopDetail();
+    if (WorkshopState.activePost?.id === post.id) closeWorkshopDetail();
     renderWorkshop();
     workshopToast(workshopText('Work deleted.', '作品已删除。'));
   } finally {
@@ -631,6 +644,10 @@ async function deleteWorkshopPost() {
       deleteButton.removeAttribute('aria-busy');
     }
     WorkshopState.deletingPostId = null;
+  }
+  } finally {
+    WorkshopState.deletingPostId = null;
+    renderWorkshop();
   }
 }
 
@@ -770,6 +787,12 @@ function initWorkshop() {
     else if (!document.getElementById('workshop-publish-overlay')?.hidden) closeWorkshopPublish();
   });
   document.addEventListener('messs:language-changed', refreshWorkshopLanguage);
+  const unsubscribeSession = window.messsAPI?.onCloudSessionChanged?.((session) => {
+    WorkshopState.currentUserId = String(session?.user?.id || '').trim() || null;
+    renderWorkshop();
+    if (WorkshopState.activePost) renderWorkshopDetail(WorkshopState.activePost);
+  });
+  window.addEventListener('beforeunload', () => unsubscribeSession?.(), { once: true });
   refreshWorkshopLanguage();
   void loadWorkshopPosts();
 }

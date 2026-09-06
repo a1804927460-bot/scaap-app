@@ -592,10 +592,6 @@ function filteredCanvasProjects() {
     .filter((project) => !query || project.name.toLowerCase().includes(query));
 }
 
-function canvasFolderIconMarkup() {
-  return '<svg viewBox="0 0 64 64" width="64" height="64" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 18.5A5.5 5.5 0 0 1 12.5 13h14l6 6H51.5A5.5 5.5 0 0 1 57 24.5v23A5.5 5.5 0 0 1 51.5 53h-39A5.5 5.5 0 0 1 7 47.5z"/><path d="M8 23h48"/></svg>';
-}
-
 function buildCanvasLibraryFolderCard(project) {
   const card = document.createElement('article');
   card.className = 'canvas-library-folder-card';
@@ -606,24 +602,27 @@ function buildCanvasLibraryFolderCard(project) {
 
   const icon = document.createElement('span');
   icon.className = 'canvas-library-folder-icon';
-  icon.innerHTML = canvasFolderIconMarkup();
+  const folderImage = document.createElement('img');
+  folderImage.src = 'assets/canvas-folder-3d.png';
+  folderImage.alt = '';
+  folderImage.width = 128;
+  folderImage.height = 128;
+  folderImage.draggable = false;
+  icon.appendChild(folderImage);
   const title = document.createElement('strong');
   title.className = 'canvas-library-folder-title';
   title.textContent = project.name;
-  const count = document.createElement('span');
-  count.className = 'canvas-library-folder-count';
   const canvasCount = AppState.canvases.filter((canvas) => canvas.projectId === project.id).length;
-  count.textContent = t(`${canvasCount} canvas${canvasCount === 1 ? '' : 'es'}`, `${canvasCount} 个画布`);
-  const hint = document.createElement('small');
-  hint.className = 'canvas-library-folder-hint';
-  hint.textContent = t('Drop canvas here', '将画布拖到这里');
+  card.title = t(`${canvasCount} canvas${canvasCount === 1 ? '' : 'es'}`, `${canvasCount} 个画布`);
 
-  card.append(icon, title, count, hint);
+  card.append(icon, title);
   card.addEventListener('click', () => {
     CanvasWorkspace.libraryProjectId = project.id;
     CanvasWorkspace.libraryQuery = '';
     const search = document.getElementById('canvas-library-search');
     if (search) search.value = '';
+    const clear = document.getElementById('canvas-library-search-clear');
+    if (clear) clear.hidden = true;
     renderCanvasLibrary();
   });
   card.addEventListener('keydown', (event) => {
@@ -900,6 +899,8 @@ function selectAllCanvasLibraryItems() {
   CanvasWorkspace.libraryQuery = '';
   const search = document.getElementById('canvas-library-search');
   if (search) search.value = '';
+  const clear = document.getElementById('canvas-library-search-clear');
+  if (clear) clear.hidden = true;
   renderCanvasLibrary();
 }
 
@@ -1782,13 +1783,26 @@ function toggleCanvasAgentHistory(open = null) {
   if (!drawer.hidden) renderCanvasAgentHistory();
 }
 
+function handleCanvasAgentShortcut(event) {
+  if (event.code !== 'Space' || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+  if (typeof isBoardWorkspaceActive !== 'function' || !isBoardWorkspaceActive()) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (event.repeat || event.isComposing) return;
+  const agent = document.getElementById('board-agent-panel');
+  setCanvasAgentOpen(!!agent?.classList.contains('is-hidden'), { focus: true });
+}
+
 function setCanvasAgentOpen(open, options = {}) {
   const agent = document.getElementById('board-agent-panel');
   const board = document.getElementById('board-panel');
   const toggle = document.getElementById('board-agent-toggle');
   if (!agent || !board) return false;
   const allowed = !!open && !board.classList.contains('is-canvas-library');
+  const wasOpen = !agent.classList.contains('is-hidden');
+  if (wasOpen === allowed) return allowed;
   agent.classList.toggle('is-hidden', !allowed);
+  agent.inert = !allowed;
   if (toggle) toggle.setAttribute('aria-expanded', String(allowed));
   const historyDrawer = document.getElementById('board-agent-history-drawer');
   const historyToggle = document.getElementById('board-agent-history');
@@ -1798,12 +1812,19 @@ function setCanvasAgentOpen(open, options = {}) {
     renderCanvasAgentContext();
     syncCanvasAgentReferencesToSelection();
     if (options.focus) {
-      requestAnimationFrame(() => document.getElementById('board-agent-input').focus());
+      requestAnimationFrame(() => {
+        if (!agent.classList.contains('is-hidden')) {
+          document.getElementById('board-agent-input')?.focus({ preventScroll: true });
+        }
+      });
     }
   } else {
     CanvasWorkspace.agentReferenceFileIds.clear();
     CanvasWorkspace.agentSelectionFileIds.clear();
     renderCanvasAgentReferences();
+    if (agent.contains(document.activeElement)) {
+      document.getElementById('board-viewport')?.focus({ preventScroll: true });
+    }
   }
   window.dispatchEvent(new Event('resize'));
   return allowed;
@@ -1848,11 +1869,13 @@ function activeCanvasAgentProvider() {
 function canvasAgentChatProviders() {
   const config = CanvasWorkspace.config || {};
   const allowedModels = new Set([
+    'gemini-3.8-flash',
     'gemini-3.1-pro',
     'gpt-5.6-sol',
     'kimi-k3'
   ]);
   const names = {
+    'gemini-3.8-flash': 'Gemini 3.8 Flash',
     'gemini-3.1-pro': 'Gemini 3.1 Pro',
     'gpt-5.6-sol': 'GPT-5.6 Sol',
     'kimi-k3': 'Kimi K3'
@@ -2368,7 +2391,7 @@ function refreshCanvasWorkspaceLanguage() {
     const element = document.querySelector(selector);
     if (element) element.textContent = t(en, zh);
   };
-  setText('#canvas-import span', 'Import .Messs', '导入 .Messs');
+  setText('#canvas-import span', 'Import canvas', '导入画布');
   setText('#canvas-project-new span', 'New folder', '新建文件夹');
   setText('.canvas-library-topline h2', 'All Canvases', '全部画布');
   setText('#canvas-library-empty', 'No canvases found', '没有找到画布');
@@ -2457,28 +2480,26 @@ async function initCanvasWorkspace(initial) {
   }
   document.getElementById('canvas-library-search').addEventListener('input', (event) => {
     CanvasWorkspace.libraryQuery = event.target.value;
+    const clear = document.getElementById('canvas-library-search-clear');
+    if (clear) clear.hidden = !event.target.value;
     renderCanvasLibrary();
+  });
+  document.getElementById('canvas-library-search-clear').addEventListener('click', () => {
+    const search = document.getElementById('canvas-library-search');
+    if (!search) return;
+    search.value = '';
+    CanvasWorkspace.libraryQuery = '';
+    document.getElementById('canvas-library-search-clear').hidden = true;
+    renderCanvasLibrary();
+    search.focus();
   });
   document.addEventListener('click', (event) => {
     if (!event.target.closest('.canvas-library-card-menu, .canvas-library-card-menu-trigger')) {
       closeCanvasCardMenus();
     }
   });
+  document.addEventListener('keydown', handleCanvasAgentShortcut, true);
   document.addEventListener('keydown', (event) => {
-    if (
-      event.code === 'Space' &&
-      (event.ctrlKey || event.metaKey) &&
-      !event.altKey &&
-      !event.shiftKey &&
-      !event.repeat &&
-      !document.getElementById('board-panel')?.classList.contains('is-canvas-library') &&
-      !document.getElementById('board-workspace-body')?.hidden
-    ) {
-      event.preventDefault();
-      const agent = document.getElementById('board-agent-panel');
-      setCanvasAgentOpen(!!agent?.classList.contains('is-hidden'), { focus: true });
-      return;
-    }
     if (event.key === 'Escape') closeCanvasCardMenus();
   });
 
@@ -2604,6 +2625,15 @@ async function initCanvasWorkspace(initial) {
     CanvasWorkspace.config = event.detail || CanvasWorkspace.config;
     renderCanvasAgentModels();
   });
+  if (isDetachedCanvasWindow()) {
+    document.body.classList.add('is-detached-canvas-window');
+    document.title = `${activeCanvasRecord().name} - Messs.`;
+    showCanvasWorkspace();
+  } else {
+    showCanvasLibrary();
+  }
+  refreshCanvasWorkspaceLanguage();
+  // Local navigation must not wait for provider configuration or chat history.
   try {
     CanvasWorkspace.config = await window.messsAPI.getAiMediaConfig();
   } catch (err) {
@@ -2613,12 +2643,4 @@ async function initCanvasWorkspace(initial) {
   renderCanvasAgentReferences();
   renderCanvasAgentHistory();
   void loadCanvasAgentHistory();
-  if (isDetachedCanvasWindow()) {
-    document.body.classList.add('is-detached-canvas-window');
-    document.title = `${activeCanvasRecord().name} - Messs.`;
-    showCanvasWorkspace();
-  } else {
-    showCanvasLibrary();
-  }
-  refreshCanvasWorkspaceLanguage();
 }

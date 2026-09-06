@@ -191,6 +191,8 @@ contextBridge.exposeInMainWorld('messsAPI', {
     return () => ipcRenderer.removeListener('activation:updated', listener);
   },
   getProfileAvatar: () => ipcRenderer.invoke('profile:getAvatar'),
+  previewProfileAvatar: () => ipcRenderer.invoke('profile:previewAvatar'),
+  saveProfileDraft: (draft) => ipcRenderer.invoke('profile:saveDraft', draft),
   chooseProfileAvatar: () => ipcRenderer.invoke('profile:chooseAvatar'),
   setProfileDisplayName: (value) => ipcRenderer.invoke('profile:setDisplayName', value),
   setProfileSignature: (value) => ipcRenderer.invoke('profile:setSignature', value),
