@@ -4,6 +4,12 @@ import { runDurableFalImageTool } from '../src/durable-fal-image-tools.js';
 import { hashImageRequest } from '../src/image-jobs.js';
 const request = { userId: 'user', requestId: 'request', model: 'feynobg', imageDataUrl: 'test', options: {} };
 const hash = hashImageRequest({ model: request.model, imageDataUrl: request.imageDataUrl, options: {} });
+test('FAL lookup outage must not release a possibly accepted reservation', async () => {
+  await assert.rejects(runDurableFalImageTool(request, {
+    getImageJob: async () => { throw new Error('Database temporarily unavailable'); },
+    runFalImageTool: async () => assert.fail('must not submit')
+  }), { code: 'provider-task-recovery-pending', providerTaskAccepted: true });
+});
 test('new FAL claim never treats the database pending placeholder as a provider task', async () => {
   const events = [];
   await runDurableFalImageTool(request, {

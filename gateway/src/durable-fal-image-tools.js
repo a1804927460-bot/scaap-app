@@ -13,7 +13,9 @@ export async function runDurableFalImageTool({ userId, requestId, model, imageDa
     failImageJob, readStoredImageResult, storeImageResult, runFalImageTool, ...deps };
   const providerId = model === 'feynobg' ? 'background-remove' : 'clipdrop-uncrop';
   const requestHash = hashImageRequest({ model, imageDataUrl, options });
-  let job = await api.getImageJob(userId, requestId);
+  let job;
+  try { job = await api.getImageJob(userId, requestId); }
+  catch { throw pending(); }
   if (job && (job.requestHash !== requestHash || job.providerId !== providerId)) {
     throw Object.assign(new Error('Request identifier conflict.'), { code: 'request-id-conflict', status: 409, providerTaskAccepted: true });
   }
