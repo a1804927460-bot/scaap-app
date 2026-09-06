@@ -902,6 +902,8 @@ function preloadBoardFullImage(source) {
         return;
       }
       cacheBoardFullImage(source, image);
+      Board.leaferContentRevision += 1;
+      scheduleBoardLeaferSync();
       resolve(image);
     }, { once: true });
     image.addEventListener('error', () => {
@@ -912,6 +914,8 @@ function preloadBoardFullImage(source) {
         return;
       }
       rememberFailedBoardFullImage(source);
+      // Release the serial decode slot even when another consumer started it.
+      scheduleBoardLeaferSync();
       resolve(null);
     }, { once: true });
   });
@@ -951,6 +955,10 @@ function mountedFullImageCandidates(zoom, minimumScreenEdge) {
 }
 
 function prewarmMountedFullImages(zoom) {
+  if (Board.leaferLayer) {
+    scheduleBoardLeaferSync();
+    return;
+  }
   mountedFullImageCandidates(zoom, BOARD_FULL_IMAGE_PREWARM_SCREEN_EDGE)
     .slice(0, BOARD_FULL_IMAGE_LIMIT)
     .forEach((entry) => {
@@ -1108,6 +1116,12 @@ function syncMountedImageQuality() {
     scheduleMountedImageQuality();
     return;
   }
+  // DOM image stacks are hidden in Leafer mode. Loading their originals
+  // separately evicts visible scene textures from the shared decode budget.
+  if (Board.leaferLayer) {
+    scheduleBoardLeaferSync();
+    return;
+  }
   const detailCandidates = boardZoomBucket() === 'detail'
     ? mountedFullImageCandidates(Board.zoom, BOARD_SELECTED_FULL_IMAGE_MIN_SCREEN_EDGE)
       .filter((entry) => {
@@ -1256,12 +1270,7 @@ function updateLeaferFullImageWindow() {
     // Prewarm directly from the scene, independent of DOM virtualization.
     // One completion triggers a new bounded pass; never decode the whole board.
     if (Board.fullImagePending.size === 0 && !Board.failedFullImageSources.has(entry.source)) {
-      const lifecycle = Board.lifecycleToken;
-      void preloadBoardFullImage(entry.source).then(decoded => {
-        if (!decoded || Board.disposed || lifecycle !== Board.lifecycleToken) return;
-        Board.leaferContentRevision += 1;
-        scheduleBoardLeaferSync();
-      });
+      void preloadBoardFullImage(entry.source);
     }
   }
   Board.leaferFullItemIds = next;
