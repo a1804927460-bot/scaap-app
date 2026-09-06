@@ -31,6 +31,7 @@ async function openBoardImageCrop(file, item) {
   if (boardImageCrop?.saving) return;
   closeBoardImageCrop();
   closeBoardButlerExpandEditor();
+  if (typeof cancelBoardViewportMotion === 'function') cancelBoardViewportMotion();
   const viewport = document.getElementById('board-viewport');
   if (!viewport || !file?.url || !item) return;
   const overlay = document.createElement('div');
@@ -64,7 +65,13 @@ async function openBoardImageCrop(file, item) {
     event.stopImmediatePropagation();
     if (event.key === 'Escape') { event.preventDefault(); closeBoardImageCrop(); }
   }, { capture: true, signal });
-  overlay.addEventListener('wheel', event => { event.preventDefault(); event.stopPropagation(); }, { passive: false, signal });
+  overlay.addEventListener('wheel', event => {
+    event.preventDefault(); event.stopImmediatePropagation();
+    if (!state.zoomAt || state.saving || toolbar.contains(event.target)) return;
+    const rect = viewport.getBoundingClientRect();
+    const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport.clientHeight : 1);
+    state.zoomAt(event.clientX - rect.left, event.clientY - rect.top, Math.exp(-Math.max(-160, Math.min(160, delta)) * .002));
+  }, { passive: false, capture: true, signal });
   try {
     state.image.crossOrigin = 'anonymous';
     state.image.src = file.url;
@@ -82,13 +89,59 @@ async function openBoardImageCrop(file, item) {
     const app = state.app = new MesssCanvasCrop.App({ view: surface, width: viewport.clientWidth, height: viewport.clientHeight,
       tree: {}, sky: {}, editor: { stroke: accent, pointSize: 7, rotateable: false, skewable: false, keyEvent: true, buttons: [] } });
     const { ClipImage, ClipResizeEditor } = MesssCanvasCrop;
+    // The plugin normally pans the source bitmap. Move the aperture instead,
+    // compensating the inner image so its world position remains unchanged.
+    if (!ClipResizeEditor.prototype.messsFrameDrag) {
+      ClipResizeEditor.prototype.messsFrameDrag = true;
+      ClipResizeEditor.prototype.onMove = function(event) {
+        const image = this.clipInner, frame = this.clipUI;
+        const zoom = this.editor.app.tree.scaleX || 1;
+        const dx = Math.max(image.x, Math.min(image.x + image.width - frame.width, (event.moveX || 0) / zoom));
+        const dy = Math.max(image.y, Math.min(image.y + image.height - frame.height, (event.moveY || 0) / zoom));
+        this.editor.app.lockLayout();
+        frame.x += dx; frame.y += dy;
+        image.x -= dx; image.y -= dy;
+        this.editor.app.unlockLayout();
+        this.onUpdate();
+      };
+    }
     ClipImage.setEditInner(ClipResizeEditor.prototype.tag);
     const node = state.node = new ClipImage({ url: file.url, x, y, width, height, editable: true });
     app.tree.add(node);
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     if (signal.aborted) return;
     app.editor.openInnerEditor(node, true);
-    const updateStatus = () => { status.textContent = `${Math.max(1, Math.round(node.width / scale))} x ${Math.max(1, Math.round(node.height / scale))}`; };
+    const positionToolbar = () => {
+      const zoom = app.tree.scaleX || 1;
+      const rect = { x: node.x * zoom + app.tree.x, y: node.y * zoom + app.tree.y,
+        width: node.width * zoom, height: node.height * zoom };
+      const tw = toolbar.offsetWidth, th = toolbar.offsetHeight;
+      toolbar.style.left = `${Math.max(8, Math.min(viewport.clientWidth - tw - 8, rect.x + rect.width / 2 - tw / 2))}px`;
+      toolbar.style.top = `${Math.max(8, Math.min(viewport.clientHeight - th - 8, rect.y + rect.height + 12))}px`;
+    };
+    const updateStatus = () => {
+      status.textContent = `${Math.max(1, Math.round(node.width / scale))} x ${Math.max(1, Math.round(node.height / scale))}`;
+      positionToolbar();
+    };
+    const camera = { zoom: Board.zoom, panX: Board.panX, panY: Board.panY };
+    state.zoomAt = (px, py, factor) => {
+      if (app.editor.innerEditor?.myEditBox.dragging) return;
+      const oldZoom = Board.zoom;
+      const minZoom = typeof BOARD_ZOOM_MIN === 'number' ? BOARD_ZOOM_MIN : .1;
+      const maxZoom = typeof BOARD_ZOOM_MAX === 'number' ? BOARD_ZOOM_MAX : 4;
+      const zoom = Math.max(minZoom, Math.min(maxZoom, oldZoom * factor));
+      const ratio = zoom / oldZoom;
+      Board.panX = px - (px - Board.panX) * ratio;
+      Board.panY = py - (py - Board.panY) * ratio;
+      Board.zoom = zoom;
+      if (typeof applyBoardTransformNow === 'function') applyBoardTransformNow();
+      if (typeof scheduleBoardViewportSave === 'function') scheduleBoardViewportSave();
+      const relative = zoom / camera.zoom;
+      app.tree.set({ scaleX: relative, scaleY: relative,
+        x: Board.panX - camera.panX * relative, y: Board.panY - camera.panY * relative });
+      app.editor.innerEditor?.onUpdate();
+      positionToolbar();
+    };
     node.on(MesssCanvasCrop.PropertyEvent.CHANGE, updateStatus);
     updateStatus();
     ratios.disabled = reset.disabled = apply.disabled = false;

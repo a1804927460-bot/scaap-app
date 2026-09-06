@@ -42,6 +42,19 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     await page.evaluate(() => { window.activeCanvasId = () => 'different-canvas'; });
     assert.equal(await page.evaluate(() => AiAssistant.queue[0].canvasId), 'original-canvas');
     assert.equal(await page.locator('.assistant-queue-item').count(), 2);
+    assert.equal(await page.locator('#ai-assistant-queue').innerText().then(text => text.includes('Model A')), false);
+    await page.locator('.assistant-queue-item').last().getByRole('button', { name: 'Reorder task' }).dragTo(page.locator('.assistant-queue-item').first());
+    assert.deepEqual(await page.evaluate(() => AiAssistant.queue.map(item => item.prompt)), ['third', 'second']);
+    await page.locator('.assistant-queue-item').last().getByRole('button', { name: 'Move up' }).click();
+    assert.deepEqual(await page.evaluate(() => AiAssistant.queue.map(item => item.prompt)), ['second', 'third']);
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(theme => { document.documentElement.dataset.theme = theme; document.body.dataset.theme = theme; }, theme);
+      await page.setViewportSize({ width: 480, height: 800 });
+      await page.waitForTimeout(200);
+      fs.mkdirSync('test-artifacts/assistant-queue', { recursive: true });
+      await page.screenshot({ path: `test-artifacts/assistant-queue/compact-${theme}.png` });
+      assert.ok(await page.locator('.assistant-queue-item').first().evaluate(el => el.getBoundingClientRect().height < 65));
+    }
     await page.locator('.assistant-queue-item').first().getByRole('button', { name: 'Edit', exact: true }).click();
     await page.locator('#ai-assistant-queue textarea').fill('edited second');
     await page.evaluate(() => resolvers.shift()({ ok: true, text: 'first answer' }));

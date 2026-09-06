@@ -112,7 +112,7 @@
       button.setAttribute('aria-selected', String(selectedModel === preset.model));
       button.classList.toggle('is-active', selectedModel === preset.model);
       button.disabled = !provider;
-      button.title = CHAT_MODEL_NAMES[preset.model];
+      button.title = translate(preset.en, preset.zh);
       const icon = document.createElement('img');
       icon.className = 'ai-chat-preset-icon';
       icon.src = `assets/icons/lucide/${preset.icon}.svg`;
@@ -148,6 +148,9 @@
   }
 
   global.MesssAiProviderOptions = {
+    routingStrategy(model, usePreset = true) {
+      return usePreset ? ({'gemini-3.8-flash':'fast','gemini-3.1-pro':'balanced','gpt-5.6-sol':'ultimate'}[model] || null) : null;
+    },
     chatPresets: CHAT_PRESETS.map(preset => Object.freeze({ ...preset })),
     syncChatPresetSelection,
     appendChatPresets,

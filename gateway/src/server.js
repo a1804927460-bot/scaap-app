@@ -833,6 +833,7 @@ function validateBody(body, kind) {
       ? String(body.canvasId).trim()
       : null,
     model: String(body.model || '').slice(0, 160),
+    routingStrategy: kind === 'chat' && ['fast','balanced','ultimate'].includes(body.routingStrategy) ? body.routingStrategy : null,
     messages,
     urls,
     referenceMediaTypes,

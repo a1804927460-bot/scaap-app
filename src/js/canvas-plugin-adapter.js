@@ -44,6 +44,8 @@ window.MesssCanvasPluginAdapter = {
       textarea.style.top = `${Math.max(0, bounds.top)}px`;
       textarea.addEventListener('input', () => {
         note.text = node.text; content.textContent = node.text;
+        note.styleRanges = node.toJSON().styleRanges || [];
+        this.syncTextBounds(session);
         const element = content.closest('.board-text-note');
         if (element) scheduleBoardItemMeasurement(note.id, element, note);
       }, { signal: controller.signal });
@@ -69,6 +71,14 @@ window.MesssCanvasPluginAdapter = {
     return { fontFamily: !note.fontFamily || note.fontFamily === 'inherit' ? 'Segoe UI, PingFang SC, Microsoft YaHei, Arial, sans-serif' : note.fontFamily,
       fontSize: note.fontSize, fontWeight: note.fontWeight, fill: textNoteDisplayColor(note), textAlign: note.align || 'left' };
   },
+  syncTextBounds(session) {
+    const { note, node, content } = session;
+    const element = content.closest('.board-text-note');
+    const bounds = boardItemBounds(note);
+    node.width = bounds.w; node.height = bounds.h;
+    if (element) syncMountedBoardItemGeometry(element, note);
+    updateBoardItemIndex(note);
+  },
   applyTextStyle(note) {
     const session = this._text; if (!session || session.note !== note) return;
     const next = this.textStyle(note), diff = {};
@@ -89,6 +99,7 @@ window.MesssCanvasPluginAdapter = {
     }
     session.style = this.textStyle(note);
     note.styleRanges = session.node.toJSON().styleRanges || [];
+    this.syncTextBounds(session);
     session.node.refocus();
     void this.warmLocalFont(note).then(() => { if (this._text === session) session.node.forceRender(); });
   },
@@ -104,6 +115,7 @@ window.MesssCanvasPluginAdapter = {
     node.exitEditing(); controller.abort();
     content.closest('.board-text-note')?.classList.remove('is-richtext-editing');
     content.textContent = note.text;
+    this.syncTextBounds(session);
     return true;
   },
   snap(bounds, candidates, zoom) {

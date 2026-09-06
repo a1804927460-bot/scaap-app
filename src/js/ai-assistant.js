@@ -222,14 +222,11 @@ function renderAiChatHistory() {
     button.type = 'button';
     button.className = 'ai-chat-history-item';
     button.classList.toggle('is-active', session.id === AiAssistant.activeSessionId);
-    button.innerHTML = `<span class="ai-chat-history-star" aria-hidden="true">${session.favorite ? '\u2605' : ''}</span><span class="ai-chat-history-copy"><b></b><small></small></span><span class="ai-chat-history-unread" aria-hidden="true"></span>`;
+    button.innerHTML = `<span class="ai-chat-history-star" aria-hidden="true">${session.favorite ? '\u2605' : ''}</span><span class="ai-chat-history-copy"><b></b></span><span class="ai-chat-history-unread" aria-hidden="true"></span>`;
     button.classList.toggle('is-unread', session.unread === true);
     button.querySelector('b').textContent = session.title || t('New conversation', '\u65b0\u5bf9\u8bdd');
-    button.querySelector('small').textContent = session.unread
-      ? t('Unread', '未读')
-      : session.favorite
-        ? t('Pinned', '置顶')
-        : t('Recent', '最近');
+    button.title = button.querySelector('b').textContent;
+    button.setAttribute('aria-label', [button.title, session.unread ? t('Unread', '未读') : '', session.favorite ? t('Pinned', '置顶') : ''].filter(Boolean).join(', '));
     button.addEventListener('click', () => loadAiChatSession(session.id));
     const more = document.createElement('button');
     more.type = 'button';
@@ -570,7 +567,6 @@ function configuredAssistantProviders(kind) {
         }];
     const options = typeof MesssAiProviderOptions !== 'undefined'
       ? MesssAiProviderOptions.chatOptions(chatProviders, {
-        allowedModels: AI_ASSISTANT_CHAT_MODELS,
         activeProviderId: config.activeChatProviderId,
         names: AI_ASSISTANT_CHAT_MODEL_NAMES
       })
@@ -1665,6 +1661,7 @@ function assistantQueueBlocksNavigation() {
 }
 
 function renderAssistantQueue() {
+  if (AiAssistant.queueDragging) return;
   const form = document.getElementById('ai-assistant-form');
   if (!form) return;
   let list = document.getElementById('ai-assistant-queue');
@@ -1683,7 +1680,12 @@ function renderAssistantQueue() {
   list.append(heading);
   const action = (row, symbol, label, callback) => {
     const button = document.createElement('button');
-    button.type = 'button'; button.textContent = symbol;
+    button.type = 'button';
+    const icons = { '\u25b6': 'play', '\u2713': 'check', '\u21b6': 'rotate-ccw', '\u270e': 'pencil', '\u2191': 'arrow-up', '\u2193': 'arrow-down', '\u00d7': 'trash-2' };
+    const icon = document.createElement('img');
+    icon.className = 'assistant-queue-icon';
+    icon.src = `assets/icons/lucide/${icons[symbol] || symbol}.svg`; icon.alt = ''; icon.draggable = false;
+    icon.setAttribute('aria-hidden', 'true'); button.append(icon);
     button.title = label; button.setAttribute('aria-label', label);
     button.addEventListener('click', callback); row.append(button);
     return button;
@@ -1715,15 +1717,46 @@ function renderAssistantQueue() {
       });
     } else {
       const text = document.createElement('div'); text.textContent = item.prompt || t('Attachments', '\u9644\u4ef6');
+      text.title = text.textContent;
       copy.append(text);
       action(row, '\u270e', t('Edit', '\u7f16\u8f91'), () => {
         AiAssistant.queueEditing = item.id; renderAssistantQueue();
         list.querySelector('textarea')?.focus();
       });
     }
-    const meta = document.createElement('small');
-    meta.textContent = [item.provider?.name, ...item.attachments.map(file => file.name)].filter(Boolean).join(' / ');
-    copy.append(meta); row.prepend(copy);
+    if (item.attachments.length) {
+      const meta = document.createElement('small');
+      meta.textContent = item.attachments.map(file => file.name).join(' / ');
+      meta.title = meta.textContent; copy.append(meta);
+    }
+    row.prepend(copy);
+    const grip = action(row, 'grip-vertical', t('Reorder task', '\u8c03\u6574\u4efb\u52a1\u987a\u5e8f'), () => {});
+    grip.classList.add('assistant-queue-grip'); row.prepend(grip);
+    grip.draggable = !AiAssistant.queueEditing;
+    grip.addEventListener('dragstart', event => {
+      AiAssistant.queueDragging = item.id;
+      event.dataTransfer.setData('application/x-messs-queue', item.id);
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setDragImage(row, 20, 20);
+      row.classList.add('is-dragging');
+    });
+    grip.addEventListener('dragend', () => {
+      AiAssistant.queueDragging = null; renderAssistantQueue(); void drainAssistantQueue();
+    });
+    row.addEventListener('dragover', event => {
+      if (!AiAssistant.queueDragging || AiAssistant.queueEditing) return;
+      event.preventDefault(); event.dataTransfer.dropEffect = 'move';
+      row.classList.add('is-drop-target');
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('is-drop-target'));
+    row.addEventListener('drop', event => {
+      const from = AiAssistant.queue.findIndex(entry => entry.id === AiAssistant.queueDragging);
+      const to = AiAssistant.queue.findIndex(entry => entry.id === item.id);
+      if (from < 0 || to < 0 || AiAssistant.queueEditing) return;
+      event.preventDefault(); event.stopPropagation();
+      const [moved] = AiAssistant.queue.splice(from, 1); AiAssistant.queue.splice(to, 0, moved);
+      AiAssistant.queueDragging = null; renderAssistantQueue(); void drainAssistantQueue();
+    });
     for (const [delta, symbol, label] of [[-1, '\u2191', t('Move up', '\u4e0a\u79fb')], [1, '\u2193', t('Move down', '\u4e0b\u79fb')]]) {
       const button = action(row, symbol, label, () => {
         const next = index + delta;
@@ -1743,10 +1776,10 @@ function renderAssistantQueue() {
 }
 
 async function drainAssistantQueue() {
-  if (AiAssistant.queueRunning || AiAssistant.queuePaused || AiAssistant.queueEditing) return;
+  if (AiAssistant.queueRunning || AiAssistant.queuePaused || AiAssistant.queueEditing || AiAssistant.queueDragging) return;
   AiAssistant.queueRunning = true;
   try {
-    while (AiAssistant.queue.length && !AiAssistant.queuePaused && !AiAssistant.queueEditing) {
+    while (AiAssistant.queue.length && !AiAssistant.queuePaused && !AiAssistant.queueEditing && !AiAssistant.queueDragging) {
       const item = AiAssistant.queue.shift();
       renderAssistantQueue();
       try {
@@ -1780,6 +1813,7 @@ function submitAssistantMessage() {
   const videoMode = AiAssistant.kind === 'video' ? assistantVideoModeForAttachments(attachments) : null;
   AiAssistant.queue.push({
     id: crypto.randomUUID(), prompt, provider: { ...provider }, attachments, kind: AiAssistant.kind,
+    routingStrategy: window.MesssAiProviderOptions?.routingStrategy(provider.model, AiAssistant.chatUsePreset !== false),
     canvasId: activeCanvasId(),
     folderId: AppState.activeFolderId && AppState.activeFolderId !== 'default' ? AppState.activeFolderId : null,
     videoMode, videoCapabilities: AiAssistant.kind === 'video' ? assistantVideoCapabilities() : null,
@@ -1912,6 +1946,7 @@ async function executeAssistantMessage(item) {
         attachmentFileIds: attachments.filter((item) => !item.attachmentToken).map((item) => item.id),
         attachmentTokens: attachments.map((item) => item.attachmentToken).filter(Boolean),
         chatProviderId: submittedProvider && submittedProvider.providerId,
+        routingStrategy: item.routingStrategy,
         chatModel: submittedProvider && submittedProvider.model
       });
       if (!response || !response.ok) {
@@ -2065,7 +2100,7 @@ function refreshAssistantLanguage() {
   const historyDate = document.getElementById('ai-chat-history-date');
   if (historyDate) historyDate.setAttribute('aria-label', t('Filter history by date', '\u6309\u65e5\u671f\u7b5b\u9009\u5386\u53f2\u8bb0\u5f55'));
   const chatButton = document.querySelector('[data-assistant-kind="chat"]');
-  if (chatButton) chatButton.textContent = t('Chat', '对话');
+  window.MesssComposerActions.setMenuLabel(chatButton, 'message-circle', t('Chat', '对话'));
   [
     ['image', t('Image', '图片')],
     ['video', t('Video', '视频')]
@@ -2074,10 +2109,7 @@ function refreshAssistantLanguage() {
     if (!button) return;
     button.title = label;
     button.setAttribute('aria-label', label);
-    const icon = button.querySelector('svg');
-    const text = document.createElement('span');
-    text.textContent = label;
-    button.replaceChildren(...(icon ? [icon,text] : [text]));
+    window.MesssComposerActions.setMenuLabel(button, kind, label);
   });
   const home = document.getElementById('ai-assistant-home');
   const messages = document.getElementById('ai-assistant-messages');

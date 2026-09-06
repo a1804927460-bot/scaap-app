@@ -516,6 +516,14 @@ assert.deepEqual(JSON.parse(chatCalls[0].options.body), {
 });
 
 const advancedChatCalls = [];
+for (const [routingStrategy,prompt,expected] of [
+  ['ultimate','hello','chat-gemini-3.8-flash'],
+  ['balanced','implement python code','chat-gemini-3.1-pro'],
+  ['balanced','concurrency architecture refactor','chat-gpt-5.6-sol']
+]) {
+  await chat({providerId:'chat-3',model:'gemini-3.1-pro',routingStrategy,prompt,messages:[{role:'user',content:prompt}]});
+  assert.equal(JSON.parse(chatCalls.at(-1).options.body).model,expected);
+}
 globalThis.fetch = async (url, options = {}) => {
   advancedChatCalls.push({ url: String(url), options });
   return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'Advanced chat reply' } }] });

@@ -894,7 +894,7 @@ assert.doesNotMatch(indexHtml, /class="canvas-library-project-filter"/, 'The can
 assert.doesNotMatch(indexHtml, /id="canvas-new"/, 'The duplicate top toolbar new-canvas action must be removed.');
 assert.match(
   workspaceSource,
-  /function filteredCanvases\(\)[\s\S]*?return AppState\.canvases[\s\S]*?CanvasWorkspace\.libraryProjectId[\s\S]*?canvas\.name\.toLowerCase\(\)\.includes\(query\)/,
+  /function filteredCanvases\(ignoreQuery = false\)[\s\S]*?return AppState\.canvases[\s\S]*?CanvasWorkspace\.libraryProjectId[\s\S]*?canvas\.name\.toLowerCase\(\)\.includes\(query\)/,
   'Canvas library must apply folder scope and the visible search query.');
 assert.doesNotMatch(
   workspaceSource,
@@ -972,7 +972,7 @@ assert.match(
 );
 assert.match(
   workspaceSource,
-  /function filteredCanvases\(\)[\s\S]*?Number\(b\.pinned === true\)[\s\S]*?canvas\.pinned === true[\s\S]*?Pin canvas/,
+  /function filteredCanvases\(ignoreQuery = false\)[\s\S]*?Number\(b\.pinned === true\)[\s\S]*?canvas\.pinned === true[\s\S]*?Pin canvas/,
   'Pinned canvases must remain visible and sort ahead of recent canvases.'
 );
 assert.match(

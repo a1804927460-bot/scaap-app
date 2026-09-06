@@ -15,7 +15,7 @@ const BOARD_DOM_RETAIN_LIMIT = 88;
 const BOARD_LIGHTWEIGHT_EFFECTS_ENTER_COUNT = 72;
 const BOARD_LIGHTWEIGHT_EFFECTS_EXIT_COUNT = 48;
 const BOARD_FULL_IMAGE_LIMIT = 4;
-const BOARD_FULL_IMAGE_CACHE_LIMIT = 4;
+const BOARD_FULL_IMAGE_CACHE_LIMIT = 32;
 const BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET = 24_000_000;
 const BOARD_FULL_IMAGE_SINGLE_PIXEL_LIMIT = 40_000_000;
 const BOARD_FULL_IMAGE_READY_LIMIT = 160;
@@ -81,7 +81,8 @@ const BOARD_UI_EVENT_SELECTOR = [
   '.context-menu',
   '.canvas-name-dialog-overlay',
   '#text-tool-panel',
-  '#doodle-color-panel'
+  '#doodle-color-panel',
+  '#doodle-color-popover'
 ].join(',');
 
 function isBoardUiEventTarget(target) {
@@ -154,6 +155,7 @@ const Board = {
   leaferCanvasId: null,
   leaferSourceByItem: new Map(),
   leaferFullItemIds: new Set(),
+  leaferDetailSources: new Map(),
   fullImageCache: new Map(),
   fullImageCachePixels: 0,
   fullImageReadyFileIds: new Set(),
@@ -1229,43 +1231,114 @@ function finishBoardWheelInteraction() {
   applyBoardTransformNow();
 }
 
+function boardMediaDetailPreview(file, screenEdge, previousSource = '') {
+  if (!String(file.thumbUrl || '').startsWith('messs-thumb://')) return null;
+  const edge = screenEdge > 700 || (previousSource.includes('edge=1536') && screenEdge > 560) ? 1536 : 768;
+  const url = new URL(file.thumbUrl);
+  url.searchParams.set('edge', String(edge));
+  const width = Number(file.sourceWidth) || edge;
+  const height = Number(file.sourceHeight) || edge;
+  const scale = Math.min(1, edge / Math.max(width, height));
+  return { source: url.href, pixels: Math.ceil(width * scale) * Math.ceil(height * scale) };
+}
+
+function boardVideoPosterSource(file, item) {
+  return Board.leaferDetailSources.get(String(item?.id || '')) || file.thumbUrl || file.previewUrl || '';
+}
+
 function updateLeaferFullImageWindow() {
   if (isBoardViewportInteracting()) return;
   const candidates = [];
   for (const item of AppState.boardItems || []) {
     if (!item || !Board.visibleIds.has(item.id)) continue;
     const file = Board.filesById.get(item.fileId);
-    if (!file || !isImageExt(file.ext)) continue;
-    const fullSource = String(resolveImageDisplaySource(file, true) || '').trim();
+    const video = file && isVideoExt(file.ext);
+    if (!file || (!isImageExt(file.ext) && !video)) continue;
+    const fullSource = video ? '' : String(resolveImageDisplaySource(file, true) || '').trim();
     const thumbSource = String(resolveImageDisplaySource(file, false) || '').trim();
-    if (!fullSource || fullSource === thumbSource) continue;
+    if (!video && (!fullSource || fullSource === thumbSource)) continue;
     const sourceEdge = Math.max(Number(file.sourceWidth) || 0, Number(file.sourceHeight) || 0);
     const bounds = boardItemBounds(item);
     const screenEdge = Math.max(bounds.w, bounds.h) * Math.max(0.001, Board.zoom) *
       Math.min(2, Number(window.devicePixelRatio) || 1);
-    const retained = Board.leaferFullItemIds.has(item.id) && Board.leaferSourceByItem.get(String(item.id)) === fullSource;
-    const threshold = retained ? BOARD_LEAFER_FULL_IMAGE_EXIT_SCREEN_EDGE : BOARD_LEAFER_FULL_IMAGE_MIN_SCREEN_EDGE;
+    const previousSource = Board.leaferDetailSources.get(String(item.id)) || Board.leaferSourceByItem.get(String(item.id));
+    const preview = boardMediaDetailPreview(file, screenEdge, previousSource);
+    const source = preview ? preview.source : fullSource;
+    if (!source) continue;
+    const retained = Board.leaferFullItemIds.has(item.id) &&
+      (previousSource === source || previousSource === fullSource);
+    const threshold = Board.leaferFullItemIds.has(item.id) ? BOARD_LEAFER_FULL_IMAGE_EXIT_SCREEN_EDGE : BOARD_LEAFER_FULL_IMAGE_MIN_SCREEN_EDGE;
     if ((sourceEdge > 0 && sourceEdge <= BOARD_THUMBNAIL_MAX_EDGE) || screenEdge < threshold) continue;
-    candidates.push({ id: item.id, screenEdge, source: fullSource, retained, selected: Boolean(item.selected),
-      pixels: Math.max(1, Number(file.sourceWidth) || 4096) * Math.max(1, Number(file.sourceHeight) || 4096) });
+    const previousImage = Board.fullImageCache.get(previousSource);
+    const previousPreview = previousSource?.startsWith('messs-thumb://')
+      ? boardMediaDetailPreview(file, previousSource.includes('edge=1536') ? 1536 : 0) : null;
+    const originalPixels = Math.max(1, Number(file.sourceWidth) || 4096) * Math.max(1, Number(file.sourceHeight) || 4096);
+    candidates.push({ id: item.id, screenEdge, source, retained, preview, previousSource, file, fullSource, originalPixels,
+      previousPixels: previousImage ? previousImage.naturalWidth * previousImage.naturalHeight :
+        (previousPreview?.pixels ?? (previousSource === fullSource ? originalPixels : Infinity)),
+      original: source === fullSource,
+      selected: Boolean(item.selected), pixels: source === preview?.source ? preview.pixels : originalPixels });
   }
   candidates.sort((left, right) => Number(right.selected)-Number(left.selected) || Number(right.retained)-Number(left.retained) || right.screenEdge-left.screenEdge || String(left.id).localeCompare(String(right.id)));
   const next = new Set();
+  const sources = new Map();
   let pixels = 0;
-  let reserved = 0;
+  const allocations = new Map();
+  const admitted = [];
+  let originals = 0;
   for (const entry of candidates) {
-    if (reserved >= Math.min(BOARD_LEAFER_FULL_ITEM_LIMIT, BOARD_FULL_IMAGE_CACHE_LIMIT)) break;
+    if (entry.preview && (Board.failedFullImageSources.has(entry.source) ||
+        (!allocations.has(entry.source) && pixels + entry.pixels > BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET))) {
+      const smaller = boardMediaDetailPreview(entry.file, 0);
+      entry.source = smaller.source;
+      entry.pixels = smaller.pixels;
+    }
+    if (Board.failedFullImageSources.has(entry.source)) continue;
+    const shared = allocations.get(entry.source);
+    if (!shared && allocations.size >= BOARD_FULL_IMAGE_CACHE_LIMIT) continue;
+    if (!shared && entry.original && originals >= BOARD_FULL_IMAGE_LIMIT) continue;
     // Permit one large original, never multiple oversized decodes. The cache
     // already retains a single image above its normal aggregate budget.
-    const singleLargeImage = reserved === 0 && entry.pixels <= BOARD_FULL_IMAGE_SINGLE_PIXEL_LIMIT;
-    if (pixels + entry.pixels > BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET && !singleLargeImage) continue;
+    const singleLargeImage = allocations.size === 0 && entry.pixels <= BOARD_FULL_IMAGE_SINGLE_PIXEL_LIMIT;
+    if (!shared && pixels + entry.pixels > BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET && !singleLargeImage) continue;
     // Reserve slots for pending decodes too. Otherwise each completion loads
     // another budget-excluded candidate and evicts the textures just promoted.
-    reserved += 1;
-    pixels += entry.pixels;
+    if (shared) shared.count += 1;
+    else {
+      allocations.set(entry.source, { pixels: entry.pixels, count: 1 });
+      if (entry.original) originals += 1;
+      pixels += entry.pixels;
+    }
+    admitted.push(entry);
+  }
+  // Give every admitted visible item a detailed preview before spending the
+  // remaining budget on originals. Repeated files share one decoded texture.
+  for (const entry of admitted) {
+    const threshold = entry.previousSource === entry.fullSource ? 1500 : 1800;
+    if (!entry.preview || !entry.fullSource || entry.screenEdge < threshold ||
+        Board.failedFullImageSources.has(entry.fullSource)) continue;
+    const previous = allocations.get(entry.source);
+    const shared = allocations.get(entry.fullSource);
+    const nextPixels = pixels - (previous.count === 1 ? previous.pixels : 0) + (shared ? 0 : entry.originalPixels);
+    if ((!shared && originals >= BOARD_FULL_IMAGE_LIMIT) || nextPixels > BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET ||
+        (!shared && previous.count > 1 && allocations.size >= BOARD_FULL_IMAGE_CACHE_LIMIT)) continue;
+    if (--previous.count === 0) allocations.delete(entry.source);
+    if (shared) shared.count += 1;
+    else { allocations.set(entry.fullSource, { pixels: entry.originalPixels, count: 1 }); originals += 1; }
+    pixels = nextPixels;
+    entry.source = entry.fullSource;
+    entry.pixels = entry.originalPixels;
+  }
+  for (const entry of admitted) {
+    entry.retained = Board.leaferFullItemIds.has(entry.id) && entry.previousSource === entry.source;
     if (entry.retained || cachedBoardFullImage(entry.source)) {
       next.add(entry.id);
+      sources.set(String(entry.id), entry.source);
       continue;
+    }
+    if (entry.previousSource && entry.previousPixels <= entry.pixels) {
+      next.add(entry.id);
+      sources.set(String(entry.id), entry.previousSource);
     }
     // Prewarm directly from the scene, independent of DOM virtualization.
     // One completion triggers a new bounded pass; never decode the whole board.
@@ -1273,7 +1346,23 @@ function updateLeaferFullImageWindow() {
       void preloadBoardFullImage(entry.source);
     }
   }
+  if (sources.size !== Board.leaferDetailSources.size ||
+      [...sources].some(([id, source]) => Board.leaferDetailSources.get(id) !== source)) {
+    Board.leaferContentRevision = (Number(Board.leaferContentRevision) || 0) + 1;
+  }
   Board.leaferFullItemIds = next;
+  Board.leaferDetailSources = sources;
+  // Posters share the scene's decoded preview. Never restart video playback
+  // or show an empty image while the larger still is being generated.
+  for (const [id, element] of Board.mounted) {
+    const item = Board.itemsById.get(id);
+    const file = item && Board.filesById.get(item.fileId);
+    if (!file || !isVideoExt(file.ext)) continue;
+    const source = boardVideoPosterSource(file, item);
+    element.querySelectorAll('.board-video-thumbnail img, .mini-video-poster').forEach(image => {
+      if (image.getAttribute('src') !== source) image.src = source;
+    });
+  }
 }
 
 function scheduleBoardInteractionPrefetch(view) {
@@ -1784,7 +1873,7 @@ function renderBoardItemContent(content, f, item) {
     const preview = document.createElement('div');
     preview.className = 'board-video-thumbnail';
     const img = document.createElement('img');
-    img.src = f.thumbUrl;
+    img.src = boardVideoPosterSource(f, item);
     img.loading = Board.visibleIds.has(item.id) ? 'eager' : 'lazy';
     observeBoardMediaIntrinsicRatio(content, f, item, img);
     img.alt = f.name;
@@ -1796,7 +1885,7 @@ function renderBoardItemContent(content, f, item) {
         window.setTimeout(() => {
           if (!img.isConnected) return;
           img.removeAttribute('src');
-          requestAnimationFrame(() => { if (img.isConnected) img.src = f.thumbUrl; });
+          requestAnimationFrame(() => { if (img.isConnected) img.src = boardVideoPosterSource(f, item); });
         }, thumbnailRetries * 450);
         return;
       }
@@ -1823,6 +1912,8 @@ function renderBoardItemContent(content, f, item) {
         badge.textContent = formatBoardVideoDuration(duration);
         badge.hidden = false;
       }
+      const posterSource = boardVideoPosterSource(f, item);
+      if (img.getAttribute('src') !== posterSource) img.src = posterSource;
       if (content.firstElementChild !== preview) content.replaceChildren(preview);
       playerPromise = null;
     };
@@ -1837,7 +1928,7 @@ function renderBoardItemContent(content, f, item) {
             if (request === playerRequest) playerPromise = null;
             return null;
           }
-          const player = buildMiniVideoPlayer(result, f);
+          const player = buildMiniVideoPlayer(result, f, item);
           content.replaceChildren(player);
           return player;
         }).catch(() => {
@@ -1899,15 +1990,15 @@ function renderBoardItemContent(content, f, item) {
     // The board may have re-rendered (or this item been removed) by the
     // time this resolves �?only touch the DOM if it's still around.
     if (document.body.contains(content)) {
-      applyBoardRichContent(content, f, result);
+      applyBoardRichContent(content, f, result, item);
     }
   }).catch(() => {});
 }
 
-function applyBoardRichContent(content, f, result) {
+function applyBoardRichContent(content, f, result, item) {
   if (result.type === 'video') {
     content.innerHTML = '';
-    content.appendChild(buildMiniVideoPlayer(result, f));
+    content.appendChild(buildMiniVideoPlayer(result, f, item));
   } else if (result.type === 'audio') {
     content.innerHTML = '';
     content.appendChild(buildMiniAudioPlayer(result, f));
@@ -2146,6 +2237,16 @@ function constrainedBoardMoveDeltas(startPositions, dx, dy) {
 }
 
 function boardItemBounds(item) {
+  if (item && item.isNote) {
+    const width = Math.max(24, Number(item.width) || 220);
+    const contentHeight = window.MesssBoardLeaferLayer?.measureTextNote(item, width);
+    return {
+      x: Number.isFinite(item.x) ? item.x : 0,
+      y: Number.isFinite(item.y) ? item.y : 0,
+      w: width,
+      h: Math.max(Number(item.height) || 0, contentHeight || 140)
+    };
+  }
   if (item && item.isMoodboard) {
     return {
       x: Number.isFinite(item.x) ? item.x : 0,
@@ -2381,6 +2482,7 @@ function disposeBoardCanvas() {
   Board.leaferCanvasId = null;
   Board.leaferSourceByItem.clear();
   Board.leaferFullItemIds.clear();
+  Board.leaferDetailSources.clear();
   Board.visibleIds.clear();
   Board.interactionVisibleIds.clear();
   Board.interactionFallbackIds.clear();
@@ -2432,12 +2534,12 @@ function syncMountedBoardItemGeometry(element, item) {
   element.style.left = `${Number.isFinite(item.x) ? item.x : 0}px`;
   element.style.top = `${Number.isFinite(item.y) ? item.y : 0}px`;
   element.style.zIndex = String(item.isPartition ? (Number(item.zIndex) || 0) : (item.zIndex || 1));
-  if (!item.isNote || Number(item.width) > 0) element.style.width = `${width}px`;
+  element.style.width = `${item.isNote ? boardItemBounds(item).w : width}px`;
 
   if (item.isPartition) {
     element.style.aspectRatio = '';
     element.style.height = `${Math.max(BOARD_PARTITION_MIN_HEIGHT, Number(item.height) || BOARD_PARTITION_MIN_HEIGHT)}px`;
-  } else if (item.isMoodboard || (file && isModelFile(file))) {
+  } else if (item.isNote || item.isMoodboard || (file && isModelFile(file))) {
     element.style.aspectRatio = '';
     element.style.height = `${boardItemBounds(item).h}px`;
   } else if (isMedia && Number(file.sourceWidth) > 0 && Number(file.sourceHeight) > 0) {
@@ -2600,11 +2702,10 @@ function boardLeaferSource(file, item) {
     if (isBoardViewportInteracting() && existingSource) {
       return existingSource;
     }
-    // Thumbnails are the stable scene texture. Only the bounded prewarm
-    // window may promote an item to its decoded original; otherwise a single
-    // viewport can upload dozens of 2K/4K textures and exhaust GPU memory.
+    // Promote only decoded sources from the bounded detail window. Lists
+    // keep small thumbnails; visible media use previews sized for the screen.
     const source = Board.leaferFullItemIds.has(itemId)
-      ? (fullSource || thumbSource)
+      ? (Board.leaferDetailSources.get(itemId) || fullSource || thumbSource)
       : (thumbSource || fullSource);
     if (itemId) {
       // This stores URL references, not decoded images. Keep one per live
@@ -2617,7 +2718,12 @@ function boardLeaferSource(file, item) {
   // Videos and models are represented by their poster/preview in the scene;
   // their decoders stay out of the canvas until the user opens a preview.
   if (isVideoExt(file.ext)) {
-    return String(file.thumbUrl || file.previewUrl || '').trim();
+    const id = String(item?.id || '');
+    const existing = Board.leaferSourceByItem.get(id);
+    if (isBoardViewportInteracting() && existing) return existing;
+    const source = String(boardVideoPosterSource(file, item)).trim();
+    if (id) Board.leaferSourceByItem.set(id, source);
+    return source;
   }
   if (isModelFile(file)) {
     return String(file.modelPreviewUrl || file.previewUrl || file.thumbUrl || '').trim();
@@ -4656,13 +4762,13 @@ function buildMiniAudioPlayer(result, f) {
   return wrap;
 }
 
-function buildMiniVideoPlayer(result, f) {
+function buildMiniVideoPlayer(result, f, item) {
   const wrap = document.createElement('div');
   wrap.className = 'mini-video-player';
 
   const poster = document.createElement('img');
   poster.className = 'mini-video-poster';
-  poster.src = f.thumbUrl || '';
+  poster.src = boardVideoPosterSource(f, item);
   poster.alt = '';
   poster.loading = 'lazy';
   poster.draggable = false;
@@ -9064,7 +9170,7 @@ function showTextToolPanel(note, contentEl) {
 }
 
 function hideTextToolPanel() {
-  document.getElementById('text-color-popover')?.remove();
+  document.getElementById('text-color-popover')?._close();
   activeTextNoteId = null;
   document.getElementById('text-tool-panel').hidden = true;
 }
@@ -9191,22 +9297,38 @@ function getActiveTextNote() {
 }
 
 function openTextColorPopover() {
-  const previous=document.getElementById('text-color-popover');
-  if(previous){previous.remove();return;}
-  const input=document.getElementById('text-color-input');
-  const pop=document.createElement('div');pop.id='text-color-popover';pop.className='text-color-popover';
+  openBoardColorPopover(document.getElementById('text-color-input'), document.getElementById('text-color-swatch'), 'text-color-popover');
+}
+
+function openBoardColorPopover(input, trigger, id) {
+  const previous=document.getElementById(id);
+  if(previous){previous._close();return;}
+  const pop=document.createElement('div');pop.id=id;pop.className='text-color-popover';
+  const controller=new AbortController();
+  const close=()=>{controller.abort();pop.remove();trigger.setAttribute('aria-expanded','false');};
+  pop._close=close;
+  trigger.setAttribute('aria-expanded','true');
+  pop.dataset.boardUiLayer='true';
+  const heading=document.createElement('header');
+  const title=document.createElement('strong');title.textContent=t('Custom color','自定义颜色');
+  const closeButton=document.createElement('button');closeButton.type='button';closeButton.setAttribute('aria-label',t('Close','关闭'));closeButton.title=t('Close','关闭');
+  const closeIcon=document.createElement('img');closeIcon.src='assets/icons/lucide/x.svg';closeIcon.alt='';closeButton.append(closeIcon);
+  closeButton.onclick=()=>{close();trigger.focus();};heading.append(title,closeButton);pop.append(heading);
   pop.setAttribute('data-rt-panel','true');pop.setAttribute('role','dialog');pop.setAttribute('aria-label',t('Text color','文字颜色'));
   const palette=document.createElement('div');palette.className='text-color-palette';
   const hex=document.createElement('input');hex.type='text';hex.maxLength=7;hex.setAttribute('aria-label','HEX');hex.spellcheck=false;
   let rgb=[0,0,0];const sliders=[];
   const render=value=>{
     hex.value=value.toUpperCase();rgb=[1,3,5].map(i=>parseInt(value.slice(i,i+2),16));
-    sliders.forEach((slider,i)=>{slider.value=String(rgb[i]);slider.nextElementSibling.textContent=String(rgb[i]);});
+    sliders.forEach((slider,i)=>{slider.value=String(rgb[i]);slider.nextElementSibling.textContent=String(rgb[i]);
+      const low=[...rgb],high=[...rgb];low[i]=0;high[i]=255;
+      slider.style.background=`linear-gradient(to right,rgb(${low.join(',')}),rgb(${high.join(',')}))`;
+    });
     palette.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.color===value.toLowerCase())));
   };
   const set=value=>{
     if(!/^#[\da-f]{6}$/i.test(value))return;
-    input.value=value;render(value);input.dispatchEvent(new Event('input',{bubbles:true}));
+    input.value=value.toLowerCase();render(value);input.dispatchEvent(new Event('input',{bubbles:true}));
   };
   for(const color of ['#ffffff','#15171c','#0057ff','#53b8dd','#ef6464','#f3bb52','#6bc597','#bb91dd']){
     const b=document.createElement('button');b.type='button';b.dataset.color=color;b.title=color;b.setAttribute('aria-label',color);
@@ -9217,13 +9339,16 @@ function openTextColorPopover() {
     const label=document.createElement('label');label.textContent=channel;
     const slider=document.createElement('input');slider.type='range';slider.min='0';slider.max='255';slider.step='1';slider.setAttribute('aria-label',channel);
     const value=document.createElement('output');
-    slider.addEventListener('input',()=>{rgb[i]=Number(slider.value);value.textContent=slider.value;hex.value='#'+rgb.map(n=>n.toString(16).padStart(2,'0')).join('');});
+    slider.addEventListener('input',()=>{rgb[i]=Number(slider.value);set('#'+rgb.map(n=>n.toString(16).padStart(2,'0')).join(''));});
     slider.addEventListener('change',()=>set(hex.value));sliders.push(slider);label.append(slider,value);pop.append(label);
   });
   hex.addEventListener('change',()=>{if(/^#[\da-f]{6}$/i.test(hex.value))set(hex.value);else render(input.value);});
-  pop.addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Escape'){e.preventDefault();pop.remove();document.getElementById('text-color-swatch').focus();}});
+  pop.addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Escape'){e.preventDefault();close();trigger.focus();}});
+  pop.addEventListener('pointerdown',e=>e.stopPropagation());
+  document.addEventListener('pointerdown',e=>{if(!pop.contains(e.target)&&!trigger.contains(e.target))close();},{capture:true,signal:controller.signal});
+  window.addEventListener('resize',close,{signal:controller.signal});
   document.body.append(pop);render(input.value);
-  const anchor=document.getElementById('text-color-swatch').getBoundingClientRect();
+  const anchor=trigger.getBoundingClientRect();
   pop.style.left=`${Math.max(8,Math.min(innerWidth-pop.offsetWidth-8,anchor.right-pop.offsetWidth))}px`;
   pop.style.top=`${Math.max(8,Math.min(innerHeight-pop.offsetHeight-8,anchor.top-pop.offsetHeight-10))}px`;
 }
@@ -9486,7 +9611,7 @@ function enterDoodleMode() {
   }
   function outsideHandler(e) {
     if (!doodleActive || !doodleHasStrokes) return;
-    if (e.target === canvas || e.target.closest('#doodle-color-panel, #board-tool-doodle')) return;
+    if (e.target === canvas || e.target.closest('#doodle-color-panel, #board-tool-doodle, #doodle-color-popover')) return;
     exitDoodleMode(true);
   }
   canvas._doodleCleanup = () => {
@@ -9506,6 +9631,7 @@ function enterDoodleMode() {
     where it visually was, instead of just being discarded. When `commit` is
     false (Escape, or toggling the tool off), the stroke is thrown away �?    matching the previous behavior. */
 function exitDoodleMode(commit) {
+  document.getElementById('doodle-color-popover')?._close();
   if (!doodleActive) return;
   const canvas = document.getElementById('board-doodle-canvas');
   const btn = document.getElementById('board-tool-doodle');
@@ -9571,6 +9697,8 @@ function commitDoodleToBoard(canvas) {
     width: Math.max(1, Math.round(bounds.width)),
     height: Math.max(1, Math.round(bounds.height)),
     doodlePaths,
+    doodleSourceWidth: Math.max(1, Math.round(bounds.width)),
+    doodleSourceHeight: Math.max(1, Math.round(bounds.height)),
     doodleVersion: 3,
     zIndex: AppState.boardItems.length + 1,
     canvasId: activeCanvasId(),
@@ -9670,6 +9798,10 @@ function initDoodleColorPanel() {
   const sizeSlider = document.getElementById('doodle-size-slider');
   const swatches = document.querySelectorAll('.doodle-swatch');
   const customColorInput = document.getElementById('doodle-custom-color');
+  const customColorButton = document.getElementById('doodle-custom-color-button');
+  customColorButton.title = t('Custom color','自定义颜色');
+  customColorButton.setAttribute('aria-label',customColorButton.title);
+  customColorButton.addEventListener('click',()=>openBoardColorPopover(customColorInput,customColorButton,'doodle-color-popover'));
   const confirmBtn = document.getElementById('doodle-confirm-btn');
 
   penBtn.addEventListener('click', () => {

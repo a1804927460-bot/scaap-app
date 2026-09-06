@@ -28,6 +28,18 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  assert.equal(plus.width,18);assert.equal(plus.height,18);
  await page.locator('#ai-assistant-upload').click();
  assert.equal(await page.locator('[data-assistant-kind="video"]').isVisible(),true);
+ await page.evaluate(() => { MesssComposerActions.refresh(); MesssComposerActions.refresh(); });
+ assert.equal(await page.locator('#ai-assistant-add-menu .messs-composer-action-icon').count(),4);
+ for(const theme of ['light','dark']) {
+   await page.evaluate(theme => { document.documentElement.dataset.theme=theme; },theme);
+   const icons=await page.locator('#ai-assistant-add-menu .messs-composer-action-icon').evaluateAll(async icons => {
+     await Promise.all(icons.map(icon=>icon.decode()));
+     return icons.map(icon=>{const r=icon.getBoundingClientRect(); const b=icon.parentElement.getBoundingClientRect();return {w:r.width,h:r.height,x:r.x,center:Math.abs(r.y+r.height/2-b.y-b.height/2)};});
+   });
+   assert.ok(icons.every(icon=>icon.w===16 && icon.h===16 && icon.center<1));
+   assert.ok(icons.every(icon=>Math.abs(icon.x-icons[0].x)<1));
+   await page.screenshot({path:`test-artifacts/composer-actions/add-icons-${theme}.png`});
+ }
  await page.locator('#ai-assistant-add-local').click();assert.equal(await page.evaluate(()=>window.uploaded),true);
  await page.locator('#ai-assistant-upload').click();await page.locator('[data-assistant-kind="image"]').click();
  assert.equal(await page.evaluate(()=>AiAssistant.kind),'image');

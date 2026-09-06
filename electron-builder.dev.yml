@@ -10,6 +10,7 @@ files:
   - package.json
   - config/runtime.json
   - config/provider-catalog.json
+  - config/agent-routing.json
   - lib/**/*
   - src/**/*
   - vendor/**/*
@@ -32,6 +33,8 @@ files:
   - "!release{,/**/*}"
   - "!release-dev{,/**/*}"
 asarUnpack:
+  - lib/agent-memory-search.cjs
+  - node_modules/minisearch/**/*
   - lib/ai-work-worker.cjs
   - node_modules/quickjs-emscripten/**/*
   - node_modules/quickjs-emscripten-core/**/*

@@ -46,6 +46,29 @@
     return api;
   }
 
+  const doodleCoordinateBounds = new WeakMap();
+  function syncDoodlePathScale(drawable, item, bounds) {
+    const entries = item.doodlePaths || [];
+    let original = doodleCoordinateBounds.get(entries);
+    if (!original) {
+      let left=Infinity, top=Infinity, right=-Infinity, bottom=-Infinity;
+      for (const entry of entries) for (const point of entry.points || []) {
+        const x=Number(point[0]), y=Number(point[1]);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        left=Math.min(left,x); top=Math.min(top,y); right=Math.max(right,x); bottom=Math.max(bottom,y);
+      }
+      original={ width:Number.isFinite(right-left) ? Math.max(1,Math.ceil(right-left+1)) : 1,
+        height:Number.isFinite(bottom-top) ? Math.max(1,Math.ceil(bottom-top+1)) : 1 };
+      doodleCoordinateBounds.set(entries,original);
+    }
+    const width=Number(item.doodleSourceWidth)>0 ? Number(item.doodleSourceWidth) : original.width;
+    const height=Number(item.doodleSourceHeight)>0 ? Number(item.doodleSourceHeight) : original.height;
+    for (const path of drawable._messsParts || []) {
+      path.scaleX=bounds.width/width;
+      path.scaleY=bounds.height/height;
+    }
+  }
+
   function polygonPath(points) {
     const normalized = (points || []).filter((point) => (
       point && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1]))
@@ -253,6 +276,43 @@
     return clamp(finite(item && item.fontSize, item && item.isNote ? 32 : 14), item && item.isNote ? 10 : 8, item && item.isNote ? 160 : 36);
   }
 
+  const noteMeasurements = new WeakMap();
+  function noteTextOptions(item) {
+    return {
+      text: textForItem(item), styleRanges: item.styleRanges || [],
+      autoWidth: false, autoHeight: false, editable: true,
+      fill: textColorForItem(item), fontFamily: textFontFamilyForItem(item),
+      fontSize: textFontSizeForItem(item), fontWeight: item.fontWeight || 500,
+      textWrap: 'break', lineHeight: { type: 'percent', value: 1.25 },
+      textAlign: item.align || 'left', textOverflow: 'hide', verticalAlign: 'top', padding: [3, 5]
+    };
+  }
+
+  function measureTextNote(item, width) {
+    const api = classes();
+    if (!api || !item?.isNote) return null;
+    const TextClass = root.MesssCanvasPlugins?.RichText || api.Text;
+    const options = noteTextOptions(item);
+    const key = JSON.stringify([width, options]);
+    const cached = noteMeasurements.get(item);
+    if (cached?.key === key && cached.TextClass === TextClass) return cached.height;
+    // Measure in board coordinates, never from a zoomed or width-capped DOM
+    // overlay. The same rich styles must drive rendering and the hit bounds.
+    const node = new TextClass({ ...options, width, autoHeight: true });
+    let height;
+    try {
+      if (node.tag === 'RichText') {
+        node._updateGraphemes();
+        node._loadFromStyleRanges(item.styleRanges || []);
+        node._measureText();
+        height = node._getTextBounds().height;
+      } else height = node.getLayoutBounds('box', 'local').height;
+    } finally { node.destroy(); }
+    height = Math.max(1, Math.ceil(Number(height) || options.fontSize * 1.25 + 6));
+    noteMeasurements.set(item, { key, TextClass, height });
+    return height;
+  }
+
   function addChildren(group, children) {
     const valid = children.filter(Boolean);
     if (valid.length) group.add(valid);
@@ -396,6 +456,7 @@
       }).filter(Boolean);
       if (paths.length) group.add(paths);
       group._messsParts = paths;
+      syncDoodlePathScale(group, item, bounds);
       return group;
     }
 
@@ -448,9 +509,10 @@
         textWrap: 'break',
         lineHeight: { type: 'percent', value: 1.25 },
         textAlign: item.align || 'left',
-        textOverflow: TextClass === api.Text ? 'ellipsis' : 'show',
+        textOverflow: 'hide',
         verticalAlign: 'top',
         padding: item.isNote ? [3, 5] : (item.isMoodboard ? 8 : 0),
+        ...(item.isNote ? noteTextOptions(item) : {}),
         stroke: undefined,
         cornerRadius: 0,
         opacity: item.isTextEditing && TextClass === api.Text ? 0 : 1
@@ -565,6 +627,7 @@
           path.eraser = entry && entry.tool === 'eraser' ? true : undefined;
         });
       }
+      syncDoodlePathScale(drawable, item, bounds);
     } else if (kind === 'rect' || kind === 'pending') {
       const [rect, label] = drawable._messsParts || [];
       if (rect) {
@@ -1045,6 +1108,7 @@
     get visible() { return state.visible; },
     get itemCount() { return state.entries.size; },
     getTextDrawable(id) { return state.entries.get(id)?.drawable; },
+    measureTextNote,
     get doodleCount() { return state.doodleGroup ? (state.doodleGroup._messsParts || []).length : 0; },
     get lastError() { return state.lastError; }
   };

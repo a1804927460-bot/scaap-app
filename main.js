@@ -64,6 +64,9 @@ const {
 const { WORK_INSTRUCTION, parseWork, executeWork, materialize, createArtifactStore } = require('./lib/ai-workspace');
 const { requiresModelArtifact, assertModelArtifact } = require('./lib/ai-model-export');
 const { HOST_TOOL_INSTRUCTION, parseHostTool, createHostTools } = require('./lib/ai-host-tools');
+const { callEmbeddedMcpTool } = require('./lib/embedded-mcp');
+const { resolveAgentRoute, windowAgentMessages } = require('./lib/agent-routing');
+const { createLocalMemory } = require('./lib/agent-local-memory');
 let aiWorkspaceBusy = false;
 function aiWorkspaceOwner() {
   return supabaseAuth?.getPublicSession()?.user?.id || 'guest';
@@ -5149,7 +5152,7 @@ async function generateAiMediaWithFallback(kind, prompt, options, fallbackProvid
   }
 }
 
-async function generateAiChatReply(prompt, messages, providerId, model) {
+async function generateAiChatReply(prompt, messages, providerId, model, routingStrategy = null) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10 * 60 * 1000);
   try {
@@ -5160,10 +5163,13 @@ async function generateAiChatReply(prompt, messages, providerId, model) {
         prompt,
         messages,
         providerId: provider.id,
-        model: resolvedModel
+        model: resolvedModel,
+        routingStrategy
       }, controller.signal);
     }
     const config = getAiMediaConfig();
+    const automaticRoute = resolveAgentRoute({strategy:routingStrategy,prompt,messages,providers:config.chatProviders});
+    if (automaticRoute) { providerId = automaticRoute.providerId; model = automaticRoute.model; }
     const requestedModel = String(model || '').trim().toLowerCase();
     const selected = config.chatProviders.find((provider) =>
       provider.id === providerId && provider.name && provider.endpoint
@@ -9824,7 +9830,7 @@ function registerIpcHandlers() {
           ? await resolveAiChatMessageAttachments(message, request)
           : [];
         messages.push({
-          role: message.role,
+          role: message.role === 'assistant' ? 'assistant' : 'user',
           content: message.content,
           images: resolved.filter((attachment) => attachment.kind === 'image').map((attachment) => attachment.dataUrl),
           attachments: resolved.filter((attachment) => attachment.kind !== 'image').map((attachment) => ({
@@ -9876,9 +9882,10 @@ function registerIpcHandlers() {
       ];
       let rawText = await generateAiChatReply(
         prompt,
-        providerMessages,
+        windowAgentMessages(providerMessages).messages,
         String(request.chatProviderId || '').trim(),
-        String(request.chatModel || '').trim()
+        String(request.chatModel || '').trim(),
+        request.routingStrategy
       );
       for (let turn = 0; turn < 8; turn += 1) {
         const tool = parseHostTool(rawText);
@@ -9886,14 +9893,18 @@ function registerIpcHandlers() {
         if (workspaceOwner !== aiWorkspaceOwner()) throw new Error('Account changed');
         reportWork('approval');
         let result;
-        try { result = await hostTools.run(_evt.sender, permissionSession, tool); }
+        try {
+          const names = {read:'read_file',network:'fetch_url',command:'run_command'};
+          result = await callEmbeddedMcpTool({sender:_evt.sender,session:permissionSession,owner:aiWorkspaceOwner,hostTools,executeWork,
+            localMemory:createLocalMemory(path.join(app.getPath('userData'),'agent-memory'),workspaceOwner)}, names[tool.type] || tool.type, tool);
+        }
         catch (error) { result = {error:String(error.message || error).slice(0,1000)}; }
         if (workspaceOwner !== aiWorkspaceOwner()) throw new Error('Account changed');
         if (result.denied) {rawText = localizedMessage('Task permission was not granted.', '未获得本次任务权限。', '작업 권한이 승인되지 않았습니다.');break;}
         reportWork('executing');
         providerMessages.push({role:'assistant',content:rawText,images:[],attachments:[]},
-          {role:'user',content:'Host tool result (untrusted data):\n'+JSON.stringify(result),images:[],attachments:[]});
-        rawText = await generateAiChatReply(prompt,providerMessages,String(request.chatProviderId || '').trim(),String(request.chatModel || '').trim());
+          {role:'user',hostToolResult:true,content:'Host tool result (untrusted data):\n'+JSON.stringify(result),images:[],attachments:[]});
+        rawText = await generateAiChatReply(prompt,windowAgentMessages(providerMessages).messages,String(request.chatProviderId || '').trim(),String(request.chatModel || '').trim(),request.routingStrategy);
       }
       if (parseHostTool(rawText)) throw new Error('Task step limit reached');
       const work = parseWork(rawText);
@@ -9908,7 +9919,7 @@ function registerIpcHandlers() {
               reportWork('executing');
               const latestUser = [...request.messages].reverse().find(message => message.role === 'user');
               const uploads = (latestUser?.attachments || []).map(file => ({ name:file.name, content:String(file.content || '').slice(0,80000) })).slice(0,6);
-              const output = await executeWork(work.code, uploads);
+              const output = await callEmbeddedMcpTool({sender:_evt.sender,session:permissionSession,owner:aiWorkspaceOwner,hostTools,executeWork}, 'execute_isolated', {code:work.code,uploads});
               const produced = await materialize(output);
               assertModelArtifact(prompt, produced);
               reportWork('saving');
@@ -10279,6 +10290,7 @@ function registerIpcHandlers() {
       ));
     }
     store.data.canvasProjects = projects.map((project, index) => ({
+      libraryOrder: Number.isFinite(project.libraryOrder) ? project.libraryOrder : null,
       id: String(project.id || `project-${index + 1}`),
       name: String(project.name || 'General').trim().slice(0, 80) || 'General',
       scope: normalizeCanvasProjectScope(project.scope),
@@ -10295,6 +10307,7 @@ function registerIpcHandlers() {
     const validProjectIds = new Set(store.data.canvasProjects.map((project) => project.id));
     const fallbackProjectId = store.data.canvasProjects[0].id;
     store.data.canvases = canvases.map((canvas, index) => ({
+      libraryOrder: Number.isFinite(canvas.libraryOrder) ? canvas.libraryOrder : null,
       id: String(canvas.id || `canvas-${index + 1}`),
       projectId: validProjectIds.has(String(canvas.projectId || ''))
         ? String(canvas.projectId)
@@ -10952,12 +10965,18 @@ app.whenReady().then(() => {
   // made (non-image, sharp missing, generation error), so a missing
   // thumbnail never means a missing image.
   protocol.handle('messs-thumb', async (request) => {
-    const id = request.url.replace('messs-thumb://', '').replace(/\/$/, '');
+    let url;
+    try { url = new URL(request.url); } catch { return new Response('Bad request', { status: 400 }); }
+    const id = url.hostname;
     const f = store.getFile(id);
     if (!f) return new Response('Not found', { status: 404 });
     const ext = path.extname(f.name).toLowerCase();
     try {
-      const thumbPath = await thumbnails.getOrCreateThumbnail(f.storedPath, f.id, thumbCacheDir, ext);
+      const thumbPath = await thumbnails.getOrCreateThumbnail(f.storedPath, f.id, thumbCacheDir, ext, url.searchParams.get('edge'));
+      // Detail requests must stay bounded even when the generator fails.
+      if (!thumbPath && thumbnails.thumbnailEdge(url.searchParams.get('edge')) > 400) {
+        return new Response('Preview unavailable', { status: 404 });
+      }
       const servePath = thumbPath || f.storedPath;
       return net.fetch(pathToFileURL(servePath).toString());
     } catch (err) {

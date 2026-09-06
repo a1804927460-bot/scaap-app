@@ -75,6 +75,37 @@ async function refreshAchievements() {
 const ASSISTANT_ICON_EXPAND = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>';
 const ASSISTANT_ICON_COMPRESS = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 3v4a2 2 0 0 1-2 2H3"/><path d="M21 9h-4a2 2 0 0 1-2-2V3"/><path d="M3 15h4a2 2 0 0 1 2 2v4"/><path d="M15 21v-4a2 2 0 0 1 2-2h4"/></svg>';
 let assistantPanelAnchor = null;
+let assistantReadingPosition = null;
+let assistantScrollRestoreFrame = 0;
+
+function captureAssistantReadingPosition(panel) {
+  const messages = document.getElementById('ai-assistant-messages');
+  if (!messages || messages.hidden) return null;
+  const top = messages.getBoundingClientRect().top;
+  const scale = messages.getBoundingClientRect().width / messages.offsetWidth || 1;
+  const anchor = Array.from(messages.children).find(row => row.getBoundingClientRect().bottom > top);
+  return {
+    sessionId: typeof AiAssistant === 'undefined' ? null : AiAssistant.activeSessionId,
+    top: messages.scrollTop,
+    width: messages.clientWidth,
+    anchor,
+    offset: anchor ? (anchor.getBoundingClientRect().top - top) / scale : 0,
+    sidebarTop: panel.querySelector('.ai-chat-history-sections')?.scrollTop || 0
+  };
+}
+
+function restoreAssistantReadingPosition(panel, position) {
+  const messages = document.getElementById('ai-assistant-messages');
+  const sessionId = typeof AiAssistant === 'undefined' ? null : AiAssistant.activeSessionId;
+  if (!position || !messages || messages.hidden || sessionId !== position.sessionId || !panel.classList.contains('is-fullscreen')) return;
+  messages.scrollTo({top:position.top,behavior:'instant'});
+  if (position.width !== messages.clientWidth && position.anchor?.parentElement === messages) {
+    const scale = messages.getBoundingClientRect().width / messages.offsetWidth || 1;
+    messages.scrollTo({top:messages.scrollTop + (position.anchor.getBoundingClientRect().top - messages.getBoundingClientRect().top) / scale - position.offset,behavior:'instant'});
+  }
+  const sidebar = panel.querySelector('.ai-chat-history-sections');
+  if (sidebar) sidebar.scrollTo({top:position.sidebarTop,behavior:'instant'});
+}
 
 function updateAssistantCompactState() {
   const panel = document.getElementById('ai-assistant-panel');
@@ -116,6 +147,9 @@ function restoreAssistantPanelToWorkspace(panel) {
 function setAssistantFullscreen(expanded, options = {}) {
   const panel = document.getElementById('ai-assistant-panel');
   const button = document.getElementById('ai-assistant-history');
+  const wasExpanded = panel.classList.contains('is-fullscreen');
+  if (assistantScrollRestoreFrame) cancelAnimationFrame(assistantScrollRestoreFrame);
+  if (wasExpanded) assistantReadingPosition = captureAssistantReadingPosition(panel);
   if (expanded && panel.parentElement !== document.body) {
     assistantPanelAnchor = document.createComment('ai-assistant-panel');
     panel.parentNode.insertBefore(assistantPanelAnchor, panel);
@@ -136,6 +170,13 @@ function setAssistantFullscreen(expanded, options = {}) {
   button.innerHTML = expanded ? ASSISTANT_ICON_COMPRESS : ASSISTANT_ICON_EXPAND;
   if (options.syncNavigation === true) syncAssistantFullscreenNavigation(expanded);
   updateAssistantCompactState();
+  if (expanded && assistantReadingPosition) {
+    restoreAssistantReadingPosition(panel, assistantReadingPosition);
+    assistantScrollRestoreFrame = requestAnimationFrame(() => {
+      assistantScrollRestoreFrame = 0;
+      restoreAssistantReadingPosition(panel, assistantReadingPosition);
+    });
+  }
 }
 
 function refreshStatsLanguage() {

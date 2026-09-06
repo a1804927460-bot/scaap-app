@@ -473,7 +473,7 @@
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>
             </button>
             <button id="board-detach-window" class="icon-btn-sm board-workspace-only" type="button" title="Open in separate window" aria-label="Open in separate window">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="12" height="11" rx="2"/><path d="M9 5h10v10"/><path d="M13 11l6-6"/></svg>
+              <img src="assets/icons/lucide/external-link.svg" width="16" height="16" alt="" aria-hidden="true" />
             </button>
           </div>
         </header>
@@ -600,7 +600,8 @@
             <button class="doodle-swatch" data-color="#22c55e" style="--swatch-color:#22c55e"></button>
             <button class="doodle-swatch" data-color="#3b82f6" style="--swatch-color:#3b82f6"></button>
             <button class="doodle-swatch" data-color="#15171c" style="--swatch-color:#15171c"></button>
-            <input id="doodle-custom-color" class="doodle-custom-color" type="color" value="#e0594f" title="Custom color" />
+            <input id="doodle-custom-color" type="hidden" value="#e0594f" />
+            <button id="doodle-custom-color-button" class="doodle-custom-color" type="button" title="Custom color" aria-label="Custom color" aria-haspopup="dialog" aria-expanded="false"></button>
           </div>
           <button id="doodle-confirm-btn" class="doodle-confirm-btn" title="Confirm drawing" aria-label="Confirm drawing">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>

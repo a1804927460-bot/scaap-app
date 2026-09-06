@@ -1170,7 +1170,8 @@ function refreshStaticLanguage() {
   setTitleAndLabel('#doodle-tool-pen', 'Pen', '画笔');
   setTitleAndLabel('#doodle-tool-eraser', 'Eraser', '橡皮擦');
   setAttr('#doodle-size-slider', 'title', 'Brush size', '画笔大小');
-  setAttr('#doodle-custom-color', 'title', 'Custom color', '自定义颜色');
+  setAttr('#doodle-custom-color-button', 'title', 'Custom color', '自定义颜色');
+  setAttr('#doodle-custom-color-button', 'aria-label', 'Custom color', '自定义颜色');
   setTitleAndLabel('#doodle-confirm-btn', 'Confirm drawing', '确认绘制');
   setAttr('#text-font-select', 'title', 'Font', '字体');
   setAttr('#text-weight-select', 'title', 'Weight', '字重');
@@ -2530,6 +2531,9 @@ function updateAiProviderCount() {
 function openAiProviderManager(view = 'general') {
   const overlay = document.getElementById('ai-provider-overlay');
   if (!overlay) return;
+  // Settings belong to the active app surface, not the workspace stacking context.
+  document.body.appendChild(overlay);
+  overlay._returnFocus = document.activeElement;
   if (overlay._closeTimer) {
     window.clearTimeout(overlay._closeTimer);
     overlay._closeTimer = 0;
@@ -2537,6 +2541,7 @@ function openAiProviderManager(view = 'general') {
   overlay.classList.remove('is-closing');
   overlay.hidden = false;
   if (typeof setSettingsView === 'function') setSettingsView(view);
+  document.getElementById('ai-provider-manager-close')?.focus({preventScroll:true});
 }
 
 function closeAiProviderManager() {
@@ -2547,6 +2552,9 @@ function closeAiProviderManager() {
     overlay.hidden = true;
     overlay.classList.remove('is-closing');
     overlay._closeTimer = 0;
+    const target = overlay._returnFocus;
+    if (target?.isConnected && target.getClientRects().length) target.focus({preventScroll:true});
+    overlay._returnFocus = null;
   }, 150);
 }
 

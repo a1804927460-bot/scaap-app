@@ -9,6 +9,8 @@ const sharp = require('sharp');
 const {
   isThumbnailableExt,
   thumbnailExtension,
+  thumbnailEdge,
+  deleteThumbnail,
   resolveFfmpegBinary,
   getOrCreateThumbnail
 } = require('../lib/thumbnails');
@@ -56,6 +58,15 @@ async function main() {
     }).png().toFile(imagePath);
     const imageThumb = await getOrCreateThumbnail(imagePath, 'image', cache, '.png');
     assert.strictEqual(path.extname(imageThumb), '.png');
+    for (const edge of [768, 1536]) {
+      const detail = await getOrCreateThumbnail(imagePath, 'image', cache, '.png', edge);
+      const metadata = await sharp(detail).metadata();
+      assert.strictEqual(metadata.width, Math.min(edge, 900), 'Detail should not upscale');
+      assert.notStrictEqual(detail, imageThumb);
+      assert.strictEqual(await getOrCreateThumbnail(imagePath, 'image', cache, '.png', edge), detail);
+    }
+    for (const value of [undefined, null, -1, 999999, '../1536']) assert.strictEqual(thumbnailEdge(value), 400);
+    assert.strictEqual(thumbnailEdge('1536'), 1536);
 
     const transparentPath = path.join(root, 'transparent.png');
     await sharp({
@@ -66,6 +77,9 @@ async function main() {
     await assertTransparentPng(
       await getOrCreateThumbnail(transparentPath, 'transparent', cache, '.png')
     );
+    const transparentDetail = await getOrCreateThumbnail(transparentPath, 'transparent', cache, '.png', 768);
+    assert.strictEqual((await sharp(transparentDetail).metadata()).width, 768);
+    assert.strictEqual((await sharp(transparentDetail).ensureAlpha().raw().toBuffer())[3], 0);
 
     // A wide-gamut source must be converted to sRGB for the cached JPEG, not
     // merely relabelled. Compare the embedded profile against Sharp's known
@@ -100,6 +114,24 @@ async function main() {
     ], { windowsHide: true, encoding: 'utf8' });
     assert.strictEqual(created.status, 0, created.stderr);
     await assertJpeg(await getOrCreateThumbnail(videoPath, 'video', cache, '.mp4'));
+    const smallVideo = await getOrCreateThumbnail(videoPath, 'video', cache, '.mp4', 1536);
+    assert.strictEqual((await sharp(smallVideo).metadata()).width, 640, 'Never upscale low resolution video posters');
+    for (const [width, height] of [[1920,1080],[1080,1920]]) {
+      const id = `video-${width}`;
+      const video = path.join(root, `${id}.mp4`);
+      const encoded = spawnSync(ffmpeg, ['-y','-f','lavfi','-i',`testsrc2=s=${width}x${height}:d=0.2`,'-pix_fmt','yuv420p',video], { windowsHide:true, encoding:'utf8' });
+      assert.strictEqual(encoded.status,0,encoded.stderr);
+      for (const edge of [768,1536]) {
+        const detail = await getOrCreateThumbnail(video,id,cache,'.mp4',edge);
+        const metadata = await sharp(detail).metadata();
+        assert.strictEqual(Math.max(metadata.width,metadata.height),edge);
+        assert.ok(Math.abs(metadata.width/metadata.height-width/height)<0.005);
+      }
+      deleteThumbnail(id,cache);
+      assert.ok(!fs.readdirSync(cache).some(name=>name.startsWith(id)), 'Deletion removes every detail variant');
+    }
+    deleteThumbnail('image',cache);
+    assert.ok(!fs.readdirSync(cache).some(name=>/^image(?:-768|-1536)?\.png$/.test(name)));
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
   }

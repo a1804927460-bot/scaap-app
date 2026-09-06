@@ -8,6 +8,8 @@ import {
   stripImageMetadata
 } from './ai302-tools.js';
 import { normalizeVideoResolution } from './video-resolution.js';
+import { selectImageChannel, recordImageChannelResult } from './image-channel-policy.js';
+import { falNanoInput, generateFalNano } from './fal-generation.js';
 import { AI302_PRIMARY_BASE_URL, getAi302BackupRoutes } from './tool-routes.js';
 
 const require = createRequire(import.meta.url);
@@ -20,6 +22,7 @@ const {
   validateGeneratedMediaBuffer
 } = require('../../lib/ai-media-provider');
 const { requestChat, discoverChatModels } = require('../../lib/ai-chat-provider');
+const { resolveAgentRoute } = require('../../lib/agent-routing');
 const { PROVIDER_CATALOG_VERSION, providerCatalog } = require('../../lib/provider-catalog');
 const { sanitizePublicModelLabel } = require('../../lib/public-model-label');
 
@@ -284,6 +287,15 @@ function configuredProviders() {
       }
     }
   }
+  const nano = byId.get('image-1');
+  if (nano?.logicalModel === 'nano-banana-pro' && nano.protocol === 'aireiter-async') {
+    // Retain the hidden route even when new overflow is disabled so accepted
+    // FAL tasks can still recover after an operator rolls back routing.
+    byId.set('fal-backup-nano-pro', { ...nano, id:'fal-backup-nano-pro', hidden:true,
+      endpoint:'https://queue.fal.run/fal-ai/nano-banana-pro', protocol:'fal-nano-queue',
+      keyEnv:'FAL_API_KEY', fallbackProviderIds:[], routeAliasOf:nano.id });
+    if (process.env.FAL_NANO_BACKUP_ENABLED === 'true') nano.fallbackProviderIds.push('fal-backup-nano-pro');
+  }
   return [...byId.values()];
 }
 
@@ -291,6 +303,7 @@ function providerApiKey(provider) {
   if (provider && provider.routeApiKey) return provider.routeApiKey;
   const direct = String(process.env[provider.keyEnv] || '').trim();
   if (direct) return direct;
+  if (provider.keyEnv === 'FAL_API_KEY') return String(process.env.FAL_KEY || '').trim();
   // Both spellings have been used by deployed Railway environments. Keep the
   // catalog canonical while accepting the legacy underscored secret so a
   // correctly configured Atlas account is not hidden from the client.
@@ -965,7 +978,7 @@ function aireiterImageParams(provider, body) {
   const ratio = String(body.aspectRatio || '').trim();
   const submittedRatio = ratio === 'auto' || /^\d+:\d+$/.test(ratio) ? ratio : '';
   const resolution = String(body.size || body.resolution || '2K').trim().toUpperCase();
-  if (['nano_banana_v2', 'nano_banana_v2_plus', 'nano_banana_v2_max'].includes(provider.model)) {
+  if (['nano_banana_v2', 'nano_banana_v2_base', 'nano_banana_v2_plus', 'nano_banana_v2_max'].includes(provider.model)) {
     if (urls.length > 8) throw aireiterLocalRejection('This route accepts at most 8 reference images.', 'too-many-references');
     return {
       prompt,
@@ -974,7 +987,7 @@ function aireiterImageParams(provider, body) {
       resolution: ['1K', '2K', '4K'].includes(resolution) ? resolution : '2K'
     };
   }
-  if (['nano_banana_pro', 'nano_banana_pro_max'].includes(provider.model)) {
+  if (['nano_banana_pro', 'nano_banana_pro_base', 'nano_banana_pro_plus', 'nano_banana_pro_advanced', 'nano_banana_pro_max'].includes(provider.model)) {
     if (urls.length > 8) throw aireiterLocalRejection('This route accepts at most 8 reference images.', 'too-many-references');
     return {
       prompt,
@@ -1021,6 +1034,8 @@ function aireiterImageParams(provider, body) {
 
 async function generateAireiterImage(provider, body, signal, hooks = {}) {
   const recovered = body && body._acceptedTask;
+  const primary = provider;
+  provider = selectImageChannel(provider, body);
   const relayTokens = [];
   let requestBody = body;
   try {
@@ -1039,9 +1054,18 @@ async function generateAireiterImage(provider, body, signal, hooks = {}) {
       });
       requestBody = { ...body, urls };
     }
-    const taskId = recovered && recovered.taskId
-      ? validVideoTaskId(recovered.taskId)
-      : await submitAireiterTask(provider, requestBody, aireiterImageParams(provider, requestBody), signal);
+    let taskId;
+    try {
+      taskId = recovered && recovered.taskId
+        ? validVideoTaskId(recovered.taskId)
+        : await submitAireiterTask(provider, requestBody, aireiterImageParams(provider, requestBody), signal);
+    } catch (error) {
+      recordImageChannelResult(provider.model,error);
+      if (provider.model === primary.model || !shouldTryProviderFallback(error)) throw error;
+      // Only a proven pre-accept rejection permits a second paid submission.
+      provider = primary;
+      taskId = await submitAireiterTask(provider, requestBody, aireiterImageParams(provider,requestBody), signal);
+    }
     try {
       if (!recovered && typeof hooks.onAccepted === 'function') {
         await hooks.onAccepted({ providerId: provider.id, taskId, pollUrl: provider.resultEndpoint });
@@ -1060,6 +1084,7 @@ async function generateAireiterImage(provider, body, signal, hooks = {}) {
             });
           }
           const buffer = validateGeneratedMediaBuffer('image', await downloadGeneratedImage(mediaUrl, signal));
+          recordImageChannelResult(provider.model,null);
           if (typeof hooks.onReady === 'function') {
             await hooks.onReady({ providerId: provider.id, taskId, mediaUrl, buffer });
           }
@@ -1078,6 +1103,7 @@ async function generateAireiterImage(provider, body, signal, hooks = {}) {
         code: 'provider-timeout', status: 504
       });
     } catch (error) {
+      recordImageChannelResult(provider.model,error);
       error.taskId ||= taskId;
       error.providerTaskAccepted = true;
       throw error;
@@ -1088,6 +1114,11 @@ async function generateAireiterImage(provider, body, signal, hooks = {}) {
 }
 
 async function generateMediaWithProvider(kind, provider, body, signal, hooks = {}) {
+  if (kind === 'image' && provider.protocol === 'fal-nano-queue') {
+    return generateFalNano(provider, body, signal, hooks, {
+      download: async (url, requestSignal) => validateGeneratedMediaBuffer('image', await downloadGeneratedImage(url, requestSignal))
+    });
+  }
   if (kind === 'image' && provider.protocol === 'aireiter-async') {
     return generateAireiterImage(provider, body, signal, hooks);
   }
@@ -1178,11 +1209,23 @@ function preferredFallbackError(firstError, lastError) {
   return firstError;
 }
 
+const activeGenerationRoutes = new Map();
 export async function generateMedia(kind, body, signal, hooks = {}) {
   const providers = providersForRequest(kind, String(body.providerId || ''), body);
+  const backup = providers.find(provider => provider.protocol === 'fal-nano-queue');
+  if (backup) {
+    try { falNanoInput(body); }
+    catch { providers.splice(providers.indexOf(backup),1); }
+    const configuredLimit = Number(process.env.AIREITER_NANO_OVERFLOW_AT);
+    const limit = Number.isInteger(configuredLimit) && configuredLimit >= 1 && configuredLimit <= 128 ? configuredLimit : Infinity;
+    if (providers.includes(backup) && (activeGenerationRoutes.get(providers[0].id) || 0) >= limit) {
+      providers.splice(providers.indexOf(backup),1); providers.unshift(backup);
+    }
+  }
   let firstError;
   let lastError;
   for (const provider of providers) {
+    activeGenerationRoutes.set(provider.id,(activeGenerationRoutes.get(provider.id) || 0)+1);
     try {
       return await generateMediaWithProvider(kind, provider, body, signal, hooks);
     } catch (error) {
@@ -1196,6 +1239,8 @@ export async function generateMedia(kind, body, signal, hooks = {}) {
         if (error !== firstError && FALLBACK_CAPABILITY_ERRORS.has(String(error.code || '').trim().toLowerCase())) break;
         throw error;
       }
+    } finally {
+      activeGenerationRoutes.set(provider.id,Math.max(0,(activeGenerationRoutes.get(provider.id) || 1)-1));
     }
   }
   throw preferredFallbackError(firstError, lastError);
@@ -3050,6 +3095,9 @@ export async function pollVideoTask(providerId, taskId, signal) {
 }
 
 export async function chat(body, signal) {
+  const route = resolveAgentRoute({strategy:body.routingStrategy,prompt:body.prompt,messages:body.messages,
+    providers:configuredProviders().filter(entry=>entry.kind === 'chat' && providerApiKey(entry))});
+  if (route) body = {...body,providerId:route.providerId,model:route.model};
   const requestedProviderId = String(body.providerId || '').trim().toLowerCase();
   const requestedModel = String(body.model || '').trim();
   if (requestedModel.toLowerCase() === 'gemini-3.7-flash') {

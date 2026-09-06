@@ -3,6 +3,17 @@ window.MesssComposerActions = (() => {
   let session = crypto.randomUUID(), mode = 'ask', initialized = false;
   let addMenu, permissionMenu, permissionButton, dialog;
   const label = (en,zh) => t(en,zh);
+  function setMenuLabel(button, name, text) {
+    if (!button) return;
+    const icon = document.createElement('img');
+    icon.src = `assets/icons/lucide/${name}.svg`;
+    icon.alt = '';
+    icon.className = 'messs-composer-action-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    const caption = document.createElement('span');
+    caption.textContent = text;
+    button.replaceChildren(icon, caption);
+  }
   function permissionLabel(button, value, text) {
     const icon = document.createElement('img');
     icon.src = `assets/icons/lucide/${value === 'full' ? 'shield-check' : 'lock-keyhole'}.svg`;
@@ -53,7 +64,10 @@ window.MesssComposerActions = (() => {
   function refresh() {
     if (!initialized) return;
     document.getElementById('ai-assistant-upload').title=label('Add','添加');
-    document.getElementById('ai-assistant-add-local').textContent=label('Add local files','添加本地文件');
+    setMenuLabel(document.getElementById('ai-assistant-add-local'), 'folder-open', label('Add local files','添加本地文件'));
+    setMenuLabel(document.querySelector('[data-assistant-kind="chat"]'), 'message-circle', label('Chat','对话'));
+    setMenuLabel(document.querySelector('[data-assistant-kind="image"]'), 'image', label('Image','图片'));
+    setMenuLabel(document.querySelector('[data-assistant-kind="video"]'), 'video', label('Video','视频'));
     permissionLabel(permissionButton, mode, mode==='full'?label('Full access','完全访问'):label('Ask permission','请求批准'));
     permissionButton.title=label('Messs permissions','Messs 权限');
     permissionMenu.querySelector('strong').textContent=label('Messs permissions','Messs 权限');
@@ -94,11 +108,11 @@ window.MesssComposerActions = (() => {
     document.addEventListener('keydown',event=>{if(event.key==='Escape')closeMenus();});
     window.addEventListener('resize',closeMenus);
     window.messsAPI?.onAiPermissionRequest?.(async request=>{
-      const allowed=request.session===session && await confirmTask(label('Allow this Messs task?','是否允许本次 Messs 任务？'),`${({read:label('Read file','读取文件'),network:label('Access website','访问网站'),command:label('Run command','执行命令')})[request.type]}\n${request.target}\n${label('Results are sent to the selected model.','结果会发送给当前模型。')}`);
+      const allowed=request.session===session && await confirmTask(label('Allow this Messs task?','是否允许本次 Messs 任务？'),`${({read:label('Read file','读取文件'),memory:label('Remember file locally','将文件加入本地知识库'),network:label('Access website','访问网站'),command:label('Run command','执行命令')})[request.type]}\n${request.target}\n${request.type === 'memory' ? label('Retrieved excerpts may be sent to the selected model.','检索到的片段可能会发送给当前模型。') : label('Results are sent to the selected model.','结果会发送给当前模型。')}`);
       await window.messsAPI.replyAiPermission({id:request.id,allow:!!allowed && request.session===session});
     });
     window.messsAPI?.onCloudSessionChanged?.(()=>void resetPermissions());
     refresh();
   }
-  return {init,refresh,resetPermissions,get session(){return session;}};
+  return {init,refresh,setMenuLabel,resetPermissions,get session(){return session;}};
 })();

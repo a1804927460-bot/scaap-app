@@ -1,0 +1,14 @@
+{
+  "version": "20260907",
+  "contextTokenBudget": 24000,
+  "models": {
+    "light": "gemini-3.8-flash",
+    "standard": "gemini-3.1-pro",
+    "advanced": "gpt-5.6-sol"
+  },
+  "strategies": {
+    "fast": ["light", "light", "standard"],
+    "balanced": ["light", "standard", "advanced"],
+    "ultimate": ["light", "advanced", "advanced"]
+  }
+}

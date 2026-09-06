@@ -548,6 +548,7 @@ function openUsageSettings() {
   if (typeof window.openAiProviderManager === 'function') {
     window.openAiProviderManager('usage');
   } else {
+    document.body.appendChild(overlay);
     overlay.classList.remove('is-closing');
     overlay.hidden = false;
     setSettingsView('usage');

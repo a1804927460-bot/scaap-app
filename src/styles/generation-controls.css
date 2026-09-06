@@ -16,6 +16,9 @@
   background: var(--bg-elevated); box-shadow: var(--shadow-elevated); overflow-y: auto;
 }
 .messs-composer-menu[hidden] { display:none; }
+#ai-assistant-add-menu button { align-items:center; gap:10px; }
+#ai-assistant-add-menu .messs-composer-action-icon { display:block; width:16px; height:16px; flex:0 0 16px; object-fit:contain; }
+[data-theme="dark"] #ai-assistant-add-menu .messs-composer-action-icon { filter:invert(1); }
 .ai-assistant-panel .messs-composer-menu button {
   display:flex; width:100%; min-height:34px; padding:8px 10px; border:0; border-radius:5px;
   background:transparent; color:var(--text-primary); font-size:13px; justify-content:flex-start;

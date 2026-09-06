@@ -87,6 +87,15 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       assert.deepEqual(await page.evaluate(() => note.styleRanges), saved.styleRanges);
       assert.equal(await page.locator('[data-richtext-editor]').count(), 0);
     }
+    await page.evaluate(() => beginTextNoteEditing(note, document.querySelector('.board-text-note-content')));
+    await page.locator('[data-richtext-editor]').fill('Long canvas text with wrapping and complete content.\n'.repeat(50));
+    await page.evaluate(() => {
+      const bounds = boardItemBounds(note), node = layer.getTextDrawable(note.id);
+      if (bounds.h <= 200 || node.height !== bounds.h) throw new Error('Live typing did not expand the text bounds');
+      if (Board.spatialIndex.getBounds(note.id).h !== bounds.h) throw new Error('Live typing left stale hit bounds');
+      cancelActiveTextNoteEditing();
+    });
+    assert.equal(await page.evaluate(() => note.text), saved.text);
     assert.equal(requests.length, 0, 'Canvas text must not be sent to public font servers');
     fs.mkdirSync('test-artifacts/canvas-plugins', { recursive: true });
     await page.screenshot({ path: 'test-artifacts/canvas-plugins/rich-text.png' });

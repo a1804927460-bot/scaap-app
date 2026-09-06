@@ -11,6 +11,9 @@ const attachments=require('../lib/ai-attachments');
     const source=fs.readFileSync(path.join(__dirname,'../main.js'),'utf8');
     const handlers=new Map(),events=[];
     const context={
+      ...require('../lib/agent-routing'),
+      ...require('../lib/agent-local-memory'),app:{getPath:()=>root},
+      ...require('../lib/embedded-mcp'),...require('../lib/ai-model-export'),hostTools:{run:async()=>({denied:true})},
       ...workspace,...attachments,...require('../lib/ai-host-tools'),console,Buffer,fs,path,sharp:require('sharp'),mainWindow:{},
       ipcMain:{handle:(name,handler)=>handlers.set(name,handler)},
       BrowserWindow:{fromWebContents:()=>({})},

@@ -1648,12 +1648,21 @@ function openBoardButlerExpandPanel(anchor, file, item) {
   editor.setAttribute('aria-label', t('Resize image', '修改尺寸'));
   const frame = document.createElement('div'); frame.className = 'board-inline-resize-frame';
   const toolbar = document.createElement('div'); toolbar.className = 'board-inline-resize-toolbar';
-  const ratioSelect = document.createElement('select'); ratioSelect.setAttribute('aria-label', t('Aspect ratio','尺寸比例'));
+  const ratioChoices = document.createElement('div'); ratioChoices.className = 'board-inline-resize-ratios';
+  ratioChoices.setAttribute('role', 'group'); ratioChoices.setAttribute('aria-label', t('Aspect ratio','尺寸比例'));
+  const detected = document.createElement('output'); detected.className = 'board-inline-resize-detected';
+  const preview = document.createElement('img'); preview.className = 'board-inline-resize-preview';
+  preview.alt = file.name || ''; preview.draggable = false;
+  preview.src = file.url || file.previewUrl || file.thumbUrl || '';
+  frame.append(preview);
   const sourceWidth = Number(file.sourceWidth) || 1024, sourceHeight = Number(file.sourceHeight) || 1024;
   let width = Math.max(64, Math.min(4096, sourceWidth)), height = Math.max(64, Math.min(4096, sourceHeight));
-  let ratio = 0, drag = null;
+  let ratio = 0, drag = null, selectedRatioButton = null;
   for (const [label,value] of [[t('Free','自由'),0],[t('Original','原比例'),sourceWidth/sourceHeight],['1:1',1],['4:3',4/3],['3:4',3/4],['16:9',16/9],['9:16',9/16]]) {
-    const option=document.createElement('option'); option.textContent=label; option.value=String(value); ratioSelect.append(option);
+    const button=document.createElement('button'); button.type='button'; button.textContent=label; button.dataset.ratio=String(value);
+    button.setAttribute('aria-pressed','false');
+    button.addEventListener('click',()=>{ratio=value;selectedRatioButton=button;setSize(width,height);});
+    ratioChoices.append(button);
   }
   const inputs = ['width','height'].map((name,index) => {
     const input=document.createElement('input'); input.type='number'; input.name=name; input.min='64'; input.max='4096'; input.step='1';
@@ -1664,7 +1673,7 @@ function openBoardButlerExpandPanel(anchor, file, item) {
   const cancel=document.createElement('button'); cancel.type='button'; cancel.innerHTML=BOARD_BUTLER_ICONS.close;
   cancel.title=t('Cancel','取消'); cancel.setAttribute('aria-label',cancel.title);
   const submit=document.createElement('button'); submit.type='submit'; submit.textContent=t('Apply','应用');
-  toolbar.append(ratioSelect,inputs[0],separator,inputs[1],credits,cancel,submit);
+  toolbar.append(ratioChoices,inputs[0],separator,inputs[1],detected,credits,cancel,submit);
   editor.append(frame,toolbar); viewport.append(editor);
   editor._sourceItem=item; boardButlerExpandEditor=editor;
   viewport.classList.add('is-board-expand-mode');
@@ -1678,7 +1687,7 @@ function openBoardButlerExpandPanel(anchor, file, item) {
     toolbar.style.maxWidth=`${Math.max(0,viewport.clientWidth-16)}px`;
     const tw=toolbar.offsetWidth,th=toolbar.offsetHeight;
     toolbar.style.left=`${Math.max(8,Math.min(viewport.clientWidth-tw-8,x+w/2-tw/2))}px`;
-    toolbar.style.top=`${Math.max(8,Math.min(viewport.clientHeight-th-8,y>=th+16 ? y-th-12 : y+h+12))}px`;
+    toolbar.style.top=`${Math.max(8,Math.min(viewport.clientHeight-th-8,y+h+12))}px`;
   };
   const setSize = (w,h,axis='width') => {
     if (ratio) {
@@ -1688,10 +1697,15 @@ function openBoardButlerExpandPanel(anchor, file, item) {
     }
     width=Math.max(64,Math.min(4096,Math.round(w)));height=Math.max(64,Math.min(4096,Math.round(h)));
     inputs[0].value=String(width);inputs[1].value=String(height);
+    const presets=[['1:1',1],['4:3',4/3],['3:4',3/4],['16:9',16/9],['9:16',9/16]];
+    const match=presets.find(([,value])=>Math.abs(width/height/value-1)<.012);
+    detected.textContent=match ? match[0] : t('Custom','自定义');
+    ratioChoices.querySelectorAll('button').forEach(button=>{
+      button.setAttribute('aria-pressed',String(button===(selectedRatioButton || ratioChoices.firstElementChild)));
+    });
     credits.textContent=`${boardButlerCreditsFromPtc((Math.max(width,height)>2048?.35:.20)+.013/7.3)} ${t('credits','积分')}`;
     paint();
   };
-  ratioSelect.addEventListener('change',()=>{ratio=Number(ratioSelect.value);setSize(width,height);});
   inputs.forEach((input,i)=>input.addEventListener('change',()=>{
     if(input.validity.valid && input.value) setSize(Number(inputs[0].value),Number(inputs[1].value),i?'height':'width');
     else setSize(width,height);

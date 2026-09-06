@@ -1,6 +1,6 @@
 {
   "name": "messs",
-  "version": "0.0.113",
+  "version": "0.0.114",
   "description": "Messs. — Resolve your confusion. A file preview & organizing desktop app.",
   "main": "main.js",
   "author": "Messs.",
@@ -11,6 +11,8 @@
   "license": "UNLICENSED",
   "private": true,
   "scripts": {
+    "test:agent-core": "node scripts/test-agent-routing.cjs && node scripts/test-agent-memory.cjs && npm run test:mcp",
+    "test:mcp": "node scripts/test-embedded-mcp.cjs && node scripts/test-ai-host-tools.cjs && node scripts/test-ai-workspace-ipc.cjs",
     "test:atlas": "node scripts/test-atlas-cloud.js",
     "postinstall": "node scripts/ensure-canvas-stub.js",
     "build:model-viewer": "node scripts/build-model-viewer.js",
@@ -38,6 +40,7 @@
     "@leafer-in/editor": "2.2.9",
     "@leafer-in/export": "2.2.9",
     "@leafer-in/text-editor": "2.2.9",
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@supabase/supabase-js": "2.112.0",
     "docx": "^9.1.1",
     "drawflow": "0.0.60",
@@ -52,6 +55,7 @@
     "leafer-x-webfont": "0.2.0",
     "mammoth": "^1.8.0",
     "marked": "15.0.12",
+    "minisearch": "7.2.0",
     "pdfjs-dist": "4.10.38",
     "perfect-freehand": "1.2.3",
     "pptxgenjs": "^4.0.1",
@@ -59,7 +63,8 @@
     "quill": "2.0.3",
     "sanitize-html": "^2.17.0",
     "sharp": "^0.35.3",
-    "three": "0.185.1"
+    "three": "0.185.1",
+    "zod": "3.25.76"
   },
   "devDependencies": {
     "electron": "43.2.0",

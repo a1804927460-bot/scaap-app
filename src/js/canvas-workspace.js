@@ -565,8 +565,8 @@ function buildCanvasMosaic(canvas) {
   return mosaic;
 }
 
-function filteredCanvases() {
-  const query = CanvasWorkspace.libraryQuery.trim().toLowerCase();
+function filteredCanvases(ignoreQuery = false) {
+  const query = ignoreQuery ? '' : CanvasWorkspace.libraryQuery.trim().toLowerCase();
   const rootProjectIds = new Set(
     canvasProjectsForScope().filter(isSystemCanvasProject).map((project) => project.id)
   );
@@ -579,12 +579,98 @@ function filteredCanvases() {
       || new Date(b.lastOpenedAt || b.updatedAt || b.createdAt || 0) - new Date(a.lastOpenedAt || a.updatedAt || a.createdAt || 0));
 }
 
-function filteredCanvasProjects() {
-  const query = CanvasWorkspace.libraryQuery.trim().toLowerCase();
+function filteredCanvasProjects(ignoreQuery = false) {
+  const query = ignoreQuery ? '' : CanvasWorkspace.libraryQuery.trim().toLowerCase();
   if (CanvasWorkspace.libraryProjectId) return [];
   return AppState.canvasProjects
     .filter((project) => !isSystemCanvasProject(project))
     .filter((project) => !query || project.name.toLowerCase().includes(query));
+}
+
+function canvasLibraryOrderedEntries(ignoreQuery = false) {
+  return [
+    ...filteredCanvasProjects(ignoreQuery).map((record) => ({ key: `folder:${record.id}`, record })),
+    ...filteredCanvases(ignoreQuery).map((record) => ({ key: `canvas:${record.id}`, record }))
+  ].sort((a, b) => Number(b.record.pinned === true) - Number(a.record.pinned === true)
+    || (Number.isFinite(a.record.libraryOrder) ? a.record.libraryOrder : Number.MAX_SAFE_INTEGER)
+      - (Number.isFinite(b.record.libraryOrder) ? b.record.libraryOrder : Number.MAX_SAFE_INTEGER));
+}
+
+function clearCanvasLibraryDropIndicators() {
+  document.querySelectorAll('[data-library-drop]').forEach((node) => { delete node.dataset.libraryDrop; });
+}
+
+async function reorderCanvasLibrary(sourceKey, targetKey, after) {
+  if (CanvasWorkspace.libraryOrderSaving || sourceKey === targetKey) return;
+  const entries = canvasLibraryOrderedEntries(true);
+  const source = entries.find((entry) => entry.key === sourceKey);
+  const target = entries.find((entry) => entry.key === targetKey);
+  if (!source || !target || (source.record.pinned === true) !== (target.record.pinned === true)) return;
+  const previous = entries.map(({ record }) => [record, record.libraryOrder]);
+  entries.splice(entries.indexOf(source), 1);
+  entries.splice(entries.indexOf(target) + Number(after), 0, source);
+  entries.forEach(({ record }, index) => { record.libraryOrder = index; });
+  CanvasWorkspace.libraryOrderSaving = true;
+  renderCanvasLibrary();
+  try { await canvasWorkspaceSave(); }
+  catch (error) {
+    previous.forEach(([record, order]) => { record.libraryOrder = order; });
+    showToast(error.message || t('Could not save order.', '无法保存排序。'), 'Canvas');
+  } finally {
+    CanvasWorkspace.libraryOrderSaving = false;
+    renderCanvasLibrary();
+  }
+}
+
+function bindCanvasLibraryReorder(card, key, folder = false) {
+  card.dataset.libraryKey = key;
+  card.draggable = true;
+  card.addEventListener('dragstart', (event) => {
+    if (CanvasWorkspace.libraryOrderSaving || card.querySelector('input')) { event.preventDefault(); event.stopImmediatePropagation(); return; }
+    if (!event.dataTransfer) return;
+    CanvasWorkspace.libraryDragKey = key;
+    event.dataTransfer.setData('text/messs-library-key', key);
+    event.dataTransfer.effectAllowed = 'move';
+  }, true);
+  card.addEventListener('dragend', () => {
+    CanvasWorkspace.libraryDragKey = null;
+    clearCanvasLibraryDropIndicators();
+  });
+  const position = (event) => {
+    const source = CanvasWorkspace.libraryDragKey;
+    if (!source || source === key || CanvasWorkspace.libraryOrderSaving) return null;
+    const rect = card.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / rect.width;
+    const y = (event.clientY - rect.top) / rect.height;
+    if (folder && source.startsWith('canvas:') && x > .25 && x < .75 && y > .2 && y < .8) return 'inside';
+    const entries = canvasLibraryOrderedEntries(true);
+    if ((entries.find((entry) => entry.key === source)?.record.pinned === true)
+      !== (entries.find((entry) => entry.key === key)?.record.pinned === true)) return null;
+    return x >= .5 ? 'after' : 'before';
+  };
+  card.addEventListener('dragover', (event) => {
+    const mode = position(event);
+    clearCanvasLibraryDropIndicators();
+    if (mode === 'inside') return;
+    event.stopImmediatePropagation();
+    card.classList.remove('is-drop-target');
+    if (!mode) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    card.dataset.libraryDrop = mode;
+  }, true);
+  card.addEventListener('dragleave', (event) => {
+    if (!card.contains(event.relatedTarget)) delete card.dataset.libraryDrop;
+  });
+  card.addEventListener('drop', (event) => {
+    const mode = position(event);
+    clearCanvasLibraryDropIndicators();
+    if (mode === 'inside') return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (mode) void reorderCanvasLibrary(CanvasWorkspace.libraryDragKey, key, mode === 'after');
+    CanvasWorkspace.libraryDragKey = null;
+  }, true);
 }
 
 function bindCanvasLibraryInlineRename(title, record, rename) {
@@ -635,6 +721,7 @@ function buildCanvasLibraryFolderCard(project) {
   const card = document.createElement('article');
   card.className = 'canvas-library-folder-card';
   card.dataset.projectId = project.id;
+  bindCanvasLibraryReorder(card, `folder:${project.id}`, true);
   card.tabIndex = 0;
   card.setAttribute('role', 'button');
   card.setAttribute('aria-label', t(`Open folder ${project.name}`, `打开文件夹“${project.name}”`));
@@ -1002,6 +1089,14 @@ function renderCanvasLibrary() {
       }
     });
     grid.appendChild(card);
+  });
+  const libraryNodes = new Map(Array.from(grid.children).map((card) => {
+    if (card.dataset.canvasId) bindCanvasLibraryReorder(card, `canvas:${card.dataset.canvasId}`);
+    return [card.dataset.libraryKey, card];
+  }));
+  canvasLibraryOrderedEntries().forEach(({ key }) => {
+    const card = libraryNodes.get(key);
+    if (card) grid.appendChild(card);
   });
   observeCanvasCardDensity(grid);
   const empty = document.getElementById('canvas-library-empty');
@@ -1984,12 +2079,6 @@ function activeCanvasAgentProvider() {
 
 function canvasAgentChatProviders() {
   const config = CanvasWorkspace.config || {};
-  const allowedModels = new Set([
-    'gemini-3.8-flash',
-    'gemini-3.1-pro',
-    'gpt-5.6-sol',
-    'kimi-k3'
-  ]);
   const names = {
     'gemini-3.8-flash': 'Gemini 3.8 Flash',
     'gemini-3.1-pro': 'Gemini 3.1 Pro',
@@ -1997,15 +2086,14 @@ function canvasAgentChatProviders() {
     'kimi-k3': 'Kimi K3'
   };
   const providers = (Array.isArray(config.chatProviders) ? config.chatProviders : []).flatMap((provider) => {
-    if (!provider || provider.available === false || !provider.endpoint) return [];
+    if (!provider || provider.available === false || provider.hidden === true || !provider.endpoint) return [];
     return (Array.isArray(provider.models) ? provider.models : [])
       .map((model) => String(model || '').trim())
-      .filter((model) => allowedModels.has(model))
+      .filter(Boolean)
       .map((model) => ({ providerId: provider.id, model, name: names[model] || model }));
   });
   if (typeof MesssAiProviderOptions !== 'undefined' && MesssAiProviderOptions.chatOptions) {
     return MesssAiProviderOptions.chatOptions(config.chatProviders, {
-      allowedModels,
       activeProviderId: config.activeChatProviderId,
       names
     });
@@ -2356,12 +2444,14 @@ async function requestCanvasAgentText(options = {}) {
   }, 1000);
   try {
     const response = await window.messsAPI.chatWithAi({
+      permissionSession: window.MesssComposerActions?.session,
       prompt: contextualPrompt,
       messages: options.isolated === true
         ? [{ role: 'user', content: contextualPrompt }]
         : CanvasWorkspace.agentMessages,
       attachmentFileIds: referenceFiles.map((file) => file.id),
       chatProviderId: selected.providerId,
+      routingStrategy: window.MesssAiProviderOptions?.routingStrategy(selected.model, CanvasWorkspace.agentChatUsePreset !== false),
       chatModel: selected.model
     });
     if (!response || !response.ok) {
@@ -2451,10 +2541,12 @@ async function submitCanvasAgentMessage() {
   }, 1000);
   try {
     const response = await window.messsAPI.chatWithAi({
+      permissionSession: window.MesssComposerActions?.session,
       prompt: contextualPrompt,
       messages: CanvasWorkspace.agentMessages,
       attachmentFileIds: referenceFiles.map((file) => file.id),
       chatProviderId: selected.providerId,
+      routingStrategy: window.MesssAiProviderOptions?.routingStrategy(selected.model, CanvasWorkspace.agentChatUsePreset !== false),
       chatModel: selected.model
     });
     if (!response || !response.ok) {

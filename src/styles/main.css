@@ -2110,6 +2110,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   text-transform: uppercase;
 }
 .ai-chat-history-sections {
+  --history-scroll-thumb: color-mix(in srgb, var(--text-primary) 18%, transparent);
   min-height: 0;
   flex: 1 1 auto;
   display: flex;
@@ -2118,6 +2119,26 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   overflow-y: auto;
   padding: 2px 0;
   scrollbar-gutter: stable;
+}
+.ai-chat-history-sections:hover,
+.ai-chat-history-sections:focus-within {
+  --history-scroll-thumb: color-mix(in srgb, var(--text-primary) 34%, transparent);
+}
+.ai-chat-history-sections::-webkit-scrollbar { width: 6px; }
+.ai-chat-history-sections::-webkit-scrollbar-track { background: transparent; }
+.ai-chat-history-sections::-webkit-scrollbar-thumb {
+  background: var(--history-scroll-thumb);
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  border-radius: 6px;
+  min-height: 32px;
+}
+.ai-chat-history-sections::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--text-primary) 48%, transparent);
+}
+.ai-chat-history-sections::-webkit-scrollbar-button { display: none; }
+@media (forced-colors: active) {
+  .ai-chat-history-sections::-webkit-scrollbar-thumb { background-color: ButtonText; }
 }
 .ai-chat-history-section {
   min-width: 0;
@@ -4711,7 +4732,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .ai-chat-history-copy b {
   min-width: 0;
   overflow: hidden;
-  font-weight: 650;
+  font-weight: 550;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -7240,7 +7261,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .board-text-note {
   width: max-content;
   min-width: 24px;
-  max-width: 560px;
+  max-width: none;
   min-height: 1.4em;
   padding: 3px 5px;
   background: transparent;
@@ -9829,10 +9850,10 @@ body { font-size: var(--font-ui-md); }
 .ai-chat-history-list { gap: 3px; }
 .ai-chat-history-entry { grid-template-columns: minmax(0, 1fr) 32px; }
 .ai-chat-history-item {
-  min-height: 42px;
+  min-height: 36px;
   gap: 7px;
-  padding: 10px 12px;
-  font-size: 15px;
+  padding: 8px 10px;
+  font-size: 13px;
   line-height: 1.4;
 }
 .ai-chat-history-empty {
@@ -10774,12 +10795,13 @@ body { font-size: var(--font-ui-md); }
 }
 .doodle-swatch.is-active { outline-color: var(--swatch-color); }
 .doodle-custom-color {
-  width: 16px; height: 16px;
+  width: 22px; height: 22px;
   flex-shrink: 0;
   border: none;
   border-radius: 50%;
   padding: 0;
-  background: none;
+  background: conic-gradient(#ef4444,#facc15,#22c55e,#06b6d4,#3b82f6,#a855f7,#ef4444);
+  box-shadow: inset 0 0 0 3px var(--canvas-control-panel), 0 0 0 1px var(--border-hairline);
   cursor: var(--cursor-click);
 }
 .doodle-custom-color::-webkit-color-swatch-wrapper { padding: 0; }
@@ -10958,6 +10980,7 @@ body { font-size: var(--font-ui-md); }
     transition-duration: 1ms !important;
   }
 }
+.doodle-custom-color[aria-expanded="true"] { outline:2px solid var(--brand-blue); outline-offset:2px; }
 
 /* Local composer edge light. The perimeter is masked, so the animated beam
    never paints over text or controls and never touches board media nodes. */
