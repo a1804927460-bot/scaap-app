@@ -161,6 +161,7 @@ function initStatsDetail() {
   document.getElementById('ai-assistant-home-button').addEventListener('click', returnToAssistantHome);
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
+    if (!document.getElementById('fullscreen-overlay')?.hidden) return;
     const panel = document.getElementById('ai-assistant-panel');
     if (assistantOccupiesFullscreenLayer(panel)) {
       setAssistantFullscreen(false, { syncNavigation: true });

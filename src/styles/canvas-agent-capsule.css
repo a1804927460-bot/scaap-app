@@ -1,4 +1,4 @@
-/* Keep the dock flush; only messages and the composer use capsule corners. */
+/* Clip the dock and its scrolling contents to the same rounded shell. */
 .ai-assistant-message.is-pending.is-chat-thinking::before,
 #board-agent-panel .board-agent-message.is-pending::before {
   content: 'Messs.';
@@ -18,12 +18,15 @@
 #board-agent-panel {
   margin: 0;
   border: 0;
-  border-radius: 0;
+  border-radius: 24px;
+  overflow: hidden;
   background: var(--bg-elevated);
   backdrop-filter: none;
   transition: none;
 }
 #resize-handle-board-agent::before {
+  top: 24px;
+  bottom: 24px;
   left: 10px;
   width: 1px;
   background: var(--border-hairline);

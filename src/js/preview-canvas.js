@@ -1324,6 +1324,15 @@ function showFullscreenMedia(media, options = {}) {
     overlay._closeTimer = 0;
   }
   if (!overlay.hidden) finalizeFullscreenPreviewClose();
+  const assistant = media.closest?.('.ai-assistant-panel');
+  const assistantHost = assistant?.querySelector('.ai-assistant-main');
+  if (assistantHost && assistant.classList.contains('is-fullscreen')) {
+    overlay._homeAnchor = document.createComment('media-preview-home');
+    overlay.before(overlay._homeAnchor);
+    assistantHost.appendChild(overlay);
+    overlay.classList.add('is-assistant-preview');
+    overlay._returnFocus = document.activeElement;
+  }
   overlay.classList.remove('is-closing');
   fsStage.innerHTML = '';
   const clone = media.cloneNode(true);
@@ -1409,6 +1418,13 @@ function finalizeFullscreenPreviewClose() {
   overlay.hidden = true;
   overlay.classList.remove('is-closing');
   overlay._closeTimer = 0;
+  if (overlay._homeAnchor) {
+    overlay._homeAnchor.replaceWith(overlay);
+    overlay._homeAnchor = null;
+  }
+  overlay.classList.remove('is-assistant-preview');
+  if (overlay._returnFocus?.isConnected) overlay._returnFocus.focus({ preventScroll: true });
+  overlay._returnFocus = null;
 }
 
 function closeFullscreenPreview() {

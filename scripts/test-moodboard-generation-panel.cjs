@@ -39,6 +39,7 @@ const { pathToFileURL } = require('node:url');
           const box = await page.locator('#ai-image-popover').boundingBox();
           assert.ok(box.x >= 0 && box.y >= 0 && box.x + box.width <= width && box.y + box.height <= 850, JSON.stringify(box));
           assert.equal(await page.locator('#ai-image-popover').evaluate(el => el.scrollWidth > el.clientWidth), false);
+          assert.equal(await page.locator('#ai-image-popover').evaluate(el => el.scrollHeight > el.clientHeight + 1), false, `${width}/${theme}/${kind}: all controls must fit`);
           await page.waitForTimeout(200);
           await page.screenshot({ path: `test-artifacts/moodboard-generation/${theme}-${width}-${kind}.png` });
         }
@@ -66,6 +67,24 @@ const { pathToFileURL } = require('node:url');
       assert.equal(await page.locator('.ai-composer-close').evaluate(el => { const r = el.getBoundingClientRect(); return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)); }), true);
     }
     await page.screenshot({ path: 'test-artifacts/moodboard-generation/anchored-scroll.png' });
+    await page.locator('#anchor-board').evaluate(el => { el.style.width = '150px'; el.style.height = '80px'; });
+    await page.waitForTimeout(100);
+    for (const kind of ['image', 'video']) {
+      await page.evaluate(kind => {
+        testPop._setMode(kind);
+        layoutMoodboardComposer(testPop, document.querySelector('#anchor-board button'));
+      }, kind);
+      assert.equal(await page.locator('#ai-image-popover').evaluate(el => el.scrollHeight > el.clientHeight + 1), false, 'Zoomed-out board must not constrain panel height');
+    }
+    await page.setViewportSize({ width: 420, height: 400 });
+    await page.waitForTimeout(100);
+    const smallBox = await page.locator('#ai-image-popover').boundingBox();
+    assert.ok(smallBox.y >= 0 && smallBox.y + smallBox.height <= 400);
+    await page.locator('#ai-image-popover').evaluate(el => el.scrollTop = el.scrollHeight);
+    assert.equal(await page.locator('.ai-composer-submit').evaluate(el => {
+      const r = el.getBoundingClientRect();
+      return el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+    }), true, 'Small-window fallback must keep submit reachable');
     await page.evaluate(() => testPop._disposeMoodboardLayout());
     console.log('Moodboard generation panel: image/video, themes, bounds, live board sizing and aligned close button passed.');
   } finally { await browser.close(); }

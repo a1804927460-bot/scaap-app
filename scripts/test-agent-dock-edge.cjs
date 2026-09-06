@@ -29,7 +29,15 @@ const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
      const p=panel.getBoundingClientRect(),h=handle.getBoundingClientRect(),s=getComputedStyle(panel),line=getComputedStyle(handle,'::before');
      return {left:p.left,right:p.right,top:p.top,bottom:p.bottom,radius:s.borderRadius,margin:s.margin,line:h.left+parseFloat(line.left),formRadius:getComputedStyle(panel.querySelector('.board-agent-form')).borderRadius};
     });
-    assert.equal(result.radius,'0px');assert.equal(result.margin,'0px');
+    assert.equal(result.radius,'24px');assert.equal(result.margin,'0px');
+    const clipping=await page.evaluate(()=>{
+     const panel=document.getElementById('board-agent-panel'),p=panel.getBoundingClientRect();
+     const corner=document.elementFromPoint(p.left+1,p.top+1);
+     const line=getComputedStyle(document.getElementById('resize-handle-board-agent'),'::before');
+     return {outside:!panel.contains(corner),overflow:getComputedStyle(panel).overflow,top:line.top,bottom:line.bottom};
+    });
+    assert.equal(clipping.outside,true);assert.equal(clipping.overflow,'hidden');
+    assert.equal(clipping.top,'24px');assert.equal(clipping.bottom,'24px');
     assert.ok(Math.abs(result.line-result.left)<=1);assert.equal(result.right,width);
     assert.equal(result.top,0);assert.equal(result.bottom,800);assert.notEqual(result.formRadius,'0px');
    }
@@ -45,6 +53,6 @@ const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
   }
   await page.evaluate(()=>document.getElementById('board-agent-panel').classList.add('is-hidden'));
   assert.equal(await page.locator('#resize-handle-board-agent').isVisible(),false);
-  console.log('Agent dock passed: flush edges, divider alignment, retained composer corners, both themes, widths and hidden state.');
+  console.log('Agent dock passed: rounded shell clipping, inset divider, composer corners, both themes, widths and hidden state.');
  }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

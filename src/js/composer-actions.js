@@ -3,6 +3,16 @@ window.MesssComposerActions = (() => {
   let session = crypto.randomUUID(), mode = 'ask', initialized = false;
   let addMenu, permissionMenu, permissionButton, dialog;
   const label = (en,zh) => t(en,zh);
+  function permissionLabel(button, value, text) {
+    const icon = document.createElement('img');
+    icon.src = `assets/icons/lucide/${value === 'full' ? 'shield-check' : 'lock-keyhole'}.svg`;
+    icon.alt = '';
+    icon.className = `messs-permission-icon is-${value}`;
+    icon.setAttribute('aria-hidden', 'true');
+    const caption = document.createElement('span');
+    caption.textContent = text;
+    button.replaceChildren(icon, caption);
+  }
   function closeMenus() {
     for (const [menu,button] of [[addMenu,document.getElementById('ai-assistant-upload')],[permissionMenu,permissionButton]]) {
       if (menu) menu.hidden = true;
@@ -44,18 +54,20 @@ window.MesssComposerActions = (() => {
     if (!initialized) return;
     document.getElementById('ai-assistant-upload').title=label('Add','添加');
     document.getElementById('ai-assistant-add-local').textContent=label('Add local files','添加本地文件');
-    permissionButton.textContent=mode==='full'?label('Full access','完全访问'):label('Ask permission','请求批准');
+    permissionLabel(permissionButton, mode, mode==='full'?label('Full access','完全访问'):label('Ask permission','请求批准'));
     permissionButton.title=label('Messs permissions','Messs 权限');
     permissionMenu.querySelector('strong').textContent=label('Messs permissions','Messs 权限');
     const buttons=permissionMenu.querySelectorAll('button');
-    buttons[0].textContent=label('Ask for each host operation','逐次请求批准');
-    buttons[1].textContent=label('Full access for this session','本次会话完全访问');
+    permissionLabel(buttons[0], 'ask', label('Ask for each host operation','逐次请求批准'));
+    permissionLabel(buttons[1], 'full', label('Full access for this session','本次会话完全访问'));
     buttons.forEach((b,i)=>b.setAttribute('aria-checked',String((i===1)===(mode==='full'))));
   }
   function init() {
     if (initialized) return;initialized=true;
     const trigger=document.getElementById('ai-assistant-upload');
-    trigger.textContent='+';trigger.setAttribute('aria-haspopup','menu');trigger.setAttribute('aria-expanded','false');
+    const addIcon = document.createElement('img');
+    addIcon.src = 'assets/icons/lucide/plus.svg'; addIcon.alt = ''; addIcon.setAttribute('aria-hidden', 'true');
+    trigger.replaceChildren(addIcon);trigger.setAttribute('aria-haspopup','menu');trigger.setAttribute('aria-expanded','false');
     addMenu=document.createElement('div');addMenu.id='ai-assistant-add-menu';addMenu.className='messs-composer-menu';addMenu.hidden=true;addMenu.setAttribute('role','menu');
     const local=document.createElement('button');local.id='ai-assistant-add-local';local.type='button';local.setAttribute('role','menuitem');addMenu.append(local);
     document.querySelectorAll('.ai-assistant-mode [data-assistant-kind]').forEach(button=>{button.setAttribute('role','menuitem');addMenu.append(button);});

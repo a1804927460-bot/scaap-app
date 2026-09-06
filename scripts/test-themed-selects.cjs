@@ -16,6 +16,12 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       document.body.replaceChildren();
       document.body.style.cssText = 'padding:32px;display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap';
       for (const select of selects) {
+        if (select.id === 'market-sort' || select.id === 'workshop-sort') {
+          const label = document.createElement('label');
+          label.className = select.id.replace('-sort', '-sort-label');
+          label.append('排序', select);document.body.append(label);
+          continue;
+        }
         select.style.cssText = 'width:160px;height:36px;background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--border-strong);border-radius:6px';
         document.body.append(select);
       }
@@ -32,6 +38,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       for (const id of ['text-font-select', 'text-weight-select', 'market-sort', 'workshop-sort', 'dynamic-select']) {
         const select = page.locator(`#${id}`);
         assert.equal(await select.evaluate(el => getComputedStyle(el).appearance), 'base-select');
+        if (id === 'market-sort' || id === 'workshop-sort') {
+          const aligned = await select.evaluate(el => ({align:getComputedStyle(el).alignItems, arrow:getComputedStyle(el,'::picker-icon').alignSelf,height:el.getBoundingClientRect().height}));
+          assert.equal(aligned.align,'center');assert.equal(aligned.arrow,'center');assert.equal(aligned.height,32);
+        }
         await select.click();
         assert.equal(await select.evaluate(el => el.matches(':open')), true);
         const colors = await select.evaluate(el => ({ menu: getComputedStyle(el, '::picker(select)').backgroundColor, option: getComputedStyle(el.options[0]).color, expected: getComputedStyle(document.body).color }));

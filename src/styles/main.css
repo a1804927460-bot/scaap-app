@@ -9014,7 +9014,18 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   display: block;
   max-height: none;
 }
+.board-item.board-item-model {
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  box-shadow: none;
+}
+.board-item-model > .board-item-name { display: none; }
 .board-item-model .board-item-content {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
   border-radius: 7px;
   background: #111317;
@@ -11797,6 +11808,24 @@ body:has(> .ai-assistant-panel.is-fullscreen:not([hidden]))::before {
 .market-sort-label select,
 .workshop-sort-label select {
   border-radius: var(--radius-md);
+}
+@supports (appearance: base-select) {
+  .market-sort-label select,
+  .workshop-sort-label select {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0 10px;
+    line-height: 1.2;
+  }
+  .market-sort-label select::picker-icon,
+  .workshop-sort-label select::picker-icon {
+    align-self: center;
+    margin-inline-start: 0;
+  }
+  .market-sort-label option,
+  .workshop-sort-label option { align-items: center; }
 }
 
 .market-card,

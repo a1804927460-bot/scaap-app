@@ -1,0 +1,34 @@
+'use strict';
+const assert = require('node:assert/strict');
+const { requestChat } = require('../lib/ai-chat-provider');
+const { parseAiArtifacts } = require('../lib/ai-attachments');
+const config = { apiKey: 'test', chatEndpoint: 'https://example.com/v1/chat/completions', chatModel: 'test', operationId: 'work-1', returnUsage: true };
+const response = (text, reason = 'stop') => ({ ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ finish_reason: reason, message: { content: text } }], usage: { prompt_tokens: 10, completion_tokens: 20 } }) });
+(async () => {
+  const prefix = '<messs-file filename="stage.svg"><svg>' + '<rect/>'.repeat(2000);
+  const requests = [];
+  const result = await requestChat(async (url, options) => {
+    requests.push(options);
+    if (requests.length === 1) return response(prefix, 'length');
+    const body = JSON.parse(options.body);
+    assert.equal(body.messages[0].content, 'Keep file output intact');
+    assert.equal(body.messages.at(-2).content, prefix, 'Continuation context must not truncate long assistant output at 12000 chars');
+    return response(prefix.slice(-160) + '</svg></messs-file>');
+  }, config, { messages: [{ role: 'system', content: 'Keep file output intact' }, { role: 'user', content: 'Create an SVG' }] });
+  assert.equal(parseAiArtifacts(result.text).artifacts.length, 1);
+  assert.equal(result.text, prefix + '</svg></messs-file>');
+  assert.deepEqual(result.usage, { inputTokens: 20, outputTokens: 40, totalTokens: 60 });
+  assert.notEqual(requests[0].headers['Idempotency-Key'], requests[1].headers['Idempotency-Key']);
+  let calls = 0;
+  await assert.rejects(requestChat(async () => ++calls === 1 ? response(prefix, 'length') : response('Restart from scratch'), config, { prompt: 'file' }), error => error.code === 'continuation-mismatch' && error.providerTaskAccepted && error.usage.outputTokens === 40);
+  calls = 0; let part = '<messs-work>return ';
+  await assert.rejects(requestChat(async () => { calls++; const chunk = part.slice(-160) + '1 + '; part += '1 + '; return response(chunk, 'length'); }, config, { prompt: 'file' }), error => error.code === 'continuation-limit');
+  assert.equal(calls, 5);
+  const controller = new AbortController(); calls = 0;
+  await assert.rejects(requestChat(async () => { calls++; controller.abort(); return response(prefix, 'length'); }, config, { prompt: 'file' }, controller.signal), error => error.name === 'AbortError');
+  assert.equal(calls, 1);
+  calls = 0;
+  const closed = await requestChat(async () => ++calls === 1 ? response('<messs-file filename="a.txt">hello') : response('<messs-file filename="a.txt">hello world</messs-file>'), config, { prompt: 'file' });
+  assert.equal(parseAiArtifacts(closed.text).artifacts[0].content, 'hello world');
+  console.log('Continuation: long SVG, exact seams, aggregate usage, distinct request IDs, mismatch, cancellation, bounded retries and missing closing tags passed.');
+})().catch(error => { console.error(error); process.exitCode = 1; });

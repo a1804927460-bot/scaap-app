@@ -2437,11 +2437,11 @@ function syncMountedBoardItemGeometry(element, item) {
   if (item.isPartition) {
     element.style.aspectRatio = '';
     element.style.height = `${Math.max(BOARD_PARTITION_MIN_HEIGHT, Number(item.height) || BOARD_PARTITION_MIN_HEIGHT)}px`;
-  } else if (item.isMoodboard) {
+  } else if (item.isMoodboard || (file && isModelFile(file))) {
     element.style.aspectRatio = '';
     element.style.height = `${boardItemBounds(item).h}px`;
   } else if (isMedia && Number(file.sourceWidth) > 0 && Number(file.sourceHeight) > 0) {
-    const height = Math.max(1, Math.round(width * file.sourceHeight / file.sourceWidth));
+    const height = Math.max(1, width * file.sourceHeight / file.sourceWidth);
     element.style.aspectRatio = `${file.sourceWidth} / ${file.sourceHeight}`;
     element.style.height = `${height}px`;
   } else {
@@ -2607,11 +2607,10 @@ function boardLeaferSource(file, item) {
       ? (fullSource || thumbSource)
       : (thumbSource || fullSource);
     if (itemId) {
-      Board.leaferSourceByItem.delete(itemId);
+      // This stores URL references, not decoded images. Keep one per live
+      // scene item so a large board cannot evict its visible texture state.
+      // syncBoardLeaferScene prunes deleted items; disposal clears the map.
       Board.leaferSourceByItem.set(itemId, source);
-      while (Board.leaferSourceByItem.size > 256) {
-        Board.leaferSourceByItem.delete(Board.leaferSourceByItem.keys().next().value);
-      }
     }
     return source;
   }
@@ -3175,7 +3174,7 @@ function createBoardItemElement(item) {
   const name = document.createElement('div');
   name.className = 'board-item-name';
   name.textContent = f.name;
-  name.hidden = isImage;
+  name.hidden = isImage || isModel;
   el.appendChild(name);
 
   if (isEditableExt(f.ext)) {
@@ -5661,7 +5660,7 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
       await refreshAchievements();
     }
 
-    showToast(request.kind === 'video' ? 'AI 视频已加入画布' : 'AI 图片已加入画布', 'AI');
+    showToast(aiMediaCanvasCompletionMessage(request.kind, files.length, generationRequest.canvasId), 'AI');
     closeAiImagePopover();
   } catch (err) {
     if (generatedFiles.length) {
@@ -8147,6 +8146,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
 }
 
 async function generateAiMediaForBoardV2(request, pop, status, submit) {
+  const targetCanvasId = activeCanvasId();
   const taskId = beginAiMediaTask(request);
   const controls = [...pop.querySelectorAll('button, textarea, select, input')];
   controls.forEach((control) => { control.disabled = true; });
@@ -8163,7 +8163,7 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
     const folderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
       ? AppState.activeFolderId
       : null;
-    const res = await window.messsAPI.generateAiMedia({ ...request, folderId, canvasId: activeCanvasId() });
+    const res = await window.messsAPI.generateAiMedia({ ...request, folderId, canvasId: targetCanvasId });
     const files = res && Array.isArray(res.files) ? res.files : (res && res.file ? [res.file] : []);
     generatedFiles = files;
     if (!res || !res.ok || !files.length) {
@@ -8184,9 +8184,7 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
     if (res.unlocked && res.unlocked.length) await refreshAchievements();
     const fallbackNotice = res.fallback && res.fallback.notice ? res.fallback.notice : '';
     showToast(
-      res.failedCount
-        ? `已生成 ${files.length} 个，${res.failedCount} 个失败`
-        : (request.kind === 'video' ? 'AI 视频已加入画布' : `${files.length} 张 AI 图片已加入画布`),
+      aiMediaCanvasCompletionMessage(request.kind, files.length, targetCanvasId, res.failedCount),
       'AI'
     );
     if (fallbackNotice) showToast(fallbackNotice, 'AI');
@@ -8211,6 +8209,22 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
     status.textContent = '';
     submit.disabled = false;
   }
+}
+
+function aiMediaCanvasCompletionMessage(kind, count, canvasId, failedCount = 0) {
+  const canvas = (AppState.canvases || []).find(entry => entry.id === canvasId);
+  const name = canvas && String(canvas.name || '').trim();
+  const media = kind === 'video'
+    ? t(`${count} AI video${count === 1 ? '' : 's'}`, `${count} 个 AI 视频`)
+    : t(`${count} AI image${count === 1 ? '' : 's'}`, `${count} 张 AI 图片`);
+  // Resolve the submission target, never the canvas currently being viewed.
+  const destination = name
+    ? t(`canvas [${name}]`, `【${name}】画布`)
+    : t('the original canvas', '原画布');
+  const message = t(`${media} added to ${destination}`, `${media}已加入${destination}`);
+  return failedCount
+    ? message + t(`; ${failedCount} failed`, `；${failedCount} 个失败`)
+    : message;
 }
 
 async function generateAiMediaForBoardV3(request) {
@@ -8271,19 +8285,14 @@ async function generateAiMediaForBoardV3(request) {
     if (res.unlocked && res.unlocked.length) await refreshAchievements();
     const fallbackNotice = res.fallback && res.fallback.notice ? res.fallback.notice : '';
 
-    const successMessage = res.failedCount
+    const successMessage = placeOnBoard
+      ? aiMediaCanvasCompletionMessage(request.kind, files.length, targetCanvasId, res.failedCount)
+      : res.failedCount
       ? t(
         `Generated ${files.length}; ${res.failedCount} failed`,
         `已生成 ${files.length} 个，${res.failedCount} 个失败`
       )
-      : !placeOnBoard
-        ? t('Generation completed', '生成完成', '생성이 완료되었습니다')
-        : request.kind === 'video'
-          ? t('AI video added to the canvas', 'AI 视频已加入画布')
-          : t(
-            `${files.length} AI image${files.length === 1 ? '' : 's'} added to the canvas`,
-            `${files.length} 张 AI 图片已加入画布`
-          );
+      : t('Generation completed', '生成完成', '생성이 완료되었습니다');
     showToast(successMessage, 'AI');
     if (fallbackNotice) showToast(fallbackNotice, 'AI');
     return generatedFiles;
@@ -8596,7 +8605,8 @@ function layoutMoodboardComposer(pop, anchor) {
   }
   const bounds = pop.offsetParent?.getBoundingClientRect() || { left: 0, top: 0, width: innerWidth, height: innerHeight };
   const width = Math.max(1, Math.min(Math.max(260, Math.min(420, anchorRect.width || 360)), bounds.width - 24));
-  const heightLimit = Math.max(80, Math.min(Math.max(300, anchorRect.height || 540), 640, bounds.height - 24, innerHeight - 24));
+  // The board's zoomed height must not limit the screen-space controls.
+  const heightLimit = Math.max(80, Math.min(bounds.height, innerHeight - bounds.top) - 24);
   const preferredLeft = anchorRect.right + 12;
   const left = preferredLeft + width <= Math.min(innerWidth, bounds.left + bounds.width) - 12
     ? preferredLeft : anchorRect.left - width - 12;

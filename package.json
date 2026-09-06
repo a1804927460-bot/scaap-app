@@ -1,6 +1,6 @@
 {
   "name": "messs",
-  "version": "0.0.112",
+  "version": "0.0.113",
   "description": "Messs. — Resolve your confusion. A file preview & organizing desktop app.",
   "main": "main.js",
   "author": "Messs.",
@@ -15,7 +15,7 @@
     "postinstall": "node scripts/ensure-canvas-stub.js",
     "build:model-viewer": "node scripts/build-model-viewer.js",
     "build:model-exporters": "node scripts/build-model-exporters.cjs",
-    "pretest": "npm run build:model-exporters && node scripts/test-packaged-model-export.cjs && node scripts/test-ai-model-export.cjs",
+    "pretest": "npm run build:model-exporters && node scripts/test-packaged-model-export.cjs && node scripts/test-ai-model-export.cjs && node scripts/test-file-output-integrity.cjs && node scripts/test-chat-continuation.cjs",
     "build:canvas-plugins": "node scripts/build-canvas-plugins.cjs",
     "build:canvas-crop": "node scripts/build-canvas-crop.cjs",
     "test": "node scripts/test-activation.js && node scripts/test-auth-screen.js && node scripts/test-profile-avatar.js && node scripts/test-model-badges.js && node scripts/test-provider-catalog-migration.js && node scripts/test-ai-provider-options.js && node scripts/test-video-resolution.js && node scripts/test-video-frame-normalization.js && node scripts/test-ai-media-provider.js && node scripts/test-ai-media-fallback.js && node scripts/test-ai-media-persistence.js && node scripts/test-ai-chat-provider.js && node scripts/test-ai-attachments.js && node scripts/test-ai-assistant-layout.js && node scripts/test-workshop.js && node scripts/test-gateway-providers.mjs && node scripts/test-board-engine.js && electron scripts/test-board-leafer-layer.js && node scripts/test-clipboard-images.js && node scripts/test-file-drop.js && node scripts/test-storage-location.js && node scripts/test-canvas-interactions.js && node scripts/test-moodboard.js && node scripts/test-canvas-package.js && node scripts/test-date-folders.js && node scripts/test-file-download-order.js && node scripts/test-canvas-node-mode.js && node scripts/test-butler-model-ui.js && node scripts/test-cursors.js && node scripts/test-language-localization.js && node scripts/test-color-management.js && node scripts/test-thumbnails.js && node scripts/test-media-metadata.js && node scripts/test-document-preview.js && node scripts/test-local-file-response.js && node scripts/test-video-preview.js && node scripts/test-concurrent-media-ui.js && node scripts/test-adobe-launcher.js && node scripts/test-credit-pricing.js && node scripts/test-membership-service.js && node scripts/test-usage-settings.js && node scripts/test-privacy-guard.js && node scripts/test-security-clients.js && node scripts/test-chat.js && node scripts/test-window-layout.js && node scripts/test-toast.js && node scripts/test-release-config.js && npm --prefix gateway run check",

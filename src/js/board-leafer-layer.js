@@ -58,6 +58,12 @@
     return String(value || '').trim();
   }
 
+  function imageFill(source) {
+    // Camera motion changes the sample scale every frame. Draw the decoded
+    // image directly instead of asynchronously rebuilding scaled patterns.
+    return { type: 'image', url: source, mode: 'fit', changeful: true, showProgress: false };
+  }
+
   function cancelTexture(drawable) {
     if (drawable && drawable._messsModelImage) cancelTexture(drawable._messsModelImage);
     const pending = state.pendingTextures.get(drawable);
@@ -74,7 +80,7 @@
     if (!source || source === drawable._messsSource) return;
     const manager = root.LeaferUI.ImageManager;
     const commit = () => {
-      drawable.fill = { type: 'image', url: source, mode: 'fit', showProgress: false };
+      drawable.fill = imageFill(source);
       drawable._messsSource = source;
     };
     if (!manager) { commit(); return; }
@@ -398,7 +404,7 @@
       const frame = new api.Rect({ width: bounds.width, height: bounds.height, fill: '#111317',
         stroke: '#363b43', strokeWidth: 1, cornerRadius: 8 });
       const image = new api.Image({ width: bounds.width, height: bounds.height, cornerRadius: 8,
-        fill: source ? { type: 'image', url: source, mode: 'fit', showProgress: false } : undefined });
+        fill: source ? imageFill(source) : undefined });
       image._messsSource = normalizeSource(source);
       const badge = new api.Text({ x: 10, y: 10, width: 32, height: 22, text: '3D',
         fontSize: 12, fontWeight: 700, fill: '#8bc5ff', textAlign: 'center', verticalAlign: 'middle' });
@@ -414,12 +420,7 @@
       const showSelectionStroke = kind === 'doodle';
       const image = new api.Image({
         ...options,
-        fill: {
-          type: 'image',
-          url: source,
-          mode: 'fit',
-          showProgress: false
-        },
+        fill: imageFill(source),
         stroke: showSelectionStroke ? stroke : undefined,
         strokeWidth: showSelectionStroke ? strokeWidth : 0,
         cornerRadius: 0

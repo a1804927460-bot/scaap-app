@@ -1,4 +1,8 @@
 /* Keep generation settings out of the composer's layout flow. */
+.ai-assistant-main { position: relative; }
+#fullscreen-overlay.is-assistant-preview { position:absolute;inset:0;z-index:50;border-radius:inherit; }
+#fullscreen-overlay.is-assistant-preview .fullscreen-stage { width:100%;--fullscreen-media-max-width:100%;--fullscreen-media-max-height:100%;padding:56px 24px 24px; }
+#fullscreen-overlay.is-assistant-preview .fullscreen-stage > img { max-width:100%;max-height:100%;object-fit:contain; }
 .ai-assistant-output-files .ai-output-image-preview {
   display:block;width: min(320px,100%);height:200px;padding:0;overflow:hidden;
   border:1px solid var(--border-hairline);border-radius:8px;background:var(--bg-surface-2);
@@ -19,8 +23,14 @@
 .ai-assistant-panel .messs-composer-menu button:hover,
 .ai-assistant-panel .messs-composer-menu button[aria-checked="true"] { background:var(--accent-soft); }
 .messs-composer-menu strong { display:block;padding:8px 10px;color:var(--text-secondary);font-size:12px; }
-.ai-assistant-panel #ai-assistant-upload { width:32px;min-width:32px;height:32px;padding:0;font-size:24px;background:transparent;border:0; }
+.ai-assistant-panel #ai-assistant-upload { display:grid;place-items:center;flex:0 0 32px;width:32px;min-width:32px;height:32px;padding:0;line-height:1;background:transparent;border:0; }
+.ai-assistant-panel #ai-assistant-upload > img { display:block;width:18px;height:18px;object-fit:contain;filter:invert(38%) sepia(94%) saturate(2420%) hue-rotate(201deg) brightness(99%) contrast(101%); }
 .ai-assistant-panel #ai-assistant-permissions { flex:none;height:30px;padding:0 8px;font-size:12px;color:var(--text-secondary);border:0;border-radius:6px;background:transparent; }
+.ai-assistant-panel #ai-assistant-permissions,
+#messs-permission-menu button { display:flex;align-items:center;gap:8px; }
+.messs-permission-icon { display:block;width:16px;height:16px;flex:0 0 16px;object-fit:contain; }
+[data-theme="dark"] .messs-permission-icon { filter:invert(1); }
+#messs-permission-menu button[aria-checked="true"] .messs-permission-icon { filter:invert(38%) sepia(94%) saturate(2420%) hue-rotate(201deg) brightness(99%) contrast(101%); }
 .messs-permission-dialog { width:min(360px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;padding:20px;border:1px solid var(--border-hairline);border-radius:8px;color:var(--text-primary);background:var(--bg-elevated); }
 .messs-permission-dialog::backdrop { background:#0006; }
 .messs-permission-dialog h3 { font-size:15px;margin:0 0 10px; }

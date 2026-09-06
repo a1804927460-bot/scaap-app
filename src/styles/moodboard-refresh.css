@@ -61,7 +61,7 @@
   min-width: 0; height: auto; overflow-y: auto; border-radius: 12px;
   padding: 16px; background: var(--bg-elevated); color: var(--text-primary);
 }
-.is-moodboard-composer .ai-composer-form { display: flex; height: auto; padding: 0; flex-direction: column; gap: 14px; }
+.is-moodboard-composer .ai-composer-form { display: flex; height: auto; padding: 0; flex-direction: column; gap: 10px; }
 .is-moodboard-composer .ai-composer-mode-row {
   position: sticky; top: 0; z-index: 6;
   display: grid; grid-template-columns: minmax(0, 1fr) 28px;

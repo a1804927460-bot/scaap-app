@@ -18,17 +18,36 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
    initAiAssistant();setAssistantFullscreen(true);
  });
  assert.equal(await page.locator('[data-assistant-kind="chat"]').isVisible(),false);
+ const plus = await page.locator('#ai-assistant-upload').evaluate(async button => {
+   const icon=button.querySelector('img');await icon.decode();
+   const b=button.getBoundingClientRect(),i=icon.getBoundingClientRect();
+   const style=getComputedStyle(icon);
+   return {dx:Math.abs(b.x+b.width/2-i.x-i.width/2),dy:Math.abs(b.y+b.height/2-i.y-i.height/2),width:parseFloat(style.width),height:parseFloat(style.height)};
+ });
+ assert.ok(plus.dx<0.5 && plus.dy<0.5,JSON.stringify(plus));
+ assert.equal(plus.width,18);assert.equal(plus.height,18);
  await page.locator('#ai-assistant-upload').click();
  assert.equal(await page.locator('[data-assistant-kind="video"]').isVisible(),true);
  await page.locator('#ai-assistant-add-local').click();assert.equal(await page.evaluate(()=>window.uploaded),true);
  await page.locator('#ai-assistant-upload').click();await page.locator('[data-assistant-kind="image"]').click();
  assert.equal(await page.evaluate(()=>AiAssistant.kind),'image');
  await page.locator('#ai-assistant-permissions').click();
+ assert.equal(await page.locator('#messs-permission-menu .messs-permission-icon').count(),2);
+ assert.equal(await page.locator('#ai-assistant-permissions .is-ask').count(),1);
+ fs.mkdirSync('test-artifacts/composer-actions',{recursive:true});
+ for(const theme of ['dark','light']) {
+   await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
+   await page.screenshot({path:`test-artifacts/composer-actions/permission-icons-${theme}.png`});
+   for(const icon of ['lock-keyhole','shield-check']) {
+     assert.equal(await page.evaluate(async icon=>{const image=new Image();image.src=`assets/icons/lucide/${icon}.svg`;await image.decode();return image.naturalWidth>0;},icon),true);
+   }
+ }
  await page.locator('#messs-permission-menu button').nth(1).click();
  assert.equal(await page.evaluate(()=>permissionChanges.length),0);
  await page.locator('.messs-permission-dialog .permission-allow').click();
  await page.waitForFunction(()=>permissionChanges.length===1);
  assert.equal(await page.locator('#ai-assistant-permissions').textContent(),'完全访问');
+ assert.equal(await page.locator('#ai-assistant-permissions .is-full').count(),1);
  await page.evaluate(()=>startNewAiChat());
  assert.equal(await page.locator('#ai-assistant-permissions').textContent(),'请求批准');
  fs.mkdirSync('test-artifacts/composer-actions',{recursive:true});
