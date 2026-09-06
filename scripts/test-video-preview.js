@@ -212,7 +212,7 @@ assert.match(
 );
 assert.match(
   previewSource,
-  /async function openFileFullscreenPreview\(file, sourceMedia = null\)[\s\S]*?isVideoExt\(file\.ext\)[\s\S]*?showFullscreenMedia\(video, \{ videoFileId: file\.id, autoplay: true \}\)/,
+  /async function openFileFullscreenPreview\(file, sourceMedia = null\)[\s\S]*?isVideoExt\(file\.ext\)[\s\S]*?showFullscreenMedia\(video, \{ videoFileId: file\.id, autoplay: true, unmute: true \}\)/,
   'The file fullscreen helper must open canvas videos, preserve mounted players and start playback immediately.'
 );
 assert.doesNotMatch(

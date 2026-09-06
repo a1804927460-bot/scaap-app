@@ -296,12 +296,20 @@ contextBridge.exposeInMainWorld('messsAPI', {
   confirmAiMediaDelivery: (deliveryToken) => ipcRenderer.invoke('ai:confirmMediaDelivery', deliveryToken),
   releaseAiMediaDelivery: (deliveryToken) => ipcRenderer.invoke('ai:releaseMediaDelivery', deliveryToken),
   chatWithAi: (request) => ipcRenderer.invoke('ai:chat', request),
+  setAiPermissionMode: (request) => ipcRenderer.invoke('ai:permissionMode', request),
+  replyAiPermission: (request) => ipcRenderer.invoke('ai:permissionReply', request),
+  onAiPermissionRequest: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('ai:permissionRequest', listener);
+    return () => ipcRenderer.removeListener('ai:permissionRequest', listener);
+  },
   onAiWorkProgress: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('ai:workProgress', listener);
     return () => ipcRenderer.removeListener('ai:workProgress', listener);
   },
   saveGeneratedAiFile: (token) => ipcRenderer.invoke('ai:saveGeneratedFile', token),
+  previewGeneratedAiFile: (token) => ipcRenderer.invoke('ai:previewGeneratedFile', token),
   exportAiChat: (session) => ipcRenderer.invoke('ai:exportChat', session),
   getCanvasAgentHistory: () => ipcRenderer.invoke('canvas-agent:getHistory'),
   saveCanvasAgentHistory: (sessions) => ipcRenderer.invoke('canvas-agent:saveHistory', sessions),
@@ -341,6 +349,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   }),
   preparePastedAiImage: (request) => ipcRenderer.invoke('ai:preparePastedImage', request),
   importClipboardImage: (request) => ipcRenderer.invoke('clipboard:importImage', request),
+  importCroppedImage: (request) => ipcRenderer.invoke('images:importCrop', request),
   getClipboardSignature: () => ipcRenderer.invoke('clipboard:signature'),
   getPreview: (id) => ipcRenderer.invoke('files:getPreview', id),
   readModelData: (id) => ipcRenderer.invoke('files:readModelData', id),

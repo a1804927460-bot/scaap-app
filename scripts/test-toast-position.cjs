@@ -22,6 +22,27 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   }
   await page.locator('.toast-dismiss').click();await page.waitForTimeout(400);
   assert.equal(await page.locator('#toast').isVisible(),false);
+  await page.evaluate(()=>showToast('Folder renamed', 'Messs'));
+  assert.equal(await page.locator('.toast-dismiss').count(),0);
+  await page.waitForTimeout(3500);
+  assert.equal(await page.locator('#toast').isVisible(),true);
+  await page.waitForTimeout(1000);
+  assert.equal(await page.locator('#toast').isVisible(),false);
+  await page.evaluate(()=>{
+   showToast('Video saved to canvas', 'AI');
+   showToast('Folder renamed again', 'Messs');
+   showToast('Image generation failed', 'AI');
+  });
+  await page.waitForTimeout(5500);
+  assert.equal(await page.locator('.toast-message').textContent(),'Video saved to canvas');
+  assert.equal(await page.locator('#toast').isVisible(),true);
+  await page.locator('.toast-dismiss').click();await page.waitForTimeout(400);
+  assert.equal(await page.locator('.toast-message').textContent(),'Folder renamed again');
+  await page.waitForTimeout(4400);
+  assert.equal(await page.locator('.toast-message').textContent(),'Image generation failed');
+  assert.equal(await page.locator('.toast-dismiss').isVisible(),true);
+  await page.locator('.toast-dismiss').click();await page.waitForTimeout(400);
+  assert.equal(await page.locator('#toast').isVisible(),false);
   console.log('Toast position: above toolbar, wrapped narrow viewport, brand asset and explicit dismissal passed.');
  }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

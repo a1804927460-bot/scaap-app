@@ -1,20 +1,49 @@
 /* Keep generation settings out of the composer's layout flow. */
+.ai-assistant-output-files .ai-output-image-preview {
+  display:block;width: min(320px,100%);height:200px;padding:0;overflow:hidden;
+  border:1px solid var(--border-hairline);border-radius:8px;background:var(--bg-surface-2);
+}
+.ai-assistant-output-files .ai-output-image-preview[hidden] {display:none;}
+.ai-output-image-preview img {width:100%;height:100%;object-fit:contain;}
+.ai-assistant-message-attachments button {color:var(--text-secondary);padding:6px 10px;border-radius:6px;}
+.messs-composer-menu {
+  position: fixed; z-index: 130; width: min(240px, calc(100vw - 16px));
+  padding: 6px; border: 1px solid var(--border-hairline); border-radius: 8px;
+  background: var(--bg-elevated); box-shadow: var(--shadow-elevated); overflow-y: auto;
+}
+.messs-composer-menu[hidden] { display:none; }
+.ai-assistant-panel .messs-composer-menu button {
+  display:flex; width:100%; min-height:34px; padding:8px 10px; border:0; border-radius:5px;
+  background:transparent; color:var(--text-primary); font-size:13px; justify-content:flex-start;
+}
+.ai-assistant-panel .messs-composer-menu button:hover,
+.ai-assistant-panel .messs-composer-menu button[aria-checked="true"] { background:var(--accent-soft); }
+.messs-composer-menu strong { display:block;padding:8px 10px;color:var(--text-secondary);font-size:12px; }
+.ai-assistant-panel #ai-assistant-upload { width:32px;min-width:32px;height:32px;padding:0;font-size:24px;background:transparent;border:0; }
+.ai-assistant-panel #ai-assistant-permissions { flex:none;height:30px;padding:0 8px;font-size:12px;color:var(--text-secondary);border:0;border-radius:6px;background:transparent; }
+.messs-permission-dialog { width:min(360px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;padding:20px;border:1px solid var(--border-hairline);border-radius:8px;color:var(--text-primary);background:var(--bg-elevated); }
+.messs-permission-dialog::backdrop { background:#0006; }
+.messs-permission-dialog h3 { font-size:15px;margin:0 0 10px; }
+.messs-permission-dialog p { font-size:12px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;color:var(--text-secondary); }
+.messs-permission-dialog footer { display:flex;justify-content:flex-end;gap:8px;margin-top:16px; }
+.messs-permission-dialog button { padding:7px 16px;border-radius:6px;background:var(--bg-surface-2);color:var(--text-primary); }
+.messs-permission-dialog .permission-allow { background:var(--accent);color:var(--bg-deep); }
 .ai-assistant-panel #ai-assistant-options {
   position: absolute;
   inset: auto 12px 64px auto;
-  width: min(440px, calc(100% - 24px));
-  max-height: min(560px, 65vh);
+  width: min(360px, calc(100% - 24px));
+  max-height: min(360px, 60vh);
   overflow-y: auto;
   box-sizing: border-box;
   margin: 0;
-  padding: 16px;
+  padding: 12px;
   border: 1px solid var(--border-hairline);
   border-radius: 12px;
   background: var(--bg-elevated);
   box-shadow: var(--shadow-elevated);
   animation: none;
   grid-template-columns: minmax(0, 1fr);
-  gap: 16px;
+  gap: 10px;
   z-index: 12;
 }
 #ai-assistant-options .ai-assistant-option-trigger { display: none; }
@@ -25,7 +54,7 @@
   gap: 4px;
   width: 100%;
   max-height: none;
-  margin: 8px 0 0;
+  margin: 5px 0 0;
   padding: 3px;
   border: 0;
   border-radius: 8px;
@@ -37,8 +66,9 @@
   justify-content: center;
   align-items: center;
   min-width: 0;
-  min-height: 36px;
-  padding: 6px;
+  min-height: 30px;
+  padding: 4px;
+  font-size: 12px;
   border: 1px solid transparent;
   border-radius: 7px;
   color: var(--text-secondary);
@@ -54,7 +84,13 @@
   background: transparent;
   padding: 0;
 }
-#ai-assistant-options .is-ratio-choice { flex-direction: column; gap: 8px; min-height: 66px; }
+#ai-assistant-options .is-ratio-choice { flex-direction: column; gap: 5px; min-height: 54px; }
+.ai-assistant-panel #ai-assistant-options-toggle {
+  height: 30px;
+  padding-inline: 8px;
+  max-width: 160px;
+  font-size: 12px;
+}
 .assistant-ratio-shape { display: block; flex: none; border: 1.5px solid currentColor; border-radius: 3px; }
 .assistant-ratio-shape.is-auto { border-style: dashed; }
 #ai-assistant-options .ai-assistant-option-group-label { grid-column: 1 / -1; }

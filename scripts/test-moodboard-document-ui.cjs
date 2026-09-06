@@ -37,6 +37,25 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       await page.evaluate(zoom => draw(zoom), zoom);
       await page.waitForTimeout(350);
       assert.ok(await page.locator('.board-moodboard-generate').first().isVisible());
+      for (const selected of [false, true]) {
+        await page.evaluate(selected => {
+          document.querySelectorAll('.board-moodboard').forEach(el => el.classList.toggle('is-selected', selected));
+          document.getElementById('board-canvas').classList.add('is-transforming');
+        }, selected);
+        for (const button of await page.locator('.board-moodboard-generate').all()) {
+          assert.ok(await button.isVisible(), 'Generate button must survive camera motion');
+          const icon = button.locator('img');
+          assert.ok(await icon.isVisible(), 'Generate icon must survive camera motion');
+          assert.equal(await icon.evaluate(el => getComputedStyle(el).filter), 'invert(1)');
+          assert.equal(await button.evaluate(el => {
+            const rect = el.getBoundingClientRect();
+            return el.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+          }), true, 'Visible button must remain hit-testable');
+        }
+        assert.equal(await page.locator('.board-moodboard-title').first().evaluate(el => getComputedStyle(el).opacity), '0', 'Do not restore duplicate DOM text');
+      }
+      await page.screenshot({path:`test-artifacts/moodboard-document/moving-${zoom}.png`});
+      await page.evaluate(() => document.getElementById('board-canvas').classList.remove('is-transforming'));
       await page.screenshot({path:`test-artifacts/moodboard-document/zoom-${zoom}.png`});
     }
     await page.evaluate(() => { items[1].width=260; items[1].selected=false; draw(0.9); });

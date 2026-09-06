@@ -37,8 +37,8 @@ const root = path.resolve(__dirname, '..');
       document.getElementById('ai-assistant-options').addEventListener('change', () => { refreshAssistantOptionPickers(); refreshAssistantOptionSummary(); });
     });
     fs.mkdirSync(path.join(root, 'test-artifacts/parameter-popover'), { recursive: true });
-    for (const width of [1200, 420]) {
-      await page.setViewportSize({ width, height: 820 });
+    for (const [width,height] of [[1200,820],[420,820],[900,560]]) {
+      await page.setViewportSize({ width, height });
       for (const theme of ['dark', 'light']) {
         await page.evaluate(theme => { document.documentElement.dataset.theme = theme; document.body.dataset.theme = theme; setAssistantOptionsOpen(false); }, theme);
         const before = await page.locator('.ai-assistant-form').boundingBox();
@@ -52,6 +52,7 @@ const root = path.resolve(__dirname, '..');
         assert.equal(await page.locator('#ai-assistant-count').inputValue(), '3');
         const popup = await page.locator('#ai-assistant-options').boundingBox();
         const trigger = await page.locator('#ai-assistant-options-toggle').boundingBox();
+        assert.ok(popup.width <= 360 && popup.height <= 360);
         assert.ok(popup.y >= 0 && popup.x >= 0 && popup.x + popup.width <= width && popup.y + popup.height <= trigger.y);
         await page.waitForTimeout(350);
         await page.screenshot({ path: path.join(root, `test-artifacts/parameter-popover/${theme}-${width}.png`) });

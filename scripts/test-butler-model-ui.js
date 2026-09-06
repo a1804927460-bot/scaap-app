@@ -246,7 +246,7 @@ const controllerIndex = html.indexOf('js/model-viewer.js');
 const boardIndex = html.indexOf('js/board-canvas.js');
 assert(bundleIndex >= 0 && bundleIndex < controllerIndex && controllerIndex < boardIndex, 'The IIFE vendor and controller must load before the board.');
 assert(fs.existsSync(bundlePath) && fs.statSync(bundlePath).size > 100000, 'The built Three.js IIFE bundle must be present.');
-assert.strictEqual(packageJson.devDependencies.three, '0.185.1');
+assert.strictEqual(packageJson.dependencies.three, '0.185.1');
 assert.strictEqual(packageJson.devDependencies.esbuild, '0.28.1');
 
 process.stdout.write('Butler and model-viewer UI tests passed.\n');

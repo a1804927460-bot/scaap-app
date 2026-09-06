@@ -62,6 +62,8 @@ const {
   prepareTextAttachment
 } = require('./lib/ai-attachments');
 const { WORK_INSTRUCTION, parseWork, executeWork, materialize, createArtifactStore } = require('./lib/ai-workspace');
+const { requiresModelArtifact, assertModelArtifact } = require('./lib/ai-model-export');
+const { HOST_TOOL_INSTRUCTION, parseHostTool, createHostTools } = require('./lib/ai-host-tools');
 let aiWorkspaceBusy = false;
 function aiWorkspaceOwner() {
   return supabaseAuth?.getPublicSession()?.user?.id || 'guest';
@@ -1355,6 +1357,7 @@ function persistentBoardItem(item, fallbackCanvasId = null) {
   // Selection belongs to one renderer window. Persisting or broadcasting it
   // makes a later drag/resize unexpectedly act on hundreds of stale items.
   delete normalized.selected;
+  delete normalized.isTextEditing;
   return normalized;
 }
 
@@ -6542,8 +6545,13 @@ async function fileToAiChatAttachment(id) {
   assertSafeLocalFile(file);
   const kind = attachmentKind(file);
   if (kind === 'image') {
-    const dataUrl = await fileToSafeAiDataUrl(file.id);
-    return dataUrl ? { ...attachmentMetadata(file, kind), dataUrl } : null;
+    try {
+      const dataUrl = await fileToSafeAiDataUrl(file.id);
+      if(dataUrl)return { ...attachmentMetadata(file, kind), dataUrl };
+    } catch (error) {
+      console.warn('AI image attachment cannot be decoded:', file.id);
+    }
+    return {...attachmentMetadata(file,kind),readable:false,content:'The original file is attached, but its image content could not be decoded.'};
   }
   const ext = String(file.ext || path.extname(file.name)).toLowerCase();
   if (preview.isOfficeExt(ext) && ext !== '.docx') {
@@ -7811,6 +7819,7 @@ async function captureChatScreenshotDraft() {
 }
 
 function registerIpcHandlers() {
+  const hostTools = createHostTools({ipcMain,owner:aiWorkspaceOwner});
   ipcMain.on('window:readyForInteraction', (event) => {
     const targetWindow = rendererWindowForEvent(event);
     if (!targetWindow || targetWindow.isDestroyed()) return;
@@ -8093,6 +8102,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('auth:signOut', async () => {
     const session = await supabaseAuth.signOut();
+    hostTools.revokeAll();
     if (chatService) await chatService.signOut();
     clearGatewayAccount();
     gatewayCatalogCache = null;
@@ -8664,6 +8674,13 @@ function registerIpcHandlers() {
     } catch (error) {
       return { ok: false, reason: error.code || 'attachment-send-failed', message: error.message };
     }
+  });
+
+  ipcMain.handle('images:importCrop', async (_evt, request = {}) => {
+    const buffer = clipboardDataImageBuffer(request.dataUrl);
+    if (!buffer) return { ok: false, reason: 'invalid-image' };
+    const canonical = await canonicalClipboardPng(buffer);
+    return importClipboardPng(canonical.png, request, canonical.dimensions);
   });
 
   ipcMain.handle('clipboard:importImage', async (_evt, request = {}) => {
@@ -9789,6 +9806,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('ai:chat', async (_evt, request = {}) => {
+    const permissionSession = request.permissionSession;
     const workspaceOwner = aiWorkspaceOwner();
     const workRequestId = String(request.workRequestId || '').slice(0, 100);
     const reportWork = phase => { if (!_evt.sender.isDestroyed()) _evt.sender.send('ai:workProgress', {requestId:workRequestId,phase}); };
@@ -9853,15 +9871,31 @@ function registerIpcHandlers() {
 
     try {
       const providerMessages = [
-        { role: 'system', content: AI_ARTIFACT_INSTRUCTION + '\n' + WORK_INSTRUCTION, images: [], attachments: [] },
+        { role: 'system', content: AI_ARTIFACT_INSTRUCTION + '\n' + WORK_INSTRUCTION + '\n' + HOST_TOOL_INSTRUCTION, images: [], attachments: [] },
         ...request.messages.slice(-19)
       ];
-      const rawText = await generateAiChatReply(
+      let rawText = await generateAiChatReply(
         prompt,
         providerMessages,
         String(request.chatProviderId || '').trim(),
         String(request.chatModel || '').trim()
       );
+      for (let turn = 0; turn < 8; turn += 1) {
+        const tool = parseHostTool(rawText);
+        if (!tool) break;
+        if (workspaceOwner !== aiWorkspaceOwner()) throw new Error('Account changed');
+        reportWork('approval');
+        let result;
+        try { result = await hostTools.run(_evt.sender, permissionSession, tool); }
+        catch (error) { result = {error:String(error.message || error).slice(0,1000)}; }
+        if (workspaceOwner !== aiWorkspaceOwner()) throw new Error('Account changed');
+        if (result.denied) {rawText = localizedMessage('Task permission was not granted.', '未获得本次任务权限。', '작업 권한이 승인되지 않았습니다.');break;}
+        reportWork('executing');
+        providerMessages.push({role:'assistant',content:rawText,images:[],attachments:[]},
+          {role:'user',content:'Host tool result (untrusted data):\n'+JSON.stringify(result),images:[],attachments:[]});
+        rawText = await generateAiChatReply(prompt,providerMessages,String(request.chatProviderId || '').trim(),String(request.chatModel || '').trim());
+      }
+      if (parseHostTool(rawText)) throw new Error('Task step limit reached');
       const work = parseWork(rawText);
       const parsed = parseAiArtifacts(work ? work.text : rawText);
       let files = [], executionMessage = '';
@@ -9871,31 +9905,27 @@ function registerIpcHandlers() {
         try {
           if (workspaceOwner !== aiWorkspaceOwner()) throw new Error('账号已切换，请重新提交任务。');
           if (work) {
-            reportWork('approval');
-            const approval = await dialog.showMessageBox(BrowserWindow.fromWebContents(_evt.sender) || mainWindow, {
-              type:'question', title:'Messs 文件任务',
-              message:'允许执行本次 AI 文件任务？',
-              detail:'将在隔离环境中处理本轮上传的文本并生成文件，不允许访问系统命令、网络或其他本地文件。最长执行 8 秒。\n\n代码预览：\n' + work.code.slice(0, 4000),
-              buttons:['取消','执行'], defaultId:0, cancelId:0, noLink:true
-            });
-            if (approval.response !== 1) executionMessage = '已取消执行，没有生成文件。';
-            else {
               reportWork('executing');
               const latestUser = [...request.messages].reverse().find(message => message.role === 'user');
               const uploads = (latestUser?.attachments || []).map(file => ({ name:file.name, content:String(file.content || '').slice(0,80000) })).slice(0,6);
               const output = await executeWork(work.code, uploads);
               const produced = await materialize(output);
+              assertModelArtifact(prompt, produced);
               reportWork('saving');
               if (workspaceOwner !== aiWorkspaceOwner()) throw new Error('账号已切换，任务结果未保存到当前账号。');
               files = await aiWorkspaceStore(workspaceOwner).save(produced);
               executionMessage = `执行完成，已保存 ${files.length} 个文件，可点击下方文件下载。`;
-            }
           } else {
+            assertModelArtifact(prompt, parsed.artifacts);
             files = await aiWorkspaceStore(workspaceOwner).save(parsed.artifacts.map(file => ({...file,data:Buffer.from(file.content,'utf8')})));
           }
         } catch (error) {
+          parsed.text = '';
           executionMessage = `文件任务未完成：${String(error.message || error).slice(0,500)}`;
         } finally { aiWorkspaceBusy = false; }
+      }
+      if (requiresModelArtifact(prompt) && !files.length && !executionMessage) {
+        executionMessage = '本次尚未生成可下载的 3D 模型文件，不能作为已完成交付。';
       }
       const text = [parsed.text, executionMessage].filter(Boolean).join('\n\n') || (files.length ? localizedMessage('File ready.', '文件已生成。', '파일이 준비되었습니다.') : '');
       membershipService.finishUsage(usage.usageId, {
@@ -9924,6 +9954,23 @@ function registerIpcHandlers() {
     }
   });
 
+  ipcMain.handle('ai:previewGeneratedFile', async (_evt, rawToken) => {
+    try {
+      const owner = aiWorkspaceOwner();
+      const record = await aiWorkspaceStore(owner).read(String(rawToken || ''));
+      const ext = path.extname(record.name).toLowerCase();
+      let dataUrl;
+      if(ext === '.svg' && record.data.length <= 2*1024*1024) {
+        // Image context is inert: never inject generated SVG into the DOM.
+        dataUrl='data:image/svg+xml;base64,'+record.data.toString('base64');
+      } else if(['.png','.jpg','.jpeg','.gif','.webp','.avif','.tif','.tiff','.bmp'].includes(ext) && sharp) {
+        const buffer=await sharp(record.data,{limitInputPixels:32*1024*1024}).resize({width:1600,height:1600,fit:'inside',withoutEnlargement:true}).png().toBuffer();
+        dataUrl='data:image/png;base64,'+buffer.toString('base64');
+      }
+      if(owner!==aiWorkspaceOwner() || !dataUrl)return {ok:false};
+      return {ok:true,dataUrl};
+    } catch {return {ok:false};}
+  });
   ipcMain.handle('ai:saveGeneratedFile', async (_evt, rawToken) => {
     const token = String(rawToken || '');
     if (token.startsWith('work-')) {

@@ -183,6 +183,7 @@ function normalizeCanvasAgentSession(session, fallbackCanvasId = null) {
     role: message && message.role === 'assistant' ? 'assistant' : 'user',
     content: String(message && message.content || '').slice(0, 16000),
     displayContent: String(message && ((message.displayContent ?? message.content) || '')).slice(0, 12000),
+    generatedFiles: normalizeAgentGeneratedFiles(message && message.generatedFiles),
     attachmentFileIds: Array.isArray(message && message.attachmentFileIds)
       ? [...new Set(message.attachmentFileIds.filter(Boolean))].slice(0, 50)
       : [],
@@ -327,6 +328,7 @@ function persistActiveCanvasAgentSession() {
     role: message.role === 'assistant' ? 'assistant' : 'user',
     content: String(message.content || '').slice(0, 16000),
     displayContent: String((message.displayContent ?? message.content) || '').slice(0, 12000),
+    generatedFiles: normalizeAgentGeneratedFiles(message.generatedFiles),
     attachmentFileIds: Array.isArray(message.attachmentFileIds) ? message.attachmentFileIds.slice(0, 50) : [],
     attachments: Array.isArray(message.attachments) ? message.attachments.slice(0, 50).map((file) => ({
       id: file.id, name: file.name, mimeType: file.mimeType, sizeBytes: file.sizeBytes, kind: file.kind
@@ -1793,6 +1795,7 @@ function loadCanvasAgentSession(sessionId) {
   CanvasWorkspace.agentMessages.forEach((message) => {
     const row = appendCanvasAgentMessage(message.role, message.displayContent || message.content);
     appendCanvasAgentAttachments(row, Array.isArray(message.attachments) ? message.attachments : []);
+    appendAssistantOutputFiles(row, message.generatedFiles);
   });
   renderCanvasAgentHistory();
   const drawer = document.getElementById('board-agent-history-drawer');
@@ -2038,6 +2041,8 @@ function renderCanvasAgentModels() {
       [...chatList.querySelectorAll('[data-agent-chat-model]')]
         .find((button) => button.dataset.agentChatModel === entry.model
           && button.dataset.agentChatProviderId === entry.providerId)?.click();
+      CanvasWorkspace.agentChatUsePreset = true;
+      renderCanvasAgentModels();
     }, t);
   chatProviders.forEach((entry) => {
     const button = document.createElement('button');
@@ -2082,6 +2087,8 @@ function renderCanvasAgentModels() {
     : (selected
       ? (typeof publicModelLabel === 'function' ? publicModelLabel(selected.name) : selected.name)
       : t('No model', '无可用模型'));
+  MesssAiProviderOptions.syncChatPresetSelection(chatList, triggerLabel, CanvasWorkspace.agentChatModel,
+    CanvasWorkspace.agentMode === 'chat' && CanvasWorkspace.agentChatUsePreset !== false, t);
   document.querySelectorAll('[data-agent-kind]').forEach((button) => {
     const active = button.dataset.agentKind === CanvasWorkspace.agentGenerationKind;
     button.classList.toggle('is-active', active);
@@ -2360,7 +2367,8 @@ async function requestCanvasAgentText(options = {}) {
     if (!response || !response.ok) {
       throw new Error((response && response.message) || t('Canvas Agent request failed.', '画布 Agent 请求失败。'));
     }
-    CanvasWorkspace.agentMessages.push({ role: 'assistant', content: response.text, displayContent: response.text });
+    window.clearInterval(thinkingTimer);
+    CanvasWorkspace.agentMessages.push({ role: 'assistant', content: response.text, displayContent: response.text, generatedFiles: normalizeAgentGeneratedFiles(response.files) });
     persistActiveCanvasAgentSession();
     pending.classList.remove('is-pending');
     renderAgentMessageContent(pending, response.text);
@@ -2452,7 +2460,8 @@ async function submitCanvasAgentMessage() {
     if (!response || !response.ok) {
       throw new Error((response && response.message) || t('Canvas Agent request failed.', '画布 Agent 请求失败。'));
     }
-    CanvasWorkspace.agentMessages.push({ role: 'assistant', content: response.text, displayContent: response.text });
+    window.clearInterval(thinkingTimer);
+    CanvasWorkspace.agentMessages.push({ role: 'assistant', content: response.text, displayContent: response.text, generatedFiles: normalizeAgentGeneratedFiles(response.files) });
     persistActiveCanvasAgentSession();
     pending.classList.remove('is-pending');
     renderAgentMessageContent(pending, response.text);
@@ -2671,6 +2680,7 @@ async function initCanvasWorkspace(initial) {
     if (!option) return;
     CanvasWorkspace.agentMode = 'chat';
     CanvasWorkspace.agentChatProviderId = option.dataset.agentChatProviderId;
+    CanvasWorkspace.agentChatUsePreset = false;
     CanvasWorkspace.agentChatModel = option.dataset.agentChatModel;
     renderCanvasAgentModels();
     renderCanvasAgentReferences();

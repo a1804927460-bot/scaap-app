@@ -130,7 +130,26 @@
     container.appendChild(separator);
   }
 
+  function syncChatPresetSelection(container, label, model, usePreset, translate) {
+    const preset = usePreset && CHAT_PRESETS.find(entry => entry.model === model);
+    container.querySelectorAll('[data-preset-model]').forEach(button => {
+      const active = !!preset && button.dataset.presetModel === model;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-selected', String(active));
+    });
+    if (!preset) return;
+    container.querySelectorAll('.ai-model-picker-option, [data-agent-chat-model]').forEach(button => {
+      button.classList.remove('is-active'); button.setAttribute('aria-selected', 'false');
+    });
+    const icon = document.createElement('img');
+    icon.className = 'ai-chat-preset-icon'; icon.src = `assets/icons/lucide/${preset.icon}.svg`; icon.alt = '';
+    const text = document.createElement('span'); text.textContent = translate(preset.en, preset.zh);
+    label.replaceChildren(icon, text);
+  }
+
   global.MesssAiProviderOptions = {
+    chatPresets: CHAT_PRESETS.map(preset => Object.freeze({ ...preset })),
+    syncChatPresetSelection,
     appendChatPresets,
     chatOptions,
     logicalModel,

@@ -214,6 +214,49 @@ button:not(:disabled):hover > svg { transform: translateY(-.5px); }
 
 input { font-family: inherit; }
 
+/* Native fallbacks and customizable pickers share the application palette. */
+select { color-scheme: dark; }
+[data-theme="light"] select { color-scheme: light; }
+select option, select optgroup {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+select option:disabled { color: var(--text-tertiary); }
+@supports (appearance: base-select) {
+  select:not([multiple]):not([size]):not([class^="ql-"]),
+  select:not([multiple]):not([size]):not([class^="ql-"])::picker(select) {
+    appearance: base-select;
+  }
+  select::picker(select) {
+    box-sizing: border-box;
+    margin-block: 6px;
+    padding: 4px;
+    max-height: min(320px, 60dvh);
+    max-width: calc(100vw - 16px);
+    overflow: auto;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .22);
+    font: 13px/1.4 var(--font-body);
+  }
+  select::picker-icon { color: var(--text-secondary); }
+  select option {
+    min-height: 30px;
+    padding: 6px 10px;
+    gap: 10px;
+    border-radius: 4px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    font: inherit;
+  }
+  select option:checked { background: var(--accent-soft); color: var(--text-primary); }
+  select option:not(:disabled):is(:hover, :focus-visible) { background: var(--bg-hover); color: var(--text-primary); }
+  select option::checkmark { color: var(--accent); }
+  select optgroup { font: inherit; }
+}
+
 a[href],
 a[href] *,
 area[href],

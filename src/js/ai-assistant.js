@@ -313,7 +313,7 @@ async function exportAiChatSession(sessionId) {
   const session = AiAssistant.sessions.find((entry) => entry.id === sessionId);
   if (!session) return;
   const result = await window.messsAPI.exportAiChat(session);
-  if (result && result.ok) showToast(t('Conversation exported', '对话已导出'), 'AI');
+  if (result && result.ok) showToast(t('Conversation exported', '对话已导出'), 'AI', { category: 'routine' });
 }
 
 function showAiChatSessionMenu(sessionId, x, y) {
@@ -370,6 +370,7 @@ function handleAiChatHistoryDrop(event, targetSection) {
 
 function loadAiChatSession(sessionId) {
   if (assistantQueueBlocksNavigation()) return;
+  window.MesssComposerActions?.resetPermissions();
   const session = AiAssistant.sessions.find((entry) => entry.id === sessionId);
   if (!session) return;
   AiAssistant.activeSessionId = session.id;
@@ -393,6 +394,7 @@ function loadAiChatSession(sessionId) {
 
 function startNewAiChat() {
   if (assistantQueueBlocksNavigation()) return;
+  window.MesssComposerActions?.resetPermissions();
   AiAssistant.activeSessionId = null;
   AiAssistant.messages = [];
   AiAssistant.attachments = [];
@@ -597,6 +599,8 @@ function renderAssistantModels() {
     MesssAiProviderOptions.appendChatPresets(menu, providers, null, (provider) => {
       [...menu.querySelectorAll('.ai-model-picker-option')]
         .find((item) => item.dataset.value === provider.id)?.click();
+      AiAssistant.chatUsePreset = true;
+      MesssAiProviderOptions.syncChatPresetSelection(menu, label, provider.model, true, t);
     }, t);
   }
 
@@ -615,6 +619,10 @@ function renderAssistantModels() {
     menuOption.setAttribute('role', 'option');
     appendAiModelLabel(menuOption, provider);
     menuOption.addEventListener('click', () => {
+      if (AiAssistant.kind === 'chat') {
+        AiAssistant.chatUsePreset = false;
+        AiAssistant.chatSelectedId = provider.id;
+      }
       select.value = provider.id;
       appendAiModelLabel(label, provider);
       menu.querySelectorAll('.ai-model-picker-option').forEach((item) => {
@@ -626,7 +634,7 @@ function renderAssistantModels() {
       trigger.setAttribute('aria-expanded', 'false');
       syncAssistantMediaOptions();
       menu.querySelectorAll('[data-preset-model]').forEach((item) => {
-        const active = item.dataset.presetModel === provider.model;
+        const active = false;
         item.classList.toggle('is-active', active);
         item.setAttribute('aria-selected', String(active));
       });
@@ -639,7 +647,7 @@ function renderAssistantModels() {
     ? config.activeImageProviderId
     : AiAssistant.kind === 'video'
       ? config.activeVideoProviderId
-      : `${config.activeChatProviderId || 'chat-3'}::${config.chatModel || 'gemini-3.1-pro'}`;
+      : AiAssistant.chatSelectedId || `${config.activeChatProviderId || 'chat-3'}::${config.chatModel || 'gemini-3.1-pro'}`;
   const active = providers.find((provider) => provider.id === activeId) || providers[0];
   select.value = active ? active.id : '';
   // A single configured provider is still a valid selection. Disabling the
@@ -665,6 +673,9 @@ function renderAssistantModels() {
     option.classList.toggle('is-active', active);
     option.setAttribute('aria-selected', String(active));
   });
+  if (AiAssistant.kind === 'chat') {
+    MesssAiProviderOptions.syncChatPresetSelection(menu, label, selected?.model, AiAssistant.chatUsePreset !== false, t);
+  }
   updateAssistantCreditEstimate();
 }
 
@@ -1105,7 +1116,15 @@ function appendAssistantMessageAttachments(row, attachments) {
       image.src = attachment.dataUrl || attachment.thumbUrl || attachment.previewUrl || attachment.url;
       image.alt = attachment.name;
       image.title = attachment.name;
+      image.tabIndex = 0;image.setAttribute('role','button');
+      image.onclick = () => showFullscreenMedia(image);
+      image.onkeydown = event => {if(event.key==='Enter' || event.key===' '){event.preventDefault();showFullscreenMedia(image);}};
       strip.appendChild(image);
+      if(attachment.id && !attachment.attachmentToken) {
+        const download=document.createElement('button');download.type='button';download.textContent=t('Download','下载');
+        download.onclick=()=>void window.messsAPI.exportFile(attachment.id).catch(()=>showToast(t('Download failed.','下载失败。')));
+        strip.append(download);
+      }
       return;
     }
     const file = document.createElement('div');
@@ -1118,6 +1137,11 @@ function appendAssistantMessageAttachments(row, attachments) {
     meta.textContent = formatAssistantFileSize(attachment.sizeBytes);
     copy.append(name, meta);
     file.appendChild(copy);
+    if(attachment.id && !attachment.attachmentToken) {
+      const download=document.createElement('button');download.type='button';download.textContent=t('Download','下载');
+      download.onclick=()=>void window.messsAPI.exportFile(attachment.id).catch(()=>showToast(t('Download failed.','下载失败。')));
+      file.append(download);
+    }
     strip.appendChild(file);
   });
   row.appendChild(strip);
@@ -1160,6 +1184,11 @@ function assistantVideoResolutionGroups(values) {
 
 function appendAssistantOutputFiles(row, files) {
   if (!row || !Array.isArray(files) || !files.length) return;
+  const body = row.matches('.board-agent-message') ? row : row.querySelector('.ai-assistant-message-body');
+  if (body && body._messageSource) {
+    const markers = new Set(files.map(file => `[File: ${file.name}]`));
+    renderAgentMessageContent(body, body._messageSource.split('\n').filter(line => !markers.has(line.trim())).join('\n'));
+  }
   const strip = document.createElement('div');
   strip.className = 'ai-assistant-output-files';
   files.forEach((file) => {
@@ -1176,10 +1205,32 @@ function appendAssistantOutputFiles(row, files) {
     button.appendChild(copy);
     button.addEventListener('click', async () => {
       const result = await window.messsAPI.saveGeneratedAiFile(file.token);
-      if (result && result.ok) showToast(t('File saved.', '文件已保存。'), 'AI');
-      else if (result && !result.canceled) showToast(result.message || t('The file could not be saved.', '文件保存失败。'), 'AI');
+      if (result && result.ok) showToast(t('File saved.', '文件已保存。'), 'AI', { category: 'routine' });
+      else if (result && !result.canceled) showToast(result.message || t('The file could not be saved.', '文件保存失败。'), 'AI', { category: 'routine' });
     });
     strip.appendChild(button);
+    if (/\.(png|jpe?g|gif|webp|avif|svg|tiff?|bmp)$/i.test(file.name || '') && window.messsAPI.previewGeneratedAiFile) {
+      const previewButton = document.createElement('button');
+      previewButton.type = 'button';previewButton.className = 'ai-output-image-preview';
+      previewButton.title = t('Preview image', '预览图片');previewButton.setAttribute('aria-label',previewButton.title);
+      previewButton.hidden = true;
+      strip.insertBefore(previewButton,button);
+      const observer = new IntersectionObserver(entries => {
+        if(!entries.some(entry=>entry.isIntersecting))return;
+        observer.disconnect();
+        void window.messsAPI.previewGeneratedAiFile(file.token).then(result=>{
+          if(!result?.ok || !button.isConnected)return;
+          const image=document.createElement('img');image.alt=file.name;image.decoding='async';image.src=result.dataUrl;
+          image.onload=()=>{if(button.isConnected)previewButton.hidden=false;};
+          previewButton.append(image);
+          previewButton.onclick=()=>showFullscreenMedia(image);
+        }).catch(()=>{});
+      });
+      observer.observe(button);
+      // Disconnect when the conversation is replaced, even if never scrolled into view.
+      const cleanup = new MutationObserver(()=>{if(!button.isConnected){observer.disconnect();cleanup.disconnect();}});
+      cleanup.observe(row.parentElement || document.getElementById('ai-assistant-messages'),{childList:true});
+    }
   });
   row.appendChild(strip);
 }
@@ -1415,7 +1466,9 @@ function positionAssistantOptions() {
   const bounds = parent.getBoundingClientRect();
   panel.style.bottom = `${Math.max(8, bounds.bottom - anchor.top + 10)}px`;
   panel.style.right = `${Math.max(12, Math.min(bounds.right - anchor.right, bounds.width - panel.offsetWidth - 12))}px`;
-  panel.style.maxHeight = `${Math.max(80, anchor.top - 24)}px`;
+  const header = panel.closest('.ai-assistant-panel')?.querySelector('.ai-assistant-header');
+  const safeTop = Math.max(12, header ? header.getBoundingClientRect().bottom + 8 : 24);
+  panel.style.maxHeight = `${Math.max(0, Math.min(360, anchor.top - safeTop - 10))}px`;
 }
 
 function setAssistantOptionsOpen(open) {
@@ -1539,7 +1592,9 @@ function appendAssistantText(role, text, className = '') {
   row.className = `ai-assistant-message is-${role}${className ? ` ${className}` : ''}`;
   const body = document.createElement('div');
   body.className = 'ai-assistant-message-body';
-  body.textContent = text;
+  body._messageSource = String(text || '');
+  if (role === 'assistant') renderAgentMessageContent(body, text);
+  else body.textContent = text;
   row.appendChild(body);
   messages.appendChild(row);
   messages.scrollTop = messages.scrollHeight;
@@ -1701,7 +1756,7 @@ async function drainAssistantQueue() {
         }
       } catch (error) {
         if (!item.started) AiAssistant.queue.unshift(item);
-        showToast(error?.message || t('Request failed', '\u8bf7\u6c42\u5931\u8d25'));
+        showToast(error?.message || t('Request failed', '\u8bf7\u6c42\u5931\u8d25'), 'AI');
         AiAssistant.queuePaused = true;
       }
     }
@@ -1850,6 +1905,7 @@ async function executeAssistantMessage(item) {
   try {
     if (submittedKind === 'chat') {
       const response = await window.messsAPI.chatWithAi({
+        permissionSession: window.MesssComposerActions?.session,
         workRequestId,
         prompt,
         messages: AiAssistant.messages,
@@ -1986,6 +2042,7 @@ async function refreshAssistantConfig(config) {
 }
 
 function refreshAssistantLanguage() {
+  window.MesssComposerActions?.refresh();
   if (AiAssistant.kind) setAssistantKind(AiAssistant.kind);
   if (AiAssistant.config) {
     renderAssistantModels();
@@ -1997,8 +2054,10 @@ function refreshAssistantLanguage() {
     upload.title = t('Add files', '添加文件');
     upload.setAttribute('aria-label', upload.title);
   }
-  const historyHeading = document.querySelector('.ai-chat-history-heading');
-  if (historyHeading) historyHeading.textContent = t('History', '\u5386\u53f2\u8bb0\u5f55');
+  const newChatLabel = document.querySelector('#ai-chat-new > span');
+  if (newChatLabel) newChatLabel.textContent = t('New chat', '新对话');
+  const historySidebar = document.querySelector('.ai-chat-history-sidebar');
+  if (historySidebar) historySidebar.setAttribute('aria-label', t('Chat history', '对话历史'));
   const pinnedLabel = document.getElementById('ai-chat-history-pinned-label');
   if (pinnedLabel) pinnedLabel.textContent = t('Pinned', '\u7f6e\u9876');
   const recentLabel = document.getElementById('ai-chat-history-recent-label');
@@ -2006,7 +2065,7 @@ function refreshAssistantLanguage() {
   const historyDate = document.getElementById('ai-chat-history-date');
   if (historyDate) historyDate.setAttribute('aria-label', t('Filter history by date', '\u6309\u65e5\u671f\u7b5b\u9009\u5386\u53f2\u8bb0\u5f55'));
   const chatButton = document.querySelector('[data-assistant-kind="chat"]');
-  if (chatButton) chatButton.textContent = 'Agent';
+  if (chatButton) chatButton.textContent = t('Chat', '对话');
   [
     ['image', t('Image', '图片')],
     ['video', t('Video', '视频')]
@@ -2015,24 +2074,24 @@ function refreshAssistantLanguage() {
     if (!button) return;
     button.title = label;
     button.setAttribute('aria-label', label);
-    button.textContent = label;
+    const icon = button.querySelector('svg');
+    const text = document.createElement('span');
+    text.textContent = label;
+    button.replaceChildren(...(icon ? [icon,text] : [text]));
   });
   const home = document.getElementById('ai-assistant-home');
   const messages = document.getElementById('ai-assistant-messages');
   if (home && !home.hidden) {
     document.querySelectorAll('.ai-assistant-quick-prompts button').forEach((button) => {
-      if (button.dataset.aiQuickAction === 'poster') {
-        button.textContent = t('Create Poster', '生成海报');
-        button.dataset.aiQuick = t('Help me create a professional poster.', '帮我生成一张专业海报。');
+      if (button.dataset.aiQuickAction === 'music-cover') {
+        button.textContent = t('Music Cover', '音乐封面');
+        button.dataset.aiQuick = t('Help me design a music cover.', '帮我设计一张音乐封面。');
+      } else if (button.dataset.aiQuickAction === 'stage-visual') {
+        button.textContent = t('Stage Visual', '舞美视觉');
+        button.dataset.aiQuick = t('Help me design a stage visual concept.', '帮我设计一张舞美视觉概念图。');
       } else if (button.dataset.aiQuickAction === 'logo') {
-        button.textContent = t('Create LOGO', '生成 LOGO');
+        button.textContent = 'LOGO';
         button.dataset.aiQuick = t('Help me design a clean and professional logo.', '帮我设计一个简洁专业的 LOGO。');
-      } else if (button.dataset.aiQuickAction === 'clarify') {
-        button.textContent = t('Clarify Idea', '理清想法');
-        button.dataset.aiQuick = t('Help me organize this idea into a clear execution plan.', '帮我把这个想法整理成清晰的执行计划。');
-      } else if (button.dataset.aiQuickAction === 'short-video') {
-        button.textContent = t('Short Video', '短视频');
-        button.dataset.aiQuick = t('Generate a short video prompt with camera movement.', '生成一个带镜头运动的短视频提示词。');
       }
     });
   }
@@ -2046,6 +2105,7 @@ function refreshAssistantLanguage() {
 }
 
 function initAiAssistant() {
+  window.MesssComposerActions?.init();
   const form = document.getElementById('ai-assistant-form');
   const panel = document.getElementById('ai-assistant-panel');
   initAssistantOptionPickers();
@@ -2077,7 +2137,7 @@ function initAiAssistant() {
     const button = event.target.closest('[data-assistant-kind]');
     if (button) setAssistantKind(button.dataset.assistantKind);
   });
-  document.getElementById('ai-assistant-upload').addEventListener('click', () => {
+  (document.getElementById('ai-assistant-add-local') || document.getElementById('ai-assistant-upload')).addEventListener('click', () => {
     uploadAssistantFiles().catch((err) => {
       showToast(typeof publicAiErrorMessage === 'function'
         ? publicAiErrorMessage(err && err.message, t('The file could not be uploaded.', '文件上传失败。'))
@@ -2181,6 +2241,7 @@ function initAiAssistant() {
   void loadAiChatHistory();
   renderAiChatHistory();
   setAssistantKind('chat');
+  refreshAssistantLanguage();
   syncAssistantCompactMode(panel);
   if (typeof ResizeObserver === 'function') {
     if (AiAssistant.compactObserver) AiAssistant.compactObserver.disconnect();

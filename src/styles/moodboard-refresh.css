@@ -4,8 +4,15 @@
   min-width: 0;
   height: min(540px, calc(100vh - 64px));
   border-radius: 16px;
-  grid-template-rows: 48px auto auto minmax(0, 1fr) 30px;
+  grid-template-rows: 48px auto minmax(0, 1fr) 30px;
 }
+#moodboard-agent-presets { display: flex; gap: 2px; padding: 2px; border-radius: 6px; background: var(--bg-surface-2); }
+#moodboard-agent-presets button { display: flex; align-items: center; gap: 4px; border: 0; background: transparent; padding: 0 7px; }
+#moodboard-agent-presets button[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+#moodboard-agent-presets img { width: 14px; height: 14px; }
+[data-theme="dark"] #moodboard-agent-presets img { filter: invert(1); }
+[data-theme="light"] #moodboard-agent-presets img { filter: none; }
+#moodboard-agent-presets button:disabled { opacity: .45; }
 .moodboard-editor-panel .moodboard-editor-header { padding-inline: 14px; }
 .moodboard-editor-panel .moodboard-agent-bar { flex-wrap: wrap; background: var(--bg-surface); }
 .moodboard-editor-panel .moodboard-agent-custom { min-width: 140px; }
@@ -38,6 +45,14 @@
 #board-canvas[data-board-renderer="leafer"] .board-moodboard .board-moodboard-generate {
   opacity: 1; pointer-events: auto;
 }
+/* This control has no Leafer counterpart; keep it across camera gestures. */
+#board-canvas[data-board-renderer="leafer"].is-transforming .board-moodboard-generate,
+#board-canvas[data-board-renderer="leafer"].is-transforming .board-moodboard-generate * {
+  visibility: visible !important;
+}
+#board-canvas[data-board-renderer="leafer"].is-transforming .board-moodboard-generate img {
+  filter: invert(1) !important;
+}
 .board-moodboard .board-moodboard-generate:hover { background: #41464b; }
 .board-moodboard .board-moodboard-open { display: none; }
 .board-moodboard-generate img { filter: invert(1); pointer-events: none; }
@@ -47,7 +62,18 @@
   padding: 16px; background: var(--bg-elevated); color: var(--text-primary);
 }
 .is-moodboard-composer .ai-composer-form { display: flex; height: auto; padding: 0; flex-direction: column; gap: 14px; }
-.is-moodboard-composer .ai-composer-mode-row { padding-right: 28px; }
+.is-moodboard-composer .ai-composer-mode-row {
+  position: sticky; top: 0; z-index: 6;
+  display: grid; grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center; gap: 8px; padding-right: 0;
+  background: var(--bg-elevated); flex-shrink: 0;
+  box-shadow: 0 -16px 0 var(--bg-elevated), 0 8px 0 var(--bg-elevated);
+}
+.is-moodboard-composer .ai-composer-mode-row .ai-composer-close {
+  position: static; width: 28px; height: 28px;
+  transform: none; align-self: center;
+}
+.is-moodboard-composer .ai-composer-form > * { flex-shrink: 0; }
 .is-moodboard-composer .ai-composer-mode { display: flex; width: 100%; }
 .is-moodboard-composer .ai-composer-mode button { flex: 1; justify-content: center; }
 .is-moodboard-composer .ai-model-picker,

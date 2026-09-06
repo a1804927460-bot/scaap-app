@@ -307,6 +307,20 @@ function positionCanvasToast() {
 function showToast(message, emoji, options = {}) {
   const toast = document.getElementById('toast');
   if (!toast) return;
+  const persistent = (emoji === 'AI' && options.category !== 'routine') || options.category === 'ai-generation' || options.persistent === true;
+  if (!toast.hidden && toast.classList.contains('is-persistent')) {
+    const current = toast.querySelector('.toast-message');
+    if (current && current.textContent === String(message || '')) return;
+    const queue = showToast._queue || (showToast._queue = []);
+    if (!persistent) {
+      // Only keep the newest routine notice while the user reads an AI notice.
+      for (let i = queue.length - 1; i >= 0; i--) if (!queue[i].persistent) queue.splice(i, 1);
+    }
+    if (!queue.some(entry => entry.message === message && entry.persistent === persistent)) {
+      queue.push({ message, emoji, options: { ...options }, persistent });
+    }
+    return;
+  }
   clearTimeout(showToast._t);
   clearTimeout(showToast._hideT);
   showToast._t = 0;
@@ -324,9 +338,6 @@ function showToast(message, emoji, options = {}) {
     : String(message || '');
   toast.appendChild(span);
   const rawDuration = Number(options && options.durationMs);
-  const aiFailure = emoji === 'AI' && /(?:fail|error|unavailable|busy|timeout|rejected|not\s+(?:be\s+)?accepted|restricted|generation\s+request|失败|错误|不可用|繁忙|超时|拒绝|未被接受|未扣积分|受限|版权|실패|오류|사용할 수 없|거부)/i
-    .test(String(message || ''));
-  const persistent = options.persistent !== false;
   toast.classList.toggle('is-persistent', persistent);
   toast.setAttribute('role', persistent ? 'alert' : 'status');
   toast.setAttribute('aria-live', persistent ? 'assertive' : 'polite');
@@ -350,8 +361,8 @@ function showToast(message, emoji, options = {}) {
   requestAnimationFrame(() => toast.classList.add('is-visible'));
   if (persistent) return;
   const durationMs = Number.isFinite(rawDuration) && rawDuration > 0
-    ? Math.max(1_000, Math.min(30_000, Math.round(rawDuration)))
-    : aiFailure ? 10_000 : 3_200;
+    ? Math.max(3_000, Math.min(5_000, Math.round(rawDuration)))
+    : 4_000;
   showToast._t = setTimeout(() => {
     toast.classList.remove('is-visible');
     showToast._t = 0;
@@ -359,8 +370,14 @@ function showToast(message, emoji, options = {}) {
       toast.hidden = true;
       if (showToast._stopPosition) showToast._stopPosition();
       showToast._hideT = 0;
+      showNextToast();
     }, 320);
   }, durationMs);
+}
+
+function showNextToast() {
+  const next = showToast._queue && showToast._queue.shift();
+  if (next) showToast(next.message, next.emoji, next.options);
 }
 
 function dismissToast() {
@@ -373,6 +390,7 @@ function dismissToast() {
   showToast._hideT = setTimeout(() => {
     toast.hidden = true;
     showToast._hideT = 0;
+    showNextToast();
   }, 320);
   toast.classList.remove('is-visible');
 }

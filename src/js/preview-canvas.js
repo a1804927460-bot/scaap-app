@@ -185,15 +185,19 @@ function createVideoPlayer(video, { fullscreen = false, onPlaybackFailure = null
   };
   const updatePlayState = () => {
     const playing = !video.paused && !video.ended;
-    playIcon.hidden = playing;
-    pauseIcon.hidden = !playing;
+    playIcon.toggleAttribute('hidden', playing);
+    pauseIcon.toggleAttribute('hidden', !playing);
+    playButton.title = t(playing ? 'Pause' : 'Play', playing ? '暂停' : '播放');
+    playButton.setAttribute('aria-label', playButton.title);
     shell.classList.toggle('is-playing', playing);
   };
   const updateVolume = () => {
     if (!muteButton) return;
     const muted = video.muted || video.volume === 0;
-    volumeIcon.hidden = muted;
-    mutedIcon.hidden = !muted;
+    volumeIcon.toggleAttribute('hidden', muted);
+    mutedIcon.toggleAttribute('hidden', !muted);
+    muteButton.title = t(muted ? 'Unmute' : 'Mute', muted ? '开启声音' : '静音');
+    muteButton.setAttribute('aria-label', muteButton.title);
     muteButton.classList.toggle('is-active', muted);
     volume.value = String(muted ? 0 : video.volume);
   };
@@ -1252,7 +1256,7 @@ async function openFileFullscreenPreview(file, sourceMedia = null) {
       video.muted = true;
       video.dataset.usingTranscode = result.transcoded ? 'true' : '';
     }
-    showFullscreenMedia(video, { videoFileId: file.id, autoplay: true });
+    showFullscreenMedia(video, { videoFileId: file.id, autoplay: true, unmute: true });
     return;
   }
   if (isImageExt(file.ext)) {
@@ -1337,7 +1341,7 @@ function showFullscreenMedia(media, options = {}) {
     const currentTime = Number(media.currentTime) || 0;
     const wasPlaying = !media.paused && !media.ended;
     const shouldAutoplay = options.autoplay === true || wasPlaying;
-    clone.muted = media.muted;
+    clone.muted = options.unmute === true ? false : media.muted;
     clone.volume = media.volume;
     clone.playbackRate = media.playbackRate;
     media.pause();

@@ -904,7 +904,7 @@
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-elevated);
   padding: 14px;
-  z-index: 74;
+  z-index: 110;
   transform-origin: 14px 100%;
   animation: surface-spring-in 400ms cubic-bezier(.18, .89, .24, 1.18);
 }
@@ -1353,7 +1353,7 @@ body.is-detached-canvas-window #board-panel {
 }
 body.is-detached-canvas-window #board-panel:not(.is-fullscreen) #board-agent-toggle { display: inline-flex; }
 body.is-detached-canvas-window #board-panel:not(.is-fullscreen) .board-agent-panel { display: flex; }
-body.is-detached-canvas-window #board-panel:not(.is-fullscreen) #resize-handle-board-agent { display: block; }
+body.is-detached-canvas-window #board-panel:not(.is-fullscreen):not(.is-canvas-library):has(.board-agent-panel:not(.is-hidden)) #resize-handle-board-agent { display: block; }
 body.is-detached-canvas-window .panel-header { cursor: var(--cursor-grab); }
 body.is-detached-canvas-window .panel-header:active { cursor: var(--cursor-grabbing); }
 [data-theme="dark"] .preview-canvas { background: var(--bg-deep); }
@@ -1781,6 +1781,17 @@ body.is-detached-canvas-window .panel-header:active { cursor: var(--cursor-grabb
   z-index: 4;
 }
 .board-video-duration[hidden] { display: none; }
+.mini-video-player > .board-video-sound {
+  position: absolute;
+  left: 7px;
+  bottom: 7px;
+  z-index: 5;
+  width: 28px;
+  height: 28px;
+  color: #fff;
+  background: rgba(12, 14, 18, .78);
+  pointer-events: auto;
+}
 .mini-video-player {
   position: relative;
   width: 100%;
@@ -2037,6 +2048,7 @@ body.is-detached-canvas-window .panel-header:active { cursor: var(--cursor-grabb
 .ai-assistant-options label[hidden],
 .ai-assistant-options [hidden] { display: none; }
 body.is-ai-assistant-fullscreen { overflow: hidden; }
+#ai-assistant-history[hidden] { display: none; }
 .ai-assistant-panel {
   flex: 1;
   min-width: 0;
@@ -2070,7 +2082,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   gap: 10px;
   padding: 22px 14px;
   border-right: 1px solid var(--border-hairline);
-  background: color-mix(in srgb, var(--bg-surface-2) 46%, var(--bg-surface));
+  background: var(--bg-surface);
   animation: content-spring-in 360ms cubic-bezier(.18, .89, .24, 1.1);
 }
 .ai-chat-new {
@@ -5201,9 +5213,24 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   filter: none !important;
   backdrop-filter: none !important;
 }
-.board-canvas.is-transforming .board-item {
+.board-canvas[data-board-renderer="leafer"].is-transforming .board-item {
   visibility: hidden !important;
   pointer-events: none !important;
+}
+.board-canvas[data-board-renderer="leafer"].is-transforming .board-item.is-selected {
+  visibility: visible !important;
+}
+/* Keep only selection chrome during camera motion, not rich DOM previews. */
+.board-canvas[data-board-renderer="leafer"].is-transforming .board-item.is-selected > :not(.board-resize-handle) {
+  visibility: hidden !important;
+}
+/* Keep mounted live media on the same surface throughout camera motion.
+   Swapping it for the scene poster changes both its frame and its geometry. */
+.board-canvas[data-board-renderer="leafer"].is-transforming .mini-video-player,
+.board-canvas[data-board-renderer="leafer"].is-transforming .mini-video-player *,
+.board-canvas[data-board-renderer="leafer"].is-transforming .board-video-thumbnail,
+.board-canvas[data-board-renderer="leafer"].is-transforming .board-video-thumbnail * {
+  visibility: visible !important;
 }
 .board-canvas.is-transforming .board-item:not(.is-selected) { box-shadow: none; }
 .board-canvas.is-transforming .board-partition-border-beam { visibility: hidden; }
@@ -5291,7 +5318,6 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 }
 /* Leafer draws static posters, but live video and duration remain DOM overlays. */
 .board-canvas[data-board-renderer="leafer"] .board-item-content > .mini-video-player,
-.board-canvas[data-board-renderer="leafer"] .board-item-content > .board-model-thumbnail,
 .board-canvas[data-board-renderer="leafer"] .board-item-content > .board-video-thumbnail {
   opacity: 1;
 }
@@ -7226,10 +7252,10 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .board-text-note:hover,
 .board-text-note.is-selected { background: color-mix(in srgb, var(--bg-surface-2) 62%, transparent); }
 .board-text-note.is-text-editing {
-  min-width: 180px;
-  padding: 8px 10px;
+  min-width: 24px;
+  padding: 3px 5px;
   background: #171a20;
-  border: 1px solid rgba(255, 255, 255, .14);
+  border: 0;
   box-shadow: 0 8px 24px rgba(15, 18, 26, .12);
 }
 .board-text-note-content {
@@ -8823,6 +8849,13 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   .prompt-optimizer-dialog { transition-duration: .01ms; }
 }
 
+.board-select-box[hidden] { display: none; }
+#board-canvas[data-board-renderer="leafer"] .board-text-note.is-richtext-editing .board-text-note-content { opacity: 0; }
+#text-tool-panel .text-tool-btn img { filter: invert(1); pointer-events: none; }
+[data-theme="light"] #text-tool-panel .text-tool-btn img { filter: none; }
+.board-snap-guides { position: absolute; inset: 0; pointer-events: none; z-index: 69; overflow: hidden; }
+.board-snap-guides i { position: absolute; display: block; background: var(--selection-outline); }
+.board-snap-guides i[hidden] { display: none; }
 .board-select-box {
   position: absolute;
   border: 1.5px solid var(--accent);
@@ -8964,6 +8997,16 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 /* -------- Board item: generic file icon + rich content + editable indicator -------- */
 .board-item-content { width: 100%; }
 .board-item-content img { width: 100%; border-radius: 7px; display: block; pointer-events: none; }
+/* Posters, live frames and legacy layout containers share square video edges. */
+.board-item.board-item-video,
+.board-item.board-item-video .board-item-content,
+.board-item-content .board-video-thumbnail,
+.board-item-content .board-video-thumbnail > img,
+.board-item-content .mini-video-player,
+.board-item-content .mini-video-player > .mini-video-poster,
+.board-item-content .mini-video-player > video {
+  border-radius: 0;
+}
 .board-item-content video {
   width: 100%;
   height: 100%;
@@ -8979,7 +9022,10 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .board-model-thumbnail {
   position: relative;
   width: 100%;
-  aspect-ratio: 4 / 3;
+  height: 100%;
+  min-height: 0;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px #363b43;
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -9037,14 +9083,6 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 }
 .board-model-thumbnail .board-model-thumbnail-mark strong { font-size: 12px; }
 .board-model-thumbnail.is-placeholder .board-model-thumbnail-mark svg { width: 16px; height: 16px; }
-.board-model-caption {
-  position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
-  display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px;
-  background: #181c23; color: #f6f7f9; pointer-events: none;
-  font-size: 12px; line-height: 1; box-sizing: border-box;
-}
-.board-model-caption span { min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.board-model-caption b { flex-shrink: 0; color: #8bc5ff; font-size: 10px; }
 @keyframes board-model-preview-pulse {
   0%, 100% { opacity: .56; transform: scale(.96); }
   50% { opacity: 1; transform: scale(1); }
@@ -10750,6 +10788,10 @@ body { font-size: var(--font-ui-md); }
 /* -------- Text tool detail panel -------- */
 .text-tool-panel[hidden] { display: none; }
 .text-tool-panel {
+  width: max-content;
+  max-width: calc(100% - 24px);
+  flex-wrap: wrap;
+  justify-content: center;
   position: absolute;
   bottom: 70px;
   left: 50%;
@@ -11714,10 +11756,18 @@ body { font-size: var(--font-ui-md); }
 /* Shared application shell geometry. The workspace is the visual baseline:
    major surfaces are inset and softly rounded while canvas/media fullscreen
    remains edge-to-edge. */
+body:has(> .ai-assistant-panel.is-fullscreen:not([hidden]))::before {
+  content: '';
+  position: fixed;
+  inset: var(--titlebar-h) 0 0;
+  z-index: 95;
+  background: var(--bg-base);
+  pointer-events: auto;
+}
 .ai-assistant-panel.is-fullscreen {
   inset: calc(var(--titlebar-h) + var(--app-shell-inset))
          var(--app-shell-inset)
-         var(--app-shell-inset);
+         max(0px, calc(var(--app-shell-inset) - 2px));
   overflow: hidden;
   border: 1px solid var(--border-hairline);
   border-radius: var(--app-shell-radius);

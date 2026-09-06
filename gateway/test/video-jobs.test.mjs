@@ -552,8 +552,8 @@ test('MiniMax H3 official polling waits for output and reports terminal failures
       if (String(url) === 'https://api.minimaxi.com/v2/query/video_generation/h3-failed-task') {
         polls += 1;
         return polls === 1
-          ? jsonResponse({ task: { id: 'h3-failed-task', status: 'processing' } })
-          : jsonResponse({ task: { id: 'h3-failed-task', status: 'failed', error_code: 'content_rejected', message: 'The content was rejected.' } });
+          ? jsonResponse({ status: 'success', task: { id: 'h3-failed-task', status: 'processing' } })
+          : jsonResponse({ status: 200, task: { id: 'h3-failed-task', status: 'failed', error_code: 'content_rejected', message: 'The content was rejected.' } });
       }
       throw new Error('Unexpected URL: ' + url);
     };

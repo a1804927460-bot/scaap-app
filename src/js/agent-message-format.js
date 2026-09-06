@@ -1,7 +1,15 @@
 'use strict';
 
+function normalizeAgentGeneratedFiles(files) {
+  return Array.isArray(files) ? files.slice(0, 6).filter(file => file && file.name && file.token).map(file => ({
+    token: String(file.token), name: String(file.name), mimeType: String(file.mimeType || 'application/octet-stream'),
+    sizeBytes: Math.max(0, Number(file.sizeBytes) || 0)
+  })) : [];
+}
+
 function renderAgentMessageContent(element, text) {
   const source = String(text || '');
+  element._messageSource = source;
   const fragment = document.createDocumentFragment();
   function append(parent, tokens) {
     for (const token of tokens || []) {

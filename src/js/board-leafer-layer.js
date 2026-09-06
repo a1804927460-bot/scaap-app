@@ -12,6 +12,7 @@
     group: null,
     doodleGroup: null,
     entries: new Map(),
+    pendingTextures: new Map(),
     orderSignature: '',
     visible: false,
     width: 0,
@@ -55,6 +56,43 @@
 
   function normalizeSource(value) {
     return String(value || '').trim();
+  }
+
+  function cancelTexture(drawable) {
+    if (drawable && drawable._messsModelImage) cancelTexture(drawable._messsModelImage);
+    const pending = state.pendingTextures.get(drawable);
+    if (!pending) return;
+    state.pendingTextures.delete(drawable);
+    if (pending.listener !== undefined) pending.image.unload(pending.listener);
+    pending.manager.recycle(pending.image);
+  }
+
+  function replaceTexture(drawable, source) {
+    const pending = state.pendingTextures.get(drawable);
+    if (pending && pending.source === source) return;
+    cancelTexture(drawable);
+    if (!source || source === drawable._messsSource) return;
+    const manager = root.LeaferUI.ImageManager;
+    const commit = () => {
+      drawable.fill = { type: 'image', url: source, mode: 'fit', showProgress: false };
+      drawable._messsSource = source;
+    };
+    if (!manager) { commit(); return; }
+    // Warm the renderer's own resource, not just the browser image cache.
+    const image = manager.get({ url: source });
+    const entry = { source, image, manager };
+    state.pendingTextures.set(drawable, entry);
+    const complete = () => {
+      if (state.pendingTextures.get(drawable) !== entry) return;
+      if (state.leafer && !drawable.destroyed && image.ready) {
+        commit();
+        // Consume the new fill before releasing this temporary resource lease.
+        state.leafer.forceRender(undefined, true);
+      }
+      cancelTexture(drawable);
+    };
+    if (image.completed) complete();
+    else entry.listener = image.load(complete, complete);
   }
 
   function normalizeBounds(item, getBounds) {
@@ -106,6 +144,7 @@
     if (item.isMoodboard) return 'moodboard';
     if (item.isNote) return 'text';
     if (item.isAiPlaceholder) return 'pending';
+    if (file && (file.kind === 'model' || /^(?:\.)?(?:glb|gltf|obj|fbx|stl|ply|3ds|usdz)$/i.test(String(file.ext || '')))) return 'model';
     // Keep media as media while its preview URL is being resolved. Falling
     // back to a colored rectangle creates false image flashes on first paint.
     if (file && (source || ['image', 'video', 'model'].includes(file.kind) ||
@@ -131,6 +170,7 @@
       item.fontFamily || '',
       item.fontSize || '',
       item.fontWeight || '',
+      JSON.stringify(item.styleRanges || []),
       item.color || '',
       item.colorMode || '',
       item.isNote ? textColorForItem(item) : '',
@@ -353,6 +393,23 @@
       return group;
     }
 
+    if (kind === 'model') {
+      const group = new api.Group({ ...options, hittable: false });
+      const frame = new api.Rect({ width: bounds.width, height: bounds.height, fill: '#111317',
+        stroke: '#363b43', strokeWidth: 1, cornerRadius: 8 });
+      const image = new api.Image({ width: bounds.width, height: bounds.height, cornerRadius: 8,
+        fill: source ? { type: 'image', url: source, mode: 'fit', showProgress: false } : undefined });
+      image._messsSource = normalizeSource(source);
+      const badge = new api.Text({ x: 10, y: 10, width: 32, height: 22, text: '3D',
+        fontSize: 12, fontWeight: 700, fill: '#8bc5ff', textAlign: 'center', verticalAlign: 'middle' });
+      const badgeBackground = new api.Rect({ x: 10, y: 10, width: 32, height: 22,
+        fill: '#181c23', cornerRadius: 5 });
+      group.add([frame, image, badgeBackground, badge]);
+      group._messsModelImage = image;
+      group._messsParts = [frame, image];
+      return group;
+    }
+
     if (kind === 'media' || kind === 'doodle') {
       const showSelectionStroke = kind === 'doodle';
       const image = new api.Image({
@@ -375,20 +432,27 @@
 
     if (kind === 'text') {
       const text = textForItem(item);
-      return new api.Text({
+      const TextClass = item.isNote && root.MesssCanvasPlugins ? root.MesssCanvasPlugins.RichText : api.Text;
+      return new TextClass({
         ...options,
         text,
+        styleRanges: item.styleRanges || [],
+        autoWidth: false,
+        autoHeight: false,
+        editable: true,
         fill: textColorForItem(item),
         fontFamily: textFontFamilyForItem(item),
         fontSize: textFontSizeForItem(item),
         fontWeight: item.fontWeight || 500,
         textWrap: 'break',
-        textOverflow: 'ellipsis',
+        lineHeight: { type: 'percent', value: 1.25 },
+        textAlign: item.align || 'left',
+        textOverflow: TextClass === api.Text ? 'ellipsis' : 'show',
         verticalAlign: 'top',
-        padding: item.isNote || item.isMoodboard ? 8 : 0,
+        padding: item.isNote ? [3, 5] : (item.isMoodboard ? 8 : 0),
         stroke: undefined,
         cornerRadius: 0,
-        opacity: item.isTextEditing ? 0 : 1
+        opacity: item.isTextEditing && TextClass === api.Text ? 0 : 1
       });
     }
 
@@ -411,7 +475,13 @@
     drawable.height = bounds.height;
     drawable.zIndex = finite(item.zIndex, item.isPartition ? 0 : 1);
     drawable.opacity = 1;
-    if (kind === 'partition') {
+    if (kind === 'model') {
+      for (const part of drawable._messsParts) {
+        part.width = bounds.width;
+        part.height = bounds.height;
+      }
+      replaceTexture(drawable._messsModelImage, normalizeSource(source));
+    } else if (kind === 'partition') {
       const [rect, title] = drawable._messsParts || [];
       if (rect) {
         rect.width = bounds.width;
@@ -447,22 +517,27 @@
       const divider = drawable._messsParts?.[3];
       if (divider) divider.width = Math.max(1, bounds.width - 48);
     } else if (kind === 'text') {
+      if (drawable.isEditing) return;
       drawable.text = textForItem(item);
       drawable.fill = textColorForItem(item);
       drawable.fontSize = textFontSizeForItem(item);
       drawable.fontWeight = item.fontWeight || 500;
-      drawable.opacity = item.isTextEditing ? 0 : 1;
+      drawable.fontFamily = textFontFamilyForItem(item);
+      drawable.textAlign = item.align || 'left';
+      if (drawable.tag === 'RichText') {
+        const textLayoutKey = JSON.stringify([drawable.text, drawable.fill, drawable.fontSize, drawable.fontWeight,
+          drawable.fontFamily, drawable.textAlign, drawable.width, drawable.height, item.styleRanges || []]);
+        if (drawable._messsTextLayoutKey !== textLayoutKey) {
+          drawable._messsTextLayoutKey = textLayoutKey;
+          drawable._updateGraphemes();
+          drawable._loadFromStyleRanges(item.styleRanges || []);
+          drawable._relayout();
+        }
+      }
+      drawable.opacity = item.isTextEditing && drawable.tag !== 'RichText' ? 0 : 1;
     } else if (kind === 'media' || kind === 'doodle') {
       const nextSource = normalizeSource(source);
-      if (nextSource && nextSource !== drawable._messsSource) {
-        drawable.fill = {
-          type: 'image',
-          url: nextSource,
-          mode: 'fit',
-          showProgress: false
-        };
-        drawable._messsSource = nextSource;
-      }
+      replaceTexture(drawable, nextSource);
       drawable.stroke = kind === 'doodle' && item.selected ? '#f5f7fb' : undefined;
       drawable.strokeWidth = kind === 'doodle' && item.selected ? 1.2 : 0;
     } else if (kind === 'vector-doodle') {
@@ -602,7 +677,10 @@
     };
     const previous = state.lastTransform;
     if (previous && previous.x === next.x && previous.y === next.y &&
-        previous.scaleX === next.scaleX && previous.scaleY === next.scaleY) return true;
+        previous.scaleX === next.scaleX && previous.scaleY === next.scaleY) {
+      if (view.sync && state.visible && state.leafer.renderer?.changed) state.leafer.forceRender(undefined, true);
+      return true;
+    }
     state.group.x = next.x;
     state.group.y = next.y;
     state.group.scaleX = next.scaleX;
@@ -612,6 +690,9 @@
     state.doodleGroup.scaleX = next.scaleX;
     state.doodleGroup.scaleY = next.scaleY;
     state.lastTransform = next;
+    // Commit the camera before the browser paints the DOM selection/video
+    // overlays. Leafer's independent RAF can otherwise lag them by one frame.
+    if (view.sync && state.visible) state.leafer.forceRender(undefined, true);
     return true;
   }
 
@@ -643,7 +724,10 @@
       const previous = state.entries.get(item.id);
       let drawable = previous && previous.kind === kind ? previous.drawable : null;
       if (!drawable) {
-        if (previous && previous.drawable) state.group.remove(previous.drawable, true);
+        if (previous && previous.drawable) {
+          cancelTexture(previous.drawable);
+          state.group.remove(previous.drawable, true);
+        }
         drawable = createDrawable(item, file, bounds, source, kind, color);
         if (!drawable) continue;
         state.entries.set(item.id, { drawable, kind, signature });
@@ -658,6 +742,7 @@
 
     for (const [id, entry] of [...state.entries]) {
       if (nextIds.has(id)) continue;
+      cancelTexture(entry.drawable);
       state.group.remove(entry.drawable, true);
       state.entries.delete(id);
     }
@@ -704,7 +789,10 @@
     const previous = state.entries.get(item.id);
     let drawable = previous && previous.kind === resolved.kind ? previous.drawable : null;
     if (!drawable) {
-      if (previous && previous.drawable) state.group.remove(previous.drawable, true);
+      if (previous && previous.drawable) {
+        cancelTexture(previous.drawable);
+        state.group.remove(previous.drawable, true);
+      }
       drawable = createDrawable(
         item,
         resolved.file,
@@ -750,7 +838,10 @@
       const previous = state.entries.get(item.id);
       let drawable = previous && previous.kind === resolved.kind ? previous.drawable : null;
       if (!drawable) {
-        if (previous && previous.drawable) state.group.remove(previous.drawable, true);
+        if (previous && previous.drawable) {
+          cancelTexture(previous.drawable);
+          state.group.remove(previous.drawable, true);
+        }
         drawable = createDrawable(
           item,
           resolved.file,
@@ -795,6 +886,7 @@
     for (const id of ids || []) {
       const entry = state.entries.get(id);
       if (!entry) continue;
+      cancelTexture(entry.drawable);
       state.group.remove(entry.drawable, true);
       state.entries.delete(id);
       changed = true;
@@ -850,6 +942,7 @@
   }
 
   function clear() {
+    for (const drawable of state.pendingTextures.keys()) cancelTexture(drawable);
     if (state.group) state.group.removeAll(true);
     clearDoodle();
     state.entries.clear();
@@ -904,6 +997,7 @@
   }
 
   function destroy() {
+    for (const drawable of state.pendingTextures.keys()) cancelTexture(drawable);
     if (state.leafer) {
       try { state.leafer.destroy(true); } catch (error) { state.lastError = error; }
     }
@@ -949,6 +1043,7 @@
     get syncCalls() { return state.syncCalls; },
     get visible() { return state.visible; },
     get itemCount() { return state.entries.size; },
+    getTextDrawable(id) { return state.entries.get(id)?.drawable; },
     get doodleCount() { return state.doodleGroup ? (state.doodleGroup._messsParts || []).length : 0; },
     get lastError() { return state.lastError; }
   };

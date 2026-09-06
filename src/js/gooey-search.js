@@ -13,6 +13,10 @@
     surface.innerHTML = `<svg width="0" height="0"><defs><filter id="${filterId}" x="-20%" y="-70%" width="140%" height="240%"><feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur"/><feColorMatrix in="blur" type="matrix" values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 20 -10" result="goo"/><feComposite in="SourceGraphic" in2="goo" operator="atop"/></filter></defs></svg><span class="gooey-search-pill"></span><span class="gooey-search-bubble"></span>`;
     surface.style.setProperty('--gooey-filter', `url(#${filterId})`);
     root.prepend(surface);
+    const outline = document.createElement('span');
+    outline.className = 'gooey-search-outline';
+    outline.setAttribute('aria-hidden', 'true');
+    root.insertBefore(outline, surface.nextSibling);
     input.setAttribute('aria-label', input.placeholder);
     input.setAttribute('enterkeyhint', 'search');
     const sync = () => root.classList.toggle('is-expanded', root.contains(document.activeElement) || !!input.value);

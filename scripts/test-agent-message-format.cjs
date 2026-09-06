@@ -24,6 +24,27 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
   assert.ok(text.includes('C# / #123456 / 3 * 4')&&text.includes('x = a * b'));
   assert.equal(await page.locator('#result script, #result a, #result img').count(),0);
   assert.equal(await page.evaluate(()=>window.bad),undefined);
+  await page.evaluate(() => {
+    const home=document.createElement('div');home.id='ai-assistant-home';document.body.append(home);
+    const messages=document.createElement('div');messages.id='ai-assistant-messages';document.body.append(messages);
+    const row=appendAssistantText('assistant','### Model\n\n**Ready**\n\n[File: phone.obj]');
+    appendAssistantOutputFiles(row,[{name:'phone.obj',sizeBytes:120,token:'test'}]);
+  });
+  assert.equal(await page.locator('#ai-assistant-messages h4').textContent(),'Model');
+  assert.equal(await page.locator('#ai-assistant-messages strong').textContent(),'Ready');
+  assert.ok(!(await page.locator('#ai-assistant-messages .ai-assistant-message-body').textContent()).includes('[File:'));
+  assert.equal(await page.locator('#ai-assistant-messages .ai-assistant-output-file').count(),1);
+  const restored = await page.evaluate(() => {
+    const session=normalizeCanvasAgentSession({id:'parity-test',messages:[{role:'assistant',content:'### Model\n\n**Ready**\n\n[File: phone.obj]',generatedFiles:[{token:'test',name:'phone.obj',sizeBytes:120}]}]});
+    const message=session.messages[0];
+    const row=document.createElement('div');row.id='canvas-parity';row.className='board-agent-message';document.body.append(row);
+    renderAgentMessageContent(row,message.content);appendAssistantOutputFiles(row,message.generatedFiles);
+    return message.generatedFiles;
+  });
+  assert.equal(restored[0].name,'phone.obj');
+  assert.equal(await page.locator('#canvas-parity h4').textContent(),'Model');
+  assert.equal(await page.locator('#canvas-parity .ai-assistant-output-file').count(),1);
+  assert.ok(!(await page.locator('#canvas-parity').textContent()).includes('[File:'));
   fs.mkdirSync('test-artifacts/agent-format',{recursive:true});
   for(const theme of ['dark','light']){
    await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);await page.waitForTimeout(350);

@@ -1,0 +1,92 @@
+'use strict';
+window.MesssComposerActions = (() => {
+  let session = crypto.randomUUID(), mode = 'ask', initialized = false;
+  let addMenu, permissionMenu, permissionButton, dialog;
+  const label = (en,zh) => t(en,zh);
+  function closeMenus() {
+    for (const [menu,button] of [[addMenu,document.getElementById('ai-assistant-upload')],[permissionMenu,permissionButton]]) {
+      if (menu) menu.hidden = true;
+      button?.setAttribute('aria-expanded','false');
+    }
+  }
+  function openMenu(menu,button) {
+    const opening = menu.hidden; closeMenus();
+    if (!opening) return;
+    menu.hidden=false;button.setAttribute('aria-expanded','true');
+    const r=button.getBoundingClientRect();
+    menu.style.left=`${Math.max(8,Math.min(r.left,innerWidth-menu.offsetWidth-8))}px`;
+    menu.style.bottom=`${Math.max(8,innerHeight-r.top+8)}px`;
+    menu.style.maxHeight=`${Math.max(80,r.top-16)}px`;
+    menu.querySelector('button')?.focus();
+  }
+  function confirmTask(title,detail) {
+    if (dialog) return Promise.resolve(false);
+    return new Promise(resolve => {
+      dialog=document.createElement('dialog');dialog.className='messs-permission-dialog';
+      const heading=document.createElement('h3');heading.textContent=title;
+      const text=document.createElement('p');text.textContent=detail;
+      const actions=document.createElement('footer');
+      const cancel=document.createElement('button'),allow=document.createElement('button');
+      cancel.textContent=label('Cancel','取消');allow.textContent=label('Allow','允许');allow.className='permission-allow';
+      const finish=value=>{const el=dialog;dialog=null;el.close();el.remove();resolve(value);};
+      cancel.onclick=()=>finish(false);allow.onclick=()=>finish(true);
+      dialog.addEventListener('cancel',event=>{event.preventDefault();finish(false);});
+      dialog._deny=()=>finish(false);
+      actions.append(cancel,allow);dialog.append(heading,text,actions);document.body.append(dialog);
+      dialog.showModal();cancel.focus();
+    });
+  }
+  async function resetPermissions() {
+    dialog?._deny();mode='ask';session=crypto.randomUUID();refresh();
+    await window.messsAPI?.setAiPermissionMode?.({session,mode});
+  }
+  function refresh() {
+    if (!initialized) return;
+    document.getElementById('ai-assistant-upload').title=label('Add','添加');
+    document.getElementById('ai-assistant-add-local').textContent=label('Add local files','添加本地文件');
+    permissionButton.textContent=mode==='full'?label('Full access','完全访问'):label('Ask permission','请求批准');
+    permissionButton.title=label('Messs permissions','Messs 权限');
+    permissionMenu.querySelector('strong').textContent=label('Messs permissions','Messs 权限');
+    const buttons=permissionMenu.querySelectorAll('button');
+    buttons[0].textContent=label('Ask for each host operation','逐次请求批准');
+    buttons[1].textContent=label('Full access for this session','本次会话完全访问');
+    buttons.forEach((b,i)=>b.setAttribute('aria-checked',String((i===1)===(mode==='full'))));
+  }
+  function init() {
+    if (initialized) return;initialized=true;
+    const trigger=document.getElementById('ai-assistant-upload');
+    trigger.textContent='+';trigger.setAttribute('aria-haspopup','menu');trigger.setAttribute('aria-expanded','false');
+    addMenu=document.createElement('div');addMenu.id='ai-assistant-add-menu';addMenu.className='messs-composer-menu';addMenu.hidden=true;addMenu.setAttribute('role','menu');
+    const local=document.createElement('button');local.id='ai-assistant-add-local';local.type='button';local.setAttribute('role','menuitem');addMenu.append(local);
+    document.querySelectorAll('.ai-assistant-mode [data-assistant-kind]').forEach(button=>{button.setAttribute('role','menuitem');addMenu.append(button);});
+    // Keep the existing delegated mode handler and upload workflow.
+    document.querySelector('.ai-assistant-mode').append(addMenu);
+    trigger.addEventListener('click',event=>{event.stopPropagation();openMenu(addMenu,trigger);});
+    addMenu.addEventListener('click',event=>{if(event.target.closest('button'))closeMenus();});
+    permissionButton=document.createElement('button');permissionButton.id='ai-assistant-permissions';permissionButton.type='button';permissionButton.setAttribute('aria-haspopup','menu');
+    document.querySelector('.ai-assistant-model-picker').after(permissionButton);
+    permissionMenu=document.createElement('div');permissionMenu.className='messs-composer-menu';permissionMenu.id='messs-permission-menu';permissionMenu.hidden=true;permissionMenu.setAttribute('role','menu');
+    permissionMenu.append(document.createElement('strong'));
+    for(const value of ['ask','full']) {
+      const button=document.createElement('button');button.type='button';button.setAttribute('role','menuitemradio');
+      button.onclick=async()=>{
+        closeMenus();const current=session;
+        if(value==='full' && !await confirmTask(label('Allow Messs for this session?','允许 Messs 在本次会话中执行？'),label('System commands, internet access and local files. Commands may modify or delete files. Results are sent to the selected model. You can revoke access at any time.','可执行系统命令、联网和访问本地文件；命令可能修改或删除文件。结果会发送给当前模型，可随时撤销。')))return;
+        if(current!==session)return;
+        const result=await window.messsAPI.setAiPermissionMode({session,mode:value});mode=result.mode;refresh();
+      };permissionMenu.append(button);
+    }
+    document.querySelector('.ai-assistant-tools').append(permissionMenu);
+    permissionButton.onclick=event=>{event.stopPropagation();openMenu(permissionMenu,permissionButton);};
+    document.addEventListener('click',event=>{if(!event.target.closest('.messs-composer-menu'))closeMenus();});
+    document.addEventListener('keydown',event=>{if(event.key==='Escape')closeMenus();});
+    window.addEventListener('resize',closeMenus);
+    window.messsAPI?.onAiPermissionRequest?.(async request=>{
+      const allowed=request.session===session && await confirmTask(label('Allow this Messs task?','是否允许本次 Messs 任务？'),`${({read:label('Read file','读取文件'),network:label('Access website','访问网站'),command:label('Run command','执行命令')})[request.type]}\n${request.target}\n${label('Results are sent to the selected model.','结果会发送给当前模型。')}`);
+      await window.messsAPI.replyAiPermission({id:request.id,allow:!!allowed && request.session===session});
+    });
+    window.messsAPI?.onCloudSessionChanged?.(()=>void resetPermissions());
+    refresh();
+  }
+  return {init,refresh,resetPermissions,get session(){return session;}};
+})();

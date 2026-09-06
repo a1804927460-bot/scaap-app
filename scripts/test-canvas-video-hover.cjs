@@ -8,7 +8,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
   const dir = path.resolve('test-artifacts/video-hover');
   fs.mkdirSync(dir, { recursive: true });
   const videoPath = path.join(dir, 'motion.webm');
-  const encoded = spawnSync(require('ffmpeg-static'), ['-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=15', '-t', '4', '-c:v', 'libvpx', videoPath], { windowsHide: true });
+  const encoded = spawnSync(require('ffmpeg-static'), ['-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=15', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '4', '-c:v', 'libvpx', '-c:a', 'libopus', videoPath], { windowsHide: true });
   assert.equal(encoded.status, 0, String(encoded.stderr));
   const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
   try {
@@ -27,10 +27,36 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       renderBoardItemContent(document.querySelector('.board-item-content'), file, { id: 'item', width: 320, height: 180 });
     }, pathToFileURL(videoPath).href);
     assert.equal(await page.locator('video').count(), 0, 'No decoder before hover');
+    const assertSquareVideo = async () => {
+      const radii = await page.locator('.board-item, .board-item-content, .board-video-thumbnail, .board-video-thumbnail > img, .mini-video-player, .mini-video-poster, .mini-video-player > video').evaluateAll(elements => elements.map(el => {
+        const css = getComputedStyle(el);
+        return [css.borderTopLeftRadius,css.borderTopRightRadius,css.borderBottomLeftRadius,css.borderBottomRightRadius];
+      }));
+      assert.ok(radii.length >= 3);
+      assert.ok(radii.flat().every(radius => radius === '0px'), JSON.stringify(radii));
+    };
+    await page.locator('.board-item').evaluate(el => el.classList.add('board-item-video'));
+    await assertSquareVideo();
+    await page.locator('.board-item').evaluate(el => el.classList.add('is-uniform-frame','is-selected'));
+    await assertSquareVideo();
     assert.equal(await page.locator('.board-video-duration').textContent(), '4s');
     assert.equal(await page.locator('.board-video-thumbnail').evaluate(el => getComputedStyle(el).opacity), '1');
     await page.locator('.board-item-content').hover();
     await page.waitForFunction(() => document.querySelector('video')?.currentTime > .2);
+    await assertSquareVideo();
+    for (const zoom of [0.5, 2, 5]) {
+      await page.locator('.board-canvas').evaluate((el, zoom) => {el.style.transformOrigin='0 0';el.style.transform=`scale(${zoom})`;}, zoom);
+      await assertSquareVideo();
+    }
+    await page.locator('.board-canvas').evaluate(el => {el.style.transform='none';});
+    const sound = page.locator('.board-video-sound');
+    // Headless Chrome can require a gesture for audible autoplay.
+    if (await page.locator('video').evaluate(video => video.muted)) await sound.click();
+    assert.equal(await page.locator('video').evaluate(video => video.muted), false);
+    await sound.click();
+    assert.equal(await page.locator('video').evaluate(video => video.muted), true);
+    await sound.click();
+    assert.equal(await page.locator('video').evaluate(video => video.muted), false);
     const sample = () => page.locator('video').screenshot();
     const first = await sample();
     await page.waitForTimeout(400);
@@ -47,8 +73,34 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     await page.mouse.move(450, 500);
     await page.waitForFunction(() => document.querySelector('video')?.paused);
     await page.waitForFunction(() => !document.querySelector('video'), null, { timeout: 15000 });
+    await assertSquareVideo();
     assert.equal(await page.locator('.board-video-duration').textContent(), '4s');
     assert.equal(await page.evaluate(() => fallbacks), 0);
+    await page.evaluate(url => {
+      const overlay = document.createElement('div');
+      overlay.id = 'fullscreen-overlay'; overlay.hidden = true;
+      overlay.innerHTML = '<div id="fullscreen-stage" style="width:600px;height:400px"></div>';
+      document.body.append(overlay);
+      const source = document.createElement('video');
+      source.src = url; source.muted = true;
+      window.testSource = source;
+      openFileFullscreenPreview(file, source);
+    }, pathToFileURL(videoPath).href);
+    const fullVideo = page.locator('#fullscreen-stage video');
+    assert.equal(await fullVideo.evaluate(video => video.muted), false, 'Expanded playback must not inherit hover mute');
+    const play = page.locator('.video-play-toggle');
+    if (await fullVideo.evaluate(video => video.paused)) await play.click();
+    await page.waitForFunction(() => !document.querySelector('#fullscreen-stage video').paused);
+    assert.equal(await page.locator('.video-icon-play').isVisible(), false);
+    assert.equal(await page.locator('.video-icon-pause').isVisible(), true);
+    await play.click();
+    await page.waitForFunction(() => document.querySelector('#fullscreen-stage video').paused);
+    assert.equal(await page.locator('.video-icon-play').isVisible(), true);
+    assert.equal(await page.locator('.video-icon-pause').isVisible(), false);
+    await page.locator('.video-mute-toggle').click();
+    assert.equal(await page.locator('.video-icon-muted').isVisible(), true);
+    assert.equal(await page.locator('.video-icon-volume').isVisible(), false);
+    await page.evaluate(() => finalizeFullscreenPreviewClose());
     console.log('Video hover passed: real moving frames, Leafer visibility, bottom-right duration, pause and decoder release.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

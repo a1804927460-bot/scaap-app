@@ -17,6 +17,7 @@ const BOARD_LIGHTWEIGHT_EFFECTS_EXIT_COUNT = 48;
 const BOARD_FULL_IMAGE_LIMIT = 4;
 const BOARD_FULL_IMAGE_CACHE_LIMIT = 4;
 const BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET = 24_000_000;
+const BOARD_FULL_IMAGE_SINGLE_PIXEL_LIMIT = 40_000_000;
 const BOARD_FULL_IMAGE_READY_LIMIT = 160;
 const BOARD_FAILED_SOURCE_LIMIT = 256;
 const BOARD_THUMBNAIL_MAX_EDGE = 400;
@@ -1132,9 +1133,14 @@ function applyBoardTransformNow() {
   Board.transformFrame = 0;
   const canvas = document.getElementById('board-canvas');
   if (!canvas) return;
+  clearTimeout(Board.transformSettleTimer);
+  Board.transformSettleTimer = 0;
   const lightweight = Board.isWheelZooming || Board.isPanning || Board.zoomFrame || Board.zoomTarget;
   canvas.classList.toggle('is-transforming', Boolean(lightweight));
   canvas.style.transform = boardTransform();
+  const moodboardComposer = document.querySelector('.is-moodboard-composer');
+  if (moodboardComposer?._moodboardAnchor) layoutMoodboardComposer(moodboardComposer, moodboardComposer._moodboardAnchor);
+  if (typeof boardButlerExpandEditor !== 'undefined') boardButlerExpandEditor?._layout?.();
   // Leafer owns the lightweight overview transform. Updating one world
   // group keeps pan/zoom on the renderer path instead of touching every
   // overview item while the pointer is moving.
@@ -1142,7 +1148,8 @@ function applyBoardTransformNow() {
     Board.leaferLayer.setTransform({
       panX: Board.panX,
       panY: Board.panY,
-      zoom: Board.zoom
+      zoom: Board.zoom,
+      sync: true
     });
   }
   // The active drawing surface is a viewport-space overlay. Keep it out of
@@ -1179,10 +1186,6 @@ function applyBoardTransformNow() {
   const zoomLabel = document.getElementById('board-zoom-label');
   if (zoomLabel) zoomLabel.textContent = Math.round(Board.zoom * 100) + '%';
   updateInfiniteGrid();
-  clearTimeout(Board.transformSettleTimer);
-  Board.transformSettleTimer = window.setTimeout(() => {
-    canvas.classList.remove('is-transforming');
-  }, BOARD_QUALITY_SETTLE_MS + 30);
   scheduleBoardReconcile();
   scheduleBoardViewportSave();
   scheduleBoardFullImagePrewarm(Board.zoom);
@@ -1206,7 +1209,6 @@ function finishBoardWheelInteraction() {
   clearBoardInteractionOverviewWork();
   Board.wheelViewportRect = null;
   Board.mountBoostUntil = performance.now() + 180;
-  document.getElementById('board-canvas')?.classList.remove('is-transforming');
   settleBoardViewportIfIdle();
   // The zoom step already runs in an animation frame. Apply the camera in
   // this same frame instead of queueing a second RAF during a wheel burst.
@@ -1230,18 +1232,25 @@ function updateLeaferFullImageWindow() {
     const retained = Board.leaferFullItemIds.has(item.id) && Board.leaferSourceByItem.get(String(item.id)) === fullSource;
     const threshold = retained ? BOARD_LEAFER_FULL_IMAGE_EXIT_SCREEN_EDGE : BOARD_LEAFER_FULL_IMAGE_MIN_SCREEN_EDGE;
     if ((sourceEdge > 0 && sourceEdge <= BOARD_THUMBNAIL_MAX_EDGE) || screenEdge < threshold) continue;
-    candidates.push({ id: item.id, screenEdge, source: fullSource, retained,
+    candidates.push({ id: item.id, screenEdge, source: fullSource, retained, selected: Boolean(item.selected),
       pixels: Math.max(1, Number(file.sourceWidth) || 4096) * Math.max(1, Number(file.sourceHeight) || 4096) });
   }
-  candidates.sort((left, right) => right.screenEdge - left.screenEdge);
+  candidates.sort((left, right) => Number(right.selected)-Number(left.selected) || Number(right.retained)-Number(left.retained) || right.screenEdge-left.screenEdge || String(left.id).localeCompare(String(right.id)));
   const next = new Set();
   let pixels = 0;
+  let reserved = 0;
   for (const entry of candidates) {
-    if (next.size >= BOARD_LEAFER_FULL_ITEM_LIMIT) break;
-    if (pixels + entry.pixels > BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET) continue;
+    if (reserved >= Math.min(BOARD_LEAFER_FULL_ITEM_LIMIT, BOARD_FULL_IMAGE_CACHE_LIMIT)) break;
+    // Permit one large original, never multiple oversized decodes. The cache
+    // already retains a single image above its normal aggregate budget.
+    const singleLargeImage = reserved === 0 && entry.pixels <= BOARD_FULL_IMAGE_SINGLE_PIXEL_LIMIT;
+    if (pixels + entry.pixels > BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET && !singleLargeImage) continue;
+    // Reserve slots for pending decodes too. Otherwise each completion loads
+    // another budget-excluded candidate and evicts the textures just promoted.
+    reserved += 1;
+    pixels += entry.pixels;
     if (entry.retained || cachedBoardFullImage(entry.source)) {
       next.add(entry.id);
-      pixels += entry.pixels;
       continue;
     }
     // Prewarm directly from the scene, independent of DOM virtualization.
@@ -1744,7 +1753,10 @@ function renderBoardItemContent(content, f, item) {
       previewRequested = true;
       preview.classList.add('is-rendering');
       window.requestBoardModelPreview(f).then((source) => {
-        if (source && preview.isConnected) installPreview(source);
+        if (source && preview.isConnected) {
+          installPreview(source);
+          syncBoardLeaferItems(item);
+        }
       }).catch(() => {}).finally(() => preview.classList.remove('is-rendering'));
     };
     preview.classList.add('is-placeholder');
@@ -1754,16 +1766,7 @@ function renderBoardItemContent(content, f, item) {
     mark.className = 'board-model-thumbnail-mark';
     mark.innerHTML = '<svg viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" stroke-width="1.45"><path d="m12 2 8 4.5v9L12 20l-8-4.5v-9L12 2Z"></path><path d="m4 6.5 8 4.5 8-4.5M12 11v9"></path></svg><strong>3D</strong>';
     mark.title = t('3D model', '3D 模型');
-    const caption = document.createElement('div');
-    caption.className = 'board-model-caption';
-    const name = document.createElement('span');
-    name.textContent = f.name || t('3D model', '3D 模型');
-    name.title = name.textContent;
-    const format = document.createElement('b');
-    format.textContent = String(f.ext || '').replace(/^\./, '').toUpperCase() || '3D';
-    caption.append(name, format);
     preview.appendChild(mark);
-    preview.appendChild(caption);
     content.appendChild(preview);
     return;
   }
@@ -2030,8 +2033,8 @@ function constrainBoardItemToPartition(item, options = {}) {
   const initialHeight = bounds.h;
   if (options.resize !== false && (bounds.w > inner.w || bounds.h > inner.h)) {
     const scale = Math.min(inner.w / Math.max(1, bounds.w), inner.h / Math.max(1, bounds.h));
-    item.width = Math.max(1, Math.round(bounds.w * scale));
-    item.height = Math.max(1, Math.round(bounds.h * scale));
+    item.width = Math.max(item.isMoodboard ? boardItemMinWidth(item) : 1, Math.round(bounds.w * scale));
+    item.height = Math.max(item.isMoodboard ? boardItemMinHeight(item) : 1, Math.round(bounds.h * scale));
     bounds = boardItemBounds(item);
   }
   const nextX = Math.round(Math.max(inner.x, Math.min(item.x, inner.x + inner.w - bounds.w)));
@@ -2061,8 +2064,8 @@ function fitBoardItemsIntoPartition(items, partition) {
       const frame = boardItemBounds(item);
       item.x = Math.round(bounds.x + (frame.x - bounds.x) * scale);
       item.y = Math.round(bounds.y + (frame.y - bounds.y) * scale);
-      item.width = Math.max(1, Math.round(frame.w * scale));
-      item.height = Math.max(1, Math.round(frame.h * scale));
+      item.width = Math.max(item.isMoodboard ? boardItemMinWidth(item) : 1, Math.round(frame.w * scale));
+      item.height = Math.max(item.isMoodboard ? boardItemMinHeight(item) : 1, Math.round(frame.h * scale));
     });
     bounds = boardSelectionBounds(members);
   }
@@ -2134,6 +2137,14 @@ function constrainedBoardMoveDeltas(startPositions, dx, dy) {
 }
 
 function boardItemBounds(item) {
+  if (item && item.isMoodboard) {
+    return {
+      x: Number.isFinite(item.x) ? item.x : 0,
+      y: Number.isFinite(item.y) ? item.y : 0,
+      w: Math.max(boardItemMinWidth(item), Number(item.width) || 360),
+      h: Math.max(boardItemMinHeight(item), Number(item.height) || 260)
+    };
+  }
   if (item && item.isPartition) {
     return {
       x: Number.isFinite(item.x) ? item.x : 0,
@@ -2298,7 +2309,12 @@ function clearMountedBoardItems() {
 }
 
 function disposeBoardCanvas() {
+  if (typeof closeBoardImageCrop === 'function') closeBoardImageCrop();
+  if (typeof closeBoardButlerExpandEditor === 'function') closeBoardButlerExpandEditor();
   if (Board.disposed) return;
+  if (Board.cancelBoxSelect) Board.cancelBoxSelect();
+  window.MesssCanvasPluginAdapter?.clearGuides();
+  window.MesssCanvasPluginAdapter?.finishText(false);
   if (Board.disposeFileDrop) Board.disposeFileDrop();
   Board.disposed = true;
   Board.lifecycleToken += 1;
@@ -2403,7 +2419,7 @@ function syncMountedBoardItemGeometry(element, item) {
   const isMedia = file && (isImageExt(file.ext) || isVideoExt(file.ext));
   const width = item.isPartition
     ? Math.max(BOARD_PARTITION_MIN_WIDTH, Number(item.width) || BOARD_PARTITION_MIN_WIDTH)
-    : Math.max(1, Number(item.width) || 220);
+    : item.isMoodboard ? boardItemBounds(item).w : Math.max(1, Number(item.width) || 220);
   element.style.left = `${Number.isFinite(item.x) ? item.x : 0}px`;
   element.style.top = `${Number.isFinite(item.y) ? item.y : 0}px`;
   element.style.zIndex = String(item.isPartition ? (Number(item.zIndex) || 0) : (item.zIndex || 1));
@@ -2412,6 +2428,9 @@ function syncMountedBoardItemGeometry(element, item) {
   if (item.isPartition) {
     element.style.aspectRatio = '';
     element.style.height = `${Math.max(BOARD_PARTITION_MIN_HEIGHT, Number(item.height) || BOARD_PARTITION_MIN_HEIGHT)}px`;
+  } else if (item.isMoodboard) {
+    element.style.aspectRatio = '';
+    element.style.height = `${boardItemBounds(item).h}px`;
   } else if (isMedia && Number(file.sourceWidth) > 0 && Number(file.sourceHeight) > 0) {
     const height = Math.max(1, Math.round(width * file.sourceHeight / file.sourceWidth));
     element.style.aspectRatio = `${file.sourceWidth} / ${file.sourceHeight}`;
@@ -2529,11 +2548,16 @@ function ensureBoardLeaferCanvas() {
     }
   }
   if (Board.leaferLayer) {
+    // Monitor DPI changes are committed only at rest, never per wheel frame.
+    const pixelRatio = isBoardViewportInteracting()
+      ? (Board.leaferPixelRatio || boardLeaferPixelRatio())
+      : boardLeaferPixelRatio();
     Board.leaferLayer.resize(
       Math.max(1, rect.width),
       Math.max(1, rect.height),
-      Board.leaferPixelRatio || boardLeaferPixelRatio()
+      pixelRatio
     );
+    Board.leaferPixelRatio = pixelRatio;
     Board.leaferLayer.setTransform({ panX: Board.panX, panY: Board.panY, zoom: Board.zoom });
     Board.leaferLayer.setVisible(true);
   }
@@ -2839,8 +2863,8 @@ function addBoardPartitionResizeHandles(element, partition) {
       startMemberFrames.forEach(({ item, width, height }) => {
         minScale = Math.max(
           minScale,
-          (item.isDoodle ? 4 : MIN_BOARD_ITEM_WIDTH) / Math.max(1, width),
-          (item.isDoodle ? 4 : 40) / Math.max(1, height)
+          boardItemMinWidth(item) / Math.max(1, width),
+          boardItemMinHeight(item) / Math.max(1, height)
         );
       });
       const memberElements = new Map(startMemberFrames.map(({ item }) => [
@@ -2872,8 +2896,8 @@ function addBoardPartitionResizeHandles(element, partition) {
         startMemberFrames.forEach(({ item, x, y, width: startWidth, height: startHeight }) => {
           item.x = Math.round(anchorX + (x - anchorX) * scale);
           item.y = Math.round(anchorY + (y - anchorY) * scale);
-          item.width = Math.max(item.isDoodle ? 4 : MIN_BOARD_ITEM_WIDTH, Math.round(startWidth * scale));
-          item.height = Math.max(item.isDoodle ? 4 : 40, Math.round(startHeight * scale));
+          item.width = Math.max(boardItemMinWidth(item), Math.round(startWidth * scale));
+          item.height = Math.max(boardItemMinHeight(item), Math.round(startHeight * scale));
         });
         constrainBoardItemsToPartitions(members, { resize: true });
         members.forEach((item) => {
@@ -3098,6 +3122,7 @@ function createBoardItemElement(item) {
   el.style.left = item.x + 'px';
   el.style.top = item.y + 'px';
   el.style.width = (item.width || 220) + 'px';
+  if (isModel) el.style.height = `${boardItemBounds(item).h}px`;
   if (!isUniformFrame && (isImage || isVideo) && f.sourceWidth && f.sourceHeight) {
     el.style.aspectRatio = `${f.sourceWidth} / ${f.sourceHeight}`;
   } else if (item.height) {
@@ -3644,9 +3669,28 @@ function makeBoardItemDraggable(el, item) {
     }
 
     const moveRunner = createLatestFrameRunner((point) => {
-      const dx = (point.clientX - startClientX) / Board.zoom;
-      const dy = (point.clientY - startClientY) / Board.zoom;
+      let dx = (point.clientX - startClientX) / Board.zoom;
+      let dy = (point.clientY - startClientY) / Board.zoom;
+      const adapter = window.MesssCanvasPluginAdapter;
+      let snapLines = [];
+      if (adapter && moved && !point.altKey && !item.isPartition) {
+        const boxes = groupStartPositions.map(entry => ({ ...boardItemBounds(entry.item), x: entry.startLeft, y: entry.startTop }));
+        const x = Math.min(...boxes.map(b => b.x)), y = Math.min(...boxes.map(b => b.y));
+        const moving = { x: x + dx, y: y + dy, w: Math.max(...boxes.map(b => b.x+b.w))-x, h: Math.max(...boxes.map(b => b.y+b.h))-y };
+        const margin = 12 / Board.zoom;
+        const ownIds = new Set(groupMates.map(entry => entry.id));
+        const candidates = [...Board.spatialIndex.query({ x: moving.x-margin, y: moving.y-margin, w: moving.w+margin*2, h: moving.h+margin*2 })]
+          .filter(id => !ownIds.has(id)).map(id => Board.itemsById.get(id))
+          .filter(entry => entry && !entry.isPartition && entry.partitionId === item.partitionId)
+          .slice(0, 256).map(entry => boardItemBounds(entry));
+        const snap = adapter.snap(moving, candidates, Board.zoom);
+        dx += snap.dx; dy += snap.dy; snapLines = snap.lines;
+      }
       const deltas = constrainedBoardMoveDeltas(groupStartPositions, dx, dy);
+      if (adapter) {
+        const constrained = [...deltas.values()].some(delta => Math.abs(delta.dx-dx)>0.01 || Math.abs(delta.dy-dy)>0.01);
+        adapter.showGuides(constrained ? [] : snapLines, Board, document.getElementById('board-viewport'));
+      }
       groupStartPositions.forEach(({ item: gItem, startLeft, startTop }) => {
         const delta = deltas.get(gItem.id) || { dx, dy };
         gItem.x = Math.round(startLeft + delta.dx);
@@ -3666,10 +3710,11 @@ function makeBoardItemDraggable(el, item) {
     function onMove(ev) {
       if (Math.hypot(ev.clientX - startClientX, ev.clientY - startClientY) > 4) moved = true;
       markBoardInteraction();
-      moveRunner.push({ clientX: ev.clientX, clientY: ev.clientY });
+      moveRunner.push({ clientX: ev.clientX, clientY: ev.clientY, altKey: ev.altKey });
     }
     function onUp() {
       moveRunner.flush();
+      window.MesssCanvasPluginAdapter?.clearGuides();
       if (moved) {
         Board.lastDragEndedAt = Date.now();
         recordBoardMoveHistory(groupStartPositions);
@@ -3678,6 +3723,8 @@ function makeBoardItemDraggable(el, item) {
       el.classList.remove('is-dragging');
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
+      window.removeEventListener('blur', onUp);
+      document.removeEventListener('pointercancel', onUp);
       groupMates.forEach((gItem) => updateBoardItemIndex(gItem));
       groupEls.forEach((groupEl, id) => {
         groupEl.style.translate = '';
@@ -3694,6 +3741,8 @@ function makeBoardItemDraggable(el, item) {
     }
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
+    window.addEventListener('blur', onUp);
+    document.addEventListener('pointercancel', onUp);
   });
 
   addResizeHandles(el, item);
@@ -3702,6 +3751,15 @@ function makeBoardItemDraggable(el, item) {
 const DEFAULT_BOARD_ITEM_WIDTH = 220;
 const MIN_BOARD_ITEM_WIDTH = 90;
 const MAX_BOARD_ITEM_WIDTH = 900;
+
+// Match the moodboard DOM minimum so Leafer, controls and hit bounds stay aligned.
+function boardItemMinWidth(item) {
+  return item.isMoodboard ? 240 : item.isDoodle ? 4 : MIN_BOARD_ITEM_WIDTH;
+}
+
+function boardItemMinHeight(item) {
+  return item.isMoodboard ? 170 : item.isDoodle ? 4 : 40;
+}
 
 function startBoardSelectionResize(event, corner, group) {
   if (!event || event.button !== 0) return;
@@ -3740,9 +3798,10 @@ function startBoardSelectionResize(event, corner, group) {
 
   let minScale = 0;
   let maxScale = Infinity;
-  startFrames.forEach(({ item, width }) => {
-    const minWidth = item.isDoodle ? 4 : MIN_BOARD_ITEM_WIDTH;
-    minScale = Math.max(minScale, minWidth / Math.max(1, width));
+  startFrames.forEach(({ item, width, height }) => {
+    const minWidth = boardItemMinWidth(item);
+    minScale = Math.max(minScale, minWidth / Math.max(1, width),
+      item.isMoodboard ? boardItemMinHeight(item) / Math.max(1, height) : 0);
     maxScale = Math.min(maxScale, MAX_BOARD_ITEM_WIDTH / Math.max(1, width));
   });
 
@@ -3759,8 +3818,8 @@ function startBoardSelectionResize(event, corner, group) {
     startFrames.forEach(({ item, x, y, width, height }) => {
       item.x = Math.round(anchorX + (x - anchorX) * scale);
       item.y = Math.round(anchorY + (y - anchorY) * scale);
-      item.width = Math.max(item.isDoodle ? 4 : MIN_BOARD_ITEM_WIDTH, Math.round(width * scale));
-      item.height = Math.max(item.isDoodle ? 4 : 40, Math.round(height * scale));
+      item.width = Math.max(boardItemMinWidth(item), Math.round(width * scale));
+      item.height = Math.max(boardItemMinHeight(item), Math.round(height * scale));
       const element = groupElements.get(item.id);
       if (element) syncMountedBoardItemGeometry(element, item);
     });
@@ -3831,12 +3890,12 @@ function addResizeHandles(el, item) {
 
     const startClientX = e.clientX;
       const startClientY = e.clientY;
-      const startWidth = item.width || el.getBoundingClientRect().width / Board.zoom;
+      const startWidth = item.isMoodboard ? boardItemBounds(item).w : item.width || el.getBoundingClientRect().width / Board.zoom;
       const mediaAspectRatio = boardMediaResizeAspect(el, item);
       const locksMediaAspect = Number.isFinite(mediaAspectRatio) && mediaAspectRatio > 0;
       const startHeight = locksMediaAspect
         ? startWidth * mediaAspectRatio
-        : item.height || el.getBoundingClientRect().height / Board.zoom;
+        : item.isMoodboard ? boardItemBounds(item).h : item.height || el.getBoundingClientRect().height / Board.zoom;
       const startLeft = item.x;
       const startTop = item.y;
       const aspectRatio = locksMediaAspect ? mediaAspectRatio : startHeight / startWidth;
@@ -3848,8 +3907,8 @@ function addResizeHandles(el, item) {
       const resizeRunner = createLatestFrameRunner((point) => {
         const dx = ((point.clientX - startClientX) / Board.zoom) * signX;
         const dy = ((point.clientY - startClientY) / Board.zoom) * signY;
-        const minWidth = item.isDoodle ? 4 : MIN_BOARD_ITEM_WIDTH;
-        const minHeight = item.isDoodle ? 4 : 40;
+        const minWidth = boardItemMinWidth(item);
+        const minHeight = boardItemMinHeight(item);
         const widthFromX = startWidth + dx;
         const widthFromY = startWidth + dy / aspectRatio;
         const proportionalWidth = Math.abs(dx) >= Math.abs(dy / aspectRatio) ? widthFromX : widthFromY;
@@ -3938,18 +3997,22 @@ function exitBoardFullscreen() {
     whose element intersects it when the mouse is released gets selected �?    "鼠标在这个区域全选，只会全选在这里的文�? (only items physically
     inside the drawn box, nothing else). */
 function startBoxSelect(e) {
+  if (Board.cancelBoxSelect) Board.cancelBoxSelect();
+  cancelBoardViewportMotion();
   const viewport = document.getElementById('board-viewport');
   const startX = e.clientX, startY = e.clientY;
   const startWorld = clientToBoardCoords(startX, startY);
   const selectionPartition = boardPartitionAtPoint(startWorld);
   if (selectionPartition) setActiveBoardPartition(selectionPartition);
   else setActiveBoardPartition(null);
-  const initialSelected = e.shiftKey ? new Set(Board.selectedIds) : new Set();
-  const clearedIds = e.shiftKey ? new Set() : new Set(Board.selectedIds);
+  const actualSelected = new Set(AppState.boardItems.filter(item => item.selected).map(item => item.id));
+  const initialSelected = e.shiftKey ? actualSelected : new Set();
+  const clearedIds = e.shiftKey ? new Set() : new Set([...Board.selectedIds, ...actualSelected]);
   let previewIds = new Set(initialSelected);
 
   const box = document.createElement('div');
   box.className = 'board-select-box';
+  box.hidden = true;
   viewport.appendChild(box);
 
   if (!e.shiftKey) {
@@ -3969,38 +4032,36 @@ function startBoxSelect(e) {
 
   const selectRunner = createLatestFrameRunner((point) => {
     const ev = point;
+    // A click (or normal pointer jitter) must not paint a zero-size border.
+    const hasArea = Math.max(Math.abs(ev.clientX - startX), Math.abs(ev.clientY - startY)) >= 3;
     updateBox(ev);
+    box.hidden = !hasArea;
+    // Both ends must use the same camera as the screen-space marquee.
+    const currentStartWorld = clientToBoardCoords(startX, startY);
     const currentWorld = clientToBoardCoords(ev.clientX, ev.clientY);
     const worldRect = {
-      x: Math.min(startWorld.x, currentWorld.x),
-      y: Math.min(startWorld.y, currentWorld.y),
-      w: Math.max(0.001, Math.abs(currentWorld.x - startWorld.x)),
-      h: Math.max(0.001, Math.abs(currentWorld.y - startWorld.y))
+      x: Math.min(currentStartWorld.x, currentWorld.x),
+      y: Math.min(currentStartWorld.y, currentWorld.y),
+      w: Math.abs(currentWorld.x - currentStartWorld.x),
+      h: Math.abs(currentWorld.y - currentStartWorld.y)
     };
-    const nextIds = Board.spatialIndex.query(worldRect);
-    for (const id of [...nextIds]) {
-      const candidate = Board.itemsById.get(id);
-      if (!candidate || candidate.isPartition ||
-        (selectionPartition && candidate.partitionId !== selectionPartition.id)) {
-        nextIds.delete(id);
-      }
+    // Marquee selection is correctness-critical: use live model bounds, not
+    // virtualized DOM nodes or a potentially stale spatial-index candidate set.
+    // This stays O(n) once per animation frame with no DOM layout reads per item.
+    const nextIds = new Set();
+    for (const candidate of AppState.boardItems) {
+      if (!candidate || candidate.isPartition || !hasArea ||
+          (selectionPartition && candidate.partitionId !== selectionPartition.id)) continue;
+      if (BoardEngine.intersects(worldRect, boardItemBounds(candidate))) nextIds.add(candidate.id);
     }
     if (e.shiftKey) initialSelected.forEach((id) => nextIds.add(id));
 
     const changedIds = new Set(clearedIds);
     clearedIds.clear();
-    for (const id of previewIds) {
-      if (nextIds.has(id)) continue;
-      const item = Board.itemsById.get(id);
-      if (item) item.selected = false;
-      changedIds.add(id);
-    }
-    for (const id of nextIds) {
-      if (!previewIds.has(id)) {
-        const item = Board.itemsById.get(id);
-        if (item) item.selected = true;
-        changedIds.add(id);
-      }
+    for (const candidate of AppState.boardItems) {
+      const selected = nextIds.has(candidate.id);
+      if (Boolean(candidate.selected) !== selected || previewIds.has(candidate.id) !== selected) changedIds.add(candidate.id);
+      candidate.selected = selected;
     }
     previewIds = nextIds;
     if (changedIds.size) {
@@ -4025,13 +4086,49 @@ function startBoxSelect(e) {
       selectRunner.push({ clientX: ev.clientX, clientY: ev.clientY });
     }
     selectRunner.flush();
+    onCancel();
+  }
+  function onCancel() {
+    selectRunner.cancel();
     box.remove();
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
+    document.removeEventListener('pointercancel', onCancel);
+    window.removeEventListener('blur', onCancel);
+    if (Board.cancelBoxSelect === onCancel) Board.cancelBoxSelect = null;
     syncBoardSelectionClasses();
   }
+  Board.cancelBoxSelect = onCancel;
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup', onUp);
+  document.addEventListener('pointercancel', onCancel);
+  window.addEventListener('blur', onCancel);
+}
+
+function mountBoardItemAtPointer(event) {
+  const point = clientToBoardCoords(event.clientX,event.clientY);
+  let hit = null;
+  for (const item of AppState.boardItems) {
+    if (!item || item.isPartition) continue;
+    const b = boardItemBounds(item);
+    if(point.x<b.x || point.x>b.x+b.w || point.y<b.y || point.y>b.y+b.h)continue;
+    if (!hit || Number(item.zIndex || 1)>Number(hit.zIndex || 1) ||
+        (Number(item.zIndex || 1)===Number(hit.zIndex || 1) && String(item.id).localeCompare(String(hit.id))>0)) hit=item;
+  }
+  if(!hit)return null;
+  let element=Board.mounted.get(hit.id);
+  if(!element) {
+    element=createBoardItemElement(hit);
+    if(!element)return null;
+    element._boardItemRef=hit;
+    element._boardFileRef=Board.filesById.get(hit.fileId);
+    element._boardRenderSignature=boardItemRenderSignature(hit,element._boardFileRef);
+    document.getElementById('board-canvas').append(element);
+    Board.mounted.set(hit.id,element);
+    Board.mountQueue.delete(hit.id);
+  }
+  syncBoardElementViewportState(hit.id,element,true);
+  return element;
 }
 
 function initBoardCanvas() {
@@ -4212,6 +4309,21 @@ function initBoardCanvas() {
     // Plain left-click-drag on empty space now box-selects directly �?no
     // modifier key needed, since panning moved to Alt+drag/middle-click above.
     if (e.button === 0) {
+      const element = mountBoardItemAtPointer(e);
+      if (element) {
+        e.preventDefault(); e.stopPropagation();
+        element.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0,clientX:e.clientX,clientY:e.clientY,shiftKey:e.shiftKey,ctrlKey:e.ctrlKey,metaKey:e.metaKey}));
+        const click = up => {
+          window.removeEventListener('blur',cancel);
+          if(element.isConnected && Math.hypot(up.clientX-e.clientX,up.clientY-e.clientY)<3) {
+            element.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:up.clientX,clientY:up.clientY,shiftKey:e.shiftKey,ctrlKey:e.ctrlKey,metaKey:e.metaKey}));
+          }
+        };
+        const cancel = () => document.removeEventListener('mouseup',click);
+        document.addEventListener('mouseup',click,{once:true});
+        window.addEventListener('blur',cancel,{once:true});
+        return;
+      }
       startBoxSelect(e);
     }
   }, true);
@@ -4555,7 +4667,7 @@ function buildMiniVideoPlayer(result, f) {
   const video = document.createElement('video');
   video.src = result.url;
   video.preload = 'none';
-  video.muted = true;
+  video.muted = false;
   video.loop = true;
   video.draggable = false;
   video.playsInline = true;
@@ -4566,6 +4678,30 @@ function buildMiniVideoPlayer(result, f) {
 
   let wantsPreview = false;
   const abortController = new AbortController();
+  const sound = document.createElement('button');
+  sound.type = 'button';
+  sound.className = 'board-video-sound video-control-btn';
+  sound.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 5 6 9H3v6h3l5 4z"/><path class="sound-on" d="M15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12"/><path class="sound-off" d="m16 10 5 5m0-5-5 5"/></svg>';
+  const syncSound = () => {
+    const muted = video.muted || video.volume === 0;
+    sound.title = t(muted ? 'Unmute' : 'Mute', muted ? '开启声音' : '静音');
+    sound.setAttribute('aria-label', sound.title);
+    sound.querySelector('.sound-on').style.display = muted ? 'none' : '';
+    sound.querySelector('.sound-off').style.display = muted ? '' : 'none';
+  };
+  for (const type of ['pointerdown', 'mousedown', 'dblclick']) {
+    sound.addEventListener(type, event => event.stopPropagation(), { signal: abortController.signal });
+  }
+  sound.addEventListener('click', event => {
+    event.stopPropagation();
+    video.muted = !video.muted;
+    if (!video.muted && !video.volume) video.volume = 0.82;
+    if (video.paused) video.play().catch(() => {});
+    syncSound();
+  }, { signal: abortController.signal });
+  video.addEventListener('volumechange', syncSound, { signal: abortController.signal });
+  syncSound();
+  wrap.append(sound);
   let playRequest = 0;
   let playbackWatchdog = 0;
   let fallbackPromise = null;
@@ -4677,6 +4813,13 @@ function buildMiniVideoPlayer(result, f) {
     const settledPlay = Promise.resolve(playResult)
       .catch((error) => {
         if (!wantsPreview || request !== playRequest || cleanedUp) return;
+        // Autoplay permission is not a codec failure. Keep hover preview available.
+        if (error && error.name === 'NotAllowedError') {
+          clearPlaybackWatchdog();
+          video.muted = true;
+          video.play().catch(() => {});
+          return;
+        }
         if (error && error.name === 'NotSupportedError') {
           void recoverPlayableSource();
           return;
@@ -8402,15 +8545,24 @@ async function openAiComposerForSelection(kind, promptText = '', options = {}) {
 }
 
 function layoutMoodboardComposer(pop, anchor) {
+  if (pop._moodboardAnchor && pop._moodboardAnchor !== anchor && pop._disposeMoodboardLayout) {
+    pop._disposeMoodboardLayout();
+    pop._disposeMoodboardLayout = null;
+  }
   pop._moodboardAnchor = anchor;
+  const boardElement = anchor instanceof Element ? anchor.closest('.board-moodboard') : null;
+  const anchorRect = boardElement ? boardElement.getBoundingClientRect() : anchor;
   if (!pop._disposeMoodboardLayout) {
     const reposition = () => { if (pop.isConnected) layoutMoodboardComposer(pop, pop._moodboardAnchor); };
     const stopWheel = event => event.stopPropagation();
+    const observer = new ResizeObserver(reposition);
+    if (boardElement) observer.observe(boardElement);
     window.addEventListener('resize', reposition);
     pop.addEventListener('wheel', stopWheel, { passive: true });
     pop._disposeMoodboardLayout = () => {
       window.removeEventListener('resize', reposition);
       pop.removeEventListener('wheel', stopWheel);
+      observer.disconnect();
     };
   }
   pop.classList.add('is-moodboard-composer');
@@ -8420,10 +8572,13 @@ function layoutMoodboardComposer(pop, anchor) {
   const mode = pop.querySelector('.ai-composer-mode-row');
   const model = pop.querySelector('.ai-model-picker');
   const videoMode = pop.querySelector('.ai-video-mode-picker');
-  mode.after(model);
-  model.after(videoMode);
+  if (mode.nextElementSibling !== model) mode.after(model);
+  if (model.nextElementSibling !== videoMode) model.after(videoMode);
+  const close = pop.querySelector('.ai-composer-close');
+  if (close && close.parentElement !== mode) mode.append(close);
   const footer = pop.querySelector('.ai-composer-footer');
-  form.insertBefore(pop.querySelector('.ai-options-panel'), footer);
+  const optionsPanel = pop.querySelector('.ai-options-panel');
+  if (optionsPanel.nextElementSibling !== footer) form.insertBefore(optionsPanel, footer);
   if (!pop.querySelector('.moodboard-submit-label')) {
     const label = document.createElement('span');
     label.className = 'moodboard-submit-label';
@@ -8431,18 +8586,19 @@ function layoutMoodboardComposer(pop, anchor) {
     pop.querySelector('.ai-composer-submit').append(label);
   }
   const bounds = pop.offsetParent?.getBoundingClientRect() || { left: 0, top: 0, width: innerWidth, height: innerHeight };
-  const width = Math.min(360, bounds.width - 24);
-  const preferredLeft = anchor.right + 12;
+  const width = Math.max(1, Math.min(Math.max(260, Math.min(420, anchorRect.width || 360)), bounds.width - 24));
+  const heightLimit = Math.max(80, Math.min(Math.max(300, anchorRect.height || 540), 640, bounds.height - 24, innerHeight - 24));
+  const preferredLeft = anchorRect.right + 12;
   const left = preferredLeft + width <= Math.min(innerWidth, bounds.left + bounds.width) - 12
-    ? preferredLeft : anchor.left - width - 12;
+    ? preferredLeft : anchorRect.left - width - 12;
   pop.style.width = `${width}px`;
   pop.style.left = `${Math.max(12, Math.min(left - bounds.left, bounds.width - width - 12))}px`;
   pop.style.right = 'auto';
   pop.style.bottom = 'auto';
-  pop.style.maxHeight = `${Math.min(innerHeight, bounds.height) - 24}px`;
-  const top = Math.max(12, Math.min(anchor.top - bounds.top, bounds.height - pop.offsetHeight - 12));
+  pop.style.maxHeight = `${heightLimit}px`;
+  const top = Math.max(12, Math.min(anchorRect.top - bounds.top, bounds.height - pop.offsetHeight - 12));
   pop.style.top = `${top}px`;
-  pop.style.maxHeight = `${Math.max(80, Math.min(innerHeight - bounds.top, bounds.height) - top - 12)}px`;
+  pop.style.maxHeight = `${Math.max(80, Math.min(heightLimit, Math.min(innerHeight - bounds.top, bounds.height) - top - 12))}px`;
 }
 
 async function generatedReferenceData(fileIds) {
@@ -8889,6 +9045,7 @@ function showTextToolPanel(note, contentEl) {
 }
 
 function hideTextToolPanel() {
+  document.getElementById('text-color-popover')?.remove();
   activeTextNoteId = null;
   document.getElementById('text-tool-panel').hidden = true;
 }
@@ -8939,6 +9096,10 @@ function beginTextNoteEditing(note, contentEl) {
   if (noteEl) noteEl.classList.add('is-text-editing');
   contentEl.contentEditable = 'true';
   showTextToolPanel(note, contentEl);
+  if (window.MesssCanvasPluginAdapter?.beginText(note, contentEl, Board.leaferLayer?.getTextDrawable(note.id))) {
+    contentEl.contentEditable = 'false';
+    return;
+  }
   contentEl.focus();
   const selection = window.getSelection && window.getSelection();
   if (selection && document.createRange) {
@@ -8954,8 +9115,11 @@ function finishTextNoteEditing({ cancel = false } = {}) {
   const note = getActiveTextNote();
   if (!note) return;
   const { noteEl, contentEl } = activeTextNoteElements();
-  if (cancel) note.text = activeTextNoteOriginalText;
-  else note.text = String(contentEl && contentEl.textContent || note.text || '').replace(/\r/g, '');
+  const richFinished = window.MesssCanvasPluginAdapter?.finishText(cancel);
+  if (!richFinished) {
+    if (cancel) note.text = activeTextNoteOriginalText;
+    else note.text = String(contentEl && contentEl.textContent || note.text || '').replace(/\r/g, '');
+  }
   if (contentEl) {
     contentEl.textContent = note.text;
     contentEl.contentEditable = 'false';
@@ -9000,16 +9164,55 @@ function applyTextNoteStyle(note, contentEl) {
   el.style.color = note.noFill ? 'transparent' : displayColor;
   el.style.webkitTextStroke = note.noFill ? '1px ' + displayColor : '';
   el.style.textAlign = note.align;
+  window.MesssCanvasPluginAdapter?.applyTextStyle(note);
 }
 
 function getActiveTextNote() {
   return AppState.boardItems.find((b) => b.id === activeTextNoteId);
 }
 
+function openTextColorPopover() {
+  const previous=document.getElementById('text-color-popover');
+  if(previous){previous.remove();return;}
+  const input=document.getElementById('text-color-input');
+  const pop=document.createElement('div');pop.id='text-color-popover';pop.className='text-color-popover';
+  pop.setAttribute('data-rt-panel','true');pop.setAttribute('role','dialog');pop.setAttribute('aria-label',t('Text color','文字颜色'));
+  const palette=document.createElement('div');palette.className='text-color-palette';
+  const hex=document.createElement('input');hex.type='text';hex.maxLength=7;hex.setAttribute('aria-label','HEX');hex.spellcheck=false;
+  let rgb=[0,0,0];const sliders=[];
+  const render=value=>{
+    hex.value=value.toUpperCase();rgb=[1,3,5].map(i=>parseInt(value.slice(i,i+2),16));
+    sliders.forEach((slider,i)=>{slider.value=String(rgb[i]);slider.nextElementSibling.textContent=String(rgb[i]);});
+    palette.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.color===value.toLowerCase())));
+  };
+  const set=value=>{
+    if(!/^#[\da-f]{6}$/i.test(value))return;
+    input.value=value;render(value);input.dispatchEvent(new Event('input',{bubbles:true}));
+  };
+  for(const color of ['#ffffff','#15171c','#0057ff','#53b8dd','#ef6464','#f3bb52','#6bc597','#bb91dd']){
+    const b=document.createElement('button');b.type='button';b.dataset.color=color;b.title=color;b.setAttribute('aria-label',color);
+    b.style.background=color;b.addEventListener('mousedown',e=>e.preventDefault());b.addEventListener('click',()=>set(color));palette.append(b);
+  }
+  pop.append(palette,hex);
+  ['R','G','B'].forEach((channel,i)=>{
+    const label=document.createElement('label');label.textContent=channel;
+    const slider=document.createElement('input');slider.type='range';slider.min='0';slider.max='255';slider.step='1';slider.setAttribute('aria-label',channel);
+    const value=document.createElement('output');
+    slider.addEventListener('input',()=>{rgb[i]=Number(slider.value);value.textContent=slider.value;hex.value='#'+rgb.map(n=>n.toString(16).padStart(2,'0')).join('');});
+    slider.addEventListener('change',()=>set(hex.value));sliders.push(slider);label.append(slider,value);pop.append(label);
+  });
+  hex.addEventListener('change',()=>{if(/^#[\da-f]{6}$/i.test(hex.value))set(hex.value);else render(input.value);});
+  pop.addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Escape'){e.preventDefault();pop.remove();document.getElementById('text-color-swatch').focus();}});
+  document.body.append(pop);render(input.value);
+  const anchor=document.getElementById('text-color-swatch').getBoundingClientRect();
+  pop.style.left=`${Math.max(8,Math.min(innerWidth-pop.offsetWidth-8,anchor.right-pop.offsetWidth))}px`;
+  pop.style.top=`${Math.max(8,Math.min(innerHeight-pop.offsetHeight-8,anchor.top-pop.offsetHeight-10))}px`;
+}
+
 function initTextToolPanel() {
   document.addEventListener('pointerdown', (e) => {
     if (!activeTextNoteId) return;
-    if (e.target.closest('.board-text-note.is-text-editing, #text-tool-panel')) return;
+    if (e.target.closest('.board-text-note.is-text-editing, #text-tool-panel, #text-color-popover')) return;
     commitActiveTextNote();
   }, true);
   document.getElementById('text-font-select').addEventListener('change', (e) => {
@@ -9039,7 +9242,7 @@ function initTextToolPanel() {
     window.messsAPI.upsertBoardItem(note);
   });
   document.getElementById('text-color-swatch').addEventListener('click', () => {
-    document.getElementById('text-color-input').click();
+    openTextColorPopover();
   });
   document.getElementById('text-color-input').addEventListener('input', (e) => {
     const note = getActiveTextNote(); if (!note) return;

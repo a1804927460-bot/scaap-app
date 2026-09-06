@@ -1174,6 +1174,15 @@ function refreshStaticLanguage() {
   setTitleAndLabel('#doodle-confirm-btn', 'Confirm drawing', '确认绘制');
   setAttr('#text-font-select', 'title', 'Font', '字体');
   setAttr('#text-weight-select', 'title', 'Weight', '字重');
+  setTitleAndLabel('#text-italic', 'Italic', '斜体');
+  setTitleAndLabel('#text-underline', 'Underline', '下划线');
+  setText('#text-font-select option[value="inherit"]', 'Default', '默认');
+  setText('#text-font-select option:nth-child(2)', 'Mono', '等宽');
+  setText('#text-font-select option:nth-child(3)', 'Serif', '衬线');
+  setText('#text-weight-select option[value="400"]', 'Regular', '常规');
+  setText('#text-weight-select option[value="600"]', 'Medium', '中等');
+  setText('#text-weight-select option[value="700"]', 'Bold', '粗体');
+  setText('#text-weight-select option[value="900"]', 'Black', '特粗');
   setAttr('#text-color-swatch', 'title', 'Text color', '文字颜色');
   setAttr('#text-color-none', 'title', 'No fill', '无填充');
   setAttr('#text-align-left', 'title', 'Align left', '左对齐');

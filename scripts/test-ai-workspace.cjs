@@ -9,6 +9,10 @@ const {executeWork,materialize,createArtifactStore,parseWork}=require('../lib/ai
   try {
     const output=await executeWork(`const sum=uploads[0].content.split(',').map(Number).reduce((a,b)=>a+b,0);return {files:[{name:'report.csv',content:'total\\n'+sum},{name:'deck.pptx',type:'pptx',slides:[{title:'Data report',body:'Total: '+sum}]}]};`,[{name:'input.csv',content:'2,3,5'}]);
     const files=await materialize(output);
+    const extra=await materialize({files:[{name:'text.jpg',type:'image',text:'Hello',width:256,height:256},{name:'any.custom',base64:Buffer.from([0,1,255,128]).toString('base64')}]});
+    assert.equal((await require('sharp')(extra[0].data).metadata()).format,'jpeg');
+    assert.deepEqual(extra[1].data,Buffer.from([0,1,255,128]));
+    await assert.rejects(materialize({files:[{name:'bad.bin',base64:'broken==='}]}));
     assert.match(files[0].data.toString(),/10/);
     const zip=await JSZip.loadAsync(files[1].data);
     assert.ok(zip.file('ppt/presentation.xml'));

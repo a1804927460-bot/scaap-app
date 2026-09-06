@@ -1592,7 +1592,7 @@ function openBoardButlerExpandPanelLegacyPreview(anchor, file, item) {
 function closeBoardButlerExpandEditor() {
   const editor = boardButlerExpandEditor;
   boardButlerExpandEditor = null;
-  if (editor) editor.remove();
+  if (editor) { editor._cleanup?.(); editor.remove(); }
   if (boardButlerExpandEditorKeyHandler) {
     document.removeEventListener('keydown', boardButlerExpandEditorKeyHandler, true);
     boardButlerExpandEditorKeyHandler = null;
@@ -1639,6 +1639,106 @@ function keepBoardButlerExpandEditorInViewport(editor) {
 }
 
 function openBoardButlerExpandPanel(anchor, file, item) {
+  const viewport = document.getElementById('board-viewport');
+  if (!viewport || !item) return;
+  closeBoardButlerPanel(); closeBoardButlerExpandEditor(); closeBoardButlerMenu();
+  const editor = document.createElement('form');
+  editor.className = 'board-inline-resize';
+  editor.dataset.boardUiLayer = 'true';
+  editor.setAttribute('aria-label', t('Resize image', '修改尺寸'));
+  const frame = document.createElement('div'); frame.className = 'board-inline-resize-frame';
+  const toolbar = document.createElement('div'); toolbar.className = 'board-inline-resize-toolbar';
+  const ratioSelect = document.createElement('select'); ratioSelect.setAttribute('aria-label', t('Aspect ratio','尺寸比例'));
+  const sourceWidth = Number(file.sourceWidth) || 1024, sourceHeight = Number(file.sourceHeight) || 1024;
+  let width = Math.max(64, Math.min(4096, sourceWidth)), height = Math.max(64, Math.min(4096, sourceHeight));
+  let ratio = 0, drag = null;
+  for (const [label,value] of [[t('Free','自由'),0],[t('Original','原比例'),sourceWidth/sourceHeight],['1:1',1],['4:3',4/3],['3:4',3/4],['16:9',16/9],['9:16',9/16]]) {
+    const option=document.createElement('option'); option.textContent=label; option.value=String(value); ratioSelect.append(option);
+  }
+  const inputs = ['width','height'].map((name,index) => {
+    const input=document.createElement('input'); input.type='number'; input.name=name; input.min='64'; input.max='4096'; input.step='1';
+    input.setAttribute('aria-label',index ? t('Height','高度') : t('Width','宽度')); return input;
+  });
+  const separator=document.createElement('span'); separator.textContent='×';
+  const credits=document.createElement('output');
+  const cancel=document.createElement('button'); cancel.type='button'; cancel.innerHTML=BOARD_BUTLER_ICONS.close;
+  cancel.title=t('Cancel','取消'); cancel.setAttribute('aria-label',cancel.title);
+  const submit=document.createElement('button'); submit.type='submit'; submit.textContent=t('Apply','应用');
+  toolbar.append(ratioSelect,inputs[0],separator,inputs[1],credits,cancel,submit);
+  editor.append(frame,toolbar); viewport.append(editor);
+  editor._sourceItem=item; boardButlerExpandEditor=editor;
+  viewport.classList.add('is-board-expand-mode');
+  const paint = () => {
+    if (!editor.isConnected) return;
+    const bounds=boardItemBounds(item), zoom=Math.max(.001,Board.zoom);
+    const w=width/sourceWidth*bounds.w*zoom, h=height/sourceHeight*bounds.h*zoom;
+    const x=(bounds.x+bounds.w/2)*zoom+Board.panX-w/2;
+    const y=(bounds.y+bounds.h/2)*zoom+Board.panY-h/2;
+    Object.assign(frame.style,{left:`${x}px`,top:`${y}px`,width:`${w}px`,height:`${h}px`});
+    toolbar.style.maxWidth=`${Math.max(0,viewport.clientWidth-16)}px`;
+    const tw=toolbar.offsetWidth,th=toolbar.offsetHeight;
+    toolbar.style.left=`${Math.max(8,Math.min(viewport.clientWidth-tw-8,x+w/2-tw/2))}px`;
+    toolbar.style.top=`${Math.max(8,Math.min(viewport.clientHeight-th-8,y>=th+16 ? y-th-12 : y+h+12))}px`;
+  };
+  const setSize = (w,h,axis='width') => {
+    if (ratio) {
+      if(axis==='height') w=h*ratio; else h=w/ratio;
+      const scale=Math.min(1,4096/Math.max(w,h));w*=scale;h*=scale;
+      const minScale=Math.max(1,64/Math.min(w,h));w*=minScale;h*=minScale;
+    }
+    width=Math.max(64,Math.min(4096,Math.round(w)));height=Math.max(64,Math.min(4096,Math.round(h)));
+    inputs[0].value=String(width);inputs[1].value=String(height);
+    credits.textContent=`${boardButlerCreditsFromPtc((Math.max(width,height)>2048?.35:.20)+.013/7.3)} ${t('credits','积分')}`;
+    paint();
+  };
+  ratioSelect.addEventListener('change',()=>{ratio=Number(ratioSelect.value);setSize(width,height);});
+  inputs.forEach((input,i)=>input.addEventListener('change',()=>{
+    if(input.validity.valid && input.value) setSize(Number(inputs[0].value),Number(inputs[1].value),i?'height':'width');
+    else setSize(width,height);
+  }));
+  for(const [corner,sx,sy] of [['nw',-1,-1],['ne',1,-1],['sw',-1,1],['se',1,1]]) {
+    const handle=document.createElement('button');handle.type='button';handle.className=`board-smart-resize-handle is-${corner}`;
+    handle.setAttribute('aria-label',t(`Resize ${corner}`,`调整尺寸 ${corner}`));
+    handle.addEventListener('pointerdown',e=>{
+      if(e.button!==0)return;e.preventDefault();e.stopPropagation();
+      const bounds=boardItemBounds(item);
+      drag={id:e.pointerId,x:e.clientX,y:e.clientY,width,height,scaleX:bounds.w*Board.zoom/sourceWidth,scaleY:bounds.h*Board.zoom/sourceHeight};
+      handle.setPointerCapture(e.pointerId);
+    });
+    handle.addEventListener('pointermove',e=>{
+      if(!drag || drag.id!==e.pointerId)return;
+      const dx=(e.clientX-drag.x)*sx*2/Math.max(.001,drag.scaleX),dy=(e.clientY-drag.y)*sy*2/Math.max(.001,drag.scaleY);
+      setSize(Math.max(64,drag.width+dx),Math.max(64,drag.height+dy),Math.abs(dy)>Math.abs(dx)?'height':'width');
+    });
+    for(const event of ['pointerup','pointercancel','lostpointercapture'])handle.addEventListener(event,()=>{drag=null;});
+    handle.addEventListener('keydown',e=>{
+      if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;
+      e.preventDefault();e.stopPropagation();
+      const vertical=e.key==='ArrowUp'||e.key==='ArrowDown';
+      const delta=(e.key==='ArrowLeft'||e.key==='ArrowUp'?-1:1)*(e.shiftKey?100:10);
+      setSize(width+(vertical?0:delta),height+(vertical?delta:0),vertical?'height':'width');
+    });
+    frame.append(handle);
+  }
+  editor.addEventListener('pointerdown',e=>e.stopPropagation());
+  editor.addEventListener('click',e=>e.stopPropagation());
+  cancel.addEventListener('click',closeBoardButlerExpandEditor);
+  editor.addEventListener('submit',e=>{
+    e.preventDefault();if(drag || !editor.reportValidity())return;
+    if(launchBoardButlerImageTool('imageExpand',file,item,{width,height}))closeBoardButlerExpandEditor();
+  });
+  boardButlerExpandEditorKeyHandler=e=>{
+    if(e.key!=='Escape')return;e.preventDefault();e.stopImmediatePropagation();closeBoardButlerExpandEditor();
+  };
+  document.addEventListener('keydown',boardButlerExpandEditorKeyHandler,true);
+  const observer=new ResizeObserver(paint);observer.observe(viewport);
+  const stopWheel=e=>{if(drag){e.preventDefault();e.stopImmediatePropagation();}};
+  viewport.addEventListener('wheel',stopWheel,{capture:true,passive:false});
+  editor._layout=paint;editor._cleanup=()=>{observer.disconnect();viewport.removeEventListener('wheel',stopWheel,true);drag=null;};
+  setSize(width,height);
+}
+
+function openBoardButlerLegacyResizePanel(anchor, file, item) {
   const { panel, body } = createBoardButlerConfigPanel(anchor, BOARD_BUTLER_ICONS.imageLayer, t('Resize image', '修改尺寸'), '');
   panel.classList.add('board-smart-resize-panel');
   const form = document.createElement('form');
@@ -2954,6 +3054,14 @@ function openBoardButlerMenu(trigger, file, item) {
       { popup: 'dialog' }
     ));
   } else {
+    menu.appendChild(createBoardButlerMenuButton(
+      file,
+      'imageCrop',
+      '<img src="assets/icons/lucide/crop.svg" width="16" height="16" alt="">',
+      t('Crop image', '图片裁切', '이미지 자르기'),
+      () => { closeBoardButlerMenu(); void openBoardImageCrop(file, item); },
+      { popup: 'dialog' }
+    ));
     menu.appendChild(createBoardButlerMenuButton(
       file,
       'removeBackground',

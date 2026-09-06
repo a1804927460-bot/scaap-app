@@ -25,12 +25,12 @@ const submitStart = html.indexOf('id="ai-assistant-submit"');
 assert(footerStart >= 0 && modeStart > footerStart && submitStart > modeStart,
   'AI mode controls should live in the composer footer before the submit button');
 
-const quickActions = ['poster', 'logo', 'clarify', 'short-video'];
+const quickActions = ['music-cover', 'stage-visual', 'logo'];
 quickActions.forEach((action) => {
   assert(html.includes(`data-ai-quick-action="${action}"`), `missing ${action} quick action`);
 });
-assert.strictEqual((html.match(/data-ai-quick-action=/g) || []).length, 4,
-  'the AI home should expose exactly four quick actions');
+assert.strictEqual((html.match(/data-ai-quick-action=/g) || []).length, 3,
+  'the AI home should expose exactly three quick actions');
 assert.match(html, /data-assistant-kind="chat"[^>]*>Agent<\/button>/,
   'the chat mode should be labelled Agent');
 assert.match(html, /id="ai-assistant-upload"[\s\S]*?m21\.44 11\.05[\s\S]*?M18\.5 15\.5v5[\s\S]*?M16 18h5/,
@@ -56,8 +56,8 @@ assert.match(assistantSource, /function refreshAssistantOptionPickers[\s\S]*?fun
     `${kind} localization must not replace its SVG with text`);
 });
 
-assert(assistantSource.includes("button.dataset.aiQuickAction === 'poster'"),
-  'assistant language refresh should distinguish the two image quick actions');
+assert(assistantSource.includes("button.dataset.aiQuickAction === 'music-cover'") && assistantSource.includes("button.dataset.aiQuickAction === 'stage-visual'"),
+  'assistant language refresh should distinguish music cover and stage visual actions');
 assert(css.includes('.ai-assistant-footer-start { min-width: 0; margin-right: auto;'),
   'the AI footer tools should align to the lower left');
 assert(css.includes('.ai-assistant-home h2 { font-size: 24px; }'),

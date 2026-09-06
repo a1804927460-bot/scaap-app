@@ -125,6 +125,7 @@ function setAssistantFullscreen(expanded, options = {}) {
   }
   panel.classList.toggle('is-fullscreen', expanded);
   document.body.classList.toggle('is-ai-assistant-fullscreen', expanded);
+  button.hidden = expanded;
   button.title = t('Return to chat home', '返回对话首页');
   button.setAttribute('aria-label', button.title);
   const homeButton = document.getElementById('ai-assistant-home-button');

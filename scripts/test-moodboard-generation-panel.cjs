@@ -44,6 +44,29 @@ const { pathToFileURL } = require('node:url');
         }
       }
     }
-    console.log('Moodboard generation panel: real composer, image/video modes, both themes and viewport bounds passed.');
+    await page.setViewportSize({ width: 1200, height: 850 });
+    await page.evaluate(() => {
+      testPop._disposeMoodboardLayout(); testPop._disposeMoodboardLayout = null;
+      const board = document.createElement('div'); board.className = 'board-moodboard'; board.id = 'anchor-board';
+      board.style.cssText = 'position:absolute;left:40px;top:60px;width:320px;height:360px';
+      const trigger = document.createElement('button'); board.append(trigger); document.body.append(board);
+      layoutMoodboardComposer(testPop, trigger);
+    });
+    await page.waitForTimeout(100);
+    assert.equal(Math.round((await page.locator('#ai-image-popover').boundingBox()).width), 320);
+    await page.locator('#anchor-board').evaluate(el => { el.style.width = '400px'; el.style.height = '480px'; });
+    await page.waitForTimeout(100);
+    assert.equal(Math.round((await page.locator('#ai-image-popover').boundingBox()).width), 400);
+    for (const scroll of [0, 500]) {
+      await page.locator('#ai-image-popover').evaluate((el, scroll) => el.scrollTop = scroll, scroll);
+      const close = await page.locator('.ai-composer-close').boundingBox();
+      const modes = await page.locator('.ai-composer-mode').boundingBox();
+      assert.ok(Math.abs(close.y + close.height / 2 - modes.y - modes.height / 2) < 1);
+      assert.ok(close.x >= modes.x + modes.width);
+      assert.equal(await page.locator('.ai-composer-close').evaluate(el => { const r = el.getBoundingClientRect(); return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)); }), true);
+    }
+    await page.screenshot({ path: 'test-artifacts/moodboard-generation/anchored-scroll.png' });
+    await page.evaluate(() => testPop._disposeMoodboardLayout());
+    console.log('Moodboard generation panel: image/video, themes, bounds, live board sizing and aligned close button passed.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -35,7 +35,7 @@ const { pathToFileURL } = require('node:url');
     assert.deepEqual(await page.evaluate(() => generated.slice(0, 2)), ['image', 'Soft light, quiet space']);
     assert.equal(await button.textContent(), '');
     assert.equal(await button.getAttribute('aria-haspopup'), 'dialog');
-    assert.ok(await page.evaluate(() => generated[2].moodboardAnchor.width > 0));
+    assert.ok(await page.evaluate(() => generated[2].moodboardAnchor.getBoundingClientRect().width > 0));
     await page.evaluate(() => { testMoodboard.moodboardText = ''; });
     await button.click();
     assert.equal(await page.evaluate(() => editorOpened), true);

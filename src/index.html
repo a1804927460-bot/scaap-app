@@ -325,7 +325,6 @@
                 <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>
                 <span>New chat</span>
               </button>
-              <div class="ai-chat-history-heading">History</div>
               <div class="ai-chat-history-sections">
                 <section id="ai-chat-history-favorites" class="ai-chat-history-section ai-chat-history-pinned-section" data-history-section="pinned" aria-labelledby="ai-chat-history-pinned-label">
                   <div class="ai-chat-history-section-heading">
@@ -360,10 +359,9 @@
             <h2>Messs resolves your confusion.</h2>
             <p id="ai-assistant-dynamic-prompt" aria-live="polite">What should we solve today?</p>
             <div class="ai-assistant-quick-prompts">
-              <button type="button" data-ai-quick-action="poster" data-ai-kind="image" data-ai-quick="Help me create a professional poster.">生成海报</button>
-              <button type="button" data-ai-quick-action="logo" data-ai-kind="image" data-ai-quick="Help me design a clean and professional logo.">生成 LOGO</button>
-              <button type="button" data-ai-quick-action="clarify" data-ai-kind="chat" data-ai-quick="Help me organize this idea into a clear execution plan.">理清想法</button>
-              <button type="button" data-ai-quick-action="short-video" data-ai-kind="video" data-ai-quick="Generate a short video prompt with camera movement.">短视频</button>
+              <button type="button" data-ai-quick-action="music-cover" data-ai-kind="image" data-ai-quick="帮我设计一张音乐封面。">音乐封面</button>
+              <button type="button" data-ai-quick-action="stage-visual" data-ai-kind="image" data-ai-quick="帮我设计一张舞美视觉概念图。">舞美视觉</button>
+              <button type="button" data-ai-quick-action="logo" data-ai-kind="image" data-ai-quick="帮我设计一个简洁专业的 LOGO。">LOGO</button>
             </div>
           </div>
           <div id="ai-assistant-messages" class="ai-assistant-messages" hidden aria-live="polite"></div>
@@ -626,6 +624,8 @@
             <option value="700">Bold</option>
             <option value="900">Black</option>
           </select>
+          <button type="button" id="text-italic" class="text-tool-btn" title="Italic" aria-label="Italic"><img src="assets/icons/lucide/italic.svg" width="14" height="14" alt=""></button>
+          <button type="button" id="text-underline" class="text-tool-btn" title="Underline" aria-label="Underline"><img src="assets/icons/lucide/underline.svg" width="14" height="14" alt=""></button>
           <div class="text-tool-divider"></div>
           <button id="text-color-swatch" class="text-color-swatch" title="Text color" style="--text-swatch-color:#f3f3f3"></button>
           <input id="text-color-input" class="text-color-input-hidden" type="color" value="#f3f3f3" />
@@ -1031,6 +1031,7 @@
         </header>
         <div class="moodboard-agent-bar" role="toolbar" aria-label="Agent text actions">
           <span class="moodboard-agent-label">Agent</span>
+          <div id="moodboard-agent-presets" role="group" aria-label="Agent mode"></div>
           <button type="button" data-moodboard-agent-action="polish">Polish</button>
           <button type="button" data-moodboard-agent-action="shorten">Shorten</button>
           <button type="button" data-moodboard-agent-action="expand">Expand</button>
@@ -1040,15 +1041,6 @@
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3l1.7 5.1L19 10l-5.3 1.9L12 17l-1.7-5.1L5 10l5.3-1.9L12 3z"/><path d="M19 15l.9 2.6L22 18.5l-2.1.9L19 22l-.9-2.6-2.1-.9 2.1-.9L19 15z"/></svg>
             </button>
           </div>
-        </div>
-        <div id="moodboard-format-toolbar" class="moodboard-format-toolbar" role="toolbar" aria-label="Text formatting">
-          <select class="ql-header" aria-label="Text style"><option value="1"></option><option value="2"></option><option selected></option></select>
-          <button class="ql-bold" type="button" aria-label="Bold"></button>
-          <button class="ql-italic" type="button" aria-label="Italic"></button>
-          <button class="ql-list" value="ordered" type="button" aria-label="Numbered list"></button>
-          <button class="ql-list" value="bullet" type="button" aria-label="Bullet list"></button>
-          <button class="ql-blockquote" type="button" aria-label="Quote"></button>
-          <button class="ql-clean" type="button" aria-label="Clear formatting"></button>
         </div>
         <div class="moodboard-editor-workspace">
           <div id="moodboard-editor" class="moodboard-editor" aria-label="Moodboard text"></div>
@@ -1465,6 +1457,7 @@
   <script src="js/detail-panel.js"></script>
   <script src="js/board-engine.js"></script>
   <script src="js/board-media-meta.js"></script>
+  <script src="js/board-image-crop.js"></script>
   <script src="js/ai-provider-options.js"></script>
   <script src="js/canvas-workspace.js"></script>
   <script src="../node_modules/marked/lib/marked.umd.js"></script>
@@ -1472,6 +1465,8 @@
   <script src="js/vendor/perfect-freehand.js"></script>
   <script src="vendor/leafer-ui.web.min.js"></script>
   <script src="vendor/leafer-export.min.js"></script>
+  <script src="vendor/canvas-plugins.js"></script>
+  <script src="js/canvas-plugin-adapter.js"></script>
   <script src="js/board-leafer-layer.js"></script>
   <script src="../node_modules/quill/dist/quill.js"></script>
   <script src="js/moodboard.js"></script>
@@ -1480,6 +1475,7 @@
   <script src="js/panel-layout.js"></script>
   <script src="js/stats-detail.js"></script>
   <script src="js/ai-assistant.js"></script>
+  <script src="js/composer-actions.js"></script>
   <script src="js/updater.js"></script>
   <script src="js/activation.js"></script>
   <script src="js/app.js"></script>

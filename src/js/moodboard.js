@@ -12,7 +12,8 @@ const MoodboardEditorState = {
   quill: null,
   saveTimer: 0,
   suppressChange: false,
-  agentBusy: false
+  agentBusy: false,
+  agentModel: 'gemini-3.8-flash'
 };
 
 function normalizeMoodboardAttributes(value) {
@@ -169,7 +170,7 @@ function moodboardEnsureQuill() {
     theme: 'snow',
     formats: [...MOODBOARD_ALLOWED_FORMATS],
     modules: {
-      toolbar: '#moodboard-format-toolbar',
+      toolbar: false,
       history: { delay: 600, maxStack: 120, userOnly: true }
     },
     placeholder: t('Collect, compare, and refine text...', '收集、对比并筛选文字...')
@@ -223,6 +224,7 @@ function openMoodboardEditor(item) {
   quill.history.clear();
   MoodboardEditorState.suppressChange = false;
   titleInput.value = moodboardTitle(item);
+  renderMoodboardAgentPresets();
   renderMoodboardSuggestion(item);
   updateMoodboardEditorCount(item);
   moodboardSaveState(t('Saved', '已保存'), 'saved');
@@ -426,7 +428,7 @@ function buildBoardMoodboardElement(item) {
       return;
     }
     void openAiComposerForSelection('image', prompt, {
-      referenceFileIds: [], moodboardAnchor: generate.getBoundingClientRect()
+      referenceFileIds: [], moodboardAnchor: generate
     }).catch(error => showToast(error.message || t('Could not open generation settings.', '无法打开生成设置。'), 'AI'));
   });
   header.append(icon, title, open, generate);
@@ -475,8 +477,42 @@ function activeMoodboardItem() {
   return AppState.boardItems.find((entry) => entry.id === MoodboardEditorState.itemId && entry.isMoodboard) || null;
 }
 
+function renderMoodboardAgentPresets() {
+  const host = document.getElementById('moodboard-agent-presets');
+  if (!host) return;
+  host.replaceChildren();
+  host.setAttribute('aria-label', t('Agent mode', 'Agent 模式'));
+  const providers = canvasAgentChatProviders();
+  MesssAiProviderOptions.chatPresets.slice(0, 2).forEach((preset) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.moodboardModel = preset.model;
+    button.disabled = MoodboardEditorState.agentBusy || !providers.some(entry => entry.model === preset.model);
+    button.setAttribute('aria-pressed', String(MoodboardEditorState.agentModel === preset.model));
+    const icon = document.createElement('img');
+    icon.src = `assets/icons/lucide/${preset.icon}.svg`;
+    icon.alt = '';
+    const label = document.createElement('span');
+    label.textContent = t(preset.en, preset.zh);
+    button.append(icon, label);
+    button.addEventListener('click', () => {
+      MoodboardEditorState.agentModel = preset.model;
+      renderMoodboardAgentPresets();
+    });
+    host.append(button);
+  });
+}
+
+function moodboardRevisionBody(text, title) {
+  const lines = String(text || '').trim().split('\n');
+  const heading = lines[0].trim().replace(/^#{1,6}\s+/, '').replace(/^\*\*(.*)\*\*$/, '$1');
+  if (heading === String(title || '').trim()) lines.shift();
+  return lines.join('\n').trim().slice(0, MOODBOARD_TEXT_LIMIT);
+}
+
 function setMoodboardAgentBusy(busy) {
   MoodboardEditorState.agentBusy = busy;
+  renderMoodboardAgentPresets();
   document.querySelectorAll('[data-moodboard-agent-action], #moodboard-agent-submit').forEach((button) => {
     button.disabled = busy;
   });
@@ -495,6 +531,11 @@ async function requestMoodboardAgentOptimization(action, customInstruction = '')
     showToast(t('Agent is unavailable.', 'Agent 当前不可用。'));
     return null;
   }
+  const provider = canvasAgentChatProviders().find(entry => entry.model === MoodboardEditorState.agentModel);
+  if (!provider) {
+    showToast(t('The selected Agent mode is unavailable.', '所选 Agent 模式暂不可用。'));
+    return null;
+  }
   const instructions = {
     polish: t('Polish the wording while preserving its intent, concrete details, and tone.', '润色文字，保留原意、具体细节和语气。'),
     shorten: t('Condense the text, remove repetition, and preserve all important information.', '精简文字，删除重复表达，保留全部重要信息。'),
@@ -511,7 +552,7 @@ async function requestMoodboardAgentOptimization(action, customInstruction = '')
     'You are refining a text-only creative moodboard.',
     locale,
     instruction,
-    'Return only the revised text. Do not add commentary, costs, model names, or image-generation instructions.',
+    'Return only the revised body text. Do not repeat the moodboard title. Do not add commentary, costs, model names, or image-generation instructions.',
     `Moodboard title: ${moodboardTitle(item)}`,
     'Text:',
     sourceText
@@ -522,6 +563,12 @@ async function requestMoodboardAgentOptimization(action, customInstruction = '')
   );
   setMoodboardAgentBusy(true);
   try {
+    if (CanvasWorkspace.agentBusy) return null;
+    CanvasWorkspace.agentChatProviderId = provider.providerId;
+    CanvasWorkspace.agentChatModel = provider.model;
+    CanvasWorkspace.agentChatUsePreset = true;
+    CanvasWorkspace.agentMode = 'chat';
+    renderCanvasAgentModels();
     if (typeof setCanvasAgentOpen === 'function') setCanvasAgentOpen(true);
     return await requestCanvasAgentText({
       displayPrompt,
@@ -530,7 +577,7 @@ async function requestMoodboardAgentOptimization(action, customInstruction = '')
       focusInput: false,
       onResponse: (responseText) => {
         item.moodboardSuggestion = {
-          text: String(responseText || '').trim().slice(0, MOODBOARD_TEXT_LIMIT),
+          text: moodboardRevisionBody(responseText, moodboardTitle(item)),
           action,
           createdAt: new Date().toISOString()
         };
@@ -574,6 +621,7 @@ function removeMoodboardSuggestion() {
 }
 
 function refreshMoodboardLanguage() {
+  renderMoodboardAgentPresets();
   const button = document.getElementById('board-tool-moodboard');
   if (button) {
     button.title = t('Text moodboard', '文字情绪板');

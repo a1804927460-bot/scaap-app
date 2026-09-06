@@ -1,0 +1,139 @@
+'use strict';
+
+let boardImageCrop = null;
+let boardImageCropBundle = null;
+
+function loadBoardImageCropPlugin() {
+  if (!boardImageCropBundle) {
+    boardImageCropBundle = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'vendor/canvas-crop.js';
+      script.onload = resolve;
+      script.onerror = () => { script.remove(); boardImageCropBundle = null; reject(new Error('Crop editor could not be loaded.')); };
+      document.head.append(script);
+    });
+  }
+  return boardImageCropBundle;
+}
+
+function closeBoardImageCrop() {
+  const state = boardImageCrop;
+  if (!state || state.saving) return;
+  boardImageCrop = null;
+  state.abort.abort();
+  state.observer?.disconnect();
+  state.app?.destroy();
+  state.image.src = '';
+  state.overlay.remove();
+}
+
+async function openBoardImageCrop(file, item) {
+  if (boardImageCrop?.saving) return;
+  closeBoardImageCrop();
+  closeBoardButlerExpandEditor();
+  const viewport = document.getElementById('board-viewport');
+  if (!viewport || !file?.url || !item) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'board-image-crop';
+  overlay.dataset.boardUiLayer = 'true';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-label', t('Crop image', '图片裁切'));
+  const surface = document.createElement('div'); surface.className = 'board-image-crop-surface';
+  const toolbar = document.createElement('div'); toolbar.className = 'board-image-crop-toolbar';
+  const label = document.createElement('span'); label.textContent = t('Crop image', '图片裁切');
+  const ratios = document.createElement('select'); ratios.setAttribute('aria-label', t('Aspect ratio', '裁切比例'));
+  for (const [value, title] of [['', t('Free', '自由')], ['original', t('Original', '原比例')], ['1:1', '1:1'], ['4:3', '4:3'], ['3:4', '3:4'], ['16:9', '16:9'], ['9:16', '9:16']]) {
+    const option = document.createElement('option'); option.value = value; option.textContent = title; ratios.append(option);
+  }
+  const status = document.createElement('output'); status.textContent = t('Loading...', '加载中...');
+  const action = (icon, title) => {
+    const button = document.createElement('button'); button.type = 'button'; button.title = title; button.setAttribute('aria-label', title);
+    const image = document.createElement('img'); image.src = `assets/icons/lucide/${icon}.svg`; image.alt = ''; button.append(image); return button;
+  };
+  const reset = action('rotate-ccw', t('Reset', '重置'));
+  const cancel = action('x', t('Cancel', '取消'));
+  const apply = action('check', t('Apply crop', '确认裁切'));
+  ratios.disabled = reset.disabled = apply.disabled = true;
+  toolbar.append(label, ratios, status, reset, cancel, apply);
+  overlay.append(surface, toolbar); viewport.append(overlay);
+  const state = { overlay, image: new Image(), abort: new AbortController(), app: null, saving: false, canvasId: activeCanvasId() };
+  boardImageCrop = state;
+  const signal = state.abort.signal;
+  cancel.addEventListener('click', closeBoardImageCrop);
+  window.addEventListener('keydown', event => {
+    event.stopImmediatePropagation();
+    if (event.key === 'Escape') { event.preventDefault(); closeBoardImageCrop(); }
+  }, { capture: true, signal });
+  overlay.addEventListener('wheel', event => { event.preventDefault(); event.stopPropagation(); }, { passive: false, signal });
+  try {
+    state.image.crossOrigin = 'anonymous';
+    state.image.src = file.url;
+    await Promise.all([loadBoardImageCropPlugin(), state.image.decode()]);
+    if (signal.aborted) return;
+    const sw = state.image.naturalWidth, sh = state.image.naturalHeight;
+    if (!sw || !sh || sw * sh > 40000000) throw new Error(t('This image exceeds the 40 MP crop limit.', '这张图片超出 4000 万像素裁切上限。'));
+    const bounds = boardItemBounds(item);
+    const scale = Math.min(bounds.w * Board.zoom / sw, (viewport.clientWidth - 48) / sw, (viewport.clientHeight - 120) / sh);
+    if (!(scale > 0)) throw new Error(t('The canvas is too small.', '画布视窗过小。'));
+    const width = sw * scale, height = sh * scale;
+    const x = Math.max(24, Math.min(viewport.clientWidth - width - 24, bounds.x * Board.zoom + Board.panX));
+    const y = Math.max(70, Math.min(viewport.clientHeight - height - 24, bounds.y * Board.zoom + Board.panY));
+    const accent = getComputedStyle(viewport).getPropertyValue('--accent').trim() || '#53b8dd';
+    const app = state.app = new MesssCanvasCrop.App({ view: surface, width: viewport.clientWidth, height: viewport.clientHeight,
+      tree: {}, sky: {}, editor: { stroke: accent, pointSize: 7, rotateable: false, skewable: false, keyEvent: true, buttons: [] } });
+    const { ClipImage, ClipResizeEditor } = MesssCanvasCrop;
+    ClipImage.setEditInner(ClipResizeEditor.prototype.tag);
+    const node = state.node = new ClipImage({ url: file.url, x, y, width, height, editable: true });
+    app.tree.add(node);
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    if (signal.aborted) return;
+    app.editor.openInnerEditor(node, true);
+    const updateStatus = () => { status.textContent = `${Math.max(1, Math.round(node.width / scale))} x ${Math.max(1, Math.round(node.height / scale))}`; };
+    node.on(MesssCanvasCrop.PropertyEvent.CHANGE, updateStatus);
+    updateStatus();
+    ratios.disabled = reset.disabled = apply.disabled = false;
+    ratios.addEventListener('change', () => {
+      const inner = app.editor.innerEditor;
+      if (!inner) return;
+      node.lockRatio = !!ratios.value;
+      if (ratios.value) inner.updateClipRatio(ratios.value === 'original' ? `${sw}:${sh}` : ratios.value);
+      updateStatus();
+    });
+    reset.addEventListener('click', () => { app.editor.innerEditor?.reset(); ratios.value = ''; node.lockRatio = false; updateStatus(); });
+    apply.addEventListener('click', async () => {
+      if (state.saving) return;
+      state.saving = true;
+      ratios.disabled = reset.disabled = apply.disabled = cancel.disabled = true;
+      status.textContent = t('Saving...', '保存中...');
+      try {
+        app.editor.closeInnerEditor();
+        node.visible = true;
+        if (node.width * node.height / (scale * scale) > 40000000) throw new Error(t('Crop area is too large.', '裁切区域过大。'));
+        const exported = await node.export('png', { pixelRatio: 1 / scale, trim: false });
+        const result = await window.messsAPI.importCroppedImage({ dataUrl: exported.data, canvasId: state.canvasId, folderId: AppState.activeFolderId });
+        if (!result?.ok || !result.file) throw new Error(t('Could not save the cropped image.', '裁切图片保存失败。'));
+        AppState.files = [result.file, ...AppState.files.filter(entry => entry.id !== result.file.id)];
+        if (state.canvasId === activeCanvasId()) {
+          await addFileToBoard(result.file.id, bounds.x + bounds.w + 32, bounds.y, { partitionId: item.partitionId });
+        }
+        if (typeof renderFileList === 'function') renderFileList(currentFileListScope());
+        state.saving = false;
+        closeBoardImageCrop();
+        showToast(t('Cropped image saved. Original preserved.', '裁切图片已保存，原图已保留。'));
+      } catch (error) {
+        state.saving = false;
+        ratios.disabled = reset.disabled = apply.disabled = cancel.disabled = false;
+        app.editor.openInnerEditor(node, true);
+        status.textContent = t('Not saved', '未保存');
+        showToast(error.message || t('Crop failed.', '裁切失败。'));
+      }
+    });
+    const vw = viewport.clientWidth, vh = viewport.clientHeight;
+    state.observer = new ResizeObserver(() => {
+      if (!overlay.isConnected || viewport.clientWidth !== vw || viewport.clientHeight !== vh) closeBoardImageCrop();
+    });
+    state.observer.observe(viewport);
+  } catch (error) {
+    if (!signal.aborted) { closeBoardImageCrop(); showToast(error.message || t('Crop editor failed.', '裁切编辑器加载失败。')); }
+  }
+}

@@ -40,6 +40,7 @@ const extract = (file, start, end) => {
         const option = event.target.closest('[data-agent-chat-model]');
         if (!option) return;
         CanvasWorkspace.agentMode = 'chat';
+        CanvasWorkspace.agentChatUsePreset = false;
         CanvasWorkspace.agentChatModel = option.dataset.agentChatModel;
         CanvasWorkspace.agentChatProviderId = option.dataset.agentChatProviderId;
         renderCanvasAgentModels();
@@ -57,7 +58,21 @@ const extract = (file, start, end) => {
         assert.equal(await page.evaluate(id => id === 'ai-assistant-model-menu'
           ? document.getElementById('ai-assistant-model').value.split('::')[1]
           : CanvasWorkspace.agentChatModel, menu), model);
+        const labelId = menu === 'ai-assistant-model-menu' ? 'ai-assistant-model-label' : 'board-agent-model-label';
+        const expected = { 'gemini-3.8-flash': '\u5feb\u901f', 'gemini-3.1-pro': '\u5747\u8861', 'gpt-5.6-sol': '\u6781\u81f4' }[model];
+        assert.equal(await page.locator(`#${labelId}`).textContent(), expected);
+        assert.equal(await page.locator(`#${menu} .ai-chat-preset.is-active, #${menu} .ai-model-picker-option.is-active, #${menu} [data-agent-chat-model].is-active`).count(), 1);
       }
+      await page.locator(`#${menu}`).evaluate(el => { el.hidden = false; });
+      const named = menu === 'ai-assistant-model-menu'
+        ? `#${menu} .ai-model-picker-option[data-value="chat-0::gemini-3.8-flash"]`
+        : `#${menu} [data-agent-chat-model="gemini-3.8-flash"]`;
+      await page.locator(named).click();
+      await page.evaluate(id => id === 'ai-assistant-model-menu' ? renderAssistantModels() : renderCanvasAgentModels(), menu);
+      assert.equal(await page.locator(`#${menu} .ai-chat-preset.is-active`).count(), 0);
+      assert.equal(await page.locator(named).evaluate(el => el.classList.contains('is-active')), true);
+      const labelId = menu === 'ai-assistant-model-menu' ? 'ai-assistant-model-label' : 'board-agent-model-label';
+      assert.notEqual(await page.locator(`#${labelId}`).textContent(), '\u5feb\u901f');
       await page.locator(`#${menu}`).evaluate(el => { el.hidden = false; });
     }
     assert.equal(await page.locator('.ai-model-picker-option').count(), 4);
