@@ -864,7 +864,7 @@ function aireiterOutputUrl(payload) {
       const found = visit(value[key], seen, depth + 1);
       if (found) return found;
     }
-    for (const key of ['data', 'result', 'response', 'output', 'outputs', 'task', 'content']) {
+    for (const key of ['data', 'result', 'response', 'output', 'outputs', 'video', 'task', 'content']) {
       const found = visit(value[key], seen, depth + 1);
       if (found) return found;
     }
@@ -874,9 +874,7 @@ function aireiterOutputUrl(payload) {
 }
 
 function aireiterTaskStatus(payload) {
-  const raw = nestedVideoTaskValue(payload, [
-    'task_status', 'taskStatus', 'task_state', 'taskState', 'status', 'state'
-  ]);
+  const raw = videoTaskStateValue(payload);
   const numeric = Number(raw);
   if (Number.isFinite(numeric)) {
     if (numeric === 2) return 'succeeded';
@@ -1520,10 +1518,31 @@ function providerVideoTaskId(payload) {
 }
 
 function providerVideoTaskStatus(payload) {
-  return normalizeVideoTaskStatus(nestedVideoTaskValue(payload, [
+  return normalizeVideoTaskStatus(videoTaskStateValue(payload));
+}
+
+function videoTaskStateValue(payload) {
+  const explicit = nestedVideoTaskValue(payload, [
     'task_status', 'taskStatus', 'prediction_status', 'predictionStatus',
-    'task_state', 'taskState', 'status', 'state'
-  ]));
+    'task_state', 'taskState'
+  ]);
+  if (explicit !== undefined) return explicit;
+  // Query envelope success must never override the nested task status.
+  const visit = (value, depth = 0) => {
+    if (!value || typeof value !== 'object' || depth > 7) return undefined;
+    for (const key of VIDEO_TASK_WRAPPER_KEYS) {
+      const nested = visit(value[key], depth + 1);
+      if (nested !== undefined) return nested;
+    }
+    for (const key of ['status', 'state']) {
+      const state = value[key];
+      if (state === undefined || state === null || !String(state).trim()) continue;
+      if (Number.isFinite(Number(state)) && Number(state) >= 100) continue;
+      return state;
+    }
+    return undefined;
+  };
+  return visit(payload);
 }
 
 function providerVideoResultUrl(payload) {
@@ -2958,9 +2977,8 @@ async function pollAireiterVideoTask(provider, taskId, signal) {
     return resultUrl
       ? { status, resultUrl }
       : {
-          status: 'failed',
-          errorCode: 'provider-result-missing',
-          errorMessage: 'The completed video task did not return a file.'
+          status: 'running',
+          retryAfterMs: 3_000
         };
   }
   if (TERMINAL_VIDEO_FAILURES.has(status)) {

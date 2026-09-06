@@ -269,7 +269,7 @@ test('AI Reiter video tasks stay pinned to their accepted route', async () => {
         return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
       }
       if (value.endsWith('/api/openapi/query')) {
-        return jsonResponse({ statusCode: 200, data: {
+        return jsonResponse({ statusCode: 200, status: 200, data: {
           status: 'completed', output: [{ url: 'https://assets.example.com/result.mp4' }]
         } });
       }
@@ -294,6 +294,22 @@ test('AI Reiter video tasks stay pinned to their accepted route', async () => {
       status: 'succeeded', resultUrl: 'https://assets.example.com/result.mp4'
     });
     assert.equal(calls.some((call) => call.url.includes('api.minimaxi.com')), false);
+  }).finally(() => { globalThis.fetch = previousFetch; });
+});
+
+test('AI Reiter H3 publishes nested video outputs without resubmission', async () => {
+  const previousFetch = globalThis.fetch;
+  await withEnvironment({ AIREITER_API_KEY: 'aireiter-key', AIREITER_TRAFFIC_PERCENT: '100' }, async () => {
+    let output = [];
+    globalThis.fetch = async (url) => {
+      assert.ok(String(url).endsWith('/api/openapi/query'));
+      return jsonResponse({ statusCode: 200, data: { status: 'completed', output } });
+    };
+    assert.deepEqual(await pollVideoTask('video-1', 'h3-existing-task'), { status: 'running', retryAfterMs: 3000 });
+    for (const video of ['https://assets.example.com/h3.mp4', { url: 'https://assets.example.com/h3.mp4' }, [{ url: 'https://assets.example.com/h3.mp4' }]]) {
+      output = [{ video }];
+      assert.deepEqual(await pollVideoTask('video-1', 'h3-existing-task'), { status: 'succeeded', resultUrl: 'https://assets.example.com/h3.mp4' });
+    }
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
