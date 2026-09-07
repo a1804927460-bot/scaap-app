@@ -374,7 +374,11 @@ function retryableProviderError(error) {
 async function processClaimedJob(job, pollVideoTask, fetchImpl, now) {
   const jobStartedAt = new Date(job.createdAt).getTime();
   const elapsedMs = () => Math.max(0, Date.now() - (Number.isFinite(jobStartedAt) ? jobStartedAt : Date.now()));
-  if (!job.deadlineAt || new Date(job.deadlineAt).getTime() <= now()) {
+  const deadline = new Date(job.deadlineAt).getTime();
+  const deadlineExpired = !Number.isFinite(deadline) || deadline <= now();
+  // A local deadline is not proof that an accepted provider job failed. A
+  // restarted worker must still retrieve completed results and retry storage.
+  if (deadlineExpired && !job.providerTaskId) {
     await finalizeVideoJob({
       requestId: job.requestId,
       leaseToken: job.leaseToken,
@@ -440,7 +444,10 @@ async function processClaimedJob(job, pollVideoTask, fetchImpl, now) {
       return 'failed';
     }
     if (!status || ACTIVE_PROVIDER_STATES.has(status)) {
-      await rescheduleVideoJob(job.requestId, job.leaseToken, providerPollDelayMs(result), null, fetchImpl);
+      await rescheduleVideoJob(job.requestId, job.leaseToken,
+        deadlineExpired ? Math.max(60_000, providerPollDelayMs(result)) : providerPollDelayMs(result),
+        deadlineExpired ? {code:'video-provider-recovery-pending', message:'The accepted video task is still being verified.'} : null,
+        fetchImpl);
       return 'pending';
     }
     await finalizeVideoJob({

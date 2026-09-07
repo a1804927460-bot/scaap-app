@@ -331,7 +331,10 @@ function readVideoTaskToken(taskToken, userId, key, now = Date.now()) {
 }
 
 function assertStrictBase64(value) {
-  if (!value || value.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+  // Repeating a four-character group exhausts V8's regexp stack on ordinary
+  // multi-megabyte media. Flat character runs keep validation stack-bounded;
+  // the decoder round trip below still rejects non-canonical padding bits.
+  if (!value || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
     throw toolError('invalid-image-data', 'The image data is not valid base64.', 400);
   }
 }
