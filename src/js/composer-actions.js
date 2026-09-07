@@ -1,6 +1,28 @@
 'use strict';
 async function chatWithAgentEstimate(pending, request) {
   let finished=false;
+  request = { ...request, workRequestId: request.workRequestId || crypto.randomUUID() };
+  const unsubscribe = window.messsAPI.onAiChatDelta?.(event => {
+    if (finished || !pending.isConnected || event?.requestId !== request.workRequestId || typeof event.text !== 'string') return;
+    const body = pending.querySelector('.ai-assistant-message-body') || pending;
+    const scroller = pending.closest('.ai-assistant-messages, .board-agent-messages');
+    const follow = scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 64;
+    pending.dataset.streaming = 'true';
+    pending.classList.add('is-streaming');
+    body.textContent = event.text;
+    if (follow) scroller.scrollTop = scroller.scrollHeight;
+  });
+  const unsubscribeWork = window.messsAPI.onAiWorkProgress?.(event => {
+    if (finished || !pending.isConnected || event?.requestId !== request.workRequestId) return;
+    const status = {
+      approval: t('Waiting for execution approval...', '等待执行确认...'),
+      executing: t('Executing file task...', '正在执行文件任务...'),
+      saving: t('Saving generated files...', '正在保存生成文件...')
+    }[event.phase];
+    if (!status) return;
+    pending.dataset.streaming = 'true';
+    (pending.querySelector('.ai-assistant-message-body') || pending).textContent = status;
+  });
   const estimate=document.createElement('span');estimate.className='agent-task-credit-range';
   estimate.textContent=t('Estimating credits...', '正在估算积分...');
   pending.dataset.creditEstimate=estimate.textContent;
@@ -12,7 +34,15 @@ async function chatWithAgentEstimate(pending, request) {
     pending.dataset.creditEstimate=estimate.textContent;
   }).catch(()=>{if(!finished && pending.isConnected)pending.dataset.creditEstimate=t('Estimate unavailable','暂无法估算积分');});
   try {return await window.messsAPI.chatWithAi(request);}
-  finally {finished=true;delete pending.dataset.creditEstimate;pending.removeAttribute('title');}
+  finally {
+    finished=true;
+    unsubscribe?.();
+    unsubscribeWork?.();
+    delete pending.dataset.creditEstimate;
+    delete pending.dataset.streaming;
+    pending.classList.remove('is-streaming');
+    pending.removeAttribute('title');
+  }
 }
 
 window.MesssComposerActions = (() => {

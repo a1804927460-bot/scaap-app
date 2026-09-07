@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import chatStream from '../lib/chat-stream.js';
 
 if (process.env.MESSS_LIVE_CHAT_AUDIT !== '1') throw new Error('Set MESSS_LIVE_CHAT_AUDIT=1 to allow paid upstream chat smoke tests.');
 const project = process.env.SUPABASE_URL;
@@ -25,16 +26,25 @@ try {
   });
   if (!login.ok) throw new Error(`Audit login HTTP ${login.status}`);
   const session = await login.json();
+  const streaming = process.env.MESSS_LIVE_CHAT_STREAM === '1';
+  const prompt = streaming ? 'Explain how a queue works in six short sentences. Use plain language.' : 'Reply with OK only.';
   for (const strategy of ['fast','balanced','ultimate']) {
     const started=Date.now(), requestId=randomUUID();
+    let firstDeltaMs=null, deltaCount=0;
     const response=await fetch(`${gateway}/v1/chat`,{
-      method:'POST',headers:{Authorization:`Bearer ${session.access_token}`,'Content-Type':'application/json','X-Request-Id':requestId},
+      method:'POST',headers:{Authorization:`Bearer ${session.access_token}`,'Content-Type':'application/json','X-Idempotency-Key':requestId,
+        Accept:streaming?'text/event-stream':'application/json'},
       body:JSON.stringify({providerId:'chat-6',model:'gemini-3.8-flash',routingStrategy:strategy,
-        prompt:'Reply with OK only.',messages:[{role:'user',content:'Reply with OK only.'}]}),
+        prompt,messages:[{role:'user',content:prompt}]}),
       signal:AbortSignal.timeout(120000)
     });
-    const result=await response.json();
+    const headersMs=Date.now()-started;
+    if(streaming && !/text\/event-stream/i.test(response.headers.get('content-type')||'')) throw new Error(`SSE not enabled (HTTP ${response.status})`);
+    const result=streaming?await chatStream.readGatewayChatStream(response,text=>{
+      if(text){firstDeltaMs??=Date.now()-started;deltaCount++;}
+    }):await response.json();
     console.log(JSON.stringify({strategy,requestId,status:response.status,durationMs:Date.now()-started,
+      ...(streaming?{headersMs,firstDeltaMs,deltaCount}:{}),
       ok:response.ok&&Boolean(result.text?.trim()),code:result.code,usage:result.usage}));
     if (!response.ok || !result.text?.trim()) throw new Error('Live chat route failed');
   }

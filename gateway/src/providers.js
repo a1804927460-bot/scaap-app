@@ -3104,7 +3104,7 @@ export async function pollVideoTask(providerId, taskId, signal) {
   });
 }
 
-export async function chat(body, signal) {
+export async function chat(body, signal, onDelta) {
   const route = resolveAgentRoute({strategy:body.routingStrategy,prompt:body.prompt,messages:body.messages,
     providers:configuredProviders().filter(entry=>entry.kind === 'chat' && providerApiKey(entry))});
   if (route) body = {...body,providerId:route.providerId,model:route.model};
@@ -3191,7 +3191,8 @@ export async function chat(body, signal) {
       chatModel,
       operationId: request.operationId,
       endUserId: request.endUserId,
-      returnUsage: true
+      returnUsage: true,
+      onDelta
     }, request, signal);
     const startedAt = Date.now();
     try {

@@ -12,8 +12,9 @@ assert.equal(estimateAgentCredits({chatModel:'unpriced'}).available,false);
 const code=fs.readFileSync('src/js/composer-actions.js','utf8').split('window.MesssComposerActions =')[0];
 async function check(mode,language='en') {
   let completeQuote,completeChat,calls=0;
-  const pending={isConnected:true,dataset:{},removeAttribute(name){delete this[name];}};
+  const pending={isConnected:true,dataset:{},classList:{remove(){}},removeAttribute(name){delete this[name];}};
   const context=vm.createContext({
+    crypto:require('node:crypto'),
     document:{createElement:()=>({})},t:(en,zh)=>language==='zh'?zh:en,
     window:{messsAPI:{
       estimateAgentCredits:()=>{if(mode==='throw')throw Error('unavailable');return new Promise(resolve=>{completeQuote=resolve;});},

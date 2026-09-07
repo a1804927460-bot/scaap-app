@@ -2495,7 +2495,7 @@ async function requestCanvasAgentText(options = {}) {
   pending.classList.add('is-pending');
   const thinkingStartedAt = Date.now();
   const thinkingTimer = window.setInterval(() => {
-    if (!pending.isConnected) return;
+    if (!pending.isConnected || pending.dataset.streaming === 'true') return;
     const seconds = Math.max(1, Math.floor((Date.now() - thinkingStartedAt) / 1000));
     pending.textContent = canvasAgentThinkingText(seconds);
   }, 1000);
@@ -2592,7 +2592,7 @@ async function submitCanvasAgentMessage() {
   pending.classList.add('is-pending');
   const thinkingStartedAt = Date.now();
   const thinkingTimer = window.setInterval(() => {
-    if (!pending.isConnected) return;
+    if (!pending.isConnected || pending.dataset.streaming === 'true') return;
     const seconds = Math.max(1, Math.floor((Date.now() - thinkingStartedAt) / 1000));
     pending.textContent = canvasAgentThinkingText(seconds);
   }, 1000);

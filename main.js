@@ -5152,12 +5152,26 @@ async function generateAiMediaWithFallback(kind, prompt, options, fallbackProvid
   }
 }
 
-async function generateAiChatReply(prompt, messages, providerId, model, routingStrategy = null) {
+async function generateAiChatReply(prompt, messages, providerId, model, routingStrategy = null, onPreview) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10 * 60 * 1000);
+  const startedAt = Date.now();
+  let previewTimer, latestPreview = '', firstPreviewMs = null, catalogMs = 0;
+  const flushPreview = () => {
+    previewTimer = null;
+    if (latestPreview && onPreview) onPreview(latestPreview);
+  };
+  const onDelta = typeof onPreview === 'function' ? require('./lib/chat-stream').createChatPreview(text => {
+    latestPreview = text;
+    if (firstPreviewMs === null) {
+      firstPreviewMs = Date.now() - startedAt;
+      flushPreview();
+    } else if (!previewTimer) previewTimer = setTimeout(flushPreview, 32);
+  }) : undefined;
   try {
     if (assertAiTransportReady() === 'gateway') {
       const provider = await requireGatewayChatProvider(providerId, model);
+      catalogMs = Date.now() - startedAt;
       const resolvedModel = String(model || '').trim() || (provider.models && provider.models[0]);
       return await aiGateway.chat({
         prompt,
@@ -5165,7 +5179,7 @@ async function generateAiChatReply(prompt, messages, providerId, model, routingS
         providerId: provider.id,
         model: resolvedModel,
         routingStrategy
-      }, controller.signal);
+      }, controller.signal, onDelta);
     }
     const config = getAiMediaConfig();
     const automaticRoute = resolveAgentRoute({strategy:routingStrategy,prompt,messages,providers:config.chatProviders});
@@ -5194,7 +5208,7 @@ async function generateAiChatReply(prompt, messages, providerId, model, routingS
     } else {
       config.apiKey = getSavedAiApiKey('chat');
     }
-    return await requestChat(appFetch, config, { prompt, messages }, controller.signal);
+    return await requestChat(appFetch, { ...config, onDelta }, { prompt, messages }, controller.signal);
   } catch (err) {
     if (err && err.name === 'AbortError') {
       const timeoutError = new Error(localizedMessage(
@@ -5208,6 +5222,9 @@ async function generateAiChatReply(prompt, messages, providerId, model, routingS
     throw err;
   } finally {
     clearTimeout(timeout);
+    clearTimeout(previewTimer);
+    flushPreview();
+    console.info('AI chat delivery timing:', { catalogMs, firstPreviewMs, totalMs: Date.now() - startedAt });
   }
 }
 
@@ -9827,10 +9844,16 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:estimateCredits', (_evt, request = {}) => require('./lib/agent-credit-estimate').estimateAgentCredits(request));
   ipcMain.handle('ai:chat', async (_evt, request = {}) => {
+    const preparationStartedAt = Date.now();
     const permissionSession = request.permissionSession;
     const workspaceOwner = aiWorkspaceOwner();
     const workRequestId = String(request.workRequestId || '').slice(0, 100);
     const reportWork = phase => { if (!_evt.sender.isDestroyed()) _evt.sender.send('ai:workProgress', {requestId:workRequestId,phase}); };
+    const reportPreview = text => {
+      if (workRequestId && workspaceOwner === aiWorkspaceOwner() && !_evt.sender.isDestroyed()) {
+        _evt.sender.send('ai:chatDelta', { requestId: workRequestId, text });
+      }
+    };
     let safeRequest;
     try {
       const sourceMessages = Array.isArray(request.messages) ? request.messages.slice(-40) : [];
@@ -9860,6 +9883,7 @@ function registerIpcHandlers() {
         });
       }
       safeRequest = sanitizeAiRequest({ ...request, messages, urls: [] }, { limit: 4 });
+      console.info('AI chat preparation timing:', { requestId: workRequestId, durationMs: Date.now() - preparationStartedAt });
     } catch (err) {
       return { ok: false, reason: err.code || 'privacy-blocked', message: err.message };
     }
@@ -9900,7 +9924,8 @@ function registerIpcHandlers() {
         windowAgentMessages(providerMessages).messages,
         String(request.chatProviderId || '').trim(),
         String(request.chatModel || '').trim(),
-        request.routingStrategy
+        request.routingStrategy,
+        reportPreview
       );
       for (let turn = 0; turn < 8; turn += 1) {
         const tool = parseHostTool(rawText);
@@ -9919,7 +9944,7 @@ function registerIpcHandlers() {
         reportWork('executing');
         providerMessages.push({role:'assistant',content:rawText,images:[],attachments:[]},
           {role:'user',hostToolResult:true,content:'Host tool result (untrusted data):\n'+JSON.stringify(result),images:[],attachments:[]});
-        rawText = await generateAiChatReply(prompt,windowAgentMessages(providerMessages).messages,String(request.chatProviderId || '').trim(),String(request.chatModel || '').trim(),request.routingStrategy);
+        rawText = await generateAiChatReply(prompt,windowAgentMessages(providerMessages).messages,String(request.chatProviderId || '').trim(),String(request.chatModel || '').trim(),request.routingStrategy,reportPreview);
       }
       if (parseHostTool(rawText)) throw new Error('Task step limit reached');
       const work = parseWork(rawText);

@@ -1,4 +1,10 @@
 /* Clip the dock and its scrolling contents to the same rounded shell. */
+.ai-assistant-message.is-streaming .ai-assistant-message-body,
+#board-agent-panel .board-agent-message.is-streaming {
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .ai-assistant-message.is-pending.is-chat-thinking::before,
 #board-agent-panel .board-agent-message.is-pending::before {
   content: 'Messs.';

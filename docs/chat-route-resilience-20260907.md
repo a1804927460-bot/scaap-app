@@ -24,6 +24,13 @@
 - Circuit health is per gateway process. A restart clears health; separate replicas do not share state. Independent provider capacity is still necessary to survive a complete upstream outage.
 - The implementation does not add SSE or formal Agent billing. Estimate labels are separately simplified without changing the estimate calculation.
 
+## Production verification
+
+- Commit 2a7d05d deployed successfully as Railway deployment 3fb509ce-6837-4494-848a-eb6d11613525. Health returned ok=true, catalogVersion=57, asyncVideo=true.
+- Authenticated production /v1/chat checks using an isolated temporary user: fast 27605 ms, balanced 4293 ms, ultimate 4423 ms, all HTTP 200 with nonempty text and usage.
+- Temporary audit user was deleted after verification. No existing user session or private file was used.
+- Desktop version remains 0.0.115. Server routing is live; simplified estimate labels and new localized chat error strings require the next desktop build.
+
 ## References
 
 - https://github.com/Portkey-AI/gateway : configurable fallback, retries and load balancing.

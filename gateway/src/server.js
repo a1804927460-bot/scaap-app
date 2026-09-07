@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { openChatStream } from './chat-stream.js';
 import crypto from 'node:crypto';
 import { assertFalConfigured, normalizeFalResizeOptions } from './fal-image-tools.js';
 import { runDurableFalImageTool } from './durable-fal-image-tools.js';
@@ -1482,6 +1483,7 @@ async function resumePendingVideoTaskAttachment(requestId) {
 }
 
 async function handle(request, response) {
+  const receivedAt = Date.now();
   const suppliedOperationId = String(request.headers['x-idempotency-key'] || '').trim();
   const requestId = validUuid(suppliedOperationId) ? suppliedOperationId : crypto.randomUUID();
   response.setHeader('X-Request-Id', requestId);
@@ -2629,23 +2631,44 @@ async function handle(request, response) {
   response.once('close', () => {
     if (!response.writableEnded) controller.abort();
   });
+  let chatStream;
+  const chatDeadline = kind === 'chat' ? setTimeout(() => controller.abort(), 10 * 60 * 1000) : null;
+  chatDeadline?.unref();
   try {
     if (kind === 'chat') {
+      if (String(request.headers.accept || '').includes('text/event-stream')) {
+        chatStream = openChatStream(response, controller.signal);
+      }
+      let queueMs = 0, firstDeltaMs = null;
       const result = await chatGenerationGate.run(
         user.id,
-        () => chat({
-          ...body,
-          operationId: requestId,
-          endUserId: providerUserId(user.id)
-        }, controller.signal),
+        () => {
+          queueMs = Date.now() - startedAt;
+          return chat({
+            ...body,
+            operationId: requestId,
+            endUserId: providerUserId(user.id)
+          }, controller.signal, chatStream ? async text => {
+            if (firstDeltaMs === null) firstDeltaMs = Date.now() - startedAt;
+            await chatStream.send('delta', { text });
+          } : undefined);
+        },
         { signal: controller.signal }
       );
       const text = typeof result === 'string' ? result : String(result && result.text || '');
       if (!freeChat) await settleUsage(requestId, 'succeeded', Date.now() - startedAt);
-      return send(response, 200, {
+      const payload = {
         text,
         ...(result && typeof result === 'object' && result.usage ? { usage: result.usage } : {})
-      });
+      };
+      console.log(JSON.stringify({ level: 'info', event: 'chat-delivery-timing', requestId,
+        streaming: Boolean(chatStream), preparationMs: startedAt - receivedAt,
+        queueMs, firstDeltaMs, totalMs: Date.now() - startedAt }));
+      if (chatStream) {
+        await chatStream.send('done', payload);
+        return chatStream.end();
+      }
+      return send(response, 200, payload);
     }
     const media = await videoGenerationGate.run(user.id, () => generateLegacyVideo({
       ...body,
@@ -2689,7 +2712,15 @@ async function handle(request, response) {
         code: String(error && error.code || 'provider-task-recovery-pending')
       }));
     }
+    if (chatStream) {
+      const { code, status } = publicGatewayError(error);
+      console.warn(JSON.stringify({ level: 'warn', event: 'chat-stream-failed', requestId, code, status }));
+      try { await chatStream.send('error', { code, status }); } catch {}
+      return chatStream.end();
+    }
     throw error;
+  } finally {
+    clearTimeout(chatDeadline);
   }
 }
 

@@ -1924,6 +1924,7 @@ async function executeAssistantMessage(item) {
       if (event.requestId === workRequestId) workPhase = event.phase;
     }) : null;
   const progress = setInterval(() => {
+    if (!pending.isConnected || pending.dataset.streaming === 'true') return;
     const seconds = Math.floor((Date.now() - startedAt) / 1000);
     pending.querySelector('.ai-assistant-message-body').textContent =
       submittedKind === 'chat'
