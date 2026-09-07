@@ -1,26 +1,38 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { generateMedia, createVideoTask, pollVideoTask } from '../gateway/src/providers.js';
-import { selectImageChannel } from '../gateway/src/image-channel-policy.js';
+import { selectImageChannel, preferFalImageChannel } from '../gateway/src/image-channel-policy.js';
+import sharp from 'sharp';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const catalog = require('../config/provider-catalog.json');
 if (!process.argv.includes('--live')) throw new Error('Pass --live for paid provider checks.');
 const mode = process.argv.find(arg => arg.startsWith('--mode='))?.slice(7);
-if (!['plus','fal','video'].includes(mode)) throw new Error('Choose --mode=plus|fal|video');
+if (!['plus','fal','video','mixed'].includes(mode)) throw new Error('Choose --mode=plus|fal|video|mixed');
+const edit = process.argv.includes('--edit');
 const dir = `test-artifacts/release/live-backups/${mode}`;
 fs.mkdirSync(dir,{recursive:true});
 process.env.FAL_NANO_BACKUP_ENABLED = 'true';
+if (mode === 'mixed') {
+  process.env.FAL_IMAGE_BACKUP_ENABLED='true';
+  process.env.FAL_IMAGE_MIX_PERCENT='10';
+  process.env.FAL_GPT_IMAGE_MIX_PERCENT='20';
+  process.env.AIREITER_IMAGE_ROUTING_SECRET ||= crypto.randomBytes(32).toString('hex');
+}
 if (mode === 'plus') {
   process.env.AIREITER_IMAGE_PLUS_PERCENT = '30';
   process.env.AIREITER_IMAGE_ROUTING_SECRET ||= crypto.randomBytes(32).toString('hex');
 }
-const ids = mode === 'plus' ? ['image-1','image-2'] : mode === 'fal' ? ['fal-backup-nano-pro'] : ['video-1'];
+const ids = mode === 'mixed' ? ['image-1','image-2','image-6'] : mode === 'plus' ? ['image-1','image-2'] : mode === 'fal' ? ['fal-backup-nano-pro'] : ['video-1'];
 for (const providerId of ids) {
   let operationId = crypto.randomUUID();
   if (mode === 'plus') {
     const provider = catalog.providers.find(p => p.id === providerId);
     while (selectImageChannel(provider,{operationId}).model === provider.model) operationId = crypto.randomUUID();
+  }
+  if (mode === 'mixed') {
+    const provider = catalog.providers.find(p => p.id === providerId);
+    while (!preferFalImageChannel(provider,{operationId})) operationId=crypto.randomUUID();
   }
   try {
     if (mode === 'video') {
@@ -45,15 +57,22 @@ for (const providerId of ids) {
       }
       continue;
     }
-    const bytes = await generateMedia(mode === 'video' ? 'video' : 'image', {
-      providerId,operationId,prompt:'A red ceramic cup on a white table, soft studio light, static camera, no text.',
-      size:mode === 'video'?'768P':'1K',resolution:'768P',duration:6,aspectRatio:'1:1',quality:'low',urls:[],videoMode:'text'
+    let accepted;
+    const urls=edit ? [`data:image/png;base64,${fs.readFileSync('test-artifacts/release/live-routes/image-1.png').toString('base64')}`] : [];
+    const suffix=edit?'-edit':'';
+    const bytes = await generateMedia('image', {
+      providerId,operationId,prompt:edit?'Change the ceramic cup to blue. Preserve the composition and white table.':'A red ceramic cup on a white table, soft studio light, static camera, no text.',
+      size:'1K',aspectRatio:'1:1',quality:mode==='mixed'?'medium':'low',urls
     },AbortSignal.timeout(mode === 'video'?600000:240000),{
-      onAccepted: async task => fs.writeFileSync(`${dir}/${providerId}-task.json`,JSON.stringify({operationId,...task})),
+      onAccepted: async task => { accepted=task; fs.writeFileSync(`${dir}/${providerId}${suffix}-task.json`,JSON.stringify({operationId,...task})); },
     });
     if (!Buffer.isBuffer(bytes)||!bytes.length) throw new Error('Empty result');
-    fs.writeFileSync(`${dir}/${providerId}.${mode==='video'?'mp4':'png'}`,bytes);
-    console.log(providerId,'passed',bytes.length);
+    if(mode==='mixed' && !accepted?.providerId.startsWith('fal-backup-'))throw new Error('Expected the mixed FAL route');
+    const meta=await sharp(bytes).metadata();
+    if (!meta.width || !meta.height)throw new Error('Missing image dimensions');
+    if (providerId==='image-6' && (meta.width!==1024 || meta.height!==1024))throw new Error('Unexpected GPT dimensions');
+    fs.writeFileSync(`${dir}/${providerId}${suffix}.${meta.format==='jpeg'?'jpg':meta.format}`,bytes);
+    console.log(providerId,suffix||'text','passed',meta.width,meta.height,bytes.length);
   } catch(error) {
     console.log(providerId,JSON.stringify({code:error.code,name:error.name,status:error.status,accepted:error.providerTaskAccepted===true}));
     process.exitCode=1;

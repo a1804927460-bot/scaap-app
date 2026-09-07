@@ -1,8 +1,10 @@
 # Image channel canary
 
-Implemented locally, disabled by default. Only Nano Banana 2 Max -> Plus and
-Nano Banana Pro Max -> Plus are eligible, on the existing AI Reiter endpoint.
-GPT Image 2 remains official; all video routes are unchanged. No public model
+Nano Banana 2 Max -> Plus and Nano Banana Pro Max -> Plus are eligible on the
+existing AI Reiter endpoint; the production Plus setting is 30% as of 2026-09-07.
+All three public image models also support compatible FAL mixing, documented in
+`fal-generation-overflow.md`. GPT Image 2 never uses the unverified standard
+AIReiter channel; all video routes are unchanged. No public model
 name, quality, reference image, resolution, aspect ratio or retail quote changes.
 
 ## Verified sources (2026-09-07)
@@ -28,15 +30,14 @@ USD per image, in 1K / 2K / 4K order:
 | Nano Banana 2 | .077 / .1155 / .154 | .048 / .072 / .108 |
 | Nano Banana Pro | .165 / .165 / .33 | .0576 / .0576 / .0708 |
 
-At 30% Plus, raw expected savings are ~9.0-11.3% for Nano2 and ~19.5-23.6%
+Within AIReiter traffic, at 30% Plus, raw expected savings are ~9.0-11.3% for Nano2 and ~19.5-23.6%
 for Pro, excluding failures, retries and operational cost. This change does not
 pretend that the original Max cost is the actual internal cost of a Plus request.
-Per-channel financial reconciliation remains a rollout prerequisite.
+FAL traffic must be accounted for separately and is not necessarily cheaper.
 
 ## Rollout
 
-After controlled comparisons and internal cost/latency reconciliation, set only
-on the gateway:
+Gateway-only configuration:
 
 ```ini
 AIREITER_IMAGE_PLUS_PERCENT=30
@@ -54,8 +55,9 @@ Accepted-task recovery queries the persisted task ID without resubmitting.
 Only a proven pre-accept failure can retry on Max. Ambiguous POST outcomes, task
 IDs and post-accept failures must never trigger a second paid generation.
 
-Before enabling: compare fixed prompt suites at each resolution with text,
+Ongoing quality monitoring should compare fixed prompt suites at each resolution with text,
 portraits, references and editing; measure success, p95 time and visual regressions.
 Retain actual channel/cost receipts in internal observability before production
-rollout. The UI need not expose infrastructure, but product quality/official
-claims must remain accurate. No production setting was changed by this patch.
+evaluation. The UI need not expose infrastructure, but product quality/official
+claims must remain accurate. Focused 1K live smoke checks are not a full
+cross-resolution quality or load benchmark.

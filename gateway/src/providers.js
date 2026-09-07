@@ -8,8 +8,8 @@ import {
   stripImageMetadata
 } from './ai302-tools.js';
 import { normalizeVideoResolution } from './video-resolution.js';
-import { selectImageChannel, recordImageChannelResult } from './image-channel-policy.js';
-import { falNanoInput, generateFalNano } from './fal-generation.js';
+import { selectImageChannel, recordImageChannelResult, preferFalImageChannel } from './image-channel-policy.js';
+import { falImageRoutes, falImageInput, generateFalImage } from './fal-generation.js';
 import { AI302_PRIMARY_BASE_URL, getAi302BackupRoutes } from './tool-routes.js';
 
 const require = createRequire(import.meta.url);
@@ -287,14 +287,15 @@ function configuredProviders() {
       }
     }
   }
-  const nano = byId.get('image-1');
-  if (nano?.logicalModel === 'nano-banana-pro' && nano.protocol === 'aireiter-async') {
-    // Retain the hidden route even when new overflow is disabled so accepted
-    // FAL tasks can still recover after an operator rolls back routing.
-    byId.set('fal-backup-nano-pro', { ...nano, id:'fal-backup-nano-pro', hidden:true,
-      endpoint:'https://queue.fal.run/fal-ai/nano-banana-pro', protocol:'fal-nano-queue',
-      keyEnv:'FAL_API_KEY', fallbackProviderIds:[], routeAliasOf:nano.id });
-    if (process.env.FAL_NANO_BACKUP_ENABLED === 'true') nano.fallbackProviderIds.push('fal-backup-nano-pro');
+  for (const route of falImageRoutes) {
+    const primary = byId.get(route.providerId);
+    if (primary?.logicalModel !== route.model || primary.protocol !== 'aireiter-async') continue;
+    // Keep identities available after rollback for already accepted jobs.
+    byId.set(route.id, { ...primary, id:route.id, hidden:true,
+      endpoint:`https://queue.fal.run/fal-ai/${route.model}`, protocol:route.protocol,
+      keyEnv:'FAL_API_KEY', fallbackProviderIds:[], routeAliasOf:primary.id });
+    if (process.env.FAL_IMAGE_BACKUP_ENABLED === 'true'
+        || (route.providerId === 'image-1' && process.env.FAL_NANO_BACKUP_ENABLED === 'true')) primary.fallbackProviderIds.push(route.id);
   }
   return [...byId.values()];
 }
@@ -392,10 +393,11 @@ function providerFor(kind, id) {
 }
 
 function requestRouteIds(provider, body = {}) {
-  // GPT Image 2 is a single-provider product. Its old 302 and Atlas entries
-  // remain catalogued only for historical task/accounting compatibility and
-  // must never become new generation candidates.
-  if (provider && provider.id === GPT_IMAGE_2_PROVIDER_ID) return [provider.id];
+  // Retired GPT aliases remain recovery-only. Only the verified FAL contract
+  // may join the official primary, never arbitrary historical overrides.
+  if (provider && provider.id === GPT_IMAGE_2_PROVIDER_ID) {
+    return [provider.id, ...(provider.fallbackProviderIds || []).filter(id => id === 'fal-backup-gpt-image-2')];
+  }
   const capabilities = provider && provider.capabilities && typeof provider.capabilities === 'object'
     ? provider.capabilities
     : {};
@@ -1114,8 +1116,8 @@ async function generateAireiterImage(provider, body, signal, hooks = {}) {
 }
 
 async function generateMediaWithProvider(kind, provider, body, signal, hooks = {}) {
-  if (kind === 'image' && provider.protocol === 'fal-nano-queue') {
-    return generateFalNano(provider, body, signal, hooks, {
+  if (kind === 'image' && ['fal-nano-queue','fal-image-queue'].includes(provider.protocol)) {
+    return generateFalImage(provider, body, signal, hooks, {
       download: async (url, requestSignal) => validateGeneratedMediaBuffer('image', await downloadGeneratedImage(url, requestSignal))
     });
   }
@@ -1212,13 +1214,18 @@ function preferredFallbackError(firstError, lastError) {
 const activeGenerationRoutes = new Map();
 export async function generateMedia(kind, body, signal, hooks = {}) {
   const providers = providersForRequest(kind, String(body.providerId || ''), body);
-  const backup = providers.find(provider => provider.protocol === 'fal-nano-queue');
+  const primary = providers.find(provider => provider.id === body.providerId);
+  const backup = providers.find(provider => ['fal-nano-queue','fal-image-queue'].includes(provider.protocol));
   if (backup) {
-    try { falNanoInput(body); }
-    catch { providers.splice(providers.indexOf(backup),1); }
+    try { falImageInput(backup, body); }
+    catch (error) {
+      providers.splice(providers.indexOf(backup),1);
+      if (!providers.length) throw error;
+    }
     const configuredLimit = Number(process.env.AIREITER_NANO_OVERFLOW_AT);
     const limit = Number.isInteger(configuredLimit) && configuredLimit >= 1 && configuredLimit <= 128 ? configuredLimit : Infinity;
-    if (providers.includes(backup) && (activeGenerationRoutes.get(providers[0].id) || 0) >= limit) {
+    const overflow = backup.protocol === 'fal-nano-queue' && (activeGenerationRoutes.get(providers[0].id) || 0) >= limit;
+    if (providers.includes(backup) && (overflow || (primary && preferFalImageChannel(primary, body)))) {
       providers.splice(providers.indexOf(backup),1); providers.unshift(backup);
     }
   }

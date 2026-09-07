@@ -1,6 +1,41 @@
 import { setTimeout as delay } from 'node:timers/promises';
 
 const origin = 'https://queue.fal.run';
+export const falImageRoutes = [
+  { providerId:'image-1', id:'fal-backup-nano-pro', model:'nano-banana-pro', protocol:'fal-nano-queue' },
+  { providerId:'image-2', id:'fal-backup-nano-2', model:'nano-banana-2', protocol:'fal-image-queue' },
+  { providerId:'image-6', id:'fal-backup-gpt-image-2', model:'gpt-image-2', protocol:'fal-image-queue' }
+];
+// Exact AIReiter official size table, not an approximate ratio conversion.
+const gptSizes = {
+  '1:1': [[1024,1024],[2048,2048]],
+  '3:2': [[1536,1024],[2048,1360]], '2:3': [[1024,1536],[1360,2048]],
+  '4:3': [[1024,768],[2048,1536]], '3:4': [[768,1024],[1536,2048]],
+  '5:4': [[1280,1024],[2560,2048]], '4:5': [[1024,1280],[2048,2560]],
+  '16:9': [[1536,864],[2048,1152],[3840,2160]], '9:16': [[864,1536],[1152,2048],[2160,3840]],
+  '2:1': [[2048,1024],[2688,1344],[3840,1920]], '1:2': [[1024,2048],[1344,2688],[1920,3840]],
+  '21:9': [[2016,864],[2688,1152],[3840,1648]], '9:21': [[864,2016],[1152,2688],[1648,3840]]
+};
+function incompatibleRequest() {
+  return Object.assign(new Error('This request is not compatible with the backup image route.'), { code:'invalid-reference-media', status:400 });
+}
+export function falImageInput(provider, body) {
+  const route = falImageRoutes.find(route => route.id === provider.id);
+  if (!route) throw incompatibleRequest();
+  if (route.model !== 'gpt-image-2') return falNanoInput(body);
+  const prompt = String(body.prompt || '').trim();
+  const urls = Array.isArray(body.urls) ? body.urls : [];
+  const resolution = String(body.size || body.resolution || '2K').trim().toUpperCase();
+  const ratio = String(body.aspectRatio || '1:1').trim();
+  const dimensions = gptSizes[ratio === 'auto' ? '1:1' : ratio]?.[['1K','2K','4K'].indexOf(resolution)];
+  const quality = String(body.quality || 'medium').trim().toLowerCase();
+  if (!dimensions || !['low','medium','high'].includes(quality) || urls.length > 9
+      || prompt.length < 2 || prompt.length > 32000 || Number(body.numImages || body.count || 1) !== 1
+      || (body.outputFormat && !['png','jpeg','webp'].includes(body.outputFormat))) throw incompatibleRequest();
+  return { prompt, image_size:{width:dimensions[0],height:dimensions[1]}, quality,
+    num_images:1, output_format:body.outputFormat || 'png', sync_mode:false,
+    ...(urls.length ? {image_urls:urls} : {}) };
+}
 const ratios = new Set(['auto','21:9','16:9','3:2','4:3','5:4','1:1','4:5','3:4','2:3','9:16']);
 export function falNanoInput(body) {
   const urls = Array.isArray(body.urls) ? body.urls : [];
@@ -18,9 +53,11 @@ export function falNanoInput(body) {
 
 // The persisted task identity is the recovery boundary. No POST retry is made
 // after transport ambiguity, acceptance, polling, or result-storage failures.
-export async function generateFalNano(provider, body, signal, hooks, deps) {
-  const input = falNanoInput(body);
-  const endpoint = `${origin}/fal-ai/nano-banana-pro${input.image_urls ? '/edit' : ''}`;
+export async function generateFalImage(provider, body, signal, hooks, deps) {
+  const input = falImageInput(provider, body);
+  const model = falImageRoutes.find(route => route.id === provider.id).model;
+  const modelPath = `/fal-ai/${model}`;
+  const endpoint = `${origin}${modelPath}${input.image_urls ? '/edit' : ''}`;
   const fetchImpl = deps.fetchImpl || fetch, sleep = deps.sleep || delay;
   let taskId = body._acceptedTask?.taskId || '', submitted = false, accepted = Boolean(taskId);
   let taskUrl = `${endpoint}/requests/${encodeURIComponent(taskId)}`;
@@ -59,13 +96,13 @@ export async function generateFalNano(provider, body, signal, hooks, deps) {
       if (task.response_url) {
         const url = new URL(task.response_url);
         if (url.origin === origin && !url.username && !url.password && !url.search && !url.hash
-          && [`/fal-ai/nano-banana-pro/requests/${taskId}`, `/fal-ai/nano-banana-pro/edit/requests/${taskId}`].includes(url.pathname)) taskUrl = url.href;
+          && [`${modelPath}/requests/${taskId}`, `${modelPath}/edit/requests/${taskId}`].includes(url.pathname)) taskUrl = url.href;
       }
       await hooks.onAccepted?.({ providerId:provider.id, taskId, pollUrl:`${taskUrl}/status` });
     } else if (body._acceptedTask.pollUrl) {
       const url = new URL(body._acceptedTask.pollUrl);
       if (url.origin !== origin || url.username || url.password || url.search || url.hash
-        || ![`/fal-ai/nano-banana-pro/requests/${taskId}/status`, `/fal-ai/nano-banana-pro/edit/requests/${taskId}/status`].includes(url.pathname)) throw new Error('Invalid stored image task endpoint.');
+        || ![`${modelPath}/requests/${taskId}/status`, `${modelPath}/edit/requests/${taskId}/status`].includes(url.pathname)) throw new Error('Invalid stored image task endpoint.');
       taskUrl = url.href.slice(0,-7);
     }
     const deadline = Date.now() + 20 * 60_000;
@@ -89,3 +126,5 @@ export async function generateFalNano(provider, body, signal, hooks, deps) {
     throw error;
   }
 }
+
+export const generateFalNano = generateFalImage;

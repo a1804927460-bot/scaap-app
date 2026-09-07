@@ -6,6 +6,16 @@ const channels = new Map([
 ]);
 const failures = new Map();
 
+export function preferFalImageChannel(provider, body, env = process.env) {
+  if (provider.kind !== 'image' || body._acceptedTask) return false;
+  const percent = Number(env[provider.id === 'image-6' ? 'FAL_GPT_IMAGE_MIX_PERCENT' : 'FAL_IMAGE_MIX_PERCENT'] || 0);
+  const secret = String(env.AIREITER_IMAGE_ROUTING_SECRET || '');
+  const operation = String(body.operationId || '');
+  if (!Number.isFinite(percent) || percent <= 0 || percent > 40 || secret.length < 32 || !operation) return false;
+  const bucket = createHmac('sha256',secret).update(`image-fal-v1:${provider.id}:${operation}`).digest().readUInt32BE(0) / 0x100000000 * 100;
+  return bucket < percent;
+}
+
 export function selectImageChannel(provider, body, env = process.env, now = Date.now()) {
   if (provider.kind !== 'image' || provider.protocol !== 'aireiter-async'
       || body._acceptedTask || !channels.has(provider.model)) return provider;
