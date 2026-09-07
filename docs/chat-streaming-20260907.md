@@ -72,6 +72,24 @@ than paying the same two rejection delays after every deployment. This is an
 operator-controlled availability preference, not proof that a pool has recovered;
 revisit it when upstream capacity changes. No extra speculative requests are sent.
 
+After deployment `eac2e8d3-3a57-4b91-9566-1487d57462f5` (commit `03648d6`),
+authenticated cold-process smoke tests returned:
+
+| Mode | First text (ms) | Complete (ms) | Delta events |
+| --- | ---: | ---: | ---: |
+| Fast | 5333 | 6371 | 62 |
+| Balanced | 3410 | 4382 | 50 |
+| Ultimate | 2576 | 3640 | 52 |
+
+All returned HTTP 200, nonempty text and normalized usage. A separate legacy
+JSON smoke test completed in 3453/2806/3629 ms. Both temporary audit accounts
+were deleted. These synthetic runs establish transport behavior and the
+cold-start fix, not general latency/SLA guarantees.
+
+`scripts/test-chat-stream-main.cjs` also exercises the actual Electron forwarding
+function in an isolated runtime: 1000 immediate deltas coalesce to two previews,
+no artifact bodies are forwarded, and success/failure clears all timers.
+
 ## References
 
 - https://github.com/rexxars/eventsource-parser

@@ -49,6 +49,12 @@ assert.match(workflow, /CSC_LINK and CSC_KEY_PASSWORD must be configured togethe
 assert.match(workflow, /CSC_IDENTITY_AUTO_DISCOVERY=false/);
 assert.match(workflow, /Do not export empty CSC_LINK\/CSC_KEY_PASSWORD values/);
 assert.match(workflow, /macos-release:/);
+const workflowJobs = require('js-yaml').load(workflow).jobs;
+for (const name of ['windows-release', 'macos-release']) {
+  const steps = workflowJobs[name].steps;
+  const install = steps.findIndex(step => step.run === 'npm --prefix gateway ci');
+  assert.ok(install >= 0 && install < steps.findIndex(step => step.run === 'npm test'), `${name} must install gateway dependencies before testing.`);
+}
 assert.match(workflow, /latest-mac\.yml/);
 assert.match(workflow, /runs-on:\s*macos-14/);
 assert.doesNotMatch(workflow, /runs-on:\s*macos-13/);

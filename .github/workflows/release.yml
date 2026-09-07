@@ -208,6 +208,9 @@ jobs:
       - name: Install desktop dependencies
         run: npm ci
 
+      - name: Install gateway dependencies
+        run: npm --prefix gateway ci
+
       - name: Set release version and runtime config
         shell: bash
         run: |
