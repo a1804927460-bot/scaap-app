@@ -516,6 +516,30 @@ assert.deepEqual(JSON.parse(chatCalls[0].options.body), {
 });
 
 const advancedChatCalls = [];
+for (const failure of [401, 429, 503]) {
+  const attempted = [];
+  globalThis.fetch = async (_url, options) => {
+    attempted.push(JSON.parse(options.body).model);
+    return attempted.length === 1
+      ? jsonResponse({error:{message:'Account unavailable'}},failure)
+      : jsonResponse({choices:[{message:{content:'Healthy alternate'}}]});
+  };
+  const request = {providerId:'chat-6',model:'gemini-3.8-flash',routingStrategy:'fast',prompt:'hello',messages:[{role:'user',content:'hello'}]};
+  if (failure === 503) {
+    await assert.rejects(()=>chat(request));
+    assert.equal(attempted.length,1,'An ambiguous upstream error must not replay');
+  } else {
+    assert.equal((await chat(request)).text,'Healthy alternate');
+    assert.deepEqual(attempted,['chat-gemini-3.8-flash','chat-gemini-3.1-pro']);
+  }
+  attempted.length=0;
+  await assert.rejects(()=>chat({...request,routingStrategy:null}));
+  assert.equal(attempted.length,1,'Manual model never changes');
+}
+globalThis.fetch = async (url, options = {}) => {
+  chatCalls.push({url:String(url),options});
+  return jsonResponse({choices:[{message:{content:'Gateway chat reply'}}]});
+};
 for (const [routingStrategy,prompt,expected] of [
   ['ultimate','hello','chat-gemini-3.8-flash'],
   ['balanced','implement python code','chat-gemini-3.1-pro'],

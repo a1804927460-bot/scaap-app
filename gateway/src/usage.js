@@ -1080,6 +1080,21 @@ export async function settleToolUsage(userId, requestId, status, durationMs, fet
     }
   }
   if (!response) throw serviceError('credit-settlement-failed', transportError && transportError.message || 'Could not settle Butler tool credits.');
+  // Older reservations can have an ai_usage row but no ai_tool_jobs row.
+  // Verify ownership and tool identity before using the shared, recovery-aware
+  // settlement RPC. Never relax a status conflict or an accepted-task hold.
+  if (response.ok && payload?.ok === false && payload.reason === 'not-found') {
+    const query = new URLSearchParams({request_id:`eq.${requestId}`,user_id:`eq.${userId}`,select:'provider_id',limit:'1'});
+    const lookup = await fetchImpl(`${supabaseUrl}/rest/v1/ai_usage?${query}`, {
+      headers, signal:AbortSignal.timeout(DURABLE_TIMEOUT_MS)
+    });
+    const rows = await responsePayload(lookup);
+    const providerId = lookup.ok && Array.isArray(rows) && rows.length === 1 ? rows[0].provider_id : '';
+    if (Object.hasOwn(BUTLER_FIXED_RETAIL_CREDITS, providerId)
+        || TOPAZ_DYNAMIC_PROVIDERS.has(providerId) || ['hunyuan3d','hyper3d','tripo3d'].includes(providerId)) {
+      return settleUsage(requestId, normalizedStatus, durationMs, fetchImpl);
+    }
+  }
   if (!response.ok) {
     if (payload && payload.reason === 'provider-task-recovery-pending') {
       throwRecoveryPending(payload, 'Could not settle Butler tool credits.');

@@ -42,6 +42,27 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
+test('legacy tool settlement verifies owner and tool before shared settlement', async () => {
+  const old=process.env.SUPABASE_SECRET_KEY;process.env.SUPABASE_SECRET_KEY='sb_secret_test';
+  try {
+    for (const rows of [[{provider_id:'background-remove'}],[],[{provider_id:'image-1'}]]) {
+      const calls=[];
+      const result=()=>settleToolUsage('owner','request','failed',0,async url=>{
+        calls.push(String(url));
+        if(String(url).includes('/settle_ai_tool_credits'))return jsonResponse({ok:false,reason:'not-found'});
+        if(String(url).includes('/ai_usage?')) {
+          const q=new URL(url).searchParams;
+          assert.equal(q.get('user_id'),'eq.owner');assert.equal(q.get('request_id'),'eq.request');
+          return jsonResponse(rows);
+        }
+        return jsonResponse({ok:true,status:'failed',creditsCharged:0});
+      });
+      if(rows[0]?.provider_id==='background-remove')assert.equal((await result()).ok,true);
+      else {await assert.rejects(result);assert.equal(calls.length,2);}
+    }
+  } finally {if(old===undefined)delete process.env.SUPABASE_SECRET_KEY;else process.env.SUPABASE_SECRET_KEY=old;}
+});
+
 function withEnvironment(values, callback) {
   const previous = {};
   for (const [key, value] of Object.entries(values)) {

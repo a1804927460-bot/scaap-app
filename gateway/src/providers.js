@@ -22,7 +22,7 @@ const {
   validateGeneratedMediaBuffer
 } = require('../../lib/ai-media-provider');
 const { requestChat, discoverChatModels } = require('../../lib/ai-chat-provider');
-const { resolveAgentRoute } = require('../../lib/agent-routing');
+const { resolveAgentRoute, strongerAgentModels } = require('../../lib/agent-routing');
 const { PROVIDER_CATALOG_VERSION, providerCatalog } = require('../../lib/provider-catalog');
 const { sanitizePublicModelLabel } = require('../../lib/public-model-label');
 
@@ -3149,13 +3149,26 @@ export async function chat(body, signal) {
     .filter((entry, index, list) => entry && providerApiKey(entry)
       && (entry.id === selected.id || modelMatches(entry, logicalModel))
       && list.findIndex((candidate) => candidate && candidate.id === entry.id) === index);
+  // Automatic modes may promote to a stronger configured model after an
+  // explicit rejection. Manual choices never silently change logical model.
+  const alternativeModels = new Map();
+  if (route) {
+    for (const alternative of strongerAgentModels(logicalModel)) {
+      const candidate = configured.find(entry => !entry.hidden && providerApiKey(entry) && modelMatches(entry, alternative));
+      if (candidate && !candidates.some(entry => entry.id === candidate.id)) {
+        candidates.push(candidate);
+        alternativeModels.set(candidate.id, alternative);
+      }
+    }
+  }
   let lastError;
   for (const candidate of candidates) {
+    const candidateModel = alternativeModels.get(candidate.id) || logicalModel;
     const provider = { ...candidate, apiKey: providerApiKey(candidate) };
     const upstreamModel = provider.upstreamModels && Object.entries(provider.upstreamModels).find(([logical]) => (
-      String(logical).trim().toLowerCase() === String(logicalModel).trim().toLowerCase()
+      String(logical).trim().toLowerCase() === String(candidateModel).trim().toLowerCase()
     ));
-    const model = upstreamModel ? upstreamModel[1] : logicalModel;
+    const model = upstreamModel ? upstreamModel[1] : candidateModel;
     const requestWithModel = (chatModel) => requestChat(fetch, {
       apiKey: provider.apiKey,
       chatEndpoint: provider.endpoint,
@@ -3175,13 +3188,13 @@ export async function chat(body, signal) {
           && /model|not found|unsupported|does not exist|invalid/i.test(message);
         // A logical/upstream alias mismatch is an explicit pre-accept rejection.
         if (!modelRejected) throw error;
-        if (!logicalModel || String(model).trim() === String(logicalModel).trim()) {
+        if (!candidateModel || String(model).trim() === String(candidateModel).trim()) {
           error.preSubmissionFailure = true;
           error.safeToFallback = true;
           throw error;
         }
         try {
-          return await requestWithModel(logicalModel);
+          return await requestWithModel(candidateModel);
         } catch (aliasError) {
           const aliasStatus = Number(aliasError && aliasError.status);
           const aliasMessage = String(aliasError && aliasError.message || '');
