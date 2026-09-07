@@ -77,5 +77,19 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  assert.ok(menu.x>=0 && menu.x+menu.width<=520 && menu.y>=0);
  await page.screenshot({path:'test-artifacts/composer-actions/compact-menu.png'});
  console.log('Composer: plus menu, upload, generation mode, explicit session grant, reset and themed task confirmation passed.');
+ await page.waitForTimeout(250);
+ assert.equal(await page.locator('#ai-assistant-add-menu').evaluate(el=>el.getAnimations().length),0);
+ await page.emulateMedia({reducedMotion:'reduce'});
+ await page.evaluate(()=>{
+   const menu=document.getElementById('ai-assistant-add-menu');
+   MesssUiMotion.enter(menu);
+ });
+ assert.equal(await page.locator('#ai-assistant-add-menu').evaluate(el=>el.getAnimations().length),0);
+ await page.emulateMedia({reducedMotion:'no-preference'});
+ await page.evaluate(()=>{
+   const menu=document.getElementById('ai-assistant-add-menu');
+   for(let i=0;i<8;i++){MesssUiMotion.enter(menu);MesssUiMotion.stop(menu);}
+ });
+ assert.equal(await page.locator('#ai-assistant-add-menu').evaluate(el=>el.getAnimations().length),0);
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -1938,7 +1938,7 @@ async function executeAssistantMessage(item) {
 
   try {
     if (submittedKind === 'chat') {
-      const response = await window.messsAPI.chatWithAi({
+      const response = await chatWithAgentEstimate(pending, {
         permissionSession: window.MesssComposerActions?.session,
         workRequestId,
         prompt,

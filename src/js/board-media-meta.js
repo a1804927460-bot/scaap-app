@@ -448,15 +448,17 @@ function boardButlerApi() {
 }
 
 function boardButlerError(result, fallback) {
+  const reason = result && (result.reason || result.errorCode || result.code);
   const candidates = result && typeof result === 'object'
     ? [result.message, result.errorMessage, result.error && result.error.message]
     : [];
   const supplied = candidates.find((value) => typeof value === 'string' && value.trim());
   const message = typeof publicAiErrorMessage === 'function'
-    ? publicAiErrorMessage(supplied ? supplied.trim() : fallback, fallback)
+    ? publicAiErrorMessage(supplied ? supplied.trim() : fallback, fallback, reason)
     : (supplied ? supplied.trim() : fallback);
   const error = new Error(message);
-  error.reason = result && (result.reason || result.errorCode || result.code);
+  error.reason = reason;
+  error.requestId = result && result.requestId;
   error.status = Number(result && (result.httpStatus ?? result.statusCode)) || undefined;
   error.retryAfterMs = Number(result && result.retryAfterMs) || undefined;
   return error;

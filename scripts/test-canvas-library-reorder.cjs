@@ -70,12 +70,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       renderCanvasLibrary();
     });
     await page.evaluate(() => dropCard('folder:x', 'canvas:a'));
-    assert.equal((await order())[0], 'canvas:a');
+    assert.deepEqual(await order(), ['canvas:b','canvas:c','folder:x','canvas:a','folder:y']);
     assert.equal(await page.locator('[data-library-drop]').count(), 0);
     const from = await page.locator('[data-library-key="folder:y"]').boundingBox();
     const to = await page.locator('[data-library-key="folder:x"]').boundingBox();
     await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
     await page.mouse.down();
+    await page.waitForTimeout(420);
+    assert.equal(await page.locator('#canvas-library-grid .is-longpress-dragging').count(),1);
     await page.mouse.move(from.x + from.width / 2 + 15, from.y + from.height / 2, { steps: 5 });
     await page.mouse.move(to.x + 10, to.y + to.height / 2, { steps: 10 });
     await page.mouse.move(to.x + 11, to.y + to.height / 2);
@@ -86,7 +88,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     }
     await page.mouse.up();
     await page.waitForFunction(() => !CanvasWorkspace.libraryOrderSaving);
-    assert.deepEqual(await order(), ['canvas:a', 'folder:y', 'folder:x', 'canvas:b', 'canvas:c']);
+    assert.deepEqual(await order(), ['canvas:b','canvas:c','folder:y','folder:x','canvas:a']);
+    assert.equal(await page.evaluate(()=>moves.length),1,'Long press must not move into a folder');
     console.log('Canvas/folder reorder, restore, rollback, folder move, hidden entries and pin priority passed');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

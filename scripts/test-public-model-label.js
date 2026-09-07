@@ -40,6 +40,24 @@ assert.equal(
 );
 
 const indexSource = fs.readFileSync(path.resolve(__dirname, '../src/index.html'), 'utf8');
+const rejected = 'The generation request was not accepted. Check the reference files and settings, then try again.';
+const localizedRejection = '\u751f\u6210\u8bf7\u6c42\u672a\u88ab\u63a5\u53d7\uff0c\u8bf7\u68c0\u67e5\u53c2\u8003\u7d20\u6750\u548c\u53c2\u6570\u540e\u91cd\u8bd5\u3002';
+assert.equal(renderer.publicAiErrorMessage(rejected), localizedRejection);
+assert.equal(renderer.publicAiErrorMessage('', 'fallback', 'provider-request-failed'), localizedRejection);
+assert.equal(renderer.publicAiErrorMessage(rejected + ' No points were charged.'), localizedRejection + '\u672c\u6b21\u672a\u6263\u79ef\u5206\u3002');
+renderer.document.documentElement.dataset.language = 'en';
+assert.equal(renderer.publicAiErrorMessage(rejected), rejected);
+renderer.document.documentElement.dataset.language = 'ko';
+assert.doesNotMatch(renderer.publicAiErrorMessage(rejected), /generation request/);
+renderer.document.documentElement.dataset.language = 'zh';
+const boardSource = fs.readFileSync(path.resolve(__dirname, '../src/js/board-media-meta.js'), 'utf8');
+vm.runInContext(boardSource.slice(boardSource.indexOf('function boardButlerError('), boardSource.indexOf('function isTransientBoardButlerStatusFailure(')), renderer);
+const failure = renderer.boardButlerError({ reason: 'provider-request-failed', message: rejected, httpStatus: 400, requestId: 'test-request', retryAfterMs: 1200 }, 'fallback');
+assert.equal(failure.message, localizedRejection);
+assert.equal(failure.reason, 'provider-request-failed');
+assert.equal(failure.status, 400);
+assert.equal(failure.requestId, 'test-request');
+assert.equal(failure.retryAfterMs, 1200);
 assert.ok(indexSource.indexOf('js/public-model-label.js') < indexSource.indexOf('js/store-client.js'));
 
 const mainSource = fs.readFileSync(path.resolve(__dirname, '../main.js'), 'utf8');

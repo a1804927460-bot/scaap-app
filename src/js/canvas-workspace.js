@@ -591,9 +591,9 @@ function canvasLibraryOrderedEntries(ignoreQuery = false) {
   return [
     ...filteredCanvasProjects(ignoreQuery).map((record) => ({ key: `folder:${record.id}`, record })),
     ...filteredCanvases(ignoreQuery).map((record) => ({ key: `canvas:${record.id}`, record }))
-  ].sort((a, b) => Number(b.record.pinned === true) - Number(a.record.pinned === true)
-    || (Number.isFinite(a.record.libraryOrder) ? a.record.libraryOrder : Number.MAX_SAFE_INTEGER)
-      - (Number.isFinite(b.record.libraryOrder) ? b.record.libraryOrder : Number.MAX_SAFE_INTEGER));
+  ].sort((a, b) => (Number.isFinite(a.record.libraryOrder) ? a.record.libraryOrder : Number.MAX_SAFE_INTEGER)
+      - (Number.isFinite(b.record.libraryOrder) ? b.record.libraryOrder : Number.MAX_SAFE_INTEGER)
+    || Number(b.record.pinned === true) - Number(a.record.pinned === true));
 }
 
 function clearCanvasLibraryDropIndicators() {
@@ -605,7 +605,7 @@ async function reorderCanvasLibrary(sourceKey, targetKey, after) {
   const entries = canvasLibraryOrderedEntries(true);
   const source = entries.find((entry) => entry.key === sourceKey);
   const target = entries.find((entry) => entry.key === targetKey);
-  if (!source || !target || (source.record.pinned === true) !== (target.record.pinned === true)) return;
+  if (!source || !target) return;
   const previous = entries.map(({ record }) => [record, record.libraryOrder]);
   entries.splice(entries.indexOf(source), 1);
   entries.splice(entries.indexOf(target) + Number(after), 0, source);
@@ -625,7 +625,59 @@ async function reorderCanvasLibrary(sourceKey, targetKey, after) {
 function bindCanvasLibraryReorder(card, key, folder = false) {
   card.dataset.libraryKey = key;
   card.draggable = true;
+  let press = null, suppressClick = false;
+  card.addEventListener('click', event => {
+    if (!suppressClick) return;
+    suppressClick = false; event.preventDefault(); event.stopImmediatePropagation();
+  }, true);
+  card.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || event.target.closest('button,input,select') || CanvasWorkspace.libraryOrderSaving) return;
+    const controller = new AbortController();
+    const state = press = { x:event.clientX, y:event.clientY, active:false, ghost:null, target:null, after:false };
+    const finish = cancel => {
+      clearTimeout(timer); controller.abort(); state.ghost?.remove();
+      card.classList.remove('is-longpress-dragging'); clearCanvasLibraryDropIndicators();
+      if (state.active) suppressClick = true;
+      press = null;
+      if (!cancel && state.active && state.target) void reorderCanvasLibrary(key,state.target,state.after);
+    };
+    const timer = setTimeout(() => {
+      if (!card.isConnected) { finish(true); return; }
+      state.active = true;
+      const rect = card.getBoundingClientRect();
+      const ghost = state.ghost = card.cloneNode(true);
+      ghost.removeAttribute('id'); ghost.removeAttribute('data-library-key');
+      ghost.setAttribute('aria-hidden','true');
+      Object.assign(ghost.style,{position:'fixed',left:`${rect.left}px`,top:`${rect.top}px`,width:`${rect.width}px`,height:`${rect.height}px`,margin:'0',pointerEvents:'none',zIndex:'10000',opacity:'.85'});
+      state.left=rect.left; state.top=rect.top;
+      document.body.append(ghost); card.classList.add('is-longpress-dragging');
+    }, 350);
+    window.addEventListener('pointermove', move => {
+      if (!state.active) { if (Math.hypot(move.clientX-state.x,move.clientY-state.y)>7) finish(true); return; }
+      move.preventDefault();
+      state.ghost.style.transform=`translate(${move.clientX-state.x}px,${move.clientY-state.y}px)`;
+      const grid=card.parentElement;
+      const candidates=Array.from(grid.children).filter(node=>node!==card && node.dataset.libraryKey);
+      let nearest=null, distance=Infinity;
+      for (const node of candidates) {
+        const r=node.getBoundingClientRect();
+        const d=Math.hypot(move.clientX-(r.left+r.width/2),move.clientY-(r.top+r.height/2));
+        if(d<distance){distance=d;nearest=node;}
+      }
+      clearCanvasLibraryDropIndicators();state.target=null;
+      const area=grid.getBoundingClientRect();
+      if(nearest && move.clientX>=area.left && move.clientX<=area.right && move.clientY>=area.top && move.clientY<=area.bottom){
+        const r=nearest.getBoundingClientRect();state.target=nearest.dataset.libraryKey;state.after=move.clientX>r.left+r.width/2;
+        nearest.dataset.libraryDrop=state.after?'after':'before';
+      }
+    },{passive:false,signal:controller.signal});
+    window.addEventListener('pointerup',()=>finish(false),{once:true,signal:controller.signal});
+    window.addEventListener('pointercancel',()=>finish(true),{once:true,signal:controller.signal});
+    window.addEventListener('blur',()=>finish(true),{once:true,signal:controller.signal});
+    window.addEventListener('keydown',e=>{if(e.key==='Escape')finish(true);},{signal:controller.signal});
+  });
   card.addEventListener('dragstart', (event) => {
+    if (press?.active) { event.preventDefault(); event.stopImmediatePropagation(); return; }
     if (CanvasWorkspace.libraryOrderSaving || card.querySelector('input')) { event.preventDefault(); event.stopImmediatePropagation(); return; }
     if (!event.dataTransfer) return;
     CanvasWorkspace.libraryDragKey = key;
@@ -643,9 +695,6 @@ function bindCanvasLibraryReorder(card, key, folder = false) {
     const x = (event.clientX - rect.left) / rect.width;
     const y = (event.clientY - rect.top) / rect.height;
     if (folder && source.startsWith('canvas:') && x > .25 && x < .75 && y > .2 && y < .8) return 'inside';
-    const entries = canvasLibraryOrderedEntries(true);
-    if ((entries.find((entry) => entry.key === source)?.record.pinned === true)
-      !== (entries.find((entry) => entry.key === key)?.record.pinned === true)) return null;
     return x >= .5 ? 'after' : 'before';
   };
   card.addEventListener('dragover', (event) => {
@@ -937,12 +986,20 @@ function renderCanvasLibrary() {
     meta.append(updated);
     meta.title = [projectName.textContent, updated.textContent].filter(Boolean).join(' · ');
 
-    const pinBadge = document.createElement('span');
+    const pinBadge = document.createElement('button');
+    pinBadge.type = 'button';
     pinBadge.className = 'canvas-library-card-pin';
-    pinBadge.title = t('Pinned canvas', '已置顶画布');
+    pinBadge.title = t('Unpin canvas', '取消置顶');
     pinBadge.setAttribute('aria-label', pinBadge.title);
     pinBadge.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3h8l-1 5 3 4H6l3-4z"/><path d="M12 12v9"/></svg>';
     pinBadge.hidden = canvas.pinned !== true;
+    pinBadge.addEventListener('pointerdown', event => event.stopPropagation());
+    pinBadge.addEventListener('keydown', event => event.stopPropagation());
+    pinBadge.addEventListener('dragstart', event => { event.preventDefault(); event.stopPropagation(); });
+    pinBadge.addEventListener('click', event => {
+      event.preventDefault(); event.stopPropagation();
+      if (canvas.pinned === true) toggleCanvasPinned(canvas.id);
+    });
 
     const menuTrigger = document.createElement('button');
     menuTrigger.type = 'button';
@@ -2443,7 +2500,7 @@ async function requestCanvasAgentText(options = {}) {
     pending.textContent = canvasAgentThinkingText(seconds);
   }, 1000);
   try {
-    const response = await window.messsAPI.chatWithAi({
+    const response = await chatWithAgentEstimate(pending, {
       permissionSession: window.MesssComposerActions?.session,
       prompt: contextualPrompt,
       messages: options.isolated === true
@@ -2540,7 +2597,7 @@ async function submitCanvasAgentMessage() {
     pending.textContent = canvasAgentThinkingText(seconds);
   }, 1000);
   try {
-    const response = await window.messsAPI.chatWithAi({
+    const response = await chatWithAgentEstimate(pending, {
       permissionSession: window.MesssComposerActions?.session,
       prompt: contextualPrompt,
       messages: CanvasWorkspace.agentMessages,

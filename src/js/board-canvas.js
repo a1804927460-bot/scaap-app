@@ -9305,7 +9305,7 @@ function openBoardColorPopover(input, trigger, id) {
   if(previous){previous._close();return;}
   const pop=document.createElement('div');pop.id=id;pop.className='text-color-popover';
   const controller=new AbortController();
-  const close=()=>{controller.abort();pop.remove();trigger.setAttribute('aria-expanded','false');};
+  const close=()=>{window.MesssUiMotion?.stop(pop);controller.abort();pop.remove();trigger.setAttribute('aria-expanded','false');};
   pop._close=close;
   trigger.setAttribute('aria-expanded','true');
   pop.dataset.boardUiLayer='true';
@@ -9351,6 +9351,7 @@ function openBoardColorPopover(input, trigger, id) {
   const anchor=trigger.getBoundingClientRect();
   pop.style.left=`${Math.max(8,Math.min(innerWidth-pop.offsetWidth-8,anchor.right-pop.offsetWidth))}px`;
   pop.style.top=`${Math.max(8,Math.min(innerHeight-pop.offsetHeight-8,anchor.top-pop.offsetHeight-10))}px`;
+  window.MesssUiMotion?.enter(pop);
 }
 
 function initTextToolPanel() {

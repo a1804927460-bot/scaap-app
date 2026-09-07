@@ -3597,6 +3597,8 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   white-space: nowrap;
 }
 .canvas-library-card-pin {
+  padding: 0;
+  cursor: var(--cursor-pointer);
   position: absolute;
   top: 10px;
   right: 39px;
@@ -3610,6 +3612,13 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   color: var(--accent);
 }
 .canvas-library-card-pin[hidden] { display: none; }
+.canvas-library-card-pin:hover {
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-elevated));
+}
+.canvas-library-card-pin:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .canvas-library-card.is-pinned {
   border-color: color-mix(in srgb, var(--accent) 52%, var(--border-hairline));
 }

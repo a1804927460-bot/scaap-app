@@ -27,6 +27,33 @@ const { pathToFileURL } = require('node:url');
       document.body.style.cssText = 'position:relative;width:100vw;height:100vh';
     });
     fs.mkdirSync('test-artifacts/moodboard-generation', { recursive: true });
+    await page.setViewportSize({width:1560,height:1020});
+    for (const canvasWidth of [740,420]) {
+      await page.evaluate(width=>{
+        const host=document.createElement('div');host.id='composer-host';
+        host.style.cssText=`position:absolute;left:30px;top:90px;width:${width}px;height:880px`;
+        document.body.append(host);host.append(testPop);
+        const dock=document.createElement('div');dock.id='dock-fixture';
+        dock.style.cssText=`position:absolute;left:${width+30}px;top:90px;width:400px;height:880px;background:#252628;z-index:200`;
+        document.body.append(dock);
+      },canvasWidth);
+      for (const kind of ['image','video']) {
+        await page.evaluate(kind=>testPop._setMode(kind),kind);
+        if(await page.locator('.ai-options-panel').isHidden())await page.locator('.ai-options-toggle').click();
+        await page.waitForTimeout(600);
+        const fit=await page.locator('.ai-options-panel').evaluate(panel=>{
+          const r=panel.getBoundingClientRect(),host=document.getElementById('composer-host').getBoundingClientRect();
+          const buttons=[...panel.querySelectorAll('button')].filter(b=>b.getClientRects().length);
+          return {inside:r.left>=host.left&&r.right<=host.right&&r.top>=host.top,
+            clickable:buttons.every(b=>{const q=b.getBoundingClientRect();return b.contains(document.elementFromPoint(q.x+q.width/2,q.y+q.height/2));})};
+        });
+        assert.ok(fit.inside&&fit.clickable,JSON.stringify({canvasWidth,kind,fit}));
+        assert.equal(await page.locator('.ai-composer-close').isVisible(),false,'Composer close must not bleed through settings');
+        await page.screenshot({path:`test-artifacts/moodboard-generation/settings-${canvasWidth}-${kind}.png`});
+        await page.locator('.ai-options-toggle').click();
+      }
+      await page.evaluate(()=>{document.body.append(testPop);document.getElementById('composer-host').remove();document.getElementById('dock-fixture').remove();});
+    }
     for (const width of [1200, 420]) {
       await page.setViewportSize({ width, height: 850 });
       for (const theme of ['dark', 'light']) {

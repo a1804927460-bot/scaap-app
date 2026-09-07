@@ -9811,6 +9811,7 @@ function registerIpcHandlers() {
     }
   });
 
+  ipcMain.handle('ai:estimateCredits', (_evt, request = {}) => require('./lib/agent-credit-estimate').estimateAgentCredits(request));
   ipcMain.handle('ai:chat', async (_evt, request = {}) => {
     const permissionSession = request.permissionSession;
     const workspaceOwner = aiWorkspaceOwner();

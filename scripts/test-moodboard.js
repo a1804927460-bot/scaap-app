@@ -69,7 +69,7 @@ assert.match(board, /item\.isAiPlaceholder \|\| item\.isMoodboard/,
 assert.match(board, /typeof initBoardMoodboards === 'function'\) initBoardMoodboards\(\)/);
 assert.match(contextMenu, /Send to moodboard[\s\S]*openMoodboardTargetPicker\(text\)/);
 assert.match(contextMenu, /item\.isMoodboard[\s\S]*openMoodboardEditor\(item\)/);
-assert.match(workspace, /async function requestCanvasAgentText[\s\S]*chatWithAi[\s\S]*options\.onResponse/);
+assert.match(workspace, /async function requestCanvasAgentText[\s\S]*chatWithAgentEstimate\(pending,[\s\S]*options\.onResponse/);
 assert.match(main, /b\.isNote \|\| b\.isDoodle \|\| b\.isMoodboard/,
   'Missing-file cleanup must preserve persisted moodboards.');
 assert.match(styles, /\.board-moodboard \{[\s\S]*?border-radius: 8px[\s\S]*?\.moodboard-overlay \{[\s\S]*?place-items: center[\s\S]*?\.moodboard-editor-panel[\s\S]*?width: min\(72vw, 980px\)[\s\S]*?height: min\(76vh, 760px\)[\s\S]*?border-radius: 8px/,

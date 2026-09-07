@@ -296,6 +296,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   confirmAiMediaDelivery: (deliveryToken) => ipcRenderer.invoke('ai:confirmMediaDelivery', deliveryToken),
   releaseAiMediaDelivery: (deliveryToken) => ipcRenderer.invoke('ai:releaseMediaDelivery', deliveryToken),
   chatWithAi: (request) => ipcRenderer.invoke('ai:chat', request),
+  estimateAgentCredits: (request) => ipcRenderer.invoke('ai:estimateCredits', request),
   setAiPermissionMode: (request) => ipcRenderer.invoke('ai:permissionMode', request),
   replyAiPermission: (request) => ipcRenderer.invoke('ai:permissionReply', request),
   onAiPermissionRequest: (callback) => {

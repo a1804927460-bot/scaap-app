@@ -62,6 +62,24 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       await page.waitForFunction(({selector,name}) => document.querySelector(selector).textContent === name, {selector,name});
       await page.evaluate(() => { window.failSave = false; });
     }
+    for (const activation of ['click', 'Enter', 'Space', 'rollback']) {
+      await page.evaluate(fail => {
+        AppState.canvases[0].pinned = true;
+        window.failSave = fail;
+        renderCanvasLibrary();
+      }, activation === 'rollback');
+      const savesBefore = await page.evaluate(() => window.saves);
+      const pin = page.locator('.canvas-library-card-pin');
+      assert.equal(await pin.getAttribute('title'), '\u53d6\u6d88\u7f6e\u9876');
+      if (activation === 'click' || activation === 'rollback') await pin.click();
+      else await pin.press(activation);
+      await page.waitForFunction(count => window.saves === count + 1, savesBefore);
+      await page.waitForFunction(fail => AppState.canvases[0].pinned === fail, activation === 'rollback');
+      assert.equal(await page.evaluate(() => window.opened), 0, 'Unpin must not open the canvas');
+      assert.equal(await page.locator('.is-longpress-dragging').count(), 0);
+      assert.equal(await pin.isVisible(), activation === 'rollback');
+    }
+    await page.evaluate(() => { window.failSave = false; });
     assert.equal(await page.locator('.canvas-library-mosaic img').evaluate(el => el.draggable), false);
     await page.evaluate(async () => {
       window.detachedCalls = [];

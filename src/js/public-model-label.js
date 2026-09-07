@@ -29,15 +29,26 @@ function publicModelLabel(value, fallback = 'AI model') {
   return text || fallback;
 }
 
-function publicAiErrorMessage(value, fallback = 'The AI service could not complete this request.') {
+function publicAiErrorMessage(value, fallback = 'The AI service could not complete this request.', reason = '') {
   let text = compactPublicText(value);
-  if (!text) return fallback;
   const language = String(
     typeof document !== 'undefined' && document.documentElement
       ? document.documentElement.dataset.language || 'en'
       : 'en'
   );
   const localized = (en, zh, ko) => language === 'zh' ? zh : language === 'ko' ? ko : en;
+  if (reason === 'provider-request-failed' || /^The generation request was not accepted\./i.test(text)) {
+    const message = localized(
+      'The generation request was not accepted. Check the reference files and settings, then try again.',
+      '生成请求未被接受，请检查参考素材和参数后重试。',
+      '생성 요청이 승인되지 않았습니다. 참조 파일과 설정을 확인한 뒤 다시 시도하세요.'
+    );
+    // Do not infer billing settlement from a rejected request alone.
+    return /\bNo points were charged\b/i.test(text)
+      ? message + localized(' No points were charged.', '本次未扣积分。', ' 포인트는 차감되지 않았습니다.')
+      : message;
+  }
+  if (!text) return fallback;
   if (/does not support (?:this|the selected) aspect ratio|invalid[-_ ]aspect[-_ ]ratio/i.test(text)) {
     return localized(
       'This aspect ratio is unavailable for the current generation mode. A supported ratio has been selected; please try again.',

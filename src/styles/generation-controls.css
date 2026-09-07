@@ -1,8 +1,30 @@
 /* Keep generation settings out of the composer's layout flow. */
+.ai-image-popover.ai-composer:not(.is-moodboard-composer) { height:auto; }
+.ai-composer:not(.is-moodboard-composer) .ai-composer-form { height:auto;min-height:176px; }
+.ai-composer:not(.is-moodboard-composer) .ai-composer-prompt { min-height:64px; }
+.ai-composer:not(.is-moodboard-composer) .ai-options-panel {
+  left:auto;right:12px;bottom:calc(100% + 8px);width:min(360px,calc(100% - 24px));
+  box-sizing:border-box;z-index:8;border-radius:8px;
+  max-height:min(520px,calc(100vh - 310px));overflow-y:auto;
+}
+.ai-composer:not(.is-moodboard-composer) .ai-composer-controls { flex-wrap:wrap;gap:6px; }
+.ai-composer:not(.is-moodboard-composer) .ai-composer-controls > .ai-model-picker { flex:0 1 auto;max-width:100%; }
+.ai-composer:not(.is-moodboard-composer) .ai-model-picker-trigger { max-width:100%; }
+.ai-composer:not(.is-moodboard-composer) .ai-options-toggle { flex:0 0 auto;min-height:32px;height:auto; }
+.ai-composer:not(.is-moodboard-composer):has(.ai-options-panel:not([hidden])) .ai-composer-close {
+  visibility:hidden;
+}
 .ai-assistant-main { position: relative; }
 #fullscreen-overlay.is-assistant-preview { position:absolute;inset:0;z-index:50;border-radius:inherit; }
-#fullscreen-overlay.is-assistant-preview .fullscreen-stage { width:100%;--fullscreen-media-max-width:100%;--fullscreen-media-max-height:100%;padding:56px 24px 24px; }
-#fullscreen-overlay.is-assistant-preview .fullscreen-stage > img { max-width:100%;max-height:100%;object-fit:contain; }
+#fullscreen-overlay.is-assistant-preview .fullscreen-stage {
+  position:absolute;inset:0;width:100%;height:100%;
+  grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr);
+  --fullscreen-media-max-width:100%;--fullscreen-media-max-height:100%;
+  padding:64px 24px 24px;
+}
+#fullscreen-overlay.is-assistant-preview .fullscreen-stage > img {
+  min-width:0;min-height:0;max-width:100%;max-height:100%;object-fit:contain;
+}
 .ai-assistant-output-files .ai-output-image-preview {
   display:block;width: min(320px,100%);height:200px;padding:0;overflow:hidden;
   border:1px solid var(--border-hairline);border-radius:8px;background:var(--bg-surface-2);
@@ -16,6 +38,11 @@
   background: var(--bg-elevated); box-shadow: var(--shadow-elevated); overflow-y: auto;
 }
 .messs-composer-menu[hidden] { display:none; }
+@media (prefers-reduced-motion: no-preference) {
+  .messs-composer-menu button, .text-color-popover header button {
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+}
 #ai-assistant-add-menu button { align-items:center; gap:10px; }
 #ai-assistant-add-menu .messs-composer-action-icon { display:block; width:16px; height:16px; flex:0 0 16px; object-fit:contain; }
 [data-theme="dark"] #ai-assistant-add-menu .messs-composer-action-icon { filter:invert(1); }
