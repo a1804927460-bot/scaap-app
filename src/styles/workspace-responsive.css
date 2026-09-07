@@ -1,6 +1,6 @@
 /* Size the library by its available pane, including a resized sidebar. */
 [data-credit-estimate] { position:relative; }
-[data-credit-estimate]::after { content:attr(data-credit-estimate); display:block; color:var(--text-secondary); font-size:12px; line-height:24px; font-variant-numeric:tabular-nums; }
+[data-credit-estimate]::after { content:"\2726\00a0 " attr(data-credit-estimate); display:block; color:var(--text-secondary); font-size:12px; line-height:24px; font-variant-numeric:tabular-nums; }
 .ai-assistant-message[data-credit-estimate]::after { position:absolute; top:0; left:112px; max-width:calc(100% - 112px); }
 @media(max-width:600px) { .ai-assistant-message[data-credit-estimate]::after { position:static; max-width:100%; } }
 #canvas-library-grid .is-longpress-dragging { opacity:.3; }

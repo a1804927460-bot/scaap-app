@@ -5253,6 +5253,20 @@ function conciseAiErrorMessage(error, context = {}) {
       'The AI gateway is synchronizing its model list. Please retry in a moment.'
     );
   }
+  if (code === 'chat-service-busy') {
+    return localizedMessage(
+      'The selected model is temporarily busy. Try an automatic mode or retry later.',
+      '当前模型暂时繁忙，可切换自动模式或稍后重试。',
+      '선택한 모델이 일시적으로 혼잡합니다. 자동 모드로 전환하거나 나중에 다시 시도하세요.'
+    );
+  }
+  if (code === 'chat-response-unavailable') {
+    return localizedMessage(
+      'The reply could not be retrieved. Please retry later.',
+      '暂时未能获取回复，请稍后重试。',
+      '응답을 가져오지 못했습니다. 나중에 다시 시도하세요.'
+    );
+  }
   if (['provider-temporarily-unavailable', 'provider-channel-unavailable', 'provider-rate-limited', 'ai302-rate-limited', 'ai302-route-unavailable'].includes(code)) {
     return localizedMessage(
       'The AI service is temporarily busy. No points were charged; please retry shortly.',

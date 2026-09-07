@@ -143,6 +143,18 @@ export function publicGatewayError(error) {
     : String(error && error.code || (originalStatus >= 500 ? 'gateway-error' : 'bad-request'));
   const rawMessage = String(error && error.message || '');
   const originalCode = classifiedProviderCode(rawCode, originalStatus, rawMessage);
+  // Chat has no durable generated-media task to recover. Never claim a result
+  // is being delivered (or that media credits are held) for a failed chat call.
+  if (error?.operationKind === 'chat') {
+    if (['provider-rate-limited', 'provider-channel-unavailable'].includes(originalCode)) {
+      return { status: 503, code: 'chat-service-busy',
+        message: 'The selected model is temporarily busy. Try an automatic mode or retry later.' };
+    }
+    if (error.providerTaskAccepted || error.submissionAmbiguous || originalStatus >= 500) {
+      return { status: 503, code: 'chat-response-unavailable',
+        message: 'The reply could not be retrieved. Please retry later.' };
+    }
+  }
   if (error && (error.providerTaskAccepted === true || error.submissionAmbiguous === true)
       && error.providerTaskTerminalFailure !== true) {
     return {

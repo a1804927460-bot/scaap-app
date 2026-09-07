@@ -2661,6 +2661,7 @@ async function handle(request, response) {
       error.providerTaskAccepted === true
       || error.submissionAmbiguous === true
     );
+    error.operationKind = kind;
     const terminalProviderFailure = error && error.providerTaskTerminalFailure === true;
     if (!freeChat && (!providerAccepted || terminalProviderFailure)) {
       try {

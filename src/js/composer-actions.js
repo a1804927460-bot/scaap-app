@@ -7,10 +7,9 @@ async function chatWithAgentEstimate(pending, request) {
   Promise.resolve().then(()=>window.messsAPI.estimateAgentCredits?.(request)).then(quote=>{
     if(finished || !pending.isConnected)return;
     estimate.textContent=quote?.available
-      ? t(`Initial reply: ${quote.min.toFixed(2)} - ${quote.max.toFixed(2)} credits`, `首轮预计 ${quote.min.toFixed(2)} - ${quote.max.toFixed(2)} 积分`)
+      ? t(`Estimated ${quote.min.toFixed(2)} - ${quote.max.toFixed(2)} credits`, `预计 ${quote.min.toFixed(2)} - ${quote.max.toFixed(2)} 积分`)
       : t('Estimate unavailable','暂无法估算积分');
-    estimate.title=t('Initial reply estimate, including 20% cost protection. Additional tool rounds and media generation are not included; this is not a spending cap.', '首轮回复预估，包含20%成本保护。后续工具轮次与图片视频生成另计，不是消费上限。');
-    pending.dataset.creditEstimate=estimate.textContent;pending.title=estimate.title;
+    pending.dataset.creditEstimate=estimate.textContent;
   }).catch(()=>{if(!finished && pending.isConnected)pending.dataset.creditEstimate=t('Estimate unavailable','暂无法估算积分');});
   try {return await window.messsAPI.chatWithAi(request);}
   finally {finished=true;delete pending.dataset.creditEstimate;pending.removeAttribute('title');}

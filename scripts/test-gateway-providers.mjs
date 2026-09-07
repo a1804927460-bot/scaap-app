@@ -517,12 +517,14 @@ assert.deepEqual(JSON.parse(chatCalls[0].options.body), {
 
 const advancedChatCalls = [];
 for (const failure of [401, 429, 503]) {
+  process.env.AIREITER_API_KEY = `isolated-chat-failure-${failure}`;
   const attempted = [];
   globalThis.fetch = async (_url, options) => {
     attempted.push(JSON.parse(options.body).model);
-    return attempted.length === 1
-      ? jsonResponse({error:{message:'Account unavailable'}},failure)
-      : jsonResponse({choices:[{message:{content:'Healthy alternate'}}]});
+    if (attempted.length === 1) return new Response(JSON.stringify({error:{message:'Account unavailable'}}), {
+      status:failure,headers:{'Content-Type':'application/json','Retry-After':'60'}
+    });
+    return jsonResponse({choices:[{message:{content:'Healthy alternate'}}]});
   };
   const request = {providerId:'chat-6',model:'gemini-3.8-flash',routingStrategy:'fast',prompt:'hello',messages:[{role:'user',content:'hello'}]};
   if (failure === 503) {
@@ -534,7 +536,7 @@ for (const failure of [401, 429, 503]) {
   }
   attempted.length=0;
   await assert.rejects(()=>chat({...request,routingStrategy:null}));
-  assert.equal(attempted.length,1,'Manual model never changes');
+  assert.equal(attempted.length,0,'Manual model stays selected and respects its cooldown');
 }
 globalThis.fetch = async (url, options = {}) => {
   chatCalls.push({url:String(url),options});
@@ -545,9 +547,11 @@ for (const [routingStrategy,prompt,expected] of [
   ['balanced','implement python code','chat-gemini-3.1-pro'],
   ['balanced','concurrency architecture refactor','chat-gpt-5.6-sol']
 ]) {
+  process.env.AIREITER_API_KEY = `isolated-chat-strategy-${routingStrategy}-${expected}`;
   await chat({providerId:'chat-3',model:'gemini-3.1-pro',routingStrategy,prompt,messages:[{role:'user',content:prompt}]});
   assert.equal(JSON.parse(chatCalls.at(-1).options.body).model,expected);
 }
+process.env.AIREITER_API_KEY = 'aireiter-secret';
 globalThis.fetch = async (url, options = {}) => {
   advancedChatCalls.push({ url: String(url), options });
   return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'Advanced chat reply' } }] });

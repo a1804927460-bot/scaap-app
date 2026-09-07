@@ -11,6 +11,9 @@ import { normalizeVideoResolution } from './video-resolution.js';
 import { selectImageChannel, recordImageChannelResult, preferFalImageChannel } from './image-channel-policy.js';
 import { falImageRoutes, falImageInput, generateFalImage } from './fal-generation.js';
 import { AI302_PRIMARY_BASE_URL, getAi302BackupRoutes } from './tool-routes.js';
+import { createRouteHealth, safeRouteFallback, withSafeRouteRetry } from './route-resilience.js';
+
+const chatRouteHealth = createRouteHealth();
 
 const require = createRequire(import.meta.url);
 const {
@@ -3168,8 +3171,13 @@ export async function chat(body, signal) {
       }
     }
   }
+  return withSafeRouteRetry(async () => {
   let lastError;
-  for (const candidate of candidates) {
+  const orderedCandidates = chatRouteHealth.prioritize(candidates, candidate => ({
+    provider: {...candidate, apiKey:providerApiKey(candidate)},
+    model:alternativeModels.get(candidate.id) || logicalModel
+  }));
+  for (const candidate of orderedCandidates) {
     const candidateModel = alternativeModels.get(candidate.id) || logicalModel;
     const provider = { ...candidate, apiKey: providerApiKey(candidate) };
     const upstreamModel = provider.upstreamModels && Object.entries(provider.upstreamModels).find(([logical]) => (
@@ -3185,7 +3193,9 @@ export async function chat(body, signal) {
       endUserId: request.endUserId,
       returnUsage: true
     }, request, signal);
+    const startedAt = Date.now();
     try {
+      const result = await chatRouteHealth.execute(provider, candidateModel, async () => {
       try {
         return await requestWithModel(model || requestedModel);
       } catch (error) {
@@ -3213,7 +3223,17 @@ export async function chat(body, signal) {
           throw aliasError;
         }
       }
+      }, signal);
+      console.log(JSON.stringify({level:'info',event:'chat-route-result',requestId:request.operationId,
+        route:provider.id,model:candidateModel,status:'succeeded',durationMs:Date.now()-startedAt,
+        usage:result && typeof result === 'object' ? result.usage : undefined}));
+      return result;
     } catch (error) {
+      console.warn(JSON.stringify({level:'warn',event:'chat-route-result',requestId:request.operationId,
+        route:provider.id,model:candidateModel,status:Number(error.status)||502,durationMs:Date.now()-startedAt,
+        reason:error.routeCoolingDown?'cooldown':error.upstreamCapacityExhausted?'capacity-exhausted':
+          error.submissionAmbiguous?'ambiguous':String(error.code||'request-failed'),
+        fallbackAllowed:safeRouteFallback(error)}));
       lastError = error;
       if (signal && signal.aborted || !shouldTryProviderFallback(error)) throw error;
     }
@@ -3221,6 +3241,7 @@ export async function chat(body, signal) {
   throw lastError || Object.assign(new Error('No chat route is available for the selected model.'), {
     code: 'provider-not-configured'
   });
+  }, signal);
 }
 
 export async function models(providerId) {

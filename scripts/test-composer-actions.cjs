@@ -91,5 +91,32 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
    for(let i=0;i<8;i++){MesssUiMotion.enter(menu);MesssUiMotion.stop(menu);}
  });
  assert.equal(await page.locator('#ai-assistant-add-menu').evaluate(el=>el.getAnimations().length),0);
+ for(const width of [1100,390]) for(const theme of ['dark','light']) {
+   await page.setViewportSize({width,height:800});
+   await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
+   const estimates=await page.evaluate(async()=>{
+     const rows=['ai-assistant-message','board-agent-message'].map(className=>{
+       const row=document.createElement('div');row.className=className;document.body.append(row);return row;
+     });
+     let finish;
+     window.messsAPI.estimateAgentCredits=async()=>({available:true,min:0.06,max:1.64});
+     window.messsAPI.chatWithAi=()=>new Promise(resolve=>{finish=resolve;});
+     const results=[];
+     for(const row of rows){
+       const task=chatWithAgentEstimate(row,{});
+       await new Promise(resolve=>setTimeout(resolve,0));
+       results.push({label:row.dataset.creditEstimate,icon:getComputedStyle(row,'::after').content,title:row.getAttribute('title')});
+       finish({ok:true});await task;
+       if(row.hasAttribute('data-credit-estimate'))throw Error('Estimate did not clear');
+       row.remove();
+     }
+     return results;
+   });
+   for(const estimate of estimates){
+     assert.equal(estimate.label,'预计 0.06 - 1.64 积分');
+     assert.ok(estimate.icon.includes('\u2726'),'Estimate must have a solid four-point star');
+     assert.equal(estimate.title,null,'No internal pricing tooltip');
+   }
+ }
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
