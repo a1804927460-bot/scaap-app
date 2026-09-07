@@ -1193,7 +1193,7 @@ function readCreditNumber(source, keys, required = false) {
   for (const key of keys) {
     if (!Object.hasOwn(record, key) || record[key] === null || record[key] === undefined || record[key] === '') continue;
     const value = Number(record[key]);
-    if (Number.isFinite(value) && value >= 0) return Math.round(value);
+    if (Number.isFinite(value) && value >= 0) return Math.round(value * 100) / 100;
   }
   if (required) throw serviceError('credit-service-failed', 'The credit service did not return a valid balance.');
   return undefined;
@@ -1208,7 +1208,7 @@ function publicUsageSummary(payload, fallbackRange) {
   const totals = payload.totals && typeof payload.totals === 'object' ? payload.totals : {};
   const validDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? String(value) : '';
   const usageCountRow = (row = {}) => ({
-    credits: nonnegativeNumber(row.credits),
+    credits: nonnegativeNumber(row.credits, false),
     generations: nonnegativeNumber(row.generations),
     requests: nonnegativeNumber(row.requests)
   });

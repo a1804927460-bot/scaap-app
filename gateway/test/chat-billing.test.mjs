@@ -3,9 +3,21 @@ import assert from 'node:assert/strict';
 import { createChatBilling, chatBudget, chatRate } from '../src/chat-billing.js';
 import calculator from '../../lib/chat-cost-pricing.js';
 import { publicGatewayError } from '../src/public-errors.js';
+import { getUsageAccount, getUsageSummary } from '../src/usage.js';
 const provider = { id: 'chat-4', endpoint: 'https://api.aireiter.com/v1/chat/completions' };
 const model = 'gpt-5.6-sol';
 const usage = {inputTokens:4400,outputTokens:66,cachedInputTokens:4224};
+
+test('public account and usage APIs retain hundredths', async () => {
+  process.env.SUPABASE_SECRET_KEY='test-not-a-secret';
+  const account={balance:99.86,reserved:0.02,availableCredits:99.84};
+  const fetcher=async url=>new Response(JSON.stringify(url.includes('get_ai_credit_account')?account:{
+    account,totals:{credits:0.14},byType:[{kind:'chat',credits:0.14}],daily:[],byModel:[]}));
+  assert.equal((await getUsageAccount('user',fetcher)).balance,99.86);
+  const summary=await getUsageSummary('user','7d',fetcher);
+  assert.equal(summary.totals.credits,0.14);
+  assert.equal(summary.byType[0].credits,0.14);
+});
 
 test('verified cached tokens and fallback model determine actual fractional charge', () => {
   assert.equal(calculator.calculateChatCost([usage],chatRate(provider,model)).credits,0.14);
