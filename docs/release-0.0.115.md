@@ -25,3 +25,15 @@
 - Previous gateway audit exercised six real FAL image generation/edit combinations and a 7 MB background-removal input. These are adapter checks, not complete authenticated desktop end-to-end tests.
 - Publish desktop tag only after the release commit's Railway deployment and health check succeed. Verify Windows and both macOS architecture artifacts and update manifests after CI publication.
 - Builds follow the existing release signing configuration; no new signing/notarization credentials were introduced.
+
+## Publication results
+
+- Release commit/tag: b771d10d7ab31899d8e339d0e99b06a315bbc2ae / v0.0.115.
+- Railway deployment 0b7b95da-9245-4845-a27c-11ee71b39767 succeeded before the desktop tag was pushed. Health returned ok=true, catalogVersion=57, asyncVideo=true.
+- GitHub Actions run 34079411152 succeeded: Windows 16m08s, macOS 2m53s.
+- Public release: https://github.com/a1804927460-bot/messs-releases/releases/tag/v0.0.115
+- All eight assets returned HTTP 200 with the declared sizes. Both updater manifests declare 0.0.115 and reference the correct Windows/Intel/Apple Silicon artifacts.
+- Windows installer downloaded completely: 402403964 bytes, SHA-512 matched latest.yml.
+- Electron updater using the same GitHub provider as the desktop app detected 0.0.115 successfully. Fixed the standalone probe to use the updater's own SemVer constructor rather than a different dependency instance.
+- macOS artifacts were built/tested in macOS CI and their public availability/manifests checked; no local macOS installation or desktop smoke test was performed.
+- CI reports deprecated Node 20 action runtimes for checkout/setup-node v4; builds succeeded using the runner's forced Node 24 action runtime. Application build commands use Node 22.

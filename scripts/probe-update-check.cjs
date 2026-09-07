@@ -3,7 +3,6 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { autoUpdater } = require('electron-updater');
-const semver = require('semver');
 
 app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'messs-update-probe-')));
 const timer = setTimeout(() => { console.error('UPDATE_PROBE_TIMEOUT'); app.exit(1); }, 60000);
@@ -15,7 +14,7 @@ app.whenReady().then(async () => {
   });
   autoUpdater.forceDevUpdateConfig = true;
   autoUpdater.autoDownload = false;
-  autoUpdater.currentVersion = semver.parse('0.0.110');
+  autoUpdater.currentVersion = new autoUpdater.currentVersion.constructor('0.0.110');
   autoUpdater.logger = Object.fromEntries(['info', 'warn', 'error', 'debug'].map(level => [level,
     (...args) => console.log(level, ...args.map(v => String(v).slice(0, 1800)))]));
   autoUpdater.setFeedURL(process.argv.includes('--generic')
