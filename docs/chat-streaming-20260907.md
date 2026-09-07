@@ -56,6 +56,22 @@ submissions, image/video route changes, concurrency-limit changes, database
 migrations or billing changes are part of this patch. Formal Agent billing
 is still separate work. Desktop streaming requires an updated client.
 
+## Production Follow-up
+
+The first authenticated SSE smoke test confirmed streaming but exposed another
+cold-start delay: Flash rejected after 22867 ms and Pro after 23201 ms, both with
+exhausted account pools. The gateway queue was 0 ms. The healthy third route
+completed in 4066 ms. Subsequent client first-text times were 3382 and 2387 ms.
+
+`MESSS_CHAT_COLD_ROUTE_ORDER` optionally seeds automatic-mode candidate ordering
+from operationally verified availability. It is applied before live health
+ranking, never adds a model below the task's quality floor, and never affects
+manual model choices. Invalid/unconfigured entries are ignored. Production
+can start with `chat-4,chat-3,chat-6` while the Gemini pools are exhausted, rather
+than paying the same two rejection delays after every deployment. This is an
+operator-controlled availability preference, not proof that a pool has recovered;
+revisit it when upstream capacity changes. No extra speculative requests are sent.
+
 ## References
 
 - https://github.com/rexxars/eventsource-parser

@@ -3170,6 +3170,12 @@ export async function chat(body, signal, onDelta) {
         alternativeModels.set(candidate.id, alternative);
       }
     }
+    // Bootstrap cold processes from an operator-verified healthy route order.
+    // Live circuit health still wins, and only task-compatible candidates enter.
+    const coldOrder = new Map([...new Set(String(process.env.MESSS_CHAT_COLD_ROUTE_ORDER || '')
+      .slice(0, 512).toLowerCase().split(',').map(id => id.trim()).filter(Boolean))]
+      .map((id, index) => [id, index]));
+    candidates.sort((a, b) => (coldOrder.get(a.id) ?? 1000) - (coldOrder.get(b.id) ?? 1000));
   }
   return withSafeRouteRetry(async () => {
   let lastError;

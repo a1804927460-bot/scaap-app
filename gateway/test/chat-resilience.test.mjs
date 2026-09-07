@@ -85,3 +85,53 @@ test('chat errors do not promise media recovery or held credits', () => {
   assert.equal(publicGatewayError({operationKind:'chat',status:429}).code,'chat-service-busy');
   assert.equal(publicGatewayError({submissionAmbiguous:true,status:503}).code,'provider-task-recovery-pending');
 });
+
+test('cold automatic routes use verified availability order without changing manual models or overriding health', async () => {
+  const savedKey=process.env.AIREITER_API_KEY, savedOrder=process.env.MESSS_CHAT_COLD_ROUTE_ORDER, savedFetch=globalThis.fetch;
+  process.env.AIREITER_API_KEY='cold-route-test-'+Date.now();
+  process.env.MESSS_CHAT_COLD_ROUTE_ORDER='missing, chat-4,chat-4,chat-3,chat-6';
+  const calls=[];
+  let solAvailable=true;
+  globalThis.fetch=async(_url,options)=>{
+    const body=JSON.parse(options.body);calls.push(body.model);
+    return body.model==='chat-gpt-5.6-sol' && !solAvailable
+      ? Response.json({error:{message:'All available accounts exhausted'}},{status:429}) : reply();
+  };
+  try {
+    assert.equal((await chat({routingStrategy:'fast',prompt:'hello'})).text,'OK');
+    assert.deepEqual(calls,['chat-gpt-5.6-sol']);
+    calls.length=0;
+    assert.equal((await chat({providerId:'chat-6',model:'gemini-3.8-flash',prompt:'hello'})).text,'OK');
+    assert.deepEqual(calls,['chat-gemini-3.8-flash']);
+    calls.length=0;solAvailable=false;
+    assert.equal((await chat({routingStrategy:'fast',prompt:'hello'})).text,'OK');
+    assert.equal(calls[0],'chat-gpt-5.6-sol');
+    assert.equal(calls.at(-1),'chat-gemini-3.8-flash');
+    calls.length=0;
+    assert.equal((await chat({routingStrategy:'fast',prompt:'hello'})).text,'OK');
+    assert.deepEqual(calls,['chat-gemini-3.8-flash']);
+  } finally {
+    globalThis.fetch=savedFetch;
+    if(savedKey===undefined)delete process.env.AIREITER_API_KEY;else process.env.AIREITER_API_KEY=savedKey;
+    if(savedOrder===undefined)delete process.env.MESSS_CHAT_COLD_ROUTE_ORDER;else process.env.MESSS_CHAT_COLD_ROUTE_ORDER=savedOrder;
+  }
+});
+
+test('an interrupted streamed automatic request is not replayed to another model', async () => {
+  const savedKey=process.env.AIREITER_API_KEY,savedFetch=globalThis.fetch;
+  process.env.AIREITER_API_KEY='stream-route-test-'+Date.now();
+  let calls=0;
+  globalThis.fetch=async()=>{
+    calls++;
+    return new Response('data: {"choices":[{"index":0,"delta":{"content":"partial"}}]}\n\n', {headers:{'Content-Type':'text/event-stream'}});
+  };
+  try {
+    const parts=[];
+    await assert.rejects(chat({routingStrategy:'fast',prompt:'hello'},undefined,text=>parts.push(text)),error=>error.providerTaskAccepted);
+    assert.equal(calls,1);
+    assert.deepEqual(parts,['partial']);
+  } finally {
+    globalThis.fetch=savedFetch;
+    if(savedKey===undefined)delete process.env.AIREITER_API_KEY;else process.env.AIREITER_API_KEY=savedKey;
+  }
+});
