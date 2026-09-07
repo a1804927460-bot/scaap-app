@@ -483,6 +483,7 @@ export async function runVideoJobWorkerCycle({
   concurrency = 4,
   providerPollConcurrency = 2,
   leaseSeconds = 300,
+  onJobError,
   now = Date.now
 } = {}) {
   if (typeof pollVideoTask !== 'function') throw new TypeError('pollVideoTask must be a function.');
@@ -498,6 +499,16 @@ export async function runVideoJobWorkerCycle({
   });
   const gatedPoll = (job) => pollGate.run(job.providerId || 'unknown', () => pollVideoTask(job));
   const results = await Promise.allSettled(jobs.map((job) => processClaimedJob(job, gatedPoll, fetchImpl, now)));
+  for (const [index, result] of results.entries()) {
+    if (result.status !== 'rejected') continue;
+    const error = result.reason;
+    // Report failed persistence without logging references, prompts or tokens.
+    if (typeof onJobError === 'function') onJobError({
+      requestId: jobs[index].requestId,
+      code: sanitizeVideoJobError(error, 'video-job-worker-failed').code,
+      status: Number(error?.status) || 503
+    });
+  }
   return {
     claimed: jobs.length,
     succeeded: results.filter((result) => result.status === 'fulfilled'

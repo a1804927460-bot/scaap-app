@@ -238,7 +238,7 @@ function glbFixture() {
     assert.equal(extendRequest.body.output_format, 'mov');
     const inferredReferenceRequest = requests.find((entry) => entry.body && entry.body.reference_videos && entry.body.reference_videos.includes('https://cdn.example.com/reference.mp4'));
     assert.equal(inferredReferenceRequest.body.model, 'bytedance/seedance-2.5/reference-to-video');
-    assert.equal(inferredReferenceRequest.body.omni_reference_task_type, 'auto');
+    assert.equal(inferredReferenceRequest.body.omni_reference_task_type, 'reference');
     assert.equal(Object.hasOwn(inferredReferenceRequest.body, 'watermark'), false);
     assert.equal(Object.hasOwn(inferredReferenceRequest.body, 'return_last_frame'), false);
     const editRequest = requests.find((entry) => entry.body && entry.body.omni_reference_task_type === 'edit');
@@ -282,7 +282,7 @@ function glbFixture() {
     assert.equal(screenshotOmniRequest.body.resolution, '1080p');
     assert.equal(screenshotOmniRequest.body.duration, 6);
     assert.equal(screenshotOmniRequest.body.ratio, '3:4');
-    assert.equal(screenshotOmniRequest.body.omni_reference_task_type, 'auto');
+    assert.equal(screenshotOmniRequest.body.omni_reference_task_type, 'reference');
     const localMultimodalRequest = requests.find((entry) => entry.body
       && typeof entry.body.prompt === 'string'
       && entry.body.prompt.includes('use local video and audio references'));
@@ -312,7 +312,7 @@ function glbFixture() {
     });
     global.fetch = previousAliasFetch;
     assert.match(aliasTask.taskId, /^messs-route:atlas-video-seedance25-ref:atlas-alias-request$/);
-    assert.deepEqual(aliasRequests.map((body) => body.omni_reference_task_type), ['auto', 'reference']);
+    assert.deepEqual(aliasRequests.map((body) => body.omni_reference_task_type), ['reference']);
 
     const previousValidationFetch = global.fetch;
     global.fetch = async (url) => {

@@ -2416,7 +2416,7 @@ async function createAtlasSeedanceVideoTask(provider, body, signal) {
         ...(mode === 'video-edit' ? { omni_reference_task_type: 'edit' }
           : mode === 'video-extend' ? { omni_reference_task_type: 'extend' }
             : String(provider.model).includes('2.5') && ['omni', 'video-reference'].includes(mode)
-              ? { omni_reference_task_type: 'auto' } : {})
+              ? { omni_reference_task_type: 'reference' } : {})
       };
   const requestOptions = (payload) => ({
     method: 'POST',
@@ -2424,25 +2424,9 @@ async function createAtlasSeedanceVideoTask(provider, body, signal) {
     signal: providerSignal(signal, Number(capabilities.createTimeoutMs) || 45_000),
     body: JSON.stringify(payload)
   });
-  let created;
-  try {
-    created = await responseJson(await fetch(provider.endpoint, requestOptions(requestBody)), provider.name);
-  } catch (error) {
-    // Some Atlas deployments still expose the Volcengine spelling for the
-    // generic 2.5 reference task. A 400 means no task was accepted, so this
-    // compatibility retry cannot create a second billable task.
-    const canRetryReferenceAlias = !isI2v
-      && String(provider.model || '').includes('2.5')
-      && ['omni', 'video-reference'].includes(mode)
-      && requestBody.omni_reference_task_type === 'auto'
-      && Number(error && error.status) === 400
-      && String(error && error.code || '') === 'provider-request-failed';
-    if (!canRetryReferenceAlias) throw error;
-    created = await responseJson(await fetch(provider.endpoint, requestOptions({
-      ...requestBody,
-      omni_reference_task_type: 'reference'
-    })), provider.name);
-  }
+  // Explicit reference mode prevents prompt-based auto detection from turning
+  // generation into an edit with incompatible source duration or ratio.
+  const created = await responseJson(await fetch(provider.endpoint, requestOptions(requestBody)), provider.name);
   const taskId = providerVideoTaskId(created);
   if (!taskId || taskId.length > 256) {
     throw Object.assign(new Error(`${provider.name} did not return a valid prediction ID.`), {

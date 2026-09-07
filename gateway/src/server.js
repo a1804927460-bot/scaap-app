@@ -2832,6 +2832,9 @@ const videoWorker = String(process.env.SUPABASE_SECRET_KEY || '').trim()
       concurrency: Math.max(1, Number(process.env.VIDEO_JOB_WORKER_CONCURRENCY) || 4),
       providerPollConcurrency: Math.max(1, Number(process.env.VIDEO_PROVIDER_POLL_CONCURRENCY) || 2),
       pollVideoTask: (job) => pollVideoTask(job.providerId, job.providerTaskId),
+      onJobError: (error) => console.error(JSON.stringify({
+        level: 'error', event: 'video-job-processing-failed', ...error
+      })),
       onError: (error) => console.error(JSON.stringify({
         level: 'error',
         event: error && error.code === 'video-job-schema-missing'
