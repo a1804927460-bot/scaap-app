@@ -124,7 +124,7 @@ test('real HTTP gateway delivers upstream delta before completion, preserves usa
         c.close();
       } }), { headers: { 'Content-Type': 'text/event-stream' } }),
       { ...config, onDelta: text => writer.send('delta', { text }) }, { prompt: 'test' }, controller.signal);
-      await writer.send('done', result);
+      await writer.send('done', {...result,creditsCharged:0.14,account:{balance:9.86,reserved:0}});
     } finally { writer.end(); }
   });
   server.listen(0, '127.0.0.1');
@@ -142,6 +142,8 @@ test('real HTTP gateway delivers upstream delta before completion, preserves usa
     const result = await pending;
     assert.equal(result.text, 'first last');
     assert.equal(result.usage.totalTokens, 3);
+    assert.equal(result.creditsCharged, 0.14);
+    assert.equal(result.account.balance, 9.86);
     assert.equal(await client.chat({ prompt: 'test' }), 'legacy');
     assert.equal(requests, 2);
   } finally {

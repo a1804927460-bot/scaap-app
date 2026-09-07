@@ -59,7 +59,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     await page.evaluate(() => emit('main', 'late'));
     assert.equal(await page.locator('#main-pending').innerText(), before);
     // Both real thinking timers must yield once actual streamed content exists.
-    assert.match(fs.readFileSync('src/js/ai-assistant.js', 'utf8'), /const progress = setInterval\(\(\) => \{\s*if \(!pending\.isConnected \|\| pending\.dataset\.streaming === 'true'\) return/);
+    assert.match(fs.readFileSync('src/js/ai-assistant.js', 'utf8'), /const progress = setInterval\(\(\) => \{\s*if \(pending\.dataset\.streaming === 'true'\) return/);
     assert.equal((fs.readFileSync('src/js/canvas-workspace.js', 'utf8').match(/if \(!pending\.isConnected \|\| pending\.dataset\.streaming === 'true'\) return/g) || []).length, 2);
     console.log('Both Agent streaming previews: isolation, cleanup, safe text, desktop/compact light/dark passed.');
   } finally { await browser.close(); }

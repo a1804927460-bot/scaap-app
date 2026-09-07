@@ -13,6 +13,8 @@ const AiAssistant = {
   attachments: [],
   sessions: [],
   activeSessionId: null,
+  sessionViews: new Map(),
+  runningItem: null,
   historyFavoritesOnly: false,
   historyDate: '',
   historyLoaded: false,
@@ -154,10 +156,10 @@ function ensureAiChatSession(title) {
   return session;
 }
 
-function persistActiveAiChatSession() {
-  const session = activeAiChatSession();
+function persistActiveAiChatSession(sessionId = AiAssistant.activeSessionId, messages = AiAssistant.messages) {
+  const session = AiAssistant.sessions.find(entry => entry.id === sessionId);
   if (!session) return;
-  session.messages = AiAssistant.messages
+  session.messages = messages
     .filter((message) => message && (message.role === 'user' || message.role === 'assistant'))
     .slice(-80)
     .map((message) => ({
@@ -180,7 +182,7 @@ function persistActiveAiChatSession() {
       })) : []
     }));
   session.updatedAt = new Date().toISOString();
-  session.unread = false;
+  session.unread = sessionId !== AiAssistant.activeSessionId;
   persistAiChatHistory();
   renderAiChatHistory();
 }
@@ -289,7 +291,7 @@ function renameAiChatSession(sessionId) {
 }
 
 async function deleteAiChatSession(sessionId) {
-  if (assistantQueueBlocksNavigation()) return;
+  if (assistantQueueBlocksNavigation(sessionId)) return;
   const session = AiAssistant.sessions.find((entry) => entry.id === sessionId);
   if (!session) return;
   const confirmed = await showConfirmDialog({
@@ -299,9 +301,10 @@ async function deleteAiChatSession(sessionId) {
     danger: true
   });
   if (!confirmed) return;
-  if (assistantQueueBlocksNavigation()) return;
+  if (assistantQueueBlocksNavigation(sessionId)) return;
   AiAssistant.sessions = AiAssistant.sessions.filter((entry) => entry.id !== sessionId);
   if (AiAssistant.activeSessionId === sessionId) startNewAiChat();
+  AiAssistant.sessionViews.delete(sessionId);
   persistAiChatHistory();
   renderAiChatHistory();
 }
@@ -366,17 +369,23 @@ function handleAiChatHistoryDrop(event, targetSection) {
 }
 
 function loadAiChatSession(sessionId) {
-  if (assistantQueueBlocksNavigation()) return;
-  window.MesssComposerActions?.resetPermissions();
+  if (sessionId === AiAssistant.activeSessionId) return;
   const session = AiAssistant.sessions.find((entry) => entry.id === sessionId);
   if (!session) return;
+  stashAssistantConversation();
+  window.MesssComposerActions?.resetPermissions();
   AiAssistant.activeSessionId = session.id;
   session.unread = false;
   persistAiChatHistory();
   AiAssistant.messages = session.messages.map((message) => ({ ...message }));
   const messages = document.getElementById('ai-assistant-messages');
-  messages.innerHTML = '';
-  AiAssistant.messages.forEach((message) => {
+  messages.replaceChildren();
+  const view = AiAssistant.sessionViews.get(sessionId);
+  document.getElementById('ai-assistant-input').value = view?.draft || '';
+  AiAssistant.attachments = view?.attachments || [];
+  renderAssistantAttachments();
+  if (view?.fragment) messages.append(view.fragment);
+  else AiAssistant.messages.forEach((message) => {
     const row = appendAssistantText(message.role, message.content);
     appendAssistantMessageAttachments(row, Array.isArray(message.attachments) ? message.attachments : []);
     appendAssistantOutputFiles(row, message.generatedFiles);
@@ -387,10 +396,12 @@ function loadAiChatSession(sessionId) {
     messages.hidden = true;
   }
   renderAiChatHistory();
+  renderAssistantQueue();
+  if (view) messages.scrollTop = view.scrollTop;
 }
 
 function startNewAiChat() {
-  if (assistantQueueBlocksNavigation()) return;
+  stashAssistantConversation();
   window.MesssComposerActions?.resetPermissions();
   AiAssistant.activeSessionId = null;
   AiAssistant.messages = [];
@@ -401,6 +412,7 @@ function startNewAiChat() {
   document.getElementById('ai-assistant-input').value = '';
   renderAssistantAttachments();
   renderAiChatHistory();
+  renderAssistantQueue();
   document.getElementById('ai-assistant-input').focus();
 }
 
@@ -1581,9 +1593,46 @@ function showAssistantConversation() {
   document.getElementById('ai-assistant-messages').hidden = false;
 }
 
-function appendAssistantText(role, text, className = '') {
-  showAssistantConversation();
+function stashAssistantConversation() {
+  if (AiAssistant.queueEditing) {
+    // Keep the waiting task paused until its unfinished edit is revisited.
+    AiAssistant.queuePaused = true;
+    AiAssistant.queueEditing = null;
+  }
+  AiAssistant.queueDragging = null;
+  const id = AiAssistant.activeSessionId;
+  if (!id) return;
   const messages = document.getElementById('ai-assistant-messages');
+  const fragment = document.createDocumentFragment();
+  const scrollTop = messages.scrollTop;
+  while (messages.firstChild) fragment.append(messages.firstChild);
+  AiAssistant.sessionViews.set(id, {fragment, scrollTop,
+    draft: document.getElementById('ai-assistant-input').value,
+    attachments: AiAssistant.attachments.map(file => ({...file}))});
+  const cachedViews = [...AiAssistant.sessionViews.entries()].filter(([,view]) => view.fragment);
+  for (const [key, view] of cachedViews.slice(0, Math.max(0, cachedViews.length - 6))) {
+    if (key !== id && AiAssistant.runningItem?.sessionId !== key && !AiAssistant.queue.some(item => item.sessionId === key)) view.fragment = null;
+  }
+}
+
+function assistantConversationTarget(sessionId = AiAssistant.activeSessionId) {
+  if (sessionId === AiAssistant.activeSessionId) return document.getElementById('ai-assistant-messages');
+  if (!AiAssistant.sessionViews.get(sessionId)?.fragment) {
+    const fragment = document.createDocumentFragment();
+    AiAssistant.sessionViews.set(sessionId,{scrollTop:0,...AiAssistant.sessionViews.get(sessionId),fragment});
+    const session = AiAssistant.sessions.find(entry => entry.id === sessionId);
+    for (const message of session?.messages || []) {
+      const row=appendAssistantText(message.role,message.content,'',sessionId);
+      appendAssistantMessageAttachments(row,message.attachments || []);
+      appendAssistantOutputFiles(row,message.generatedFiles);
+    }
+  }
+  return AiAssistant.sessionViews.get(sessionId).fragment;
+}
+
+function appendAssistantText(role, text, className = '', sessionId = AiAssistant.activeSessionId) {
+  if (sessionId === AiAssistant.activeSessionId) showAssistantConversation();
+  const messages = assistantConversationTarget(sessionId);
   const row = document.createElement('div');
   row.className = `ai-assistant-message is-${role}${className ? ` ${className}` : ''}`;
   const body = document.createElement('div');
@@ -1597,8 +1646,8 @@ function appendAssistantText(role, text, className = '') {
   return row;
 }
 
-function appendAssistantMedia(files, kind) {
-  const messages = document.getElementById('ai-assistant-messages');
+function appendAssistantMedia(files, kind, sessionId = AiAssistant.activeSessionId) {
+  const messages = assistantConversationTarget(sessionId);
   const row = document.createElement('div');
   row.className = 'ai-assistant-message is-assistant';
   const body = document.createElement('div');
@@ -1654,8 +1703,8 @@ function setAssistantBusy(busy) {
   submit.disabled = !selectedAssistantProvider();
 }
 
-function assistantQueueBlocksNavigation() {
-  if (!AiAssistant.queueRunning && !AiAssistant.queue.length) return false;
+function assistantQueueBlocksNavigation(sessionId = AiAssistant.activeSessionId) {
+  if (AiAssistant.runningItem?.sessionId !== sessionId && !AiAssistant.queue.some(item => item.sessionId === sessionId)) return false;
   showToast(t('Finish the request or clear the waiting queue before switching conversations.', '\u8bf7\u7b49\u5f85\u5f53\u524d\u8bf7\u6c42\u7ed3\u675f\u5e76\u5904\u7406\u5f85\u53d1\u961f\u5217\u540e\u5207\u6362\u5bf9\u8bdd\u3002'));
   return true;
 }
@@ -1672,11 +1721,12 @@ function renderAssistantQueue() {
   }
   const previousIds = new Set(Array.from(list.querySelectorAll('[data-queue-id]'), row => row.dataset.queueId));
   list.replaceChildren();
-  list.hidden = !AiAssistant.queue.length;
+  const visibleQueue = AiAssistant.queue.filter(item => item.sessionId === AiAssistant.activeSessionId);
+  list.hidden = !visibleQueue.length;
   if (list.hidden) return;
   const heading = document.createElement('div');
   heading.className = 'assistant-queue-heading';
-  heading.textContent = t('Queued', '\u5f85\u53d1\u9001') + ` (${AiAssistant.queue.length})`;
+  heading.textContent = t('Queued', '\u5f85\u53d1\u9001') + ` (${visibleQueue.length})`;
   list.append(heading);
   const action = (row, symbol, label, callback) => {
     const button = document.createElement('button');
@@ -1695,7 +1745,7 @@ function renderAssistantQueue() {
       AiAssistant.queuePaused = false; void drainAssistantQueue();
     });
   }
-  for (const [index, item] of AiAssistant.queue.entries()) {
+  for (const item of visibleQueue) {
     const row = document.createElement('div'); row.className = 'assistant-queue-item';
     row.dataset.queueId = item.id;
     row.classList.toggle('is-queue-enter', !previousIds.has(item.id));
@@ -1757,14 +1807,16 @@ function renderAssistantQueue() {
       const [moved] = AiAssistant.queue.splice(from, 1); AiAssistant.queue.splice(to, 0, moved);
       AiAssistant.queueDragging = null; renderAssistantQueue(); void drainAssistantQueue();
     });
-    for (const [delta, symbol, label] of [[-1, '\u2191', t('Move up', '\u4e0a\u79fb')], [1, '\u2193', t('Move down', '\u4e0b\u79fb')]]) {
-      const button = action(row, symbol, label, () => {
-        const next = index + delta;
-        [AiAssistant.queue[index], AiAssistant.queue[next]] = [AiAssistant.queue[next], AiAssistant.queue[index]];
-        renderAssistantQueue();
-      });
-      button.disabled = index + delta < 0 || index + delta >= AiAssistant.queue.length;
-    }
+    grip.addEventListener('keydown', event => {
+      if (!['ArrowUp','ArrowDown'].includes(event.key)) return;
+      const from=AiAssistant.queue.indexOf(item), neighbor=visibleQueue[visibleQueue.indexOf(item)+(event.key==='ArrowUp'?-1:1)];
+      if (!neighbor) return;
+      event.preventDefault();
+      const to=AiAssistant.queue.indexOf(neighbor);
+      [AiAssistant.queue[from],AiAssistant.queue[to]]=[AiAssistant.queue[to],AiAssistant.queue[from]];
+      renderAssistantQueue();
+      list.querySelector(`[data-queue-id="${item.id}"] .assistant-queue-grip`)?.focus();
+    });
     action(row, '\u00d7', t('Delete queued message', '\u5220\u9664\u5f85\u53d1\u6d88\u606f'), () => {
       AiAssistant.queue = AiAssistant.queue.filter(entry => entry.id !== item.id);
       if (AiAssistant.queueEditing === item.id) AiAssistant.queueEditing = null;
@@ -1781,6 +1833,7 @@ async function drainAssistantQueue() {
   try {
     while (AiAssistant.queue.length && !AiAssistant.queuePaused && !AiAssistant.queueEditing && !AiAssistant.queueDragging) {
       const item = AiAssistant.queue.shift();
+      AiAssistant.runningItem = item;
       renderAssistantQueue();
       try {
         if (await executeAssistantMessage(item) !== true) {
@@ -1795,6 +1848,7 @@ async function drainAssistantQueue() {
     }
   } finally {
     AiAssistant.queueRunning = false;
+    AiAssistant.runningItem = null;
     if (!AiAssistant.queue.length) AiAssistant.queuePaused = false;
     renderAssistantQueue();
   }
@@ -1810,9 +1864,12 @@ function submitAssistantMessage() {
     return;
   }
   const attachments = AiAssistant.attachments.map(file => ({ ...file }));
+  const sessionId = ensureAiChatSession(prompt).id;
+  persistAiChatHistory();
   const videoMode = AiAssistant.kind === 'video' ? assistantVideoModeForAttachments(attachments) : null;
   AiAssistant.queue.push({
     id: crypto.randomUUID(), prompt, provider: { ...provider }, attachments, kind: AiAssistant.kind,
+    sessionId, permissionSession: window.MesssComposerActions?.session,
     routingStrategy: window.MesssAiProviderOptions?.routingStrategy(provider.model, AiAssistant.chatUsePreset !== false),
     canvasId: activeCanvasId(),
     folderId: AppState.activeFolderId && AppState.activeFolderId !== 'default' ? AppState.activeFolderId : null,
@@ -1835,6 +1892,18 @@ function submitAssistantMessage() {
 }
 
 async function executeAssistantMessage(item) {
+  const sessionId = item.sessionId;
+  const sourceSession = AiAssistant.sessions.find(entry => entry.id === sessionId);
+  if (!sourceSession) return true;
+  const conversationMessages = sourceSession.messages.map(message => ({...message}));
+  const persistConversation = () => {
+    if (AiAssistant.activeSessionId === sessionId) AiAssistant.messages = conversationMessages;
+    else {
+      const owner = AiAssistant.sessions.find(entry => entry.id === sessionId);
+      if (owner) owner.unread = true;
+    }
+    persistActiveAiChatSession(sessionId,conversationMessages);
+  };
   const input = document.getElementById('ai-assistant-input');
   const submittedKind = item.kind;
   const submittedProvider = item.provider;
@@ -1882,11 +1951,10 @@ async function executeAssistantMessage(item) {
     });
     if (!creditAccess.ok) return;
   }
-  ensureAiChatSession(prompt);
   item.started = true;
-  const userRow = appendAssistantText('user', prompt);
+  const userRow = appendAssistantText('user', prompt, '', sessionId);
   appendAssistantMessageAttachments(userRow, attachments);
-  AiAssistant.messages.push({
+  conversationMessages.push({
     role: 'user',
     content: prompt,
     attachmentFileIds: attachments.filter((item) => !item.attachmentToken).map((item) => item.id),
@@ -1900,7 +1968,7 @@ async function executeAssistantMessage(item) {
       dataUrl: item.dataUrl || ''
     }))
   });
-  persistActiveAiChatSession();
+  persistConversation();
 
   setAssistantBusy(true);
   const modelName = submittedProvider
@@ -1914,7 +1982,7 @@ async function executeAssistantMessage(item) {
     submittedKind === 'chat'
       ? t('Thinking...', '思考中...')
       : t(`Using ${modelName} to generate ${submittedKind === 'video' ? 'video' : 'image'}...`, `正在使用 ${modelNameZh} 生成${submittedKind === 'video' ? '视频' : '图片'}...`),
-    submittedKind === 'chat' ? 'is-pending is-chat-thinking' : 'is-pending'
+    submittedKind === 'chat' ? 'is-pending is-chat-thinking' : 'is-pending', sessionId
   );
   const startedAt = Date.now();
   const workRequestId = crypto.randomUUID();
@@ -1924,7 +1992,7 @@ async function executeAssistantMessage(item) {
       if (event.requestId === workRequestId) workPhase = event.phase;
     }) : null;
   const progress = setInterval(() => {
-    if (!pending.isConnected || pending.dataset.streaming === 'true') return;
+    if (pending.dataset.streaming === 'true') return;
     const seconds = Math.floor((Date.now() - startedAt) / 1000);
     pending.querySelector('.ai-assistant-message-body').textContent =
       submittedKind === 'chat'
@@ -1940,10 +2008,10 @@ async function executeAssistantMessage(item) {
   try {
     if (submittedKind === 'chat') {
       const response = await chatWithAgentEstimate(pending, {
-        permissionSession: window.MesssComposerActions?.session,
+        permissionSession: item.permissionSession,
         workRequestId,
         prompt,
-        messages: AiAssistant.messages,
+        messages: conversationMessages,
         attachmentFileIds: attachments.filter((item) => !item.attachmentToken).map((item) => item.id),
         attachmentTokens: attachments.map((item) => item.attachmentToken).filter(Boolean),
         chatProviderId: submittedProvider && submittedProvider.providerId,
@@ -1953,14 +2021,14 @@ async function executeAssistantMessage(item) {
       if (!response || !response.ok) {
         throw new Error((response && response.message) || t('AI chat failed.', 'AI 对话失败。'));
       }
-      AiAssistant.messages.push({
+      conversationMessages.push({
         role: 'assistant',
         content: response.text,
         generatedFiles: Array.isArray(response.files) ? response.files : []
       });
-      persistActiveAiChatSession();
+      persistConversation();
       pending.remove();
-      const assistantRow = appendAssistantText('assistant', response.text);
+      const assistantRow = appendAssistantText('assistant', response.text, '', sessionId);
       appendAssistantOutputFiles(assistantRow, response.files);
     } else {
       const request = {
@@ -2020,15 +2088,15 @@ async function executeAssistantMessage(item) {
       renderFolderGridIfActive();
       if (response.unlocked && response.unlocked.length) await refreshAchievements();
       pending.remove();
-      appendAssistantMedia(generatedMediaFiles, submittedKind);
+      appendAssistantMedia(generatedMediaFiles, submittedKind, sessionId);
       if (response.fallback && response.fallback.notice) showToast(response.fallback.notice, 'AI');
-      AiAssistant.messages.push({
+      conversationMessages.push({
         role: 'assistant',
         content: `${submittedKind === 'video'
           ? t('Video generated and saved to the library.', '视频已生成并保存到资料库。')
           : t(`${generatedMediaFiles.length} image${generatedMediaFiles.length === 1 ? '' : 's'} generated and saved to the library.`, `${generatedMediaFiles.length} 张图片已生成并保存到资料库。`)}`
       });
-      persistActiveAiChatSession();
+      persistConversation();
     }
     return true;
   } catch (err) {
@@ -2044,7 +2112,7 @@ async function executeAssistantMessage(item) {
         'The result is saved and canvas synchronization will resume automatically.',
         '生成结果已安全保存，画布同步将自动恢复。'
       );
-      appendAssistantMedia(generatedMediaFiles, submittedKind);
+      appendAssistantMedia(generatedMediaFiles, submittedKind, sessionId);
     } else if (mediaPlaceholders.length && typeof removeAiPlaceholders === 'function') {
       removeAiPlaceholders(mediaPlaceholders);
       mediaPlaceholders = [];
@@ -2061,7 +2129,7 @@ async function executeAssistantMessage(item) {
     clearInterval(progress);
     if (stopWorkProgress) stopWorkProgress();
     setAssistantBusy(false);
-    if (!AiAssistant.queueEditing && document.activeElement === document.body) input.focus();
+    if (AiAssistant.activeSessionId === sessionId && !AiAssistant.queueEditing && document.activeElement === document.body) input.focus();
   }
 }
 

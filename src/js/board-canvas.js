@@ -1233,7 +1233,10 @@ function finishBoardWheelInteraction() {
 
 function boardMediaDetailPreview(file, screenEdge, previousSource = '') {
   if (!String(file.thumbUrl || '').startsWith('messs-thumb://')) return null;
-  const edge = screenEdge > 700 || (previousSource.includes('edge=1536') && screenEdge > 560) ? 1536 : 768;
+  const previousEdge = previousSource.startsWith('messs-thumb://')
+    ? Number(new URL(previousSource).searchParams.get('edge')) || 0 : 0;
+  const edge = screenEdge > 1500 || (previousEdge >= 3072 && screenEdge > 1200) ? 3072
+    : screenEdge > 700 || (previousEdge >= 1536 && screenEdge > 560) ? 1536 : 768;
   const url = new URL(file.thumbUrl);
   url.searchParams.set('edge', String(edge));
   const width = Number(file.sourceWidth) || edge;
@@ -1271,7 +1274,7 @@ function updateLeaferFullImageWindow() {
     if ((sourceEdge > 0 && sourceEdge <= BOARD_THUMBNAIL_MAX_EDGE) || screenEdge < threshold) continue;
     const previousImage = Board.fullImageCache.get(previousSource);
     const previousPreview = previousSource?.startsWith('messs-thumb://')
-      ? boardMediaDetailPreview(file, previousSource.includes('edge=1536') ? 1536 : 0) : null;
+      ? boardMediaDetailPreview(file, Number(new URL(previousSource).searchParams.get('edge')) * 0.75) : null;
     const originalPixels = Math.max(1, Number(file.sourceWidth) || 4096) * Math.max(1, Number(file.sourceHeight) || 4096);
     candidates.push({ id: item.id, screenEdge, source, retained, preview, previousSource, file, fullSource, originalPixels,
       previousPixels: previousImage ? previousImage.naturalWidth * previousImage.naturalHeight :
@@ -1341,8 +1344,9 @@ function updateLeaferFullImageWindow() {
       sources.set(String(entry.id), entry.previousSource);
     }
     // Prewarm directly from the scene, independent of DOM virtualization.
-    // One completion triggers a new bounded pass; never decode the whole board.
-    if (Board.fullImagePending.size === 0 && !Board.failedFullImageSources.has(entry.source)) {
+    // A small decode pool prevents a slow thumbnail from blocking its neighbors.
+    // Admission still reserves the complete pixel budget before any loads start.
+    if (Board.fullImagePending.size < 3 && !Board.failedFullImageSources.has(entry.source)) {
       void preloadBoardFullImage(entry.source);
     }
   }

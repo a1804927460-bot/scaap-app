@@ -58,7 +58,7 @@ async function main() {
     }).png().toFile(imagePath);
     const imageThumb = await getOrCreateThumbnail(imagePath, 'image', cache, '.png');
     assert.strictEqual(path.extname(imageThumb), '.png');
-    for (const edge of [768, 1536]) {
+    for (const edge of [768, 1536, 3072]) {
       const detail = await getOrCreateThumbnail(imagePath, 'image', cache, '.png', edge);
       const metadata = await sharp(detail).metadata();
       assert.strictEqual(metadata.width, Math.min(edge, 900), 'Detail should not upscale');

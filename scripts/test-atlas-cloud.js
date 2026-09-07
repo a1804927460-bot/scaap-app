@@ -289,9 +289,7 @@ function glbFixture() {
     assert.deepEqual(localMultimodalRequest.body.reference_videos, [mediaUploads[2].url]);
     assert.deepEqual(localMultimodalRequest.body.reference_audios, [mediaUploads[3].url]);
 
-    // Atlas installations using the older Volcengine spelling may reject the
-    // generic task type. A rejected request has no task id, so the adapter may
-    // safely retry once with that alias.
+    // Never submit auto: reference generation must not be inferred as editing.
     const aliasRequests = [];
     const previousAliasFetch = global.fetch;
     global.fetch = async (url, options = {}) => {

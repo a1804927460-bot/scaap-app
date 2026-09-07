@@ -3,7 +3,7 @@ async function chatWithAgentEstimate(pending, request) {
   let finished=false;
   request = { ...request, workRequestId: request.workRequestId || crypto.randomUUID() };
   const unsubscribe = window.messsAPI.onAiChatDelta?.(event => {
-    if (finished || !pending.isConnected || event?.requestId !== request.workRequestId || typeof event.text !== 'string') return;
+    if (finished || event?.requestId !== request.workRequestId || typeof event.text !== 'string') return;
     const body = pending.querySelector('.ai-assistant-message-body') || pending;
     const scroller = pending.closest('.ai-assistant-messages, .board-agent-messages');
     const follow = scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 64;
@@ -13,7 +13,7 @@ async function chatWithAgentEstimate(pending, request) {
     if (follow) scroller.scrollTop = scroller.scrollHeight;
   });
   const unsubscribeWork = window.messsAPI.onAiWorkProgress?.(event => {
-    if (finished || !pending.isConnected || event?.requestId !== request.workRequestId) return;
+    if (finished || event?.requestId !== request.workRequestId) return;
     const status = {
       approval: t('Waiting for execution approval...', '等待执行确认...'),
       executing: t('Executing file task...', '正在执行文件任务...'),

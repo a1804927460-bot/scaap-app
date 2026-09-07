@@ -21,7 +21,8 @@ begin
     updated := regexp_replace(updated,
       $pattern$(->>\s*'(creditsCharged|historicalCreditsCharged)'\s*,\s*''\s*\))::bigint$pattern$,
       E'\\1::numeric', 'g');
-    if entry.proname = 'finalize_ai_video_job' then
+    if entry.proname = 'finalize_ai_video_job'
+      and position('if normalized_status = ''failed'' and job.status <> ''failed'' then' in updated) = 0 then
       -- A lease-checked terminal provider failure is not a speculative refund.
       -- Mark it inside the same transaction so the generic recovery guard
       -- permits release; any settlement error rolls both changes back.

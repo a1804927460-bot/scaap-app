@@ -2177,7 +2177,7 @@ function renderAccountFooterCredits(membership) {
   if (!values) return false;
   const label = t('Available points', '可用积分', '사용 가능 포인트');
   const unit = t(' points', ' 积分', ' 포인트');
-  const value = values.available.toLocaleString(appLocale());
+  const value = values.available.toLocaleString(appLocale(), { maximumFractionDigits: 2 });
   for (const footerCredits of document.querySelectorAll('.account-footer-credits')) {
   footerCredits.querySelector('b').textContent = value;
   footerCredits.querySelector('small').textContent = unit;
@@ -2197,7 +2197,7 @@ function renderMembershipBalance(membership) {
   if (!creditValues) return;
   const creditCount = document.getElementById('account-credit-count');
   const planBadge = document.getElementById('account-plan-badge');
-  if (creditCount) creditCount.textContent = creditValues.balance.toLocaleString(appLocale());
+  if (creditCount) creditCount.textContent = creditValues.balance.toLocaleString(appLocale(), { maximumFractionDigits: 2 });
   if (planBadge) planBadge.textContent = plan;
   renderAccountFooterCredits(membership);
 }

@@ -42,7 +42,7 @@ cached.clear();context.updateLeaferFullImageWindow();
 assert.equal(context.Board.leaferFullItemIds.size,4,'Decoder LRU eviction must not demote scene textures');
 context.Board.zoom=.35;context.updateLeaferFullImageWindow();assert.equal(context.Board.leaferFullItemIds.size,4,'Exit threshold retains detail');
 context.Board.zoom=.2;context.updateLeaferFullImageWindow();assert.equal(context.Board.leaferFullItemIds.size,0);
-context.Board.zoom=1;context.updateLeaferFullImageWindow();assert.equal(requested.length,1,'Scene prewarms without DOM nodes and bounds concurrent work');
+context.Board.zoom=1;context.updateLeaferFullImageWindow();assert.equal(requested.length,3,'Scene prewarms without DOM nodes and bounds concurrent work');
 context.Board.fullImagePending.clear();
 for(const file of context.Board.filesById.values()){file.sourceWidth=4000;file.sourceHeight=4000;cached.add(file.url);}
 context.updateLeaferFullImageWindow();assert.equal(context.Board.leaferFullItemIds.size,1,'Decoded pixel budget remains bounded');
@@ -54,7 +54,7 @@ function resetMedia(count, edge = 500) {
   const id=String(i),file={ext:i%2?'.mp4':'.png',sourceWidth:3840,sourceHeight:2160,url:`full-${i}`,thumbUrl:`messs-thumb://${i}`};
   context.AppState.boardItems.push({id,fileId:id,width:edge,height:edge*9/16});
   context.Board.visibleIds.add(id);context.Board.filesById.set(id,file);
-  for(const tier of [768,1536])cached.add(context.boardMediaDetailPreview(file,tier===768?500:1000).source);
+  for(const tier of [768,1536,3072])cached.add(context.boardMediaDetailPreview(file,tier*0.75).source);
  }
 }
 resetMedia(24);
@@ -105,7 +105,7 @@ for(const file of context.Board.filesById.values())cached.add(file.url);
 context.updateLeaferFullImageWindow();
 assert.equal(context.Board.leaferFullItemIds.size,3,'Original promotion cannot starve neighboring video previews');
 assert.equal(context.Board.leaferDetailSources.get('0'),'full-0');
-assert.ok(context.Board.leaferDetailSources.get('1').includes('1536'));
+assert.ok(context.Board.leaferDetailSources.get('1').includes('3072'));
 const stableOriginals=JSON.stringify([...context.Board.leaferDetailSources]);
 for(let i=0;i<5;i++)context.updateLeaferFullImageWindow();
 assert.equal(JSON.stringify([...context.Board.leaferDetailSources]),stableOriginals,'Original allocations must not oscillate between neighbors on each sync');

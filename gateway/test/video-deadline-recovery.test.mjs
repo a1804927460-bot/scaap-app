@@ -11,6 +11,25 @@ const job = {
 };
 const video=Buffer.from('000000186674797069736f6d0000020069736f6d', 'hex');
 
+test('worker persistence failures are observable without leaking task payloads',async()=>{
+  const previous=process.env.SUPABASE_SECRET_KEY;
+  process.env.SUPABASE_SECRET_KEY='sb_secret_test';
+  try {
+    const errors=[];
+    const summary=await runVideoJobWorkerCycle({
+      pollVideoTask:async()=>({status:'failed',errorCode:'provider-request-failed'}),
+      onJobError:error=>errors.push(error),
+      fetchImpl:async url=>String(url).endsWith('/claim_due_ai_video_jobs')
+        ?Response.json([job]):Response.json({code:'22P02',message:'private database detail'},{status:400})
+    });
+    assert.equal(summary.errors,1);
+    assert.deepEqual(errors,[{requestId:job.request_id,code:'video-job-service-failed',status:400}]);
+  } finally {
+    if(previous===undefined)delete process.env.SUPABASE_SECRET_KEY;
+    else process.env.SUPABASE_SECRET_KEY=previous;
+  }
+});
+
 for(const scenario of ['completed','processing','poll-outage','storage-outage','terminal-failure','no-task']) {
   test(`expired video ${scenario} preserves accepted task semantics`, async()=>{
     const previous=process.env.SUPABASE_SECRET_KEY;

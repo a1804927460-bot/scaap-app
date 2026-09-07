@@ -59,3 +59,14 @@ No existing customer balance was changed by these tests.
 creates a disposable account, funds only that account, tests zero-balance denial,
 concurrent reservations, real usage charging and duplicate rejection, verifies
 the resulting ledger, and deletes the temporary user in `finally`.
+
+Live SSE audit on 2026-09-07 passed all three presets: each charged 0.14
+credits, the disposable balance ended at 99.58 with zero held credits,
+three ledger charges and duplicate requests rejected. First-token latency
+was 36.9s / 4.3s / 6.0s; the first upstream request is still variable.
+
+The follow-up `202609070003_fractional_media_settlement.sql` repairs legacy
+JSON text-to-integer casts in video finalization/download and canvas usage.
+It also allows lease-validated terminal failures to release holds immediately
+without bypassing the generic guard for still-running media tasks. Rollback
+tests cover success, failure, duplicate callbacks and fractional balances.

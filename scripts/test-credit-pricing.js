@@ -518,7 +518,7 @@ assert.match(
 );
 assert.match(
   assistantSource,
-  /function appendAssistantMedia\(files, kind\)[\s\S]*?body\.textContent = completionText;/,
+  /function appendAssistantMedia\(files, kind, sessionId = AiAssistant.activeSessionId\)[\s\S]*?body\.textContent = completionText;/,
   'The assistant must show completion without exposing the settled charge.'
 );
 assert.doesNotMatch(assistantSource, /Actual charge:|实际扣除/);

@@ -1489,8 +1489,8 @@ function notifyUpdateDownloaded(info) {
     progress: 100,
     message: null
   });
-  if (mainWindow) {
-    mainWindow.webContents.send('updater:downloaded', { version: info.version });
+  for (const window of [mainWindow, ...detachedCanvasWindows.values()]) {
+    if (window && !window.isDestroyed()) window.webContents.send('updater:downloaded', { version: info.version });
   }
 }
 
@@ -1500,8 +1500,8 @@ function publicUpdaterState() {
 
 function setUpdaterState(patch) {
   updaterState = { ...updaterState, ...patch };
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('updater:status', publicUpdaterState());
+  for (const window of [mainWindow, ...detachedCanvasWindows.values()]) {
+    if (window && !window.isDestroyed()) window.webContents.send('updater:status', publicUpdaterState());
   }
   return publicUpdaterState();
 }
@@ -1588,7 +1588,8 @@ function setupAutoUpdater() {
     return;
   }
   if (updaterState.enabled) checkForUpdatesQuietly();
-  updateCheckInterval = setInterval(checkForUpdatesQuietly, 4 * 60 * 60 * 1000);
+  updateCheckInterval = setInterval(checkForUpdatesQuietly, 15 * 60 * 1000);
+  updateCheckInterval.unref?.();
 }
 
 function oauthResponseHtml(success, message) {
