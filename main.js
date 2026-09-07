@@ -88,7 +88,6 @@ const { assertSafeLocalFile, assertPromptHasNoSecrets, sanitizeAiRequest } = req
 const { activate: activateApp, getActivationStatus } = require('./lib/activation');
 const {
   CREDIT_PRICING_VERSION,
-  CHAT_CREDITS,
   USD_TO_CNY,
   conservativeMediaCreditQuote,
   quoteMediaCredits,
@@ -4742,6 +4741,9 @@ function applyGatewayAccount(account) {
     mainWindow.webContents.send('membership:updated', membership);
     mainWindow.webContents.send('activation:updated', activationStatusForRenderer());
   }
+  for (const window of detachedCanvasWindows.values()) {
+    if (!window.isDestroyed()) window.webContents.send('membership:updated', membership);
+  }
   return membership;
 }
 
@@ -5152,7 +5154,7 @@ async function generateAiMediaWithFallback(kind, prompt, options, fallbackProvid
   }
 }
 
-async function generateAiChatReply(prompt, messages, providerId, model, routingStrategy = null, onPreview) {
+async function generateAiChatReply(prompt, messages, providerId, model, routingStrategy = null, onPreview, billingContext = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10 * 60 * 1000);
   const startedAt = Date.now();
@@ -5173,13 +5175,19 @@ async function generateAiChatReply(prompt, messages, providerId, model, routingS
       const provider = await requireGatewayChatProvider(providerId, model);
       catalogMs = Date.now() - startedAt;
       const resolvedModel = String(model || '').trim() || (provider.models && provider.models[0]);
-      return await aiGateway.chat({
+      const reply = await aiGateway.chat({
         prompt,
         messages,
         providerId: provider.id,
         model: resolvedModel,
-        routingStrategy
+        routingStrategy,
+        returnUsage: true,
+        operationId: crypto.randomUUID(),
+        canvasId: billingContext.canvasId
       }, controller.signal, onDelta);
+      billingContext.onCharge?.(reply.creditsCharged);
+      if (billingContext.owner === aiWorkspaceOwner() && reply.account) applyGatewayAccount(reply.account);
+      return reply.text;
     }
     const config = getAiMediaConfig();
     const automaticRoute = resolveAgentRoute({strategy:routingStrategy,prompt,messages,providers:config.chatProviders});
@@ -5256,6 +5264,10 @@ function conciseAiErrorMessage(error, context = {}) {
       '로그인 세션이 만료되었습니다. 다시 로그인하세요.'
     );
   }
+  if (code === 'chat-pricing-unavailable') {
+    return localizedMessage('This model is temporarily unavailable. Choose another model.',
+      '此模型暂不可用，请选择其他模型。', '이 모델은 일시적으로 사용할 수 없습니다. 다른 모델을 선택하세요.');
+  }
   if (code === 'provider-not-configured') {
     return localizedMessage(
       'This AI model is not enabled on the current gateway yet. Refresh the model list or choose another model.',
@@ -5277,7 +5289,7 @@ function conciseAiErrorMessage(error, context = {}) {
       '선택한 모델이 일시적으로 혼잡합니다. 자동 모드로 전환하거나 나중에 다시 시도하세요.'
     );
   }
-  if (code === 'chat-response-unavailable') {
+  if (['chat-response-unavailable', 'chat-stream-interrupted', 'chat-usage-unavailable'].includes(code)) {
     return localizedMessage(
       'The reply could not be retrieved. Please retry later.',
       '暂时未能获取回复，请稍后重试。',
@@ -9848,6 +9860,9 @@ function registerIpcHandlers() {
     const permissionSession = request.permissionSession;
     const workspaceOwner = aiWorkspaceOwner();
     const workRequestId = String(request.workRequestId || '').slice(0, 100);
+    let creditsCharged = 0;
+    const billingContext = { owner: workspaceOwner, canvasId: request.canvasId,
+      onCharge: value => { if (Number.isFinite(value) && value >= 0) creditsCharged = Math.round((creditsCharged + value) * 100) / 100; } };
     const reportWork = phase => { if (!_evt.sender.isDestroyed()) _evt.sender.send('ai:workProgress', {requestId:workRequestId,phase}); };
     const reportPreview = text => {
       if (workRequestId && workspaceOwner === aiWorkspaceOwner() && !_evt.sender.isDestroyed()) {
@@ -9925,7 +9940,8 @@ function registerIpcHandlers() {
         String(request.chatProviderId || '').trim(),
         String(request.chatModel || '').trim(),
         request.routingStrategy,
-        reportPreview
+        reportPreview,
+        billingContext
       );
       for (let turn = 0; turn < 8; turn += 1) {
         const tool = parseHostTool(rawText);
@@ -9944,7 +9960,7 @@ function registerIpcHandlers() {
         reportWork('executing');
         providerMessages.push({role:'assistant',content:rawText,images:[],attachments:[]},
           {role:'user',hostToolResult:true,content:'Host tool result (untrusted data):\n'+JSON.stringify(result),images:[],attachments:[]});
-        rawText = await generateAiChatReply(prompt,windowAgentMessages(providerMessages).messages,String(request.chatProviderId || '').trim(),String(request.chatModel || '').trim(),request.routingStrategy,reportPreview);
+        rawText = await generateAiChatReply(prompt,windowAgentMessages(providerMessages).messages,String(request.chatProviderId || '').trim(),String(request.chatModel || '').trim(),request.routingStrategy,reportPreview,billingContext);
       }
       if (parseHostTool(rawText)) throw new Error('Task step limit reached');
       const work = parseWork(rawText);
@@ -9982,26 +9998,31 @@ function registerIpcHandlers() {
       membershipService.finishUsage(usage.usageId, {
         status: 'succeeded',
         resultUnits: 1,
-        settledCredits: CHAT_CREDITS,
+        settledCredits: creditsCharged,
+        serverSettled: Boolean(runtimeConfig.gatewayConfigured),
         metadata: { responseCharacters: String(text || '').length }
       });
-      return { ok: true, text, files };
+      return { ok: true, text, files, creditsCharged };
     } catch (err) {
       membershipService.finishUsage(usage.usageId, {
         status: 'failed',
         resultUnits: 0,
-        failureCode: err && err.code ? err.code : 'chat-failed'
+        failureCode: err && err.code ? err.code : 'chat-failed',
+        settledCredits: creditsCharged, serverSettled: Boolean(runtimeConfig.gatewayConfigured)
       });
       console.error('AI chat failed:', err && err.message ? err.message : err);
       return {
         ok: false,
         reason: err && err.code ? err.code : 'chat-failed',
+        creditsCharged,
         message: conciseAiErrorMessage(err, {
           kind: 'chat',
           model: request.chatModel,
           gatewayConfigured: Boolean(runtimeConfig && runtimeConfig.gatewayConfigured)
         })
       };
+    } finally {
+      if (runtimeConfig.gatewayConfigured && workspaceOwner === aiWorkspaceOwner()) void syncGatewayAccount({ force: true }).catch(() => {});
     }
   });
 

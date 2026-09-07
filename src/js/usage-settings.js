@@ -69,9 +69,9 @@ function usageText(english, chinese, korean) {
 }
 
 function usageNumber(value) {
-  const safe = Math.max(0, Math.round(Number(value) || 0));
+  const safe = Math.max(0, Number(value) || 0);
   try {
-    return new Intl.NumberFormat(typeof appLocale === 'function' ? appLocale() : 'en-US').format(safe);
+    return new Intl.NumberFormat(typeof appLocale === 'function' ? appLocale() : 'en-US', { maximumFractionDigits: 2 }).format(safe);
   } catch (error) {
     return String(safe);
   }
@@ -589,7 +589,7 @@ function refreshUsageLanguage(renderData = true) {
   set('#usage-retry-btn', 'Try Again', '重试', '다시 시도');
   set('#usage-balance-label', 'Available points', '可用积分', '사용 가능 포인트');
   set('.usage-balance-side > span', 'Total balance', '总余额', '총 잔액');
-  set('.usage-balance-side > small', 'Points ready for image and video tools', '可用于图片与视频工具', '이미지 및 동영상 도구에 사용 가능');
+  set('.usage-balance-side > small', 'Points ready for AI tasks', '可用于 AI 任务', 'AI 작업에 사용 가능');
   if (UsageSettings.summary && UsageSettings.summary.account.reserved > 0) {
     document.getElementById('usage-reserved-wrap').lastChild.textContent = usageText(' reserved', ' 已冻结', ' 예약됨');
   }

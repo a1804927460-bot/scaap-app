@@ -342,7 +342,7 @@ assert.strictEqual(publicPricing.grossMarginPercent, 25);
 assert.strictEqual(publicPricing.retailMarkupPercent, 33.33333333333333);
 assert.strictEqual(publicPricing.retailMultiplier, 4 / 3);
 assert.strictEqual(publicPricing.upstreamCostSafetyPercent, 10);
-assert.strictEqual(publicPricing.chat, 0);
+assert.strictEqual(publicPricing.chat, null, 'Chat is usage-priced, never a fixed free request');
 assert.strictEqual(publicPricing.profitPerRequestCny, 0);
 assert.strictEqual(publicPricing.minimumVideoCredits, 0);
 assert.strictEqual(IMAGE_OPERATING_COST_RETAIL_CREDITS, 1);

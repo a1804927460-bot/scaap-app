@@ -11,7 +11,8 @@ function runtime(chat) {
   const timers = new Set();
   const logs = [];
   const scope = vm.createContext({
-    AbortController, Date,
+    AbortController, Date, crypto: require('node:crypto'),
+    aiWorkspaceOwner: () => 'owner',
     setTimeout(fn, delay) { const timer = setTimeout(() => { timers.delete(timer); fn(); }, delay); timers.add(timer); return timer; },
     clearTimeout(timer) { timers.delete(timer); clearTimeout(timer); },
     console: { info: (...args) => logs.push(args) },
@@ -35,7 +36,9 @@ test('Electron forwarding publishes early, coalesces token bursts, hides artifac
     for (let i = 0; i < 1000; i++) onDelta('!');
     onDelta('<mes');onDelta('ss-file>SECRET</messs-file>');
     await held;
-    return 'final validated text';
+    assert.equal(_request.returnUsage, true);
+    assert.match(_request.operationId, /^[a-f0-9-]{36}$/);
+    return {text:'final validated text',creditsCharged:0.14};
   });
   const pending = app.call(text => { previews.push(text); first(); });
   try {
@@ -57,7 +60,7 @@ test('Electron forwarding publishes early, coalesces token bursts, hides artifac
 });
 
 test('Electron retains JSON compatibility and disposes streaming timers after failure', async () => {
-  const legacy = runtime(async () => 'legacy');
+  const legacy = runtime(async () => ({text:'legacy',creditsCharged:0.14}));
   assert.equal(await legacy.call(() => assert.fail('No fake typewriter')), 'legacy');
   assert.equal(legacy.timers.size, 0);
   const previews = [];

@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { openChatStream } from './chat-stream.js';
 import crypto from 'node:crypto';
+import { createChatBilling } from './chat-billing.js';
 import { assertFalConfigured, normalizeFalResizeOptions } from './fal-image-tools.js';
 import { runDurableFalImageTool } from './durable-fal-image-tools.js';
 import { FairConcurrencyGate } from './fair-concurrency-gate.js';
@@ -2621,10 +2622,10 @@ async function handle(request, response) {
         : { 'X-Messs-Credits-Charged': String(Math.max(0, Number(media.creditsCharged) || 0)) })
     });
   }
-  const reservation = await reserveUsage(user.id, kind, requestId, body);
+  const chatBilling = kind === 'chat' ? createChatBilling(user.id, requestId, body) : null;
+  const reservation = chatBilling ? await chatBilling.reserve() : await reserveUsage(user.id, kind, requestId, body);
   if (!reservation.ok) return deniedReservation(response, reservation);
   const freeChat = isFreeChatReservation(kind, reservation);
-  if (body.canvasId && !freeChat) await tagUsageCanvas(user.id, requestId, body.canvasId);
   const startedAt = Date.now();
   const controller = new AbortController();
   request.once('aborted', () => controller.abort());
@@ -2635,6 +2636,7 @@ async function handle(request, response) {
   const chatDeadline = kind === 'chat' ? setTimeout(() => controller.abort(), 10 * 60 * 1000) : null;
   chatDeadline?.unref();
   try {
+    if (body.canvasId && !freeChat) await tagUsageCanvas(user.id, requestId, body.canvasId);
     if (kind === 'chat') {
       if (String(request.headers.accept || '').includes('text/event-stream')) {
         chatStream = openChatStream(response, controller.signal);
@@ -2651,14 +2653,16 @@ async function handle(request, response) {
           }, controller.signal, chatStream ? async text => {
             if (firstDeltaMs === null) firstDeltaMs = Date.now() - startedAt;
             await chatStream.send('delta', { text });
-          } : undefined);
+          } : undefined, chatBilling);
         },
         { signal: controller.signal }
       );
       const text = typeof result === 'string' ? result : String(result && result.text || '');
-      if (!freeChat) await settleUsage(requestId, 'succeeded', Date.now() - startedAt);
+      const settlement = await chatBilling.settle(result, Date.now() - startedAt);
       const payload = {
         text,
+        creditsCharged: settlement.creditsCharged,
+        account: settlement.account,
         ...(result && typeof result === 'object' && result.usage ? { usage: result.usage } : {})
       };
       console.log(JSON.stringify({ level: 'info', event: 'chat-delivery-timing', requestId,
@@ -2686,9 +2690,10 @@ async function handle(request, response) {
     );
     error.operationKind = kind;
     const terminalProviderFailure = error && error.providerTaskTerminalFailure === true;
-    if (!freeChat && (!providerAccepted || terminalProviderFailure)) {
+    if (chatBilling || (!freeChat && (!providerAccepted || terminalProviderFailure))) {
       try {
-        await settleUsage(requestId, 'failed', Date.now() - startedAt);
+        if (chatBilling) await chatBilling.settle(null, Date.now() - startedAt);
+        else await settleUsage(requestId, 'failed', Date.now() - startedAt);
       } catch (settlementError) {
         // Preserve the upstream failure for the client. The reservation remains
         // locked (not spent) and reserve_ai_credits will release it after the

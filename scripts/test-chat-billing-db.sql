@@ -1,0 +1,58 @@
+do $$
+declare
+  uid uuid := gen_random_uuid();
+  other_uid uuid := gen_random_uuid();
+  req uuid := gen_random_uuid();
+  claim uuid := gen_random_uuid();
+  req2 uuid := gen_random_uuid();
+  result jsonb;
+  receipt jsonb := '{"credits":0.14,"providerId":"chat-4","model":"gpt-5.6-sol","usage":{"inputTokens":4400,"outputTokens":66,"cachedInputTokens":4224},"rate":{"inputCnyPerMillion":8.76,"outputCnyPerMillion":43.8,"cachedInputCnyPerMillion":0.876}}';
+  remaining numeric;
+begin
+  insert into auth.users(id) values(uid),(other_uid);
+  update public.ai_credit_accounts set balance=10 where user_id=uid;
+  result:=public.reserve_ai_chat_credits(uid,req,repeat('a',64),claim,1,false,'chat-4');
+  assert (result->>'ok')::boolean, 'initial reserve';
+  result:=public.reserve_ai_chat_credits(uid,req,repeat('a',64),claim,1,false,'chat-4');
+  assert (result->>'ok')::boolean, 'transport retry must be idempotent';
+  assert (select reserved=1 from public.ai_credit_accounts where user_id=uid), 'no duplicate hold';
+  result:=public.reserve_ai_chat_credits(uid,req,repeat('a',64),gen_random_uuid(),1,false,'chat-4');
+  assert not (result->>'ok')::boolean, 'second handler must not execute';
+  result:=public.reserve_ai_chat_credits(uid,req,repeat('b',64),claim,1,true,'chat-4');
+  assert not (result->>'ok')::boolean, 'payload mismatch';
+  result:=public.reserve_ai_chat_credits(other_uid,req,repeat('a',64),claim,1,true,'chat-4');
+  assert not (result->>'ok')::boolean, 'tenant isolation';
+  result:=public.reserve_ai_chat_credits(uid,req,repeat('a',64),claim,2,true,'chat-4');
+  assert (result->>'ok')::boolean, 'continuation reserve';
+  result:=public.reserve_ai_chat_credits(uid,req2,repeat('b',64),gen_random_uuid(),9,false,'chat-4');
+  assert result->>'reason'='insufficient-credits', 'concurrent holds count against balance';
+  result:=public.settle_ai_chat_credits(uid,req,receipt,100);
+  assert (result->>'creditsCharged')::numeric=0.14, 'fractional actual charge';
+  assert (select balance=9.86 and reserved=0 from public.ai_credit_accounts where user_id=uid), 'unused hold released';
+  result:=public.settle_ai_chat_credits(uid,req,receipt,100);
+  assert (result->>'creditsCharged')::numeric=0.14, 'idempotent settlement';
+  assert (select balance=9.86 from public.ai_credit_accounts where user_id=uid), 'no duplicate debit';
+  result:=public.settle_ai_chat_credits(uid,req,null,100);
+  assert not (result->>'ok')::boolean, 'late failure must not refund success';
+  assert (select count(*)=1 from public.ai_credit_ledger where request_id=req and event_type='charge'), 'single charge record';
+  result:=public.reserve_ai_chat_credits(uid,req2,repeat('b',64),claim,1,false,'chat-4');
+  assert (result->>'ok')::boolean, 'second reservation';
+  result:=public.settle_ai_chat_credits(uid,req2,receipt-'usage',100);
+  assert not (result->>'ok')::boolean, 'missing usage cannot charge';
+  result:=public.settle_ai_chat_credits(uid,req2,null,100);
+  assert (result->>'creditsCharged')::numeric=0, 'failed chat not charged';
+  assert (select balance=9.86 and reserved=0 from public.ai_credit_accounts where user_id=uid), 'failure fully releases';
+  -- Existing integral media settlement must preserve the fractional remainder.
+  req2:=gen_random_uuid();
+  result:=public.reserve_priced_ai_credits_internal(uid,'image','image-1',req2,'1K',null,2,2);
+  assert (result->>'ok')::boolean, 'media reservation still works';
+  result:=public.settle_ai_credits(req2,'succeeded',100);
+  assert (result->>'creditsCharged')::numeric=2, 'media price unchanged';
+  assert (select balance=7.86 and reserved=0 from public.ai_credit_accounts where user_id=uid), 'media preserves decimals';
+  result:=public.authoritative_ai_usage_summary(uid,current_date,current_date,'custom',0);
+  assert (result#>>'{totals,credits}')::numeric=2.14, 'summary preserves decimals';
+  assert not has_function_privilege('authenticated','public.settle_ai_chat_credits(uuid,uuid,jsonb,integer)','execute'), 'client cannot settle';
+  assert not has_function_privilege('anon','public.reserve_ai_chat_credits(uuid,uuid,text,uuid,numeric,boolean,text)','execute'), 'anonymous cannot reserve';
+end;
+$$;
+select 'chat billing transaction tests passed; all fixtures and schema changes rolled back' as result;

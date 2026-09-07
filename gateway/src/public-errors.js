@@ -3,7 +3,7 @@ const USER_AUTH_CODES = new Set(['invalid-session', 'auth-required']);
 const PROVIDER_ERROR_CODES = new Set(['api-error', 'provider-request-failed', 'ai302-unauthorized']);
 const SUPPLIER_NAME_RE = /\b(?:api\.atlascloud\.ai|atlas\s*cloud|atlascloud|302(?:\.ai)?|ai302|quick\s*router|topaz(?:\s+labs)?|higgsfield|google|gemini|kling|jimeng|dreamina|minimax|doubao|seedream|seedance|hyper3d|tripo(?:3d)?|hunyuan|qwen|clipdrop|legnext|rodin|openai|anthropic|volcengine|bytedance|kwaivgi|replicate|siliconflow|aliyun|deepseek)\b/gi;
 const KNOWN_PUBLIC_CODES = new Set([
-  'moderation-unavailable', 'prompt-rejected',
+  'moderation-unavailable', 'prompt-rejected', 'chat-pricing-unavailable',
   'invalid-session', 'auth-required', 'account-suspended', 'request-id-conflict', 'delivery-status-conflict',
   'invalid-delivery-confirmation', 'quota-not-configured', 'quota-service-failed',
   'credit-service-not-configured', 'credit-schema-missing', 'credit-service-failed',
@@ -146,6 +146,9 @@ export function publicGatewayError(error) {
   // Chat has no durable generated-media task to recover. Never claim a result
   // is being delivered (or that media credits are held) for a failed chat call.
   if (error?.operationKind === 'chat') {
+    if (['insufficient-credits','account-suspended','request-id-conflict','chat-pricing-unavailable'].includes(rawCode)) {
+      return {status: originalStatus, code: rawCode, message: 'The AI request could not be authorized.'};
+    }
     if (['provider-rate-limited', 'provider-channel-unavailable'].includes(originalCode)) {
       return { status: 503, code: 'chat-service-busy',
         message: 'The selected model is temporarily busy. Try an automatic mode or retry later.' };

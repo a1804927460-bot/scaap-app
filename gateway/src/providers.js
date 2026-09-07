@@ -3104,7 +3104,7 @@ export async function pollVideoTask(providerId, taskId, signal) {
   });
 }
 
-export async function chat(body, signal, onDelta) {
+export async function chat(body, signal, onDelta, billing) {
   const route = resolveAgentRoute({strategy:body.routingStrategy,prompt:body.prompt,messages:body.messages,
     providers:configuredProviders().filter(entry=>entry.kind === 'chat' && providerApiKey(entry))});
   if (route) body = {...body,providerId:route.providerId,model:route.model};
@@ -3198,6 +3198,8 @@ export async function chat(body, signal, onDelta) {
       operationId: request.operationId,
       endUserId: request.endUserId,
       returnUsage: true,
+      requireUsage: Boolean(billing),
+      beforeRequest: billing ? (nextRequest, usage) => billing.beforeRequest(provider, candidateModel, nextRequest, usage) : undefined,
       onDelta
     }, request, signal);
     const startedAt = Date.now();
@@ -3234,7 +3236,7 @@ export async function chat(body, signal, onDelta) {
       console.log(JSON.stringify({level:'info',event:'chat-route-result',requestId:request.operationId,
         route:provider.id,model:candidateModel,status:'succeeded',durationMs:Date.now()-startedAt,
         usage:result && typeof result === 'object' ? result.usage : undefined}));
-      return result;
+      return billing ? { ...result, billingModel: candidateModel, billingProvider: { id: provider.id, endpoint: provider.endpoint } } : result;
     } catch (error) {
       console.warn(JSON.stringify({level:'warn',event:'chat-route-result',requestId:request.operationId,
         route:provider.id,model:candidateModel,status:Number(error.status)||502,durationMs:Date.now()-startedAt,

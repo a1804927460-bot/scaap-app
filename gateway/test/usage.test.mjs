@@ -147,8 +147,8 @@ test('video quote clamps provider parameters, keeps chat free, and no provider r
       code: 'provider-not-allowed'
     });
   }
-  assert.equal(quoteUsage('chat', { providerId: 'chat-1' }).credits, 0);
-  assert.equal(quoteUsage('chat', { providerId: 'chat-2' }).credits, 0);
+  assert.equal(quoteUsage('chat', { providerId: 'chat-1' }).credits, null);
+  assert.equal(quoteUsage('chat', { providerId: 'chat-2' }).credits, null);
   assert.equal(quoteUsage('chat', { providerId: 'chat-1' }).requiresActivation, false);
   assert.equal(quoteUsage('image', { providerId: 'image-1' }).requiresActivation, false);
   assert.equal(providerRequiresActivation('chat', 'chat-1'), false);
@@ -258,9 +258,9 @@ test('retail formula applies the safety buffer and current segmented gross margi
   assert.equal(quoteUsage('video', { providerId: 'video-3', resolution: '4K-ESR', duration: 6 }).credits, 3542);
 });
 
-test('free chat reservations never need a settlement row', () => {
-  assert.equal(isFreeChatReservation('chat', { reason: 'free', credits: 0 }), true);
-  assert.equal(isFreeChatReservation('chat', { reason: 'development-bypass', credits: 0 }), true);
+test('legacy free markers cannot bypass chat settlement', () => {
+  assert.equal(isFreeChatReservation('chat', { reason: 'free', credits: 0 }), false);
+  assert.equal(isFreeChatReservation('chat', { reason: 'development-bypass', credits: 0 }), false);
   assert.equal(isFreeChatReservation('image', { reason: 'free', credits: 0 }), false);
   assert.equal(isFreeChatReservation('chat', { reason: 'reserved', credits: 1 }), false);
 });
@@ -533,19 +533,16 @@ test('failed legacy account update keeps the activation denial and does not retr
   });
 });
 
-test('free chat bypasses legacy activation compatibility RPCs', async () => {
+test('chat requires dedicated metered reservation, never media or activation RPCs', async () => {
   await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'true' }, async () => {
     const userId = '00000000-0000-4000-8000-000000000013';
     let calls = 0;
-    const result = await reserveUsage(userId, 'chat', 'request-two', { providerId: 'chat-1' }, async () => {
+    await assert.rejects(reserveUsage(userId, 'chat', 'request-two', { providerId: 'chat-1' }, async () => {
       calls += 1;
       return jsonResponse({ ok: false });
-    });
+    }), {code:'chat-billing-required'});
 
     assert.equal(calls, 0);
-    assert.equal(result.ok, true);
-    assert.equal(result.reason, 'free');
-    assert.equal(result.credits, 0);
   });
 });
 
@@ -909,17 +906,14 @@ test('durable mode fails closed when secret or credit schema is missing', async 
   });
 });
 
-test('free chat does not call legacy quota RPCs during migration', async () => {
+test('relaxed legacy quotas cannot silently enable free chat', async () => {
   await withEnvironment({ SUPABASE_SECRET_KEY: 'sb_secret_test', REQUIRE_DURABLE_QUOTA: 'false' }, async () => {
     let calls = 0;
-    const result = await reserveUsage('u', 'chat', 'r', { providerId: 'chat-1' }, async () => {
+    await assert.rejects(reserveUsage('u', 'chat', 'r', { providerId: 'chat-1' }, async () => {
       calls += 1;
       return jsonResponse(true);
-    });
+    }), {code:'chat-billing-required'});
     assert.equal(calls, 0);
-    assert.equal(result.ok, true);
-    assert.equal(result.reason, 'free');
-    assert.equal(result.credits, 0);
   });
 });
 

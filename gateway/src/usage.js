@@ -38,10 +38,9 @@ const MINIMAX_H3_RETAIL_CREDITS_PER_SECOND = Object.freeze({
   '2K': retailVideoCreditsFromUpstreamCny(0.1825 * USD_TO_CNY)
 });
 const MINIMAX_H3_EXTRA_IMAGE_RETAIL_CREDITS = retailVideoCreditsFromUpstreamCny(0.055 * USD_TO_CNY);
-// Agent and AI chat are explicitly free. Keep the named exports for clients
-// that still read the public pricing object, but never reserve points here.
+// Chat has no fixed per-message price; chat-billing owns token reservations.
 export const CHAT_UPSTREAM_PTC_RESERVE = 0;
-export const CHAT_CREDITS = 0;
+export const CHAT_CREDITS = null;
 
 function retailCreditsFromUpstreamPoints(upstreamPoints) {
   const normalized = Number(upstreamPoints);
@@ -588,9 +587,7 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
   // Every account uses the same quote. Supabase independently recomputes the
   // total and a mismatch fails closed during rolling deployments.
   const quote = quoteUsage(kind, request);
-  if (quote.kind === 'chat' && quote.credits === 0) {
-    return { ok: true, reason: 'free', ...quote, developmentBypass: false };
-  }
+  if (quote.kind === 'chat') throw serviceError('chat-billing-required', 'Chat requires token-based billing.');
 
   let requestBody = JSON.stringify({
     p_user_id: userId,
