@@ -1,0 +1,119 @@
+/* Shared conversation rhythm; scoped to Agent surfaces. */
+.ai-assistant-main, #board-agent-panel {
+  --agent-copy-size: 14px;
+  --agent-copy-leading: 1.75;
+  --agent-error: #a52b32;
+  container-type: inline-size;
+  container-name: agent;
+}
+.ai-assistant-panel .ai-assistant-messages,
+#board-agent-panel .board-agent-messages {
+  min-height: 0;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scroll-padding-block: 20px;
+}
+.ai-assistant-panel.is-fullscreen .ai-assistant-messages {
+  width: 100%; max-width: none; box-sizing: border-box;
+  padding: 28px max(24px, calc((100% - 880px) / 2)) 24px;
+}
+.ai-assistant-panel .ai-assistant-message { min-width: 0; gap: 8px; margin-bottom: 24px; }
+.ai-assistant-panel .ai-assistant-message-body,
+.ai-assistant-panel.is-fullscreen .ai-assistant-message-body,
+#board-agent-panel .board-agent-message {
+  font-size: var(--agent-copy-size);
+  line-height: var(--agent-copy-leading);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.ai-assistant-panel .ai-assistant-message.is-assistant .ai-assistant-message-body { max-width: 100%; }
+.ai-assistant-panel .ai-assistant-message.is-user .ai-assistant-message-body {
+  max-width: 85%; padding: 10px 14px; border-radius: 16px 16px 5px 16px;
+}
+#board-agent-panel .board-agent-message { max-width: 100%; border-radius: 16px; }
+#board-agent-panel .board-agent-message.is-user { max-width: 88%; border-bottom-right-radius: 5px; }
+.ai-assistant-panel .ai-assistant-message.is-error .ai-assistant-message-body,
+#board-agent-panel .board-agent-message.is-error {
+  padding: 10px 14px; border-radius: 10px;
+  border-inline-start: 3px solid var(--agent-error);
+  background: color-mix(in srgb, var(--agent-error) 8%, transparent);
+  color: var(--agent-error);
+}
+.ai-assistant-panel .ai-assistant-message.is-pending .ai-assistant-message-body,
+#board-agent-panel .board-agent-message.is-pending { color: var(--text-secondary); }
+/* Grid puts the estimate in document flow, so wrapped estimates cannot cover text. */
+.ai-assistant-message.is-chat-thinking[data-credit-estimate] {
+  display: grid; grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 18px; row-gap: 8px; width: 100%; align-items: start;
+}
+.ai-assistant-message.is-chat-thinking[data-credit-estimate]::before { grid-area: 1 / 1; margin: 0; }
+.ai-assistant-message.is-chat-thinking[data-credit-estimate]::after {
+  position: static; grid-area: 1 / 2; max-width: 100%; min-width: 0; overflow-wrap: anywhere;
+}
+.ai-assistant-message.is-chat-thinking[data-credit-estimate] > * { grid-column: 1 / -1; }
+#board-agent-panel [data-credit-estimate]::after { margin-top: 8px; }
+.ai-assistant-panel .ai-assistant-message-body pre,
+#board-agent-panel .board-agent-message pre {
+  max-width: 100%; box-sizing: border-box; overflow-x: auto;
+  padding: 12px 14px; border: 1px solid var(--border-hairline); border-radius: 10px;
+  background: var(--bg-surface-2); font-size: 12px; line-height: 1.65;
+  white-space: pre; overflow-wrap: normal; tab-size: 2;
+}
+.ai-assistant-panel .ai-assistant-output-files,
+#board-agent-panel .ai-assistant-output-files { max-width: 100%; min-width: 0; gap: 8px; }
+.ai-assistant-panel .ai-assistant-output-file,
+#board-agent-panel .ai-assistant-output-file { max-width: 100%; min-width: 0; border-radius: 10px; }
+.ai-assistant-panel .ai-assistant-form,
+.ai-assistant-panel.is-fullscreen .ai-assistant-form,
+#board-agent-panel .board-agent-form {
+  box-sizing: border-box; border-radius: 20px;
+  border: 1px solid var(--border-hairline);
+  box-shadow: 0 4px 18px rgb(0 0 0 / 6%);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.ai-assistant-panel.is-fullscreen .ai-assistant-form { max-width: 880px; margin-bottom: 20px; }
+.ai-assistant-panel .ai-assistant-form::before,
+.ai-assistant-panel .ai-assistant-form::after,
+#board-agent-panel .board-agent-form::before,
+#board-agent-panel .board-agent-form::after { display: none; }
+.ai-assistant-panel .ai-assistant-form:focus-within,
+#board-agent-panel .board-agent-form:focus-within {
+  border-color: var(--brand-blue-bright);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand-blue-bright) 12%, transparent);
+}
+.ai-assistant-panel #ai-assistant-input,
+#board-agent-panel .board-agent-form textarea {
+  font-size: 14px; line-height: 1.65; min-height: 64px; max-height: min(180px, 28dvh);
+}
+.ai-assistant-panel .ai-assistant-form-footer,
+#board-agent-panel .board-agent-form-footer { flex-wrap: wrap; gap: 8px; }
+.ai-assistant-panel .ai-assistant-footer-start,
+#board-agent-panel .board-agent-form-tools { flex-wrap: wrap; min-width: 0; gap: 6px; }
+.ai-assistant-panel .ai-assistant-form button[type="submit"],
+#board-agent-panel .board-agent-form button[type="submit"] { flex-shrink: 0; margin-inline-start: auto; }
+.ai-chat-history-sidebar .ai-chat-history-item {
+  min-height: 38px; border-radius: 9px; font-weight: 400; line-height: 1.5;
+}
+.ai-chat-history-sidebar .ai-chat-history-item.is-active { font-weight: 600; }
+.ai-chat-history-sidebar .ai-chat-history-empty { font-size: 12px; line-height: 1.6; }
+.ai-assistant-panel :is(button, textarea, select):focus-visible,
+#board-agent-panel :is(button, textarea, select):focus-visible {
+  outline: 2px solid var(--brand-blue-bright); outline-offset: 3px;
+}
+.ai-assistant-panel button:disabled,
+#board-agent-panel button:disabled { cursor: var(--cursor-default); }
+@container agent (max-width: 480px) {
+  .ai-assistant-message.is-chat-thinking[data-credit-estimate] { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .ai-assistant-message.is-chat-thinking[data-credit-estimate]::after { grid-area: 2 / 1; }
+  .ai-assistant-panel.is-fullscreen .ai-assistant-messages { padding-inline: 16px; }
+  .ai-assistant-panel .ai-assistant-form,
+  .ai-assistant-panel.is-fullscreen .ai-assistant-form { width: calc(100% - 24px); padding: 12px; }
+  #board-agent-panel .board-agent-message { padding: 10px 12px; }
+  #board-agent-panel .board-agent-form { margin-inline: 8px; padding: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-assistant-panel *, #board-agent-panel * { scroll-behavior: auto !important; transition-duration: 0s !important; animation: none !important; }
+}
+
+[data-theme="dark"] :is(.ai-assistant-main, #board-agent-panel) { --agent-error: #f08b91; }

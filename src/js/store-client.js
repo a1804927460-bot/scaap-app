@@ -307,7 +307,7 @@ function positionCanvasToast() {
 function showToast(message, emoji, options = {}) {
   const toast = document.getElementById('toast');
   if (!toast) return;
-  const persistent = (emoji === 'AI' && options.category !== 'routine') || options.category === 'ai-generation' || options.persistent === true;
+  const persistent = options.category === 'ai-generation-failure';
   if (!toast.hidden && toast.classList.contains('is-persistent')) {
     const current = toast.querySelector('.toast-message');
     if (current && current.textContent === String(message || '')) return;
@@ -337,7 +337,6 @@ function showToast(message, emoji, options = {}) {
     ? window.publicAiErrorMessage(message)
     : String(message || '');
   toast.appendChild(span);
-  const rawDuration = Number(options && options.durationMs);
   toast.classList.toggle('is-persistent', persistent);
   toast.setAttribute('role', persistent ? 'alert' : 'status');
   toast.setAttribute('aria-live', persistent ? 'assertive' : 'polite');
@@ -360,9 +359,7 @@ function showToast(message, emoji, options = {}) {
   positionCanvasToast();
   requestAnimationFrame(() => toast.classList.add('is-visible'));
   if (persistent) return;
-  const durationMs = Number.isFinite(rawDuration) && rawDuration > 0
-    ? Math.max(3_000, Math.min(5_000, Math.round(rawDuration)))
-    : 4_000;
+  const durationMs = 5_000;
   showToast._t = setTimeout(() => {
     toast.classList.remove('is-visible');
     showToast._t = 0;

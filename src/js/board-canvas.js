@@ -5754,7 +5754,7 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
         ? '请先在设置中保存速创 API 密钥。'
         : (res && res.message) || 'AI 生成失败。';
       removeAiPlaceholders(placeholders);
-      showToast(msg, 'AI');
+      showToast(msg, 'AI', { category: 'ai-generation-failure' });
       return;
     }
 
@@ -5783,7 +5783,7 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
       showToast('生成结果已安全保存，画布同步将自动恢复。', 'AI');
     } else {
       removeAiPlaceholders(placeholders);
-      showToast(err && err.message ? err.message : 'AI 生成失败。', 'AI');
+      showToast(err && err.message ? err.message : 'AI 生成失败。', 'AI', { category: 'ai-generation-failure' });
     }
   } finally {
     clearInterval(progressTimer);
@@ -6389,6 +6389,15 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
   placeholders.forEach((placeholder, index) => {
     const itemIndex = workingBoardItems.findIndex((item) => item.id === placeholder.id);
     const livePlaceholder = itemIndex >= 0 ? workingBoardItems[itemIndex] : placeholder;
+    // A prior delivery may already have completed this slot. Partial/repeated
+    // responses must not replace it with another result or remove it below.
+    if (itemIndex >= 0 && !livePlaceholder.isAiPlaceholder && livePlaceholder.fileId) {
+      replacedIds.add(livePlaceholder.id);
+      updates.push(livePlaceholder);
+      const fallbackIndex = fallbackFiles.findIndex((file) => file.id === livePlaceholder.fileId);
+      if (fallbackIndex >= fallbackFileIndex) fallbackFiles.splice(fallbackIndex, 1);
+      return;
+    }
     const persistedItem = persistedById.get(placeholder.id);
     const file = persistedItem
       ? files.find((entry) => entry.id === persistedItem.fileId)
@@ -6490,7 +6499,7 @@ async function replaceAiPlaceholders(placeholders, files, request, persistedItem
   // records before returning them. Renderer-side reconciliation must never
   // discard that durable result merely because a second IPC write is slow.
   AppState.allBoardItems = workingBoardItems.filter((item) =>
-    !placeholderIds.has(item.id) || replacedIds.has(item.id)
+    !placeholderIds.has(item.id) || !item.isAiPlaceholder || replacedIds.has(item.id)
   );
   AppState.boardItems = AppState.allBoardItems.filter((item) => (item.canvasId || 'canvas-1') === activeCanvasId());
   const resultPartitionId = request.partitionId || placeholders.find((placeholder) => placeholder.partitionId)?.partitionId || null;
@@ -8281,7 +8290,7 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
         ? '请先在设置的 AI 接口管理中保存接口密钥。'
         : (res && res.message) || 'AI 生成失败。';
       removeAiPlaceholders(placeholders);
-      showToast(message, 'AI');
+      showToast(message, 'AI', { category: 'ai-generation-failure' });
       return;
     }
 
@@ -8295,7 +8304,7 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
     const fallbackNotice = res.fallback && res.fallback.notice ? res.fallback.notice : '';
     showToast(
       aiMediaCanvasCompletionMessage(request.kind, files.length, targetCanvasId, res.failedCount),
-      'AI'
+      'AI', { category: res.failedCount > 0 ? 'ai-generation-failure' : 'routine' }
     );
     if (fallbackNotice) showToast(fallbackNotice, 'AI');
     closeAiImagePopover();
@@ -8310,7 +8319,7 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
       showToast('生成结果已安全保存，画布同步将自动恢复。', 'AI');
     } else {
       removeAiPlaceholders(placeholders);
-      showToast(err && err.message ? err.message : 'AI 生成失败。', 'AI');
+      showToast(err && err.message ? err.message : 'AI 生成失败。', 'AI', { category: 'ai-generation-failure' });
     }
   } finally {
     clearInterval(progressTimer);
@@ -8380,7 +8389,7 @@ async function generateAiMediaForBoardV3(request) {
         )
         : (res && res.message) || t('AI generation failed.', 'AI 生成失败。');
       removeAiPlaceholders(placeholders);
-      showToast(message, 'AI');
+      showToast(message, 'AI', { category: 'ai-generation-failure' });
       return [];
     }
 
@@ -8403,7 +8412,7 @@ async function generateAiMediaForBoardV3(request) {
         `已生成 ${files.length} 个，${res.failedCount} 个失败`
       )
       : t('Generation completed', '生成完成', '생성이 완료되었습니다');
-    showToast(successMessage, 'AI');
+    showToast(successMessage, 'AI', { category: res.failedCount > 0 ? 'ai-generation-failure' : 'routine' });
     if (fallbackNotice) showToast(fallbackNotice, 'AI');
     return generatedFiles;
   } catch (err) {
@@ -8424,7 +8433,7 @@ async function generateAiMediaForBoardV3(request) {
       return generatedFiles;
     }
     removeAiPlaceholders(placeholders);
-    showToast(err && err.message ? err.message : t('AI generation failed.', 'AI 生成失败。'), 'AI');
+    showToast(err && err.message ? err.message : t('AI generation failed.', 'AI 生成失败。'), 'AI', { category: 'ai-generation-failure' });
     return [];
   } finally {
     finishAiMediaTask(taskId);
@@ -8607,7 +8616,7 @@ async function submitBoardQuickGeneration(kind, promptText, options = {}) {
       placeOnBoard: options.placeOnBoard !== false
     });
   } catch (err) {
-    showToast(err && err.message ? err.message : t('AI generation failed.', 'AI 生成失败。'), 'AI');
+    showToast(err && err.message ? err.message : t('AI generation failed.', 'AI 生成失败。'), 'AI', { category: 'ai-generation-failure' });
     return [];
   }
 }
@@ -8826,7 +8835,7 @@ async function retryGeneratedMediaFromDetails(file) {
       urls: references.urls
     });
   } catch (err) {
-    showToast(err && err.message ? err.message : t('AI generation failed.', 'AI 生成失败。'), 'AI');
+    showToast(err && err.message ? err.message : t('AI generation failed.', 'AI 生成失败。'), 'AI', { category: 'ai-generation-failure' });
   }
 }
 

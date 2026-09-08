@@ -73,6 +73,18 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     assert.equal(recovered.items[0].x, 450, 'Preserve user movement during recovery');
     assert.equal(recovered.visible.length, 0, 'Do not insert into another active canvas');
     assert.equal(recovered.partitionChanges, 0, 'Background delivery must not change active partition');
+    const partial = await page.evaluate(async () => {
+      const slots = ['first', 'second'].map(id => ({id, canvasId:'canvas-1', isAiPlaceholder:true, x:0, y:0, width:100, height:100}));
+      AppState.allBoardItems = [{...slots[0], isAiPlaceholder:false, fileId:'first-result', x:250}, slots[1]];
+      AppState.boardItems = AppState.allBoardItems;
+      await replaceAiPlaceholders(slots, [{id:'second-result'}], {canvasId:'canvas-1', aspectRatio:'1:1'}, [{...slots[1], fileId:'second-result'}]);
+      await replaceAiPlaceholders(slots, [{id:'second-result'}], {canvasId:'canvas-1', aspectRatio:'1:1'});
+      return AppState.boardItems;
+    });
+    assert.equal(partial.length, 2, 'Partial and repeated delivery must retain completed slots');
+    assert.equal(partial.find(item => item.id === 'first').fileId, 'first-result');
+    assert.equal(partial.find(item => item.id === 'first').x, 250, 'Keep movement of an already delivered image');
+    assert.equal(partial.find(item => item.id === 'second').fileId, 'second-result');
     console.log('Passed: same-ID image and video placeholder replacement paints without any subsequent interaction.');
   } finally { await browser.close(); }
 })().catch(error=>{console.error(error);process.exitCode=1;});

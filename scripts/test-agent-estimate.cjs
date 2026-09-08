@@ -9,6 +9,22 @@ for(const chatModel of ['gemini-3.8-flash','gemini-3.1-pro','gpt-5.6-sol']) {
   assert.ok(quote.min>=0 && quote.max>=quote.min);
 }
 assert.equal(estimateAgentCredits({chatModel:'unpriced'}).available,false);
+for (const [routingStrategy,prompt,chatModel] of [
+  ['ultimate','Write a short caption','gemini-3.8-flash'],
+  ['balanced','Analyze this report','gemini-3.1-pro'],
+  ['ultimate','Analyze this report','gpt-5.6-sol'],
+  ['fast','Review the architecture','gemini-3.1-pro']
+]) {
+  assert.deepEqual(estimateAgentCredits({routingStrategy,prompt}),
+    estimateAgentCredits({chatModel,prompt}), 'Estimates must price the selected route');
+}
+const followUp={prompt:'continue',messages:[{role:'user',content:'Review the architecture'}]};
+assert.deepEqual(estimateAgentCredits({...followUp,routingStrategy:'balanced'}),
+  estimateAgentCredits({...followUp,chatModel:'gpt-5.6-sol'}));
+assert.deepEqual(estimateAgentCredits({chatModel:'gpt-5.6-sol',attachmentFileIds:['a','a']}),
+  estimateAgentCredits({chatModel:'gpt-5.6-sol',attachmentFileIds:['a']}));
+assert.deepEqual(estimateAgentCredits({chatModel:'gpt-5.6-sol',messages:[{content:[{type:'text',text:'hello'}]}]}),
+  estimateAgentCredits({chatModel:'gpt-5.6-sol',messages:[{content:'hello'}]}));
 const code=fs.readFileSync('src/js/composer-actions.js','utf8').split('window.MesssComposerActions =')[0];
 async function check(mode,language='en') {
   let completeQuote,completeChat,calls=0;

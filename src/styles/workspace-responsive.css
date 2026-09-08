@@ -1,6 +1,16 @@
 /* Size the library by its available pane, including a resized sidebar. */
 [data-credit-estimate] { position:relative; }
-[data-credit-estimate]::after { content:"\2726\00a0 " attr(data-credit-estimate); display:block; color:var(--text-secondary); font-size:12px; line-height:24px; font-variant-numeric:tabular-nums; }
+[data-credit-estimate]::after {
+  content: attr(data-credit-estimate);
+  display: block;
+  padding-left: 20px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%239b9da1' d='M8 0C9.5 5 11 6.5 16 8C11 9.5 9.5 11 8 16C6.5 11 5 9.5 0 8C5 6.5 6.5 5 8 0Z'/%3E%3C/svg%3E") no-repeat left 4px / 16px 16px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 24px;
+  font-variant-numeric: tabular-nums;
+  box-sizing: border-box;
+}
 .ai-assistant-message[data-credit-estimate]::after { position:absolute; top:0; left:112px; max-width:calc(100% - 112px); }
 @media(max-width:600px) { .ai-assistant-message[data-credit-estimate]::after { position:static; max-width:100%; } }
 #canvas-library-grid .is-longpress-dragging { opacity:.3; }

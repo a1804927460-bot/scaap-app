@@ -23,7 +23,7 @@ export function selectImageChannel(provider, body, env = process.env, now = Date
   const percent = Number(env.AIREITER_IMAGE_PLUS_PERCENT || 0);
   const secret = String(env.AIREITER_IMAGE_ROUTING_SECRET || '');
   const operation = String(body.operationId || '');
-  if (!Number.isFinite(percent) || percent <= 0 || percent > 40 || secret.length < 32 || !operation) return provider;
+  if (!Number.isFinite(percent) || percent <= 0 || percent > 60 || secret.length < 32 || !operation) return provider;
   const alternative = channels.get(provider.model);
   if ((failures.get(alternative)?.until || 0) > now) return provider;
   const bucket = createHmac('sha256',secret).update(`image-channel-v1:${provider.model}:${operation}`).digest().readUInt32BE(0) / 0x100000000 * 100;

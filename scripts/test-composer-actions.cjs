@@ -105,7 +105,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
      for(const row of rows){
        const task=chatWithAgentEstimate(row,{});
        await new Promise(resolve=>setTimeout(resolve,0));
-       results.push({label:row.dataset.creditEstimate,icon:getComputedStyle(row,'::after').content,title:row.getAttribute('title')});
+       results.push({label:row.dataset.creditEstimate,icon:getComputedStyle(row,'::after').backgroundImage,iconSize:getComputedStyle(row,'::after').backgroundSize,title:row.getAttribute('title')});
        finish({ok:true});await task;
        if(row.hasAttribute('data-credit-estimate'))throw Error('Estimate did not clear');
        row.remove();
@@ -114,7 +114,8 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
    });
    for(const estimate of estimates){
      assert.equal(estimate.label,'预计 0.06 - 1.64 积分');
-     assert.ok(estimate.icon.includes('\u2726'),'Estimate must have a solid four-point star');
+     assert.ok(estimate.icon.includes('data:image/svg+xml'), 'Estimate star must render as a scalable icon');
+     assert.equal(estimate.iconSize, '16px 16px', 'Estimate star stays smaller than the 24px brand mark');
      assert.equal(estimate.title,null,'No internal pricing tooltip');
    }
  }

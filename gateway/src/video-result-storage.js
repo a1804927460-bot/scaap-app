@@ -1,3 +1,5 @@
+import { getR2Media, putR2Media, r2MediaConfigured } from './r2-media-storage.js';
+
 const VIDEO_RESULT_BUCKET = 'messs-ai-video-results';
 const MAX_VIDEO_RESULT_BYTES = 256 * 1024 * 1024;
 const UUID = '[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}';
@@ -127,6 +129,14 @@ export async function storeVideoResult(userId, requestId, buffer, contentType = 
     throw serviceError('video-result-storage-failed', 'The generated video cannot be stored safely.', 502);
   }
   const key = `${String(userId).toLowerCase()}/${String(requestId).toLowerCase()}.${type.extension}`;
+  if (r2MediaConfigured()) {
+    try {
+      await putR2Media(`video/${key}`, video, type.contentType);
+    } catch (error) {
+      throw Object.assign(serviceError('video-result-storage-failed', 'The generated video could not be stored safely.'), { retryable: true });
+    }
+    return `storage://${VIDEO_RESULT_BUCKET}/${key}`;
+  }
   let response;
   try {
     response = await fetchImpl(storageUrl(key), {
@@ -162,6 +172,18 @@ export async function readStoredVideoResult(userId, requestId, reference, fetchI
   }
   const parsed = parseReference(reference, userId, requestId);
   if (!parsed) throw serviceError('video-result-storage-missing', 'The saved video result is not available yet.', 404);
+  if (r2MediaConfigured()) {
+    let stored;
+    try { stored = await getR2Media(`video/${parsed.key}`, MAX_VIDEO_RESULT_BYTES); }
+    catch { throw serviceError('video-result-storage-unavailable', 'The saved video result is temporarily unavailable.'); }
+    if (stored) {
+      const type = videoType(stored.body, stored.contentType);
+      if (!type || !stored.body.length || stored.body.length > MAX_VIDEO_RESULT_BYTES) {
+        throw serviceError('video-result-storage-invalid', 'The saved video result is invalid.', 502);
+      }
+      return { buffer: stored.body, contentType: type.contentType };
+    }
+  }
   let response;
   try {
     response = await fetchImpl(storageUrl(parsed.key), {

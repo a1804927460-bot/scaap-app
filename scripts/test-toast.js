@@ -56,7 +56,7 @@ const sandbox = {
 };
 vm.runInNewContext(`${source}\nthis.__showToast = showToast;`, sandbox);
 
-sandbox.__showToast('本次生成请求未被接受，未扣积分。请检查设置后重试。', 'AI');
+sandbox.__showToast('本次生成请求未被接受，未扣积分。请检查设置后重试。', 'AI', { category: 'ai-generation-failure' });
 assert.strictEqual(toast.hidden, false);
 assert.strictEqual(toast.classList.contains('is-persistent'), true);
 assert.strictEqual(toast.attributes.role, 'alert');
@@ -72,9 +72,18 @@ assert.strictEqual(toast.hidden, true);
 
 toast.children = [];
 sandbox.__showToast('AI 图片已加入画布', 'AI');
-assert.strictEqual(toast.classList.contains('is-persistent'), true);
-assert.strictEqual(toast.children.some((child) => child.className === 'toast-dismiss'), true);
-assert.strictEqual(timers.length, 1, 'success notifications also wait for dismissal');
+assert.strictEqual(toast.classList.contains('is-persistent'), false);
+assert.strictEqual(toast.children.some((child) => child.className === 'toast-dismiss'), false);
+assert.strictEqual(timers.length, 2, 'success notifications must auto-dismiss');
+assert.strictEqual(timers[1].delay, 5000);
+timers[1].callback();
+timers[2].callback();
+assert.strictEqual(toast.hidden, true);
+sandbox.__showToast('Prompt copied', 'AI');
+assert.strictEqual(toast.classList.contains('is-persistent'), false);
+assert.strictEqual(timers.at(-1).delay, 5000);
+sandbox.__showToast('Folder renamed', 'Messs', { durationMs: 3000 });
+assert.strictEqual(timers.at(-1).delay, 5000);
 
 assert.match(css, /\.toast\.is-persistent\s*\{/);
 assert.match(css, /\.toast-dismiss\s*\{/);

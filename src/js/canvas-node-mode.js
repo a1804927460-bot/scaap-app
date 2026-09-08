@@ -400,7 +400,7 @@ async function runCanvasGenerationNode(nodeId) {
     saveCanvasNodeLayout();
   } catch (error) {
     setCanvasNodeRunState(id, 'error', t('Failed', '失败', '실패'));
-    showToast(error && error.message ? error.message : t('AI generation failed.', 'AI 生成失败。', 'AI 생성에 실패했습니다.'), 'AI');
+    showToast(error && error.message ? error.message : t('AI generation failed.', 'AI 生成失败。', 'AI 생성에 실패했습니다.'), 'AI', { category: 'ai-generation-failure' });
   } finally {
     CanvasNodeMode.runningNodes.delete(id);
   }

@@ -1,3 +1,5 @@
+import { getR2Media, putR2Media, r2MediaConfigured } from './r2-media-storage.js';
+
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
 const IMAGE_RESULT_BUCKET = 'messs-ai-image-results';
 const MAX_IMAGE_RESULT_BYTES = 64 * 1024 * 1024;
@@ -76,6 +78,14 @@ export async function storeImageResult(userId, requestId, buffer, fetchImpl = fe
     throw serviceError('image-result-storage-failed', 'The generated image cannot be stored safely.', 502);
   }
   const key = `${String(userId).toLowerCase()}/${String(requestId).toLowerCase()}.${type.extension}`;
+  if (r2MediaConfigured()) {
+    try {
+      await putR2Media(`image/${key}`, image, type.contentType);
+    } catch {
+      throw serviceError('image-result-storage-failed', 'The generated image could not be stored safely.');
+    }
+    return `storage://${IMAGE_RESULT_BUCKET}/${key}`;
+  }
   let response;
   try {
     response = await fetchImpl(storageUrl(key), {
@@ -110,6 +120,17 @@ export async function readStoredImageResult(userId, requestId, reference, fetchI
     ));
   let missing = true;
   for (const key of keys) {
+    if (r2MediaConfigured()) {
+      let stored;
+      try { stored = await getR2Media(`image/${key}`, MAX_IMAGE_RESULT_BYTES); }
+      catch { throw serviceError('image-result-storage-unavailable', 'The saved image result is temporarily unavailable.'); }
+      if (stored) {
+        if (!imageType(stored.body) || !stored.body.length || stored.body.length > MAX_IMAGE_RESULT_BYTES) {
+          throw serviceError('image-result-storage-invalid', 'The saved image result is invalid.', 502);
+        }
+        return stored.body;
+      }
+    }
     let response;
     try {
       response = await fetchImpl(storageUrl(key), {

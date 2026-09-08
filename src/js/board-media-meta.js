@@ -814,7 +814,7 @@ async function runBoardButlerImageTool(action, file, item, options) {
     state.status = 'error';
     state.message = error && error.message;
     syncBoardButlerTaskUi(file.id);
-    showToast(state.message || t('Image processing failed.', '图片处理失败。', '이미지 처리에 실패했습니다.'));
+    showToast(state.message || t('Image processing failed.', '图片处理失败。', '이미지 처리에 실패했습니다.'), 'AI', { category: 'ai-generation-failure' });
   }
 }
 
@@ -954,7 +954,7 @@ async function runBoardButlerVideoTool(action, file, item, options) {
     state.status = 'error';
     state.message = error && error.message;
     syncBoardButlerTaskUi(file.id);
-    showToast(state.message || t('Video enhancement failed.', '视频超清失败。', '비디오 고화질 처리에 실패했습니다.'));
+    showToast(state.message || t('Video enhancement failed.', '视频超清失败。', '비디오 고화질 처리에 실패했습니다.'), 'AI', { category: 'ai-generation-failure' });
   }
 }
 
@@ -2504,7 +2504,7 @@ async function runBoardButlerRemoveBackground(file, item, options = {}) {
     state.status = 'error';
     state.message = error && error.message;
     syncBoardButlerTaskUi(file.id);
-    showToast(state.message || t('Could not remove the background.', '去除背景失败。', '배경을 제거하지 못했습니다.'));
+    showToast(state.message || t('Could not remove the background.', '去除背景失败。', '배경을 제거하지 못했습니다.'), 'AI', { category: 'ai-generation-failure' });
   }
 }
 
@@ -2813,7 +2813,7 @@ async function runBoardButlerGenerate3d(file, item, providerId, options = {}) {
     state.status = 'error';
     state.message = error && error.message;
     syncBoardButlerTaskUi(file.id);
-    showToast(state.message || t('3D generation failed.', '3D 生成失败。', '3D 생성에 실패했습니다.'));
+    showToast(state.message || t('3D generation failed.', '3D 生成失败。', '3D 생성에 실패했습니다.'), 'AI', { category: 'ai-generation-failure' });
   }
 }
 
@@ -2953,7 +2953,7 @@ async function resumePersistedBoardButlerTask(task) {
     state.status = 'error';
     state.message = error && error.message;
     syncBoardButlerTaskUi(file.id);
-    showToast(state.message || t('The Butler task could not be resumed.', 'Butler 任务恢复失败。', 'Butler 작업을 복구하지 못했습니다.'));
+    showToast(state.message || t('The Butler task could not be resumed.', 'Butler 任务恢复失败。', 'Butler 작업을 복구하지 못했습니다.'), 'AI', { category: 'ai-generation-failure' });
   }
 }
 

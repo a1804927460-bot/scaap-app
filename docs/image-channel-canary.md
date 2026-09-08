@@ -1,7 +1,8 @@
 # Image channel canary
 
 Nano Banana 2 Max -> Plus and Nano Banana Pro Max -> Plus are eligible on the
-existing AI Reiter endpoint; the production Plus setting is 30% as of 2026-09-07.
+existing AI Reiter endpoint; the requested Plus setting is 60%. Production was
+last recorded at 30% on 2026-09-07; the new setting requires gateway deployment.
 All three public image models also support compatible FAL mixing, documented in
 `fal-generation-overflow.md`. GPT Image 2 never uses the unverified standard
 AIReiter channel; all video routes are unchanged. No public model
@@ -30,7 +31,7 @@ USD per image, in 1K / 2K / 4K order:
 | Nano Banana 2 | .077 / .1155 / .154 | .048 / .072 / .108 |
 | Nano Banana Pro | .165 / .165 / .33 | .0576 / .0576 / .0708 |
 
-Within AIReiter traffic, at 30% Plus, raw expected savings are ~9.0-11.3% for Nano2 and ~19.5-23.6%
+Within AIReiter traffic, at 60% Plus, raw expected savings are ~17.9-22.6% for Nano2 and ~39.1-47.1%
 for Pro, excluding failures, retries and operational cost. This change does not
 pretend that the original Max cost is the actual internal cost of a Plus request.
 FAL traffic must be accounted for separately and is not necessarily cheaper.
@@ -40,13 +41,13 @@ FAL traffic must be accounted for separately and is not necessarily cheaper.
 Gateway-only configuration:
 
 ```ini
-AIREITER_IMAGE_PLUS_PERCENT=30
+AIREITER_IMAGE_PLUS_PERCENT=60
 AIREITER_IMAGE_ROUTING_SECRET=<independent random secret, at least 32 characters>
 ```
 
 Keep the secret fixed across replicas. Zero or unset disables; values outside
-0-40 fail closed. The HMAC of operation ID chooses a stable statistical bucket;
-30% is an expected share, not a hard per-user or small-batch quota. Do not expose
+0-60 fail closed. The HMAC of operation ID chooses a stable statistical bucket;
+60% is an expected share, not a hard per-user or small-batch quota. Do not expose
 these settings to the desktop/public provider catalog.
 
 Three consecutive observed failures within five minutes pause that Plus channel

@@ -1842,7 +1842,7 @@ async function drainAssistantQueue() {
         }
       } catch (error) {
         if (!item.started) AiAssistant.queue.unshift(item);
-        showToast(error?.message || t('Request failed', '\u8bf7\u6c42\u5931\u8d25'), 'AI');
+        showToast(error?.message || t('Request failed', '\u8bf7\u6c42\u5931\u8d25'), 'AI', { category: 'ai-generation-failure' });
         AiAssistant.queuePaused = true;
       }
     }

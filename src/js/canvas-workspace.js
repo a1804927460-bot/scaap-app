@@ -2377,6 +2377,15 @@ function addSelectedImagesToCanvasAgent() {
     void uploadCanvasAgentAttachments();
     return true;
   }
+  const selectedFiles = ids
+    .map((fileId) => AppState.files.find((entry) => entry.id === fileId))
+    .filter(Boolean);
+  if (selectedFiles.some((file) => isImageExt(file.ext) || isVideoExt(file.ext))) {
+    CanvasWorkspace.agentMode = 'generate';
+    CanvasWorkspace.agentGenerationKind = selectedFiles.some((file) => isVideoExt(file.ext)) && !selectedFiles.some((file) => isImageExt(file.ext))
+      ? 'video'
+      : 'image';
+  }
   const added = addCanvasAgentReferenceIds(ids);
   ids.forEach((fileId) => CanvasWorkspace.agentSelectionFileIds.add(fileId));
   return added;
@@ -2411,7 +2420,7 @@ function addCanvasAgentReference(fileId) {
   const file = AppState.files.find((entry) => entry.id === fileId);
   if (!file || (!isImageExt(file.ext) && !isVideoExt(file.ext))) return false;
   CanvasWorkspace.agentMode = 'generate';
-  CanvasWorkspace.agentGenerationKind = 'image';
+  CanvasWorkspace.agentGenerationKind = isVideoExt(file.ext) ? 'video' : 'image';
   return addCanvasAgentReferenceIds([file.id]);
 }
 

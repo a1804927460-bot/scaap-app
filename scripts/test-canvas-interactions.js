@@ -783,6 +783,16 @@ assert.match(
   /getElementById\('board-agent-add-reference'\)[\s\S]*?addEventListener\('click', addSelectedImagesToCanvasAgent\)/,
   'Agent references must only be added through the explicit add-reference control.'
 );
+assert.match(
+  workspaceSource,
+  /function addSelectedImagesToCanvasAgent\(\) \{[\s\S]*?CanvasWorkspace\.agentMode = 'generate';/,
+  'Adding selected canvas media to Agent must switch the panel into generation mode.'
+);
+assert.match(
+  workspaceSource,
+  /function addCanvasAgentReference[\s\S]*?CanvasWorkspace\.agentGenerationKind = isVideoExt\(file\.ext\) \? 'video' : 'image';/,
+  'Single media references must preserve video generation mode when needed.'
+);
 assert.match(workspaceSource, /selectedCanvasAgentMediaIds[\s\S]*?isVideoExt/,
   'Canvas Agent references must recognize both images and videos.');
 assert.match(workspaceSource, /board-agent-input[\s\S]*?handleCanvasAgentPaste[\s\S]*?event\.stopPropagation\(\)/,

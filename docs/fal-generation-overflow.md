@@ -37,19 +37,19 @@ Verified schema sources on 2026-09-07:
 `FAL_API_KEY` (or `FAL_KEY`) is server-only.
 `FAL_NANO_BACKUP_ENABLED=true` enables pre-accept rejection fallback.
 This legacy flag enables only Nano Pro. `FAL_IMAGE_BACKUP_ENABLED=true` enables
-all three models. The rollout configuration is:
+all three models. The requested rollout configuration (pending deployment) is:
 
 ```ini
 FAL_IMAGE_BACKUP_ENABLED=true
 FAL_IMAGE_MIX_PERCENT=10
 FAL_GPT_IMAGE_MIX_PERCENT=20
-AIREITER_IMAGE_PLUS_PERCENT=30
+AIREITER_IMAGE_PLUS_PERCENT=60
 ```
 
 Keep the existing `AIREITER_IMAGE_ROUTING_SECRET` stable across replicas.
 FAL percentages accept 0-40; absent/invalid values disable weighted selection,
 not rejection fallback. Selection is server-side HMAC over operation ID and
-logical provider ID. Expected normal shares are Nano Max 63%, Plus 27%, FAL 10%;
+logical provider ID. Expected normal shares are Nano Max 36%, Plus 54%, FAL 10%;
 GPT official 80%, FAL 20%. These are statistical shares, not user rate limits.
 Health fallback can change observed shares. Missing keys or incompatible requests
 leave the original primary usable. No new user admission limit is introduced.
