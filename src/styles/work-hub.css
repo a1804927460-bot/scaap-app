@@ -91,7 +91,7 @@
 .hub-editor h3 { font-size:13px; }
 .hub-editor label { display:flex; flex-direction:column; gap:8px; color:var(--text-secondary); font-size:12px; margin-bottom:16px; }
 .hub-editor input[type="date"] { color-scheme:dark; }
-.hub-editor input[type="date"]::-webkit-calendar-picker-indicator { opacity:.68; filter:invert(1) brightness(1.25); cursor:pointer; }
+.hub-editor input[type="date"]::-webkit-calendar-picker-indicator { opacity:.68; filter:invert(1) brightness(1.25); cursor:var(--cursor-click); }
 .hub-editor input[type="number"] { appearance:textfield; -moz-appearance:textfield; }
 .hub-editor input[type="number"]::-webkit-inner-spin-button,
 .hub-editor input[type="number"]::-webkit-outer-spin-button { margin:0; -webkit-appearance:none; }

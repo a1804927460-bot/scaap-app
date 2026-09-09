@@ -2708,7 +2708,8 @@ function boardLeaferSource(file, item) {
     }
     // Promote only decoded sources from the bounded detail window. Lists
     // keep small thumbnails; visible media use previews sized for the screen.
-    const source = Board.leaferFullItemIds.has(itemId)
+    const needsSharpSource = item.selected || (Board.zoom || 1) >= 1.35;
+    const source = Board.leaferFullItemIds.has(itemId) || needsSharpSource
       ? (Board.leaferDetailSources.get(itemId) || fullSource || thumbSource)
       : (thumbSource || fullSource);
     if (itemId) {

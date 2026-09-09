@@ -227,6 +227,21 @@
 }
 [data-theme="dark"] .brand-word, [data-theme="dark"] .brand-dot { color: var(--brand-blue-bright); }
 .brand-dot { color: var(--title-accent); }
+/* Native date pickers must follow the app theme instead of opening a white
+   system popup over the dark project editor. */
+[data-theme="dark"] input[type="date"],
+[data-theme="dark"] input[type="datetime-local"] { color-scheme: dark; }
+[data-theme="light"] input[type="date"],
+[data-theme="light"] input[type="datetime-local"] { color-scheme: light; }
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  cursor: var(--cursor-click);
+  opacity: .72;
+  padding: 4px;
+  border-radius: 6px;
+}
+input[type="date"]::-webkit-calendar-picker-indicator:hover,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover { opacity: 1; background: var(--bg-hover); }
 .brand-tagline {
   display: block;
   font-size: 10.5px;
@@ -2291,38 +2306,42 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .ai-assistant-brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
-  height: 28px;
+  height: 42px;
+  padding: 0 4px;
 }
 .ai-assistant-brand > img {
-  width: 24px;
-  height: 24px;
-  flex: 0 0 24px;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
   object-fit: contain;
 }
 .ai-assistant-brand-word {
   overflow: hidden;
-  color: var(--brand-blue-bright);
+  color: var(--title-accent);
   font-family: var(--font-display);
-  font-size: 20px;
+  font-size: 26px;
   font-weight: 900;
   line-height: 1;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+.ai-assistant-brand-dot { color: var(--title-accent); }
+[data-theme="dark"] .ai-assistant-brand-word,
+[data-theme="dark"] .ai-assistant-brand-dot { color: var(--brand-blue-bright); }
 .ai-assistant-brand-dot { color: inherit; }
 .ai-assistant-brand:focus-visible { outline: 2px solid var(--brand-blue-bright); outline-offset: 4px; }
 .ai-assistant-panel.is-fullscreen .ai-assistant-brand {
-  gap: 10px;
-  height: 34px;
+  gap: 12px;
+  height: 42px;
 }
 .ai-assistant-panel.is-fullscreen .ai-assistant-brand > img {
-  width: 30px;
-  height: 30px;
-  flex-basis: 30px;
+  width: 42px;
+  height: 42px;
+  flex-basis: 42px;
 }
-.ai-assistant-panel.is-fullscreen .ai-assistant-brand-word { font-size: 24px; }
+.ai-assistant-panel.is-fullscreen .ai-assistant-brand-word { font-size: 26px; }
 .ai-assistant-sidebar-toggle { margin-inline-start:auto; }
 .ai-assistant-home {
   flex: 1;
@@ -9874,7 +9893,7 @@ body { font-size: var(--font-ui-md); }
   gap: 12px;
   padding: 26px 18px;
 }
-.ai-assistant-panel.is-fullscreen .ai-assistant-brand-word { font-size: 24px; }
+.ai-assistant-panel.is-fullscreen .ai-assistant-brand-word { font-size: 26px; }
 .ai-chat-new {
   height: 48px;
   gap: 11px;
