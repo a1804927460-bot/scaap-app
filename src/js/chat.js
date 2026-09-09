@@ -1491,7 +1491,7 @@ function resizeChatComposer() {
 function openChatSettings() {
   const messsTab = document.querySelector('.section-tab[data-section="messs"]');
   if (messsTab) messsTab.click();
-  const settingsButton = chatEl('settings-btn');
+  const settingsButton = chatEl('ai-account-menu-open');
   if (settingsButton) settingsButton.click();
   const allSettings = chatEl('ai-provider-manager-open');
   if (allSettings) allSettings.click();

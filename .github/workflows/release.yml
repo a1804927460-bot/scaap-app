@@ -57,7 +57,12 @@ jobs:
               Select-Object -First 1 -ExpandProperty FullName
           }
           if (-not $libreOfficeExe) {
-            choco install libreoffice --no-progress -y --force --execution-timeout=600
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              choco install libreoffice --no-progress -y --force --execution-timeout=1200 --timeout=1200 --web-request-timeout=300
+              if ($LASTEXITCODE -eq 0) { break }
+              if ($attempt -eq 3) { throw 'LibreOffice installation failed after three attempts.' }
+              Start-Sleep -Seconds 10
+            }
             Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1" -ErrorAction SilentlyContinue
             refreshenv
             $libreOfficeExe = Get-Command soffice.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source

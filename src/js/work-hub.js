@@ -111,20 +111,25 @@ window.MesssWorkHub = (() => {
       card.addEventListener('contextmenu', event=>{
         event.preventDefault();
         event.stopPropagation();
-        buildAndShowSimpleMenu([
+        const menu=buildAndShowSimpleMenu([
           {label:'在文件夹中显示',icon:'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z',action:()=>api().revealFile(f.id)},
           {divider:true},
           {label:'删除文件',danger:true,icon:'M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m-9 0v14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V6',action:()=>deleteHubFile(f)}
         ],event.clientX,event.clientY,'hub-file-context-menu');
+        root.append(menu);
       });
     });
   }
   async function deleteHubFile(file) {
     if(!file)return;
-    const ok=await showConfirmDialog({
-      title:'删除文件',
-      message:`确定删除“${file.name}”吗？确认后会同时从本地磁盘和 Messs 文件库中永久删除，且无法恢复。`,
-      confirmLabel:'删除并清除'
+    const ok=await new Promise(resolve=>{
+      const dialog=editor('删除文件', '<p>确定删除“'+esc(file.name)+'”吗？</p><p>这里删除后，本地磁盘中的文件也会一起永久删除，同时从 Messs 文件库移除，无法恢复。</p>');
+      const submit=dialog.querySelector('[type=submit]');
+      submit.textContent='同时删除本地文件';
+      let confirmed=false;
+      dialog.querySelector('form').onsubmit=event=>{event.preventDefault();confirmed=true;dialog.close();};
+      dialog.addEventListener('close',()=>resolve(confirmed),{once:true});
+      dialog.querySelector('[data-close]').focus();
     });
     if(!ok)return;
     try {
@@ -191,7 +196,7 @@ window.MesssWorkHub = (() => {
     if(name==='upload'){button.disabled=true;try{await upload();}finally{button.disabled=false;}return;}
     if(name==='add-existing'){area='files';render();return;}
     const fileId=button.dataset.id||button.closest('[data-file-id]')?.dataset.fileId;
-    if(name==='preview'){const f=AppState.files.find(f=>f.id===fileId);if(f){root.close();selectFileForPreview(f.id);}return;}
+    if(name==='preview'){const f=AppState.files.find(f=>f.id===fileId);if(f){root.close();if(isImageExt(f.ext)||isVideoExt(f.ext)){await openFileFullscreenPreview(f);}else{await selectFileForPreview(f.id);openFullscreenPreview();}}return;}
     if(name==='collect'){await api().saveWorkspaceResource({kind:'asset',fileId,tags:[],favorite:false});await reload();notify('已加入素材库');return;}
     if(name==='asset-edit'){assetEditor(fileId);return;}
     if(name==='use-file'){if(!activeCanvasRecord())throw Error('请先打开一个画布');const center=boardViewportCenterCoords();await addFilesToBoard([fileId],center.x,center.y);root.close();showCanvasWorkspace();return;}

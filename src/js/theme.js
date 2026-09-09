@@ -25,7 +25,7 @@ function initTheme(initialTheme) {
     });
   });
 
-  const settingsBtn = document.getElementById('settings-btn');
+
   const accountBtn = document.getElementById('account-menu-open');
   const settingsPopover = document.getElementById('settings-popover');
   const accountPopover = document.getElementById('account-popover');
@@ -44,7 +44,12 @@ function initTheme(initialTheme) {
       settingsPopover.hidden = false;
       return;
     }
-    otherPopover.hidden = true;
+    if (popover.contains(otherPopover)) {
+      otherPopover.hidden = false;
+      popover.classList.add('is-open-with-settings');
+    } else {
+      otherPopover.hidden = true;
+    }
     document.body.appendChild(popover);
     const anchor = e.currentTarget.getBoundingClientRect();
     popover.style.position = 'fixed';
@@ -52,12 +57,12 @@ function initTheme(initialTheme) {
     popover.style.bottom = `${Math.max(8, window.innerHeight - anchor.top + 8)}px`;
     popover.hidden = !popover.hidden;
   };
-  settingsBtn.addEventListener('click', togglePopover(accountPopover, settingsPopover));
+
   accountBtn.addEventListener('click', togglePopover(accountPopover, settingsPopover));
   document.getElementById('ai-account-menu-open')?.addEventListener('click', togglePopover(accountPopover, settingsPopover));
-  document.getElementById('ai-settings-btn')?.addEventListener('click', togglePopover(accountPopover, settingsPopover));
+
   document.addEventListener('click', (e) => {
-    if (!accountPopover.contains(settingsPopover) && !settingsPopover.hidden && !settingsPopover.contains(e.target) && !settingsBtn.contains(e.target)) {
+    if (!accountPopover.contains(settingsPopover) && !settingsPopover.hidden && !settingsPopover.contains(e.target)) {
       settingsPopover.hidden = true;
     }
     if (!accountPopover.hidden && !accountPopover.contains(e.target) && !accountBtn.contains(e.target)) {
