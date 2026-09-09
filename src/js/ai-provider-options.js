@@ -25,6 +25,7 @@
     const source = [provider && provider.model, provider && provider.name, provider && provider.id]
       .map(normalized).filter(Boolean).join('-');
     if (kind === 'chat') return normalized(provider && provider.model) || source;
+    if (/gpt.*image.*2-5(?:-|$)/.test(source)) return 'gpt-image-2-5';
     if (/gpt.*image.*2/.test(source)) return 'gpt-image-2';
     if (/nano.*banana.*2.*lite/.test(source)) return 'nano-banana-2-lite';
     if (/nano.*banana.*2/.test(source)) return 'nano-banana-2';

@@ -3920,6 +3920,7 @@ function normalizeImageProviders(value, fallbackEndpoint) {
       // canonical ID so they cannot shift public products onto another
       // provider's endpoint, pricing, or selected-state cache.
       id: providerId,
+      logicalModel: String(saved.logicalModel || '').trim().slice(0, 120),
       name: String(saved.name || (index === 0 ? DEFAULT_CATALOG_IMAGE.name : endpoint ? deriveProviderName(endpoint) : '')).trim().slice(0, 40),
       endpoint,
       model: String(saved.model || '').trim().slice(0, 120),
@@ -4874,6 +4875,7 @@ async function getPublicAiMediaConfig() {
       .slice(0, 100)
       .map((provider) => ({
         id: provider.id,
+        logicalModel: provider.logicalModel,
         name: sanitizePublicModelLabel(provider.name, provider.id),
         endpoint: gatewayEndpoint,
         models: provider.models,
