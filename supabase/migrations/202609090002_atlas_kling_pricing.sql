@@ -472,7 +472,7 @@ returns jsonb
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
 declare
   normalized_provider text := lower(trim(coalesce(p_provider_id, '')));
   quoted_credits integer;
@@ -505,7 +505,7 @@ begin
     p_expected_credits, quoted_credits
   );
 end;
-$;
+$$;
 
 revoke all on function public.reserve_ai_video_credits(uuid, text, text, uuid, text, integer, integer, integer, boolean) from public, anon, authenticated;
 grant execute on function public.reserve_ai_video_credits(uuid, text, text, uuid, text, integer, integer, integer, boolean) to service_role;
