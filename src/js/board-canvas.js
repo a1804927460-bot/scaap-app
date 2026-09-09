@@ -2330,6 +2330,7 @@ function rebuildBoardSpatialIndex() {
   Board.spatialIndex.clear();
   Board.filesById = new Map(AppState.files.map((file) => [file.id, file]));
   Board.itemsById = new Map(AppState.boardItems.map((item) => [item.id, item]));
+  pruneBoardRuntimeCaches();
   Board.selectedIds = new Set();
   Board.selectedCount = 0;
   for (const item of AppState.boardItems) {
@@ -2345,6 +2346,29 @@ function rebuildBoardSpatialIndex() {
   Board.leaferContentRevision += 1;
   Board.lastMountHash = null;
   Board.lastKeepHash = null;
+}
+
+function pruneBoardRuntimeCaches() {
+  const liveItemIds = new Set(Board.itemsById.keys());
+  const liveFileIds = new Set(Board.filesById.keys());
+  for (const id of Board.metrics.keys()) {
+    if (!liveItemIds.has(id)) Board.metrics.delete(id);
+  }
+  for (const id of Board.leaferSourceByItem.keys()) {
+    if (!liveItemIds.has(id)) Board.leaferSourceByItem.delete(id);
+  }
+  for (const id of Board.leaferDetailSources.keys()) {
+    if (!liveItemIds.has(id)) Board.leaferDetailSources.delete(id);
+  }
+  for (const id of Board.previewGenerations.keys()) {
+    if (!liveFileIds.has(id)) Board.previewGenerations.delete(id);
+  }
+  for (const id of BoardPreviewCache.keys()) {
+    if (!liveFileIds.has(id)) deleteBoardPreviewCache(id);
+  }
+  for (const id of Board.fullImageReadyFileIds) {
+    if (!liveFileIds.has(id)) Board.fullImageReadyFileIds.delete(id);
+  }
 }
 
 function updateBoardItemIndex(item) {
@@ -9971,4 +9995,3 @@ function initDoodleColorPanel() {
 
   confirmBtn.addEventListener('click', () => { if (doodleActive) exitDoodleMode(true); });
 }
-

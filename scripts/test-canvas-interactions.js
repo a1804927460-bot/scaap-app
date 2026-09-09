@@ -1113,6 +1113,11 @@ assert.match(
   /BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET = 24_000_000[\s\S]*?function cacheBoardFullImage[\s\S]*?fullImageCachePixels[\s\S]*?BOARD_FULL_IMAGE_CACHE_PIXEL_BUDGET/,
   'Decoded 4K caching must use a pixel budget so several originals cannot exhaust graphics memory.'
 );
+assert.match(
+  boardSource,
+  /function pruneBoardRuntimeCaches[\s\S]*?Board\.metrics\.keys\(\)[\s\S]*?Board\.previewGenerations\.keys\(\)[\s\S]*?BoardPreviewCache\.keys\(\)[\s\S]*?Board\.fullImageReadyFileIds/,
+  'Removed files and items must be pruned from long-lived board runtime caches.'
+);
 const transformSource = boardSource.slice(
   boardSource.indexOf('function applyBoardTransform'),
   boardSource.indexOf('function setBoardZoomTarget')
