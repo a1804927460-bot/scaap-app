@@ -45,7 +45,7 @@ export async function moderateGenerationPrompt(body, { userId, requestId, fetchI
     throw unavailable();
   }
   if (!['allow', 'deny', 'flag'].includes(result?.decision)) throw unavailable();
-  if (result.decision !== 'allow') {
+  if (result.decision === 'deny') {
     throw Object.assign(new Error('提示词未通过内容审核，请修改后重试。'), {
       code: 'prompt-rejected', status: 400
     });

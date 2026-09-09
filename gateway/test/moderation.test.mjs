@@ -26,11 +26,16 @@ test('moderation sends all user text and no media or account identifiers', async
   assert.equal(result.units, 1);
 });
 
-test('deny and flag block, with a stable public error', async () => {
-  for (const decision of ['deny', 'flag']) {
-    await assert.rejects(moderateGenerationPrompt({ prompt: 'test' }, {
-      env, fetchImpl: async () => response(decision)
-    }), (error) => publicGatewayError(error).code === 'prompt-rejected' && error.status === 400);
+test('deny blocks while flagged ordinary prompts remain eligible for provider review', async () => {
+  await assert.rejects(moderateGenerationPrompt({ prompt: 'test' }, {
+    env, fetchImpl: async () => response('deny')
+  }), (error) => publicGatewayError(error).code === 'prompt-rejected' && error.status === 400);
+
+  for (const prompt of ['a man in a studio portrait', 'a woman walking through a city']) {
+    const result = await moderateGenerationPrompt({ prompt }, {
+      env, fetchImpl: async () => response('flag')
+    });
+    assert.equal(result.decision, 'flag');
   }
 });
 
