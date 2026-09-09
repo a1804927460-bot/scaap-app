@@ -13,7 +13,7 @@ import operatingCosts from '../../lib/operating-costs.js';
 import creditPricing from '../../lib/credit-pricing.js';
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
-export const CREDIT_PRICING_VERSION = '202609060001';
+export const CREDIT_PRICING_VERSION = '202609090008';
 const LEGACY_POINTS_PER_CNY = 10;
 const POINTS_PER_CNY = 1000 / 70;
 const POINT_DENOMINATION_SCALE = POINTS_PER_CNY / LEGACY_POINTS_PER_CNY;
@@ -131,10 +131,15 @@ const GPT_IMAGE_2_EDIT_RETAIL_CREDITS = retailNestedRateTable(GPT_IMAGE_2_EDIT_U
 const GPT_IMAGE_2_RETAIL_CREDITS = GPT_IMAGE_2_GENERATE_RETAIL_CREDITS;
 export const GPT_IMAGE_2_MAX_INPUT_RETAIL_CREDITS = 0;
 export const GPT_IMAGE_2_OUTPUT_RETAIL_CREDITS = GPT_IMAGE_2_RETAIL_CREDITS;
+export const GPT_IMAGE_25_UPSTREAM_CREDITS = Object.freeze({
+  '1k': 0.020 * PTC_TO_CREDITS,
+  '2k': 0.025 * PTC_TO_CREDITS,
+  '4k': 0.035 * PTC_TO_CREDITS
+});
+export const GPT_IMAGE_25_RETAIL_CREDITS = Object.freeze({ '1k': 3, '2k': 4, '4k': 5 });
 
 export const IMAGE_QUALITY_UPSTREAM_CREDITS = Object.freeze({
   'image-6': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
-  'image-19': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
   'atlas-image-gpt2': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
   'atlas-image-gpt2-edit': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_EDIT_UPSTREAM_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
 });
@@ -146,7 +151,6 @@ export const IMAGE_QUALITY_CREDITS = Object.freeze({
 
 export const IMAGE_QUALITY_RESOLUTION_UPSTREAM_CREDITS = Object.freeze({
   'image-6': GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS,
-  'image-19': GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS,
   'atlas-image-gpt2': GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS,
   'atlas-image-gpt2-edit': GPT_IMAGE_2_EDIT_UPSTREAM_CREDITS
 });
@@ -157,6 +161,7 @@ export const IMAGE_QUALITY_RESOLUTION_CREDITS = Object.freeze({
 });
 
 export const IMAGE_RESOLUTION_UPSTREAM_CREDITS = Object.freeze({
+  'image-19': GPT_IMAGE_25_UPSTREAM_CREDITS,
   'image-1': Object.freeze({
     '1k': 0.165 * PTC_TO_CREDITS,
     '2k': 0.165 * PTC_TO_CREDITS,
@@ -181,7 +186,8 @@ export const IMAGE_RESOLUTION_UPSTREAM_CREDITS = Object.freeze({
 });
 export const IMAGE_RESOLUTION_CREDITS = Object.freeze({
   ...retailNestedRateTable(IMAGE_RESOLUTION_UPSTREAM_CREDITS),
-  'image-3': Object.freeze({ '2k': 5, '4k': 8 })
+  'image-3': Object.freeze({ '2k': 5, '4k': 8 }),
+  'image-19': GPT_IMAGE_25_RETAIL_CREDITS
 });
 
 export const IMAGE_CREDITS = Object.freeze({
@@ -189,6 +195,7 @@ export const IMAGE_CREDITS = Object.freeze({
   'image-1': IMAGE_RESOLUTION_CREDITS['image-1']['2k'],
   'image-3': IMAGE_RESOLUTION_CREDITS['image-3']['2k'],
   'image-6': GPT_IMAGE_2_RETAIL_CREDITS.medium['1k'],
+  'image-19': GPT_IMAGE_25_RETAIL_CREDITS['2k'],
   'atlas-image-gpt2': GPT_IMAGE_2_GENERATE_RETAIL_CREDITS.medium['1k'],
   'atlas-image-gpt2-edit': GPT_IMAGE_2_EDIT_RETAIL_CREDITS.medium['1k'],
   'image-17': IMAGE_RESOLUTION_CREDITS['image-17']['1k'],

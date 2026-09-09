@@ -173,6 +173,12 @@
 .ai-composer .ai-options-panel:has(.is-resolution-groups)::-webkit-scrollbar-track { background:transparent; }
 .ai-kling-options { margin-bottom: 18px; }
 .ai-kling-options[hidden] { display: none; }
+.ai-gpt25-options { margin-bottom: 18px; }
+.ai-gpt25-options[hidden] { display:none; }
+.ai-gpt25-variants { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; margin-top:10px; }
+.ai-gpt25-variants button { min-height:36px; padding:7px 10px; border:1px solid transparent; border-radius:9px; background:var(--bg-surface-2); color:var(--text-secondary); font:inherit; font-size:12px; cursor:var(--cursor-click); }
+.ai-gpt25-variants button:hover { background:var(--bg-elevated); color:var(--text-primary); }
+.ai-gpt25-variants button.is-active { background:rgba(52,156,229,.14); border-color:rgba(75,174,242,.35); color:#77c8ff; }
 .ai-kling-variants { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 10px 0 14px; }
 .ai-kling-variants button { min-height: 36px; padding: 7px 8px; border: 1px solid transparent; border-radius: 9px; background: var(--bg-surface-2); color: var(--text-secondary); font: inherit; font-size: 12px; cursor: var(--cursor-click); }
 .ai-kling-variants button:hover { background: var(--bg-elevated); color: var(--text-primary); }

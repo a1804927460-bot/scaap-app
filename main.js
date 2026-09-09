@@ -4970,6 +4970,7 @@ async function generateAiMediaBuffer(kind, prompt, options = {}) {
         providerId: kind === 'video' ? options.videoProviderId : options.imageProviderId,
         size: options.size,
         quality: options.quality,
+        variant: options.variant,
         resolution: options.resolution,
         aspectRatio: options.aspectRatio,
         sourceWidth: options.sourceWidth,
@@ -5042,6 +5043,7 @@ function aiMediaGenerationOptions(request, providerId) {
   return {
     size: request.size,
     quality: request.quality,
+    variant: request.variant,
     resolution: request.resolution,
     aspectRatio: request.aspectRatio,
     sourceWidth: request.sourceWidth,

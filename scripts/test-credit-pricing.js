@@ -28,7 +28,7 @@ const {
 } = require('../lib/credit-pricing');
 
 assert.strictEqual(POINTS_PER_CNY, 1000 / 70);
-assert.strictEqual(CREDIT_PRICING_VERSION, '202609090001');
+assert.strictEqual(CREDIT_PRICING_VERSION, '202609090008');
 assert.strictEqual(RETAIL_GROSS_MARGIN_PERCENT, 16.9);
 assert.strictEqual(RETAIL_MARKUP_PERCENT, 33.33333333333333);
 assert.strictEqual(RETAIL_MULTIPLIER, 4 / 3);
@@ -173,6 +173,11 @@ Object.entries(IMAGE_QUALITY_RESOLUTION_PRICES['image-6']).forEach(([quality, re
     );
   });
 });
+assert.deepStrictEqual(
+  ['1K', '2K', '4K'].map((size) => quoteMediaCredits({ kind: 'image', imageProviderId: 'image-19', size }).totalCredits),
+  [3, 4, 5],
+  'GPT Image 2.5 must use AIReiter resolution-only prices with a 10-30% net margin.'
+);
 
 assert.deepStrictEqual(quoteMediaCredits({
   kind: 'video',
@@ -347,7 +352,7 @@ assert.strictEqual(publicPricing.profitPerRequestCny, 0);
 assert.strictEqual(publicPricing.minimumVideoCredits, 0);
 assert.strictEqual(IMAGE_OPERATING_COST_RETAIL_CREDITS, 1);
 assert.strictEqual(VIDEO_OPERATING_COST_RETAIL_CREDITS, 6);
-assert.strictEqual(publicPricing.operatingCostPricingVersion, CREDIT_PRICING_VERSION);
+assert.strictEqual(publicPricing.operatingCostPricingVersion, '202609090001');
 assert.ok(Math.abs(publicPricing.operatingCosts.image.total - 0.013) < 1e-12);
 assert.strictEqual(publicPricing.operatingCosts.video.total, 0.25);
 assert.strictEqual(publicPricing.image['image-5'], 5);

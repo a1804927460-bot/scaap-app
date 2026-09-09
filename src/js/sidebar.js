@@ -2173,7 +2173,7 @@ function renderAccountCreditUnavailable() {
   const value = footerCredits.querySelector('b');
   const unit = footerCredits.querySelector('small');
   if (value) value.textContent = '...';
-  if (unit) unit.textContent = unavailable;
+  if (unit) unit.textContent = '';
   footerCredits.title = unavailable;
   footerCredits.setAttribute('aria-label', unavailable);
   }
@@ -2183,11 +2183,10 @@ function renderAccountFooterCredits(membership) {
   const values = membershipCreditValues(membership);
   if (!values) return false;
   const label = t('Available points', '可用积分', '사용 가능 포인트');
-  const unit = t(' points', ' 积分', ' 포인트');
   const value = values.available.toLocaleString(appLocale(), { maximumFractionDigits: 2 });
   for (const footerCredits of document.querySelectorAll('.account-footer-credits')) {
   footerCredits.querySelector('b').textContent = value;
-  footerCredits.querySelector('small').textContent = unit;
+  footerCredits.querySelector('small').textContent = '';
   footerCredits.title = `${label}: ${value}`;
   footerCredits.setAttribute('aria-label', `${label}: ${value}`);
   }

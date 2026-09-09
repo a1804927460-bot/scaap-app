@@ -697,7 +697,11 @@ function validateBody(body, kind) {
   const requestedSeed = Math.round(Number(body.seed));
   const requestedStyleId = String(body.styleId || '').trim();
   const requestedStyleStrength = Math.max(0, Math.min(1, Number(body.styleStrength ?? 1)));
+  const requestedVariant = String(body.variant || '').trim().toLowerCase();
   if (kind === 'image') {
+    if (providerId === 'image-19' && requestedVariant && !['flare', 'sunburst'].includes(requestedVariant)) {
+      throw invalidOption('invalid-variant', 'GPT Image 2.5 supports Flare or Sunburst.');
+    }
     if (providerId === 'image-18') mediaProvider.withLegnextMidjourneyParameters(prompt, '8.2', requestedRatio, requestedSize);
     const configuredSizes = urls.length > 1 && Array.isArray(capabilities.multiReferenceSizes)
       ? capabilities.multiReferenceSizes
@@ -846,6 +850,7 @@ function validateBody(body, kind) {
     referenceMediaTypes,
     size: kind === 'image' ? requestedSize : '1K',
     quality: kind === 'image' ? requestedQuality : null,
+    variant: kind === 'image' && providerId === 'image-19' ? (requestedVariant || 'flare') : null,
     resolution: kind === 'video' ? requestedResolution : '768P',
     aspectRatio: kind === 'chat' ? 'auto' : requestedRatio,
     duration: kind === 'video' ? requestedDuration : Math.max(1, Math.min(30, Number(body.duration) || 6)),

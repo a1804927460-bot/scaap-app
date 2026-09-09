@@ -5,6 +5,8 @@ const path = require('path');
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'src', 'index.html'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'src', 'styles', 'main.css'), 'utf8');
+const interfaceCss = fs.readFileSync(path.join(root, 'src', 'styles', 'agent-interface.css'), 'utf8');
+const statsSource = fs.readFileSync(path.join(root, 'src', 'js', 'stats-detail.js'), 'utf8');
 const assistantSource = fs.readFileSync(path.join(root, 'src', 'js', 'ai-assistant.js'), 'utf8');
 const sidebarSource = fs.readFileSync(path.join(root, 'src', 'js', 'sidebar.js'), 'utf8');
 const mainSource = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
@@ -18,6 +20,14 @@ assert.match(
 );
 assert.match(css, /\.ai-assistant-brand\s*\{[\s\S]*?display: flex;[\s\S]*?align-items: center;/,
   'the Agent header brand should keep its mark and wordmark aligned');
+assert.match(html, /id="ai-assistant-sidebar-toggle"[^>]*aria-expanded="true"/,
+  'the Agent history sidebar should start expanded and expose a collapse control');
+assert.match(statsSource, /sidebarToggle\.addEventListener\('click',[\s\S]*?classList\.toggle\('is-history-collapsed'\)[\s\S]*?aria-expanded/,
+  'the sidebar control must synchronize its collapsed state and accessibility label');
+assert.match(interfaceCss, /\.is-history-collapsed \.ai-assistant-header\s*\{[\s\S]*?flex-direction:column;[\s\S]*?justify-content:center;/,
+  'the collapsed rail must stack the logo and toggle instead of overlapping them');
+assert.match(interfaceCss, /\.is-history-collapsed \.ai-assistant-brand-word\s*\{\s*display:none;/,
+  'the collapsed rail should retain the logo mark while hiding only the wordmark');
 
 const footerStart = html.indexOf('<div class="ai-assistant-form-footer">');
 const modeStart = html.indexOf('<div class="ai-assistant-mode"');
@@ -157,6 +167,10 @@ assert.match(
   /id="ai-assistant-quality-buttons"[\s\S]*?data-quality="low"[\s\S]*?data-quality="medium"[\s\S]*?data-quality="high"/,
   'GPT Image 2 must expose low, medium, and high quality controls.'
 );
+assert.match(html, /id="ai-assistant-variant-buttons"[\s\S]*?data-variant="flare"[\s\S]*?data-variant="sunburst"/,
+  'GPT Image 2.5 must expose Flare and Sunburst inside one generation settings panel.');
+assert.match(assistantSource, /variant:\s*submittedKind === 'image' \? submittedMediaOptions\.variant/,
+  'Assistant generation requests must forward the selected GPT Image 2.5 variant.');
 assert.match(
   assistantSource,
   /quality:\s*submittedKind === 'image'[\s\S]*?createAiPlaceholders\(request\)[\s\S]*?request\.placements = mediaPlaceholders\.map[\s\S]*?replaceAiPlaceholders\(mediaPlaceholders, files, request, response\.boardItems \|\| \[\]\)/,

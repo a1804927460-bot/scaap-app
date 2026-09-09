@@ -199,6 +199,14 @@ function initStatsDetail() {
   }
   updateAssistantCompactState();
   document.getElementById('ai-assistant-history').addEventListener('click', returnToAssistantHome);
+  const sidebarToggle = document.getElementById('ai-assistant-sidebar-toggle');
+  if (sidebarToggle) sidebarToggle.addEventListener('click', () => {
+    const panel = document.getElementById('ai-assistant-panel');
+    const collapsed = panel.classList.toggle('is-history-collapsed');
+    sidebarToggle.setAttribute('aria-expanded', String(!collapsed));
+    sidebarToggle.title = collapsed ? t('Expand sidebar', '展开侧栏') : t('Collapse sidebar', '收缩侧栏');
+    sidebarToggle.setAttribute('aria-label', sidebarToggle.title);
+  });
   document.getElementById('ai-assistant-home-button').addEventListener('click', returnToAssistantHome);
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;

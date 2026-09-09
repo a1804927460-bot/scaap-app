@@ -27,6 +27,7 @@ const USAGE_MODEL_NAMES = Object.freeze({
   'image-4': 'Midjourney Turbo',
   'image-5': 'Nano Banana 2 Lite',
   'image-6': 'GPT Image 2',
+  'image-19': 'GPT Image 2.5',
   'image-7': 'Higgsfield Soul Standard',
   'image-8': 'Higgsfield Soul',
   'image-9': 'Nano Banana',

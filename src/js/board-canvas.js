@@ -6717,6 +6717,13 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
         </div>
       </section>
       <div class="ai-options-panel" hidden>
+        <section class="ai-gpt25-options" hidden>
+          <div class="ai-options-heading"><strong>${t('Model type', '模型类型')}</strong><span>GPT Image 2.5</span></div>
+          <div class="ai-gpt25-variants" data-option="image-variant">
+            <button type="button" data-value="flare" class="is-active">Flare</button>
+            <button type="button" data-value="sunburst">Sunburst</button>
+          </div>
+        </section>
         <section class="ai-kling-options" hidden>
           <div class="ai-options-heading"><strong>Kling 版本</strong><span>按创作需求选择</span></div>
           <div class="ai-kling-variants"></div>
@@ -6861,6 +6868,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   let ratio = kind === 'video' ? (aiConfig.videoAspectRatio || '16:9') : (aiConfig.imageAspectRatio || '1:1');
   let size = aiConfig.imageSize || '1K';
   let quality = 'medium';
+  let imageVariant = 'flare';
   let count = 1;
   let duration = Number(aiConfig.videoDuration) || 6;
   let serviceTier = 'standard';
@@ -7566,6 +7574,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       count: kind === 'image' ? count : undefined,
       size: kind === 'image' ? size : undefined,
       quality: kind === 'image' ? quality : undefined,
+      variant: kind === 'image' && provider.id === 'image-19' ? imageVariant : undefined,
       resolution: size,
       duration: kind === 'video' ? duration : undefined,
       serviceTier: kind === 'video' && provider.capabilities?.variantOptions ? serviceTier : undefined,
@@ -7686,6 +7695,13 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   }
 
   function syncGenerationOptions() {
+    const gpt25Panel = pop.querySelector('.ai-gpt25-options');
+    const supportsGpt25Variants = kind === 'image' && selectedImageProvider()?.id === 'image-19';
+    gpt25Panel.hidden = !supportsGpt25Variants;
+    pop.querySelectorAll('[data-option="image-variant"] button').forEach((button) => {
+      button.classList.toggle('is-active', button.dataset.value === imageVariant);
+      button.setAttribute('aria-pressed', String(button.dataset.value === imageVariant));
+    });
     const variants = kind === 'video' ? selectedVideoProvider()?.capabilities?.variantOptions : null;
     const klingPanel = pop.querySelector('.ai-kling-options');
     klingPanel.hidden = !variants;
@@ -8136,6 +8152,15 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     updateCreditEstimate();
     setOptionsOpen(true);
   });
+  pop.querySelector('[data-option="image-variant"]').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-value]');
+    if (!button) return;
+    imageVariant = button.dataset.value === 'sunburst' ? 'sunburst' : 'flare';
+    syncGenerationOptions();
+    updateSummary();
+    updateCreditEstimate();
+    setOptionsOpen(true);
+  });
   pop.querySelector('.ai-duration-range').addEventListener('input', (event) => {
     const capabilities = selectedVideoCapabilities();
     const allowedDurations = videoModeDurations(
@@ -8258,6 +8283,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       size,
       resolution: size,
       quality: kind === 'image' ? quality : undefined,
+      variant: kind === 'image' && selectedProvider?.id === 'image-19' ? imageVariant : undefined,
       count,
        duration: kind === 'video'
          ? supportedVideoDurationFor(duration, selectedMode, videoCapabilities)
@@ -9944,5 +9970,4 @@ function initDoodleColorPanel() {
 
   confirmBtn.addEventListener('click', () => { if (doodleActive) exitDoodleMode(true); });
 }
-
 

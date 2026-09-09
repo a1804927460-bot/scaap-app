@@ -22,16 +22,20 @@ revoke all on public.upstream_cost_rates from public, anon, authenticated;
 grant select on public.upstream_cost_rates to service_role;
 
 insert into public.upstream_cost_rates
-  (provider_id, logical_model, resolution, quality, cost_usd, source_url, verified_at, expires_at)
+  (provider_id, logical_model, variant, resolution, quality, cost_usd, source_url, verified_at, expires_at)
 values
-  ('aireiter','nano-banana-v2','1K','',0.03,'https://aireiter.com/image/nano-banana-v2',now(),now()+interval '7 days'),
-  ('aireiter','nano-banana-v2','2K','',0.03,'https://aireiter.com/image/nano-banana-v2',now(),now()+interval '7 days'),
-  ('aireiter','nano-banana-v2','4K','',0.035,'https://aireiter.com/image/nano-banana-v2',now(),now()+interval '7 days'),
-  ('aireiter','nano-banana-pro','1K','',0.05,'https://aireiter.com/image/nano-banana-pro',now(),now()+interval '7 days'),
-  ('aireiter','nano-banana-pro','2K','',0.05,'https://aireiter.com/image/nano-banana-pro',now(),now()+interval '7 days'),
-  ('aireiter','nano-banana-pro','4K','',0.06,'https://aireiter.com/image/nano-banana-pro',now(),now()+interval '7 days'),
-  ('aireiter','gpt-image-2.5','1K','flare',0.022,'https://aireiter.com/image/gpt-image-2-5',now(),now()+interval '1 day'),
-  ('aireiter','gpt-image-2.5','1K','sunburst',0.022,'https://aireiter.com/image/gpt-image-2-5',now(),now()+interval '1 day')
+  ('aireiter','nano-banana-v2','','1K','',0.03,'https://aireiter.com/image/nano-banana-v2',now(),now()+interval '7 days'),
+  ('aireiter','nano-banana-v2','','2K','',0.03,'https://aireiter.com/image/nano-banana-v2',now(),now()+interval '7 days'),
+  ('aireiter','nano-banana-v2','','4K','',0.035,'https://aireiter.com/image/nano-banana-v2',now(),now()+interval '7 days'),
+  ('aireiter','nano-banana-pro','','1K','',0.05,'https://aireiter.com/image/nano-banana-pro',now(),now()+interval '7 days'),
+  ('aireiter','nano-banana-pro','','2K','',0.05,'https://aireiter.com/image/nano-banana-pro',now(),now()+interval '7 days'),
+  ('aireiter','nano-banana-pro','','4K','',0.06,'https://aireiter.com/image/nano-banana-pro',now(),now()+interval '7 days'),
+  ('aireiter','gpt-image-2.5','flare','1K','',0.020,'https://aireiter.com/image/gpt-image-2-5',now(),now()+interval '1 day'),
+  ('aireiter','gpt-image-2.5','flare','2K','',0.025,'https://aireiter.com/image/gpt-image-2-5',now(),now()+interval '1 day'),
+  ('aireiter','gpt-image-2.5','flare','4K','',0.035,'https://aireiter.com/image/gpt-image-2-5',now(),now()+interval '1 day'),
+  ('aireiter','gpt-image-2.5','sunburst','1K','',0.020,'https://aireiter.com/image/gpt-image-2-5',now(),now()+interval '1 day'),
+  ('aireiter','gpt-image-2.5','sunburst','2K','',0.025,'https://aireiter.com/image/gpt-image-2-5',now(),now()+interval '1 day'),
+  ('aireiter','gpt-image-2.5','sunburst','4K','',0.035,'https://aireiter.com/image/gpt-image-2-5',now(),now()+interval '1 day')
 on conflict do nothing;
 
 create or replace function public.get_active_upstream_cost(

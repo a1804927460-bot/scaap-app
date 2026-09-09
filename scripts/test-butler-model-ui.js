@@ -26,6 +26,8 @@ assert.match(boardMedia, /className = 'board-butler-trigger'/, 'The selected-ima
 assert.match(boardMedia, /requestedMinimum = requestedSize === '4K' \? 3072[\s\S]*?requestedSize === '2K' \? 1536/, 'Generated-image details must verify requested quality against actual pixels.');
 assert.match(boardMedia, /t\('Requested', '请求'\)[\s\S]*?t\('Actual', '实际'\)/, 'A legacy low-resolution result must not be labelled as its requested quality.');
 assert.match(boardCanvas, /class="ai-option-block ai-quality-block"[\s\S]*?data-option="quality"[\s\S]*?data-value="low"[\s\S]*?data-value="medium"[\s\S]*?data-value="high"/, 'The canvas capsule must expose GPT Image 2 low, medium, and high quality controls.');
+assert.match(boardCanvas, /class="ai-gpt25-options"[\s\S]*?data-option="image-variant"[\s\S]*?data-value="flare"[\s\S]*?data-value="sunburst"/, 'The canvas capsule must keep GPT Image 2.5 variants in one model panel.');
+assert.match(boardCanvas, /variant: kind === 'image' && selectedProvider\?\.id === 'image-19' \? imageVariant : undefined/, 'The canvas generation request must forward the selected GPT Image 2.5 variant.');
 assert.match(boardCanvas, /quality: kind === 'image' \? quality : undefined[\s\S]*?Promise\.resolve\(quoteApi/, 'The canvas capsule estimate must include the selected image quality.');
 assert.match(boardCanvas, /const request = \{[\s\S]*?quality: kind === 'image' \? quality : undefined[\s\S]*?imageProviderId:/, 'The canvas capsule generation request must include the selected image quality.');
 assert.match(

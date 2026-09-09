@@ -95,6 +95,10 @@ assert.deepEqual(gptImage2Provider.capabilities.referenceMimeTypes, ['image/png'
 assert.equal(gptImage2Provider.capabilities.maxReferenceImageBytes, (25 * 1024 * 1024) - 1);
 assert.equal(providerPromptLimit('image', 'image-6', false), 32000);
 assert.equal(providerPromptLimit('image', 'image-6', true), 32000);
+const gptImage25Provider = config.providers.find((provider) => provider.id === 'image-19');
+assert.equal(gptImage25Provider.name, 'GPT Image 2.5');
+assert.deepEqual(Object.keys(gptImage25Provider.capabilities.variantOptions), ['flare', 'sunburst']);
+assert.equal(gptImage25Provider.capabilities.qualities, undefined);
 assert.equal(providerPromptLimit('image', 'image-1', false), 12000);
 assert.equal(providerPromptLimit('video', 'video-1', false), 7000);
 assert.match(
@@ -490,6 +494,24 @@ assert.deepEqual(await generateMedia('image', {
     aspectRatio: '16:9',
     urls: []
   }), pngHeader(1024, 1024));
+
+const gpt25Calls = [];
+globalThis.fetch = async (url, options = {}) => {
+  gpt25Calls.push({ url: String(url), options });
+  const value = String(url);
+  if (value === 'https://aireiter.com/api/openapi/submit') return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
+  if (value === 'https://aireiter.com/api/openapi/query') return jsonResponse({ statusCode: 200, data: { status: 'completed', output: [{ url: 'https://cdn.example/gpt25.png' }] } });
+  if (value === 'https://cdn.example/gpt25.png') return new Response(pngHeader(2048, 2048), { status: 200, headers: { 'content-type': 'image/png' } });
+  throw new Error(`Unexpected GPT Image 2.5 URL: ${value}`);
+};
+assert.deepEqual(await generateMedia('image', {
+  providerId: 'image-19', prompt: 'precise edit', size: '2K', aspectRatio: '1:1',
+  variant: 'sunburst', urls: []
+}), pngHeader(2048, 2048));
+const gpt25Submit = gpt25Calls.find((call) => call.url === 'https://aireiter.com/api/openapi/submit');
+const gpt25Body = JSON.parse(gpt25Submit.options.body);
+assert.equal(gpt25Body.model, 'gpt_image_2_5_sunburst');
+assert.deepEqual(gpt25Body.params, { prompt: 'precise edit', aspect_ratio: '1:1', resolution: '2K' });
 
 const chatCalls = [];
 globalThis.fetch = async (url, options = {}) => {

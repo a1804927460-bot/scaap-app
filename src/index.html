@@ -189,7 +189,7 @@
           <button id="account-menu-open" class="account-footer-main" type="button" aria-label="Account and settings">
             <span id="account-footer-avatar" class="account-avatar">M</span>
             <span class="account-footer-copy"><strong id="account-footer-name" data-profile-field="name">Messs user</strong><small id="account-footer-signature" data-profile-field="signature"></small></span>
-            <span id="account-footer-credits" class="account-footer-credits" aria-label="Points unavailable" title="Points unavailable"><i aria-hidden="true">ϟ</i><b>...</b><small>Unavailable</small></span>
+            <span id="account-footer-credits" class="account-footer-credits" aria-label="Points unavailable" title="Points unavailable"><i aria-hidden="true"><img src="assets/icons/lucide/gem.svg" alt="" /></i><b>...</b><small></small></span>
           </button>
         </div>
 
@@ -315,6 +315,9 @@
               <img src="assets/logo-mark.png" alt="" draggable="false" />
               <span class="ai-assistant-brand-word">Messs<span class="ai-assistant-brand-dot" aria-hidden="true">.</span></span>
             </button>
+            <button id="ai-assistant-sidebar-toggle" class="icon-btn-sm ai-assistant-sidebar-toggle" type="button" title="Collapse sidebar" aria-label="Collapse sidebar" aria-expanded="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+            </button>
             <button id="ai-assistant-history" class="icon-btn-sm" type="button" title="Return to chat home" aria-label="Return to chat home">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
             </button>
@@ -351,7 +354,7 @@
                 <button id="ai-account-menu-open" class="account-footer-main" type="button" aria-label="Account and settings" data-i18n-aria-label-en="Account and settings" data-i18n-aria-label-zh="账户与设置">
                   <span id="ai-account-footer-avatar" class="account-avatar">M</span>
                   <span class="account-footer-copy"><strong id="ai-account-footer-name">Messs user</strong><small id="ai-account-footer-signature"></small></span>
-                  <span id="ai-account-footer-credits" class="account-footer-credits"><b>...</b><small></small></span>
+                  <span id="ai-account-footer-credits" class="account-footer-credits"><i aria-hidden="true"><img src="assets/icons/lucide/gem.svg" alt="" /></i><b>...</b><small></small></span>
                 </button>
                 <button id="ai-settings-btn" class="account-settings-btn" type="button" aria-label="Settings" data-i18n-aria-label-en="Settings" data-i18n-aria-label-zh="设置">
                   <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
@@ -416,6 +419,14 @@
                 <button type="button" class="ai-assistant-option-trigger" aria-haspopup="listbox" aria-expanded="false"><span></span><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="m7 10 5 5 5-5"/></svg></button>
                 <div class="ai-assistant-option-menu" role="listbox" hidden></div>
               </div></label>
+              <div id="ai-assistant-variant-wrap" class="ai-assistant-option-field ai-assistant-variant-field" hidden>
+                <span>Model type</span>
+                <input id="ai-assistant-variant" type="hidden" value="flare" />
+                <div id="ai-assistant-variant-buttons" class="ai-assistant-quality-buttons ai-assistant-variant-buttons" role="group" aria-label="GPT Image 2.5 model type">
+                  <button type="button" data-variant="flare" class="is-active" aria-pressed="true">Flare</button>
+                  <button type="button" data-variant="sunburst" aria-pressed="false">Sunburst</button>
+                </div>
+              </div>
               <div id="ai-assistant-quality-wrap" class="ai-assistant-option-field ai-assistant-quality-field" hidden>
                 <span>Quality</span>
                 <input id="ai-assistant-quality" type="hidden" value="medium" />

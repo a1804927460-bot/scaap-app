@@ -761,6 +761,7 @@ function updateAssistantCreditEstimate() {
     count: kind === 'image' ? Number(document.getElementById('ai-assistant-count').value) : undefined,
     size: kind === 'image' ? document.getElementById('ai-assistant-size').value : undefined,
     quality: kind === 'image' ? document.getElementById('ai-assistant-quality').value : undefined,
+    variant: kind === 'image' ? document.getElementById('ai-assistant-variant')?.value : undefined,
     resolution: kind === 'video' ? document.getElementById('ai-assistant-size').value : undefined,
     duration: kind === 'video' ? Number(document.getElementById('ai-assistant-duration').value) : undefined
   };
@@ -992,6 +993,8 @@ function syncAssistantMediaOptions() {
   const sizeSelect = document.getElementById('ai-assistant-size');
   const qualityWrap = document.getElementById('ai-assistant-quality-wrap');
   const qualityInput = document.getElementById('ai-assistant-quality');
+  const variantWrap = document.getElementById('ai-assistant-variant-wrap');
+  const variantInput = document.getElementById('ai-assistant-variant');
   const durationSelect = document.getElementById('ai-assistant-duration');
   const resolutions = isVideo
     ? (Array.isArray(capabilities.resolutions) ? capabilities.resolutions : ['768P', '2K'])
@@ -1065,6 +1068,14 @@ function syncAssistantMediaOptions() {
     button.textContent = quality === 'low'
       ? t('Low', '低')
       : quality === 'high' ? t('High', '高') : t('Medium', '中');
+  });
+  const supportsGptImage25Variants = !isVideo && selectedAssistantProvider()?.id === 'image-19';
+  variantWrap.hidden = !supportsGptImage25Variants;
+  if (!['flare', 'sunburst'].includes(variantInput.value)) variantInput.value = 'flare';
+  document.querySelectorAll('#ai-assistant-variant-buttons [data-variant]').forEach((button) => {
+    const active = button.dataset.variant === variantInput.value;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', String(active));
   });
 
   durationSelect.innerHTML = '';
@@ -1520,7 +1531,9 @@ function refreshAssistantOptionSummary() {
     const qualityWrap = document.getElementById('ai-assistant-quality-wrap');
     const quality = document.getElementById('ai-assistant-quality').value;
     const qualityLabel = qualityWrap.hidden ? '' : ` · ${quality === 'low' ? t('Low', '低') : quality === 'high' ? t('High', '高') : t('Medium', '中')}`;
-    toggle.textContent = `${ratio} · ${size}${qualityLabel} · x${count}`;
+    const variantWrap = document.getElementById('ai-assistant-variant-wrap');
+    const variantLabel = variantWrap.hidden ? '' : ` · ${document.getElementById('ai-assistant-variant').value === 'sunburst' ? 'Sunburst' : 'Flare'}`;
+    toggle.textContent = `${ratio} · ${size}${variantLabel}${qualityLabel} · x${count}`;
   }
 }
 
@@ -1893,6 +1906,7 @@ function submitAssistantMessage() {
       aspectRatio: document.getElementById('ai-assistant-ratio').value,
       size: document.getElementById('ai-assistant-size').value,
       quality: document.getElementById('ai-assistant-quality').value,
+      variant: document.getElementById('ai-assistant-variant')?.value || 'flare',
       count: Number(document.getElementById('ai-assistant-count').value),
       duration: Number(document.getElementById('ai-assistant-duration').value)
     }
@@ -1953,6 +1967,7 @@ async function executeAssistantMessage(item) {
       videoProviderId: submittedKind === 'video' && submittedProvider ? submittedProvider.id : null,
       count: submittedMediaOptions.count,
       quality: submittedKind === 'image' ? submittedMediaOptions.quality : undefined,
+      variant: submittedKind === 'image' ? submittedMediaOptions.variant : undefined,
       duration: submittedMediaOptions.duration,
       size: submittedKind === 'image' ? submittedMediaOptions.size : undefined,
       resolution: submittedKind === 'video'
@@ -2050,6 +2065,7 @@ async function executeAssistantMessage(item) {
         aspectRatio: submittedMediaOptions.aspectRatio,
         size: submittedMediaOptions.size,
         quality: submittedKind === 'image' ? submittedMediaOptions.quality : undefined,
+        variant: submittedKind === 'image' ? submittedMediaOptions.variant : undefined,
         resolution: submittedKind === 'video'
           ? submittedMediaOptions.size
           : undefined,
@@ -2342,6 +2358,18 @@ function initAiAssistant() {
     if (!button || button.hidden) return;
     document.getElementById('ai-assistant-quality').value = button.dataset.quality;
     document.querySelectorAll('#ai-assistant-quality-buttons [data-quality]').forEach((option) => {
+      const active = option === button;
+      option.classList.toggle('is-active', active);
+      option.setAttribute('aria-pressed', String(active));
+    });
+    refreshAssistantOptionSummary();
+    updateAssistantCreditEstimate();
+  });
+  document.getElementById('ai-assistant-variant-buttons').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-variant]');
+    if (!button) return;
+    document.getElementById('ai-assistant-variant').value = button.dataset.variant;
+    document.querySelectorAll('#ai-assistant-variant-buttons [data-variant]').forEach((option) => {
       const active = option === button;
       option.classList.toggle('is-active', active);
       option.setAttribute('aria-pressed', String(active));

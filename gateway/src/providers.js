@@ -943,13 +943,17 @@ function markAireiterSubmitError(error) {
 
 async function submitAireiterTask(provider, body, params, signal) {
   const outTaskId = aireiterTaskIdentity(body);
+  const requestedVariant = String(body.variant || '').trim().toLowerCase();
+  const model = provider.model === 'gpt_image_2_5_flare' && requestedVariant === 'sunburst'
+    ? 'gpt_image_2_5_sunburst'
+    : provider.model;
   let payload;
   try {
     payload = await responseJson(await fetch(provider.endpoint, {
       method: 'POST',
       headers: providerTaskHeaders(provider, body),
       signal: providerSignal(signal, 45_000),
-      body: JSON.stringify({ model: provider.model, params, out_task_id: outTaskId })
+      body: JSON.stringify({ model, params, out_task_id: outTaskId })
     }), 'Generation service');
   } catch (error) {
     const classified = markAireiterSubmitError(error);
@@ -1029,7 +1033,7 @@ function aireiterImageParams(provider, body) {
       resolution: ['1K', '2K', '4K'].includes(resolution) ? resolution : '2K'
     };
   }
-  if (['gpt_image_2', 'gpt_image_2_official', 'gpt_image_2_5'].includes(provider.model)) {
+  if (['gpt_image_2', 'gpt_image_2_official'].includes(provider.model)) {
     if (urls.length > 9) throw aireiterLocalRejection('This route accepts at most 9 reference images.', 'too-many-references');
     if (!['low', 'medium', 'high'].includes(String(body.quality || 'medium').trim().toLowerCase())) {
       throw aireiterLocalRejection('GPT Image 2 quality must be low, medium, or high.', 'invalid-quality');
@@ -1048,9 +1052,22 @@ function aireiterImageParams(provider, body) {
       ...(urls.length ? { image_url: urls } : {}),
       ...(submittedRatio && submittedRatio !== 'auto' ? { aspect_ratio: submittedRatio } : {}),
       resolution,
-      quality: String(body.quality || 'medium').trim().toLowerCase(),
-      ...(provider.model === 'gpt_image_2_5' && ['flare','sunburst'].includes(String(body.variant || '').toLowerCase())
-        ? { variant: String(body.variant).toLowerCase() } : {})
+      quality: String(body.quality || 'medium').trim().toLowerCase()
+    };
+  }
+  if (['gpt_image_2_5_flare', 'gpt_image_2_5_sunburst'].includes(provider.model)) {
+    if (urls.length > 9) throw aireiterLocalRejection('This route accepts at most 9 reference images.', 'too-many-references');
+    if (!['1K', '2K', '4K'].includes(resolution)) {
+      throw aireiterLocalRejection('GPT Image 2.5 resolution must be 1K, 2K, or 4K.', 'invalid-size');
+    }
+    if (submittedRatio && submittedRatio !== 'auto' && !['1:1', '16:9', '9:16', '4:3', '3:4'].includes(submittedRatio)) {
+      throw aireiterLocalRejection('GPT Image 2.5 does not support this aspect ratio.', 'invalid-aspect-ratio');
+    }
+    return {
+      prompt,
+      ...(urls.length ? { image_url: urls } : {}),
+      ...(submittedRatio && submittedRatio !== 'auto' ? { aspect_ratio: submittedRatio } : {}),
+      resolution
     };
   }
   if (provider.model === 'mj_v8_1') {
@@ -1094,10 +1111,16 @@ async function generateAireiterImage(provider, body, signal, hooks = {}) {
         : await submitAireiterTask(provider, requestBody, aireiterImageParams(provider, requestBody), signal);
     } catch (error) {
       recordImageChannelResult(provider.model,error);
-      if (provider.model === primary.model || !shouldTryProviderFallback(error)) throw error;
-      // Only a proven pre-accept rejection permits a second paid submission.
-      provider = primary;
-      taskId = await submitAireiterTask(provider, requestBody, aireiterImageParams(provider,requestBody), signal);
+      if (provider.model === 'gpt_image_2_5_flare' && shouldTryProviderFallback(error)) {
+        const attemptedVariant = String(requestBody.variant || 'flare').trim().toLowerCase();
+        requestBody = { ...requestBody, variant: attemptedVariant === 'sunburst' ? 'flare' : 'sunburst' };
+        taskId = await submitAireiterTask(provider, requestBody, aireiterImageParams(provider, requestBody), signal);
+      } else {
+        if (provider.model === primary.model || !shouldTryProviderFallback(error)) throw error;
+        // Only a proven pre-accept rejection permits a second paid submission.
+        provider = primary;
+        taskId = await submitAireiterTask(provider, requestBody, aireiterImageParams(provider,requestBody), signal);
+      }
     }
     try {
       if (!recovered && typeof hooks.onAccepted === 'function') {
