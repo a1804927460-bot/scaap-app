@@ -105,7 +105,40 @@ window.MesssWorkHub = (() => {
     const records=resources.filter(r=>r.kind==='asset');
     const files=(AppState.files||[]).filter(f=>!assets||records.some(r=>r.fileId===f.id)).filter(f=>{const meta=records.find(r=>r.fileId===f.id);const type=/\.(png|jpe?g|webp|gif|svg|avif)$/i.test(f.name)?'image':/\.(mp4|mov|webm|mkv)$/i.test(f.name)?'video':'other';return (filter==='all'||filter===type||(filter==='favorite'&&meta?.favorite))&&`${f.name} ${meta?.tags?.join(' ')||''}`.toLowerCase().includes(query.toLowerCase());});
     content.innerHTML=heading(assets?'素材库':'文件',assets?'收集自己的图片、视频与文档，让每次创作都有积累。':'本机文件，集中浏览与复用。',assets?action('add-existing','从文件添加')+action('upload','↑ 导入素材','hub-primary'):action('upload','↑ 导入文件','hub-primary'))+`<div class="hub-toolbar">${search()}<div class="hub-segment">${['all','image','video','other',...(assets?['favorite']:[])].map((v,i)=>action('filter-'+v,['全部','图片','视频','其他','收藏'][i],filter===v?'is-active':'')).join('')}</div><small>${files.length} 个文件</small></div><div class="hub-asset-grid">${files.slice(0,300).map(f=>{const meta=records.find(r=>r.fileId===f.id);return `<article class="hub-asset" data-file-id="${esc(f.id)}"><button class="hub-asset-preview" data-hub-action="preview" data-id="${esc(f.id)}" aria-label="预览 ${esc(f.name)}"></button><strong title="${esc(f.name)}">${esc(f.name)}</strong><small>${esc(meta?.tags?.join(' · ')||f.ext||'文件')}</small><div>${action('use-file','用于画布')}${assets?action('asset-edit','管理'):action('collect','加入素材库')}</div></article>`;}).join('')||'<div class="hub-empty">这里还没有素材<br>导入自己的文件，或从已有文件中添加。</div>'}</div>${files.length>300?'<p>仅显示前 300 项，请搜索缩小范围。</p>':''}`;
-    content.querySelectorAll('.hub-asset').forEach(card=>{const f=files.find(f=>f.id===card.dataset.fileId);if(typeof appendFileThumbnail==='function')appendFileThumbnail(card.querySelector('.hub-asset-preview'),f);});
+    content.querySelectorAll('.hub-asset').forEach(card=>{
+      const f=files.find(f=>f.id===card.dataset.fileId);
+      if(typeof appendFileThumbnail==='function')appendFileThumbnail(card.querySelector('.hub-asset-preview'),f);
+      card.addEventListener('contextmenu', event=>{
+        event.preventDefault();
+        event.stopPropagation();
+        buildAndShowSimpleMenu([
+          {label:'在文件夹中显示',icon:'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z',action:()=>api().revealFile(f.id)},
+          {divider:true},
+          {label:'删除文件',danger:true,icon:'M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m-9 0v14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V6',action:()=>deleteHubFile(f)}
+        ],event.clientX,event.clientY,'hub-file-context-menu');
+      });
+    });
+  }
+  async function deleteHubFile(file) {
+    if(!file)return;
+    const ok=await showConfirmDialog({
+      title:'删除文件',
+      message:`确定删除“${file.name}”吗？确认后会同时从本地磁盘和 Messs 文件库中永久删除，且无法恢复。`,
+      confirmLabel:'删除并清除'
+    });
+    if(!ok)return;
+    try {
+      const result=await api().deleteFilePermanently(file.id);
+      if(!result?.ok)throw Error(result?.error||'删除文件失败');
+      for(const resource of resources.filter(item=>item.fileId===file.id)) {
+        try { await api().removeWorkspaceResource(resource); } catch {}
+      }
+      AppState.files=AppState.files.filter(item=>item.id!==file.id);
+      if(typeof removeBoardItemsForFile==='function')removeBoardItemsForFile(file.id);
+      if(AppState.activeFileId===file.id&&typeof clearPreview==='function')clearPreview();
+      await reload();
+      showToast('文件已从本地和 Messs 文件库永久删除');
+    } catch(error) { notify(error); }
   }
   async function upload() {
     const paths=await api().pickFiles();if(!paths?.length)return;
