@@ -134,6 +134,7 @@ export const GPT_IMAGE_2_OUTPUT_RETAIL_CREDITS = GPT_IMAGE_2_RETAIL_CREDITS;
 
 export const IMAGE_QUALITY_UPSTREAM_CREDITS = Object.freeze({
   'image-6': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
+  'image-19': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
   'atlas-image-gpt2': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
   'atlas-image-gpt2-edit': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_EDIT_UPSTREAM_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
 });
@@ -145,6 +146,7 @@ export const IMAGE_QUALITY_CREDITS = Object.freeze({
 
 export const IMAGE_QUALITY_RESOLUTION_UPSTREAM_CREDITS = Object.freeze({
   'image-6': GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS,
+  'image-19': GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS,
   'atlas-image-gpt2': GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS,
   'atlas-image-gpt2-edit': GPT_IMAGE_2_EDIT_UPSTREAM_CREDITS
 });

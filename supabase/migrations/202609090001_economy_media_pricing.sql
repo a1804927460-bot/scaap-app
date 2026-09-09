@@ -104,7 +104,7 @@ begin
       when '1k' then 0.03 when '2k' then 0.03 when '4k' then 0.035 else 0.03 end;
     return public.quote_media_retail_credits_from_cny(upstream_usd * 7.3 + 0.013);
   end if;
-  if provider_id = 'image-6' then
+  if provider_id in ('image-6','image-19','aireiter-image-gpt25-flare','aireiter-image-gpt25-sunburst') then
     quality := split_part(supplied_resolution || ':medium:1k', ':', 1);
     image_resolution := split_part(supplied_resolution || ':medium:1k', ':', 2);
     if quality not in ('low', 'medium', 'high') then quality := 'medium'; end if;
