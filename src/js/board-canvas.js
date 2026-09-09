@@ -6316,7 +6316,18 @@ function getConfiguredVideoProviders(aiConfig = {}) {
 
 function createAiPlaceholders(request) {
   const count = request.kind === 'image' ? Math.max(1, Math.min(4, Number(request.count) || 1)) : 1;
-  const size = BoardEngine.fitAspectRatio(request.aspectRatio, 300, 220);
+  const requestedRatio = String(request.aspectRatio || '').trim().toLowerCase();
+  const firstReferenceId = Array.isArray(request.referenceFileIds) ? request.referenceFileIds[0] : null;
+  const firstReference = firstReferenceId
+    ? AppState.files.find((file) => file.id === firstReferenceId)
+    : null;
+  const referenceWidth = Number(firstReference && (firstReference.sourceWidth || firstReference.width));
+  const referenceHeight = Number(firstReference && (firstReference.sourceHeight || firstReference.height));
+  const placeholderRatio = ['auto', 'adaptive'].includes(requestedRatio)
+      && referenceWidth > 0 && referenceHeight > 0
+    ? `${referenceWidth}:${referenceHeight}`
+    : request.aspectRatio;
+  const size = BoardEngine.fitAspectRatio(placeholderRatio, 300, 220);
   const targetCanvasId = request.canvasId || activeCanvasId();
   const targetPartition = boardPartitionById(request.partitionId) ||
     boardPartitionAtPoint(request.placement || boardViewportCenterCoords());
@@ -6335,7 +6346,7 @@ function createAiPlaceholders(request) {
     y: position.y,
     width: size.width,
     height: size.height,
-    aspectRatio: request.aspectRatio,
+    aspectRatio: placeholderRatio,
     zIndex: AppState.boardItems.length + index + 1,
     canvasId: targetCanvasId,
     ...(targetPartition ? { partitionId: targetPartition.id } : {})

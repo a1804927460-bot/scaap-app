@@ -1118,6 +1118,11 @@ assert.match(
   /function pruneBoardRuntimeCaches[\s\S]*?Board\.metrics\.keys\(\)[\s\S]*?Board\.previewGenerations\.keys\(\)[\s\S]*?BoardPreviewCache\.keys\(\)[\s\S]*?Board\.fullImageReadyFileIds/,
   'Removed files and items must be pruned from long-lived board runtime caches.'
 );
+assert.match(
+  boardSource,
+  /function createAiPlaceholders[\s\S]*?firstReference\.sourceWidth[\s\S]*?\['auto', 'adaptive'\]\.includes\(requestedRatio\)[\s\S]*?fitAspectRatio\(placeholderRatio/,
+  'Adaptive video placeholders must follow the first reference image dimensions.'
+);
 const transformSource = boardSource.slice(
   boardSource.indexOf('function applyBoardTransform'),
   boardSource.indexOf('function setBoardZoomTarget')
