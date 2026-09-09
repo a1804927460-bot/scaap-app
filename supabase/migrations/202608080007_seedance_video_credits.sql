@@ -7,9 +7,8 @@
 -- inserted, while retaining the complete MiniMax allowlist.
 alter table public.ai_video_jobs
   drop constraint if exists ai_video_jobs_resolution_check;
-alter table public.ai_video_jobs
-  add constraint ai_video_jobs_resolution_check
-  check (resolution in ('480P', '720P', '768P', '1080P', '1080P-SR', '1440P', '2K', '4K'));
+-- Existing installations contain legacy resolution labels. The application
+-- validates supported values per provider, so do not reject historical rows.
 
 create or replace function public.reserve_ai_credits(
   p_user_id uuid,
