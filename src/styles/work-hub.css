@@ -84,12 +84,20 @@
 .hub-bar span { position:relative; font-size:9px; }
 .hub-diamond { position:absolute; top:3px; font-size:14px; color:#92c6f7; transform:translateX(-50%); pointer-events:none; }
 .hub-notice { margin:12px 28px 0; padding:12px 16px; color:var(--text-primary); background:var(--accent-soft); border-radius:9px; font-size:12px; }
-.hub-editor { width:min(620px,calc(100vw - 32px)); max-height:calc(100vh - 64px); overflow:auto; padding:24px; }
+.hub-editor { width:min(620px,calc(100vw - 32px)); max-height:calc(100vh - 64px); overflow:auto; padding:24px; color-scheme:dark; }
 .hub-editor::backdrop { background:#0008; }
 .hub-editor header { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; }
 .hub-editor h2 { font-size:21px; margin:0; }
 .hub-editor h3 { font-size:13px; }
 .hub-editor label { display:flex; flex-direction:column; gap:8px; color:var(--text-secondary); font-size:12px; margin-bottom:16px; }
+.hub-editor input[type="date"] { color-scheme:dark; }
+.hub-editor input[type="date"]::-webkit-calendar-picker-indicator { opacity:.68; filter:invert(1) brightness(1.25); cursor:pointer; }
+.hub-editor input[type="number"] { appearance:textfield; -moz-appearance:textfield; }
+.hub-editor input[type="number"]::-webkit-inner-spin-button,
+.hub-editor input[type="number"]::-webkit-outer-spin-button { margin:0; -webkit-appearance:none; }
+.hub-editor input:focus-visible,
+.hub-editor select:focus-visible,
+.hub-editor textarea:focus-visible { outline:2px solid color-mix(in srgb,#398fde 72%,transparent); outline-offset:1px; border-color:#398fde; }
 .hub-editor textarea { resize:vertical; line-height:1.7; }
 .hub-form-grid { display:grid; grid-template-columns:1fr 1fr; gap:0 16px; }
 .hub-editor footer { display:flex; justify-content:flex-end; gap:10px; margin-top:24px; }
@@ -121,6 +129,8 @@
 .hub-skill button { font-size:11px; }
 .hub-footnote { color:var(--text-tertiary); font-size:11px; line-height:1.8; margin-top:24px; }
 [data-theme="light"] .work-hub .status-active { color:#28669e; }
+[data-theme="light"] .hub-editor { color-scheme:light; }
+[data-theme="light"] .hub-editor input[type="date"]::-webkit-calendar-picker-indicator { filter:none; }
 [data-theme="light"] .work-hub .status-planned { color:#765997; }
 [data-theme="light"] .work-hub .status-blocked { color:#956320; }
 [data-theme="light"] .work-hub .status-done { color:#2c7961; }
