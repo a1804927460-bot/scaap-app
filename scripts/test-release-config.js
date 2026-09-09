@@ -92,7 +92,7 @@ assert.ok(catalog.version >= 8);
 assert.deepEqual(
   catalog.providers.filter((provider) => provider.kind === 'image' && provider.hidden !== true).map((provider) => provider.name),
   [
-    'Nano Banana Pro', 'Nano Banana 2', 'GPT Image 2', 'Midjourney V8.2'
+    'Nano Banana Pro', 'Nano Banana 2', 'GPT Image 2', 'GPT Image 2.5', 'Midjourney V8.2'
   ]
 );
 assert.deepEqual(

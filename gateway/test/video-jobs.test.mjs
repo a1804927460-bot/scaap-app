@@ -704,6 +704,7 @@ test('provider errors are bounded and redact credential-like values', () => {
 test('migration enforces service-only jobs, atomic reserve/settle, leases, and active-job cleanup protection', () => {
   const migration = fs.readFileSync(new URL('../../supabase/migrations/202608080003_async_video_jobs.sql', import.meta.url), 'utf8');
   const seedanceMigration = fs.readFileSync(new URL('../../supabase/migrations/202608080007_seedance_video_credits.sql', import.meta.url), 'utf8');
+  const resolutionMigration = fs.readFileSync(new URL('../../supabase/migrations/202608170003_kling_video_credits.sql', import.meta.url), 'utf8');
   const verifiedMigration = fs.readFileSync(new URL('../../supabase/migrations/202608210004_minimax_h3_verified_settlement.sql', import.meta.url), 'utf8');
   assert.match(migration, /alter table public\.ai_video_jobs enable row level security/i);
   assert.match(migration, /revoke all on table public\.ai_video_jobs from public, anon, authenticated/i);
@@ -718,7 +719,7 @@ test('migration enforces service-only jobs, atomic reserve/settle, leases, and a
   assert.match(migration, /get_ai_video_job_download[\s\S]*?usage_row\.status = 'succeeded'/i);
   assert.match(migration, /job\.lease_token is null[\s\S]*?job\.lease_token is distinct from p_lease_token[\s\S]*?job\.leased_until is null/i);
   assert.match(seedanceMigration, /drop constraint if exists ai_video_jobs_resolution_check/i);
-  assert.match(seedanceMigration, /check \(resolution in \('480P', '720P', '768P', '2K'\)\)/i);
+  assert.match(resolutionMigration, /check \(resolution in \('480P', '720P', '768P', '1080P', '2K'\)\)/i);
   assert.match(verifiedMigration, /status in \('starting', 'submitted', 'polling', 'ready', 'succeeded', 'failed'\)/i);
   assert.match(verifiedMigration, /target_credits := greatest\(target_credits, actual_retail_credits\)/i);
   assert.match(verifiedMigration, /public\.settle_ai_credits\([\s\S]*?'failed'/i);

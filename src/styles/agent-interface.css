@@ -194,7 +194,7 @@
 .agent-native-action { padding:18px; margin:12px 0; background:var(--bg-elevated); border:1px solid var(--border-hairline); border-radius:14px; }
 .agent-native-action p { white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; }
 .agent-native-action button,.agent-save-skill { padding:9px 14px; border:1px solid var(--border-hairline); border-radius:9px; background:var(--accent-soft); color:var(--text-primary); cursor:var(--cursor-click); }
-.agent-native-action button:disabled { opacity:.6; cursor:default; }
+.agent-native-action button:disabled { opacity:.6; cursor:var(--cursor-default); }
 .agent-native-action img { display:block; max-width:100%; max-height:320px; border-radius:8px; }
 /* Welcome branding stays intact when the heading is translated. */
 .ai-assistant-home h2::before {
@@ -209,7 +209,7 @@
 #board-agent-panel #board-agent-detach { right:86px; }
 #board-agent-drag { display:none; }
 #board-agent-panel.is-floating { position:fixed; z-index:1000; margin:0; resize:both; overflow:hidden; min-width:min(320px,calc(100vw - 24px)); min-height:min(320px,calc(100vh - 88px)); max-width:calc(100vw - 24px); max-height:calc(100vh - 64px); box-shadow:0 18px 60px #0008; }
-#board-agent-panel.is-floating #board-agent-drag { display:block; position:absolute; inset:0 126px auto 0; height:54px; padding:18px; box-sizing:border-box; cursor:move; touch-action:none; color:var(--text-secondary); font-size:12px; z-index:5; }
+#board-agent-panel.is-floating #board-agent-drag { display:block; position:absolute; inset:0 126px auto 0; height:54px; padding:18px; box-sizing:border-box; cursor:var(--cursor-grab); touch-action:none; color:var(--text-secondary); font-size:12px; z-index:5; }
 #board-panel.has-floating-agent #resize-handle-board-agent { display:none; }
 
 .agent-charge-receipt { display: block; margin-top: 8px; color: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }

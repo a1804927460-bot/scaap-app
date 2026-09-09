@@ -12,7 +12,7 @@ const preload = read('preload.js');
 const main = read('main.js');
 const css = read('src', 'styles', 'main.css');
 const migration = read('supabase', 'migrations', '202608220001_workshop_posts.sql');
-const followupMigration = read('supabase', 'migrations', '202608220002_workshop_prompt_and_delete.sql');
+const followupMigration = read('supabase', 'migrations', '202608220005_workshop_prompt_and_delete.sql');
 const deleteRpcMigration = read('supabase', 'migrations', '202609040001_workshop_delete_rpc.sql');
 
 assert.match(html, /id="section-workshop" class="app-section workshop-section"/);

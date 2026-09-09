@@ -440,10 +440,10 @@ await generateMedia('image', {
   urls: [relayReference]
 });
 const nano2Submit = nanoCalls.find((call) => call.url === 'https://aireiter.com/api/openapi/submit'
-  && JSON.parse(call.options.body).model === 'nano_banana_v2_max');
+  && JSON.parse(call.options.body).model === 'nano_banana_v2');
 assert.ok(nano2Submit);
 const relayedBody = JSON.parse(nano2Submit.options.body);
-assert.equal(relayedBody.model, 'nano_banana_v2_max');
+assert.equal(relayedBody.model, 'nano_banana_v2');
 assert.equal(relayedBody.params.image_url.length, 1);
 assert.match(relayedBody.params.image_url[0], /^https:\/\/gateway\.test\/v1\/tools\/assets\/[A-Za-z0-9_-]{43}$/);
 assert.ok(nanoCalls.some((call) => call.url === 'https://aireiter.com/api/openapi/query'));
@@ -502,7 +502,7 @@ const chatReply = await chat({
   prompt: 'Hello',
   messages: [{ role: 'user', content: 'Hello' }]
 });
-assert.deepEqual(chatReply, { text: 'Gateway chat reply', usage: null });
+assert.deepEqual(chatReply, { text: 'Gateway chat reply', usage: null, usageTurns: [] });
 assert.equal(
   chatCalls[0].url,
   'https://aireiter.com/api/v1/chat/completions'
@@ -563,7 +563,7 @@ for (const [providerId, model] of [['chat-4', 'gpt-5.6-sol'], ['chat-5', 'kimi-k
     prompt: `Hello ${model}`,
     messages: [{ role: 'user', content: `Hello ${model}` }]
   });
-  assert.deepEqual(reply, { text: 'Advanced chat reply', usage: null });
+  assert.deepEqual(reply, { text: 'Advanced chat reply', usage: null, usageTurns: [] });
 }
 assert.equal(advancedChatCalls.length, 2);
 advancedChatCalls.forEach((call) => {
@@ -599,7 +599,7 @@ for (const [providerId, model] of [
     operationId: `aireiter-${providerId}`,
     endUserId: 'u_0123456789abcdef0123',
     messages: [{ role: 'user', content: `hello ${model}` }]
-  }), { text: 'AIREITER agent reply', usage: null });
+  }), { text: 'AIREITER agent reply', usage: null, usageTurns: [] });
 }
 assert.deepEqual(aireiterAgentCalls, [
   { url: 'https://aireiter.com/api/v1/chat/completions', model: 'chat-gemini-3.1-pro' },

@@ -592,6 +592,13 @@ function providersForRequest(kind, id, body = {}) {
     });
   }
   const configured = configuredProviders();
+  const requestedReferences = Array.isArray(body.urls) ? body.urls.length : 0;
+  if (requestedReferences > (requested.capabilities?.maxReferenceImages ?? 8)) {
+    throw Object.assign(new Error('Too many reference images.'), {
+      code: 'too-many-references',
+      status: 400
+    });
+  }
   const byId = new Map(configured.filter((provider) => provider.kind === kind).map((provider) => [provider.id, provider]));
   const candidates = [];
   const routeIds = orderMixedRouteIds(requestRouteIds(requested, body), byId, requested, body);
