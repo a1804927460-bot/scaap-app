@@ -36,6 +36,7 @@ assert.deepEqual(
     'Nano Banana Pro',
     'Nano Banana 2',
     'GPT Image 2',
+    'GPT Image 2.5',
     'Midjourney V8.2'
   ]
 );
