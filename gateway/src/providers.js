@@ -1022,7 +1022,7 @@ function aireiterImageParams(provider, body) {
       resolution: ['1K', '2K', '4K'].includes(resolution) ? resolution : '2K'
     };
   }
-  if (['gpt_image_2', 'gpt_image_2_official'].includes(provider.model)) {
+  if (['gpt_image_2', 'gpt_image_2_official', 'gpt_image_2_5'].includes(provider.model)) {
     if (urls.length > 9) throw aireiterLocalRejection('This route accepts at most 9 reference images.', 'too-many-references');
     if (!['low', 'medium', 'high'].includes(String(body.quality || 'medium').trim().toLowerCase())) {
       throw aireiterLocalRejection('GPT Image 2 quality must be low, medium, or high.', 'invalid-quality');
@@ -1041,7 +1041,9 @@ function aireiterImageParams(provider, body) {
       ...(urls.length ? { image_url: urls } : {}),
       ...(submittedRatio && submittedRatio !== 'auto' ? { aspect_ratio: submittedRatio } : {}),
       resolution,
-      quality: String(body.quality || 'medium').trim().toLowerCase()
+      quality: String(body.quality || 'medium').trim().toLowerCase(),
+      ...(provider.model === 'gpt_image_2_5' && ['flare','sunburst'].includes(String(body.variant || '').toLowerCase())
+        ? { variant: String(body.variant).toLowerCase() } : {})
     };
   }
   if (provider.model === 'mj_v8_1') {

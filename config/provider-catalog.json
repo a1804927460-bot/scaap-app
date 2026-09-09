@@ -342,6 +342,19 @@
       "keyEnv": "AI302_KEY"
     },
     {
+      "id": "image-19",
+      "kind": "image",
+      "name": "GPT Image 2.5",
+      "endpoint": "https://aireiter.com/api/openapi/submit",
+      "resultEndpoint": "https://aireiter.com/api/openapi/query",
+      "model": "gpt_image_2_5",
+      "protocol": "aireiter-async",
+      "logicalModel": "gpt-image-2.5",
+      "requiresActivation": false,
+      "capabilities": {"resolutionPresets":["1K","2K","4K"],"sizes":["1K","2K","4K"],"qualities":["low","medium","high"],"ratios":["1:1","16:9","9:16","4:3","3:4"],"maxReferenceImages":9,"referenceMimeTypes":["image/png","image/jpeg","image/webp"]},
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
       "id": "image-7",
       "kind": "image",
       "name": "Higgsfield Soul Standard",
