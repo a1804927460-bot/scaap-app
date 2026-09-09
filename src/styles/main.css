@@ -912,6 +912,20 @@
 }
 .settings-popover[hidden] { display: none; }
 .account-popover { width: min(300px, calc(100vw - 32px)); }
+.account-popover.is-open-with-settings { max-height: min(78vh, 760px); overflow-y: auto; }
+.account-popover > .is-account-inline-settings {
+  position: static;
+  width: auto;
+  max-height: none;
+  overflow: visible;
+  padding: 12px 0 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  transform: none;
+  animation: none;
+}
 .account-popover-head { display: flex; align-items: center; gap: 12px; padding: 2px 2px 12px; border-bottom: 1px solid var(--border-hairline); }
 .account-popover-head > span:last-child { min-width: 0; display: grid; gap: 3px; }
 .account-popover-head small { color: var(--text-tertiary); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
