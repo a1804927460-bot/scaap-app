@@ -9,8 +9,13 @@ const response = (decision) => new Response(JSON.stringify({
   id: 'mod_fixture', object: 'moderation_result', decision, usage: { units: 1 }, future: true
 }));
 
-test('moderation sends all user text and no media or account identifiers', async () => {
-  const result = await moderateGenerationPrompt({ prompt: 'scene', options: { promptSuffix: 'detail' }, urls: ['secret-media'] }, {
+test('moderation sends generation intent without negative prompts, media or account identifiers', async () => {
+  const result = await moderateGenerationPrompt({
+    prompt: 'scene',
+    negativePrompt: 'no nudity',
+    options: { promptSuffix: 'detail', negativePrompt: 'no NSFW content' },
+    urls: ['secret-media']
+  }, {
     env, userId: 'private@example.com', requestId: 'job-1',
     fetchImpl: async (url, options) => {
       assert.equal(url, 'https://test-api.creem.io/v1/moderation/prompt');
@@ -20,6 +25,8 @@ test('moderation sends all user text and no media or account identifiers', async
       assert.match(body.external_id, /^[a-f0-9]{64}$/);
       assert.equal(options.body.includes('private@example.com'), false);
       assert.equal(options.body.includes('secret-media'), false);
+      assert.equal(options.body.includes('nudity'), false);
+      assert.equal(options.body.includes('NSFW'), false);
       return response('allow');
     }
   });

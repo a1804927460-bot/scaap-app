@@ -19,8 +19,9 @@ function unavailable() {
 
 export async function moderateGenerationPrompt(body, { userId, requestId, fetchImpl = fetch, env = process.env } = {}) {
   // Only screen user-controlled text, never reference bytes or chat history.
-  const prompts = [body?.prompt, body?.options?.prompt, body?.negativePrompt,
-    body?.options?.negativePrompt, body?.options?.promptSuffix]
+  // Negative prompts describe content to exclude. Screening them as generation
+  // intent turns safety-oriented phrases such as "no nudity" into false hits.
+  const prompts = [body?.prompt, body?.options?.prompt, body?.options?.promptSuffix]
     .filter((value) => value !== undefined && value !== null)
     .map(String).filter((value) => value.trim());
   const prompt = [...new Set(prompts)].join('\n');
