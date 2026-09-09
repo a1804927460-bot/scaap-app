@@ -82,7 +82,7 @@
 .is-moodboard-composer .ai-video-mode-trigger { width: 100%; max-width: none; justify-content: space-between; }
 .is-moodboard-composer .ai-model-picker-menu,
 .is-moodboard-composer .ai-video-mode-menu { top: calc(100% + 6px); bottom: auto; width: 100%; min-width: 0; }
-.is-moodboard-composer .ai-composer-prompt { min-height: 58px; height: 72px; max-height: 120px; font-size: 13px; }
+.is-moodboard-composer .ai-composer-prompt { display: none; }
 .ai-composer.is-moodboard-composer .ai-options-panel {
   display: block; position: static; width: 100%; max-height: none;
   margin: 0; padding: 0; border: 0; border-radius: 0;

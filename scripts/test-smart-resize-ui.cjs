@@ -40,7 +40,9 @@ const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
    await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;document.body.dataset.theme=theme;boardButlerExpandEditor._layout();},theme);
    await page.waitForTimeout(300);
    const rect=await panel.locator('.board-inline-resize-toolbar').boundingBox();assert.ok(rect.x>=0&&rect.x+rect.width<=width+1);
-   assert.equal(await panel.locator('.board-inline-resize-preview').count(),1);
+   assert.equal(await panel.locator('img').count(),0);
+   assert.equal(await panel.locator('.board-inline-resize-margin').count(),4);
+   assert.equal(await page.locator('#board-viewport > img').count(),1);
    assert.equal(await panel.locator('.board-inline-resize-ratios [aria-pressed="true"]').count(),1);
    await page.screenshot({path:`test-artifacts/smart-resize/${theme}-${width}.png`});
   }

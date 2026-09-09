@@ -5,9 +5,9 @@ export const USD_TO_CNY = 7.3;
 export const TOPAZ_PROVIDER_PTC_PER_POINT = 0.15;
 export const APP_CREDITS_PER_CNY = 1000 / 70;
 // Capsule generation tools use the same guarded media policy: a 10% cost
-// buffer and a 25% gross margin. Agent and chat remain free features.
-export const RETAIL_GROSS_MARGIN_PERCENT = 25;
-export const RETAIL_MULTIPLIER = 1 / (1 - RETAIL_GROSS_MARGIN_PERCENT / 100);
+// buffer and a 16.9% gross margin after an 8.1% payment-fee allowance. Agent and chat remain free features.
+export const RETAIL_GROSS_MARGIN_PERCENT = 16.9;
+export const RETAIL_MULTIPLIER = 1 / (1 - RETAIL_GROSS_MARGIN_PERCENT / 100 - 0.081);
 export const RETAIL_MARKUP_PERCENT = (RETAIL_MULTIPLIER - 1) * 100;
 export const UPSTREAM_COST_SAFETY_PERCENT = 10;
 export const UPSTREAM_COST_SAFETY_MULTIPLIER = 1 + UPSTREAM_COST_SAFETY_PERCENT / 100;
@@ -36,7 +36,7 @@ export const BUTLER_FIXED_PROVIDER_PTC = Object.freeze({
   'clipdrop-uncrop': 0.20 + 0.013 / USD_TO_CNY,
   'kling-image-expand': 0.50,
   cleanup: 0.50,
-  'clipdrop-upscale': 0.50,
+  'clipdrop-upscale': 0.08 + 0.013 / USD_TO_CNY,
   'generative-upscale': 0.80
 });
 

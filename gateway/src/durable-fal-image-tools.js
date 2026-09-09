@@ -11,7 +11,7 @@ function pending() {
 export async function runDurableFalImageTool({ userId, requestId, model, imageDataUrl, options = {} }, deps = {}) {
   const api = { getImageJob, claimImageJob, recordImageProviderTask, recordImageProviderResult,
     failImageJob, readStoredImageResult, storeImageResult, runFalImageTool, ...deps };
-  const providerId = model === 'feynobg' ? 'background-remove' : 'clipdrop-uncrop';
+  const providerId = model === 'feynobg' ? 'background-remove' : model === 'topaz/upscale/image' ? 'clipdrop-upscale' : 'clipdrop-uncrop';
   const requestHash = hashImageRequest({ model, imageDataUrl, options });
   let job;
   try { job = await api.getImageJob(userId, requestId); }

@@ -428,7 +428,7 @@ function buildBoardMoodboardElement(item) {
       return;
     }
     void openAiComposerForSelection('image', prompt, {
-      referenceFileIds: [], moodboardAnchor: generate
+      referenceFileIds: [], moodboardAnchor: generate, moodboardItemId: item.id
     }).catch(error => showToast(error.message || t('Could not open generation settings.', '无法打开生成设置。'), 'AI'));
   });
   header.append(icon, title, open, generate);

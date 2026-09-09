@@ -28,8 +28,8 @@ const {
 } = require('../lib/credit-pricing');
 
 assert.strictEqual(POINTS_PER_CNY, 1000 / 70);
-assert.strictEqual(CREDIT_PRICING_VERSION, '202609060001');
-assert.strictEqual(RETAIL_GROSS_MARGIN_PERCENT, 25);
+assert.strictEqual(CREDIT_PRICING_VERSION, '202609090001');
+assert.strictEqual(RETAIL_GROSS_MARGIN_PERCENT, 16.9);
 assert.strictEqual(RETAIL_MARKUP_PERCENT, 33.33333333333333);
 assert.strictEqual(RETAIL_MULTIPLIER, 4 / 3);
 assert.strictEqual(PROFIT_PER_REQUEST_CNY, 0);
@@ -51,8 +51,8 @@ assert.deepStrictEqual(quoteMediaCredits({
   count: 2,
   units: 2,
   unit: 'image',
-  unitCredits: 26,
-  totalCredits: 52
+  unitCredits: 8,
+  totalCredits: 16
 });
 
 assert.strictEqual(quoteMediaCredits({
@@ -136,10 +136,10 @@ assert.strictEqual(quoteMediaCredits({
 }).totalCredits, 36);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-1', size: '4K'
-}).totalCredits, 51);
+}).totalCredits, 10);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-2', size: '1K'
-}).totalCredits, 13);
+}).totalCredits, 5);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-9'
 }).totalCredits, 7);
@@ -148,11 +148,11 @@ assert.strictEqual(quoteMediaCredits({
 }).totalCredits, 13);
 assert.strictEqual(quoteMediaCredits({
   kind: 'image', imageProviderId: 'image-18', size: '2K'
-}).totalCredits, 50);
+}).totalCredits, 19);
 
 const imageResolutionMatrix = {
-  'image-1': { '1K': 26, '2K': 26, '4K': 51 },
-  'image-2': { '1K': 13, '2K': 18, '4K': 24 },
+  'image-1': { '1K': 8, '2K': 8, '4K': 10 },
+  'image-2': { '1K': 5, '2K': 5, '4K': 6 },
   'image-3': { '2K': 7, '4K': 11 }
 };
 Object.entries(imageResolutionMatrix).forEach(([imageProviderId, resolutions]) => {
@@ -338,7 +338,7 @@ assert.strictEqual(
 const publicPricing = publicCreditPricing();
 assert.strictEqual(publicPricing.pricingVersion, CREDIT_PRICING_VERSION);
 assert.strictEqual(publicPricing.pointsPerCny, 1000 / 70);
-assert.strictEqual(publicPricing.grossMarginPercent, 25);
+assert.strictEqual(publicPricing.grossMarginPercent, 16.9);
 assert.strictEqual(publicPricing.retailMarkupPercent, 33.33333333333333);
 assert.strictEqual(publicPricing.retailMultiplier, 4 / 3);
 assert.strictEqual(publicPricing.upstreamCostSafetyPercent, 10);
@@ -385,7 +385,7 @@ providerCatalog.providers.filter((provider) => provider.hidden !== true && ['ima
           && resolutions.some((value) => String(value).toUpperCase() === String(resolution).toUpperCase()))?.[0];
       const quote = quoteMediaCredits({
         kind: 'video', videoProviderId: provider.id, resolution,
-        duration: (capabilities.durations || [6])[0], serviceTier
+        duration: (capabilities.variantOptions?.[serviceTier]?.durations || capabilities.durations || [6])[0], serviceTier
       });
       assert.strictEqual(
         quote.resolution,
@@ -577,12 +577,12 @@ async function assertGatewayPricingParity() {
 
 function assertCostProtection() {
   const imageCases = [
-    ['image-1', { size: '1K' }, 0.165 * USD_TO_CNY],
-    ['image-1', { size: '2K' }, 0.165 * USD_TO_CNY],
-    ['image-1', { size: '4K' }, 0.330 * USD_TO_CNY],
-    ['image-2', { size: '1K' }, 0.077 * USD_TO_CNY],
-    ['image-2', { size: '2K' }, 0.1155 * USD_TO_CNY],
-    ['image-2', { size: '4K' }, 0.154 * USD_TO_CNY]
+    ['image-1', { size: '1K' }, 0.05 * USD_TO_CNY],
+    ['image-1', { size: '2K' }, 0.05 * USD_TO_CNY],
+    ['image-1', { size: '4K' }, 0.06 * USD_TO_CNY],
+    ['image-2', { size: '1K' }, 0.03 * USD_TO_CNY],
+    ['image-2', { size: '2K' }, 0.03 * USD_TO_CNY],
+    ['image-2', { size: '4K' }, 0.035 * USD_TO_CNY]
   ];
   for (const [providerId, options, upstreamCny] of imageCases) {
     const quote = quoteMediaCredits({ kind: 'image', imageProviderId: providerId, ...options }).totalCredits;

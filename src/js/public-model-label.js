@@ -15,7 +15,7 @@ function compactPublicText(value) {
 function publicModelLabel(value, fallback = 'AI model') {
   let text = compactPublicText(value);
   if (!text) return fallback;
-  if (/^(?:google|gemini|minimax|kling|jimeng|dreamina)$/i.test(text)) return fallback;
+  if (/^(?:google|gemini|minimax|jimeng|dreamina)$/i.test(text)) return fallback;
   text = text
     .replace(PUBLIC_MODEL_SUPPLIER_SUFFIX_RE, '')
     .replace(PUBLIC_SUPPLIER_DOMAIN_RE, '')

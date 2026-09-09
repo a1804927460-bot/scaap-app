@@ -1,0 +1,170 @@
+TAP version 13
+# Subtest: provider user IDs are stable, distinct, and contain no account data
+ok 1 - provider user IDs are stable, distinct, and contain no account data
+  ---
+  duration_ms: 1.4502
+  type: 'test'
+  ...
+# Subtest: AI Reiter is the primary Nano Banana Pro route
+not ok 2 - AI Reiter is the primary Nano Banana Pro route
+  ---
+  duration_ms: 19.4257
+  type: 'test'
+  location: 'C:\\Users\\18049\\Documents\\Codex\\2026-08-21\\messssss-thread-019ff71f-bfe2-7f03-8e54\\work\\gateway-v080-deploy\\gateway\\test\\aireiter-routing.test.mjs:43:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+    
+    + 'nano_banana_pro'
+    - 'nano_banana_pro_max'
+                      ^
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'nano_banana_pro_max'
+  actual: 'nano_banana_pro'
+  operator: 'strictEqual'
+  stack: |-
+    file:///C:/Users/18049/Documents/Codex/2026-08-21/messssss-thread-019ff71f-bfe2-7f03-8e54/work/gateway-v080-deploy/gateway/test/aireiter-routing.test.mjs:78:12
+    async TestContext.<anonymous> (file:///C:/Users/18049/Documents/Codex/2026-08-21/messssss-thread-019ff71f-bfe2-7f03-8e54/work/gateway-v080-deploy/gateway/test/aireiter-routing.test.mjs:45:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: AI Reiter Nano Banana 2 references use a public relay and documented URL encoding
+not ok 3 - AI Reiter Nano Banana 2 references use a public relay and documented URL encoding
+  ---
+  duration_ms: 6.3934
+  type: 'test'
+  location: 'C:\\Users\\18049\\Documents\\Codex\\2026-08-21\\messssss-thread-019ff71f-bfe2-7f03-8e54\\work\\gateway-v080-deploy\\gateway\\test\\aireiter-routing.test.mjs:82:1'
+  failureType: 'testCodeFailure'
+  error: "Cannot read properties of undefined (reading 'image_url')"
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    file:///C:/Users/18049/Documents/Codex/2026-08-21/messssss-thread-019ff71f-bfe2-7f03-8e54/work/gateway-v080-deploy/gateway/test/aireiter-routing.test.mjs:127:48
+    async TestContext.<anonymous> (file:///C:/Users/18049/Documents/Codex/2026-08-21/messssss-thread-019ff71f-bfe2-7f03-8e54/work/gateway-v080-deploy/gateway/test/aireiter-routing.test.mjs:84:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: AI Reiter GPT Image 2 official sends documented resolution and rejects unsupported combinations
+ok 4 - AI Reiter GPT Image 2 official sends documented resolution and rejects unsupported combinations
+  ---
+  duration_ms: 5.2544
+  type: 'test'
+  ...
+# Subtest: GPT Image 2 rejects retired provider routes before any upstream call
+ok 5 - GPT Image 2 rejects retired provider routes before any upstream call
+  ---
+  duration_ms: 1.8998
+  type: 'test'
+  ...
+# {"level":"info","event":"chat-route-result","requestId":"","route":"chat-3","model":"gemini-3.1-pro","status":"succeeded","durationMs":2,"usage":null}
+# {"level":"info","event":"chat-route-result","requestId":"","route":"chat-4","model":"gpt-5.6-sol","status":"succeeded","durationMs":0,"usage":null}
+# {"level":"info","event":"chat-route-result","requestId":"","route":"chat-5","model":"kimi-k3","status":"succeeded","durationMs":0,"usage":null}
+# {"level":"info","event":"chat-route-result","requestId":"","route":"chat-6","model":"gemini-3.8-flash","status":"succeeded","durationMs":0,"usage":null}
+# Subtest: AI Reiter accepts numeric completion status and nested result URLs
+ok 6 - AI Reiter accepts numeric completion status and nested result URLs
+  ---
+  duration_ms: 2014.9625
+  type: 'test'
+  ...
+# Subtest: AI Reiter nested authentication and balance errors are rejected before polling
+ok 7 - AI Reiter nested authentication and balance errors are rejected before polling
+  ---
+  duration_ms: 1.6199
+  type: 'test'
+  ...
+# Subtest: AI Reiter video tasks stay pinned to their accepted route
+ok 8 - AI Reiter video tasks stay pinned to their accepted route
+  ---
+  duration_ms: 2.7907
+  type: 'test'
+  ...
+# Subtest: AI Reiter H3 publishes nested video outputs without resubmission
+ok 9 - AI Reiter H3 publishes nested video outputs without resubmission
+  ---
+  duration_ms: 3.2066
+  type: 'test'
+  ...
+# Subtest: AI Reiter MiniMax H3 maps first-frame and first-last-frame requests separately
+ok 10 - AI Reiter MiniMax H3 maps first-frame and first-last-frame requests separately
+  ---
+  duration_ms: 3.1248
+  type: 'test'
+  ...
+# Subtest: AI Reiter MiniMax H3 uses all-reference only for mixed reference assets
+ok 11 - AI Reiter MiniMax H3 uses all-reference only for mixed reference assets
+  ---
+  duration_ms: 1.736
+  type: 'test'
+  ...
+# Subtest: AI Reiter MiniMax H3 rejects text-to-video and wrong frame counts before submission
+ok 12 - AI Reiter MiniMax H3 rejects text-to-video and wrong frame counts before submission
+  ---
+  duration_ms: 2.7362
+  type: 'test'
+  ...
+# Subtest: 100 percent AI Reiter traffic is absolute even without an operation ID
+ok 13 - 100 percent AI Reiter traffic is absolute even without an operation ID
+  ---
+  duration_ms: 1.3797
+  type: 'test'
+  ...
+# Subtest: AI Reiter MiniMax H3 rejects unsupported frame media before submission
+ok 14 - AI Reiter MiniMax H3 rejects unsupported frame media before submission
+  ---
+  duration_ms: 1.6949
+  type: 'test'
+  ...
+# Subtest: retired Gemini 3.7 Flash requests are rejected before any upstream call
+ok 15 - retired Gemini 3.7 Flash requests are rejected before any upstream call
+  ---
+  duration_ms: 0.9446
+  type: 'test'
+  ...
+# Subtest: AI Reiter Agent models use their configured model routes
+ok 16 - AI Reiter Agent models use their configured model routes
+  ---
+  duration_ms: 6.5445
+  type: 'test'
+  ...
+# Subtest: Nano Banana Pro remains AI Reiter primary and deterministic
+ok 17 - Nano Banana Pro remains AI Reiter primary and deterministic
+  ---
+  duration_ms: 47.06
+  type: 'test'
+  ...
+# Subtest: an ambiguous AI Reiter submission is never replayed on a legacy paid route
+ok 18 - an ambiguous AI Reiter submission is never replayed on a legacy paid route
+  ---
+  duration_ms: 1.882
+  type: 'test'
+  ...
+# Subtest: an interrupted AI Reiter submission resumes from its deterministic task ID
+ok 19 - an interrupted AI Reiter submission resumes from its deterministic task ID
+  ---
+  duration_ms: 1.2349
+  type: 'test'
+  ...
+# Subtest: a proven AI Reiter rejection never replays Nano Banana 2 on a legacy route
+ok 20 - a proven AI Reiter rejection never replays Nano Banana 2 on a legacy route
+  ---
+  duration_ms: 1.3251
+  type: 'test'
+  ...
+# Subtest: legacy traffic controls cannot demote AI Reiter and ChaserPro remains hidden
+ok 21 - legacy traffic controls cannot demote AI Reiter and ChaserPro remains hidden
+  ---
+  duration_ms: 6.1805
+  type: 'test'
+  ...
+1..21
+# tests 21
+# suites 0
+# pass 19
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2287.8452

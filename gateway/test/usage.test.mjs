@@ -81,14 +81,14 @@ function withEnvironment(values, callback) {
 }
 
 test('gateway quote matches the desktop image table', () => {
-  assert.equal(quoteUsage('image', { providerId: 'image-1' }).credits, 26);
-  assert.equal(quoteUsage('image', { providerId: 'image-2' }).credits, 18);
+  assert.equal(quoteUsage('image', { providerId: 'image-1' }).credits, 8);
+  assert.equal(quoteUsage('image', { providerId: 'image-2' }).credits, 5);
   assert.equal(quoteUsage('image', { providerId: 'image-3' }).credits, 7);
   assert.equal(quoteUsage('image', { providerId: 'image-4' }).credits, 5);
   assert.equal(quoteUsage('image', { providerId: 'image-5' }).credits, 5);
   assert.equal(quoteUsage('image', { providerId: 'image-9' }).credits, 7);
-  assert.equal(quoteUsage('image', { providerId: 'image-1', size: '4K' }).credits, 51);
-  assert.equal(quoteUsage('image', { providerId: 'image-2', size: '1K' }).credits, 13);
+  assert.equal(quoteUsage('image', { providerId: 'image-1', size: '4K' }).credits, 10);
+  assert.equal(quoteUsage('image', { providerId: 'image-2', size: '1K' }).credits, 5);
   assert.deepEqual(quoteUsage('image', { providerId: 'image-6', quality: 'high' }), {
     kind: 'image', providerId: 'image-6', credits: 51, unitCredits: 51, totalCredits: 51, count: 1, resolution: 'high', quality: 'high',
     imageResolution: '1k', billingResolution: 'high:1k', duration: null, requiresActivation: false
@@ -282,7 +282,7 @@ test('Legnext Midjourney uses its dedicated RPC and HD price', async () => {
     assert.match(call.url, /\/rpc\/reserve_ai_media_credits$/);
     assert.equal(call.body.p_provider_id, 'image-18');
     assert.equal(call.body.p_resolution, '2k');
-    assert.equal(call.body.p_expected_credits, 50);
+    assert.equal(call.body.p_expected_credits, 19);
     assert.equal(call.body.p_count, 1);
     assert.equal(result.ok, true);
   });
@@ -297,7 +297,7 @@ test('every account receives the same quote without consulting a pricing-tier RP
       { providerId: 'image-1', size: '4K' },
       async () => { fetchCalls += 1; return jsonResponse({}, 500); }
     );
-    assert.equal(quote.credits, 51);
+    assert.equal(quote.credits, 10);
     assert.equal(fetchCalls, 0);
   });
 });
@@ -310,10 +310,10 @@ test('client pricing-tier fields cannot alter the unified server quote', async (
       async (url, options) => {
         calls.push(JSON.parse(options.body));
         return calls.length === 1
-          ? jsonResponse({ ok: false, reason: 'pricing-mismatch', credits: 10 })
-          : jsonResponse({ ok: true, reason: 'reserved', credits: 10, availableCredits: 90 });
+          ? jsonResponse({ ok: false, reason: 'pricing-mismatch', credits: 3 })
+          : jsonResponse({ ok: true, reason: 'reserved', credits: 3, availableCredits: 97 });
       });
-    assert.equal(result.credits, 10);
+    assert.equal(result.credits, 3);
     assert.equal(result.ok, false);
     assert.equal(result.reason, 'pricing-mismatch');
     assert.equal(calls.length, 1);
@@ -377,7 +377,7 @@ test('Butler image, enhancement, and 3D tools all use conservative paid pricing'
     'clipdrop-uncrop': 31,
     'kling-image-expand': 77,
     cleanup: 77,
-    'clipdrop-upscale': 77,
+    'clipdrop-upscale': 13,
     'generative-upscale': 123,
     'qwen-image-edit-plus': 16,
     'qwen-image-layered': 8,
@@ -395,7 +395,7 @@ test('Butler image, enhancement, and 3D tools all use conservative paid pricing'
     const calls = [];
     for (const [providerId, credits] of Object.entries(BUTLER_FIXED_RETAIL_CREDITS)) {
       const requestId = crypto.randomUUID();
-      const result = await reserveToolUsage(userId, requestId, { providerId }, async (url, options) => {
+      const result = await reserveToolUsage(userId, requestId, { providerId, ...(providerId === 'clipdrop-upscale' ? { options: { megapixels: 24 } } : {}) }, async (url, options) => {
         const body = JSON.parse(options.body);
         calls.push({ url, body });
         return jsonResponse({ ok: true, reason: 'reserved', credits, availableCredits: 1000 - credits });
@@ -1081,7 +1081,7 @@ test('canvas accounting tags a paid request and exposes sanitized all-time detai
     assert.equal(usage.details[0].requestId, '00000000-0000-4000-8000-000000000099');
     assert.equal(usage.details[0].estimatedCredits, 31);
     assert.equal(usage.details[0].credits, undefined);
-    assert.equal(usage.details[0].creditsCharged, undefined);
+    assert.equal(usage.details[0].creditsCharged, 28);
     assert.doesNotMatch(JSON.stringify(usage), /providerCost|provider_cost/i);
     assert.match(calls[0].url, /\/rpc\/set_ai_usage_canvas$/);
     assert.match(calls[1].url, /\/rpc\/get_canvas_ai_usage_summary$/);

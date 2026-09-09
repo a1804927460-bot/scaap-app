@@ -1,3 +1,8 @@
+import { quickRouterImageRoutes, createQuickRouterPriceGuard } from './quickrouter-image-routes.js';
+const quickRouterPriceGuard = createQuickRouterPriceGuard();
+import economyImageRoutes from '../../lib/economy-image-routes.js';
+import { MediaRouteCapacity } from './media-route-capacity.js';
+import klingOptions from '../../lib/kling-options.js';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import {
@@ -41,6 +46,7 @@ const RETIRED_GPT_IMAGE_2_ROUTE_IDS = new Set([
   'aireiter-image-gpt2'
 ]);
 const ASYNC_VIDEO_PROTOCOLS = new Set([
+  'atlas-kling-video',
   'minimax-video-v2',
   'atlas-minimax-h3-video',
   'seedance-video-v3',
@@ -87,6 +93,9 @@ function sanitizePublicCapabilityValue(value, nested = false) {
 function publicCapabilities(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const result = sanitizePublicCapabilityValue(value);
+  if (value.variantOptions) result.variantOptions = Object.fromEntries(Object.entries(value.variantOptions)
+    .map(([id,v])=>[id,{label:String(v.label),resolutions:v.resolutions,durations:v.durations,
+      maxReferenceImages:v.maxReferenceImages,generateAudio:v.generateAudio,videoModes:v.videoModes}]));
   if (value.resolutionRatios && typeof value.resolutionRatios === 'object') {
     result.resolutionRatios = Object.fromEntries(Object.entries(value.resolutionRatios)
       .filter(([resolution, ratios]) => /^(1K|2K|4K)$/.test(resolution) && Array.isArray(ratios))
@@ -199,15 +208,15 @@ function configuredProviders() {
   for (const raw of [...builtinProviders(), ...extra].slice(0, MAX_PROVIDERS)) {
     const id = String(raw.id || '').trim().toLowerCase();
     const builtin = byId.get(id);
-    const lockedGptImage2 = id === GPT_IMAGE_2_PROVIDER_ID && builtin && builtin.kind === 'image';
+    const lockedPricedImage = [GPT_IMAGE_2_PROVIDER_ID, 'image-1', 'image-2', 'image-18', 'video-14'].includes(id) && builtin;
     const kind = ['chat', 'image', 'video'].includes(raw.kind)
       ? raw.kind
       : (builtin && builtin.kind) || '';
-    // GPT Image 2 is intentionally a single AI Reiter route. Do not let an
+    // Priced primary image contracts are versioned with their quotes. Do not let an
     // old Railway AI_PROVIDERS_JSON entry replace its endpoint, protocol, or
     // credential and silently create a billable request on another service.
-    const endpoint = safeServerEndpoint(lockedGptImage2 ? builtin.endpoint : raw.endpoint || (builtin && builtin.endpoint));
-    const keyEnv = String(lockedGptImage2 ? builtin.keyEnv : raw.keyEnv || (builtin && builtin.keyEnv) || '').trim();
+    const endpoint = safeServerEndpoint(lockedPricedImage ? builtin.endpoint : raw.endpoint || (builtin && builtin.endpoint));
+    const keyEnv = String(lockedPricedImage ? builtin.keyEnv : raw.keyEnv || (builtin && builtin.keyEnv) || '').trim();
     if (!PROVIDER_ID.test(id) || !kind || !endpoint || !PROVIDER_KEY_ENV.test(keyEnv)) continue;
     const models = Array.isArray(raw.models)
       ? raw.models.map(String).map((v) => v.trim()).filter(Boolean).slice(0, 30)
@@ -221,7 +230,7 @@ function configuredProviders() {
       id, kind,
       name: String(raw.name || (builtin && builtin.name) || id).trim().slice(0, 80),
       endpoint,
-      resultEndpoint: safeServerEndpoint(lockedGptImage2 ? builtin.resultEndpoint : raw.resultEndpoint || (builtin && builtin.resultEndpoint)) || DEFAULT_RESULT_ENDPOINT,
+      resultEndpoint: safeServerEndpoint(lockedPricedImage ? builtin.resultEndpoint : raw.resultEndpoint || (builtin && builtin.resultEndpoint)) || DEFAULT_RESULT_ENDPOINT,
       models,
       upstreamModels,
       // This is an internal routing hint. It is deliberately removed from
@@ -232,8 +241,8 @@ function configuredProviders() {
         : (Array.isArray(raw.fallbackProviderIds) ? raw.fallbackProviderIds : []))
         .map((value) => String(value || '').trim().toLowerCase())
         .filter((value) => PROVIDER_ID.test(value)))].slice(0, 20),
-      model: String(lockedGptImage2 ? builtin.model : raw.model || (builtin && builtin.model) || '').trim().slice(0, 120),
-      protocol: String(lockedGptImage2 ? builtin.protocol : raw.protocol || (builtin && builtin.protocol) || '').trim().slice(0, 40),
+      model: String(lockedPricedImage ? builtin.model : raw.model || (builtin && builtin.model) || '').trim().slice(0, 120),
+      protocol: String(lockedPricedImage ? builtin.protocol : raw.protocol || (builtin && builtin.protocol) || '').trim().slice(0, 40),
       // Capabilities for catalog models are versioned with the application.
       // Deployment overrides may replace endpoints or credentials, but must
       // not revive a stale resolution/mode matrix for a built-in model.
@@ -299,6 +308,14 @@ function configuredProviders() {
       keyEnv:'FAL_API_KEY', fallbackProviderIds:[], routeAliasOf:primary.id });
     if (process.env.FAL_IMAGE_BACKUP_ENABLED === 'true'
         || (route.providerId === 'image-1' && process.env.FAL_NANO_BACKUP_ENABLED === 'true')) primary.fallbackProviderIds.push(route.id);
+  }
+  for (const route of quickRouterImageRoutes()) {
+    const primary=byId.get(route.routeAliasOf);
+    if (!primary || primary.logicalModel!==route.logicalModel) continue;
+    // Keep the recovery identity even if verification expires. New paid work
+    // requires its dedicated fixed-group key and matching audited cost profile.
+    byId.set(route.id,route);
+    if (route.quickRouterVerified) primary.fallbackProviderIds=[...new Set([...(primary.fallbackProviderIds||[]),route.id])];
   }
   return [...byId.values()];
 }
@@ -594,7 +611,9 @@ function providersForRequest(kind, id, body = {}) {
       code: 'provider-secret-missing'
     });
   }
-  return candidates;
+  const affordable = economyImageRoutes.selectEconomyImageRoutes(requested, candidates, body);
+  if (!affordable.length) throw Object.assign(new Error('No compatible route is available at the current quoted price.'), {code:'compatible-route-unavailable',status:503});
+  return affordable;
 }
 
 function routedProviderTaskId(requestedProviderId, actualProviderId, taskId) {
@@ -1119,6 +1138,7 @@ async function generateAireiterImage(provider, body, signal, hooks = {}) {
 }
 
 async function generateMediaWithProvider(kind, provider, body, signal, hooks = {}) {
+  if (provider.id.startsWith('quickrouter-nano-') && !body._acceptedTask) await quickRouterPriceGuard(provider, signal);
   if (kind === 'image' && ['fal-nano-queue','fal-image-queue'].includes(provider.protocol)) {
     return generateFalImage(provider, body, signal, hooks, {
       download: async (url, requestSignal) => validateGeneratedMediaBuffer('image', await downloadGeneratedImage(url, requestSignal))
@@ -1215,6 +1235,7 @@ function preferredFallbackError(firstError, lastError) {
 }
 
 const activeGenerationRoutes = new Map();
+const mediaRouteCapacity = new MediaRouteCapacity();
 export async function generateMedia(kind, body, signal, hooks = {}) {
   const providers = providersForRequest(kind, String(body.providerId || ''), body);
   const primary = providers.find(provider => provider.id === body.providerId);
@@ -1234,14 +1255,21 @@ export async function generateMedia(kind, body, signal, hooks = {}) {
   }
   let firstError;
   let lastError;
-  for (const provider of providers) {
+  const remaining = [...providers];
+  const owner = body.endUserId || 'anonymous';
+  while (remaining.length) {
+    const provider = mediaRouteCapacity.select(remaining, owner);
+    remaining.splice(remaining.indexOf(provider), 1);
     activeGenerationRoutes.set(provider.id,(activeGenerationRoutes.get(provider.id) || 0)+1);
     try {
-      return await generateMediaWithProvider(kind, provider, body, signal, hooks);
+      return await mediaRouteCapacity.run(provider, owner,
+        () => generateMediaWithProvider(kind, provider, body, signal, hooks), signal);
     } catch (error) {
       if (!firstError) firstError = error;
       lastError = error;
       if (signal && signal.aborted) throw error;
+      // Exhausted balance, unavailable pricing or provider capacity are safe pre-submit fallbacks.
+      if (!error.providerTaskAccepted && !error.submissionAmbiguous && (Number(error.status)===402 || error.code==='provider-price-unverified' || error.code==='provider-price-changed' || error.upstreamCapacityExhausted===true)) error.safeToFallback=true;
       if (!shouldTryProviderFallback(error)) {
         // A narrower secondary route may reject a capability that the primary
         // route supports. Keep the primary outage as the actionable error
@@ -2795,8 +2823,44 @@ async function createAireiterVideoTask(provider, body, signal) {
   return { providerId: provider.id, taskId };
 }
 
+async function createAtlasKlingVideoTask(provider, body, signal) {
+  const input = klingOptions.klingInput(body);
+  for (const url of body.urls) {
+    const asset = atlasLocalMediaAsset(url,'image');
+    if (!asset) continue;
+    const dimensions = generatedImageDimensions(asset.buffer);
+    if (!['image/png','image/jpeg'].includes(asset.mime) || asset.buffer.length > 10*1024*1024
+        || !dimensions || Math.min(dimensions.width,dimensions.height)<300
+        || dimensions.width/dimensions.height<0.4 || dimensions.width/dimensions.height>2.5) {
+      throw Object.assign(new Error('Kling frames must be PNG/JPEG, at most 10 MB, at least 300 pixels per edge, with a ratio between 1:2.5 and 2.5:1.'),
+        {code:'invalid-reference-media',status:400,preSubmissionFailure:true});
+    }
+  }
+  // Verify the account tariff before spending: discounts can expire.
+  const calculated = await responseJson(await fetch('https://api.atlascloud.ai/api/v1/model/calculate', {
+    method:'POST',headers:providerHeaders(provider,true),signal:providerSignal(signal,15000),
+    body:JSON.stringify({model:input.variant.model,duration:input.duration,resolution:input.resolution,
+      ...(input.variant.sound?{sound:input.sound}:{})})
+  }),provider.name);
+  const current = Number(calculated?.data?.price);
+  if (calculated?.code !== 200 || !Number.isFinite(current) || current <= 0
+      || current > input.usdPerSecond*input.duration + 0.00001) {
+    throw Object.assign(new Error('Kling pricing changed or could not be verified. Please refresh the quote.'),
+      {code:'provider-price-changed',status:409,safeToFallback:false});
+  }
+  input.payload.image = await atlasMediaReference(provider,input.payload.image,'image',signal);
+  if(input.payload.end_image) input.payload.end_image = await atlasMediaReference(provider,input.payload.end_image,'image',signal);
+  const created = await responseJson(await fetch(provider.endpoint,{
+    method:'POST',headers:providerTaskHeaders(provider,body),signal:providerSignal(signal,45000),body:JSON.stringify(input.payload)
+  }),provider.name);
+  const taskId=providerVideoTaskId(created);
+  if(!taskId || taskId.length>256) throw Object.assign(new Error('Kling did not return a valid task ID.'),{code:'provider-invalid-response',status:502,submissionAmbiguous:true});
+  return {providerId:provider.id,taskId};
+}
+
 async function createVideoTaskWithProvider(provider, body, signal) {
   try {
+    if (provider.protocol === 'atlas-kling-video') return await createAtlasKlingVideoTask(provider, body, signal);
     if (provider.protocol === 'aireiter-async') return await createAireiterVideoTask(provider, body, signal);
     if (provider.protocol === 'minimax-video-v2') return await createMiniMaxVideoTask(provider, body, signal);
     if (provider.protocol === 'atlas-minimax-h3-video') return await createAtlasMiniMaxH3VideoTask(provider, body, signal);
@@ -2834,7 +2898,7 @@ export async function createVideoTask(body, signal) {
       const created = await createVideoTaskWithProvider(provider, body, signal);
       return {
         ...created,
-        taskId: routedProviderTaskId(requestedProviderId, created.providerId, created.taskId)
+        taskId: routedProviderTaskId(requestedProviderId === 'video-14' ? 'kling-billing' : requestedProviderId, created.providerId, created.taskId)
       };
     } catch (error) {
       if (!firstError) firstError = error;
@@ -3072,6 +3136,7 @@ async function pollJimengVideoTask(provider, taskId, signal) {
 export async function pollVideoTask(providerId, taskId, signal) {
   const routed = parseRoutedProviderTaskId(String(providerId || ''), taskId);
   const provider = providerFor('video', routed.providerId);
+  if (provider.protocol === 'atlas-kling-video') return pollAtlasSeedanceVideoTask(provider, routed.taskId, signal);
   if (provider.protocol === 'aireiter-async') return pollAireiterVideoTask(provider, routed.taskId, signal);
   if (provider.protocol === 'minimax-video-v2') return pollMiniMaxVideoTask(provider, routed.taskId, signal);
   if (provider.protocol === 'atlas-minimax-h3-video') return pollAtlasMiniMaxH3VideoTask(provider, routed.taskId, signal);
@@ -3089,6 +3154,9 @@ export async function pollVideoTask(providerId, taskId, signal) {
 }
 
 export async function chat(body, signal, onDelta, billing) {
+  if (String(body.model || '').trim().toLowerCase() === 'gemini-3.7-flash') {
+    throw Object.assign(new Error('This chat model has been retired. Please select an available model.'), { code: 'model-retired', status: 400 });
+  }
   const route = resolveAgentRoute({strategy:body.routingStrategy,prompt:body.prompt,messages:body.messages,
     providers:configuredProviders().filter(entry=>entry.kind === 'chat' && providerApiKey(entry))});
   if (route) body = {...body,providerId:route.providerId,model:route.model};
@@ -3183,7 +3251,7 @@ export async function chat(body, signal, onDelta, billing) {
       endUserId: request.endUserId,
       returnUsage: true,
       requireUsage: Boolean(billing),
-      beforeRequest: billing ? (nextRequest, usage) => billing.beforeRequest(provider, candidateModel, nextRequest, usage) : undefined,
+      beforeRequest: billing ? (nextRequest, usage, turns) => billing.beforeRequest(provider, candidateModel, nextRequest, usage, turns) : undefined,
       onDelta
     }, request, signal);
     const startedAt = Date.now();

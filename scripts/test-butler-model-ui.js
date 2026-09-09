@@ -61,8 +61,9 @@ assert.doesNotMatch(boardMedia, /dataset\.pinned/, 'Butler secondary menus must 
 assert.match(boardMedia, /event\.key === 'Escape'[\s\S]*closeBoardButlerMenu/, 'The Butler toolbar must close with Escape.');
 assert.match(boardButlerMenu, /'removeBackground'/, 'Background removal must remain available in the image Butler menu.');
 assert.match(boardButlerMenu, /'imageExpand'/, 'Image expansion must remain available in the image Butler menu.');
+assert.match(boardButlerMenu, /'imageEnhance'/, 'Quality enhancement is available in Butler.');
 assert.match(boardButlerMenu, /'generate3d'/, '3D generation must remain available in the image Butler menu.');
-['imageEdit', 'imageEnhance', 'eraseObject', 'topazImage'].forEach((action) => {
+['imageEdit', 'eraseObject', 'topazImage'].forEach((action) => {
   assert.doesNotMatch(boardButlerMenu, new RegExp(`'${action}'`), `${action} must be removed from the visible image Butler menu.`);
 });
 ['imageEdit', 'imageExpand', 'imageEnhance', 'eraseObject'].forEach((action) => {
@@ -108,7 +109,7 @@ assert.match(boardMedia, /function syncBoardButlerExpandEditorToSelection[\s\S]*
   'Changing the source selection must close its canvas expansion editor.');
 assert.match(canvasWorkspace, /function showCanvasLibrary[\s\S]*?closeBoardButlerExpandEditor/,
   'Leaving the canvas workspace must close the expansion editor.');
-assert.doesNotMatch(boardButlerMenu, /Enhance quality|画质提升|Image enhancement|图片增强/, 'Removed image enhancement tools must not remain visible in the image Butler menu.');
+assert.match(boardButlerMenu, /Enhance quality|画质提升/, 'Topaz quality enhancement must remain visible.');
 assert.doesNotMatch(boardMedia, /Creative upscale|图片创意放大/, 'The removed creative-upscale product must not remain visible.');
 assert.match(boardMedia, /maskDataUrl[\s\S]*maskWidth[\s\S]*maskHeight/, 'Erase must submit a real PNG mask with dimensions.');
 assert.match(boardMedia, /videoUpscale: Object\.freeze/, 'Video enhancement must have an isolated bridge hook.');

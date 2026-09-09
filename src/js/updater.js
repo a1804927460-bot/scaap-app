@@ -22,20 +22,20 @@ function showUpdateBanner(state = latestUpdaterState, force = false) {
         '正在打开 macOS 更新，请按系统提示允许更新，Messs 会自动重启。'
       )
       : t(
-        'The update installer is opening. Complete the installer and approve the Windows prompt if shown.',
-        '正在打开更新安装程序，请完成安装；如出现 Windows 提示，请允许本次更新。'
+        'Updating automatically. Messs will restart; approve the Windows permission prompt if shown.',
+        '正在自动更新，完成后将重新打开；如出现 Windows 权限提示，请允许本次更新。'
       );
     installBtn.disabled = true;
-    installBtn.textContent = t('Opening installer...', '正在打开安装程序...');
+    installBtn.textContent = t('Updating...', '正在更新...');
   } else if (status === 'downloaded') {
     downloadedUpdateVersion = version || downloadedUpdateVersion;
     text.textContent = t(
-      `Version ${version || ''} is ready. Restart to update.`,
-      `新版本 ${version || ''} 已准备好，重启即可更新。`
+      `Version ${version || ''} is ready. It will install when you quit, or restart now.`,
+      `新版本 ${version || ''} 已下载，退出软件时自动安装，也可立即重启更新。`
     );
     installBtn.disabled = false;
     installBtn.textContent = version
-      ? t(`Restart to install ${version}`, `重启安装 ${version}`)
+      ? t(`Restart to update ${version}`, `重启更新 ${version}`)
       : t('Restart to update', '重启更新');
   } else if (status === 'downloading') {
     const progress = Math.round(Number(state.progress) || 0);
@@ -70,7 +70,7 @@ function updaterStatusText(state) {
     available: t(`Version ${version || ''} is available`, `发现版本 ${version || ''}`),
     downloading: t(`Downloading ${version || ''} · ${progress}%`, `正在下载 ${version || ''} · ${progress}%`),
     downloaded: t(`Version ${version || ''} is ready to install`, `版本 ${version || ''} 已可安装`),
-    installing: t('Opening the update installer...', '正在打开更新安装程序...'),
+    installing: t('Installing update...', '正在自动安装更新...'),
     'up-to-date': t('You are up to date', '当前已是最新版本'),
     error: t('Update check failed', '更新检查失败')
   };
@@ -140,7 +140,7 @@ function initUpdater() {
     button.disabled = true;
     button.textContent = latestUpdaterState && latestUpdaterState.platform === 'darwin'
       ? t('Opening macOS update...', '正在打开 macOS 更新...')
-      : t('Opening installer...', '正在打开安装程序...');
+      : t('Updating...', '正在更新...');
     renderUpdaterState({ ...(latestUpdaterState || {}), status: 'installing', progress: 100 });
     try {
       const result = await window.messsAPI.installUpdateNow();

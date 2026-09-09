@@ -730,7 +730,7 @@ const AUTH_LEGAL_DOCUMENTS = Object.freeze({
     title: ['Privacy', '隐私协议', '개인정보 보호'],
     body: [
       'Messs stores the account, canvas, file, and usage data needed to provide the app. Provider credentials remain on the configured gateway and are not shown in the renderer.',
-      'Messs 会保存提供服务所需的账号、画布、文件和用量数据。上游密钥保存在已配置的网关中，不会显示在客户端。',
+      'Messs 会保存提供服务所需的账号、画布、文件和用量数据，包括登录标识、工作区设置、生成记录、积分余额与扣费明细。文件和媒体仅用于完成你发起的任务、同步到你的工作区以及提供历史记录功能。我们会采取访问控制、传输加密和最小权限措施保护数据；上游密钥保存在已配置的网关中，不会显示在客户端。你可以在设置中管理存储位置、退出账号或申请删除数据。部分请求会发送到所选 AI 上游，具体处理遵循对应服务商的隐私政策。',
       'Messs는 서비스 제공에 필요한 계정, 캔버스, 파일 및 사용량 데이터를 저장합니다. 공급자 키는 구성된 게이트웨이에 보관되며 앱 화면에 표시되지 않습니다.'
     ]
   },
@@ -738,7 +738,7 @@ const AUTH_LEGAL_DOCUMENTS = Object.freeze({
     title: ['Terms', '用户协议', '이용 약관'],
     body: [
       'Use Messs lawfully and keep your account secure. You are responsible for content submitted to AI services and for checking generated results before publishing or sharing them.',
-      '请合法使用 Messs 并保护账号安全。你需要对提交给 AI 服务的内容负责，发布或分享前请自行检查生成结果。',
+      '请合法使用 Messs 并保护账号安全。你需要对提交给 AI 服务的提示词、上传文件、参考素材及生成结果负责，确认你拥有必要的版权、肖像和商标授权。不得绕过安全限制、滥用服务、批量制造垃圾请求或干扰其他用户。积分按实际消耗或已确认的任务计费，网络故障、上游限制和第三方服务变化可能影响结果；发布或分享前请自行检查生成结果。',
       'Messs를 합법적으로 사용하고 계정을 안전하게 관리하세요. AI 서비스에 제출하는 콘텐츠와 게시 또는 공유 전 결과 확인에 대한 책임은 사용자에게 있습니다.'
     ]
   },
@@ -746,7 +746,7 @@ const AUTH_LEGAL_DOCUMENTS = Object.freeze({
     title: ['Content rules', '内容规范', '콘텐츠 규정'],
     body: [
       'Do not use Messs to create illegal, abusive, deceptive, or privacy-invasive content. Respect copyright, likeness, trademarks, and the rights of other people when uploading references or generating media.',
-      '请勿使用 Messs 制作违法、骚扰、欺骗或侵犯隐私的内容。上传参考素材或生成媒体时，请尊重版权、肖像、商标及他人的合法权益。',
+      '请勿使用 Messs 制作违法、暴力威胁、骚扰仇恨、欺诈误导、侵犯隐私、色情剥削或帮助规避监管的内容。不得上传恶意软件、未经授权的个人信息、机密资料或受限制的版权素材。上传参考素材或生成媒体时，请尊重版权、肖像、商标及他人的合法权益；涉及真实人物、未成年人、医疗、金融或公共事件时，应取得明确授权并进行人工核验。发现违规内容、侵权通知或安全问题，请通过客服渠道联系我们。',
       'Messs를 사용해 불법적이거나 괴롭힘, 기만, 개인정보 침해에 해당하는 콘텐츠를 만들지 마세요. 참고 자료를 업로드하거나 미디어를 생성할 때 저작권, 초상, 상표 및 타인의 권리를 존중하세요.'
     ]
   }
@@ -1713,8 +1713,15 @@ function toggleSidebarCollapsed() {
 function setSidebarCollapsed(collapsed) {
   document.getElementById('main-app').classList.toggle('sidebar-collapsed', collapsed);
   document.getElementById('sidebar').classList.toggle('is-collapsed', collapsed);
+  const toggle = document.getElementById('collapse-sidebar-btn');
+  if (toggle) {
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    const label = collapsed ? t('Expand sidebar', '展开侧边栏') : t('Collapse sidebar', '收起侧边栏');
+    toggle.title = label;
+    toggle.setAttribute('aria-label', label);
+  }
   const expandBtn = document.getElementById('expand-sidebar-btn');
-  if (expandBtn && collapsed) {
+  if (expandBtn && collapsed && !toggle) {
     expandBtn.hidden = false;
     requestAnimationFrame(() => expandBtn.classList.add('is-visible'));
   } else if (expandBtn) {
@@ -2202,6 +2209,71 @@ function renderMembershipBalance(membership) {
   renderAccountFooterCredits(membership);
 }
 
+async function openCreditPurchaseDialog() {
+  if (document.getElementById('credit-purchase-dialog')) return;
+  const dialog = document.createElement('dialog');
+  dialog.id = 'credit-purchase-dialog';
+  dialog.className = 'credit-purchase-dialog';
+  const title = document.createElement('h2');
+  title.id = 'credit-purchase-title';
+  title.textContent = t('Buy credits', '购买积分');
+  dialog.setAttribute('aria-labelledby', title.id);
+  const note = document.createElement('p');
+  note.textContent = t('One-time purchase · USD · tax included · no automatic renewal', '一次性购买 · 美元结算 · 含税 · 不自动续费');
+  const status = document.createElement('p');
+  status.setAttribute('role', 'status');
+  status.textContent = t('Loading…', '正在加载…');
+  const grid = document.createElement('div'); grid.className = 'credit-purchase-packs';
+  const footer = document.createElement('div'); footer.className = 'credit-purchase-actions';
+  const refresh = document.createElement('button'); refresh.type = 'button';
+  refresh.textContent = t('Refresh balance', '刷新积分');
+  const close = document.createElement('button'); close.type = 'button'; close.textContent = t('Close', '关闭');
+  close.onclick = () => dialog.close();
+  let refreshing = false;
+  const refreshBalance = async () => {
+    if (refreshing || !dialog.isConnected) return;
+    refreshing = true; refresh.disabled = true;
+    try {
+      const snapshot = await window.messsAPI.getMembershipSnapshot();
+      renderMembershipBalance(snapshot);
+      const values = membershipCreditValues(snapshot, { requireAuthoritative: true, userId: activeAccountAvatarUserId || '' });
+      if (values) status.textContent = t('Current balance: ', '当前积分：') + values.balance.toLocaleString(appLocale());
+    } catch { status.textContent = t('Could not refresh. Please try again.', '刷新失败，请重试。'); }
+    finally { refreshing = false; refresh.disabled = false; }
+  };
+  refresh.onclick = refreshBalance;
+  window.addEventListener('focus', refreshBalance);
+  dialog.addEventListener('close', () => { window.removeEventListener('focus', refreshBalance); dialog.remove(); document.getElementById('account-plan-open')?.focus(); }, { once: true });
+  footer.append(refresh, close); dialog.append(title, note, grid, status, footer); document.body.append(dialog); dialog.showModal();
+  try {
+    const result = await window.messsAPI.getCreditPacks();
+    if (!dialog.isConnected) return;
+    if (!result?.ok) {
+      status.textContent = result?.code === 'sign-in-required' ? t('Sign in before purchasing credits.', '请先登录后购买积分。') : t('Payments are unavailable. Please try later.', '支付暂不可用，请稍后重试。');
+      return;
+    }
+    status.textContent = t('Credits are added after payment confirmation.', '支付确认后积分自动到账。');
+    for (const pack of result.packs) {
+      const card = document.createElement('section');
+      const name = document.createElement('h3'); name.textContent = pack.name;
+      const amount = document.createElement('strong'); amount.textContent = Number(pack.credits).toLocaleString(appLocale()) + t(' credits', ' 积分');
+      const price = document.createElement('p'); price.textContent = new Intl.NumberFormat('en-US', { style: 'currency', currency: pack.currency }).format(pack.amount / 100);
+      const buy = document.createElement('button'); buy.type = 'button'; buy.disabled = !pack.available;
+      buy.textContent = pack.available ? t('Buy', '购买') : t('Coming soon', '暂未开放');
+      buy.onclick = async () => {
+        const buttons = [...grid.querySelectorAll('button')]; buttons.forEach(button => { button.disabled = true; });
+        status.textContent = t('Opening secure checkout…', '正在打开安全支付页面…');
+        try {
+          const purchase = await window.messsAPI.purchaseCreditPack(pack.id);
+          status.textContent = purchase?.ok ? t('Complete payment in your browser, then refresh your balance here.', '请在浏览器中完成付款，然后返回刷新积分。') : t('Could not open checkout. Please try again.', '支付页面打开失败，请重试。');
+        } catch { status.textContent = t('Could not open checkout. Please try again.', '支付页面打开失败，请重试。'); }
+        finally { buttons.forEach((button, index) => { button.disabled = !result.packs[index].available; }); }
+      };
+      card.append(name, amount, price, buy); grid.append(card);
+    }
+  } catch { status.textContent = t('Payments are unavailable. Please try later.', '支付暂不可用，请稍后重试。'); }
+}
+
 function renderCloudSecurity(config) {
   const section = document.querySelector('.cloud-security-section');
   const state = document.getElementById('cloud-security-state');
@@ -2580,7 +2652,7 @@ async function initAiMediaSettings() {
   document.getElementById('cloud-account-google').addEventListener('click', (event) => signInCloudWithGoogle(event.currentTarget));
   document.getElementById('account-google-sign-in').addEventListener('click', (event) => signInCloudWithGoogle(event.currentTarget));
   document.getElementById('account-plan-open').addEventListener('click', () => {
-    showToast(t('Plans will be available before the public release.', '套餐将在正式发布前开放。'), 'Messs');
+    void openCreditPurchaseDialog();
   });
   document.getElementById('account-popover-avatar').addEventListener('click', chooseAccountAvatar);
   document.addEventListener('messs:profile-avatar-updated', (event) => {

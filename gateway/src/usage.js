@@ -175,7 +175,7 @@ export const IMAGE_RESOLUTION_UPSTREAM_CREDITS = Object.freeze({
   'image-15': legacyPointRateTable({ '1k': 3, '2k': 4 }),
   'image-16': legacyPointRateTable({ '512x512': 2, '1024x1024': 2 }),
   'image-17': Object.freeze({ '1k': 0.08 * PTC_TO_CREDITS, '2k': 0.32 * PTC_TO_CREDITS }),
-  'image-18': Object.freeze({ '1k': 0.08 * PTC_TO_CREDITS, '2k': 0.32 * PTC_TO_CREDITS })
+  'image-18': Object.freeze({ '1k': 0.08 * PTC_TO_CREDITS, '2k': 0.12 * PTC_TO_CREDITS })
 });
 export const IMAGE_RESOLUTION_CREDITS = Object.freeze({
   ...retailNestedRateTable(IMAGE_RESOLUTION_UPSTREAM_CREDITS),
@@ -461,13 +461,13 @@ export function quoteUsage(kind, request = {}) {
   }
   if (normalizedKind === 'video') {
     const requestedProviderId = String(request.providerId || 'video-1').trim().toLowerCase() || 'video-1';
-    if (!['video-1', 'video-2', 'video-3'].includes(requestedProviderId)) {
+    if (!['video-1', 'video-2', 'video-3', 'video-14'].includes(requestedProviderId)) {
       throw Object.assign(new Error('The selected video provider is not allowed.'), { code: 'provider-not-allowed', status: 400 });
     }
     const sharedQuote = creditPricing.quoteMediaCredits({
       kind: 'video', providerId: requestedProviderId, resolution: request.resolution,
       size: request.size, duration: request.duration, serviceTier: request.serviceTier,
-      model: request.model, referenceMediaTypes: request.referenceMediaTypes
+      model: request.model, referenceMediaTypes: request.referenceMediaTypes, generateAudio: request.generateAudio
     });
     return {
       kind: 'video',
@@ -813,7 +813,7 @@ export async function confirmUsageDelivery(userId, requestId, delivered = true, 
 
 export async function reserveToolUsage(userId, requestId, request = {}, fetchImpl = fetch) {
   const providerId = String(request.providerId || '').trim().toLowerCase();
-  if (['background-remove', 'clipdrop-uncrop'].includes(providerId)) {
+  if (['background-remove', 'clipdrop-uncrop', 'clipdrop-upscale'].includes(providerId)) {
     const quote = falPricing.quoteFalTool(providerId, request.options || {});
     const headers = serviceHeaders();
     if (!headers) throw serviceError('credit-service-not-configured', 'FAL requires durable billing.');
@@ -1338,12 +1338,14 @@ export async function getCanvasUsage(userId, canvasId, fetchImpl = fetch) {
     // with its append-only ledger to calculate a lifetime, de-duplicated total.
     details: (Array.isArray(payload.details) ? payload.details : []).map((row = {}) => ({
       requestId: String(row.requestId || '').trim().slice(0, 80),
-      kind: ['image', 'video', '3d'].includes(row.kind) ? row.kind : 'image',
+      kind: ['chat', 'image', 'video', '3d'].includes(row.kind) ? row.kind : 'image',
       providerId: String(row.providerId || '').trim().toLowerCase().slice(0, 64),
       modelName: String(row.modelName || '').trim().slice(0, 160),
       name: String(row.name || '').trim().slice(0, 240),
       estimatedCredits: row.estimatedCredits === null || row.estimatedCredits === undefined
         ? null : nonnegativeNumber(row.estimatedCredits),
+      creditsCharged: (row.creditsCharged ?? row.credits) == null ? null : nonnegativeNumber(row.creditsCharged ?? row.credits),
+      creditsReserved: row.creditsReserved == null ? null : nonnegativeNumber(row.creditsReserved),
       status: ['reserved', 'succeeded', 'failed'].includes(row.status) ? row.status : 'succeeded',
       resolution: String(row.resolution || '').trim().slice(0, 32) || null,
       duration: nonnegativeNumber(row.duration),

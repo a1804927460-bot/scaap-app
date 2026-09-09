@@ -304,6 +304,11 @@ textarea,
   outline-offset: 2px;
 }
 
+/* Ordinary typing must not make a previously clicked control look selected. */
+html[data-keyboard-navigation="false"] :focus-visible:not(input):not(textarea):not(select):not([contenteditable="true"]):not([role="textbox"]) {
+  outline: none !important;
+}
+
 /* The viewport receives shortcut focus; its outline leaks behind the Agent dock. */
 #board-viewport:focus-visible {
   outline: none;

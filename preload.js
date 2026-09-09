@@ -167,6 +167,14 @@ async function renderPdfPage(pdfPath, pageNumber, scale) {
 
 contextBridge.exposeInMainWorld('messsAPI', {
   getInitialState: () => ipcRenderer.invoke('app:getInitialState'),
+  listScheduleProjects: () => ipcRenderer.invoke('schedule:list'),
+  saveScheduleProject: input => ipcRenderer.invoke('schedule:save', input),
+  archiveScheduleProject: input => ipcRenderer.invoke('schedule:archive', input),
+  restoreScheduleProject: input => ipcRenderer.invoke('schedule:restore', input),
+  listWorkspaceResources: () => ipcRenderer.invoke('resources:list'),
+  saveWorkspaceResource: input => ipcRenderer.invoke('resources:save', input),
+  removeWorkspaceResource: input => ipcRenderer.invoke('resources:remove', input),
+  parseWorkspaceSkill: text => ipcRenderer.invoke('resources:parseSkill', text),
   getActivationStatus: () => ipcRenderer.invoke('activation:getStatus'),
   activateApp: (code) => ipcRenderer.invoke('activation:activate', code),
   syncThemeSurface: (theme) => ipcRenderer.send('window:syncThemeSurface', theme),
@@ -177,6 +185,8 @@ contextBridge.exposeInMainWorld('messsAPI', {
   setColorProfile: (profile) => ipcRenderer.invoke('settings:setColorProfile', profile),
   restartForColorProfile: () => ipcRenderer.invoke('settings:restartForColorProfile'),
   getMembershipSnapshot: () => ipcRenderer.invoke('membership:getSnapshot'),
+  getCreditPacks: () => ipcRenderer.invoke('payments:getPacks'),
+  purchaseCreditPack: (packId) => ipcRenderer.invoke('payments:purchase', packId),
   getUsageSummary: (range) => ipcRenderer.invoke('membership:getUsageSummary', range),
   checkMembershipFeature: (feature) => ipcRenderer.invoke('membership:checkFeature', feature),
   quoteMediaCredits: (request) => ipcRenderer.invoke('membership:quoteMedia', request),

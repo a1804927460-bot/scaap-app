@@ -1060,7 +1060,7 @@ async function testLegnextMidjourneyFlow() {
   assert.strictEqual(detectMediaProtocol(config.imageEndpoint), 'legnext-midjourney');
   assert.strictEqual(calls[0].url, 'https://api.legnext.ai/api/v1/diffusion');
   assert.deepStrictEqual(JSON.parse(calls[0].options.body), {
-    text: 'cinematic observatory --v 8.2 --ar 16:9 --hd'
+    text: 'cinematic observatory --v 8.2 --ar 16:9 --hd --fast'
   });
   assert.strictEqual(calls[0].options.headers['x-api-key'], 'legnext-secret');
   assert.strictEqual(calls[0].options.headers.Authorization, undefined);

@@ -4284,9 +4284,24 @@ function initBoardCanvas() {
     // rename fields, the document editor, etc.).
     const tag = document.activeElement && document.activeElement.tagName;
     const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || (document.activeElement && document.activeElement.isContentEditable);
-    if (isEditable || !isBoardWorkspaceActive()) return;
+    if (isEditable || e.isComposing || e.defaultPrevented || document.querySelector('dialog[open]') || !isBoardWorkspaceActive()) return;
     if (typeof CanvasNodeMode !== 'undefined' && CanvasNodeMode.mode === 'node') return;
 
+    if (!e.altKey && !e.repeat) {
+      const command = e.ctrlKey || e.metaKey;
+      if (command && ['+', '=', '-', '0'].includes(e.key)) {
+        e.preventDefault();
+        if (e.key === '0') resetBoardZoomTo100();
+        else document.getElementById(e.key === '-' ? 'board-zoom-out' : 'board-zoom-in').click();
+        return;
+      }
+      if (!command && e.shiftKey && ['Digit1', 'Digit2'].includes(e.code)) {
+        e.preventDefault();
+        const items = boardSelectionContextItems();
+        fitBoardItemsToViewport(e.code === 'Digit2' ? items.filter(item => item.selected) : items);
+        return;
+      }
+    }
     const shortcutKey = e.key.toLowerCase();
     const selection = window.getSelection && window.getSelection();
     if ((e.ctrlKey || e.metaKey) && shortcutKey === 'c' && selection && !selection.isCollapsed && selection.toString()) {
@@ -5187,19 +5202,30 @@ function boardAiDurationValue(seconds) {
 }
 
 function renderShortcutsPopover(pop) {
-  const shortcuts = [
-    ['Ctrl/Cmd + Z', 'Undo last move', '撤回上次移动'],
-    ['Ctrl/Cmd + Shift + Z', 'Redo last move', '重做上次移动'],
-    ['Ctrl/Cmd + A', 'Select all board items', '选择全部画布项目'],
-    ['Delete', 'Remove selected items from board', '移除所选画布项目'],
-    ['Esc', 'Clear selection or exit drawing', '清除选择或退出绘制'],
-    ['Mouse wheel', 'Zoom board', '缩放画布'],
-    ['Shift + wheel', 'Pan board', '滚动画布'],
-    ['Middle drag', 'Pan board', '平移画布']
+  const groups = [
+    ['Edit', '编辑', [
+      ['Ctrl + Z', 'Undo', '撤销'], ['Ctrl + Shift + Z', 'Redo', '重做'],
+      ['Ctrl + C', 'Copy selection', '复制所选'], ['Ctrl + V', 'Paste', '粘贴'],
+      ['Ctrl + A', 'Select all', '全选'], ['Ctrl + D', 'Deselect', '取消选择'],
+      ['Delete', 'Remove from canvas', '从画布移除'], ['Esc', 'Exit current operation', '退出当前操作']
+    ]],
+    ['View', '视图', [
+      ['Ctrl + +', 'Zoom in', '放大'], ['Ctrl + −', 'Zoom out', '缩小'],
+      ['Ctrl + 0', 'Reset to 100%', '重置为 100%'],
+      ['Shift + 1', 'Fit canvas', '适应画布'], ['Shift + 2', 'Fit selection', '适应选中'],
+      ['Shift + wheel', 'Pan horizontally', '水平滚动画布'], ['Middle drag', 'Pan canvas', '平移画布']
+    ]],
+    ['AI & workflow', 'AI 与工作流', [
+      ['Ctrl + Space', 'Toggle Agent', '显示 / 隐藏 Agent'],
+      ['Tab', 'Generate from selection', '打开所选素材的生成面板']
+    ]]
   ];
-  pop.innerHTML = '<div class="shortcuts-title">' + t('Shortcuts', '快捷键') + '</div>' + shortcuts.map(([key, en, zh]) =>
-    `<div class="shortcuts-row"><span>${escapeHtml(t(en, zh))}</span><kbd>${escapeHtml(key)}</kbd></div>`
-  ).join('');
+  pop.setAttribute('role', 'dialog'); pop.setAttribute('aria-label', t('Shortcuts', '快捷键'));
+  pop.innerHTML = '<header class="shortcuts-heading"><strong>' + t('Messs shortcuts', 'Messs 快捷键') + '</strong><button type="button" aria-label="'+t('Close','关闭')+'">×</button></header><div class="shortcuts-columns">' + groups.map(([en,zh,rows]) =>
+    '<section><h3>'+escapeHtml(t(en,zh))+'</h3>'+rows.map(([key,en,zh])=>
+      '<div class="shortcuts-row"><span>'+escapeHtml(t(en,zh))+'</span><kbd>'+escapeHtml(key)+'</kbd></div>').join('')+'</section>'
+  ).join('')+'</div><p class="shortcuts-footnote">'+t('Canvas shortcuts are inactive while typing. On macOS use Command instead of Ctrl.', '输入文字时不触发画布快捷键。macOS 使用 Command 代替 Ctrl。')+'</p>';
+  pop.querySelector('.shortcuts-heading button').onclick = () => pop.remove();
 }
 
 function refreshBoardLanguage() {
@@ -6691,6 +6717,12 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
         </div>
       </section>
       <div class="ai-options-panel" hidden>
+        <section class="ai-kling-options" hidden>
+          <div class="ai-options-heading"><strong>Kling 版本</strong><span>按创作需求选择</span></div>
+          <div class="ai-kling-variants"></div>
+          <div class="ai-kling-audio"><span>同步声音</span><label><input type="checkbox" class="ai-kling-sound">生成声音</label></div>
+          <p class="ai-kling-hint"></p>
+        </section>
         <div class="ai-options-heading"><strong data-generation-heading="ratio">画面比例</strong><span class="ai-ratio-value"></span></div>
         <div class="ai-ratio-grid"></div>
         <div class="ai-option-block ai-resolution-block">
@@ -6831,6 +6863,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   let quality = 'medium';
   let count = 1;
   let duration = Number(aiConfig.videoDuration) || 6;
+  let serviceTier = 'standard';
+  let generateAudio = false;
   let styleId = '';
   let enhancePrompt = true;
   let seed = null;
@@ -7386,7 +7420,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       ratio: t('Aspect ratio', '画面比例'),
       resolution: t('Resolution', '分辨率'),
       quality: t('Quality', '精细度'),
-      count: t('Count', '数量'),
+      count: kind === 'image' && selectedImageProvider()?.id === 'image-18' ? t('Grids (4 images each)', '组数（每组四宫格）') : t('Count', '数量'),
       duration: t('Duration', '时长')
     };
     pop.querySelectorAll('[data-generation-heading]').forEach((heading) => {
@@ -7486,7 +7520,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     return providers.find((provider) => provider.id === modelSelect.value) || null;
   }
 
-  function renderCreditEstimate(totalCredits) {
+  function renderCreditEstimate(totalCredits, authoritative = false) {
     const total = Math.max(0, Math.ceil(Number(totalCredits) || 0));
     if (!total) {
       delete creditEstimate.dataset.credits;
@@ -7497,9 +7531,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       return;
     }
     creditEstimate.dataset.credits = String(total);
+    creditEstimate.dataset.authoritative = String(authoritative);
     creditEstimate.hidden = false;
     creditEstimate.removeAttribute('aria-busy');
-    creditEstimate.textContent = t(`${total} pts`, `${total} 积分`);
+    creditEstimate.textContent = (creditEstimate.dataset.authoritative === 'true' ? '' : '≈ ') + t(`${total} pts`, `${total} 积分`);
     creditEstimate.title = t(`Estimated usage: ${total} credits`, `预计消耗 ${total} 积分`);
   }
 
@@ -7532,11 +7567,13 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       size: kind === 'image' ? size : undefined,
       quality: kind === 'image' ? quality : undefined,
       resolution: size,
-      duration: kind === 'video' ? duration : undefined
+      duration: kind === 'video' ? duration : undefined,
+      serviceTier: kind === 'video' && provider.capabilities?.variantOptions ? serviceTier : undefined,
+      generateAudio: kind === 'video' && provider.capabilities?.variantOptions ? generateAudio : undefined
     };
     Promise.resolve(quoteApi.call(window.messsAPI, request)).then((pricing) => {
       if (revision !== creditQuoteRevision) return;
-      renderCreditEstimate(pricing && pricing.totalCredits);
+      renderCreditEstimate(pricing && pricing.totalCredits, pricing?.authoritative === true);
     }).catch(() => {
       if (revision !== creditQuoteRevision) return;
       renderCreditEstimate(0);
@@ -7552,9 +7589,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
 
   function selectedVideoCapabilities() {
     const provider = selectedVideoProvider();
-    return provider && provider.capabilities && typeof provider.capabilities === 'object'
-      ? provider.capabilities
-      : {};
+    const caps = provider?.capabilities || {};
+    const variant = caps.variantOptions?.[serviceTier] || caps.variantOptions?.standard;
+    return variant ? {...caps,...variant} : caps;
   }
 
   function videoModeLabel(modeId) {
@@ -7649,6 +7686,34 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   }
 
   function syncGenerationOptions() {
+    const variants = kind === 'video' ? selectedVideoProvider()?.capabilities?.variantOptions : null;
+    const klingPanel = pop.querySelector('.ai-kling-options');
+    klingPanel.hidden = !variants;
+    if (variants) {
+      if (!variants[serviceTier]) serviceTier = 'standard';
+      const variant = variants[serviceTier];
+      const container = pop.querySelector('.ai-kling-variants');
+      container.replaceChildren();
+      for (const [id, option] of Object.entries(variants)) {
+        const button = document.createElement('button');
+        button.type = 'button'; button.textContent = option.label;
+        button.className = id === serviceTier ? 'is-active' : '';
+        button.setAttribute('aria-pressed', String(id === serviceTier));
+        button.addEventListener('click', () => {
+          if (boardReferences.size > option.maxReferenceImages) {
+            showToast(t('Remove the end frame before selecting Turbo.', '请先移除尾帧，再选择 Turbo。'), 'Kling'); return;
+          }
+          serviceTier = id; syncGenerationOptions();
+        });
+        container.appendChild(button);
+      }
+      if (!variant.generateAudio) generateAudio = false;
+      const sound = pop.querySelector('.ai-kling-sound');
+      sound.disabled = !variant.generateAudio; sound.checked = generateAudio;
+      pop.querySelector('.ai-kling-hint').textContent = variant.maxReferenceImages === 1
+        ? 'Turbo 使用单张首帧，可选择 720P 或 1080P。'
+        : '支持首帧 / 首尾帧。SR 为超分；声音与清晰度会同步更新积分。';
+    }
     const capabilities = kind === 'video' ? selectedVideoCapabilities() : selectedImageCapabilities();
     if (kind === 'video') {
       const selectedMode = composerVideoMode(videoMode, capabilities);
@@ -7705,6 +7770,19 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       button.textContent = value === 'Default'
         ? t('Default', '默认', '기본')
         : kind === 'video' ? aiVideoResolutionLabel(value) : value;
+      if (kind === 'video') {
+        button.title = aiVideoResolutionLabel(value);
+        button.setAttribute('aria-label', button.title);
+        const label = document.createElement('span');
+        label.className = 'ai-resolution-value';
+        label.textContent = String(value).replace(/-(?:ESR|SR)/gi, '').replace(/\s*&\s*60FPS/i, '').trim();
+        button.replaceChildren(label);
+        if (/60FPS/i.test(value)) {
+          const badge = document.createElement('small');
+          badge.className = 'ai-resolution-fps'; badge.textContent = '60 FPS';
+          button.appendChild(badge);
+        }
+      }
       container.appendChild(button);
     };
     const resolutionGroups = kind === 'video' ? aiVideoResolutionGroups(resolutions) : [];
@@ -7759,12 +7837,17 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     void syncHiggsfieldOptions();
   }
 
+  pop.querySelector('.ai-kling-sound').addEventListener('change', (event) => {
+    generateAudio = event.target.checked; updateCreditEstimate();
+  });
+
   function renderRatios() {
     const capabilities = kind === 'video' ? selectedVideoCapabilities() : selectedImageCapabilities();
     const ratios = kind === 'video'
       ? videoModeRatios(composerVideoRequestMode(videoMode, boardReferences.size, capabilities), capabilities)
       : supportedImageRatios(capabilities, boardReferences.size > 0);
     if (!ratios.includes(ratio)) ratio = ratios[0];
+    ratioGrid.hidden = kind === 'video' && Boolean(selectedVideoProvider()?.capabilities?.variantOptions);
     ratioGrid.innerHTML = '';
     ratios.forEach((value) => {
       const button = document.createElement('button');
@@ -8106,17 +8189,18 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       showToast(t('Wait for the reference images to finish loading.', '请等待参考图加载完成。'), 'AI');
       return;
     }
-    const text = prompt.value.trim();
+    const sourceMoodboard = pop._moodboardItemId
+      ? AppState.boardItems.find(item => item.id === pop._moodboardItemId && item.isMoodboard) : null;
+    const text = pop._moodboardItemId
+      ? (sourceMoodboard ? moodboardPlainText(sourceMoodboard).trim() : '') : prompt.value.trim();
     if (!text) {
-      showToast(t('Enter a generation prompt first.', '请先输入生成提示词。'), 'AI');
-      prompt.focus();
+      showToast(pop._moodboardItemId ? t('Add text to the moodboard first.', '请先在情绪板里填写文字。') : t('Enter a generation prompt first.', '请先输入生成提示词。'), 'AI');
+      if (!pop._moodboardItemId) prompt.focus();
       return;
     }
     const selectedProvider = (kind === 'image' ? providers : videoProviders)
       .find((provider) => provider.id === modelSelect.value);
-    const videoCapabilities = kind === 'video' && selectedProvider && selectedProvider.capabilities
-      ? selectedProvider.capabilities
-      : {};
+    const videoCapabilities = kind === 'video' ? selectedVideoCapabilities() : {};
     if (kind === 'video' && boardReferences.size >= 2
       && !['omni', 'video-reference', 'video-edit', 'video-extend'].includes(videoMode)
       && !supportsVideoFirstLastFrame(videoCapabilities)) {
@@ -8184,6 +8268,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
           : videoModeRatios(selectedMode, videoCapabilities)[0])
         : ratio,
       videoMode: kind === 'video' ? selectedMode.id : null,
+      serviceTier: kind === 'video' && selectedProvider?.capabilities?.variantOptions ? serviceTier : undefined,
+      generateAudio: kind === 'video' && selectedProvider?.capabilities?.variantOptions ? generateAudio : undefined,
       imageProviderId: kind === 'image' && selectedProvider ? selectedProvider.id : null,
       videoProviderId: kind === 'video' && selectedProvider ? selectedProvider.id : null,
       modelName: selectedProvider
@@ -8218,6 +8304,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     refreshLanguage();
   };
   pop._applyGenerationPreset = (preset = {}) => {
+    serviceTier = preset.serviceTier || 'standard';
+    generateAudio = preset.generateAudio === true;
     updateMode(preset.kind === 'video' ? 'video' : 'image');
     const modelOption = [...modelSelect.options].find((entry) => entry.value === preset.providerId);
     if (modelOption) {
@@ -8677,8 +8765,11 @@ async function openAiComposerForSelection(kind, promptText = '', options = {}) {
 
   const prompt = pop.querySelector('.ai-composer-prompt');
   if (promptText) prompt.value = promptText;
-  if (options.moodboardAnchor) layoutMoodboardComposer(pop, options.moodboardAnchor);
-  prompt.focus();
+  pop._moodboardItemId = options.moodboardItemId || null;
+  if (options.moodboardAnchor) {
+    layoutMoodboardComposer(pop, options.moodboardAnchor);
+    pop.querySelector('.ai-model-picker-trigger')?.focus();
+  } else prompt.focus();
 }
 
 function layoutMoodboardComposer(pop, anchor) {
@@ -8777,9 +8868,8 @@ async function retryGeneratedMediaFromDetails(file) {
     const imageProvider = !isVideo
       ? getConfiguredImageProviders(config || {}).find((provider) => provider.id === generation.providerId)
       : null;
-    const videoCapabilities = videoProvider && videoProvider.capabilities
-      ? videoProvider.capabilities
-      : {};
+    const baseVideoCapabilities = videoProvider?.capabilities || {};
+    const videoCapabilities = {...baseVideoCapabilities, ...(baseVideoCapabilities.variantOptions?.[generation.serviceTier || 'standard'] || {})};
     const videoResolution = isVideo
       ? supportedVideoResolution(generation.resolution || generation.size, videoCapabilities)
       : undefined;
@@ -8828,6 +8918,8 @@ async function retryGeneratedMediaFromDetails(file) {
       sourceHeight: file.sourceHeight || null,
       imageProviderId: generation.kind === 'video' ? null : generation.providerId,
       videoProviderId: generation.kind === 'video' ? generation.providerId : null,
+      serviceTier: generation.serviceTier,
+      generateAudio: generation.generateAudio,
       modelName: generation.modelName || t('AI model', 'AI 模型'),
       cameraControl: isVideo ? normalizeAiCameraControl(generation.cameraControl) : null,
       referenceFileIds: references.referenceFileIds,

@@ -38,11 +38,20 @@ export async function normalizeFalResizeOptions(imageDataUrl, options = {}) {
   return normalized;
 }
 
+export async function normalizeFalEnhanceOptions(imageDataUrl) {
+  const { buffer } = parseImageDataUrl(imageDataUrl);
+  const metadata = await sharp(buffer, { limitInputPixels: 6_000_000 }).metadata();
+  if (!metadata.width || !metadata.height || metadata.pages > 1 || metadata.width * metadata.height > 6_000_000) {
+    throw failure('invalid-image-tool-options', '画质提升支持不超过 600 万像素的静态图片，请先缩小图片。', 400);
+  }
+  return { megapixels: Math.ceil(metadata.width * metadata.height * 4 / 1_000_000) };
+}
+
 export async function runFalImageTool(model, imageDataUrl, options = {}, dependencies = {}) {
-  if (!['smart-resize', 'feynobg'].includes(model)) throw failure('invalid-image-tool', '不支持此图片工具。', 400);
+  if (!['smart-resize', 'feynobg', 'topaz/upscale/image'].includes(model)) throw failure('invalid-image-tool', '不支持此图片工具。', 400);
   const key = assertFalConfigured(dependencies.env || process.env);
   parseImageDataUrl(imageDataUrl);
-  const input = model === 'smart-resize' ? falResizeInput(imageDataUrl, options) : { image_url: imageDataUrl };
+  const input = model === 'smart-resize' ? falResizeInput(imageDataUrl, options) : model === 'topaz/upscale/image' ? { image_url: imageDataUrl, upscale_factor: 2, model: 'Standard MAX', output_format: 'png', face_enhancement: false } : { image_url: imageDataUrl };
   const fetchImpl = dependencies.fetchImpl || fetch;
   const sleep = dependencies.sleep || delay;
   const endpoint = `${origin}/fal-ai/${model}`;
@@ -80,7 +89,8 @@ export async function runFalImageTool(model, imageDataUrl, options = {}, depende
       : await json(endpoint, 'POST', input);
     accepted = true;
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(task.request_id || '')) throw failure('provider-invalid-response', '图片任务标识缺失。');
-    const taskUrl = `${endpoint}/requests/${task.request_id}`;
+    const taskEndpoint = model.startsWith('topaz/') ? `${origin}/fal-ai/topaz` : endpoint;
+    const taskUrl = `${taskEndpoint}/requests/${task.request_id}`;
     if (!dependencies.existingTaskId && dependencies.onAccepted) {
       await dependencies.onAccepted({ taskId: task.request_id, pollUrl: `${taskUrl}/status` });
     }

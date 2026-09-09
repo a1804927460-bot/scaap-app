@@ -30,13 +30,19 @@ const AI_ASSISTANT_CHAT_MODELS = new Set([
   'gemini-3.8-flash',
   'gemini-3.1-pro',
   'gpt-5.6-sol',
-  'kimi-k3'
+  'kimi-k3',
+  'deepseek-v4-flash',
+  'deepseek-v4-pro',
+  'gpt-6-astra'
 ]);
 const AI_ASSISTANT_CHAT_MODEL_NAMES = {
   'gemini-3.8-flash': 'Gemini 3.8 Flash',
   'gemini-3.1-pro': 'Gemini 3.1 Pro',
   'gpt-5.6-sol': 'GPT-5.6 Sol',
-  'kimi-k3': 'Kimi K3'
+  'kimi-k3': 'Kimi K3',
+    'deepseek-v4-flash': 'DeepSeek V4 Flash',
+    'deepseek-v4-pro': 'DeepSeek V4 Pro',
+    'gpt-6-astra': 'GPT-6 Astra'
 };
 
 function aiChatHistoryDate(value) {
@@ -52,6 +58,7 @@ function normalizeAiChatSession(session) {
   if (!session || !session.id) return null;
   const messages = Array.isArray(session.messages) ? session.messages.slice(-100).map((message) => ({
     role: message && message.role === 'assistant' ? 'assistant' : 'user',
+    creditsCharged: agentRecordedCredits(message?.creditsCharged),
     content: String(message && message.content || '').slice(0, 16000),
     attachmentFileIds: Array.isArray(message && message.attachmentFileIds) ? message.attachmentFileIds.slice(0, 50) : [],
     attachmentTokens: Array.isArray(message && message.attachmentTokens) ? message.attachmentTokens.slice(0, 20) : [],
@@ -164,6 +171,7 @@ function persistActiveAiChatSession(sessionId = AiAssistant.activeSessionId, mes
     .slice(-80)
     .map((message) => ({
       role: message.role,
+      creditsCharged: agentRecordedCredits(message.creditsCharged),
       content: String(message.content || '').slice(0, 12000),
       attachmentFileIds: Array.isArray(message.attachmentFileIds) ? message.attachmentFileIds.slice(0, 8) : [],
       attachmentTokens: Array.isArray(message.attachmentTokens) ? message.attachmentTokens.slice(0, 8) : [],
@@ -389,6 +397,7 @@ function loadAiChatSession(sessionId) {
     const row = appendAssistantText(message.role, message.content);
     appendAssistantMessageAttachments(row, Array.isArray(message.attachments) ? message.attachments : []);
     appendAssistantOutputFiles(row, message.generatedFiles);
+    appendAgentCharge(row, message);
   });
   if (AiAssistant.messages.length) showAssistantConversation();
   else {
@@ -655,7 +664,7 @@ function renderAssistantModels() {
     ? config.activeImageProviderId
     : AiAssistant.kind === 'video'
       ? config.activeVideoProviderId
-      : AiAssistant.chatSelectedId || `${config.activeChatProviderId || 'chat-3'}::${config.chatModel || 'gemini-3.1-pro'}`;
+      : AiAssistant.chatSelectedId || providers.find((provider) => provider.model === 'gemini-3.8-flash')?.id;
   const active = providers.find((provider) => provider.id === activeId) || providers[0];
   select.value = active ? active.id : '';
   // A single configured provider is still a valid selection. Disabling the
@@ -693,7 +702,7 @@ function selectedAssistantProvider() {
     .find((provider) => provider.id === (select && select.value)) || null;
 }
 
-function renderAssistantCreditEstimate(totalCredits) {
+function renderAssistantCreditEstimate(totalCredits, authoritative = false) {
   const estimate = document.getElementById('ai-assistant-credit-estimate');
   if (!estimate) return;
   const total = Math.max(0, Math.ceil(Number(totalCredits) || 0));
@@ -706,9 +715,10 @@ function renderAssistantCreditEstimate(totalCredits) {
     return;
   }
   estimate.dataset.credits = String(total);
+  estimate.dataset.authoritative = String(authoritative);
   estimate.hidden = false;
   estimate.removeAttribute('aria-busy');
-  estimate.textContent = t(`${total} credits`, `${total} \u79ef\u5206`);
+  estimate.textContent = (authoritative ? '' : '≈ ') + t(`${total} credits`, `${total} \u79ef\u5206`);
   estimate.title = t(`Estimated usage: ${total} credits`, `\u9884\u8ba1\u6d88\u8017 ${total} \u79ef\u5206`);
 }
 
@@ -716,7 +726,7 @@ function refreshAssistantCreditEstimateLanguage() {
   const estimate = document.getElementById('ai-assistant-credit-estimate');
   if (!estimate || estimate.hidden) return;
   const total = Number(estimate.dataset.credits);
-  if (Number.isFinite(total) && total > 0) renderAssistantCreditEstimate(total);
+  if (Number.isFinite(total) && total > 0) renderAssistantCreditEstimate(total, estimate.dataset.authoritative === 'true');
 }
 
 function updateAssistantCreditEstimate() {
@@ -756,7 +766,7 @@ function updateAssistantCreditEstimate() {
   };
   Promise.resolve(quoteApi.call(window.messsAPI, request)).then((pricing) => {
     if (revision !== AiAssistant.creditQuoteRevision || kind !== AiAssistant.kind) return;
-    renderAssistantCreditEstimate(pricing && pricing.totalCredits);
+    renderAssistantCreditEstimate(pricing && pricing.totalCredits, pricing?.authoritative === true);
   }).catch(() => {
     if (revision !== AiAssistant.creditQuoteRevision || kind !== AiAssistant.kind) return;
     renderAssistantCreditEstimate(0);
@@ -1625,6 +1635,7 @@ function assistantConversationTarget(sessionId = AiAssistant.activeSessionId) {
       const row=appendAssistantText(message.role,message.content,'',sessionId);
       appendAssistantMessageAttachments(row,message.attachments || []);
       appendAssistantOutputFiles(row,message.generatedFiles);
+      appendAgentCharge(row, message);
     }
   }
   return AiAssistant.sessionViews.get(sessionId).fragment;
@@ -2024,12 +2035,14 @@ async function executeAssistantMessage(item) {
       conversationMessages.push({
         role: 'assistant',
         content: response.text,
+        creditsCharged: agentRecordedCredits(response.creditsCharged),
         generatedFiles: Array.isArray(response.files) ? response.files : []
       });
       persistConversation();
       pending.remove();
       const assistantRow = appendAssistantText('assistant', response.text, '', sessionId);
       appendAssistantOutputFiles(assistantRow, response.files);
+      appendAgentCharge(assistantRow, response);
     } else {
       const request = {
         kind: submittedKind,
@@ -2118,6 +2131,12 @@ async function executeAssistantMessage(item) {
       mediaPlaceholders = [];
     }
     if (!generatedMediaFiles.length) {
+      const interrupted = submittedKind === 'chat' && preserveInterruptedAgentReply(pending);
+      if (interrupted) {
+        conversationMessages.push(interrupted);
+        persistConversation();
+        return false;
+      }
       pending.classList.remove('is-pending');
       pending.classList.add('is-error');
       pending.querySelector('.ai-assistant-message-body').textContent =

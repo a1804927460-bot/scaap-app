@@ -77,11 +77,11 @@ assert.ok(
 );
 assert.match(main, /owner:\s*'a1804927460-bot'/);
 assert.match(main, /repo:\s*'messs-releases'/);
-assert.match(main, /autoUpdater\.autoInstallOnAppQuit\s*=\s*false/);
-assert.match(main, /autoUpdater\.quitAndInstall\(false,\s*process\.platform\s*===\s*'darwin'\)/);
+assert.match(main, /autoUpdater\.autoInstallOnAppQuit\s*=\s*updaterState\.enabled/);
+assert.match(main, /autoUpdater\.quitAndInstall\(true,\s*true\)/);
 assert.doesNotMatch(main, /quitAndInstall\([\s\S]{0,160}setTimeout\(\(\)\s*=>\s*app\.exit/);
 assert.match(updaterUi, /\['available',\s*'downloading',\s*'downloaded',\s*'installing'\]/);
-assert.match(updaterUi, /status\s*===\s*'installing'[\s\S]*?Opening installer/);
+assert.match(updaterUi, /status\s*===\s*'installing'[\s\S]*?Updating/);
 assert.match(main, /image-resolution-mismatch[\s\S]*?points were refunded[\s\S]*?积分已退还/);
 assert.match(main, /preview\.shutdownProcesses\(\)/);
 assert.match(main, /thumbnails\.shutdownProcesses\(\)/);
@@ -92,18 +92,18 @@ assert.ok(catalog.version >= 8);
 assert.deepEqual(
   catalog.providers.filter((provider) => provider.kind === 'image' && provider.hidden !== true).map((provider) => provider.name),
   [
-    'Nano Banana Pro', 'Nano Banana 2', 'GPT Image 2'
+    'Nano Banana Pro', 'Nano Banana 2', 'GPT Image 2', 'Midjourney V8.2'
   ]
 );
 assert.deepEqual(
   catalog.providers.filter((provider) => provider.kind === 'video' && provider.hidden !== true).map((provider) => provider.name),
   [
-    'MiniMax H3', 'Seedance 2.0', 'Seedance 2.5'
+    'MiniMax H3', 'Seedance 2.0', 'Seedance 2.5', 'Kling'
   ]
 );
 assert.deepEqual(
   catalog.providers.filter((provider) => provider.hidden === true).map((provider) => provider.id),
-  ['atlas-image-gpt2', 'atlas-video-seedance20-i2v', 'atlas-video-seedance20-ref', 'atlas-video-seedance25-i2v', 'atlas-video-seedance25-ref', 'legacy-image-2', 'image-3', 'image-4', 'image-5', 'legacy-image-gpt2', 'image-7', 'image-8', 'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16', 'atlas-video-minimax-h3-i2v', 'atlas-video-minimax-h3-ref', 'legacy-video-minimax-h3', 'video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9', 'video-10', 'video-11', 'video-12', 'video-13', 'image-17', 'image-18', 'aireiter-image-nano-pro', 'aireiter-image-gpt2', 'aireiter-image-midjourney81', 'aireiter-video-minimax-h3', 'aireiter-video-seedance20', 'aireiter-video-seedance25', 'aireiter-video-kling-v3', 'aireiter-video-kling-o3', 'aireiter-chat-luna', 'chat-2']
+  ['atlas-image-gpt2', 'atlas-video-seedance20-i2v', 'atlas-video-seedance20-ref', 'atlas-video-seedance25-i2v', 'atlas-video-seedance25-ref', 'legacy-image-2', 'image-3', 'image-4', 'image-5', 'legacy-image-gpt2', 'image-7', 'image-8', 'image-9', 'image-10', 'image-11', 'image-12', 'image-13', 'image-14', 'image-15', 'image-16', 'atlas-video-minimax-h3-i2v', 'atlas-video-minimax-h3-ref', 'legacy-video-minimax-h3', 'video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-9', 'video-10', 'video-11', 'video-12', 'video-13', 'image-17', 'aireiter-image-nano-pro', 'aireiter-image-gpt2', 'aireiter-image-midjourney81', 'aireiter-video-minimax-h3', 'aireiter-video-seedance20', 'aireiter-video-seedance25', 'aireiter-video-kling-v3', 'aireiter-video-kling-o3', 'aireiter-chat-luna', 'chat-2']
 );
 assert.equal(catalog.providers.find((provider) => provider.name === 'MiniMax H3').requiresActivation, false);
 const miniMaxH3 = catalog.providers.find((provider) => provider.id === 'video-1');

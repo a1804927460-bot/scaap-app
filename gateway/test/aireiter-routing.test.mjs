@@ -53,7 +53,7 @@ test('AI Reiter is the primary Nano Banana Pro route', async () => {
       calls.push({ url: value, options });
       if (value === 'https://aireiter.com/api/openapi/submit') {
         const body = JSON.parse(options.body);
-        assert.equal(body.model, 'nano_banana_pro_max');
+        assert.equal(body.model, 'nano_banana_pro');
         assert.equal(body.params.prompt, 'test image');
         assert.deepEqual(body.params.image_url, ['https://assets.example.com/reference.png']);
         return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
@@ -75,7 +75,7 @@ test('AI Reiter is the primary Nano Banana Pro route', async () => {
     });
     assert.deepEqual(result, VALID_PNG);
     assert.equal(calls[0].url, 'https://aireiter.com/api/openapi/submit');
-    assert.equal(JSON.parse(calls[0].options.body).model, 'nano_banana_pro_max');
+    assert.equal(JSON.parse(calls[0].options.body).model, 'nano_banana_pro');
   }).finally(() => { globalThis.fetch = previousFetch; });
 });
 
@@ -91,7 +91,7 @@ test('AI Reiter Nano Banana 2 references use a public relay and documented URL e
       const value = String(url);
       if (value.endsWith('/api/openapi/submit')) {
         const body = JSON.parse(options.body);
-        assert.equal(body.model, 'nano_banana_v2_max');
+        assert.equal(body.model, 'nano_banana_v2');
         submittedParams = body.params;
         assert.equal(Array.isArray(body.params.image_url), true);
         assert.equal(body.params.image_url.length, 1);
@@ -716,7 +716,7 @@ test('legacy traffic controls cannot demote AI Reiter and ChaserPro remains hidd
       calls.push(value);
       if (value.endsWith('/api/openapi/submit')) {
         const body = JSON.parse(options.body);
-        assert.equal(body.model, 'nano_banana_pro_max');
+        assert.equal(body.model, 'nano_banana_pro');
         return jsonResponse({ statusCode: 200, data: { status: 'pending' } });
       }
       if (value.endsWith('/api/openapi/query')) {

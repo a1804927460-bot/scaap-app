@@ -5,7 +5,10 @@
     'gemini-3.8-flash': 'Gemini 3.8 Flash',
     'gemini-3.1-pro': 'Gemini 3.1 Pro',
     'gpt-5.6-sol': 'GPT-5.6 Sol',
-    'kimi-k3': 'Kimi K3'
+    'kimi-k3': 'Kimi K3',
+    'deepseek-v4-flash': 'DeepSeek V4 Flash',
+    'deepseek-v4-pro': 'DeepSeek V4 Pro',
+    'gpt-6-astra': 'GPT-6 Astra'
   };
 
   function clean(value) {
@@ -149,7 +152,8 @@
 
   global.MesssAiProviderOptions = {
     routingStrategy(model, usePreset = true) {
-      return usePreset ? ({'gemini-3.8-flash':'fast','gemini-3.1-pro':'balanced','gpt-5.6-sol':'ultimate'}[model] || null) : null;
+      // Preset buttons express a capability floor; the actual model is selected from text complexity.
+      return usePreset ? 'auto' : 'auto';
     },
     chatPresets: CHAT_PRESETS.map(preset => Object.freeze({ ...preset })),
     syncChatPresetSelection,

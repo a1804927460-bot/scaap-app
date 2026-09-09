@@ -84,6 +84,28 @@ try {
       throw new Error(`Unexpected request ${url}`);
     };
     const hooks={onAccepted:async task=>{accepted=task;}};
+    if (route.model !== 'gpt-image-2') {
+      for (const urls of [[], ['https://example.com/ref.png']]) {
+        mode='ok'; calls=[];
+        assert.deepEqual(await generateMedia('image',{...body,urls},null,hooks),png);
+        assert.equal(calls[0].url,'https://aireiter.com/api/openapi/submit','Economy quote must override costly mixed-channel preference');
+        assert.equal(accepted.providerId,route.providerId);
+        assert.ok(!calls.some(c=>c.url.startsWith('https://queue.fal.run/')));
+      }
+      mode='reject-primary'; calls=[];
+      await assert.rejects(()=>generateMedia('image',body,null,hooks));
+      assert.ok(!calls.some(c=>c.url.startsWith('https://queue.fal.run/')),'An outage must not spend beyond the quoted budget');
+      mode='ok'; calls=[];
+      process.env.FAL_IMAGE_BACKUP_ENABLED='false';
+      await recoverMedia('image',body,{providerId:route.id,providerTaskId:'fal-task',pollUrl:`https://queue.fal.run/fal-ai/${route.model}/requests/fal-task/status`},null,hooks);
+      assert.equal(calls.filter(c=>c.method==='POST').length,0,'Previously accepted costly tasks remain recoverable after repricing');
+      process.env.FAL_IMAGE_BACKUP_ENABLED='true';
+      delete process.env.AIREITER_API_KEY; calls=[];
+      await assert.rejects(()=>generateMedia('image',body,null,hooks),e=>e.code==='compatible-route-unavailable');
+      assert.equal(calls.length,0,'Missing cheap credentials cannot enable a loss-making route');
+      process.env.AIREITER_API_KEY='test-primary';
+      continue;
+    }
     for(const urls of [[],['https://example.com/ref.png']]) {
       mode='ok';calls=[];
       assert.deepEqual(await generateMedia('image',{...body,urls},null,hooks),png);

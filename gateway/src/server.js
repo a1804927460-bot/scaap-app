@@ -1,8 +1,11 @@
+import mediaProvider from '../../lib/ai-media-provider.js';
+import klingOptions from '../../lib/kling-options.js';
 import http from 'node:http';
+import { paymentCatalog, createCreditCheckout, handleCreditWebhook } from './credit-payments.js';
 import { openChatStream } from './chat-stream.js';
 import crypto from 'node:crypto';
 import { createChatBilling } from './chat-billing.js';
-import { assertFalConfigured, normalizeFalResizeOptions } from './fal-image-tools.js';
+import { assertFalConfigured, normalizeFalResizeOptions, normalizeFalEnhanceOptions } from './fal-image-tools.js';
 import { runDurableFalImageTool } from './durable-fal-image-tools.js';
 import { FairConcurrencyGate } from './fair-concurrency-gate.js';
 import { authenticate } from './auth.js';
@@ -115,7 +118,7 @@ import {
 
 const port = Math.max(1, Number(process.env.PORT) || 3000);
 const maxBodyBytes = 70 * 1024 * 1024;
-const PUBLIC_VIDEO_PROVIDER_IDS = new Set(['video-1', 'video-2', 'video-3']);
+const PUBLIC_VIDEO_PROVIDER_IDS = new Set(['video-1', 'video-2', 'video-3', 'video-14']);
 const rateBuckets = new Map();
 const MAX_RATE_BUCKETS = Math.max(1_000, Math.min(100_000, Number(process.env.GATEWAY_RATE_BUCKET_LIMIT) || 20_000));
 const runIdempotentOperation = createIdempotentOperationRunner();
@@ -455,6 +458,7 @@ function validateBody(body, kind) {
   if (kind === 'video' && !PUBLIC_VIDEO_PROVIDER_IDS.has(providerId)) {
     throw invalidOption('provider-not-allowed', 'The selected video model is no longer available.');
   }
+  if (kind === 'video' && providerId === 'video-14') klingOptions.klingInput(body);
   const capabilities = providerCapabilities(kind, providerId) || {};
   const isAtlasVideo = kind === 'video'
     && (String(capabilities.atlasKind || '').length > 0 || capabilities.atlasRouted === true);
@@ -668,7 +672,7 @@ function validateBody(body, kind) {
   }
   const requestedDuration = Number(body.duration);
   const requestedOutputFormat = String(body.outputFormat || (kind === 'video' ? 'mp4' : 'jpeg')).trim().toLowerCase();
-  const requestedGenerateAudio = body.generateAudio !== false;
+  const requestedGenerateAudio = providerId === 'video-14' ? body.generateAudio === true : body.generateAudio !== false;
   const requestedReturnLastFrame = body.returnLastFrame === true;
   const requestedAudioUrls = Array.isArray(body.referenceAudioUrls)
     ? body.referenceAudioUrls.slice(0, supportsReferenceAudio
@@ -694,6 +698,7 @@ function validateBody(body, kind) {
   const requestedStyleId = String(body.styleId || '').trim();
   const requestedStyleStrength = Math.max(0, Math.min(1, Number(body.styleStrength ?? 1)));
   if (kind === 'image') {
+    if (providerId === 'image-18') mediaProvider.withLegnextMidjourneyParameters(prompt, '8.2', requestedRatio, requestedSize);
     const configuredSizes = urls.length > 1 && Array.isArray(capabilities.multiReferenceSizes)
       ? capabilities.multiReferenceSizes
       : urls.length > 0 && Array.isArray(capabilities.referenceSizes)
@@ -1489,6 +1494,19 @@ async function handle(request, response) {
   const requestId = validUuid(suppliedOperationId) ? suppliedOperationId : crypto.randomUUID();
   response.setHeader('X-Request-Id', requestId);
   const url = new URL(request.url, 'http://gateway.local');
+  if (request.method === 'GET' && url.pathname === '/payments/return') {
+    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'" });
+    return response.end('<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>MESSS · 支付结果</title><body style="font:16px system-ui;max-width:560px;margin:15vh auto;padding:24px"><h1>请返回 MESSS 查看积分</h1><p>支付确认后，积分将自动到账。若尚未更新，请稍后点击刷新。</p><p>Return to MESSS. Credits appear after payment confirmation.</p></body></html>');
+  }
+  if (request.method === 'POST' && url.pathname === '/v1/payments/creem/webhook') {
+    const chunks = []; let size = 0;
+    for await (const chunk of request) {
+      size += chunk.length;
+      if (size > 262144) return send(response, 413, { code: 'payment-event-too-large' });
+      chunks.push(chunk);
+    }
+    return send(response, 200, await handleCreditWebhook(Buffer.concat(chunks), request.headers['creem-signature']));
+  }
   if (request.method === 'GET' && url.pathname === '/healthz') {
     return send(response, 200, { ok: true, catalogVersion, asyncVideo: true });
   }
@@ -1914,8 +1932,9 @@ async function handle(request, response) {
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/tools/image/upscale') {
-    if (!ai302Enabled(AI302_FLAGS.image)) return disabledTool(response);
+    assertFalConfigured();
     const body = await readJson(request);
+    const enhanceOptions = await normalizeFalEnhanceOptions(body && body.imageDataUrl);
     const deferredDelivery = body && body.deliveryConfirmation === true;
     const modelId = String(body && body.modelId || '').trim().toLowerCase();
     if (!['clipdrop-upscale', 'generative-upscale'].includes(modelId)) {
@@ -1923,12 +1942,9 @@ async function handle(request, response) {
     }
     const providerId = 'clipdrop-upscale';
     const png = await runIdempotentImageOperation(user.id, requestId, async () => {
-      const usage = await reserveFixedTool(user.id, providerId, requestId);
+      const usage = await reserveFixedTool(user.id, providerId, requestId, enhanceOptions);
       try {
-        const output = await generativeUpscaleImage(
-          { imageDataUrl: body && body.imageDataUrl },
-          { accountingRequestId: usage.requestId }
-        );
+        const output = await runDurableFalImageTool({ userId: user.id, requestId, model: 'topaz/upscale/image', imageDataUrl: body.imageDataUrl, options: enhanceOptions });
         const settlement = deferredDelivery ? null : await settleReservedTool(user.id, usage);
         return annotateToolDelivery(output, {
           requestId: usage.requestId,
@@ -2280,6 +2296,13 @@ async function handle(request, response) {
     // A task that has been accepted or has a ready result must remain
     // recoverable. Releasing it here would discard a billable provider result.
     throw videoDeliveryRecoveryPendingError();
+  }
+  if (request.method === 'GET' && url.pathname === '/v1/payments/packs') {
+    return send(response, 200, paymentCatalog());
+  }
+  if (request.method === 'POST' && url.pathname === '/v1/payments/checkout') {
+    const body = await readJson(request);
+    return send(response, 200, await createCreditCheckout(user, body?.packId));
   }
 
   if (request.method === 'POST' && url.pathname === '/v1/media/video/tasks/download') {

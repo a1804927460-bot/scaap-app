@@ -620,7 +620,7 @@ async function sendBoardMediaToCreativeApp(fileId, target) {
 
 function formatCanvasUsagePoints(value) {
   const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return t('Not recorded', '\u672a\u8bb0\u5f55');
+  if (value == null || value === '' || !Number.isFinite(numeric)) return t('Not recorded', '\u672a\u8bb0\u5f55');
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(Math.max(0, numeric));
 }
 
@@ -675,14 +675,16 @@ function renderCanvasUsageDetails(result) {
     ? result.canvas.name
     : t('Usage details', '\u4f7f\u7528\u660e\u7ec6');
   const tableHeaders = document.querySelectorAll('.canvas-usage-table th');
-  [t('Date', '\u65e5\u671f'), t('Type', '\u7c7b\u578b'), t('Model', '\u6a21\u578b'), t('Output', '\u751f\u6210\u7ed3\u679c'), t('Estimated', '\u9884\u4f30')]
+  [t('Date', '\u65e5\u671f'), t('Type', '\u7c7b\u578b'), t('Model', '\u6a21\u578b'), t('Output', '\u751f\u6210\u7ed3\u679c'), t('Charged', '实际扣费')]
     .forEach((label, index) => { if (tableHeaders[index]) tableHeaders[index].textContent = label; });
   const metrics = [
-    [t('Estimated total', '\u9884\u4f30\u603b\u989d'), formatCanvasUsagePoints(totals.estimatedCredits ?? totals.credits)],
+    [t('Charged total', '实际扣费'), formatCanvasUsagePoints(totals.creditsCharged)],
+    [t('Pending reservation', '待结算预留'), formatCanvasUsagePoints(totals.pendingCredits)],
     [t('AI results', 'AI \u7ed3\u679c'), String(Math.max(0, Number(totals.generations) || 0))],
-    [t('Images', '\u56fe\u7247'), `${formatCanvasUsagePoints(breakdown.image && (breakdown.image.estimatedCredits ?? breakdown.image.credits))} / ${Number(breakdown.image && breakdown.image.generations) || 0}`],
-    [t('Videos', '\u89c6\u9891'), `${formatCanvasUsagePoints(breakdown.video && (breakdown.video.estimatedCredits ?? breakdown.video.credits))} / ${Number(breakdown.video && breakdown.video.generations) || 0}`],
-    ['3D', `${formatCanvasUsagePoints(breakdown['3d'] && (breakdown['3d'].estimatedCredits ?? breakdown['3d'].credits))} / ${Number(breakdown['3d'] && breakdown['3d'].generations) || 0}`]
+    [t('Images', '\u56fe\u7247'), `${formatCanvasUsagePoints(breakdown.image && (breakdown.image.creditsCharged))} / ${Number(breakdown.image && breakdown.image.generations) || 0}`],
+    [t('Videos', '\u89c6\u9891'), `${formatCanvasUsagePoints(breakdown.video && (breakdown.video.creditsCharged))} / ${Number(breakdown.video && breakdown.video.generations) || 0}`],
+    [t('Agent', 'Agent'), formatCanvasUsagePoints(breakdown.chat?.creditsCharged)],
+    ['3D', `${formatCanvasUsagePoints(breakdown['3d'] && (breakdown['3d'].creditsCharged))} / ${Number(breakdown['3d'] && breakdown['3d'].generations) || 0}`]
   ];
   summary.replaceChildren(...metrics.map(([label, value]) => {
     const metric = document.createElement('div');
@@ -696,19 +698,14 @@ function renderCanvasUsageDetails(result) {
   const unknown = Math.max(0, Number(totals.unrecorded) || 0);
   const estimated = Math.max(0, Number(totals.estimated) || 0);
   const notes = [];
-  if (estimated > 0) notes.push(t(
-    `${estimated} result${estimated === 1 ? '' : 's'} were recalculated from saved model settings using the latest price table.`,
-    `${estimated} \u6761\u7ed3\u679c\u5df2\u6839\u636e\u4fdd\u5b58\u7684\u6a21\u578b\u53c2\u6570\u6309\u6700\u65b0\u4ef7\u683c\u91cd\u7b97\u3002`
-  ));
-  if (unknown > 0) notes.push(t(
-    `${unknown} result${unknown === 1 ? '' : 's'} do not contain enough model parameters to calculate the latest price and are excluded from the current-price total.`,
-    `${unknown} \u6761\u7ed3\u679c\u7f3a\u5c11\u6309\u6700\u65b0\u4ef7\u683c\u91cd\u7b97\u6240\u9700\u7684\u6a21\u578b\u53c2\u6570\uff0c\u672a\u8ba1\u5165\u6309\u73b0\u4ef7\u603b\u989d\u3002`
-  ));
+  notes.push(t('Charges come from recorded settlements. Pending reservations and unrecorded charges are excluded.', '实际扣费以结算记录为准；待结算预留和未记录费用不计入实扣总额。'));
+  if (!result.cloudAvailable) notes.push(t('Showing saved receipts; cloud sync is unavailable.', '当前显示已保存账单，云端暂未同步。'));
   note.hidden = notes.length === 0;
   note.textContent = notes.join(' ');
   rows.replaceChildren(...details.map((entry) => {
     const row = document.createElement('tr');
     const labels = {
+      chat: 'Agent',
       image: t('Image', '\u56fe\u7247'),
       video: t('Video', '\u89c6\u9891'),
       '3d': '3D'
@@ -722,11 +719,11 @@ function renderCanvasUsageDetails(result) {
       entry.name || '-',
       entry.status === 'pending'
         ? t('Pending', '\u5f85\u7ed3\u7b97')
-        : formatCanvasUsagePoints(entry.estimatedCredits)
+        : entry.creditsCharged == null ? t('Unrecorded', '未记录') : formatCanvasUsagePoints(entry.creditsCharged)
     ].forEach((value, index) => {
       const cell = document.createElement('td');
       cell.textContent = value;
-      if (index === 4 && (entry.estimatedCredits === null || entry.status === 'pending')) cell.className = 'is-unrecorded';
+      if (index === 4 && (entry.creditsCharged == null || entry.status === 'pending')) cell.className = 'is-unrecorded';
       row.appendChild(cell);
     });
     return row;

@@ -1307,7 +1307,7 @@ test('server enables paid 302 routes with the shared key unless a route is expli
   assertGuardBefore('/v1/tools/image/layer', 'ai302Enabled(AI302_FLAGS.image)', 'submitQwenImageLayered');
   assertGuardBefore('/v1/tools/image/status', 'ai302Enabled(imageToolFlag(modelId))', 'imageToolPoller');
   assertGuardBefore('/v1/tools/image/download', 'ai302Enabled(imageToolFlag(modelId))', 'imageToolPoller');
-  assertGuardBefore('/v1/tools/image/upscale', 'ai302Enabled(AI302_FLAGS.image)', 'generativeUpscaleImage');
+  assertGuardBefore('/v1/tools/image/upscale', 'assertFalConfigured()', 'runDurableFalImageTool');
   assertGuardBefore('/v1/tools/image/erase', 'ai302Enabled(AI302_FLAGS.image)', 'cleanupImageObjects');
   assertGuardBefore('/v1/tools/3d/create', 'ai302Enabled(flag)', 'createThreeDTask');
   assert.match(

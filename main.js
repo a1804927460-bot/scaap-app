@@ -1,4 +1,5 @@
 'use strict';
+const {klingSelection} = require('./lib/kling-options');
 const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, Menu, Tray, Notification, clipboard, safeStorage, desktopCapturer, screen, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -736,7 +737,7 @@ const BUTLER_IMAGE_TOOL_CREDITS = Object.freeze({
   'kling-image-expand': butlerRetailCreditsFromPtc(0.50),
   'clipdrop-uncrop': quoteFalTool('clipdrop-uncrop').credits,
   cleanup: butlerRetailCreditsFromPtc(0.50),
-  'clipdrop-upscale': butlerRetailCreditsFromPtc(0.50),
+  'clipdrop-upscale': quoteFalTool('clipdrop-upscale', {megapixels:24}).credits,
   'generative-upscale': butlerRetailCreditsFromPtc(0.80),
   'qwen-image-edit-plus': butlerRetailCreditsFromPtc(0.10),
   'qwen-image-layered': butlerRetailCreditsFromPtc(0.05),
@@ -1547,10 +1548,9 @@ function checkForUpdatesQuietly() {
 function setupAutoUpdater() {
   updaterState.enabled = store.data.settings.autoUpdateEnabled !== false;
   autoUpdater.autoDownload = updaterState.enabled;
-  // A per-machine NSIS update needs elevation. Installing silently during an
-  // ordinary quit can leave the app closed with no feedback when UAC is
-  // cancelled or the installer cannot start, so installation is explicit.
-  autoUpdater.autoInstallOnAppQuit = false;
+  // Install verified downloads on normal quit. Existing per-machine Windows
+  // installations may still require the system elevation prompt.
+  autoUpdater.autoInstallOnAppQuit = updaterState.enabled;
   autoUpdater.autoRunAppAfterInstall = true;
   const publishInfo = getPublishInfo();
   if (publishInfo) {
@@ -1826,6 +1826,7 @@ function fileToPayload(f, aiDeliveryToken = null) {
       requestedDuration: f.aiGeneration.requestedDuration || null,
       videoMode: f.aiGeneration.videoMode || null,
       serviceTier: f.aiGeneration.serviceTier || null,
+      generateAudio: f.aiGeneration.generateAudio,
       cameraControl: f.aiGeneration.kind === 'video'
         ? normalizeVideoCameraControl(f.aiGeneration.cameraControl)
         : null,
@@ -1894,10 +1895,9 @@ async function installDownloadedUpdate() {
     if (updateInstallStarted) app.quit();
   }, 15_000);
   updateInstallFallbackTimer.unref?.();
-  // macOS needs the forced-run-after-install flag so the app does not remain
-  // hidden after the ZIP updater finishes. Windows keeps the visible NSIS
-  // installer flow and its existing elevation behavior.
-  autoUpdater.quitAndInstall(false, process.platform === 'darwin');
+  // Explicit restart installs without a wizard and reopens the application.
+  // Normal quit uses electron-updater's silent install without reopening.
+  autoUpdater.quitAndInstall(true, true);
   return { ok: true, installing: true };
 }
 
@@ -4136,6 +4136,7 @@ function sanitizeAiAssistantHistory(value) {
               kind: ['image', 'video', 'file'].includes(attachment && attachment.kind) ? attachment.kind : 'file'
             })).filter((attachment) => attachment.id || attachment.name)
             : [],
+          creditsCharged: typeof message?.creditsCharged === 'number' && Number.isFinite(message.creditsCharged) && message.creditsCharged >= 0 ? message.creditsCharged : null,
           generatedFiles: Array.isArray(message && message.generatedFiles)
             ? message.generatedFiles.slice(0, 12).map((file) => ({
               token: String(file && file.token || '').slice(0, 240),
@@ -4177,6 +4178,7 @@ function estimatedHistoricalCanvasCredits(file, operation, kind) {
         resolution: operation.resolution,
         duration: operation.requestedDuration ?? operation.duration,
         serviceTier: operation.serviceTier,
+        generateAudio: operation.generateAudio,
         count: 1
       });
       return kind === 'image' ? quote.unitCredits : quote.totalCredits;
@@ -4205,11 +4207,10 @@ function canvasUsageEntryFromFile(file) {
   const parsedEstimatedCredits = Number(rawEstimatedCredits);
   const hasSavedEstimate = rawEstimatedCredits !== null && rawEstimatedCredits !== undefined
     && rawEstimatedCredits !== '' && Number.isFinite(parsedEstimatedCredits) && parsedEstimatedCredits >= 0;
-  // Reprice saved model parameters with the current catalog. The settled
-  // charge remains immutable accounting history, but it is not the current
-  // price shown in usage totals after a pricing-table update.
+  // Preserve the original quote and receipt. Current prices are only a clearly
+  // marked fallback for legacy files that contain neither.
   const currentCredits = estimatedHistoricalCanvasCredits(file, operation, kind);
-  const hasCurrentQuote = Number.isFinite(Number(currentCredits));
+  const hasCurrentQuote = currentCredits !== null && currentCredits !== undefined && Number.isFinite(Number(currentCredits));
   const savedPricingVersion = String(operation.pricingVersion || '').trim().slice(0, 32);
   const accountingRequestId = String(operation.accountingRequestId || '').trim();
   return {
@@ -4228,21 +4229,17 @@ function canvasUsageEntryFromFile(file) {
       ? Number(operation.requestedDuration ?? operation.duration)
       : null,
     serviceTier: String(operation.serviceTier || '').slice(0, 20) || null,
+    generateAudio: operation.generateAudio,
     pricingOptions: kind === '3d'
       ? butlerThreeDPricingOptions(String(operation.modelId || ''), operation.pricingOptions)
       : null,
-    estimatedCredits: hasCurrentQuote ? Math.max(0, Number(currentCredits))
-      : hasSavedEstimate ? Math.max(0, parsedEstimatedCredits)
-        : recorded ? Math.max(0, parsedChargedCredits) : null,
+    estimatedCredits: hasSavedEstimate ? Math.max(0, parsedEstimatedCredits)
+      : recorded ? Math.max(0, parsedChargedCredits) : hasCurrentQuote ? Math.max(0, Number(currentCredits)) : null,
     historicalCreditsCharged: recorded ? Math.max(0, parsedChargedCredits) : null,
     creditsCharged: recorded ? Math.max(0, parsedChargedCredits) : null,
     credits: recorded ? Math.max(0, parsedChargedCredits) : null,
-    pricingVersion: hasCurrentQuote ? CREDIT_PRICING_VERSION : savedPricingVersion || null,
-    estimated: hasCurrentQuote && (
-      savedPricingVersion !== CREDIT_PRICING_VERSION
-      || !hasSavedEstimate
-      || Math.max(0, parsedEstimatedCredits) !== Math.max(0, Number(currentCredits))
-    ),
+    pricingVersion: savedPricingVersion || (!hasSavedEstimate && !recorded && hasCurrentQuote ? CREDIT_PRICING_VERSION : null),
+    estimated: !hasSavedEstimate && !recorded && hasCurrentQuote,
     status: recorded ? 'succeeded' : 'pending',
     createdAt: String(operation.createdAt || file.importedAt || new Date().toISOString()).slice(0, 40)
   };
@@ -4271,7 +4268,7 @@ function normalizeCanvasUsageEntry(entry) {
     requestId: String(entry.requestId || '').trim().slice(0, 80) || null,
     sourceFileId: String(entry.sourceFileId || '').trim().slice(0, 120) || null,
     name: String(entry.name || '').slice(0, 240),
-    kind: ['image', 'video', '3d'].includes(entry.kind) ? entry.kind : 'image',
+    kind: ['chat', 'image', 'video', '3d'].includes(entry.kind) ? entry.kind : 'image',
     providerId: String(entry.providerId || '').trim().slice(0, 100) || null,
     modelName: String(entry.modelName || entry.providerId || 'AI tool').slice(0, 160),
     resolution: String(entry.resolution || '').slice(0, 40) || null,
@@ -4279,11 +4276,12 @@ function normalizeCanvasUsageEntry(entry) {
     quality: String(entry.quality || '').slice(0, 20) || null,
     duration: Number.isFinite(Number(entry.duration)) ? Number(entry.duration) : null,
     serviceTier: String(entry.serviceTier || '').slice(0, 20) || null,
+    generateAudio: entry.generateAudio,
     pricingOptions: entry.kind === '3d'
       ? butlerThreeDPricingOptions(String(entry.providerId || ''), entry.pricingOptions)
       : null,
     estimatedCredits,
-    historicalCreditsCharged: Number.isFinite(Number(entry.historicalCreditsCharged))
+    historicalCreditsCharged: entry.historicalCreditsCharged != null && Number.isFinite(Number(entry.historicalCreditsCharged))
       && Number(entry.historicalCreditsCharged) >= 0
       ? Math.max(0, Number(entry.historicalCreditsCharged))
       : creditsCharged,
@@ -4299,6 +4297,8 @@ function normalizeCanvasUsageEntry(entry) {
 
 function backfillCanvasUsageEstimate(entry) {
   if (!entry) return entry;
+  if (entry.estimatedCredits !== null && entry.estimatedCredits !== undefined) return entry;
+  if (entry.creditsCharged !== null && entry.creditsCharged !== undefined) return { ...entry, estimatedCredits: entry.creditsCharged, estimated: false };
   if (entry.kind === '3d' && Object.hasOwn(BUTLER_THREE_D_CREDITS, entry.providerId)) {
     const currentCredits = butlerThreeDRetailCredits(entry.providerId, entry.pricingOptions);
     return {
@@ -4329,6 +4329,7 @@ function backfillCanvasUsageEstimate(entry) {
       quality: entry.quality,
       duration: entry.duration,
       serviceTier: entry.serviceTier,
+      generateAudio: entry.generateAudio,
       count: 1
     });
     const credits = entry.kind === 'image' ? quote.unitCredits : quote.totalCredits;
@@ -4350,7 +4351,9 @@ function backfillCanvasUsageEstimate(entry) {
 // a quote update can never make the UI claim that more points were charged.
 function preserveSettledCanvasUsage(entry) {
   if (!entry || entry.status !== 'succeeded') return entry;
-  const historical = Number(entry.historicalCreditsCharged ?? entry.creditsCharged ?? entry.credits);
+  const rawHistorical = entry.historicalCreditsCharged ?? entry.creditsCharged ?? entry.credits;
+  if (rawHistorical == null || rawHistorical === '') return entry;
+  const historical = Number(rawHistorical);
   if (!Number.isFinite(historical) || historical < 0) return entry;
   return {
     ...entry,
@@ -4422,8 +4425,8 @@ async function canvasCreditUsage(canvasId) {
     const historicalCreditsCharged = Number(
       entry.historicalCreditsCharged ?? entry.creditsCharged ?? entry.credits
     );
-    const hasCloudEstimate = Number.isFinite(estimatedCredits) && estimatedCredits >= 0;
-    const hasCloudCharge = Number.isFinite(historicalCreditsCharged) && historicalCreditsCharged >= 0;
+    const hasCloudEstimate = (entry.estimatedCredits ?? entry.creditsReserved) != null && Number.isFinite(estimatedCredits) && estimatedCredits >= 0;
+    const hasCloudCharge = (entry.historicalCreditsCharged ?? entry.creditsCharged ?? entry.credits) != null && Number.isFinite(historicalCreditsCharged) && historicalCreditsCharged >= 0;
     const cloudResolution = String(entry.resolution || '').trim().slice(0, 40);
     const [cloudQuality, cloudImageResolution] = cloudResolution.includes(':')
       ? cloudResolution.toLowerCase().split(':', 2)
@@ -4434,7 +4437,7 @@ async function canvasCreditUsage(canvasId) {
       canvasId: id,
       requestId,
       name: local.name || String(entry.name || '').slice(0, 240),
-      kind: ['image', 'video', '3d'].includes(entry.kind) ? entry.kind : (local.kind || 'image'),
+      kind: ['chat', 'image', 'video', '3d'].includes(entry.kind) ? entry.kind : (local.kind || 'image'),
       providerId: String(entry.providerId || local.providerId || '').slice(0, 100) || null,
       modelName: local.modelName || String(entry.modelName || entry.providerId || 'AI model').slice(0, 160),
       resolution: local.resolution || cloudImageResolution || null,
@@ -4450,7 +4453,7 @@ async function canvasCreditUsage(canvasId) {
       credits: hasCloudCharge ? Math.max(0, historicalCreditsCharged) : local.creditsCharged ?? null,
       pricingVersion: local.pricingVersion || null,
       estimated: local.estimated === true && !hasCloudEstimate,
-      status: ['pending', 'succeeded', 'failed'].includes(entry.status)
+      status: entry.status === 'reserved' ? 'pending' : ['pending', 'succeeded', 'failed'].includes(entry.status)
         ? entry.status : hasCloudCharge ? 'succeeded' : (local.status || 'pending'),
       createdAt: String(entry.createdAt || local.createdAt || '').slice(0, 40)
     });
@@ -4459,10 +4462,10 @@ async function canvasCreditUsage(canvasId) {
     .map(backfillCanvasUsageEstimate)
     .map(preserveSettledCanvasUsage)
     .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
-  const publicDetails = details.map(({ historicalCreditsCharged, creditsCharged, credits, ...entry }) => entry);
+  const publicDetails = details.map(entry => ({ ...entry }));
   const recorded = details.filter((entry) => entry.historicalCreditsCharged !== null);
   const currentlyPriced = details.filter((entry) => entry.credits !== null || entry.estimatedCredits !== null);
-  const breakdown = ['image', 'video', '3d'].reduce((result, kind) => {
+  const breakdown = ['chat', 'image', 'video', '3d'].reduce((result, kind) => {
     const entries = details.filter((entry) => entry.kind === kind);
     const known = entries.filter((entry) => entry.historicalCreditsCharged !== null);
     const priced = entries.filter((entry) => entry.credits !== null || entry.estimatedCredits !== null);
@@ -4481,6 +4484,7 @@ async function canvasCreditUsage(canvasId) {
   }, {});
   const publicBreakdown = Object.fromEntries(Object.entries(breakdown).map(([kind, entry]) => [kind, {
     estimatedCredits: entry.estimatedCredits,
+    creditsCharged: entry.creditsCharged,
     generations: entry.generations,
     unrecorded: entry.unrecorded
   }]));
@@ -4488,6 +4492,8 @@ async function canvasCreditUsage(canvasId) {
     ok: true,
     canvas: { id: canvas.id, name: canvas.name },
     totals: {
+      creditsCharged: details.reduce((sum, entry) => sum + (Number(entry.creditsCharged) || 0), 0),
+      pendingCredits: details.filter(entry => entry.status === 'pending').reduce((sum, entry) => sum + (Number(entry.estimatedCredits) || 0), 0),
       estimatedCredits: details.reduce((sum, entry) => sum + (Number(entry.estimatedCredits) || 0), 0),
       generations: details.length,
       recorded: recorded.length,
@@ -4970,8 +4976,7 @@ async function generateAiMediaBuffer(kind, prompt, options = {}) {
         sourceHeight: options.sourceHeight,
         duration: options.duration,
         videoMode: options.videoMode,
-        serviceTier: options.serviceTier,
-        referenceMediaTypes: options.referenceMediaTypes,
+        serviceTier: options.serviceTier,        referenceMediaTypes: options.referenceMediaTypes,
         referenceVideoUploadIds: options.referenceVideoUploadIds,
         referenceAudioUrls: options.referenceAudioUrls,
         referenceAudioUploadIds: options.referenceAudioUploadIds,
@@ -5043,8 +5048,7 @@ function aiMediaGenerationOptions(request, providerId) {
     sourceHeight: request.sourceHeight,
     duration: request.duration,
     videoMode: request.videoMode,
-    serviceTier: request.serviceTier,
-    referenceMediaTypes: request.referenceMediaTypes,
+    serviceTier: request.serviceTier,    referenceMediaTypes: request.referenceMediaTypes,
     referenceVideoUploadIds: request.referenceVideoUploadIds,
     referenceAudioUrls: request.referenceAudioUrls,
     referenceAudioUploadIds: request.referenceAudioUploadIds,
@@ -5622,8 +5626,8 @@ async function sanitizeButlerMaskDataUrl(value) {
 }
 
 function butlerOutputAccounting(buffer, fallbackCredits) {
-  const estimated = Number(buffer && buffer.estimatedCredits);
-  const charged = Number(buffer && buffer.creditsCharged);
+  const estimated = buffer?.estimatedCredits == null ? NaN : Number(buffer.estimatedCredits);
+  const charged = buffer?.creditsCharged == null ? NaN : Number(buffer.creditsCharged);
   const fallback = Number(fallbackCredits);
   const estimatedCredits = Number.isFinite(estimated) && estimated >= 0
     ? estimated
@@ -5633,7 +5637,7 @@ function butlerOutputAccounting(buffer, fallbackCredits) {
   }
   const creditsCharged = Number.isFinite(charged) && charged >= 0
     ? charged
-    : estimatedCredits;
+    : null;
   return {
     ...(estimatedCredits === null ? {} : { estimatedCredits }),
     ...(creditsCharged === null ? {} : { creditsCharged, credits: creditsCharged })
@@ -5921,6 +5925,7 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
         : null,
       videoMode: mediaKind === 'video' ? String(request.videoMode || 'text').trim().slice(0, 32) : null,
       serviceTier: mediaKind === 'video' ? String(request.serviceTier || '').trim().toLowerCase().slice(0, 24) || null : null,
+      generateAudio: request.generateAudio,
       cameraControl: mediaKind === 'video' ? normalizeVideoCameraControl(request.cameraControl) : null,
       referenceFileIds,
       referenceMediaTypes: mediaKind === 'video' && Array.isArray(request.referenceMediaTypes)
@@ -6568,24 +6573,15 @@ function imageDimensionsWithinCapabilities(size, capabilities = {}) {
 
 async function quoteMediaCreditsForAccount(request = {}) {
   const localQuote = quoteMediaCredits(request);
-  if (!hasAuthenticatedGatewaySession() || !aiGateway || !aiGateway.isConfigured()) return localQuote;
+  if (!hasAuthenticatedGatewaySession() || !aiGateway || !aiGateway.isConfigured()) return { ...localQuote, quoteSource: 'local', authoritative: false };
   try {
     const remoteQuote = await aiGateway.quoteMediaCredits(request);
-    // A quote without a version is from a pre-versioned gateway deployment.
-    // Do not let it replace the bundled table: this is what previously let a
-    // stale Seedance 2.5 4K-ESR quote (151 points) reach the composer.
-    if (String(remoteQuote && remoteQuote.pricingVersion || '').trim() !== CREDIT_PRICING_VERSION) {
-      return localQuote;
-    }
-    // A rolling gateway deployment can briefly expose an older price table.
-    // Never show a quote below the bundled table: the server remains the
-    // authority for reservation, while this upper bound prevents the desktop
-    // estimate from understating a real charge during that window.
-    return conservativeMediaCreditQuote(localQuote, remoteQuote, request);
+    if (!remoteQuote || !Number.isFinite(remoteQuote.totalCredits) || remoteQuote.totalCredits < 0) throw new Error('Invalid gateway quote');
+    return { ...remoteQuote, quoteSource: 'gateway', authoritative: true };
   } catch {
     // A quote outage must not make the local UI unusable; the server remains
     // authoritative when the generation request is submitted.
-    return localQuote;
+    return { ...localQuote, quoteSource: 'local', authoritative: false };
   }
 }
 
@@ -7023,7 +7019,8 @@ function normalizeAiMediaGenerationRequest(request, kind) {
   normalized.referenceAudioUrls = Array.isArray(request.referenceAudioUrls)
     ? request.referenceAudioUrls.map(String).filter((value) => /^https:\/\//i.test(value)).slice(0, isSeedance25 ? 10 : 3)
     : [];
-  normalized.generateAudio = request.generateAudio !== false;
+  normalized.generateAudio = providerId === 'video-14' ? request.generateAudio === true : request.generateAudio !== false;
+  if (providerId === 'video-14') klingSelection({...normalized,serviceTier:requestedServiceTier});
   normalized.returnLastFrame = request.returnLastFrame === true;
   const supportsSeed = capabilities.supportsSeed === true;
   const requestedSeed = Math.round(Number(request.seed));
@@ -8124,6 +8121,34 @@ function registerIpcHandlers() {
     return session;
   });
 
+  const projectSchedule = require('./lib/project-schedule').createScheduleService(store,
+    () => supabaseAuth?.getPublicSession()?.user?.id || 'local');
+  for (const action of ['list', 'save', 'archive', 'restore']) {
+    ipcMain.handle(`schedule:${action}`, (_event, input) => projectSchedule[action](input));
+  }
+  const workspaceResources = require('./lib/workspace-resources').createResourceService(store,
+    () => supabaseAuth?.getPublicSession()?.user?.id || 'local');
+  for (const action of ['list', 'save', 'remove', 'parseSkill']) {
+    ipcMain.handle(`resources:${action}`, (_event, input) => workspaceResources[action](input));
+  }
+
+  ipcMain.handle('payments:getPacks', async () => {
+    if (!hasAuthenticatedGatewaySession()) return { ok: false, code: 'sign-in-required' };
+    try { return { ok: true, ...await aiGateway.getCreditPacks() }; }
+    catch { return { ok: false, code: 'payments-unavailable' }; }
+  });
+  ipcMain.handle('payments:purchase', async (_event, packId) => {
+    if (!hasAuthenticatedGatewaySession()) return { ok: false, code: 'sign-in-required' };
+    if (!['start', 'create', 'studio'].includes(packId)) return { ok: false, code: 'invalid-credit-pack' };
+    try {
+      const result = await aiGateway.createCreditCheckout(packId);
+      const url = new URL(result.checkoutUrl);
+      if (url.protocol !== 'https:' || url.username || url.password || !['www.creem.io', 'creem.io', 'checkout.creem.io', 'test-checkout.creem.io'].includes(url.hostname)) throw new Error('Invalid checkout URL');
+      await shell.openExternal(url.href);
+      return { ok: true, orderId: result.orderId };
+    } catch { return { ok: false, code: 'payment-checkout-failed' }; }
+  });
+
   ipcMain.handle('auth:signUp', async (_evt, credentials = {}) => {
     const session = await supabaseAuth.signUp(credentials.email, credentials.password);
     if (session && session.authenticated) {
@@ -8326,7 +8351,12 @@ function registerIpcHandlers() {
     return membershipService.checkFeature(String(feature || '').trim());
   });
 
-  ipcMain.handle('membership:quoteMedia', (_evt, request = {}) => quoteMediaCreditsForAccount(request));
+  const previewMediaCredits = require('./lib/media-quote-preview').createMediaQuotePreview({
+    localQuote: quoteMediaCredits,
+    remoteQuote: quoteMediaCreditsForAccount,
+    scope: () => JSON.stringify([aiWorkspaceOwner(), CREDIT_PRICING_VERSION, runtimeConfig.aiGatewayUrl, hasAuthenticatedGatewaySession()])
+  });
+  ipcMain.handle('membership:quoteMedia', (_evt, request = {}) => previewMediaCredits(request));
 
   ipcMain.handle('profile:getAvatar', () => readProfileAvatarDataUrl());
   ipcMain.handle('profile:getMood', () => {
@@ -9593,6 +9623,7 @@ function registerIpcHandlers() {
       resolution: request.resolution,
       duration: request.duration,
       serviceTier: request.serviceTier,
+      generateAudio: request.generateAudio,
       referenceMediaTypes: request.referenceMediaTypes
     });
     const fallbackProvider = kind === 'image'
@@ -9692,7 +9723,7 @@ function registerIpcHandlers() {
         if (result.status !== 'fulfilled') continue;
         const generated = result.value;
         const providerEstimate = Number(generated.buffer && generated.buffer.estimatedCredits);
-        const providerCharge = Number(generated.buffer && generated.buffer.creditsCharged);
+        const providerCharge = generated.buffer?.creditsCharged == null ? NaN : Number(generated.buffer.creditsCharged);
         if (kind === 'video' && Number.isFinite(providerEstimate) && providerEstimate >= 0) {
           authoritativeVideoEstimate = providerEstimate;
         }
@@ -9748,12 +9779,12 @@ function registerIpcHandlers() {
           const isPendingDelivery = !!aiDeliveryToken;
           const resultCharge = isPendingDelivery
             ? 0
-            : (Number.isFinite(providerCharge) && providerCharge >= 0 ? providerCharge : quotedResultCredits);
+            : (Number.isFinite(providerCharge) && providerCharge >= 0 ? providerCharge : null);
           creditsCharged += resultCharge;
           deliveryGroup.settledCredits += resultCharge;
           if (!isPendingDelivery) deliveryGroup.resultUnits += 1;
           if (kind === 'video' && resultCharge > 0) authoritativeVideoCharge = resultCharge;
-          if (added.record.aiGeneration && !isPendingDelivery) {
+          if (added.record.aiGeneration && !isPendingDelivery && resultCharge !== null) {
             added.record.aiGeneration.creditsCharged = resultCharge;
             added.record.aiGeneration.credits = resultCharge;
           }
@@ -9855,15 +9886,25 @@ function registerIpcHandlers() {
     }
   });
 
-  ipcMain.handle('ai:estimateCredits', (_evt, request = {}) => require('./lib/agent-credit-estimate').estimateAgentCredits(request));
+  ipcMain.handle('ai:estimateCredits', async (_evt, request = {}) => {
+    try {
+      const messages = (Array.isArray(request.messages) ? request.messages : [{role:'user',content:request.prompt}]).slice(-100).map(message => ({...message}));
+      const index = messages.map(message => message.role).lastIndexOf('user');
+      if (index >= 0) {
+        const attachments = await resolveAiChatMessageAttachments(messages[index], request);
+        messages[index] = {...messages[index], images:attachments.filter(file=>file.kind==='image').map(file=>file.dataUrl), attachments:attachments.filter(file=>file.kind!=='image')};
+      }
+      return require('./lib/agent-credit-estimate').estimateAgentCredits({...request,messages,attachmentsResolved:true});
+    } catch { return {available:false,reason:'context-unavailable'}; }
+  });
   ipcMain.handle('ai:chat', async (_evt, request = {}) => {
     const preparationStartedAt = Date.now();
     const permissionSession = request.permissionSession;
     const workspaceOwner = aiWorkspaceOwner();
     const workRequestId = String(request.workRequestId || '').slice(0, 100);
-    let creditsCharged = 0;
+    let creditsCharged = 0, chargedReplies = 0;
     const billingContext = { owner: workspaceOwner, canvasId: request.canvasId,
-      onCharge: value => { if (Number.isFinite(value) && value >= 0) creditsCharged = Math.round((creditsCharged + value) * 100) / 100; } };
+      onCharge: value => { if (Number.isFinite(value) && value >= 0) { chargedReplies++; creditsCharged = Math.round((creditsCharged + value) * 100) / 100; } } };
     const reportWork = phase => { if (!_evt.sender.isDestroyed()) _evt.sender.send('ai:workProgress', {requestId:workRequestId,phase}); };
     const reportPreview = text => {
       if (workRequestId && workspaceOwner === aiWorkspaceOwner() && !_evt.sender.isDestroyed()) {
@@ -9872,7 +9913,7 @@ function registerIpcHandlers() {
     };
     let safeRequest;
     try {
-      const sourceMessages = Array.isArray(request.messages) ? request.messages.slice(-40) : [];
+      const sourceMessages = Array.isArray(request.messages) ? request.messages.slice(-100) : [];
       const lastUserIndex = sourceMessages.map((message) => message && message.role).lastIndexOf('user');
       const messages = [];
       for (let index = 0; index < sourceMessages.length; index += 1) {
@@ -9931,9 +9972,10 @@ function registerIpcHandlers() {
     }
 
     try {
+      const appCapabilities = require('./lib/agent-app-capabilities').appCapabilityInstruction(await getPublicAiMediaConfig());
       const providerMessages = [
-        { role: 'system', content: AI_ARTIFACT_INSTRUCTION + '\n' + WORK_INSTRUCTION + '\n' + HOST_TOOL_INSTRUCTION, images: [], attachments: [] },
-        ...request.messages.slice(-19)
+        { role: 'system', content: AI_ARTIFACT_INSTRUCTION + '\n' + WORK_INSTRUCTION + '\n' + HOST_TOOL_INSTRUCTION + '\n' + require('./lib/agent-skill-context').SKILL_AUTHORING_INSTRUCTION + '\n' + appCapabilities, images: [], attachments: [] },
+        ...request.messages
       ];
       let rawText = await generateAiChatReply(
         prompt,
@@ -10003,7 +10045,7 @@ function registerIpcHandlers() {
         serverSettled: Boolean(runtimeConfig.gatewayConfigured),
         metadata: { responseCharacters: String(text || '').length }
       });
-      return { ok: true, text, files, creditsCharged };
+      return { ok: true, text, files, creditsCharged: chargedReplies ? creditsCharged : null };
     } catch (err) {
       membershipService.finishUsage(usage.usageId, {
         status: 'failed',
@@ -10015,7 +10057,7 @@ function registerIpcHandlers() {
       return {
         ok: false,
         reason: err && err.code ? err.code : 'chat-failed',
-        creditsCharged,
+        creditsCharged: chargedReplies ? creditsCharged : null,
         message: conciseAiErrorMessage(err, {
           kind: 'chat',
           model: request.chatModel,
@@ -10970,7 +11012,7 @@ app.whenReady().then(() => {
     store.scheduleSave();
     updaterState.enabled = next;
     autoUpdater.autoDownload = next;
-    autoUpdater.autoInstallOnAppQuit = false;
+    autoUpdater.autoInstallOnAppQuit = next;
     const state = setUpdaterState({ status: next ? 'idle' : 'disabled', message: null });
     if (next && app.isPackaged) checkForUpdates(false);
     return state;

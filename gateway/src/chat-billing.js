@@ -14,7 +14,7 @@ export function chatRate(provider, model) {
   return rate;
 }
 
-export function chatBudget(request, usage, rate) {
+export function chatBudget(request, usage, rate, turns) {
   let images = 0;
   const messages = request.messages?.map(message => {
     images += Array.isArray(message.images) ? message.images.length : 0;
@@ -25,7 +25,7 @@ export function chatBudget(request, usage, rate) {
   // Encoded image bytes are not text tokens. Bound each supported vision input.
   const inputTokens = Buffer.byteLength(text, 'utf8') + 8192 + images * 16384;
   return pricing.calculateChatCost([
-    ...(usage ? [usage] : []), { inputTokens, outputTokens: 4096 }
+    ...(turns?.length ? turns : usage ? [usage] : []), { inputTokens, outputTokens: 4096 }
   ], rate).credits;
 }
 
@@ -63,14 +63,14 @@ export function createChatBilling(userId, requestId, request, fetchImpl = fetch)
   }, fetchImpl);
   return {
     reserve: () => reserve(0.01),
-    async beforeRequest(provider, model, nextRequest, usage) {
-      const result = await reserve(chatBudget(nextRequest, usage, chatRate(provider, model)), true);
+    async beforeRequest(provider, model, nextRequest, usage, turns) {
+      const result = await reserve(chatBudget(nextRequest, usage, chatRate(provider, model), turns), true);
       if (!result.ok) throw billingError(result.reason, result.reason === 'insufficient-credits' ? 402 : 409);
     },
     async settle(result, durationMs) {
       const receipt = result ? {
-        ...pricing.calculateChatCost([result.usage], chatRate(result.billingProvider, result.billingModel)),
-        model: result.billingModel, providerId: result.billingProvider.id, usage: result.usage,
+        ...pricing.calculateChatCost(result.usageTurns?.length ? result.usageTurns : [result.usage], chatRate(result.billingProvider, result.billingModel)),
+        model: result.billingModel, providerId: result.billingProvider.id, usage: result.usage, turns: result.usageTurns?.length ? result.usageTurns : [result.usage],
         rate: chatRate(result.billingProvider, result.billingModel)
       } : null;
       const settled = await chatCreditRpc('settle_ai_chat_credits', {

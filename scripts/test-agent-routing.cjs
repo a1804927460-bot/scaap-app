@@ -22,3 +22,16 @@ assert.equal(window.droppedMessages,2);
 assert.throws(()=>windowAgentMessages(messages,50),/exceeds/);
 assert.equal(messages.length,6,'transcript remains intact');
 console.log('Agent policies and context windows passed: task tiers, manual selection, unavailable routes, complete tool turns, retained system prompt and budget rejection.');
+
+const longHistory = [{role:'system',content:'trusted policy'}];
+for(let i=0;i<30;i++) longHistory.push({role:'user',content:(i===0?'Project delivery Friday. ':'Request '+i+' ')+ 'detail '.repeat(180)}, {role:'assistant',content:'Proposed, not completed. '+ 'response '.repeat(80)});
+longHistory.push({role:'user',content:'Continue with the revised deadline.'});
+const preserved = windowAgentMessages(longHistory,12000);
+assert.ok(preserved.estimatedTokens <= 12000);
+assert.ok(preserved.historyExcerptMessages > 0);
+assert.equal(preserved.messages[0],longHistory[0]);
+assert.match(preserved.messages[1].content,/Project delivery Friday/);
+assert.equal(preserved.messages.at(-1),longHistory.at(-1));
+assert.equal(longHistory.length,62);
+assert.deepEqual(windowAgentMessages([{role:'user',content:'New conversation'}],12000).messages,[{role:'user',content:'New conversation'}]);
+console.log('Long history excerpts retain original requirements within budget without crossing conversations.');

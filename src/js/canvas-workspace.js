@@ -181,6 +181,7 @@ function normalizeCanvasAgentSession(session, fallbackCanvasId = null) {
   if (!session || !session.id) return null;
   const messages = Array.isArray(session.messages) ? session.messages.slice(-100).map((message) => ({
     role: message && message.role === 'assistant' ? 'assistant' : 'user',
+    creditsCharged: agentRecordedCredits(message?.creditsCharged),
     content: String(message && message.content || '').slice(0, 16000),
     displayContent: String(message && ((message.displayContent ?? message.content) || '')).slice(0, 12000),
     generatedFiles: normalizeAgentGeneratedFiles(message && message.generatedFiles),
@@ -326,6 +327,7 @@ function persistActiveCanvasAgentSession() {
   const session = ensureCanvasAgentSession();
   session.messages = CanvasWorkspace.agentMessages.map((message) => ({
     role: message.role === 'assistant' ? 'assistant' : 'user',
+    creditsCharged: agentRecordedCredits(message.creditsCharged),
     content: String(message.content || '').slice(0, 16000),
     displayContent: String((message.displayContent ?? message.content) || '').slice(0, 12000),
     generatedFiles: normalizeAgentGeneratedFiles(message.generatedFiles),
@@ -1948,6 +1950,7 @@ function loadCanvasAgentSession(sessionId) {
     const row = appendCanvasAgentMessage(message.role, message.displayContent || message.content);
     appendCanvasAgentAttachments(row, Array.isArray(message.attachments) ? message.attachments : []);
     appendAssistantOutputFiles(row, message.generatedFiles);
+    appendAgentCharge(row, message);
   });
   renderCanvasAgentHistory();
   const drawer = document.getElementById('board-agent-history-drawer');
@@ -2140,7 +2143,10 @@ function canvasAgentChatProviders() {
     'gemini-3.8-flash': 'Gemini 3.8 Flash',
     'gemini-3.1-pro': 'Gemini 3.1 Pro',
     'gpt-5.6-sol': 'GPT-5.6 Sol',
-    'kimi-k3': 'Kimi K3'
+    'kimi-k3': 'Kimi K3',
+    'deepseek-v4-flash': 'DeepSeek V4 Flash',
+    'deepseek-v4-pro': 'DeepSeek V4 Pro',
+    'gpt-6-astra': 'GPT-6 Astra'
   };
   const providers = (Array.isArray(config.chatProviders) ? config.chatProviders : []).flatMap((provider) => {
     if (!provider || provider.available === false || provider.hidden === true || !provider.endpoint) return [];
@@ -2175,7 +2181,7 @@ function renderCanvasAgentModels() {
   if (!chatProviders.some((entry) => (
     entry.providerId === CanvasWorkspace.agentChatProviderId && entry.model === CanvasWorkspace.agentChatModel
   ))) {
-    const preferred = chatProviders.find((entry) => entry.model === 'gemini-3.1-pro') || chatProviders[0] || null;
+    const preferred = chatProviders.find((entry) => entry.model === 'gemini-3.8-flash') || chatProviders[0] || null;
     CanvasWorkspace.agentChatProviderId = preferred && preferred.providerId;
     CanvasWorkspace.agentChatModel = preferred && preferred.model;
   }
@@ -2510,6 +2516,7 @@ async function requestCanvasAgentText(options = {}) {
   }, 1000);
   try {
     const response = await chatWithAgentEstimate(pending, {
+      canvasId: activeCanvasId(),
       permissionSession: window.MesssComposerActions?.session,
       prompt: contextualPrompt,
       messages: options.isolated === true
@@ -2524,15 +2531,20 @@ async function requestCanvasAgentText(options = {}) {
       throw new Error((response && response.message) || t('Canvas Agent request failed.', '画布 Agent 请求失败。'));
     }
     window.clearInterval(thinkingTimer);
-    CanvasWorkspace.agentMessages.push({ role: 'assistant', content: response.text, displayContent: response.text, generatedFiles: normalizeAgentGeneratedFiles(response.files) });
+    CanvasWorkspace.agentMessages.push({ role: 'assistant', content: response.text, displayContent: response.text, creditsCharged: agentRecordedCredits(response.creditsCharged), generatedFiles: normalizeAgentGeneratedFiles(response.files) });
     persistActiveCanvasAgentSession();
     pending.classList.remove('is-pending');
     renderAgentMessageContent(pending, response.text);
     if (typeof appendAssistantOutputFiles === 'function') appendAssistantOutputFiles(pending, response.files);
+    appendAgentCharge(pending, response);
     if (typeof options.onResponse === 'function') await options.onResponse(response.text, response);
     return response;
   } catch (err) {
-    pending.remove();
+    const interrupted = preserveInterruptedAgentReply(pending);
+    if (interrupted) {
+      CanvasWorkspace.agentMessages.push(interrupted);
+      persistActiveCanvasAgentSession();
+    } else pending.remove();
     appendCanvasAgentMessage('error', typeof publicAiErrorMessage === 'function'
       ? publicAiErrorMessage(err && err.message, t('Canvas Agent request failed.', '画布 Agent 请求失败。'))
       : (err && err.message ? err.message : t('Canvas Agent request failed.', '画布 Agent 请求失败。')));
@@ -2607,6 +2619,7 @@ async function submitCanvasAgentMessage() {
   }, 1000);
   try {
     const response = await chatWithAgentEstimate(pending, {
+      canvasId: activeCanvasId(),
       permissionSession: window.MesssComposerActions?.session,
       prompt: contextualPrompt,
       messages: CanvasWorkspace.agentMessages,
@@ -2619,13 +2632,18 @@ async function submitCanvasAgentMessage() {
       throw new Error((response && response.message) || t('Canvas Agent request failed.', '画布 Agent 请求失败。'));
     }
     window.clearInterval(thinkingTimer);
-    CanvasWorkspace.agentMessages.push({ role: 'assistant', content: response.text, displayContent: response.text, generatedFiles: normalizeAgentGeneratedFiles(response.files) });
+    CanvasWorkspace.agentMessages.push({ role: 'assistant', content: response.text, displayContent: response.text, creditsCharged: agentRecordedCredits(response.creditsCharged), generatedFiles: normalizeAgentGeneratedFiles(response.files) });
     persistActiveCanvasAgentSession();
     pending.classList.remove('is-pending');
     renderAgentMessageContent(pending, response.text);
     if (typeof appendAssistantOutputFiles === 'function') appendAssistantOutputFiles(pending, response.files);
+    appendAgentCharge(pending, response);
   } catch (err) {
-    pending.remove();
+    const interrupted = preserveInterruptedAgentReply(pending);
+    if (interrupted) {
+      CanvasWorkspace.agentMessages.push(interrupted);
+      persistActiveCanvasAgentSession();
+    } else pending.remove();
     appendCanvasAgentMessage('error', typeof publicAiErrorMessage === 'function'
       ? publicAiErrorMessage(err && err.message, t('Canvas Agent request failed.', '画布 Agent 请求失败。'))
       : (err && err.message ? err.message : t('Canvas Agent request failed.', '画布 Agent 请求失败。')));
@@ -2785,6 +2803,7 @@ async function initCanvasWorkspace(initial) {
       closeCanvasCardMenus();
     }
   });
+  initCanvasAgentFloating();
   document.addEventListener('keydown', handleCanvasAgentShortcut, true);
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') closeCanvasCardMenus();
@@ -2795,6 +2814,7 @@ async function initCanvasWorkspace(initial) {
     setCanvasAgentOpen(agent.classList.contains('is-hidden'), { focus: true });
   });
   document.getElementById('board-agent-close').addEventListener('click', () => {
+    if (document.getElementById('board-agent-panel').classList.contains('is-floating')) { setCanvasAgentFloating(false); setCanvasAgentOpen(true); return; }
     setCanvasAgentOpen(false);
   });
   document.getElementById('board-agent-history').addEventListener('click', (event) => {
@@ -2931,4 +2951,47 @@ async function initCanvasWorkspace(initial) {
   renderCanvasAgentReferences();
   renderCanvasAgentHistory();
   void loadCanvasAgentHistory();
+}
+function setCanvasAgentFloating(floating) {
+  const panel = document.getElementById('board-agent-panel');
+  const button = document.getElementById('board-agent-detach');
+  panel.classList.toggle('is-floating', floating);
+  document.getElementById('board-panel').classList.toggle('has-floating-agent', floating);
+  button.setAttribute('aria-pressed', String(floating));
+  button.title = floating ? '放回 Agent' : '取下 Agent';
+  button.setAttribute('aria-label', button.title);
+  if (floating) {
+    panel.style.width = `${Math.min(480, window.innerWidth - 24)}px`;
+    panel.style.height = `${Math.min(680, window.innerHeight - 88)}px`;
+    panel.style.left = `${Math.max(12, window.innerWidth - Math.min(480, window.innerWidth - 24) - 24)}px`;
+    panel.style.top = '64px';
+    setCanvasAgentOpen(true, {focus:true});
+  } else {
+    for (const key of ['width','height','left','top']) panel.style.removeProperty(key);
+  }
+}
+function initCanvasAgentFloating() {
+  const panel = document.getElementById('board-agent-panel');
+  document.getElementById('board-agent-detach').addEventListener('click', () => setCanvasAgentFloating(!panel.classList.contains('is-floating')));
+  const handle = document.getElementById('board-agent-drag');
+  let drag;
+  handle.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || !panel.classList.contains('is-floating')) return;
+    const rect = panel.getBoundingClientRect();
+    drag = {x:event.clientX-rect.left,y:event.clientY-rect.top};
+    handle.setPointerCapture(event.pointerId); event.preventDefault();
+  });
+  handle.addEventListener('pointermove', event => {
+    if (!drag) return;
+    panel.style.left = `${Math.max(0,Math.min(window.innerWidth-panel.offsetWidth,event.clientX-drag.x))}px`;
+    panel.style.top = `${Math.max(0,Math.min(window.innerHeight-56,event.clientY-drag.y))}px`;
+  });
+  handle.addEventListener('lostpointercapture', () => { drag = null; });
+  handle.addEventListener('pointerup', () => { drag = null; });
+  window.addEventListener('resize', () => {
+    if (!panel.classList.contains('is-floating')) return;
+    const rect = panel.getBoundingClientRect();
+    panel.style.left = `${Math.max(0,Math.min(rect.left,window.innerWidth-panel.offsetWidth))}px`;
+    panel.style.top = `${Math.max(0,Math.min(rect.top,window.innerHeight-56))}px`;
+  });
 }

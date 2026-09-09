@@ -1,0 +1,40 @@
+TAP version 13
+# Subtest: public account and usage APIs retain hundredths
+ok 1 - public account and usage APIs retain hundredths
+  ---
+  duration_ms: 13.3028
+  type: 'test'
+  ...
+# Subtest: verified cached tokens and fallback model determine actual fractional charge
+ok 2 - verified cached tokens and fallback model determine actual fractional charge
+  ---
+  duration_ms: 0.4254
+  type: 'test'
+  ...
+# Subtest: reservation grows for continuations without rounding usage repeatedly
+ok 3 - reservation grows for continuations without rounding usage repeatedly
+  ---
+  duration_ms: 0.1541
+  type: 'test'
+  ...
+# Subtest: billing is server owned and retries a lost RPC response with the same claim
+ok 4 - billing is server owned and retries a lost RPC response with the same claim
+  ---
+  duration_ms: 1.8057
+  type: 'test'
+  ...
+# Subtest: insufficient balance prevents a provider submission and stays a billing error
+ok 5 - insufficient balance prevents a provider submission and stays a billing error
+  ---
+  duration_ms: 0.9372
+  type: 'test'
+  ...
+1..5
+# tests 5
+# suites 0
+# pass 5
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 119.4384

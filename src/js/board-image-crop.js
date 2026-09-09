@@ -54,6 +54,10 @@ async function openBoardImageCrop(file, item) {
   const reset = action('rotate-ccw', t('Reset', '重置'));
   const cancel = action('x', t('Cancel', '取消'));
   const apply = action('check', t('Apply crop', '确认裁切'));
+  apply.className = 'is-primary';
+  const applyLabel = document.createElement('span'); applyLabel.textContent = t('Done', '完成'); apply.append(applyLabel);
+  label.className = 'board-image-crop-title';
+  status.className = 'board-image-crop-size';
   ratios.disabled = reset.disabled = apply.disabled = true;
   toolbar.append(label, ratios, status, reset, cancel, apply);
   overlay.append(surface, toolbar); viewport.append(overlay);

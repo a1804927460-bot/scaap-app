@@ -161,3 +161,25 @@
 .flatpickr-calendar .flatpickr-next-month { color: var(--text-primary); fill: currentColor; }
 .flatpickr-calendar:before, .flatpickr-calendar:after { display: none; }
 .flatpickr-calendar .flatpickr-current-month { font-size: 14px; }
+/* A single scroll surface for Seedance settings, including upscale tiers. */
+.ai-composer .ai-options-panel:has(.is-resolution-groups) {
+  border-radius:16px;
+  scrollbar-width:thin;
+  scrollbar-color:var(--border-hairline) transparent;
+  overscroll-behavior:contain;
+}
+.ai-composer .ai-options-panel:has(.is-resolution-groups)::-webkit-scrollbar { width:5px; }
+.ai-composer .ai-options-panel:has(.is-resolution-groups)::-webkit-scrollbar-thumb { background:var(--border-hairline); border-radius:8px; }
+.ai-composer .ai-options-panel:has(.is-resolution-groups)::-webkit-scrollbar-track { background:transparent; }
+.ai-kling-options { margin-bottom: 18px; }
+.ai-kling-options[hidden] { display: none; }
+.ai-kling-variants { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 10px 0 14px; }
+.ai-kling-variants button { min-height: 36px; padding: 7px 8px; border: 1px solid transparent; border-radius: 9px; background: var(--bg-surface-2); color: var(--text-secondary); font: inherit; font-size: 12px; cursor: pointer; }
+.ai-kling-variants button:hover { background: var(--bg-elevated); color: var(--text-primary); }
+.ai-kling-variants button.is-active { background: rgba(52,156,229,.14); border-color: rgba(75,174,242,.35); color: #77c8ff; }
+.ai-kling-audio { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--text-secondary); }
+.ai-kling-audio label { display: flex; gap: 7px; align-items: center; cursor: pointer; }
+.ai-kling-sound { accent-color: #45a9ed; }
+.ai-kling-hint { margin: 10px 0 0; font-size: 11px; line-height: 1.6; color: var(--text-secondary); }
+
+.ai-composer .ai-ratio-grid[hidden] { display: none; }

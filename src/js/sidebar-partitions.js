@@ -1,90 +1,36 @@
 'use strict';
 function initSidebarPartitions() {
   const brand = document.getElementById('sidebar-brand-btn');
-  if (!brand || brand.dataset.partitionReady) return;
-  brand.dataset.partitionReady = 'true';
-  brand.setAttribute('aria-haspopup', 'dialog');
-  brand.setAttribute('aria-expanded', 'false');
-  const dialog = document.createElement('dialog');
-  dialog.className = 'sidebar-partition-wheel';
-  dialog.setAttribute('aria-label', '切换分区');
-  dialog.innerHTML = '<div class="partition-wheel-stage"><button class="partition-slot slot-top" type="button" disabled aria-label="预留分区"></button><button class="partition-slot slot-right" type="button" disabled aria-label="预留分区"></button><button class="partition-slot slot-current" type="button" aria-current="true">所有文件</button><button class="partition-slot slot-left" type="button" disabled aria-label="预留分区"></button><img class="partition-wheel-logo" src="assets/logo-mark.png" alt=""></div>';
-  document.body.append(dialog);
-  // Use one surface per capsule; filtering duplicate surfaces blurs their edges.
-  const slots = [...dialog.querySelectorAll('.partition-slot')];
-  let animations = [];
-  const animateWheel = (closing = false) => {
-    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const current = slots.map(slot => ({transform: getComputedStyle(slot).transform, opacity: getComputedStyle(slot).opacity}));
-    animations.forEach(animation => animation.cancel());
-    animations = slots.map((slot, index) => {
-      const style = getComputedStyle(slot);
-      const joined = `translate(${style.getPropertyValue('--join-x')}, ${style.getPropertyValue('--join-y')}) rotate(-60deg) scale(.28)`;
-      const frames = closing ? [current[index], {transform:joined,opacity:0}] : [
-        {transform:joined,opacity:0,offset:0},
-        {transform:'translate(0, 0) rotate(-3deg) scale(1.04)',opacity:1,offset:.72},
-        {transform:'translate(0, 0) rotate(0deg) scale(1)',opacity:1,offset:1}
-      ];
-      return slot.animate(frames, {duration:reduced ? 0 : closing ? 240 : 620,
-        delay:reduced ? 0 : (closing ? 3-index : index)*35, easing:'cubic-bezier(.22,1,.36,1)',fill:'both'});
-    });
-  };
-  let closeTimer;
-  const close = () => {
-    if (!dialog.open || dialog.classList.contains('is-closing')) return;
-    dialog.classList.add('is-closing');
-    animateWheel(true);
-    closeTimer = setTimeout(() => dialog.close(), matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 350);
-  };
-  let timer = null;
-  let origin = null;
-  let suppressClick = false;
-  const cancelHold = () => { clearTimeout(timer); timer = null; origin = null; };
-  const open = () => {
-    cancelHold();
-    if (dialog.open) return;
-    const rect = brand.getBoundingClientRect();
-    dialog.style.left = `${Math.max(8, Math.min(innerWidth - 312, rect.left + rect.width / 2 - 148))}px`;
-    dialog.style.top = `${Math.max(8, Math.min(innerHeight - 292, rect.top))}px`;
-    dialog.showModal();
-    dialog.classList.remove('is-closing');
-    animateWheel();
-    brand.setAttribute('aria-expanded', 'true');
-  };
-  brand.addEventListener('pointerdown', event => {
-    if (event.button !== 0) return;
-    suppressClick = false;
-    origin = { x: event.clientX, y: event.clientY };
-    timer = setTimeout(() => { suppressClick = true; open(); }, 450);
-  });
-  document.addEventListener('pointermove', event => {
-    if (origin && Math.hypot(event.clientX - origin.x, event.clientY - origin.y) > 8) cancelHold();
-  }, { passive: true });
-  document.addEventListener('pointerup', cancelHold, true);
-  document.addEventListener('pointercancel', cancelHold, true);
-  window.addEventListener('blur', cancelHold);
-  brand.addEventListener('click', event => {
-    if (!suppressClick) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    suppressClick = false;
-  }, true);
-  brand.addEventListener('keydown', event => {
-    if (event.key !== 'ArrowDown') return;
-    event.preventDefault();
-    open();
-  });
-  dialog.addEventListener('click', event => {
-    if (event.target === dialog || event.target.closest('button.slot-current')) close();
-  });
-  dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
-  dialog.addEventListener('close', () => {
-    clearTimeout(closeTimer);
-    animations.forEach(animation => animation.cancel());
-    animations = [];
-    dialog.classList.remove('is-closing');
-    brand.setAttribute('aria-expanded', 'false');
-    brand.focus({ preventScroll: true });
-  });
+  if (!brand || document.getElementById('workspace-shortcuts')) return;
+  const nav = document.createElement('nav');
+  nav.id = 'workspace-shortcuts'; nav.className = 'workspace-shortcuts';
+  nav.setAttribute('aria-label', '工作分区');
+  for (const [id, label, icon] of [['schedule','日程','calendar-days'],['files','文件','folder'],['assets','素材库','images'],['skills','技能','sparkles']]) {
+    const button = document.createElement('button');
+    button.type='button'; button.dataset.workspaceArea=id; button.title=label; button.setAttribute('aria-label',label);
+    const paths = {
+      schedule: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4m10-4v4M3 11h18M8 15h2m4 0h2m-8 3h2"/>',
+      files: '<path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3Z"/>',
+      assets: '<rect x="6" y="3" width="15" height="15" rx="3"/><path d="M3 7v12a2 2 0 0 0 2 2h12M7 15l4-4 3 3 3-2 3 3"/><circle cx="16" cy="7" r="1"/>',
+      skills: '<path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/>'
+    };
+    button.innerHTML = `<span><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[id]}</svg></span><small>${label}</small>`;
+    button.addEventListener('click',()=>window.MesssWorkHub.open(id)); nav.append(button);
+  }
+  (brand.closest('.sidebar-brand-row') || brand).after(nav);
+  document.getElementById('collapse-sidebar-btn')?.addEventListener('click', toggleSidebarCollapsed);
+  const quick = document.createElement('div');
+  quick.className = 'sidebar-rail-actions';
+  const buttons = [
+    ['搜索文件', '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>', () => { setSidebarCollapsed(false); document.getElementById('search-input').focus(); }],
+    ['导入文件', '<path d="M12 16V3m-5 5 5-5 5 5M4 16v5h16v-5"/>', () => document.getElementById('import-btn').click()],
+    ['新建文件夹', '<path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3Zm9 3v6m-3-3h6"/>', () => document.getElementById('add-folder-btn').click()]
+  ];
+  for (const [label, path, run] of buttons) {
+    const button = document.createElement('button');button.type='button';button.title=label;button.setAttribute('aria-label',label);
+    button.innerHTML=`<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+    button.addEventListener('click',run);quick.append(button);
+  }
+  nav.after(quick);
 }
-document.addEventListener('DOMContentLoaded', initSidebarPartitions);
+document.addEventListener('DOMContentLoaded',initSidebarPartitions);

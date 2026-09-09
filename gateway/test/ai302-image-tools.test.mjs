@@ -804,7 +804,7 @@ test('gateway charges image tools while retaining opaque asynchronous result dow
   );
   assert.match(
     server,
-    /url\.pathname === '\/v1\/tools\/image\/upscale'[\s\S]*?clipdrop-upscale[\s\S]*?reserveFixedTool[\s\S]*?generativeUpscaleImage[\s\S]*?settleReservedTool\(user\.id, usage\)/
+    /url\.pathname === '\/v1\/tools\/image\/upscale'[\s\S]*?clipdrop-upscale[\s\S]*?reserveFixedTool[\s\S]*?runDurableFalImageTool[\s\S]*?settleReservedTool\(user\.id, usage\)/
   );
   assert.match(
     server,

@@ -121,7 +121,7 @@ window.MesssCanvasPluginAdapter = {
   snap(bounds, candidates, zoom) {
     const snap = this._snap || (this._snap = new MesssCanvasPlugins.Snap({
       isApp: true, tree: {}, editor: { multiple: false }, zoomLayer: { scaleX: 1 }
-    }, { snapSize: 3, showLinePoints: false }));
+    }, { snapSize: 8, showLinePoints: false }));
     const points = b => ({ tl: { x: b.x, y: b.y }, tr: { x: b.x + b.w, y: b.y },
       bl: { x: b.x, y: b.y + b.h }, br: { x: b.x + b.w, y: b.y + b.h }, c: { x: b.x + b.w / 2, y: b.y + b.h / 2 } });
     const lines = [];
@@ -133,7 +133,9 @@ window.MesssCanvasPluginAdapter = {
       lines.push(axis === 'x' ? [Math.min(...ends), coordinate, Math.max(...ends), coordinate] : [coordinate, Math.min(...ends), coordinate, Math.max(...ends)]);
     };
     // Avoid the plugin's integer rounding expanding the tolerance at high zoom.
-    snap.isInRange = (a, b) => Math.abs(a - b) * zoom <= 3;
+    // Use a slightly wider screen-space capture radius so alignment engages
+    // before the edges are nearly touching, while remaining predictable.
+    snap.isInRange = (a, b) => Math.abs(a - b) * zoom <= 8;
     snap.getSnapPoints = points;
     snap.snapPoints = candidates.map(points);
     const target = { ...bounds };

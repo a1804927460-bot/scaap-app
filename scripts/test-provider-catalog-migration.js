@@ -35,14 +35,15 @@ assert.deepEqual(
   [
     'Nano Banana Pro',
     'Nano Banana 2',
-    'GPT Image 2'
+    'GPT Image 2',
+    'Midjourney V8.2'
   ]
 );
 const nanoBananaPro = media.imageProviders.find((provider) => provider.id === 'image-1');
 assert.ok(nanoBananaPro);
 assert.equal(nanoBananaPro.endpoint, 'https://aireiter.com/api/openapi/submit');
 assert.equal(nanoBananaPro.resultEndpoint, 'https://aireiter.com/api/openapi/query');
-assert.equal(nanoBananaPro.model, 'nano_banana_pro_max');
+assert.equal(nanoBananaPro.model, 'nano_banana_pro');
 assert.equal(nanoBananaPro.protocol, 'aireiter-async');
 assert.deepEqual(nanoBananaPro.capabilities.sizes, ['1K', '2K', '4K']);
 assert.equal(nanoBananaPro.capabilities.ratios.includes('auto'), true);
@@ -61,7 +62,7 @@ assert.equal(chaserCatalog.icon, 'chaser-pro');
 assert.equal(chaserPro.name, '');
 assert.equal(require('../lib/provider-catalog').catalogProvider('image-1').keyEnv, 'AIREITER_API_KEY');
 assert.equal(require('../lib/provider-catalog').catalogProvider('image-2').keyEnv, 'AIREITER_API_KEY');
-assert.equal(require('../lib/provider-catalog').catalogProvider('image-2').model, 'nano_banana_v2_max');
+assert.equal(require('../lib/provider-catalog').catalogProvider('image-2').model, 'nano_banana_v2');
 assert.deepEqual(require('../lib/provider-catalog').catalogProvider('image-1').fallbackProviderIds, []);
 assert.deepEqual(require('../lib/provider-catalog').catalogProvider('image-2').fallbackProviderIds, []);
 assert.deepEqual(require('../lib/provider-catalog').catalogProvider('video-1').fallbackProviderIds, []);
@@ -126,7 +127,8 @@ assert.deepEqual(
   [
     'MiniMax H3',
     'Seedance 2.0',
-    'Seedance 2.5'
+    'Seedance 2.5',
+    'Kling'
   ]
 );
 const seedance20 = media.videoProviders.find((provider) => provider.id === 'video-2');
@@ -317,7 +319,7 @@ assert.doesNotMatch(assistantSource, /gpt-5\.6-luna|GPT-5\.6 Luna/);
 assert.match(assistantSource, /'gemini-3\.1-pro': 'Gemini 3\.1 Pro'/);
 assert.match(assistantSource, /'gpt-5\.6-sol': 'GPT-5\.6 Sol'/);
 assert.match(assistantSource, /'kimi-k3': 'Kimi K3'/);
-assert.doesNotMatch(assistantSource, /doubao-seed-2-1-pro-260628|deepseek-v4-pro/);
+assert.doesNotMatch(assistantSource, /doubao-seed-2-1-pro-260628/);
 assert.equal(
   require('../lib/provider-catalog').providerCatalog().every((provider) => provider.requiresActivation === false),
   true,

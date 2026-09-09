@@ -14,5 +14,5 @@ assert.equal(events.filter(e=>e.channel==='updater:downloaded').length,2);
 assert.match(source,/autoUpdateEnabled !== false/);
 assert.match(source,/if \(updaterState.enabled\) checkForUpdatesQuietly\(\)/);
 assert.match(source,/setInterval\(checkForUpdatesQuietly, 15 \* 60 \* 1000\)/);
-assert.match(source,/autoUpdater.autoInstallOnAppQuit = false/);
-console.log('Updater: startup defaults, periodic checks, main/detached notifications and explicit restart passed.');
+assert.match(source,/autoUpdater.autoInstallOnAppQuit = updaterState.enabled/);
+console.log('Updater: startup defaults, periodic checks, main/detached notifications and automatic quit installation and explicit restart passed.');

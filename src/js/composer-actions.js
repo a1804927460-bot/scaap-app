@@ -1,4 +1,16 @@
 'use strict';
+function agentRecordedCredits(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+function appendAgentCharge(row, receipt) {
+  if (!row) return;
+  row.querySelector('.agent-charge-receipt')?.remove();
+  const credits=agentRecordedCredits(receipt?.creditsCharged);
+  if (credits === null) return;
+  const label=document.createElement('small');label.className='agent-charge-receipt';
+  label.textContent=t('Charged '+credits.toFixed(2)+' credits','已扣 '+credits.toFixed(2)+' 积分');
+  row.appendChild(label);
+}
 async function chatWithAgentEstimate(pending, request) {
   let finished=false;
   request = { ...request, workRequestId: request.workRequestId || crypto.randomUUID() };
@@ -9,6 +21,7 @@ async function chatWithAgentEstimate(pending, request) {
     const follow = scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 64;
     pending.dataset.streaming = 'true';
     pending.classList.add('is-streaming');
+    pending.agentPreviewText = event.text;
     body.textContent = event.text;
     if (follow) scroller.scrollTop = scroller.scrollHeight;
   });
@@ -29,11 +42,11 @@ async function chatWithAgentEstimate(pending, request) {
   Promise.resolve().then(()=>window.messsAPI.estimateAgentCredits?.(request)).then(quote=>{
     if(finished || !pending.isConnected)return;
     estimate.textContent=quote?.available
-      ? t(`Estimated ${quote.min.toFixed(2)} - ${quote.max.toFixed(2)} credits`, `预计 ${quote.min.toFixed(2)} - ${quote.max.toFixed(2)} 积分`)
+      ? t(`First reply estimate ${quote.min.toFixed(2)} - ${quote.max.toFixed(2)} credits; tools and continuations extra`, `首轮预计 ${quote.min.toFixed(2)} - ${quote.max.toFixed(2)} 积分；工具和续写另计`)
       : t('Estimate unavailable','暂无法估算积分');
     pending.dataset.creditEstimate=estimate.textContent;
   }).catch(()=>{if(!finished && pending.isConnected)pending.dataset.creditEstimate=t('Estimate unavailable','暂无法估算积分');});
-  try {return await window.messsAPI.chatWithAi(request);}
+  try { const result=await window.messsAPI.chatWithAi(request); pending.agentReceipt={creditsCharged:agentRecordedCredits(result?.creditsCharged)}; return result; }
   finally {
     finished=true;
     unsubscribe?.();
@@ -43,6 +56,20 @@ async function chatWithAgentEstimate(pending, request) {
     pending.classList.remove('is-streaming');
     pending.removeAttribute('title');
   }
+}
+
+function preserveInterruptedAgentReply(pending) {
+  const preview = pending.agentPreviewText;
+  if (typeof preview !== 'string' || !preview.trim()) return null;
+  const text = preview + '\n\n' + t(
+    '[Reply incomplete: the request did not finish. Received text has been retained.]',
+    '【回复未完成：本次请求未能完成，已保留收到的内容。】'
+  );
+  pending.classList.remove('is-pending', 'is-streaming');
+  const body = pending.querySelector('.ai-assistant-message-body') || pending;
+  body.textContent = text;
+  appendAgentCharge(pending, pending.agentReceipt);
+  return { role: 'assistant', content: text, displayContent: text, interrupted: true, creditsCharged: agentRecordedCredits(pending.agentReceipt?.creditsCharged) };
 }
 
 window.MesssComposerActions = (() => {

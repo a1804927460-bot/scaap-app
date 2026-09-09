@@ -1,0 +1,1644 @@
+
+> messs-ai-gateway@0.0.2 test
+> node ../scripts/test-gateway-suite.mjs
+
+TAP version 13
+# Subtest: Qwen Image Edit Plus submits sanitized relay images and polls with an owner-bound opaque token
+ok 1 - Qwen Image Edit Plus submits sanitized relay images and polls with an owner-bound opaque token
+  ---
+  duration_ms: 21.1086
+  type: 'test'
+  ...
+# Subtest: Qwen Image Layered submits one relay and accepts only allowlisted result URLs
+ok 2 - Qwen Image Layered submits one relay and accepts only allowlisted result URLs
+  ---
+  duration_ms: 1.6638
+  type: 'test'
+  ...
+# Subtest: Super Upscale V2 is synchronous, bounded, and releases its temporary relay
+ok 3 - Super Upscale V2 is synchronous, bounded, and releases its temporary relay
+  ---
+  duration_ms: 1.0919
+  type: 'test'
+  ...
+# Subtest: image tools report a rejected 302 key without exposing it
+ok 4 - image tools report a rejected 302 key without exposing it
+  ---
+  duration_ms: 0.6239
+  type: 'test'
+  ...
+# Subtest: image tools distinguish a provider timeout from a transport outage
+ok 5 - image tools distinguish a provider timeout from a transport outage
+  ---
+  duration_ms: 0.6551
+  type: 'test'
+  ...
+# Subtest: image tool classifies provider body errors and only falls back for rejected capacity errors
+ok 6 - image tool classifies provider body errors and only falls back for rejected capacity errors
+  ---
+  duration_ms: 1.7639
+  type: 'test'
+  ...
+# Subtest: image tools accept wrapped 302 task and synchronous result payloads
+ok 7 - image tools accept wrapped 302 task and synchronous result payloads
+  ---
+  duration_ms: 1.7652
+  type: 'test'
+  ...
+# Subtest: Topaz image tools use documented endpoints, real provider credits, polling, and settlement
+ok 8 - Topaz image tools use documented endpoints, real provider credits, polling, and settlement
+  ---
+  duration_ms: 1.5991
+  type: 'test'
+  ...
+# Subtest: Topaz generative sharpen and enhance use their distinct documented endpoints
+ok 9 - Topaz generative sharpen and enhance use their distinct documented endpoints
+  ---
+  duration_ms: 1.3236
+  type: 'test'
+  ...
+# Subtest: all seven Topaz image tools use their documented endpoint and default model
+ok 10 - all seven Topaz image tools use their documented endpoint and default model
+  ---
+  duration_ms: 1.9275
+  type: 'test'
+  ...
+# Subtest: Topaz image tools unwrap aliases and keep polling until a download URL exists
+ok 11 - Topaz image tools unwrap aliases and keep polling until a download URL exists
+  ---
+  duration_ms: 1.2416
+  type: 'test'
+  ...
+# Subtest: Topaz image failure settles as released credits
+ok 12 - Topaz image failure settles as released credits
+  ---
+  duration_ms: 0.7417
+  type: 'test'
+  ...
+# Subtest: Erase sends sanitized multipart image and mask files and returns one safe URL
+ok 13 - Erase sends sanitized multipart image and mask files and returns one safe URL
+  ---
+  duration_ms: 0.8007
+  type: 'test'
+  ...
+# Subtest: Clipdrop Uncrop sends exact centered pixel extensions and returns the raster result
+ok 14 - Clipdrop Uncrop sends exact centered pixel extensions and returns the raster result
+  ---
+  duration_ms: 0.8184
+  type: 'test'
+  ...
+# Subtest: quality-first synchronous image tools use the documented 302 multipart endpoints
+ok 15 - quality-first synchronous image tools use the documented 302 multipart endpoints
+  ---
+  duration_ms: 0.7387
+  type: 'test'
+  ...
+# Subtest: result downloads follow only allowlisted redirects, omit the 302 key, and validate PNG bytes
+ok 16 - result downloads follow only allowlisted redirects, omit the 302 key, and validate PNG bytes
+  ---
+  duration_ms: 0.5071
+  type: 'test'
+  ...
+# Subtest: gateway charges image tools while retaining opaque asynchronous result downloads
+ok 17 - gateway charges image tools while retaining opaque asynchronous result downloads
+  ---
+  duration_ms: 1.7211
+  type: 'test'
+  ...
+1..17
+# tests 17
+# suites 0
+# pass 17
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 460.5185
+
+TAP version 13
+# Subtest: image data URLs are strict and metadata is removed without corrupting PNG data
+ok 1 - image data URLs are strict and metadata is removed without corrupting PNG data
+  ---
+  duration_ms: 2.4463
+  type: 'test'
+  ...
+# Subtest: Photoroom background removal requests a transparent PNG
+ok 2 - Photoroom background removal requests a transparent PNG
+  ---
+  duration_ms: 14.0222
+  type: 'test'
+  ...
+# Subtest: 302 authorization failures are explicit and unsupported background options are not forwarded
+ok 3 - 302 authorization failures are explicit and unsupported background options are not forwarded
+  ---
+  duration_ms: 0.8581
+  type: 'test'
+  ...
+# Subtest: background removal distinguishes a provider timeout from a transport outage
+ok 4 - background removal distinguishes a provider timeout from a transport outage
+  ---
+  duration_ms: 0.7248
+  type: 'test'
+  ...
+# Subtest: provider-specific 3D options reject unsupported combinations before submission
+ok 5 - provider-specific 3D options reject unsupported combinations before submission
+  ---
+  duration_ms: 0.3084
+  type: 'test'
+  ...
+# Subtest: asset URLs reject non-provider hosts, credentials, ports, fragments, and IP literals
+ok 6 - asset URLs reject non-provider hosts, credentials, ports, fragments, and IP literals
+  ---
+  duration_ms: 3.2964
+  type: 'test'
+  ...
+# Subtest: asset URLs allow only configured backup route hosts
+ok 7 - asset URLs allow only configured backup route hosts
+  ---
+  duration_ms: 0.4173
+  type: 'test'
+  ...
+# Subtest: 3D fallback stays on the accepted backup route through status and model delivery
+ok 8 - 3D fallback stays on the accepted backup route through status and model delivery
+  ---
+  duration_ms: 4.4149
+  type: 'test'
+  ...
+# Subtest: HUNYUAN3D task tokens hide the job, bind the user and provider, and normalize status
+ok 9 - HUNYUAN3D task tokens hide the job, bind the user and provider, and normalize status
+  ---
+  duration_ms: 5.523
+  type: 'test'
+  ...
+# Subtest: Hyper3D receives a short-lived metadata-free image relay and uses the documented contract
+ok 10 - Hyper3D receives a short-lived metadata-free image relay and uses the documented contract
+  ---
+  duration_ms: 1.9616
+  type: 'test'
+  ...
+# Subtest: Tripo3D uploads the image, creates a PBR task, polls, settles credits, and downloads GLB
+ok 11 - Tripo3D uploads the image, creates a PBR task, polls, settles credits, and downloads GLB
+  ---
+  duration_ms: 2.4125
+  type: 'test'
+  ...
+# Subtest: Tripo3D accepts nested response envelopes and camel-case model assets
+ok 12 - Tripo3D accepts nested response envelopes and camel-case model assets
+  ---
+  duration_ms: 1.0477
+  type: 'test'
+  ...
+# Subtest: 3D accounting is validated before any paid upstream request
+ok 13 - 3D accounting is validated before any paid upstream request
+  ---
+  duration_ms: 0.3354
+  type: 'test'
+  ...
+# Subtest: 3D providers download only validated GLB bytes and never return upstream URLs
+ok 14 - 3D providers download only validated GLB bytes and never return upstream URLs
+  ---
+  duration_ms: 0.9805
+  type: 'test'
+  ...
+# Subtest: Topaz video creation uses the documented relay contract and server-only retail pricing
+ok 15 - Topaz video creation uses the documented relay contract and server-only retail pricing
+  ---
+  duration_ms: 2.2807
+  type: 'test'
+  ...
+# Subtest: Topaz result download validates the provider URL and returns only video bytes
+ok 16 - Topaz result download validates the provider URL and returns only video bytes
+  ---
+  duration_ms: 1.3921
+  type: 'test'
+  ...
+# Subtest: Topaz chunk uploads are owner-bound, retry-safe, and consumed only when complete
+ok 17 - Topaz chunk uploads are owner-bound, retry-safe, and consumed only when complete
+  ---
+  duration_ms: 5.4224
+  type: 'test'
+  ...
+# Subtest: Topaz creation unwraps generic 302 status envelopes and accepts task field aliases
+ok 18 - Topaz creation unwraps generic 302 status envelopes and accepts task field aliases
+  ---
+  duration_ms: 1.681
+  type: 'test'
+  ...
+# Subtest: Topaz accepts wrapped 302 responses and derives progress from processing jobs
+ok 19 - Topaz accepts wrapped 302 responses and derives progress from processing jobs
+  ---
+  duration_ms: 1.2335
+  type: 'test'
+  ...
+# Subtest: Topaz video accepts snake_case jobs and waits for a delayed download URL
+ok 20 - Topaz video accepts snake_case jobs and waits for a delayed download URL
+  ---
+  duration_ms: 0.8676
+  type: 'test'
+  ...
+# Subtest: Topaz video inputs and output options fail closed
+ok 21 - Topaz video inputs and output options fail closed
+  ---
+  duration_ms: 0.2638
+  type: 'test'
+  ...
+# Subtest: Topaz documents a creation rejection instead of returning a generic start failure
+ok 22 - Topaz documents a creation rejection instead of returning a generic start failure
+  ---
+  duration_ms: 0.6465
+  type: 'test'
+  ...
+# Subtest: unsafe background-result redirects and missing public relay configuration fail closed
+ok 23 - unsafe background-result redirects and missing public relay configuration fail closed
+  ---
+  duration_ms: 0.9097
+  type: 'test'
+  ...
+# Subtest: background removal accepts a wrapped 302 result without exposing the provider URL
+ok 24 - background removal accepts a wrapped 302 result without exposing the provider URL
+  ---
+  duration_ms: 0.4319
+  type: 'test'
+  ...
+# Subtest: server enables paid 302 routes with the shared key unless a route is explicitly disabled
+ok 25 - server enables paid 302 routes with the shared key unless a route is explicitly disabled
+  ---
+  duration_ms: 1.8315
+  type: 'test'
+  ...
+1..25
+# tests 25
+# suites 0
+# pass 25
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 486.1278
+
+TAP version 13
+# Subtest: provider user IDs are stable, distinct, and contain no account data
+ok 1 - provider user IDs are stable, distinct, and contain no account data
+  ---
+  duration_ms: 1.5545
+  type: 'test'
+  ...
+# Subtest: AI Reiter is the primary Nano Banana Pro route
+ok 2 - AI Reiter is the primary Nano Banana Pro route
+  ---
+  duration_ms: 18.049
+  type: 'test'
+  ...
+# Subtest: AI Reiter Nano Banana 2 references use a public relay and documented URL encoding
+ok 3 - AI Reiter Nano Banana 2 references use a public relay and documented URL encoding
+  ---
+  duration_ms: 5.0356
+  type: 'test'
+  ...
+# Subtest: AI Reiter GPT Image 2 official sends documented resolution and rejects unsupported combinations
+ok 4 - AI Reiter GPT Image 2 official sends documented resolution and rejects unsupported combinations
+  ---
+  duration_ms: 5.9046
+  type: 'test'
+  ...
+# Subtest: GPT Image 2 rejects retired provider routes before any upstream call
+ok 5 - GPT Image 2 rejects retired provider routes before any upstream call
+  ---
+  duration_ms: 2.2216
+  type: 'test'
+  ...
+# {"level":"info","event":"chat-route-result","requestId":"","route":"chat-3","model":"gemini-3.1-pro","status":"succeeded","durationMs":2,"usage":null}
+# {"level":"info","event":"chat-route-result","requestId":"","route":"chat-4","model":"gpt-5.6-sol","status":"succeeded","durationMs":0,"usage":null}
+# {"level":"info","event":"chat-route-result","requestId":"","route":"chat-5","model":"kimi-k3","status":"succeeded","durationMs":0,"usage":null}
+# {"level":"info","event":"chat-route-result","requestId":"","route":"chat-6","model":"gemini-3.8-flash","status":"succeeded","durationMs":0,"usage":null}
+# Subtest: AI Reiter accepts numeric completion status and nested result URLs
+ok 6 - AI Reiter accepts numeric completion status and nested result URLs
+  ---
+  duration_ms: 2005.2677
+  type: 'test'
+  ...
+# Subtest: AI Reiter nested authentication and balance errors are rejected before polling
+ok 7 - AI Reiter nested authentication and balance errors are rejected before polling
+  ---
+  duration_ms: 2.3172
+  type: 'test'
+  ...
+# Subtest: AI Reiter video tasks stay pinned to their accepted route
+ok 8 - AI Reiter video tasks stay pinned to their accepted route
+  ---
+  duration_ms: 3.2307
+  type: 'test'
+  ...
+# Subtest: AI Reiter H3 publishes nested video outputs without resubmission
+ok 9 - AI Reiter H3 publishes nested video outputs without resubmission
+  ---
+  duration_ms: 3.0439
+  type: 'test'
+  ...
+# Subtest: AI Reiter MiniMax H3 maps first-frame and first-last-frame requests separately
+ok 10 - AI Reiter MiniMax H3 maps first-frame and first-last-frame requests separately
+  ---
+  duration_ms: 2.6207
+  type: 'test'
+  ...
+# Subtest: AI Reiter MiniMax H3 uses all-reference only for mixed reference assets
+ok 11 - AI Reiter MiniMax H3 uses all-reference only for mixed reference assets
+  ---
+  duration_ms: 1.947
+  type: 'test'
+  ...
+# Subtest: AI Reiter MiniMax H3 rejects text-to-video and wrong frame counts before submission
+ok 12 - AI Reiter MiniMax H3 rejects text-to-video and wrong frame counts before submission
+  ---
+  duration_ms: 2.8767
+  type: 'test'
+  ...
+# Subtest: 100 percent AI Reiter traffic is absolute even without an operation ID
+ok 13 - 100 percent AI Reiter traffic is absolute even without an operation ID
+  ---
+  duration_ms: 1.2606
+  type: 'test'
+  ...
+# Subtest: AI Reiter MiniMax H3 rejects unsupported frame media before submission
+ok 14 - AI Reiter MiniMax H3 rejects unsupported frame media before submission
+  ---
+  duration_ms: 1.408
+  type: 'test'
+  ...
+# Subtest: retired Gemini 3.7 Flash requests are rejected before any upstream call
+ok 15 - retired Gemini 3.7 Flash requests are rejected before any upstream call
+  ---
+  duration_ms: 0.9616
+  type: 'test'
+  ...
+# Subtest: AI Reiter Agent models use their configured model routes
+ok 16 - AI Reiter Agent models use their configured model routes
+  ---
+  duration_ms: 6.1241
+  type: 'test'
+  ...
+# Subtest: Nano Banana Pro remains AI Reiter primary and deterministic
+ok 17 - Nano Banana Pro remains AI Reiter primary and deterministic
+  ---
+  duration_ms: 49.2179
+  type: 'test'
+  ...
+# Subtest: an ambiguous AI Reiter submission is never replayed on a legacy paid route
+ok 18 - an ambiguous AI Reiter submission is never replayed on a legacy paid route
+  ---
+  duration_ms: 2.0724
+  type: 'test'
+  ...
+# Subtest: an interrupted AI Reiter submission resumes from its deterministic task ID
+ok 19 - an interrupted AI Reiter submission resumes from its deterministic task ID
+  ---
+  duration_ms: 1.6548
+  type: 'test'
+  ...
+# Subtest: a proven AI Reiter rejection never replays Nano Banana 2 on a legacy route
+ok 20 - a proven AI Reiter rejection never replays Nano Banana 2 on a legacy route
+  ---
+  duration_ms: 1.4288
+  type: 'test'
+  ...
+# Subtest: legacy traffic controls cannot demote AI Reiter and ChaserPro remains hidden
+ok 21 - legacy traffic controls cannot demote AI Reiter and ChaserPro remains hidden
+  ---
+  duration_ms: 4.9714
+  type: 'test'
+  ...
+1..21
+# tests 21
+# suites 0
+# pass 21
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2264.5099
+
+TAP version 13
+# Subtest: Kling variants preserve model, sound, dimensions, quote and billing-bound task recovery
+ok 1 - Kling variants preserve model, sound, dimensions, quote and billing-bound task recovery
+  ---
+  duration_ms: 48.7114
+  type: 'test'
+  ...
+# Subtest: Kling rejects unsupported combinations before any upstream request
+ok 2 - Kling rejects unsupported combinations before any upstream request
+  ---
+  duration_ms: 0.2767
+  type: 'test'
+  ...
+# Subtest: expired discounts and ambiguous submissions never trigger another billable request
+ok 3 - expired discounts and ambiguous submissions never trigger another billable request
+  ---
+  duration_ms: 2.6689
+  type: 'test'
+  ...
+1..3
+# tests 3
+# suites 0
+# pass 3
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 350.8028
+
+TAP version 13
+# Subtest: public account and usage APIs retain hundredths
+ok 1 - public account and usage APIs retain hundredths
+  ---
+  duration_ms: 13.072
+  type: 'test'
+  ...
+# Subtest: verified cached tokens and fallback model determine actual fractional charge
+ok 2 - verified cached tokens and fallback model determine actual fractional charge
+  ---
+  duration_ms: 0.4231
+  type: 'test'
+  ...
+# Subtest: reservation grows for continuations without rounding usage repeatedly
+ok 3 - reservation grows for continuations without rounding usage repeatedly
+  ---
+  duration_ms: 0.1489
+  type: 'test'
+  ...
+# Subtest: billing is server owned and retries a lost RPC response with the same claim
+ok 4 - billing is server owned and retries a lost RPC response with the same claim
+  ---
+  duration_ms: 1.8285
+  type: 'test'
+  ...
+# Subtest: insufficient balance prevents a provider submission and stays a billing error
+ok 5 - insufficient balance prevents a provider submission and stays a billing error
+  ---
+  duration_ms: 0.8687
+  type: 'test'
+  ...
+1..5
+# tests 5
+# suites 0
+# pass 5
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 466.1017
+
+TAP version 13
+# Subtest: chat recognizes capacity rejection envelopes, preserves Retry-After and never renders errors as replies
+ok 1 - chat recognizes capacity rejection envelopes, preserves Retry-After and never renders errors as replies
+  ---
+  duration_ms: 14.1128
+  type: 'test'
+  ...
+# Subtest: circuit cooldown is model/key scoped, allows recovery probes and prioritizes healthy routes
+ok 2 - circuit cooldown is model/key scoped, allows recovery probes and prioritizes healthy routes
+  ---
+  duration_ms: 30.2233
+  type: 'test'
+  ...
+# {"level":"warn","event":"chat-route-result","requestId":"test-auto-1","route":"chat-6","model":"gemini-3.8-flash","status":429,"durationMs":0,"reason":"capacity-exhausted","fallbackAllowed":true}
+# {"level":"warn","event":"chat-route-result","requestId":"test-auto-1","route":"chat-3","model":"gemini-3.1-pro","status":429,"durationMs":1,"reason":"capacity-exhausted","fallbackAllowed":true}
+# {"level":"info","event":"chat-route-result","requestId":"test-auto-1","route":"chat-4","model":"gpt-5.6-sol","status":"succeeded","durationMs":1,"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}
+# {"level":"info","event":"chat-route-result","requestId":"test-auto-2","route":"chat-4","model":"gpt-5.6-sol","status":"succeeded","durationMs":0,"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}
+# {"level":"warn","event":"chat-route-result","requestId":"","route":"chat-6","model":"gemini-3.8-flash","status":429,"durationMs":0,"reason":"cooldown","fallbackAllowed":true}
+# {"level":"info","event":"chat-route-result","requestId":"","route":"chat-4","model":"gpt-5.6-sol","status":"succeeded","durationMs":0,"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}
+# {"level":"info","event":"chat-route-result","requestId":"","route":"chat-6","model":"gemini-3.8-flash","status":"succeeded","durationMs":1,"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}
+# {"level":"warn","event":"chat-route-result","requestId":"","route":"chat-4","model":"gpt-5.6-sol","status":429,"durationMs":0,"reason":"capacity-exhausted","fallbackAllowed":true}
+# {"level":"info","event":"chat-route-result","requestId":"","route":"chat-6","model":"gemini-3.8-flash","status":"succeeded","durationMs":0,"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}
+# {"level":"info","event":"chat-route-result","requestId":"","route":"chat-6","model":"gemini-3.8-flash","status":"succeeded","durationMs":1,"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}
+# {"level":"warn","event":"chat-route-result","requestId":"","route":"chat-6","model":"gemini-3.8-flash","status":502,"durationMs":2,"reason":"chat-stream-interrupted","fallbackAllowed":false}
+# Subtest: safe retries are bounded and do not retry accepted, ambiguous, exhausted or long Retry-After requests
+ok 3 - safe retries are bounded and do not retry accepted, ambiguous, exhausted or long Retry-After requests
+  ---
+  duration_ms: 1011.2835
+  type: 'test'
+  ...
+# Subtest: automatic chat bypasses depleted models on later requests; manual models never change silently
+ok 4 - automatic chat bypasses depleted models on later requests; manual models never change silently
+  ---
+  duration_ms: 9.7996
+  type: 'test'
+  ...
+# Subtest: chat errors do not promise media recovery or held credits
+ok 5 - chat errors do not promise media recovery or held credits
+  ---
+  duration_ms: 0.7412
+  type: 'test'
+  ...
+# Subtest: cold automatic routes use verified availability order without changing manual models or overriding health
+ok 6 - cold automatic routes use verified availability order without changing manual models or overriding health
+  ---
+  duration_ms: 6.4224
+  type: 'test'
+  ...
+# Subtest: an interrupted streamed automatic request is not replayed to another model
+ok 7 - an interrupted streamed automatic request is not replayed to another model
+  ---
+  duration_ms: 3.3024
+  type: 'test'
+  ...
+1..7
+# tests 7
+# suites 0
+# pass 7
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1554.2151
+
+TAP version 13
+# Subtest: webhook authenticates original bytes and rejects tampering or malformed signatures
+ok 1 - webhook authenticates original bytes and rejects tampering or malformed signatures
+  ---
+  duration_ms: 1.1085
+  type: 'test'
+  ...
+# Subtest: only matching paid production one-time orders reach durable completion
+ok 2 - only matching paid production one-time orders reach durable completion
+  ---
+  duration_ms: 13.5533
+  type: 'test'
+  ...
+# Subtest: refund notifications persist for reconciliation and storage failures are retried
+ok 3 - refund notifications persist for reconciliation and storage failures are retried
+  ---
+  duration_ms: 0.5395
+  type: 'test'
+  ...
+# Subtest: checkout uses authoritative price and account, rejects redirect injection
+ok 4 - checkout uses authoritative price and account, rejects redirect injection
+  ---
+  duration_ms: 0.6759
+  type: 'test'
+  ...
+1..4
+# tests 4
+# suites 0
+# pass 4
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 694.7454
+
+TAP version 13
+# Subtest: FAL lookup outage must not release a possibly accepted reservation
+ok 1 - FAL lookup outage must not release a possibly accepted reservation
+  ---
+  duration_ms: 1.014
+  type: 'test'
+  ...
+# Subtest: new FAL claim never treats the database pending placeholder as a provider task
+ok 2 - new FAL claim never treats the database pending placeholder as a provider task
+  ---
+  duration_ms: 1.2633
+  type: 'test'
+  ...
+# Subtest: FAL retry after process loss resumes accepted task and stores bytes before returning
+ok 3 - FAL retry after process loss resumes accepted task and stores bytes before returning
+  ---
+  duration_ms: 0.1793
+  type: 'test'
+  ...
+# Subtest: completed FAL retry reads stored output without submitting
+ok 4 - completed FAL retry reads stored output without submitting
+  ---
+  duration_ms: 0.1171
+  type: 'test'
+  ...
+# Subtest: concurrent FAL claim does not submit twice
+ok 5 - concurrent FAL claim does not submit twice
+  ---
+  duration_ms: 0.1242
+  type: 'test'
+  ...
+# Subtest: FAL storage outage preserves the accepted task reservation
+ok 6 - FAL storage outage preserves the accepted task reservation
+  ---
+  duration_ms: 0.1269
+  type: 'test'
+  ...
+1..6
+# tests 6
+# suites 0
+# pass 6
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 163.1687
+
+TAP version 13
+# Subtest: verified high-cost backups never enter an economy quote, regardless of candidate order
+ok 1 - verified high-cost backups never enter an economy quote, regardless of candidate order
+  ---
+  duration_ms: 1.1913
+  type: 'test'
+  ...
+# Subtest: capability selection can choose another upstream without changing dimensions or references
+ok 2 - capability selection can choose another upstream without changing dimensions or references
+  ---
+  duration_ms: 0.2289
+  type: 'test'
+  ...
+# Subtest: same transport, unverified host, unsupported ratio and non-edit routes are excluded
+ok 3 - same transport, unverified host, unsupported ratio and non-edit routes are excluded
+  ---
+  duration_ms: 0.2519
+  type: 'test'
+  ...
+1..3
+# tests 3
+# suites 0
+# pass 3
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 397.2892
+
+TAP version 13
+# Subtest: fair gate rotates users and enforces global and per-user limits
+ok 1 - fair gate rotates users and enforces global and per-user limits
+  ---
+  duration_ms: 33.3106
+  type: 'test'
+  ...
+# Subtest: queued work can be cancelled without leaking capacity
+ok 2 - queued work can be cancelled without leaking capacity
+  ---
+  duration_ms: 0.6035
+  type: 'test'
+  ...
+1..2
+# tests 2
+# suites 0
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 116.354
+
+TAP version 13
+# Subtest: FAL legacy offsets and price tiers agree with submitted resolution
+ok 1 - FAL legacy offsets and price tiers agree with submitted resolution
+  ---
+  duration_ms: 4.9658
+  type: 'test'
+  ...
+# Subtest: fal key aliases and input limits
+ok 2 - fal key aliases and input limits
+  ---
+  duration_ms: 0.6672
+  type: 'test'
+  ...
+# Subtest: smart-resize queues then downloads the documented result shape
+ok 3 - smart-resize queues then downloads the documented result shape
+  ---
+  duration_ms: 15.7966
+  type: 'test'
+  ...
+# Subtest: feynobg queues then downloads the documented result shape
+ok 4 - feynobg queues then downloads the documented result shape
+  ---
+  duration_ms: 2.7137
+  type: 'test'
+  ...
+# Subtest: topaz/upscale/image queues then downloads the documented result shape
+ok 5 - topaz/upscale/image queues then downloads the documented result shape
+  ---
+  duration_ms: 1.0116
+  type: 'test'
+  ...
+# Subtest: Topaz enhancement derives billed tier from real image bytes
+ok 6 - Topaz enhancement derives billed tier from real image bytes
+  ---
+  duration_ms: 29.6081
+  type: 'test'
+  ...
+1..6
+# tests 6
+# suites 0
+# pass 6
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 618.0481
+
+TAP version 13
+# Subtest: idempotent operations share concurrent work and retry after rejection
+ok 1 - idempotent operations share concurrent work and retry after rejection
+  ---
+  duration_ms: 2.4119
+  type: 'test'
+  ...
+# Subtest: successful idempotent operations remain shared during their ttl
+ok 2 - successful idempotent operations remain shared during their ttl
+  ---
+  duration_ms: 0.3008
+  type: 'test'
+  ...
+1..2
+# tests 2
+# suites 0
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 518.8378
+
+TAP version 13
+# All public image routes: mapping, mixed distribution, edit, hidden config, rejection fallback, acceptance and rollback recovery passed.
+# Subtest: All public image models preserve their contract across mixed routes
+ok 1 - All public image models preserve their contract across mixed routes
+  ---
+  duration_ms: 309.3273
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 643.5121
+
+TAP version 13
+# Subtest: missing image recovery schema does not block a fresh image request
+ok 1 - missing image recovery schema does not block a fresh image request
+  ---
+  duration_ms: 0.7035
+  type: 'test'
+  ...
+# Subtest: image recovery remains fail-closed for an unknown RPC failure
+ok 2 - image recovery remains fail-closed for an unknown RPC failure
+  ---
+  duration_ms: 0.1648
+  type: 'test'
+  ...
+1..2
+# tests 2
+# suites 0
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 85.779
+
+TAP version 13
+# Subtest: multi-megabyte JPEG, PNG and WebP validate without regexp stack overflow
+ok 1 - multi-megabyte JPEG, PNG and WebP validate without regexp stack overflow
+  ---
+  duration_ms: 2975.9671
+  type: 'test'
+  ...
+# Subtest: large video input preserves bytes and upload size validation
+ok 2 - large video input preserves bytes and upload size validation
+  ---
+  duration_ms: 22.1379
+  type: 'test'
+  ...
+# Subtest: padding, invalid characters and non-canonical encodings are still rejected
+ok 3 - padding, invalid characters and non-canonical encodings are still rejected
+  ---
+  duration_ms: 11.4393
+  type: 'test'
+  ...
+# Subtest: large reference survives actual FAL tool input validation before queue submission
+ok 4 - large reference survives actual FAL tool input validation before queue submission
+  ---
+  duration_ms: 108.2353
+  type: 'test'
+  ...
+1..4
+# tests 4
+# suites 0
+# pass 4
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3284.8102
+
+TAP version 13
+# Subtest: busy cheapest route spills only to supplied affordable candidates and shares alias capacity
+ok 1 - busy cheapest route spills only to supplied affordable candidates and shares alias capacity
+  ---
+  duration_ms: 0.8948
+  type: 'test'
+  ...
+# Subtest: full affordable routes queue without starting upstream work; cancelled requests never submit
+ok 2 - full affordable routes queue without starting upstream work; cancelled requests never submit
+  ---
+  duration_ms: 1.0258
+  type: 'test'
+  ...
+# Subtest: bounded queue rejects excess work before spending, errors release capacity
+ok 3 - bounded queue rejects excess work before spending, errors release capacity
+  ---
+  duration_ms: 0.3311
+  type: 'test'
+  ...
+1..3
+# tests 3
+# suites 0
+# pass 3
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 83.7839
+
+TAP version 13
+# Subtest: moderation sends all user text and no media or account identifiers
+ok 1 - moderation sends all user text and no media or account identifiers
+  ---
+  duration_ms: 12.349
+  type: 'test'
+  ...
+# Subtest: deny and flag block, with a stable public error
+ok 2 - deny and flag block, with a stable public error
+  ---
+  duration_ms: 1.8992
+  type: 'test'
+  ...
+# Subtest: network, HTTP, malformed and unknown decisions fail closed
+ok 3 - network, HTTP, malformed and unknown decisions fail closed
+  ---
+  duration_ms: 0.7074
+  type: 'test'
+  ...
+# Subtest: missing keys and production test keys cannot bypass screening
+ok 4 - missing keys and production test keys cannot bypass screening
+  ---
+  duration_ms: 0.3889
+  type: 'test'
+  ...
+# Subtest: generation is screened before billing while retrieval and chat stay available
+ok 5 - generation is screened before billing while retrieval and chat stay available
+  ---
+  duration_ms: 0.8414
+  type: 'test'
+  ...
+1..5
+# tests 5
+# suites 0
+# pass 5
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 641.5497
+
+TAP version 13
+# Subtest: locked built-in media routes ignore deployment-supplied fallback overrides
+ok 1 - locked built-in media routes ignore deployment-supplied fallback overrides
+  ---
+  duration_ms: 20.953
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 159.9235
+
+TAP version 13
+# Subtest: provider authentication errors are isolated from user sessions
+ok 1 - provider authentication errors are isolated from user sessions
+  ---
+  duration_ms: 1.8144
+  type: 'test'
+  ...
+# Subtest: user session errors keep their authentication semantics
+ok 2 - user session errors keep their authentication semantics
+  ---
+  duration_ms: 1.0859
+  type: 'test'
+  ...
+# Subtest: gateway account authorization errors are not mislabeled as provider failures
+ok 3 - gateway account authorization errors are not mislabeled as provider failures
+  ---
+  duration_ms: 0.3976
+  type: 'test'
+  ...
+# Subtest: provider timeouts never leak numeric DOMException codes
+ok 4 - provider timeouts never leak numeric DOMException codes
+  ---
+  duration_ms: 0.1268
+  type: 'test'
+  ...
+# Subtest: unexpected aborts are exposed as retryable provider interruptions
+ok 5 - unexpected aborts are exposed as retryable provider interruptions
+  ---
+  duration_ms: 0.1326
+  type: 'test'
+  ...
+# Subtest: reference policy rejections preserve their dedicated safe code
+ok 6 - reference policy rejections preserve their dedicated safe code
+  ---
+  duration_ms: 0.117
+  type: 'test'
+  ...
+# Subtest: supplier and relay names are removed from public gateway messages
+ok 7 - supplier and relay names are removed from public gateway messages
+  ---
+  duration_ms: 0.1915
+  type: 'test'
+  ...
+# Subtest: unknown upstream errors are reduced to stable public categories
+ok 8 - unknown upstream errors are reduced to stable public categories
+  ---
+  duration_ms: 0.0993
+  type: 'test'
+  ...
+# Subtest: accepted tasks always use the recovery category
+ok 9 - accepted tasks always use the recovery category
+  ---
+  duration_ms: 0.2811
+  type: 'test'
+  ...
+# Subtest: tool failures keep concrete safe categories without exposing upstream details
+ok 10 - tool failures keep concrete safe categories without exposing upstream details
+  ---
+  duration_ms: 0.4168
+  type: 'test'
+  ...
+# Subtest: accepted or ambiguous tool errors stay in recovery and never claim a refund
+ok 11 - accepted or ambiguous tool errors stay in recovery and never claim a refund
+  ---
+  duration_ms: 0.1277
+  type: 'test'
+  ...
+1..11
+# tests 11
+# suites 0
+# pass 11
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 320.0539
+
+TAP version 13
+# Subtest: R2 storage preserves bytes, bounds downloads and keeps legacy recovery
+ok 1 - R2 storage preserves bytes, bounds downloads and keeps legacy recovery
+  ---
+  duration_ms: 17.678
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 280.6052
+
+TAP version 13
+# Subtest: legacy tool settlement verifies owner and tool before shared settlement
+ok 1 - legacy tool settlement verifies owner and tool before shared settlement
+  ---
+  duration_ms: 14.4786
+  type: 'test'
+  ...
+# Subtest: gateway quote matches the desktop image table
+ok 2 - gateway quote matches the desktop image table
+  ---
+  duration_ms: 1.6803
+  type: 'test'
+  ...
+# Subtest: video quote clamps provider parameters, keeps chat free, and no provider requires activation
+ok 3 - video quote clamps provider parameters, keeps chat free, and no provider requires activation
+  ---
+  duration_ms: 0.4953
+  type: 'test'
+  ...
+# Subtest: provider config always exposes the complete catalog regardless of legacy activation state
+ok 4 - provider config always exposes the complete catalog regardless of legacy activation state
+  ---
+  duration_ms: 0.1276
+  type: 'test'
+  ...
+# Subtest: reserve sends normalized server-authoritative pricing parameters
+ok 5 - reserve sends normalized server-authoritative pricing parameters
+  ---
+  duration_ms: 0.8123
+  type: 'test'
+  ...
+# Subtest: all paid video models use the unified authoritative reservation RPC
+ok 6 - all paid video models use the unified authoritative reservation RPC
+  ---
+  duration_ms: 1.2039
+  type: 'test'
+  ...
+# Subtest: reserve exposes insufficient-credit denials
+ok 7 - reserve exposes insufficient-credit denials
+  ---
+  duration_ms: 0.386
+  type: 'test'
+  ...
+# Subtest: retail formula applies the safety buffer and current segmented gross margins, with one PTC treated as one USD
+ok 8 - retail formula applies the safety buffer and current segmented gross margins, with one PTC treated as one USD
+  ---
+  duration_ms: 0.1374
+  type: 'test'
+  ...
+# Subtest: legacy free markers cannot bypass chat settlement
+ok 9 - legacy free markers cannot bypass chat settlement
+  ---
+  duration_ms: 0.2195
+  type: 'test'
+  ...
+# Subtest: Legnext Midjourney uses its dedicated RPC and HD price
+ok 10 - Legnext Midjourney uses its dedicated RPC and HD price
+  ---
+  duration_ms: 0.5935
+  type: 'test'
+  ...
+# Subtest: every account receives the same quote without consulting a pricing-tier RPC
+ok 11 - every account receives the same quote without consulting a pricing-tier RPC
+  ---
+  duration_ms: 0.2265
+  type: 'test'
+  ...
+# Subtest: client pricing-tier fields cannot alter the unified server quote
+ok 12 - client pricing-tier fields cannot alter the unified server quote
+  ---
+  duration_ms: 0.3034
+  type: 'test'
+  ...
+# Subtest: Butler Topaz tools reserve conservative retail credits and preserve provider audit data
+ok 13 - Butler Topaz tools reserve conservative retail credits and preserve provider audit data
+  ---
+  duration_ms: 0.5731
+  type: 'test'
+  ...
+# Subtest: Butler Topaz reservations fail closed when the credit service is unavailable
+ok 14 - Butler Topaz reservations fail closed when the credit service is unavailable
+  ---
+  duration_ms: 0.3
+  type: 'test'
+  ...
+# Subtest: Butler image, enhancement, and 3D tools all use conservative paid pricing
+ok 15 - Butler image, enhancement, and 3D tools all use conservative paid pricing
+  ---
+  duration_ms: 2.1274
+  type: 'test'
+  ...
+# Subtest: GPT Image 2 reserves the selected quality price through the existing RPC parameter
+ok 16 - GPT Image 2 reserves the selected quality price through the existing RPC parameter
+  ---
+  duration_ms: 0.3342
+  type: 'test'
+  ...
+# Subtest: Higgsfield reserves resolution pricing through its server-authoritative RPC
+ok 17 - Higgsfield reserves resolution pricing through its server-authoritative RPC
+  ---
+  duration_ms: 0.35
+  type: 'test'
+  ...
+# Subtest: legacy activation denial opens only the current account and retries the identical reservation once
+ok 18 - legacy activation denial opens only the current account and retries the identical reservation once
+  ---
+  duration_ms: 1.4369
+  type: 'test'
+  ...
+# Subtest: failed legacy account update keeps the activation denial and does not retry reservation
+ok 19 - failed legacy account update keeps the activation denial and does not retry reservation
+  ---
+  duration_ms: 0.4574
+  type: 'test'
+  ...
+# Subtest: chat requires dedicated metered reservation, never media or activation RPCs
+ok 20 - chat requires dedicated metered reservation, never media or activation RPCs
+  ---
+  duration_ms: 0.1697
+  type: 'test'
+  ...
+# Subtest: failed generation settles as a release request
+ok 21 - failed generation settles as a release request
+  ---
+  duration_ms: 0.2602
+  type: 'test'
+  ...
+# Subtest: recovery-pending settlement responses are preserved for media and tools
+ok 22 - recovery-pending settlement responses are preserved for media and tools
+  ---
+  duration_ms: 0.6536
+  type: 'test'
+  ...
+# Subtest: settlement retries once without risking a duplicate charge
+ok 23 - settlement retries once without risking a duplicate charge
+  ---
+  duration_ms: 0.2579
+  type: 'test'
+  ...
+# Subtest: local media delivery confirmation is owner-bound and sends only normalized settlement data
+ok 24 - local media delivery confirmation is owner-bound and sends only normalized settlement data
+  ---
+  duration_ms: 0.3769
+  type: 'test'
+  ...
+# Subtest: local media delivery rejects invalid identities and opposite prior settlements
+ok 25 - local media delivery rejects invalid identities and opposite prior settlements
+  ---
+  duration_ms: 0.2803
+  type: 'test'
+  ...
+# Subtest: credit migration atomically releases failed reservations
+ok 26 - credit migration atomically releases failed reservations
+  ---
+  duration_ms: 0.6151
+  type: 'test'
+  ...
+# Subtest: delivery confirmation migration settles only owner media reservations and remains idempotent
+ok 27 - delivery confirmation migration settles only owner media reservations and remains idempotent
+  ---
+  duration_ms: 0.6499
+  type: 'test'
+  ...
+# Subtest: settlement rejects an already-settled result with the opposite status
+ok 28 - settlement rejects an already-settled result with the opposite status
+  ---
+  duration_ms: 0.2984
+  type: 'test'
+  ...
+# Subtest: forward migration opens model access while preserving server-authoritative credits
+ok 29 - forward migration opens model access while preserving server-authoritative credits
+  ---
+  duration_ms: 0.4157
+  type: 'test'
+  ...
+# Subtest: GPT Image 2 forward migration preserves async reservations and recomputes quality pricing
+ok 30 - GPT Image 2 forward migration preserves async reservations and recomputes quality pricing
+  ---
+  duration_ms: 0.5687
+  type: 'test'
+  ...
+# Subtest: Kling async video jobs reserve through the Kling provider allow-list
+ok 31 - Kling async video jobs reserve through the Kling provider allow-list
+  ---
+  duration_ms: 0.469
+  type: 'test'
+  ...
+# Subtest: latest async migration accepts the complete Seedance matrix and prices logical routes with Atlas catalog credits
+ok 32 - latest async migration accepts the complete Seedance matrix and prices logical routes with Atlas catalog credits
+  ---
+  duration_ms: 0.4398
+  type: 'test'
+  ...
+# Subtest: rebuilt pricing migration matches the gateway Atlas, GPT Image 2, and USD tool tables
+ok 33 - rebuilt pricing migration matches the gateway Atlas, GPT Image 2, and USD tool tables
+  ---
+  duration_ms: 0.3974
+  type: 'test'
+  ...
+# Subtest: latest pricing migration applies the 20% rule to every dedicated billing RPC
+ok 34 - latest pricing migration applies the 20% rule to every dedicated billing RPC
+  ---
+  duration_ms: 0.3954
+  type: 'test'
+  ...
+# Subtest: authoritative pricing migration covers every image and video route
+ok 35 - authoritative pricing migration covers every image and video route
+  ---
+  duration_ms: 0.6474
+  type: 'test'
+  ...
+# Subtest: retired video migration blocks new reservations but preserves historical pricing
+ok 36 - retired video migration blocks new reservations but preserves historical pricing
+  ---
+  duration_ms: 0.3157
+  type: 'test'
+  ...
+# Subtest: final point-denomination migration matches the deployed redemption-code schema
+ok 37 - final point-denomination migration matches the deployed redemption-code schema
+  ---
+  duration_ms: 0.3867
+  type: 'test'
+  ...
+# Subtest: Nano Banana migration enforces provider and resolution pricing server-side
+ok 38 - Nano Banana migration enforces provider and resolution pricing server-side
+  ---
+  duration_ms: 0.4321
+  type: 'test'
+  ...
+# Subtest: Butler video migration enforces retail pricing and keeps provider-cost audit data server-only
+ok 39 - Butler video migration enforces retail pricing and keeps provider-cost audit data server-only
+  ---
+  duration_ms: 0.5044
+  type: 'test'
+  ...
+# Subtest: Butler and Seedance forward migration independently enforces every retail price
+ok 40 - Butler and Seedance forward migration independently enforces every retail price
+  ---
+  duration_ms: 0.7075
+  type: 'test'
+  ...
+# Subtest: Tripo3D forward migration adds durable fixed-price 3D accounting
+ok 41 - Tripo3D forward migration adds durable fixed-price 3D accounting
+  ---
+  duration_ms: 0.3074
+  type: 'test'
+  ...
+# Subtest: gateway config and model routes do not consult the legacy unlock flag
+ok 42 - gateway config and model routes do not consult the legacy unlock flag
+  ---
+  duration_ms: 0.7602
+  type: 'test'
+  ...
+# Subtest: durable mode fails closed when secret or credit schema is missing
+ok 43 - durable mode fails closed when secret or credit schema is missing
+  ---
+  duration_ms: 0.4324
+  type: 'test'
+  ...
+# Subtest: relaxed legacy quotas cannot silently enable free chat
+ok 44 - relaxed legacy quotas cannot silently enable free chat
+  ---
+  duration_ms: 0.1802
+  type: 'test'
+  ...
+# Subtest: redemption hashes the submitted code and account reads remain server-only
+ok 45 - redemption hashes the submitted code and account reads remain server-only
+  ---
+  duration_ms: 0.9421
+  type: 'test'
+  ...
+# Subtest: account and usage reads fail closed on a missing balance but preserve an explicit zero
+ok 46 - account and usage reads fail closed on a missing balance but preserve an explicit zero
+  ---
+  duration_ms: 0.6886
+  type: 'test'
+  ...
+# Subtest: usage summary calls the service-only RPC and exposes only public retail fields
+ok 47 - usage summary calls the service-only RPC and exposes only public retail fields
+  ---
+  duration_ms: 0.5286
+  type: 'test'
+  ...
+# Subtest: usage summary rejects invalid ranges before making a request
+ok 48 - usage summary rejects invalid ranges before making a request
+  ---
+  duration_ms: 0.171
+  type: 'test'
+  ...
+# Subtest: custom calendar usage calls the date-range RPC with a bounded timezone offset
+ok 49 - custom calendar usage calls the date-range RPC with a bounded timezone offset
+  ---
+  duration_ms: 1.3247
+  type: 'test'
+  ...
+# Subtest: canvas accounting tags a paid request and exposes sanitized all-time details
+ok 50 - canvas accounting tags a paid request and exposes sanitized all-time details
+  ---
+  duration_ms: 0.7782
+  type: 'test'
+  ...
+# Subtest: usage summary migration aggregates successful retail usage and is service-role only
+ok 51 - usage summary migration aggregates successful retail usage and is service-role only
+  ---
+  duration_ms: 0.5093
+  type: 'test'
+  ...
+# Subtest: canvas usage migration keeps attribution and custom dates server-authoritative
+ok 52 - canvas usage migration keeps attribution and custom dates server-authoritative
+  ---
+  duration_ms: 0.4362
+  type: 'test'
+  ...
+# Subtest: settled usage reports use current policy prices without mutating the immutable ledger
+ok 53 - settled usage reports use current policy prices without mutating the immutable ledger
+  ---
+  duration_ms: 0.3801
+  type: 'test'
+  ...
+# Subtest: usage summary HTTP route remains behind authentication
+ok 54 - usage summary HTTP route remains behind authentication
+  ---
+  duration_ms: 0.7586
+  type: 'test'
+  ...
+# Subtest: video delivery confirmation preserves accepted tasks when local metadata is invalid
+ok 55 - video delivery confirmation preserves accepted tasks when local metadata is invalid
+  ---
+  duration_ms: 1.5384
+  type: 'test'
+  ...
+# Subtest: latest settlement migration holds live image and video recovery reservations
+ok 56 - latest settlement migration holds live image and video recovery reservations
+  ---
+  duration_ms: 0.6084
+  type: 'test'
+  ...
+# Subtest: historical failed video refunds are idempotent and require unambiguous failed evidence
+ok 57 - historical failed video refunds are idempotent and require unambiguous failed evidence
+  ---
+  duration_ms: 0.4156
+  type: 'test'
+  ...
+1..57
+# tests 57
+# suites 0
+# pass 57
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 153.3227
+
+TAP version 13
+# Subtest: worker persistence failures are observable without leaking task payloads
+ok 1 - worker persistence failures are observable without leaking task payloads
+  ---
+  duration_ms: 15.306
+  type: 'test'
+  ...
+# Subtest: expired video completed preserves accepted task semantics
+ok 2 - expired video completed preserves accepted task semantics
+  ---
+  duration_ms: 2.3352
+  type: 'test'
+  ...
+# Subtest: expired video processing preserves accepted task semantics
+ok 3 - expired video processing preserves accepted task semantics
+  ---
+  duration_ms: 0.7647
+  type: 'test'
+  ...
+# Subtest: expired video poll-outage preserves accepted task semantics
+ok 4 - expired video poll-outage preserves accepted task semantics
+  ---
+  duration_ms: 0.696
+  type: 'test'
+  ...
+# Subtest: expired video storage-outage preserves accepted task semantics
+ok 5 - expired video storage-outage preserves accepted task semantics
+  ---
+  duration_ms: 0.6454
+  type: 'test'
+  ...
+# Subtest: expired video terminal-failure preserves accepted task semantics
+ok 6 - expired video terminal-failure preserves accepted task semantics
+  ---
+  duration_ms: 0.3884
+  type: 'test'
+  ...
+# Subtest: expired video no-task preserves accepted task semantics
+ok 7 - expired video no-task preserves accepted task semantics
+  ---
+  duration_ms: 0.3343
+  type: 'test'
+  ...
+1..7
+# tests 7
+# suites 0
+# pass 7
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 123.6408
+
+TAP version 13
+# Subtest: canonical request hashes are stable across property order
+ok 1 - canonical request hashes are stable across property order
+  ---
+  duration_ms: 0.9527
+  type: 'test'
+  ...
+# Subtest: start is idempotency-bound to operation, owner token, and canonical request without persisting secrets
+ok 2 - start is idempotency-bound to operation, owner token, and canonical request without persisting secrets
+  ---
+  duration_ms: 12.0503
+  type: 'test'
+  ...
+# Subtest: start accepts only a higher server-authorized price without exposing an account tier
+ok 3 - start accepts only a higher server-authorized price without exposing an account tier
+  ---
+  duration_ms: 0.5398
+  type: 'test'
+  ...
+# Subtest: start rejects a stale server price below the conservative gateway quote
+ok 4 - start rejects a stale server price below the conservative gateway quote
+  ---
+  duration_ms: 0.6718
+  type: 'test'
+  ...
+# Subtest: retired video models are rejected before a credit reservation is created
+ok 5 - retired video models are rejected before a credit reservation is created
+  ---
+  duration_ms: 0.4133
+  type: 'test'
+  ...
+# Subtest: async job RPC retries a transient transport failure with the same idempotent payload
+ok 6 - async job RPC retries a transient transport failure with the same idempotent payload
+  ---
+  duration_ms: 159.2148
+  type: 'test'
+  ...
+# Subtest: owner status and download calls send only the task token hash
+ok 7 - owner status and download calls send only the task token hash
+  ---
+  duration_ms: 2.2421
+  type: 'test'
+  ...
+# Subtest: provider-ready, download settlement, and download failure RPCs preserve authoritative usage
+ok 8 - provider-ready, download settlement, and download failure RPCs preserve authoritative usage
+  ---
+  duration_ms: 2.4289
+  type: 'test'
+  ...
+# Subtest: finalization rejects a mocked credit/job settlement status mismatch
+ok 9 - finalization rejects a mocked credit/job settlement status mismatch
+  ---
+  duration_ms: 0.729
+  type: 'test'
+  ...
+# Subtest: worker reschedules 429 responses using provider retry-after without exposing credentials
+ok 10 - worker reschedules 429 responses using provider retry-after without exposing credentials
+  ---
+  duration_ms: 2.3737
+  type: 'test'
+  ...
+# Subtest: worker keeps timeout and transport failures pending instead of releasing credits
+ok 11 - worker keeps timeout and transport failures pending instead of releasing credits
+  ---
+  duration_ms: 0.5789
+  type: 'test'
+  ...
+# Subtest: worker fails closed after one clear error when the asynchronous schema is missing
+ok 12 - worker fails closed after one clear error when the asynchronous schema is missing
+  ---
+  duration_ms: 0.4489
+  type: 'test'
+  ...
+# Subtest: legacy MiniMax H3 adapter preserves official multimodal recovery
+ok 13 - legacy MiniMax H3 adapter preserves official multimodal recovery
+  ---
+  duration_ms: 4.5489
+  type: 'test'
+  ...
+# Subtest: result download and storage expose transient failures as retryable
+ok 14 - result download and storage expose transient failures as retryable
+  ---
+  duration_ms: 1.0902
+  type: 'test'
+  ...
+# Subtest: legacy MiniMax H3 adapter keeps documented frame fields for recovery
+ok 15 - legacy MiniMax H3 adapter keeps documented frame fields for recovery
+  ---
+  duration_ms: 1.6206
+  type: 'test'
+  ...
+# Subtest: MiniMax H3 rejects legacy empty frame requests before upstream submission
+ok 16 - MiniMax H3 rejects legacy empty frame requests before upstream submission
+  ---
+  duration_ms: 1.4349
+  type: 'test'
+  ...
+# Subtest: MiniMax H3 sends validated local first and last frames inline without a media upload
+ok 17 - MiniMax H3 sends validated local first and last frames inline without a media upload
+  ---
+  duration_ms: 1.8347
+  type: 'test'
+  ...
+# Subtest: MiniMax H3 official submission outages remain ambiguous after the paid request starts
+ok 18 - MiniMax H3 official submission outages remain ambiguous after the paid request starts
+  ---
+  duration_ms: 1.6893
+  type: 'test'
+  ...
+# Subtest: MiniMax H3 official polling waits for output and reports terminal failures
+ok 19 - MiniMax H3 official polling waits for output and reports terminal failures
+  ---
+  duration_ms: 2.6668
+  type: 'test'
+  ...
+# Subtest: reference copyright policy rejections keep a specific public-safe error code
+ok 20 - reference copyright policy rejections keep a specific public-safe error code
+  ---
+  duration_ms: 2.9379
+  type: 'test'
+  ...
+# Subtest: legacy synchronous video compatibility still creates, polls, and downloads MiniMax image-to-video output
+ok 21 - legacy synchronous video compatibility still creates, polls, and downloads MiniMax image-to-video output
+  ---
+  duration_ms: 2.584
+  type: 'test'
+  ...
+# Subtest: legacy synchronous video compatibility rejects an HTTP 200 error page
+ok 22 - legacy synchronous video compatibility rejects an HTTP 200 error page
+  ---
+  duration_ms: 2.6247
+  type: 'test'
+  ...
+# Subtest: provider errors are bounded and redact credential-like values
+ok 23 - provider errors are bounded and redact credential-like values
+  ---
+  duration_ms: 0.0765
+  type: 'test'
+  ...
+# Subtest: migration enforces service-only jobs, atomic reserve/settle, leases, and active-job cleanup protection
+ok 24 - migration enforces service-only jobs, atomic reserve/settle, leases, and active-job cleanup protection
+  ---
+  duration_ms: 1.4397
+  type: 'test'
+  ...
+# Subtest: gateway exposes async task routes while preserving the v0.0.5 synchronous video route
+ok 25 - gateway exposes async task routes while preserving the v0.0.5 synchronous video route
+  ---
+  duration_ms: 1.0351
+  type: 'test'
+  ...
+1..25
+# tests 25
+# suites 0
+# pass 25
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 387.0835
+
+TAP version 13
+# Subtest: normalizes the legacy Seedance 2.5 2K alias
+ok 1 - normalizes the legacy Seedance 2.5 2K alias
+  ---
+  duration_ms: 0.5473
+  type: 'test'
+  ...
+# Subtest: quotes the legacy alias at the canonical Seedance 2.5 tier
+ok 2 - quotes the legacy alias at the canonical Seedance 2.5 tier
+  ---
+  duration_ms: 0.7198
+  type: 'test'
+  ...
+1..2
+# tests 2
+# suites 0
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 553.5154
+
+TAP version 13
+# Subtest: stored video streaming returns the original verified bytes
+ok 1 - stored video streaming returns the original verified bytes
+  ---
+  duration_ms: 15.4556
+  type: 'test'
+  ...
+# Subtest: an interrupted stored video stream is recoverable and never yields partial bytes
+ok 2 - an interrupted stored video stream is recoverable and never yields partial bytes
+  ---
+  duration_ms: 0.9269
+  type: 'test'
+  ...
+1..2
+# tests 2
+# suites 0
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 102.3311
+
+TAP version 13
+# Subtest: recreated video worker RPC is service-only
+ok 1 - recreated video worker RPC is service-only
+  ---
+  duration_ms: 1.0997
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 88.8023
+

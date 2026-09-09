@@ -11,6 +11,41 @@ const { readChatCompletionStream, readGatewayChatStream, createChatPreview } = r
 const sse = data => `data: ${JSON.stringify(data)}\r\n\r\n`;
 const delta = (text, finish = null) => sse({ choices: [{ index: 0, delta: { content: text }, finish_reason: finish }] });
 const config = { apiKey: 'test', chatEndpoint: 'https://example.test/v1/chat/completions', chatModel: 'test', returnUsage: true };
+
+test('socket failure after a delta remains an accepted interrupted stream', async () => {
+  let reads = 0;
+  const parts = [];
+  const broken = new Response(new ReadableStream({
+    pull(controller) {
+      if (reads++ === 0) controller.enqueue(Buffer.from('event: delta\ndata: {"text":"Received text"}\n\n'));
+      else controller.error(new TypeError('terminated'));
+    }
+  }));
+  await assert.rejects(readGatewayChatStream(broken, text => parts.push(text)), {
+    code: 'chat-stream-interrupted', providerTaskAccepted: true
+  });
+  assert.deepEqual(parts, ['Received text']);
+});
+
+test('shared Agent recovery retains safe preview and marks restored history incomplete', () => {
+  const fs = require('node:fs');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(require.resolve('../src/js/composer-actions.js'), 'utf8');
+  const helper = source.slice(source.indexOf('function agentRecordedCredits'), source.indexOf('window.MesssComposerActions ='));
+  const context = { t: en => en };
+  vm.createContext(context);
+  vm.runInContext(helper, context);
+  for (const mainChat of [true, false]) {
+    const body = {};
+    const pending = { agentPreviewText: 'Already received', classList: { remove() {} }, querySelector: selector => selector === '.ai-assistant-message-body' && mainChat ? body : null };
+    const saved = context.preserveInterruptedAgentReply(pending);
+    assert.equal(saved.interrupted, true);
+    assert.match(saved.content, /Already received.*\n\n\[Reply incomplete/s);
+    assert.equal((mainChat ? body : pending).textContent, saved.displayContent);
+    assert.equal(JSON.parse(JSON.stringify(saved)).displayContent, saved.content);
+  }
+  assert.equal(context.preserveInterruptedAgentReply({}), null);
+});
 function response(text, split = 13) {
   const bytes = Buffer.from(text);
   return new Response(new ReadableStream({

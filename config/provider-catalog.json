@@ -1,5 +1,5 @@
 {
-  "version": 57,
+  "version": 62,
   "providers": [
     {
       "id": "atlas-image-gpt2",
@@ -180,7 +180,7 @@
       "name": "Nano Banana Pro",
       "endpoint": "https://aireiter.com/api/openapi/submit",
       "resultEndpoint": "https://aireiter.com/api/openapi/query",
-      "model": "nano_banana_pro_max",
+      "model": "nano_banana_pro",
       "protocol": "aireiter-async",
       "logicalModel": "nano-banana-pro",
       "fallbackProviderIds": [],
@@ -199,7 +199,7 @@
       "name": "Nano Banana 2",
       "endpoint": "https://aireiter.com/api/openapi/submit",
       "resultEndpoint": "https://aireiter.com/api/openapi/query",
-      "model": "nano_banana_v2_max",
+      "model": "nano_banana_v2",
       "protocol": "aireiter-async",
       "logicalModel": "nano-banana-2",
       "fallbackProviderIds": [],
@@ -768,6 +768,316 @@
       "keyEnv": "AI302_KEY"
     },
     {
+      "id": "video-14",
+      "kind": "video",
+      "name": "Kling",
+      "endpoint": "https://api.atlascloud.ai/api/v1/model/generateVideo",
+      "resultEndpoint": "https://api.atlascloud.ai/api/v1/model/prediction",
+      "model": "kwaivgi/kling-v3.0-std/image-to-video",
+      "protocol": "atlas-kling-video",
+      "logicalModel": "kling",
+      "fallbackProviderIds": [],
+      "requiresActivation": false,
+      "keyEnv": "ATLASCLOUD_API_KEY",
+      "capabilities": {
+        "resolutions": [
+          "720P",
+          "1080P-SR",
+          "1440P-SR",
+          "1080P",
+          "4K"
+        ],
+        "durations": [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "ratios": [
+          "adaptive"
+        ],
+        "frameReferenceRatios": [
+          "adaptive"
+        ],
+        "minReferenceImages": 1,
+        "maxReferenceImages": 2,
+        "referenceMimeTypes": [
+          "image/png",
+          "image/jpeg"
+        ],
+        "maxReferenceImageBytes": 10485760,
+        "promptMaxCharacters": 2500,
+        "referencePromptMaxCharacters": 2500,
+        "videoModes": [
+          {
+            "id": "first-frame",
+            "minReferences": 1,
+            "maxReferences": 1,
+            "roles": [
+              "first_frame"
+            ],
+            "mediaTypes": [
+              "image"
+            ]
+          },
+          {
+            "id": "first-last-frame",
+            "minReferences": 2,
+            "maxReferences": 2,
+            "roles": [
+              "first_frame",
+              "last_frame"
+            ],
+            "mediaTypes": [
+              "image"
+            ]
+          }
+        ],
+        "outputFormats": [
+          "mp4"
+        ],
+        "serviceTiers": [
+          "standard",
+          "pro",
+          "turbo",
+          "v3-4k",
+          "o3-4k"
+        ],
+        "defaultServiceTier": "standard",
+        "tierResolutions": {
+          "standard": [
+            "720P",
+            "1080P-SR",
+            "1440P-SR"
+          ],
+          "pro": [
+            "1080P",
+            "1440P-SR"
+          ],
+          "turbo": [
+            "720P",
+            "1080P"
+          ],
+          "v3-4k": [
+            "4K"
+          ],
+          "o3-4k": [
+            "4K"
+          ]
+        },
+        "variantOptions": {
+          "standard": {
+            "label": "V3 标准",
+            "resolutions": [
+              "720P",
+              "1080P-SR",
+              "1440P-SR"
+            ],
+            "durations": [
+              5,
+              10
+            ],
+            "maxReferenceImages": 2,
+            "generateAudio": true,
+            "videoModes": [
+              {
+                "id": "first-frame",
+                "minReferences": 1,
+                "maxReferences": 1,
+                "roles": [
+                  "first_frame"
+                ],
+                "mediaTypes": [
+                  "image"
+                ]
+              },
+              {
+                "id": "first-last-frame",
+                "minReferences": 2,
+                "maxReferences": 2,
+                "roles": [
+                  "first_frame",
+                  "last_frame"
+                ],
+                "mediaTypes": [
+                  "image"
+                ]
+              }
+            ]
+          },
+          "pro": {
+            "label": "V3 Pro",
+            "resolutions": [
+              "1080P",
+              "1440P-SR"
+            ],
+            "durations": [
+              5,
+              10
+            ],
+            "maxReferenceImages": 2,
+            "generateAudio": true,
+            "videoModes": [
+              {
+                "id": "first-frame",
+                "minReferences": 1,
+                "maxReferences": 1,
+                "roles": [
+                  "first_frame"
+                ],
+                "mediaTypes": [
+                  "image"
+                ]
+              },
+              {
+                "id": "first-last-frame",
+                "minReferences": 2,
+                "maxReferences": 2,
+                "roles": [
+                  "first_frame",
+                  "last_frame"
+                ],
+                "mediaTypes": [
+                  "image"
+                ]
+              }
+            ]
+          },
+          "turbo": {
+            "label": "V3 Turbo",
+            "resolutions": [
+              "720P",
+              "1080P"
+            ],
+            "durations": [
+              5,
+              10
+            ],
+            "maxReferenceImages": 1,
+            "generateAudio": false,
+            "videoModes": [
+              {
+                "id": "first-frame",
+                "minReferences": 1,
+                "maxReferences": 1,
+                "roles": [
+                  "first_frame"
+                ],
+                "mediaTypes": [
+                  "image"
+                ]
+              }
+            ]
+          },
+          "v3-4k": {
+            "label": "V3 4K",
+            "resolutions": [
+              "4K"
+            ],
+            "durations": [
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15
+            ],
+            "maxReferenceImages": 2,
+            "generateAudio": true,
+            "videoModes": [
+              {
+                "id": "first-frame",
+                "minReferences": 1,
+                "maxReferences": 1,
+                "roles": [
+                  "first_frame"
+                ],
+                "mediaTypes": [
+                  "image"
+                ]
+              },
+              {
+                "id": "first-last-frame",
+                "minReferences": 2,
+                "maxReferences": 2,
+                "roles": [
+                  "first_frame",
+                  "last_frame"
+                ],
+                "mediaTypes": [
+                  "image"
+                ]
+              }
+            ]
+          },
+          "o3-4k": {
+            "label": "O3 4K",
+            "resolutions": [
+              "4K"
+            ],
+            "durations": [
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15
+            ],
+            "maxReferenceImages": 2,
+            "generateAudio": true,
+            "videoModes": [
+              {
+                "id": "first-frame",
+                "minReferences": 1,
+                "maxReferences": 1,
+                "roles": [
+                  "first_frame"
+                ],
+                "mediaTypes": [
+                  "image"
+                ]
+              },
+              {
+                "id": "first-last-frame",
+                "minReferences": 2,
+                "maxReferences": 2,
+                "roles": [
+                  "first_frame",
+                  "last_frame"
+                ],
+                "mediaTypes": [
+                  "image"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
       "id": "video-4",
       "kind": "video",
       "name": "Seedance 2.0 Fast",
@@ -1043,11 +1353,13 @@
       "id": "image-18",
       "kind": "image",
       "name": "Midjourney V8.2",
-      "hidden": true,
+      "hidden": false,
       "endpoint": "https://api.legnext.ai/api/v1/diffusion",
       "resultEndpoint": "https://api.legnext.ai/api/v1/job",
       "model": "8.2",
       "protocol": "legnext-midjourney",
+      "logicalModel": "midjourney-v8-2",
+      "fallbackProviderIds": [],
       "requiresActivation": false,
       "capabilities": {
         "sizes": ["1K", "2K"],
@@ -1228,6 +1540,51 @@
       "endpoint": "https://aireiter.com/api/v1/chat/completions",
       "models": ["kimi-k3"],
       "upstreamModels": { "kimi-k3": "chat-kimi-k3" },
+      "protocol": "openai-chat",
+      "requiresActivation": false,
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
+      "id": "chat-7",
+      "kind": "chat",
+      "name": "DeepSeek V4 Flash",
+      "endpoint": "https://aireiter.com/api/v1/messages",
+      "models": [
+        "deepseek-v4-flash"
+      ],
+      "upstreamModels": {
+        "deepseek-v4-flash": "deepseek-v4-flash"
+      },
+      "protocol": "anthropic",
+      "requiresActivation": false,
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
+      "id": "chat-8",
+      "kind": "chat",
+      "name": "DeepSeek V4 Pro",
+      "endpoint": "https://aireiter.com/api/v1/messages",
+      "models": [
+        "deepseek-v4-pro"
+      ],
+      "upstreamModels": {
+        "deepseek-v4-pro": "deepseek-v4-pro"
+      },
+      "protocol": "anthropic",
+      "requiresActivation": false,
+      "keyEnv": "AIREITER_API_KEY"
+    },
+    {
+      "id": "chat-9",
+      "kind": "chat",
+      "name": "GPT-6 Astra",
+      "endpoint": "https://aireiter.com/api/v1/chat/completions",
+      "models": [
+        "gpt-6-astra"
+      ],
+      "upstreamModels": {
+        "gpt-6-astra": "gpt-6-astra"
+      },
       "protocol": "openai-chat",
       "requiresActivation": false,
       "keyEnv": "AIREITER_API_KEY"

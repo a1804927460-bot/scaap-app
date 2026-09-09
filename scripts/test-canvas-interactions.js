@@ -1566,8 +1566,8 @@ assert.match(
 );
 assert.match(
   contextMenuSource,
-  /function renderCanvasUsageDetails[\s\S]*?breakdown\.image[\s\S]*?breakdown\.video[\s\S]*?breakdown\['3d'\][\s\S]*?latest price table/,
-  'Canvas usage details must show the current repriced totals.'
+  /function renderCanvasUsageDetails[\s\S]*?breakdown\.image[\s\S]*?breakdown\.video[\s\S]*?breakdown\['3d'\][\s\S]*?recorded settlements/,
+  'Canvas usage must show recorded settlements.'
 );
 assert.doesNotMatch(contextMenuSource, /Original settlement record|\u539f\u59cb\u7ed3\u7b97\u8bb0\u5f55/,
   'The obsolete original-settlement metric must not be exposed in the UI.');
@@ -1622,7 +1622,7 @@ ledgerSandbox.store.data.files = [];
 ledgerSandbox.store.data.canvasUsageLedger = JSON.parse(JSON.stringify(ledgerSandbox.store.data.canvasUsageLedger));
 ledgerSandbox.canvasLedgerApi.ensureCanvasUsageLedger();
 assert.equal(ledgerSandbox.store.data.canvasUsageLedger.length, 1, 'Deleting media and reloading after an update must preserve canvas usage.');
-assert.equal(ledgerSandbox.store.data.canvasUsageLedger[0].estimatedCredits, 12);
+assert.equal(ledgerSandbox.store.data.canvasUsageLedger[0].estimatedCredits, 24);
 assert.equal(ledgerSandbox.store.data.canvasUsageLedger[0].creditsCharged, 24);
 assert.equal(ledgerSandbox.store.data.canvasUsageLedger[0].credits, 24);
 assert.equal(ledgerSandbox.store.data.canvasUsageLedger[0].canvasId, 'canvas-history');
@@ -1640,8 +1640,8 @@ const staleVideo = {
 ledgerSandbox.canvasLedgerApi.recordCanvasUsageFile(staleVideo);
 assert.equal(
   ledgerSandbox.store.data.canvasUsageLedger.find((entry) => entry.sourceFileId === staleVideo.id).estimatedCredits,
-  1216,
-  'Canvas history may backfill a missing estimate from the current pricing table.'
+  151,
+  'Canvas history uses its saved receipt rather than repricing the past.'
 );
 assert.equal(
   ledgerSandbox.store.data.canvasUsageLedger.find((entry) => entry.sourceFileId === staleVideo.id).creditsCharged,

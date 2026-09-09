@@ -52,7 +52,7 @@ assert.ok(ids.includes('video-2'));
 assert.ok(ids.includes('video-3'));
 assert.deepEqual(
   config.providers.filter((provider) => provider.kind === 'video').map((provider) => provider.id),
-  ['video-1', 'video-2', 'video-3']
+  ['video-1', 'video-2', 'video-3', 'video-14']
 );
 assert.equal(ids.includes('chat-1'), false);
 assert.equal(ids.includes('chat-2'), false);
@@ -67,7 +67,7 @@ assert.deepEqual(
 );
 assert.equal(config.providers.find((provider) => provider.id === 'image-1').name, 'Nano Banana Pro');
 assert.equal(ids.includes('image-3'), false);
-for (const [id, model] of [['image-17', '8.1'], ['image-18', '8.2']]) {
+for (const [id, model] of [['image-17', '8.1']]) {
   const provider = config.providers.find((entry) => entry.id === id);
   assert.equal(provider, undefined, `retired Midjourney V${model} must not be public`);
 }
@@ -316,7 +316,7 @@ for (const id of ['video-4', 'video-5', 'video-6', 'video-7', 'video-8', 'video-
 process.env.AI302_KEY = configuredAi302Key;
 process.env.AIREITER_API_KEY = configuredAireiterKey;
 assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-17'), false);
-assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-18'), false);
+assert.equal(withoutAi302.providers.some((provider) => provider.id === 'image-18'), true);
 
 const configuredLegnextKey = process.env.LEGNEXT_API_KEY;
 delete process.env.LEGNEXT_API_KEY;
@@ -382,7 +382,7 @@ assert.equal(nanoCalls[0].url, 'https://aireiter.com/api/openapi/submit');
 assert.equal(nanoCalls[0].options.headers.Authorization, 'Bearer aireiter-secret');
 const nanoBody = JSON.parse(nanoCalls[0].options.body);
 assert.deepEqual(nanoBody, {
-  model: 'nano_banana_pro_max',
+  model: 'nano_banana_pro',
   params: {
     prompt: 'editorial portrait',
     aspect_ratio: '3:4',

@@ -140,7 +140,7 @@ const BOARD_BUTLER_RETAIL_CREDITS = Object.freeze({
   removeBackground: boardButlerCreditsFromPtc(0.001 + 0.013 / 7.3),
   imageEdit: boardButlerCreditsFromPtc(0.05),
   imageExpand: boardButlerCreditsFromPtc(0.20 + 0.013 / 7.3),
-  imageEnhance: boardButlerCreditsFromPtc(0.50),
+  imageEnhance: boardButlerCreditsFromPtc(0.08 + 0.013 / 7.3),
   eraseObject: boardButlerCreditsFromPtc(0.50),
   topazImage: boardButlerCreditsFromPtc(6 * 0.15),
   hunyuan3d: boardButlerCreditsFromPtc(0.40),
@@ -310,6 +310,7 @@ function closeBoardButlerPanel() {
 }
 
 function closeBoardButlerMenu() {
+  if (boardButlerMenu?._layoutFrame) cancelAnimationFrame(boardButlerMenu._layoutFrame);
   if (boardButlerMenu) {
     const menu = boardButlerMenu;
     const trigger = menu._trigger;
@@ -333,26 +334,33 @@ function closeBoardButlerMenu() {
 }
 
 function positionBoardButlerMenu(menu, trigger) {
-  const triggerRect = trigger.getBoundingClientRect();
-  const margin = 10;
-  const gap = 7;
-  const width = menu.offsetWidth;
-  const height = menu.offsetHeight;
-  const fitsRight = triggerRect.right + gap + width <= window.innerWidth - margin;
-  const fitsLeft = triggerRect.left - gap - width >= margin;
-  let left = fitsRight
-    ? triggerRect.right + gap
-    : (fitsLeft ? triggerRect.left - width - gap : Math.max(margin, window.innerWidth - width - margin));
-  let top = triggerRect.top + (triggerRect.height - height) / 2;
-  if (!fitsRight && !fitsLeft) {
-    const fitsBelow = triggerRect.bottom + gap + height <= window.innerHeight - margin;
-    top = fitsBelow ? triggerRect.bottom + gap : triggerRect.top - height - gap;
-  }
-  left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
-  top = Math.max(margin, Math.min(top, window.innerHeight - height - margin));
-  menu.style.left = `${Math.round(left)}px`;
-  menu.style.top = `${Math.round(top)}px`;
-  menu.classList.toggle('opens-upward', top + height + 104 > window.innerHeight - margin);
+  if (!menu?.isConnected || !trigger?.isConnected) return;
+  const rect = trigger.getBoundingClientRect();
+  const viewport = trigger.closest('#board-viewport') || document.getElementById('board-viewport');
+  const bounds = viewport?.getBoundingClientRect();
+  const margin = 10, gap = 7;
+  const leftEdge = Math.max(margin, (bounds?.left || 0) + margin);
+  const topEdge = Math.max(margin, (bounds?.top || 0) + margin);
+  const rightEdge = Math.min(window.innerWidth - margin, (bounds?.right || window.innerWidth) - margin);
+  const bottomEdge = Math.min(window.innerHeight - margin, (bounds?.bottom || window.innerHeight) - margin);
+  menu.style.maxWidth = Math.max(1, rightEdge - leftEdge) + 'px';
+  menu.classList.remove('is-vertical');
+  const horizontalWidth = menu.scrollWidth, horizontalHeight = menu.offsetHeight;
+  const sideSpace = Math.max(rightEdge - rect.right - gap, rect.left - gap - leftEdge);
+  const aboveBelow = Math.max(rect.top - gap - topEdge, bottomEdge - rect.bottom - gap);
+  const horizontalFits = horizontalWidth <= rightEdge - leftEdge &&
+    (horizontalWidth <= sideSpace || horizontalHeight <= aboveBelow);
+  // Prefer a side column when the horizontal row would be squeezed against the image.
+  menu.classList.toggle('is-vertical', !horizontalFits || (horizontalWidth > sideSpace && sideSpace >= 180));
+  menu.setAttribute('aria-orientation', menu.classList.contains('is-vertical') ? 'vertical' : 'horizontal');
+  const width = menu.offsetWidth, height = menu.offsetHeight;
+  let left, top;
+  if (rect.right + gap + width <= rightEdge) { left = rect.right + gap; top = rect.top; }
+  else if (rect.left - gap - width >= leftEdge) { left = rect.left - gap - width; top = rect.top; }
+  else { left = rect.right - width; top = rect.bottom + gap + height <= bottomEdge ? rect.bottom + gap : rect.top - gap - height; }
+  menu.style.left = Math.round(Math.max(leftEdge, Math.min(left, rightEdge - width))) + 'px';
+  menu.style.top = Math.round(Math.max(topEdge, Math.min(top, bottomEdge - height))) + 'px';
+  menu.classList.toggle('opens-upward', top + height + 104 > bottomEdge);
 }
 
 function setBoardButlerPanelPosition(panel, left, top) {
@@ -1653,10 +1661,11 @@ function openBoardButlerExpandPanel(anchor, file, item) {
   const ratioChoices = document.createElement('div'); ratioChoices.className = 'board-inline-resize-ratios';
   ratioChoices.setAttribute('role', 'group'); ratioChoices.setAttribute('aria-label', t('Aspect ratio','尺寸比例'));
   const detected = document.createElement('output'); detected.className = 'board-inline-resize-detected';
-  const preview = document.createElement('img'); preview.className = 'board-inline-resize-preview';
-  preview.alt = file.name || ''; preview.draggable = false;
-  preview.src = file.url || file.previewUrl || file.thumbUrl || '';
-  frame.append(preview);
+  // Keep the original canvas bitmap fixed; preview only the added margins.
+  const margins = Array.from({ length: 4 }, () => {
+    const region = document.createElement('div'); region.className = 'board-inline-resize-margin';
+    region.setAttribute('aria-hidden', 'true'); frame.append(region); return region;
+  });
   const sourceWidth = Number(file.sourceWidth) || 1024, sourceHeight = Number(file.sourceHeight) || 1024;
   let width = Math.max(64, Math.min(4096, sourceWidth)), height = Math.max(64, Math.min(4096, sourceHeight));
   let ratio = 0, drag = null, selectedRatioButton = null;
@@ -1675,7 +1684,14 @@ function openBoardButlerExpandPanel(anchor, file, item) {
   const cancel=document.createElement('button'); cancel.type='button'; cancel.innerHTML=BOARD_BUTLER_ICONS.close;
   cancel.title=t('Cancel','取消'); cancel.setAttribute('aria-label',cancel.title);
   const submit=document.createElement('button'); submit.type='submit'; submit.textContent=t('Apply','应用');
-  toolbar.append(ratioChoices,inputs[0],separator,inputs[1],detected,credits,cancel,submit);
+  const heading = document.createElement('div'); heading.className = 'board-inline-resize-heading';
+  heading.textContent = t('Resize image', '修改尺寸');
+  credits.className = 'board-inline-resize-credits';
+  const dimensions = document.createElement('div'); dimensions.className = 'board-inline-resize-dimensions';
+  dimensions.append(inputs[0],separator,inputs[1],detected);
+  const actions = document.createElement('div'); actions.className = 'board-inline-resize-actions';
+  actions.append(credits,cancel,submit);
+  toolbar.append(heading,ratioChoices,dimensions,actions);
   editor.append(frame,toolbar); viewport.append(editor);
   editor._sourceItem=item; boardButlerExpandEditor=editor;
   viewport.classList.add('is-board-expand-mode');
@@ -1686,6 +1702,11 @@ function openBoardButlerExpandPanel(anchor, file, item) {
     const x=(bounds.x+bounds.w/2)*zoom+Board.panX-w/2;
     const y=(bounds.y+bounds.h/2)*zoom+Board.panY-h/2;
     Object.assign(frame.style,{left:`${x}px`,top:`${y}px`,width:`${w}px`,height:`${h}px`});
+    const mx=Math.max(0,(w-bounds.w*zoom)/2), my=Math.max(0,(h-bounds.h*zoom)/2);
+    const regions=[[0,0,w,my],[0,h-my,w,my],[0,my,mx,h-2*my],[w-mx,my,mx,h-2*my]];
+    regions.forEach(([left,top,width,height],index)=>Object.assign(margins[index].style,{
+      left:`${left}px`,top:`${top}px`,width:`${width}px`,height:`${height}px`
+    }));
     toolbar.style.maxWidth=`${Math.max(0,viewport.clientWidth-16)}px`;
     const tw=toolbar.offsetWidth,th=toolbar.offsetHeight;
     toolbar.style.left=`${Math.max(8,Math.min(viewport.clientWidth-tw-8,x+w/2-tw/2))}px`;
@@ -3090,6 +3111,12 @@ function openBoardButlerMenu(trigger, file, item) {
       { popup: null, credits: BOARD_BUTLER_RETAIL_CREDITS.removeBackground }
     ));
     menu.appendChild(createBoardButlerMenuButton(
+      file, 'imageEnhance', BOARD_BUTLER_ICONS.topazImage,
+      t('Enhance quality', '画质提升', '화질 향상'),
+      () => { closeBoardButlerMenu(); void runBoardButlerImageTool('imageEnhance', file, item, {}); },
+      { popup: null, credits: BOARD_BUTLER_RETAIL_CREDITS.imageEnhance }
+    ));
+    menu.appendChild(createBoardButlerMenuButton(
       file,
       'imageExpand',
       BOARD_BUTLER_ICONS.imageLayer,
@@ -3151,6 +3178,16 @@ function openBoardButlerMenu(trigger, file, item) {
   syncBoardButlerTaskUi(file.id);
   positionBoardButlerMenu(menu, trigger);
   requestAnimationFrame(() => menu.classList.add('is-visible'));
+  let previousLayout = '';
+  const trackLayout = () => {
+    if (boardButlerMenu !== menu || !menu.isConnected) return;
+    if (!trigger.isConnected) { closeBoardButlerMenu(); return; }
+    const rect = trigger.getBoundingClientRect();
+    const key = [rect.x, rect.y, rect.width, rect.height, window.innerWidth, window.innerHeight].join(',');
+    if (key !== previousLayout) { previousLayout = key; positionBoardButlerMenu(menu, trigger); }
+    menu._layoutFrame = requestAnimationFrame(trackLayout);
+  };
+  menu._layoutFrame = requestAnimationFrame(trackLayout);
   window.setTimeout(() => {
     if (boardButlerMenu !== menu || !menu.isConnected) return;
     boardButlerMenuClickCloser = (event) => {
