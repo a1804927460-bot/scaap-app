@@ -1897,9 +1897,10 @@ async function installDownloadedUpdate() {
     if (updateInstallStarted) app.quit();
   }, 15_000);
   updateInstallFallbackTimer.unref?.();
-  // Explicit restart installs without a wizard and reopens the application.
-  // Normal quit uses electron-updater's silent install without reopening.
-  autoUpdater.quitAndInstall(true, true);
+  // A user-triggered install must show the NSIS wizard so progress remains
+  // visible after Messs exits. Normal app quit still uses the updater's
+  // separate silent-install path.
+  autoUpdater.quitAndInstall(false, true);
   return { ok: true, installing: true };
 }
 
