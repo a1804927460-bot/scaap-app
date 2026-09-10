@@ -342,7 +342,7 @@ function openMoodboardTargetPicker(text) {
   dialog.setAttribute('aria-modal', 'true');
   const header = document.createElement('header');
   const heading = document.createElement('h2');
-  heading.textContent = t('Send to moodboard', '发送到情绪板');
+  heading.textContent = t('Send to canvas', '发送到画布');
   const close = document.createElement('button');
   close.type = 'button';
   close.className = 'icon-btn-sm';

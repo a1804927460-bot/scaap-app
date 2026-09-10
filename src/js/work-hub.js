@@ -51,15 +51,42 @@ window.MesssWorkHub = (() => {
   function filteredProjects() {return projects.filter(p=>Boolean(p.deletedAt)===archived && (filter==='all'||p.status===filter) && `${p.title} ${p.owner}`.toLowerCase().includes(query.toLowerCase())).sort((a,b)=>a.due.localeCompare(b.due));}
   function badge(p) {return `<span class="hub-status status-${p.status}">${p.status!=='done'&&p.due<today()?'已逾期 · ':''}${statusNames[p.status]}</span>`;}
   function card(p) {const remaining=difference(p.due,today());return `<button class="hub-project-card" data-hub-action="edit-project" data-id="${p.id}"><div>${badge(p)}<small>${p.progress}%</small></div><strong>${esc(p.title)}</strong><p>${esc(p.owner||'待指定负责人')} · ${p.due.slice(5)} 交付</p><progress max="100" value="${p.progress}" aria-label="项目进度"></progress><small>${p.status==='done'?'交付完成':remaining<0?`逾期 ${-remaining} 天`:remaining===0?'今天交付':`距交付 ${remaining} 天`}</small></button>`;}
+  function focusCard(p) {
+    const next = [...p.milestones].filter(m=>!m.done).sort((a,b)=>a.date.localeCompare(b.date))[0];
+    const hint = p.status==='done' ? '已完成交付' : next ? '下一步：'+next.title+' · '+next.date.slice(5) : '下一步：打开项目，添加一个小步骤';
+    return card(p).replace('</button>', '<span class="hub-next-step">'+esc(hint)+'</span></button>');
+  }
+  function setupHubDates(container) {
+    if (typeof flatpickr !== 'function') return;
+    container.querySelectorAll('input[type="date"]').forEach(input => {
+      if (input._flatpickr) return;
+      flatpickr(input, { dateFormat:'Y-m-d', disableMobile:true, allowInput:true, static:true, animate:false,
+        minDate:input.min || '2000-01-01', maxDate:input.max || '2199-12-31',
+        locale:AppState.language==='ko'?'ko':AppState.language==='en'?'default':'zh',
+        monthSelectorType:'dropdown', ariaDateFormat:'Y-m-d',
+        onReady:(_, __, instance)=>instance.calendarContainer.classList.add('hub-date-picker') });
+    });
+  }
   function renderSchedule() {
     const rows=filteredProjects(), active=projects.filter(p=>!p.deletedAt), late=active.filter(p=>p.status!=='done'&&p.due<today()), soon=active.filter(p=>p.status!=='done'&&p.due>=today()&&p.due<=addDays(today(),7));
     content.innerHTML=heading('项目日程','把每一次交付，放在清晰的时间线上。',action('export-calendar','导出日历')+action('new-project','＋ 新建项目','hub-primary'))+
       `<div class="hub-metrics"><div><small>进行中的项目</small><strong>${active.filter(p=>p.status==='active').length}<span> 项</span></strong></div><div><small>未来 7 天交付</small><strong>${soon.length}<span> 项</span></strong></div><div class="${late.length?'is-late':''}"><small>需要关注 · 逾期</small><strong>${late.length}<span> 项</span></strong></div><div><small>已交付</small><strong>${active.filter(p=>p.status==='done').length}<span> 项</span></strong></div></div>`+
-      `<div class="hub-toolbar"><div class="hub-segment">${['month','timeline','list'].map((v,i)=>action('view-'+v,['月历','时间线','交付清单'][i],view===v?'is-active':'')).join('')}</div>${search()}<select class="hub-status-filter" aria-label="状态筛选"><option value="all">全部状态</option>${Object.entries(statusNames).map(([v,l])=>`<option value="${v}" ${filter===v?'selected':''}>${l}</option>`).join('')}</select>${action('archive-toggle',archived?'返回项目':'已归档',archived?'is-active':'')}</div>`+
+      `<div class="hub-toolbar"><div class="hub-segment">${['focus','month','timeline','list'].map((v,i)=>action('view-'+v,['今日聚焦','月历','时间线','交付清单'][i],view===v?'is-active':'')).join('')}</div>${search()}<select class="hub-status-filter" aria-label="状态筛选"><option value="all">全部状态</option>${Object.entries(statusNames).map(([v,l])=>`<option value="${v}" ${filter===v?'selected':''}>${l}</option>`).join('')}</select>${action('archive-toggle',archived?'返回项目':'已归档',archived?'is-active':'')}</div>`+
       `<div class="hub-month-nav">${action('previous','‹')}<h2>${month.replace('-',' 年 ')} 月</h2>${action('next','›')}${action('today','今天')}<span>日期按本地日历显示 · 进度由项目负责人记录</span></div><div class="hub-schedule-body"></div>`;
     content.querySelector('.hub-status-filter').addEventListener('change',e=>{filter=e.target.value;render();});
     const body=content.querySelector('.hub-schedule-body');
-    if(view==='month') {
+    content.querySelector('.hub-metrics').hidden = view === 'focus';
+    content.querySelector('.hub-month-nav').hidden = view === 'focus';
+    if(view==='focus') {
+      const unfinished = rows.filter(p=>p.status!=='done');
+      const groups = [
+        ['今天先看', unfinished.filter(p=>p.due<=today())],
+        ['接下来 7 天', unfinished.filter(p=>p.due>today()&&p.due<=addDays(today(),7))],
+        ['稍后安排', unfinished.filter(p=>p.due>addDays(today(),7))],
+        ['已经完成', rows.filter(p=>p.status==='done')]
+      ];
+      body.innerHTML = '<section class="hub-focus"><header><h2>一次处理一件事</h2><p>打开一个项目，先做下一个未完成的里程碑。没有里程碑时，可以在项目里添加一个小步骤。</p></header>'+groups.map(([label,items])=>'<section class="hub-focus-group"><h3>'+label+' <small>'+items.length+' 项</small></h3><div class="hub-project-grid">'+items.slice(0,5).map(focusCard).join('')+'</div>'+(items.length>5?'<details><summary>查看其余 '+(items.length-5)+' 项</summary><div class="hub-project-grid">'+items.slice(5).map(focusCard).join('')+'</div></details>':items.length?'':'<p class="hub-focus-empty">这里暂时没有项目。</p>')+'</section>').join('')+'</section>';
+    } else if(view==='month') {
       const first=new Date(month+'-01T12:00:00');const start=addDays(day(first),-(first.getDay()+6)%7);
       const days=Array.from({length:42},(_,i)=>addDays(start,i));
       body.innerHTML=`<div class="hub-calendar"><div class="hub-weekdays">${['一','二','三','四','五','六','日'].map(d=>`<span>周${d}</span>`).join('')}</div><div class="hub-days">${days.map(d=>{
@@ -75,16 +102,18 @@ window.MesssWorkHub = (() => {
   function editor(title, html) {
     const dialog=document.createElement('dialog');dialog.className='hub-editor';dialog.setAttribute('aria-label',title);
     dialog.innerHTML=`<form><header><h2>${title}</h2><button type="button" data-close aria-label="关闭">×</button></header>${html}<p class="hub-editor-error" role="alert"></p><footer><button type="button" data-close>取消</button><button class="hub-primary" type="submit">保存</button></footer></form>`;
-    document.body.append(dialog);dialog.addEventListener('keydown',e=>e.stopPropagation());dialog.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>dialog.close());dialog.addEventListener('close',()=>dialog.remove());dialog.showModal();return dialog;
+    document.body.append(dialog);
+    setupHubDates(dialog);
+    dialog.addEventListener('keydown',e=>e.stopPropagation());dialog.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>dialog.close());dialog.addEventListener('close',()=>{dialog.querySelectorAll('input').forEach(input=>input._flatpickr?.destroy());dialog.remove();});dialog.showModal();return dialog;
   }
   function editProject(id, date=today()) {
     const p=projects.find(r=>r.id===id)||{title:'',owner:'',start:date,due:date,status:'planned',progress:0,notes:'',milestones:[]};
     const dialog=editor(p.id?'项目详情':'新建项目',`<label>项目名称<input name="title" required maxlength="160" value="${esc(p.title)}" placeholder="例如：品牌影片交付"></label><div class="hub-form-grid"><label>负责人<input name="owner" maxlength="100" value="${esc(p.owner)}" placeholder="姓名 / 团队"></label><label>关联画布<select name="canvasId"><option value="">不关联</option>${(AppState.canvases||[]).map(c=>`<option value="${esc(c.id)}" ${p.canvasId===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></label><label>开始日期<input name="start" type="date" min="2000-01-01" max="2199-12-31" required value="${p.start}"></label><label>交付日期<input name="due" type="date" min="2000-01-01" max="2199-12-31" required value="${p.due}"></label><label>状态<select name="status">${Object.entries(statusNames).map(([v,l])=>`<option value="${v}" ${p.status===v?'selected':''}>${l}</option>`).join('')}</select></label><label>进度 %<input name="progress" type="number" min="0" max="100" step="1" required value="${p.progress}"></label></div><div class="hub-milestone-heading"><h3>里程碑</h3><button type="button" data-add-milestone>＋ 添加</button></div><div class="hub-milestones"></div><label>交付说明<textarea name="notes" rows="3" maxlength="6000" placeholder="交付物、验收要求、风险与备注">${esc(p.notes)}</textarea></label>${p.id?`<div class="hub-detail-actions"><button type="button" data-archive>${p.deletedAt?'恢复项目':'归档项目'}</button>${p.canvasId?'<button type="button" data-open-canvas>打开关联画布</button>':''}<small>最近更新 ${new Date(p.updatedAt).toLocaleString()}</small></div><details><summary>变更记录</summary>${(p.history||[]).slice().reverse().map(h=>`<p>${new Date(h.at).toLocaleString()} · ${esc(h.action)} · ${h.progress}% · 交付 ${h.due}</p>`).join('')}</details>`:''}`);
     const form=dialog.querySelector('form'), milestones=dialog.querySelector('.hub-milestones');
-    const add=(m={title:'',date:p.due,done:false})=>{const row=document.createElement('div');row.className='hub-milestone';row.innerHTML=`<input type="checkbox" aria-label="里程碑已完成" ${m.done?'checked':''}><input type="text" placeholder="里程碑名称" aria-label="里程碑名称" maxlength="160" required value="${esc(m.title)}"><input type="date" aria-label="里程碑日期" required value="${m.date}"><button type="button" aria-label="移除里程碑">×</button>`;row.querySelector('button').onclick=()=>row.remove();milestones.append(row);};p.milestones.forEach(add);
+    const add=(m={title:'',date:p.due,done:false})=>{const row=document.createElement('div');row.className='hub-milestone';row.innerHTML=`<input type="checkbox" aria-label="里程碑已完成" ${m.done?'checked':''}><input type="text" placeholder="里程碑名称" aria-label="里程碑名称" maxlength="160" required value="${esc(m.title)}"><input type="date" aria-label="里程碑日期" required value="${m.date}"><button type="button" aria-label="移除里程碑">×</button>`;row.querySelector('button').onclick=()=>row.remove();milestones.append(row);setupHubDates(row);};p.milestones.forEach(add);
     dialog.querySelector('[data-add-milestone]').onclick=()=>{if(milestones.children.length<50)add();};
     form.elements.status.onchange=()=>{if(form.elements.status.value==='done')form.elements.progress.value=100;};
-    form.onsubmit=async e=>{e.preventDefault();const submit=form.querySelector('[type=submit]');submit.disabled=true;try{const input=Object.fromEntries(new FormData(form));input.progress=Number(input.progress);input.id=p.id;input.revision=p.revision;input.milestones=[...milestones.children].map(row=>({title:row.children[1].value,date:row.children[2].value,done:row.children[0].checked}));await api().saveScheduleProject(input);dialog.close();await reload();}catch(error){dialog.querySelector('.hub-editor-error').textContent=error.message;}finally{submit.disabled=false;}};
+    form.onsubmit=async e=>{e.preventDefault();const submit=form.querySelector('[type=submit]');submit.disabled=true;try{const input=Object.fromEntries(new FormData(form));input.progress=Number(input.progress);input.id=p.id;input.revision=p.revision;input.milestones=[...milestones.children].map(row=>({title:row.children[1].value,date:row.querySelector('input[aria-label="里程碑日期"]').value,done:row.children[0].checked}));await api().saveScheduleProject(input);dialog.close();await reload();}catch(error){dialog.querySelector('.hub-editor-error').textContent=error.message;}finally{submit.disabled=false;}};
     const archive=dialog.querySelector('[data-archive]');if(archive)archive.onclick=async()=>{archive.disabled=true;try{await api()[p.deletedAt?'restoreScheduleProject':'archiveScheduleProject'](p);dialog.close();await reload();}catch(e){dialog.querySelector('.hub-editor-error').textContent=e.message;archive.disabled=false;}};
     const canvas=dialog.querySelector('[data-open-canvas]');if(canvas)canvas.onclick=()=>{if(!AppState.canvases.some(c=>c.id===p.canvasId)){dialog.querySelector('.hub-editor-error').textContent='关联画布已不存在';return;}dialog.close();root.close();switchCanvas(p.canvasId,{enterWorkspace:true});};
   }
@@ -103,8 +132,9 @@ window.MesssWorkHub = (() => {
   function renderFiles() {
     const assets=area==='assets';
     const records=resources.filter(r=>r.kind==='asset');
+    const folders=assets?resources.filter(r=>r.kind==='asset-folder'):[];
     const files=(AppState.files||[]).filter(f=>!assets||records.some(r=>r.fileId===f.id)).filter(f=>{const meta=records.find(r=>r.fileId===f.id);const type=/\.(png|jpe?g|webp|gif|svg|avif)$/i.test(f.name)?'image':/\.(mp4|mov|webm|mkv)$/i.test(f.name)?'video':'other';return (filter==='all'||filter===type||(filter==='favorite'&&meta?.favorite))&&`${f.name} ${meta?.tags?.join(' ')||''}`.toLowerCase().includes(query.toLowerCase());});
-    content.innerHTML=heading(assets?'素材库':'文件',assets?'收集自己的图片、视频与文档，让每次创作都有积累。':'本机文件，集中浏览与复用。',assets?action('add-existing','从文件添加')+action('upload','↑ 导入素材','hub-primary'):action('upload','↑ 导入文件','hub-primary'))+`<div class="hub-toolbar">${search()}<div class="hub-segment">${['all','image','video','other',...(assets?['favorite']:[])].map((v,i)=>action('filter-'+v,['全部','图片','视频','其他','收藏'][i],filter===v?'is-active':'')).join('')}</div><small>${files.length} 个文件</small></div><div class="hub-asset-grid">${files.slice(0,300).map(f=>{const meta=records.find(r=>r.fileId===f.id);return `<article class="hub-asset" data-file-id="${esc(f.id)}"><button class="hub-asset-preview" data-hub-action="preview" data-id="${esc(f.id)}" aria-label="预览 ${esc(f.name)}"></button><strong title="${esc(f.name)}">${esc(f.name)}</strong><small>${esc(meta?.tags?.join(' · ')||f.ext||'文件')}</small><div>${action('use-file','用于画布')}${assets?action('asset-edit','管理'):action('collect','加入素材库')}</div></article>`;}).join('')||'<div class="hub-empty">这里还没有素材<br>导入自己的文件，或从已有文件中添加。</div>'}</div>${files.length>300?'<p>仅显示前 300 项，请搜索缩小范围。</p>':''}`;
+    content.innerHTML=heading(assets?'素材库':'文件',assets?'收集自己的图片、视频与文档，让每次创作都有积累。':'本机文件，集中浏览与复用。',assets?action('new-asset-folder','＋ 新建文件夹')+action('add-existing','从文件添加')+action('upload','↑ 导入素材','hub-primary'):action('upload','↑ 导入文件','hub-primary'))+`<div class="hub-toolbar">${search()}<div class="hub-segment">${['all','image','video','other',...(assets?['favorite']:[])].map((v,i)=>action('filter-'+v,['全部','图片','视频','其他','收藏'][i],filter===v?'is-active':'')).join('')}</div><small>${files.length} 个文件</small></div><div class="hub-asset-grid">${folders.map(folder=>`<article class="hub-asset-folder" data-folder-id="${esc(folder.id)}"><div class="hub-folder-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></div><strong>${esc(folder.name)}</strong><small>素材文件夹</small></article>`).join('')+files.slice(0,300).map(f=>{const meta=records.find(r=>r.fileId===f.id);return `<article class="hub-asset" data-file-id="${esc(f.id)}"><button class="hub-asset-preview" data-hub-action="preview" data-id="${esc(f.id)}" aria-label="预览 ${esc(f.name)}"></button><strong title="${esc(f.name)}">${esc(f.name)}</strong><small>${esc(meta?.tags?.join(' · ')||f.ext||'文件')}</small><div>${action('use-file','用于画布')}${assets?action('asset-edit','管理'):action('collect','加入素材库')}</div></article>`;}).join('')||(query||filter!=='all'?'<div class="hub-empty">没有匹配的文件<br>请更换关键词或筛选条件。</div>':'<div class="hub-empty">这里还没有素材<br>导入自己的文件，或从已有文件中添加。</div>')}</div>${files.length>300?'<p>仅显示前 300 项，请搜索缩小范围。</p>':''}`;
     content.querySelectorAll('.hub-asset').forEach(card=>{
       const f=files.find(f=>f.id===card.dataset.fileId);
       if(typeof appendFileThumbnail==='function')appendFileThumbnail(card.querySelector('.hub-asset-preview'),f);
@@ -121,29 +151,47 @@ window.MesssWorkHub = (() => {
     });
   }
   async function deleteHubFile(file) {
-    if(!file)return;
-    const ok=await new Promise(resolve=>{
-      const dialog=editor('删除文件', '<p>确定删除“'+esc(file.name)+'”吗？</p><p>这里删除后，本地磁盘中的文件也会一起永久删除，同时从 Messs 文件库移除，无法恢复。</p>');
-      const submit=dialog.querySelector('[type=submit]');
-      submit.textContent='同时删除本地文件';
-      let confirmed=false;
-      dialog.querySelector('form').onsubmit=event=>{event.preventDefault();confirmed=true;dialog.close();};
-      dialog.addEventListener('close',()=>resolve(confirmed),{once:true});
-      dialog.querySelector('[data-close]').focus();
-    });
-    if(!ok)return;
-    try {
-      const result=await api().deleteFilePermanently(file.id);
-      if(!result?.ok)throw Error(result?.error||'删除文件失败');
-      for(const resource of resources.filter(item=>item.fileId===file.id)) {
-        try { await api().removeWorkspaceResource(resource); } catch {}
+    if (!file || document.querySelector('.hub-delete-dialog[open]')) return;
+    const dialog = editor('删除素材', '<p>请选择“'+esc(file.name)+'”的删除方式。</p><p>仅从素材库删除：保留本地文件，仍可从文件页面访问。</p><p>同时删除本地文件：从素材库和文件库移除，并永久删除本地文件，无法恢复。</p>');
+    dialog.classList.add('hub-delete-dialog');
+    const library = dialog.querySelector('[type=submit]');
+    library.type = 'button'; library.textContent = '仅从素材库删除';
+    const local = document.createElement('button');
+    local.type = 'button'; local.className = 'hub-danger'; local.textContent = '同时删除本地文件';
+    library.after(local);
+    let busy = false, localDeleted = false;
+    dialog.querySelector('form').onsubmit = e => e.preventDefault();
+    dialog.addEventListener('cancel', e => { if (busy) e.preventDefault(); });
+    const remove = async choice => {
+      if (busy) return;
+      busy = true;
+      const button = choice === 'local' ? local : library, label = button.textContent;
+      dialog.setAttribute('aria-busy','true');
+      dialog.querySelectorAll('button').forEach(b=>b.disabled=true);
+      dialog.querySelector('.hub-editor-error').textContent='';
+      button.textContent='正在删除…';
+      try {
+        if (choice === 'local' && !localDeleted) {
+          const result = await api().deleteFilePermanently(file.id);
+          if (!result?.ok) throw Error(result?.error || '删除本地文件失败，请重试。');
+          localDeleted = true;
+          AppState.files = AppState.files.filter(item=>item.id!==file.id);
+          if (typeof removeBoardItemsForFile === 'function') removeBoardItemsForFile(file.id);
+        }
+        const record = resources.find(item=>item.kind==='asset'&&item.fileId===file.id);
+        if (record) await api().removeWorkspaceResource(record);
+        dialog.close();
+        showToast(localDeleted?'文件已从素材库和本地永久删除':'文件已从素材库移除，本地文件已保留');
+        try { await reload(); } catch(error) { notify('删除已完成，但列表刷新失败，请重新打开此页面。'); }
+      } catch(error) {
+        dialog.querySelector('.hub-editor-error').textContent=(localDeleted?'本地文件已删除，素材记录清理失败。点击删除可重试清理。 ':'')+(error.message||String(error));
+      } finally {
+        busy=false; dialog.removeAttribute('aria-busy'); button.textContent=label;
+        dialog.querySelectorAll('button').forEach(b=>b.disabled=false);
+        if (localDeleted) { library.disabled=true; local.textContent='重试清理素材记录'; }
       }
-      AppState.files=AppState.files.filter(item=>item.id!==file.id);
-      if(typeof removeBoardItemsForFile==='function')removeBoardItemsForFile(file.id);
-      if(AppState.activeFileId===file.id&&typeof clearPreview==='function')clearPreview();
-      await reload();
-      showToast('文件已从本地和 Messs 文件库永久删除');
-    } catch(error) { notify(error); }
+    };
+    library.onclick=()=>remove('library'); local.onclick=()=>remove('local');
   }
   async function upload() {
     const paths=await api().pickFiles();if(!paths?.length)return;
@@ -156,7 +204,7 @@ window.MesssWorkHub = (() => {
     if(typeof renderFileList==='function')renderFileList(currentFileListScope());
   }
   function assetEditor(id) {
-    const record=resources.find(r=>r.kind==='asset'&&r.fileId===id),f=AppState.files.find(f=>f.id===id);if(!f)return;
+    const record=resources.find(r=>r.kind==='asset'&&r.fileId===id),f=AppState.files.find(f=>f.id===id);if(!f||!record){notify('素材记录已变化，请重新打开素材库。');return;}
     const dialog=editor('素材管理',`<p>${esc(f.name)}</p><label>标签（用逗号分隔）<input name="tags" value="${esc(record.tags.join(', '))}" maxlength="500"></label><label class="hub-check"><input name="favorite" type="checkbox" ${record.favorite?'checked':''}>收藏素材</label><button type="button" data-remove>从素材库移除（保留原文件）</button>`);
     dialog.querySelector('form').onsubmit=async e=>{e.preventDefault();try{await api().saveWorkspaceResource({...record,tags:e.target.elements.tags.value.split(/[,，]/),favorite:e.target.elements.favorite.checked});dialog.close();await reload();}catch(error){dialog.querySelector('.hub-editor-error').textContent=error.message;}};
     dialog.querySelector('[data-remove]').onclick=async()=>{try{await api().removeWorkspaceResource(record);dialog.close();await reload();}catch(error){dialog.querySelector('.hub-editor-error').textContent=error.message;}};
@@ -193,10 +241,13 @@ window.MesssWorkHub = (() => {
     if(name==='new-project'||name==='new-on-day'){editProject(null,name==='new-on-day'?selected:today());return;}
     if(name==='edit-project'){editProject(button.dataset.id);return;}
     if(name==='export-calendar'){exportCalendar();return;}
+    if(name==='new-asset-folder'){
+      const dialog=editor('新建素材文件夹','<label>文件夹名称<input name="name" maxlength="120" required placeholder="例如：品牌参考"></label>');
+      dialog.querySelector('form').onsubmit=async e=>{e.preventDefault();const button=dialog.querySelector('[type=submit]');button.disabled=true;try{await api().saveWorkspaceResource({kind:'asset-folder',name:e.target.elements.name.value});dialog.close();await reload();}catch(error){dialog.querySelector('.hub-editor-error').textContent=error.message;button.disabled=false;}};return;}
     if(name==='upload'){button.disabled=true;try{await upload();}finally{button.disabled=false;}return;}
     if(name==='add-existing'){area='files';render();return;}
     const fileId=button.dataset.id||button.closest('[data-file-id]')?.dataset.fileId;
-    if(name==='preview'){const f=AppState.files.find(f=>f.id===fileId);if(f){root.close();if(isImageExt(f.ext)||isVideoExt(f.ext)){await openFileFullscreenPreview(f);}else{await selectFileForPreview(f.id);openFullscreenPreview();}}return;}
+    if(name==='preview'){const f=AppState.files.find(f=>f.id===fileId);if(f){window.__messsPreviewReturnToFiles = true;root.close();if(isImageExt(f.ext)||isVideoExt(f.ext)){await openFileFullscreenPreview(f);}else{await selectFileForPreview(f.id);openFullscreenPreview();}}return;}
     if(name==='collect'){await api().saveWorkspaceResource({kind:'asset',fileId,tags:[],favorite:false});await reload();notify('已加入素材库');return;}
     if(name==='asset-edit'){assetEditor(fileId);return;}
     if(name==='use-file'){if(!activeCanvasRecord())throw Error('请先打开一个画布');const center=boardViewportCenterCoords();await addFilesToBoard([fileId],center.x,center.y);root.close();showCanvasWorkspace();return;}

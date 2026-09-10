@@ -6760,6 +6760,14 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
             <button type="button" data-value="sunburst">Sunburst</button>
           </div>
         </section>
+        <section class="ai-gpt25-background" hidden>
+          <div class="ai-options-heading"><strong>${t('Background', '背景')}</strong></div>
+          <div class="ai-gpt25-variants" data-option="image-background">
+            <button type="button" data-value="auto">${t('Auto', '自动')}</button>
+            <button type="button" data-value="opaque">${t('Opaque', '不透明')}</button>
+            <button type="button" data-value="transparent">${t('Transparent', '透明')}</button>
+          </div>
+        </section>
         <section class="ai-kling-options" hidden>
           <div class="ai-options-heading"><strong>Kling 版本</strong><span>按创作需求选择</span></div>
           <div class="ai-kling-variants"></div>
@@ -6905,6 +6913,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   let size = aiConfig.imageSize || '1K';
   let quality = 'medium';
   let imageVariant = 'flare';
+  let imageBackground = 'auto';
   let count = 1;
   let duration = Number(aiConfig.videoDuration) || 6;
   let serviceTier = 'standard';
@@ -7611,6 +7620,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       size: kind === 'image' ? size : undefined,
       quality: kind === 'image' ? quality : undefined,
       variant: kind === 'image' && provider.id === 'image-19' ? imageVariant : undefined,
+      background: kind === 'image' ? imageBackground : undefined,
       resolution: size,
       duration: kind === 'video' ? duration : undefined,
       serviceTier: kind === 'video' && provider.capabilities?.variantOptions ? serviceTier : undefined,
@@ -7734,6 +7744,11 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const gpt25Panel = pop.querySelector('.ai-gpt25-options');
     const supportsGpt25Variants = kind === 'image' && selectedImageProvider()?.id === 'image-19';
     gpt25Panel.hidden = !supportsGpt25Variants;
+    pop.querySelector('.ai-gpt25-background').hidden = !supportsGpt25Variants;
+    pop.querySelectorAll('[data-option="image-background"] button').forEach(button => {
+      button.classList.toggle('is-active', button.dataset.value === imageBackground);
+      button.setAttribute('aria-pressed', String(button.dataset.value === imageBackground));
+    });
     pop.querySelectorAll('[data-option="image-variant"] button').forEach((button) => {
       button.classList.toggle('is-active', button.dataset.value === imageVariant);
       button.setAttribute('aria-pressed', String(button.dataset.value === imageVariant));
@@ -8188,6 +8203,12 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     updateCreditEstimate();
     setOptionsOpen(true);
   });
+  pop.querySelector('[data-option="image-background"]').addEventListener('click', event => {
+    const button = event.target.closest('button[data-value]');
+    if (!button) return;
+    imageBackground = button.dataset.value;
+    syncGenerationOptions();
+  });
   pop.querySelector('[data-option="image-variant"]').addEventListener('click', (event) => {
     const button = event.target.closest('[data-value]');
     if (!button) return;
@@ -8320,6 +8341,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       resolution: size,
       quality: kind === 'image' ? quality : undefined,
       variant: kind === 'image' && selectedProvider?.id === 'image-19' ? imageVariant : undefined,
+      background: kind === 'image' ? imageBackground : undefined,
       count,
        duration: kind === 'video'
          ? supportedVideoDurationFor(duration, selectedMode, videoCapabilities)

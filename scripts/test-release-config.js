@@ -32,7 +32,9 @@ assert.match(installerInclude, /\$\{isUpdated\}[\s\S]*?taskkill\.exe[\s\S]*?\/F[
 assert.doesNotMatch(installerInclude, /taskkill\.exe[^\r\n]*\/T/, 'The installer must not terminate its own child process tree.');
 assert.match(installerInclude, /Get-CimInstance Win32_Process[\s\S]*?ExecutablePath[\s\S]*?\$INSTDIR\\resources\\tools\\\*[\s\S]*?Invoke-CimMethod -MethodName Terminate/);
 assert.doesNotMatch(installerInclude, /taskkill\.exe[^\r\n]*(?:soffice|ffmpeg|magick)/i, 'Bundled helpers must be terminated by install path, not a broad image-name match.');
-assert.match(installerInclude, /!macro customInstall[\s\S]*?\$\{isUpdated\}[\s\S]*?CreateShortCut "\$newStartMenuLink"[\s\S]*?CreateShortCut "\$newDesktopLink"/);
+assert.match(installerInclude, /!macro customInstall[\s\S]*?\$\{isUpdated\}[\s\S]*?CreateShortCut "\$newStartMenuLink"/);
+assert.match(installerInclude, /!macro repairDesktopShortcut[\s\S]*?CreateShortCut "\$newDesktopLink"/);
+assert.match(installerInclude, /!ifndef BUILD_UNINSTALLER[\s\S]*?desktopShortcutWasPresent[\s\S]*?IfFileExists "\$DESKTOP\\\$\{SHORTCUT_NAME\}\.lnk"[\s\S]*?repairDesktopShortcut/);
 assert.match(workflow, /secrets\.RELEASES_TOKEN/);
 assert.match(workflow, /secrets\.CSC_LINK/);
 assert.match(workflow, /secrets\.CSC_KEY_PASSWORD/);
@@ -65,6 +67,8 @@ assert.match(workflow, /choco install imagemagick\.app/);
 assert.match(workflow, /Copy-Item \$libreOffice build-resources\/tools\/libreoffice -Recurse/);
 assert.match(workflow, /Copy-Item \$imageMagick build-resources\/tools\/imagemagick -Recurse/);
 assert.match(builder, /extraResources:[\s\S]*?from:\s*build-resources\/tools[\s\S]*?to:\s*tools/);
+assert.match(builder, /files:[\s\S]*?node_modules\/ffmpeg-static\/\*\*\/\*/);
+assert.match(builder, /asarUnpack:[\s\S]*?node_modules\/ffmpeg-static\/\*\*\/\*/);
 assert.match(builder, /asarUnpack:[\s\S]*?node_modules\/pdfjs-dist\/\*\*\/\*/);
 assert.ok(
   preload.indexOf('fs.existsSync(unpackedPath)') < preload.indexOf('fs.existsSync(devPath)'),
@@ -77,11 +81,13 @@ assert.ok(
 );
 assert.match(main, /owner:\s*'a1804927460-bot'/);
 assert.match(main, /repo:\s*'messs-releases'/);
+assert.match(main, /app\.setAppUserModelId\(APP_USER_MODEL_ID\)/);
 assert.match(main, /autoUpdater\.autoInstallOnAppQuit\s*=\s*updaterState\.enabled/);
 assert.match(main, /autoUpdater\.quitAndInstall\(true,\s*true\)/);
 assert.doesNotMatch(main, /quitAndInstall\([\s\S]{0,160}setTimeout\(\(\)\s*=>\s*app\.exit/);
 assert.match(updaterUi, /\['available',\s*'downloading',\s*'downloaded',\s*'installing'\]/);
 assert.match(updaterUi, /status\s*===\s*'installing'[\s\S]*?Updating/);
+assert.match(updaterUi, /update-banner-progress[\s\S]*?aria-valuenow[\s\S]*?fill\.style\.width/);
 assert.match(main, /image-resolution-mismatch[\s\S]*?points were refunded[\s\S]*?积分已退还/);
 assert.match(main, /preview\.shutdownProcesses\(\)/);
 assert.match(main, /thumbnails\.shutdownProcesses\(\)/);

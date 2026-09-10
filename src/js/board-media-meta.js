@@ -344,19 +344,12 @@ function positionBoardButlerMenu(menu, trigger) {
   const rightEdge = Math.min(window.innerWidth - margin, (bounds?.right || window.innerWidth) - margin);
   const bottomEdge = Math.min(window.innerHeight - margin, (bounds?.bottom || window.innerHeight) - margin);
   menu.style.maxWidth = Math.max(1, rightEdge - leftEdge) + 'px';
-  menu.classList.remove('is-vertical');
-  const horizontalWidth = menu.scrollWidth, horizontalHeight = menu.offsetHeight;
-  const sideSpace = Math.max(rightEdge - rect.right - gap, rect.left - gap - leftEdge);
-  const aboveBelow = Math.max(rect.top - gap - topEdge, bottomEdge - rect.bottom - gap);
-  const horizontalFits = horizontalWidth <= rightEdge - leftEdge &&
-    (horizontalWidth <= sideSpace || horizontalHeight <= aboveBelow);
-  // Prefer a side column when the horizontal row would be squeezed against the image.
-  menu.classList.toggle('is-vertical', !horizontalFits || (horizontalWidth > sideSpace && sideSpace >= 180));
-  menu.setAttribute('aria-orientation', menu.classList.contains('is-vertical') ? 'vertical' : 'horizontal');
+  // Keep the same vertical capsule menu at every canvas zoom and window size.
+  menu.classList.add('is-vertical');
+  menu.setAttribute('aria-orientation', 'vertical');
   const width = menu.offsetWidth, height = menu.offsetHeight;
   let left, top;
   if (rect.right + gap + width <= rightEdge) { left = rect.right + gap; top = rect.top; }
-  else if (rect.left - gap - width >= leftEdge) { left = rect.left - gap - width; top = rect.top; }
   else { left = rect.right - width; top = rect.bottom + gap + height <= bottomEdge ? rect.bottom + gap : rect.top - gap - height; }
   menu.style.left = Math.round(Math.max(leftEdge, Math.min(left, rightEdge - width))) + 'px';
   menu.style.top = Math.round(Math.max(topEdge, Math.min(top, bottomEdge - height))) + 'px';
@@ -3076,7 +3069,7 @@ function openBoardButlerMenu(trigger, file, item) {
   closeBoardButlerPanel();
   closeBoardButlerMenu();
   const menu = document.createElement('div');
-  menu.className = 'board-butler-menu';
+  menu.className = 'board-butler-menu is-vertical';
   menu.setAttribute('role', 'toolbar');
   menu.setAttribute('aria-label', t('Butler tools', 'Butler 工具', 'Butler 도구'));
   menu._trigger = trigger;

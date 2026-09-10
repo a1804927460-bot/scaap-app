@@ -598,12 +598,47 @@ function canvasLibraryOrderedEntries(ignoreQuery = false) {
     || Number(b.record.pinned === true) - Number(a.record.pinned === true));
 }
 
+let canvasLibraryShiftPreview = null;
+function resetCanvasLibraryShiftPreview() {
+  if (!canvasLibraryShiftPreview) return;
+  for (const node of canvasLibraryShiftPreview.nodes) {
+    node.style.removeProperty('translate');
+    node.classList.remove('is-reorder-shifting');
+  }
+  canvasLibraryShiftPreview = null;
+}
+function previewCanvasLibraryShift(sourceKey, targetKey, after) {
+  const grid = document.getElementById('canvas-library-grid');
+  if (!grid) return;
+  if (!canvasLibraryShiftPreview) {
+    const nodes = [...grid.children].filter(node=>node.dataset.libraryKey);
+    canvasLibraryShiftPreview = {nodes, rects:nodes.map(node=>node.getBoundingClientRect()), signature:''};
+  }
+  const state=canvasLibraryShiftPreview;
+  const signature=sourceKey+'|'+targetKey+'|'+after;
+  if (state.signature===signature) return;
+  state.signature=signature;
+  const order=[...state.nodes], source=order.find(n=>n.dataset.libraryKey===sourceKey), target=order.find(n=>n.dataset.libraryKey===targetKey);
+  if (!source||!target||source===target) return;
+  order.splice(order.indexOf(source),1);order.splice(order.indexOf(target)+Number(after),0,source);
+  order.forEach((node,index)=>{
+    const from=state.rects[state.nodes.indexOf(node)],to=state.rects[index];
+    node.classList.add('is-reorder-shifting');
+    node.style.translate=(to.left-from.left)+'px '+(to.top-from.top)+'px';
+  });
+}
+function canvasLibraryDragRect(card) {
+  const state=canvasLibraryShiftPreview, index=state?.nodes.indexOf(card);
+  return index>=0 ? state.rects[index] : card.getBoundingClientRect();
+}
+
 function clearCanvasLibraryDropIndicators() {
   document.querySelectorAll('[data-library-drop]').forEach((node) => { delete node.dataset.libraryDrop; });
 }
 
 async function reorderCanvasLibrary(sourceKey, targetKey, after) {
   if (CanvasWorkspace.libraryOrderSaving || sourceKey === targetKey) return;
+  resetCanvasLibraryShiftPreview();
   const entries = canvasLibraryOrderedEntries(true);
   const source = entries.find((entry) => entry.key === sourceKey);
   const target = entries.find((entry) => entry.key === targetKey);
@@ -641,6 +676,7 @@ function bindCanvasLibraryReorder(card, key, folder = false) {
       card.classList.remove('is-longpress-dragging'); clearCanvasLibraryDropIndicators();
       if (state.active) suppressClick = true;
       press = null;
+      resetCanvasLibraryShiftPreview();
       if (!cancel && state.active && state.target) void reorderCanvasLibrary(key,state.target,state.after);
     };
     const timer = setTimeout(() => {
@@ -662,15 +698,16 @@ function bindCanvasLibraryReorder(card, key, folder = false) {
       const candidates=Array.from(grid.children).filter(node=>node!==card && node.dataset.libraryKey);
       let nearest=null, distance=Infinity;
       for (const node of candidates) {
-        const r=node.getBoundingClientRect();
+        const r=canvasLibraryDragRect(node);
         const d=Math.hypot(move.clientX-(r.left+r.width/2),move.clientY-(r.top+r.height/2));
         if(d<distance){distance=d;nearest=node;}
       }
       clearCanvasLibraryDropIndicators();state.target=null;
       const area=grid.getBoundingClientRect();
       if(nearest && move.clientX>=area.left && move.clientX<=area.right && move.clientY>=area.top && move.clientY<=area.bottom){
-        const r=nearest.getBoundingClientRect();state.target=nearest.dataset.libraryKey;state.after=move.clientX>r.left+r.width/2;
+        const r=canvasLibraryDragRect(nearest);state.target=nearest.dataset.libraryKey;state.after=move.clientX>r.left+r.width/2;
         nearest.dataset.libraryDrop=state.after?'after':'before';
+        previewCanvasLibraryShift(key,state.target,state.after);
       }
     },{passive:false,signal:controller.signal});
     window.addEventListener('pointerup',()=>finish(false),{once:true,signal:controller.signal});
@@ -680,7 +717,7 @@ function bindCanvasLibraryReorder(card, key, folder = false) {
   });
   card.addEventListener('dragstart', (event) => {
     if (press?.active) { event.preventDefault(); event.stopImmediatePropagation(); return; }
-    if (CanvasWorkspace.libraryOrderSaving || card.querySelector('input')) { event.preventDefault(); event.stopImmediatePropagation(); return; }
+    if (CanvasWorkspace.libraryOrderSaving || event.target.closest('input')) { event.preventDefault(); event.stopImmediatePropagation(); return; }
     if (!event.dataTransfer) return;
     CanvasWorkspace.libraryDragKey = key;
     event.dataTransfer.setData('text/messs-library-key', key);
@@ -688,12 +725,13 @@ function bindCanvasLibraryReorder(card, key, folder = false) {
   }, true);
   card.addEventListener('dragend', () => {
     CanvasWorkspace.libraryDragKey = null;
+    resetCanvasLibraryShiftPreview();
     clearCanvasLibraryDropIndicators();
   });
   const position = (event) => {
     const source = CanvasWorkspace.libraryDragKey;
     if (!source || source === key || CanvasWorkspace.libraryOrderSaving) return null;
-    const rect = card.getBoundingClientRect();
+    const rect = canvasLibraryDragRect(card);
     const x = (event.clientX - rect.left) / rect.width;
     const y = (event.clientY - rect.top) / rect.height;
     if (folder && source.startsWith('canvas:') && x > .25 && x < .75 && y > .2 && y < .8) return 'inside';
@@ -702,13 +740,14 @@ function bindCanvasLibraryReorder(card, key, folder = false) {
   card.addEventListener('dragover', (event) => {
     const mode = position(event);
     clearCanvasLibraryDropIndicators();
-    if (mode === 'inside') return;
+    if (mode === 'inside') { resetCanvasLibraryShiftPreview(); return; }
     event.stopImmediatePropagation();
     card.classList.remove('is-drop-target');
     if (!mode) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
     card.dataset.libraryDrop = mode;
+    previewCanvasLibraryShift(CanvasWorkspace.libraryDragKey,key,mode==='after');
   }, true);
   card.addEventListener('dragleave', (event) => {
     if (!card.contains(event.relatedTarget)) delete card.dataset.libraryDrop;
@@ -1016,6 +1055,7 @@ function renderCanvasLibrary() {
     menu.className = 'canvas-library-card-menu';
     menu.setAttribute('role', 'menu');
     menu.hidden = true;
+    const inFolder = Boolean(project && !isSystemCanvasProject(project));
     const actions = [
       {
         action: 'toggle-pin',
@@ -1029,7 +1069,7 @@ function renderCanvasLibrary() {
       },
       {
         action: 'move-folder',
-        label: t('Move to folder', '移动到文件夹'),
+        label: inFolder ? t('Move out of folder', '移出文件夹') : t('Move to folder', '移动到文件夹'),
         icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M8 13h8M13 10l3 3-3 3"/></svg>'
       },
       {
@@ -1073,7 +1113,10 @@ function renderCanvasLibrary() {
       if (!button) return;
       closeCanvasCardMenus();
       if (button.dataset.canvasAction === 'rename') promptRenameCanvas(canvas.id);
-      if (button.dataset.canvasAction === 'move-folder') promptMoveCanvasToFolder(canvas.id);
+      if (button.dataset.canvasAction === 'move-folder') {
+        if (inFolder) moveCanvasOutOfFolder(canvas.id);
+        else promptMoveCanvasToFolder(canvas.id);
+      }
       if (button.dataset.canvasAction === 'export') exportCanvasFile(canvas.id);
       if (button.dataset.canvasAction === 'usage') void openCanvasUsageDetails(canvas.id);
       if (button.dataset.canvasAction === 'delete') promptDeleteCanvas(canvas.id);
@@ -1095,10 +1138,15 @@ function renderCanvasLibrary() {
           icon: 'M8 3h8l-1 5 3 4H6l3-4z;M12 12v9',
           action: () => toggleCanvasPinned(canvas.id)
         },
+        ...(isSystemCanvasProject(AppState.canvasProjects.find((project) => project.id === canvas.projectId)) ? [] : [{
+          label: t('Move out of folder', '移出文件夹'),
+          icon: 'M3 7h18M12 10v8m-3-4 3 4 3-4',
+          action: () => moveCanvasOutOfFolder(canvas.id)
+        }]),
         {
           label: t('Move to folder', '移动到文件夹'),
           icon: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z;M8 13h8M13 10l3 3-3 3',
-          action: () => promptMoveCanvasToFolder(canvas.id)
+          action: () => inFolder ? moveCanvasOutOfFolder(canvas.id) : promptMoveCanvasToFolder(canvas.id)
         }
       ], event.clientX, event.clientY, 'canvas-card-context-menu');
     });
@@ -1413,7 +1461,11 @@ function showCanvasFolderDialog({
     document.body.appendChild(overlay);
     const form = overlay.querySelector('form');
     const select = overlay.querySelector('.canvas-folder-select');
-    appendCanvasProjectOptions(select, AppState.canvasProjects, projectId || null);
+    const populatedProjects = AppState.canvasProjects.filter((project) => {
+      const hasCanvas = AppState.canvases.some((canvas) => canvas.projectId === project.id);
+      return hasCanvas || project.id === projectId;
+    });
+    appendCanvasProjectOptions(select, populatedProjects, projectId || null);
     requestAnimationFrame(() => overlay.classList.add('is-visible'));
 
     function close(value) {
@@ -1546,6 +1598,13 @@ async function promptRenameCanvasProject(projectId, inlineName) {
     renderCanvasWorkspaceControls();
     showToast(err && err.message ? err.message : t('Folder rename failed.', '文件夹重命名失败。'), 'Canvas');
   }
+}
+
+async function moveCanvasOutOfFolder(canvasId) {
+  const canvas = AppState.canvases.find((entry) => entry.id === canvasId);
+  const target = AppState.canvasProjects.find((entry) => isSystemCanvasProject(entry));
+  if (!canvas || !target || canvas.projectId === target.id) return;
+  await moveCanvasToProject(canvasId, target.id, { notify: true });
 }
 
 async function promptMoveCanvasToFolder(canvasId) {
@@ -2696,8 +2755,12 @@ function refreshCanvasWorkspaceLanguage() {
     const element = document.querySelector(selector);
     if (element) element.textContent = t(en, zh);
   };
-  setText('#canvas-import span', 'Import canvas', '导入画布');
-  setText('#canvas-project-new span', 'New folder', '新建文件夹');
+  const importButton = document.getElementById('canvas-import');
+  if (importButton) {
+    importButton.title = t('Import canvas', '导入画布');
+    importButton.setAttribute('aria-label', importButton.title);
+  }
+  setText('#canvas-project-new span', 'New canvas', '新建画布');
   setText('.canvas-library-topline h2', 'All Canvases', '全部画布');
   setText('#canvas-library-empty', 'No canvases found', '没有找到画布');
   const search = document.getElementById('canvas-library-search');
@@ -2768,7 +2831,13 @@ async function initCanvasWorkspace(initial) {
   CanvasWorkspace.libraryScope = canvasProjectScope(activeProject);
 
   document.getElementById('canvas-import').addEventListener('click', promptImportCanvas);
-  document.getElementById('canvas-project-new').addEventListener('click', promptNewProject);
+  document.getElementById('canvas-project-new').addEventListener('click', promptNewCanvas);
+  const libraryGrid = document.getElementById('canvas-library-view');
+  libraryGrid?.addEventListener('contextmenu', (event) => {
+    if (event.target.closest('.canvas-library-card, .canvas-library-folder-card, button, input, select, textarea')) return;
+    event.preventDefault(); event.stopPropagation();
+    buildAndShowSimpleMenu([{ label: t('New folder', '新建文件夹'), icon: 'M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3z', action: () => promptNewProject() }, { label: t('New canvas', '新建画布'), icon: 'M3 3h18v18H3z;M12 8v8M8 12h8', action: () => promptNewCanvas() }], event.clientX, event.clientY, 'canvas-library-background-menu');
+  });
   document.getElementById('canvas-library-back').addEventListener('click', showCanvasLibrary);
   document.getElementById('canvas-library-folder-back').addEventListener('click', selectAllCanvasLibraryItems);
   document.getElementById('board-detach-window').addEventListener('click', () => {

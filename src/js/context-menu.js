@@ -544,7 +544,7 @@ function showAgentTextContextMenu(event) {
   }];
   if (text && typeof openMoodboardTargetPicker === 'function') {
     items.push({
-      label: t('Send to moodboard', '发送到情绪板'),
+      label: t('Send to canvas', '发送到画布'),
       icon: 'M4 4h6a3 3 0 0 1 3 3v13a3 3 0 0 0-3-3H4z;M20 4h-6a3 3 0 0 0-3 3v13a3 3 0 0 1 3-3h6z',
       action: () => openMoodboardTargetPicker(text)
     });

@@ -416,6 +416,7 @@
                 <button type="button" class="ai-assistant-option-trigger" aria-haspopup="listbox" aria-expanded="false"><span></span><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="m7 10 5 5 5-5"/></svg></button>
                 <div class="ai-assistant-option-menu" role="listbox" hidden></div>
               </div></label>
+              <label id="ai-assistant-background-wrap" class="ai-assistant-option-field" hidden><span>背景</span><select id="ai-assistant-background"><option value="auto">自动</option><option value="opaque">不透明</option><option value="transparent">透明</option></select></label>
               <div id="ai-assistant-variant-wrap" class="ai-assistant-option-field ai-assistant-variant-field" hidden>
                 <span>Model type</span>
                 <input id="ai-assistant-variant" type="hidden" value="flare" />
@@ -509,13 +510,12 @@
                   </button>
                 </label>
                 <div class="canvas-library-actions">
-                  <button id="canvas-import" class="canvas-library-action" type="button">
+                  <button id="canvas-import" class="canvas-library-action" type="button" title="Import canvas" aria-label="Import canvas">
                     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
-                    <span>Import canvas</span>
                   </button>
                   <button id="canvas-project-new" class="canvas-library-action" type="button">
                     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 10v6M9 13h6"/></svg>
-                    <span>New folder</span>
+                    <span>New canvas</span>
                   </button>
                 </div>
               </div>
@@ -1076,8 +1076,11 @@
       </section>
     </div>
 
-    <div id="update-banner" class="update-banner" hidden>
-      <span class="update-banner-text">A new version has been downloaded. Restart to update.</span>
+    <div id="update-banner" class="update-banner" role="status" aria-live="polite" hidden>
+      <div class="update-banner-copy">
+        <span class="update-banner-text">A new version has been downloaded. Restart to update.</span>
+        <div class="update-banner-progress" role="progressbar" aria-label="Update download progress" aria-valuemin="0" aria-valuemax="100" hidden><span></span></div>
+      </div>
       <button id="update-install-btn" class="pill-btn">Restart Now</button>
       <button id="update-dismiss-btn" class="icon-btn-sm" aria-label="Dismiss" title="Dismiss">x</button>
     </div>

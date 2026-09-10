@@ -137,3 +137,38 @@
 @media(max-width:1100px) { .hub-agenda { width:210px; } .hub-content { padding:24px; } .hub-month-nav>span { display:none; } .hub-day { min-height:93px; } }
 @media(max-width:850px) { .hub-schedule-body { flex-direction:column; } .hub-calendar,.hub-agenda { width:100%; } .hub-agenda { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; } .hub-agenda>div:first-child,.hub-agenda>p { grid-column:1/-1; } .hub-local { display:none; } .hub-heading { align-items:flex-start; flex-direction:column; } .hub-metrics { gap:8px; } .hub-metrics>div { padding:12px; } }
 @media(max-width:540px) { .work-hub { width:calc(100vw - 12px); height:calc(100vh - 24px); border-radius:16px; } .hub-top { padding:0 12px; gap:8px; } .hub-wordmark { display:none; } .hub-top nav { gap:2px; } .hub-content { padding:16px 10px; } .hub-metrics { grid-template-columns:1fr 1fr; } .hub-day { min-height:78px; padding:4px 2px; } .hub-weekdays span { padding:10px 0; } .work-hub .hub-calendar-event { font-size:9px; padding:3px 2px; } .hub-calendar-event span { display:none; } .hub-form-grid { grid-template-columns:1fr; } .hub-editor { padding:16px; } .hub-milestone { grid-template-columns:18px 1fr 112px 22px; gap:4px; } .hub-milestone input { padding:7px 3px; } .hub-actions { flex-wrap:wrap; } .hub-agenda { grid-template-columns:1fr; } }
+
+.hub-editor .hub-danger { background:#c93636; border-color:#c93636; color:#fff; }
+.hub-editor .hub-danger:hover { background:#b52d2d; border-color:#b52d2d; }
+.hub-delete-dialog footer { flex-wrap:wrap; }
+
+/* Quiet, readable schedule surfaces and a date picker inside the modal layer. */
+.hub-metrics[hidden], .hub-month-nav[hidden] { display:none; }
+.hub-focus { width:100%; min-width:0; }
+.hub-focus > header { margin:4px 0 28px; }
+.hub-focus h2 { font-size:23px; margin:0 0 8px; }
+.hub-focus p { color:var(--text-secondary); font-size:13px; line-height:1.7; }
+.hub-focus-group { margin:0 0 28px; }
+.hub-focus-group h3 { font-size:15px; margin:0 0 12px; }
+.hub-focus-group h3 small { margin-left:8px; color:var(--text-secondary); font-weight:400; }
+.hub-focus .hub-project-card { padding:18px; }
+.hub-focus .hub-project-card strong { font-size:16px; }
+.hub-next-step { display:block; margin-top:14px; padding-top:12px; border-top:1px solid var(--border-hairline); color:var(--text-primary); font-size:13px; line-height:1.6; }
+.hub-focus summary { cursor:var(--cursor-click); padding:12px 0; color:var(--text-secondary); font-size:13px; }
+.hub-editor .flatpickr-wrapper { width:100%; min-width:0; }
+.hub-editor .flatpickr-wrapper > input { width:100%; box-sizing:border-box; }
+.hub-editor .hub-date-picker { background:var(--bg-elevated); border:1px solid var(--border-hairline); border-radius:12px; box-shadow:0 12px 36px #0005; padding:8px; box-sizing:content-box; }
+.hub-date-picker .flatpickr-day { font-size:13px; }
+.hub-date-picker .flatpickr-day.today { border-color:var(--brand-blue-bright); }
+.hub-date-picker .flatpickr-day.selected { background:#237bdc; border-color:#237bdc; color:#fff; }
+.hub-date-picker .flatpickr-months { margin-bottom:8px; }
+.hub-editor .hub-date-picker select { padding:0; min-height:0; }
+.hub-form-grid > label:nth-child(even) .hub-date-picker { left:auto; right:0; }
+.work-hub button:focus-visible, .hub-editor button:focus-visible { outline:2px solid #69b3ff; outline-offset:3px; }
+@media(prefers-reduced-motion:reduce) { .work-hub *, .hub-editor * { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }
+
+.hub-asset-folder { display:flex; flex-direction:column; gap:8px; min-height:180px; padding:20px; background:var(--bg-elevated); border:1px solid var(--border-hairline); border-radius:14px; cursor:var(--cursor-click); }
+.hub-folder-icon { width:58px; height:48px; display:grid; place-items:center; margin-bottom:12px; }
+.hub-folder-icon svg { width:58px; height:48px; fill:#237bdc; stroke:#58a5ff; stroke-width:1; filter:drop-shadow(0 5px 8px #237bdc44); }
+.hub-asset-folder strong { font-size:14px; color:var(--text-primary); overflow-wrap:anywhere; }
+.hub-asset-folder small { color:var(--text-tertiary); font-size:10px; }

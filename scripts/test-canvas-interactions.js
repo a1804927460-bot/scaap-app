@@ -889,12 +889,12 @@ assert.match(
   /button\.addEventListener\('contextmenu',[\s\S]*?event\.preventDefault\(\);[\s\S]*?event\.stopPropagation\(\);[\s\S]*?Delete folder[\s\S]*?promptDeleteCanvasProject\(project\.id\)[\s\S]*?canvas-project-context-menu/,
   'Right-clicking a folder must open its management menu without triggering the folder filter.'
 );
-assert.match(indexHtml, /id="canvas-project-new"[\s\S]*?New folder/,
-  'The canvas library must expose its retained new-folder entry point.');
+assert.match(indexHtml, /id="canvas-project-new"[\s\S]*?New canvas/,
+  'The canvas library must expose its primary new-canvas entry point.');
 assert.match(
   indexHtml,
-  /id="canvas-library-view"[\s\S]*?canvas-library-toolbar[\s\S]*?id="canvas-library-search"[\s\S]*?canvas-library-actions[\s\S]*?id="canvas-import"[\s\S]*?Import canvas[\s\S]*?id="canvas-project-new"[\s\S]*?New folder/,
-  'Canvas library must retain search, import, and folder controls beside the search field.'
+  /id="canvas-library-view"[\s\S]*?canvas-library-toolbar[\s\S]*?id="canvas-library-search"[\s\S]*?canvas-library-actions[\s\S]*?id="canvas-import"[\s\S]*?id="canvas-project-new"[\s\S]*?New canvas/,
+  'Canvas library must retain search, import, and new-canvas controls beside the search field.'
 );
 assert.doesNotMatch(indexHtml, /id="canvas-header-new"/, 'The duplicate top-right new-canvas plus button must be removed.');
 assert.doesNotMatch(indexHtml, /class="sidebar-projects"/, 'The sidebar project management block must be removed.');
@@ -992,7 +992,7 @@ assert.match(
 );
 assert.match(mainSource, /lastOpenedAt: canvas\.lastOpenedAt \|\| null,[\s\S]*?pinned: canvas\.pinned === true/,
   'Canvas pin state must survive the main-process canvas-state normalization.');
-assert.match(indexHtml, /id="canvas-import"[\s\S]*?Import canvas/,
+assert.match(indexHtml, /id="canvas-import"[^>]*title="Import canvas"/,
   'The canvas library must expose a .Messs import entry point.');
 assert.match(workspaceSource, /async function promptImportCanvas[\s\S]*?window\.messsAPI\.importCanvas\(projectId\)[\s\S]*?switchCanvas\(result\.canvas\.id/,
   'Importing a .Messs package must merge its files and layout, then open the imported canvas.');

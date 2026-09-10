@@ -96,6 +96,15 @@ function renderUpdaterState(state) {
     const button = document.getElementById(id);
     if (button) button.disabled = latestUpdaterState.status === 'checking';
   });
+  const progress = document.querySelector('.update-banner-progress');
+  if (progress) {
+    const downloading = latestUpdaterState.status === 'downloading';
+    const percent = Math.max(0, Math.min(100, Math.round(Number(latestUpdaterState.progress) || 0)));
+    progress.hidden = !downloading;
+    progress.setAttribute('aria-valuenow', String(percent));
+    const fill = progress.querySelector('span');
+    if (fill) fill.style.width = `${percent}%`;
+  }
   showUpdateBanner(latestUpdaterState);
 }
 

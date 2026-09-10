@@ -12,6 +12,8 @@ const nodeNet = require('net');
 const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 const { autoUpdater } = require('electron-updater');
+const APP_USER_MODEL_ID = 'com.messs.desktop';
+if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID);
 let ElectronScreenshots = null;
 try {
   const screenshotsModule = require('electron-screenshots');
@@ -4917,6 +4919,7 @@ async function getPublicAiMediaConfig() {
   }
 }
 
+let gatewayCatalogPending = null;
 async function getVerifiedGatewayCatalog(force = false) {
   const now = Date.now();
   const session = supabaseAuth && supabaseAuth.getPublicSession();
@@ -4924,10 +4927,19 @@ async function getVerifiedGatewayCatalog(force = false) {
   if (!force && gatewayCatalogCache && gatewayCatalogCache.scope === scope && gatewayCatalogCache.expiresAt > now) {
     return gatewayCatalogCache.value;
   }
-  const remote = await aiGateway.getConfig();
-  const value = normalizeGatewayCatalog(remote, runtimeConfig.aiGatewayUrl);
-  gatewayCatalogCache = { value, scope, expiresAt: now + 60_000 };
-  return value;
+  if (!force && gatewayCatalogPending?.scope === scope) return gatewayCatalogPending.promise;
+  const pending = { scope, promise: null };
+  pending.promise = (async () => {
+    const remote = await aiGateway.getConfig();
+    const value = normalizeGatewayCatalog(remote, runtimeConfig.aiGatewayUrl);
+    const liveScope = String(supabaseAuth?.getPublicSession()?.user?.id || 'guest');
+    if (liveScope !== scope) throw Object.assign(new Error('Account changed'), {code:'invalid-session'});
+    if (gatewayCatalogPending === pending) gatewayCatalogCache = { value, scope, expiresAt: Date.now() + 60_000 };
+    return value;
+  })();
+  gatewayCatalogPending = pending;
+  try { return await pending.promise; }
+  finally { if (gatewayCatalogPending === pending) gatewayCatalogPending = null; }
 }
 
 async function requireGatewayProvider(kind, providerId) {
@@ -4973,6 +4985,7 @@ async function generateAiMediaBuffer(kind, prompt, options = {}) {
         size: options.size,
         quality: options.quality,
         variant: options.variant,
+        background: options.background,
         resolution: options.resolution,
         aspectRatio: options.aspectRatio,
         sourceWidth: options.sourceWidth,
@@ -5046,6 +5059,7 @@ function aiMediaGenerationOptions(request, providerId) {
     size: request.size,
     quality: request.quality,
     variant: request.variant,
+    background: request.background,
     resolution: request.resolution,
     aspectRatio: request.aspectRatio,
     sourceWidth: request.sourceWidth,
@@ -5293,9 +5307,9 @@ function conciseAiErrorMessage(error, context = {}) {
   }
   if (code === 'chat-service-busy') {
     return localizedMessage(
-      'The selected model is temporarily busy. Try an automatic mode or retry later.',
-      '当前模型暂时繁忙，可切换自动模式或稍后重试。',
-      '선택한 모델이 일시적으로 혼잡합니다. 자동 모드로 전환하거나 나중에 다시 시도하세요.'
+      'Available model routes are temporarily busy. Please retry shortly.',
+      '当前可用模型线路暂时繁忙，请稍后重试。',
+      '현재 사용 가능한 모델 경로가 혼잡합니다. 잠시 후 다시 시도하세요.'
     );
   }
   if (['chat-response-unavailable', 'chat-stream-interrupted', 'chat-usage-unavailable'].includes(code)) {
@@ -9976,9 +9990,15 @@ function registerIpcHandlers() {
     }
 
     try {
-      const appCapabilities = require('./lib/agent-app-capabilities').appCapabilityInstruction(await getPublicAiMediaConfig());
+      // Capability discovery needs the model catalog, not a balance refresh.
+      const capabilityStartedAt = Date.now();
+      const capabilityConfig = runtimeConfig.gatewayConfigured
+        ? { imageProviders: (await getVerifiedGatewayCatalog()).providers.filter(p=>p.kind==='image').map(p=>({...p,hasApiKey:true})) }
+        : await getPublicAiMediaConfig();
+      const appCapabilities = require('./lib/agent-app-capabilities').appCapabilityInstruction(capabilityConfig);
+      console.info('AI chat capability timing:', {requestId:workRequestId,durationMs:Date.now()-capabilityStartedAt});
       const providerMessages = [
-        { role: 'system', content: AI_ARTIFACT_INSTRUCTION + '\n' + WORK_INSTRUCTION + '\n' + HOST_TOOL_INSTRUCTION + '\n' + require('./lib/agent-skill-context').SKILL_AUTHORING_INSTRUCTION + '\n' + appCapabilities, images: [], attachments: [] },
+        { role: 'system', content: AI_ARTIFACT_INSTRUCTION + '\n' + WORK_INSTRUCTION + '\n' + HOST_TOOL_INSTRUCTION + '\n' + require('./lib/agent-skill-context').SKILL_AUTHORING_INSTRUCTION + '\n' + appCapabilities + '\n' + require('./lib/agent-response-style').AGENT_RESPONSE_STYLE, images: [], attachments: [] },
         ...request.messages
       ];
       let rawText = await generateAiChatReply(

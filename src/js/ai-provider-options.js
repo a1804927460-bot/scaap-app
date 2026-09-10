@@ -153,8 +153,8 @@
 
   global.MesssAiProviderOptions = {
     routingStrategy(model, usePreset = true) {
-      // Preset buttons express a capability floor; the actual model is selected from text complexity.
-      return usePreset ? 'auto' : 'auto';
+      if (!usePreset) return null;
+      return ({ 'gemini-3.8-flash':'fast', 'gemini-3.1-pro':'balanced', 'gpt-5.6-sol':'ultimate' })[model] || null;
     },
     chatPresets: CHAT_PRESETS.map(preset => Object.freeze({ ...preset })),
     syncChatPresetSelection,

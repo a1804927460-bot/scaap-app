@@ -1425,6 +1425,10 @@ function finalizeFullscreenPreviewClose() {
   overlay.classList.remove('is-assistant-preview');
   if (overlay._returnFocus?.isConnected) overlay._returnFocus.focus({ preventScroll: true });
   overlay._returnFocus = null;
+  if (window.__messsPreviewReturnToFiles && window.MesssWorkHub) {
+    window.__messsPreviewReturnToFiles = false;
+    window.MesssWorkHub.open('files').catch(() => {});
+  }
 }
 
 function closeFullscreenPreview() {

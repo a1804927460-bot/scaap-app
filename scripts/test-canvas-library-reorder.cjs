@@ -81,7 +81,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     await page.mouse.move(from.x + from.width / 2 + 15, from.y + from.height / 2, { steps: 5 });
     await page.mouse.move(to.x + 10, to.y + to.height / 2, { steps: 10 });
     await page.mouse.move(to.x + 11, to.y + to.height / 2);
-    assert.equal(await page.locator('[data-library-key="folder:x"]').getAttribute('data-library-drop'), 'before');
+    const longPressIndicators = await page.locator('#canvas-library-grid > article').evaluateAll(nodes => nodes.map(node => ({ key: node.dataset.libraryKey, drop: node.dataset.libraryDrop || null, translate: node.style.translate || null })));
+    assert.equal(await page.locator('[data-library-key="folder:x"]').getAttribute('data-library-drop'), 'before', JSON.stringify(longPressIndicators));
     for (const theme of ['light', 'dark']) {
       await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
       await page.screenshot({ path: `test-artifacts/library-reorder/${theme}.png` });

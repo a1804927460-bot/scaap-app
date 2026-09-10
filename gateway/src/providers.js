@@ -1067,7 +1067,8 @@ function aireiterImageParams(provider, body) {
       prompt,
       ...(urls.length ? { image_url: urls } : {}),
       ...(submittedRatio && submittedRatio !== 'auto' ? { aspect_ratio: submittedRatio } : {}),
-      resolution
+      resolution,
+      ...(body.background ? { background: body.background } : {})
     };
   }
   if (provider.model === 'mj_v8_1') {

@@ -11,6 +11,8 @@ const attachments=require('../lib/ai-attachments');
     const source=fs.readFileSync(path.join(__dirname,'../main.js'),'utf8');
     const handlers=new Map(),events=[];
     const context={
+      require: name=>require(path.join(__dirname,'..',name)),
+      getPublicAiMediaConfig:async()=>({imageProviders:[]}),
       ...require('../lib/agent-routing'),
       ...require('../lib/agent-local-memory'),app:{getPath:()=>root},
       ...require('../lib/embedded-mcp'),...require('../lib/ai-model-export'),hostTools:{run:async()=>({denied:true})},

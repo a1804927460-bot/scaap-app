@@ -1,6 +1,6 @@
 {
   "name": "messs",
-  "version": "0.0.124",
+  "version": "0.0.125",
   "description": "Messs. — Resolve your confusion. A file preview & organizing desktop app.",
   "main": "main.js",
   "author": "Messs.",
@@ -38,7 +38,8 @@
     "release:win": "npm run build:model-exporters && npm run build:model-viewer && electron-builder --config electron-builder.release.yml --win --publish never",
     "release:mac": "npm run build:model-exporters && npm run build:model-viewer && electron-builder --config electron-builder.release.yml --mac --publish never",
     "test:work-hub": "node --test scripts/test-work-hub.cjs",
-    "test:agent-app-actions": "node --test scripts/test-agent-app-actions.cjs"
+    "test:agent-app-actions": "node --test scripts/test-agent-app-actions.cjs",
+    "test:updater-ui": "node scripts/test-updater-ui.cjs"
   },
   "dependencies": {
     "@leafer-in/editor": "2.2.9",

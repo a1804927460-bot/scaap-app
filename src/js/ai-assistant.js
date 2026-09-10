@@ -1071,6 +1071,7 @@ function syncAssistantMediaOptions() {
   });
   const supportsGptImage25Variants = !isVideo && selectedAssistantProvider()?.id === 'image-19';
   variantWrap.hidden = !supportsGptImage25Variants;
+  document.getElementById('ai-assistant-background-wrap').hidden = !supportsGptImage25Variants;
   if (!['flare', 'sunburst'].includes(variantInput.value)) variantInput.value = 'flare';
   document.querySelectorAll('#ai-assistant-variant-buttons [data-variant]').forEach((button) => {
     const active = button.dataset.variant === variantInput.value;
@@ -1907,6 +1908,7 @@ function submitAssistantMessage() {
       size: document.getElementById('ai-assistant-size').value,
       quality: document.getElementById('ai-assistant-quality').value,
       variant: document.getElementById('ai-assistant-variant')?.value || 'flare',
+      background: document.getElementById('ai-assistant-background')?.value || 'auto',
       count: Number(document.getElementById('ai-assistant-count').value),
       duration: Number(document.getElementById('ai-assistant-duration').value)
     }
@@ -1968,6 +1970,7 @@ async function executeAssistantMessage(item) {
       count: submittedMediaOptions.count,
       quality: submittedKind === 'image' ? submittedMediaOptions.quality : undefined,
       variant: submittedKind === 'image' ? submittedMediaOptions.variant : undefined,
+        background: submittedKind === 'image' ? submittedMediaOptions.background : undefined,
       duration: submittedMediaOptions.duration,
       size: submittedKind === 'image' ? submittedMediaOptions.size : undefined,
       resolution: submittedKind === 'video'
@@ -2066,6 +2069,7 @@ async function executeAssistantMessage(item) {
         size: submittedMediaOptions.size,
         quality: submittedKind === 'image' ? submittedMediaOptions.quality : undefined,
         variant: submittedKind === 'image' ? submittedMediaOptions.variant : undefined,
+        background: submittedKind === 'image' ? submittedMediaOptions.background : undefined,
         resolution: submittedKind === 'video'
           ? submittedMediaOptions.size
           : undefined,

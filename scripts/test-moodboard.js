@@ -67,7 +67,7 @@ assert.match(board, /item\.isMoodboard\) return buildBoardMoodboardElement\(item
 assert.match(board, /item\.isAiPlaceholder \|\| item\.isMoodboard/,
   'Moodboards must remain mountable without a backing media file.');
 assert.match(board, /typeof initBoardMoodboards === 'function'\) initBoardMoodboards\(\)/);
-assert.match(contextMenu, /Send to moodboard[\s\S]*openMoodboardTargetPicker\(text\)/);
+assert.match(contextMenu, /Send to canvas[\s\S]*openMoodboardTargetPicker\(text\)/);
 assert.match(contextMenu, /item\.isMoodboard[\s\S]*openMoodboardEditor\(item\)/);
 assert.match(workspace, /async function requestCanvasAgentText[\s\S]*chatWithAgentEstimate\(pending,[\s\S]*options\.onResponse/);
 assert.match(main, /b\.isNote \|\| b\.isDoodle \|\| b\.isMoodboard/,

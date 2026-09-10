@@ -35,3 +35,13 @@ assert.equal(preserved.messages.at(-1),longHistory.at(-1));
 assert.equal(longHistory.length,62);
 assert.deepEqual(windowAgentMessages([{role:'user',content:'New conversation'}],12000).messages,[{role:'user',content:'New conversation'}]);
 console.log('Long history excerpts retain original requirements within budget without crossing conversations.');
+
+require('../src/js/ai-provider-options');
+const options=global.MesssAiProviderOptions;
+for (const [model,strategy] of [['gemini-3.8-flash','fast'],['gemini-3.1-pro','balanced'],['gpt-5.6-sol','ultimate']]) {
+  assert.equal(options.routingStrategy(model,true),strategy);
+  assert.equal(options.routingStrategy(model,false),null);
+  assert.equal(resolveAgentRoute({strategy:options.routingStrategy(model,true),prompt:'你是谁',providers}).model,policy.models.light);
+}
+assert.equal(options.routingStrategy('unknown',true),null);
+console.log('Preset selections preserve fast/balanced/ultimate and manual model choice.');

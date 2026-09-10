@@ -8,16 +8,19 @@ const root = path.resolve(__dirname, '..');
   const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
   try {
     const page = await browser.newPage();
+    await page.route('**/*.js', route => route.fulfill({ contentType: 'text/javascript', body: '' }));
     await page.goto(pathToFileURL(path.join(root, 'src/index.html')).href);
     const source = fs.readFileSync(path.join(root, 'src/js/canvas-workspace.js'), 'utf8');
     const start = source.indexOf('function buildCanvasLibraryFolderCard(');
     const end = source.indexOf('\nfunction ', start + 10);
-    await page.evaluate(source.slice(start, end));
+    await page.evaluate(`window.buildCanvasLibraryFolderCard = (${source.slice(start, end)});`);
     await page.evaluate(() => {
       window.t = (en, zh) => zh;
       window.AppState = { canvases: [], canvasProjects: [] };
       window.CanvasWorkspace = { libraryProjectId: null };
       window.renderCanvasLibrary = () => {};
+      window.bindCanvasLibraryReorder = () => {};
+      window.bindCanvasLibraryInlineRename = () => {};
       const section = document.getElementById('canvas-library-view').cloneNode(true);
       document.body.replaceChildren(section);
       document.body.style.cssText = 'display:block;height:auto;overflow:auto;padding:24px;background:#101112';
@@ -44,7 +47,7 @@ const root = path.resolve(__dirname, '..');
         card.append(title, mosaic);
         grid.append(card);
       }
-      document.querySelector('#canvas-import span').textContent = '导入画布';
+      document.querySelector('#canvas-import').title = '导入画布';
     });
     for (const width of [1920, 1440, 1000, 760, 520]) {
       await page.setViewportSize({ width, height: 800 });

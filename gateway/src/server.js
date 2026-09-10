@@ -697,6 +697,10 @@ function validateBody(body, kind) {
   const requestedSeed = Math.round(Number(body.seed));
   const requestedStyleId = String(body.styleId || '').trim();
   const requestedStyleStrength = Math.max(0, Math.min(1, Number(body.styleStrength ?? 1)));
+  const requestedBackground = String(body.background || 'auto').trim().toLowerCase();
+  if (kind === 'image' && providerId === 'image-19' && !['auto', 'opaque', 'transparent'].includes(requestedBackground)) {
+    throw invalidOption('invalid-option', 'Unsupported image background.');
+  }
   const requestedVariant = String(body.variant || '').trim().toLowerCase();
   if (kind === 'image') {
     if (providerId === 'image-19' && requestedVariant && !['flare', 'sunburst'].includes(requestedVariant)) {
@@ -844,13 +848,14 @@ function validateBody(body, kind) {
       ? String(body.canvasId).trim()
       : null,
     model: String(body.model || '').slice(0, 160),
-    routingStrategy: kind === 'chat' && ['fast','balanced','ultimate'].includes(body.routingStrategy) ? body.routingStrategy : null,
+    routingStrategy: kind === 'chat' && ['auto','fast','balanced','ultimate'].includes(body.routingStrategy) ? body.routingStrategy : null,
     messages,
     urls,
     referenceMediaTypes,
     size: kind === 'image' ? requestedSize : '1K',
     quality: kind === 'image' ? requestedQuality : null,
     variant: kind === 'image' && providerId === 'image-19' ? (requestedVariant || 'flare') : null,
+    background: kind === 'image' && providerId === 'image-19' ? requestedBackground : undefined,
     resolution: kind === 'video' ? requestedResolution : '768P',
     aspectRatio: kind === 'chat' ? 'auto' : requestedRatio,
     duration: kind === 'video' ? requestedDuration : Math.max(1, Math.min(30, Number(body.duration) || 6)),
