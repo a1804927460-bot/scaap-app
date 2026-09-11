@@ -451,12 +451,14 @@ export function quoteUsage(kind, request = {}) {
       kind: 'image', providerId, count: request.count, quality: request.quality,
       resolution: request.resolution, size: request.size
     });
+    const performance = String(request.performanceMode || '').trim().toLowerCase() === 'performance';
+    const modeMultiplier = performance ? 1.6 : 1;
     return {
       kind: 'image',
       providerId: sharedQuote.providerId,
-      credits: Math.ceil(Number(sharedQuote.totalCredits) || 0),
-      unitCredits: sharedQuote.unitCredits,
-      totalCredits: Math.ceil(Number(sharedQuote.totalCredits) || 0),
+      credits: Math.ceil((Number(sharedQuote.totalCredits) || 0) * modeMultiplier),
+      unitCredits: Math.ceil((Number(sharedQuote.unitCredits) || 0) * modeMultiplier),
+      totalCredits: Math.ceil((Number(sharedQuote.totalCredits) || 0) * modeMultiplier),
       count: sharedQuote.count,
       resolution: sharedQuote.quality || sharedQuote.resolution || null,
       ...(sharedQuote.quality ? { quality: sharedQuote.quality } : {}),
@@ -478,11 +480,13 @@ export function quoteUsage(kind, request = {}) {
       size: request.size, duration: request.duration, serviceTier: request.serviceTier,
       model: request.model, referenceMediaTypes: request.referenceMediaTypes, generateAudio: request.generateAudio
     });
+    const performance = String(request.performanceMode || '').trim().toLowerCase() === 'performance';
+    const modeMultiplier = performance ? 1.6 : 1;
     return {
       kind: 'video',
       providerId: sharedQuote.providerId,
-      credits: Math.ceil(Number(sharedQuote.totalCredits) || 0),
-      unitCredits: sharedQuote.unitCredits,
+      credits: Math.ceil((Number(sharedQuote.totalCredits) || 0) * modeMultiplier),
+      unitCredits: Math.ceil((Number(sharedQuote.unitCredits) || 0) * modeMultiplier),
       fixedCredits: sharedQuote.fixedCredits || 0,
       minimumCredits: sharedQuote.minimumCredits || MINIMUM_VIDEO_CREDITS,
       resolution: sharedQuote.resolution,

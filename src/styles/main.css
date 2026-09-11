@@ -5341,6 +5341,11 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   filter: none;
   animation-duration: .72s;
 }
+.ai-performance-switch { display:flex; align-items:center; gap:2px; padding:3px; margin-left:8px; border:1px solid var(--border-subtle); border-radius:9px; background:var(--bg-surface-1); }
+.board-performance-switch { position:absolute; left:18px; bottom:18px; z-index:30; display:flex; align-items:center; gap:2px; padding:4px; border:1px solid var(--border-subtle); border-radius:10px; background:rgba(24,25,28,.94); box-shadow:0 8px 24px #0005; }
+.ai-performance-option { border:0; border-radius:6px; padding:4px 10px; color:var(--text-tertiary); background:transparent; font:inherit; font-size:12px; cursor:pointer; }
+.ai-performance-option.is-active { color:var(--text-primary); background:var(--bg-surface-3); box-shadow:0 1px 4px #0003; }
+.ai-performance-option[data-performance-mode="performance"].is-active { color:#69baff; }
 .board-leafer-canvas {
   position: absolute;
   inset: 0;

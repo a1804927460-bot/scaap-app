@@ -5766,7 +5766,7 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
   submitBtn.disabled = true;
   cancelBtn.disabled = true;
   controls.forEach((control) => { control.disabled = true; });
-  const generationRequest = { ...request, canvasId: activeCanvasId() };
+  const generationRequest = { ...request, performanceMode: request.performanceMode || 'normal', canvasId: activeCanvasId() };
   const placeholders = createAiPlaceholders(generationRequest);
   const defaultButtonText = request.kind === 'video' ? '生成视频' : '生成图片';
   const startedAt = Date.now();
@@ -6683,6 +6683,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
             视频
           </button>
         </div>
+        <div class="ai-performance-switch" role="group" aria-label="画布生成模式">
+          <button type="button" class="ai-performance-option is-active" data-performance-mode="normal">普通</button>
+          <button type="button" class="ai-performance-option" data-performance-mode="performance">性能</button>
+        </div>
         <div class="ai-composer-reference-strip" aria-label="参考图" hidden></div>
       </div>
       <textarea class="ai-composer-prompt" rows="4" spellcheck="false"></textarea>
@@ -6871,6 +6875,19 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   const form = pop.querySelector('form');
   const prompt = pop.querySelector('.ai-composer-prompt');
   const videoModeControl = pop.querySelector('.ai-video-mode-picker');
+  const performanceSwitch = pop.querySelector('.ai-performance-switch');
+  const savedPerformanceMode = localStorage.getItem('messs-canvas-performance-mode') === 'performance' ? 'performance' : 'normal';
+  let performanceMode = savedPerformanceMode;
+  const applyPerformanceMode = (mode, withFeedback = true) => {
+    const performance = mode === 'performance';
+    performanceMode = performance ? 'performance' : 'normal';
+    document.querySelectorAll('.ai-performance-switch [data-performance-mode], #board-performance-switch [data-performance-mode]').forEach((button) => button.classList.toggle('is-active', button.dataset.performanceMode === mode));
+    if (performanceSwitch) performanceSwitch.dataset.mode = mode;
+    localStorage.setItem('messs-canvas-performance-mode', mode);
+  };
+  applyPerformanceMode(savedPerformanceMode, false);
+  performanceSwitch?.addEventListener('click', (event) => { const button = event.target.closest('[data-performance-mode]'); if (button) applyPerformanceMode(button.dataset.performanceMode); });
+  document.getElementById('board-performance-switch')?.addEventListener('click', (event) => { const button = event.target.closest('[data-performance-mode]'); if (button) applyPerformanceMode(button.dataset.performanceMode); });
   const videoModeTrigger = pop.querySelector('.ai-video-mode-trigger');
   const videoModeLabelElement = pop.querySelector('.ai-video-mode-label');
   const videoModeMenu = pop.querySelector('.ai-video-mode-menu');
@@ -7624,6 +7641,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       resolution: size,
       duration: kind === 'video' ? duration : undefined,
       serviceTier: kind === 'video' && provider.capabilities?.variantOptions ? serviceTier : undefined,
+      performanceMode,
       generateAudio: kind === 'video' && provider.capabilities?.variantOptions ? generateAudio : undefined
     };
     Promise.resolve(quoteApi.call(window.messsAPI, request)).then((pricing) => {
@@ -8352,6 +8370,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
           : videoModeRatios(selectedMode, videoCapabilities)[0])
         : ratio,
       videoMode: kind === 'video' ? selectedMode.id : null,
+      performanceMode,
       serviceTier: kind === 'video' && selectedProvider?.capabilities?.variantOptions ? serviceTier : undefined,
       generateAudio: kind === 'video' && selectedProvider?.capabilities?.variantOptions ? generateAudio : undefined,
       imageProviderId: kind === 'image' && selectedProvider ? selectedProvider.id : null,
