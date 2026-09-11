@@ -8151,15 +8151,11 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       const selectedSkill = promptStyles.find((entry) => entry.id === selectedPromptStyleId && entry.model);
       if (selectedSkill) {
         const model = String(selectedSkill.model).trim();
-        let option = [...modelSelect.options].find((entry) => entry.value === `skill:${selectedSkill.id}`);
-        if (!option) {
-          option = new Option(`✦ 技能自动选择 · ${model}`, `skill:${selectedSkill.id}`);
-          modelSelect.appendChild(option);
-        }
-        modelSelect.value = option.value;
+        modelSelect.dataset.skillModel = model;
         modelPickerLabel.textContent = `✦ ${t('Skill auto-select', '技能自动选择')}`;
         modelPickerLabel.classList.add('is-skill-auto');
       } else if (!selectedSkill) {
+        delete modelSelect.dataset.skillModel;
         modelPickerLabel.classList.remove('is-skill-auto');
       }
       try {
