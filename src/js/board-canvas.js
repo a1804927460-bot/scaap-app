@@ -6802,8 +6802,15 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   const applyPerformanceMode = (mode, withFeedback = true) => {
     const performance = mode === 'performance';
     performanceMode = performance ? 'performance' : 'normal';
-    document.querySelectorAll('#board-performance-switch [data-performance-mode]').forEach((button) => button.classList.toggle('is-active', button.dataset.performanceMode === mode));
+    const modeSwitch = document.getElementById('board-performance-switch');
+    modeSwitch?.querySelectorAll('[data-performance-mode]').forEach((button) => {
+      const active = button.dataset.performanceMode === performanceMode;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    modeSwitch?.classList.toggle('is-performance', performance);
     localStorage.setItem('messs-canvas-performance-mode', mode);
+    window.MesssUiMotion?.canvasModeSwitch(modeSwitch, document.getElementById('board-viewport'), performanceMode, withFeedback);
   };
   applyPerformanceMode(savedPerformanceMode, false);
   document.getElementById('board-performance-switch')?.addEventListener('click', (event) => { const button = event.target.closest('[data-performance-mode]'); if (button) applyPerformanceMode(button.dataset.performanceMode); });

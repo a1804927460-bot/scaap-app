@@ -1,6 +1,6 @@
 {
   "name": "messs",
-  "version": "0.0.129",
+  "version": "0.0.130",
   "description": "Messs. — Resolve your confusion. A file preview & organizing desktop app.",
   "main": "main.js",
   "author": "Messs.",
@@ -29,6 +29,7 @@
     "test:chat-screenshot-integration": "node scripts/test-chat-screenshot-integration.js",
     "test:screenshot-runtime": "node scripts/test-screenshot-runtime.js",
     "test:canvas-zoom-runtime": "electron scripts/test-board-zoom-runtime.js",
+    "test:canvas-mode-switch": "node scripts/test-canvas-mode-switch.cjs",
     "test:board-leafer-layer": "electron scripts/test-board-leafer-layer.js",
     "test:detached-canvas-runtime": "node scripts/test-detached-canvas-runtime.js",
     "test:usage-visual": "node scripts/test-usage-visual.js",

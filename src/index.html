@@ -529,8 +529,15 @@
             <canvas id="board-leafer-canvas" class="board-leafer-canvas" aria-hidden="true"></canvas>
             <div id="board-canvas" class="board-canvas"></div>
             <div id="board-performance-switch" class="board-performance-switch" role="group" aria-label="画布生成模式">
-              <button type="button" class="ai-performance-option is-active" data-performance-mode="normal">普通</button>
-              <button type="button" class="ai-performance-option" data-performance-mode="performance">性能</button>
+              <span class="board-performance-thumb" aria-hidden="true"></span>
+              <button type="button" class="ai-performance-option is-active" data-performance-mode="normal" aria-pressed="true">
+                <img src="assets/icons/lucide/circle-check.svg" width="15" height="15" alt="" aria-hidden="true">
+                <span>普通</span>
+              </button>
+              <button type="button" class="ai-performance-option" data-performance-mode="performance" aria-pressed="false">
+                <img src="assets/icons/lucide/zap.svg" width="15" height="15" alt="" aria-hidden="true">
+                <span>性能</span>
+              </button>
             </div>
             <div id="board-doodle-canvas" class="board-doodle-canvas" hidden></div>
             <div id="board-empty" class="board-empty">Drag files here to compare, arrange, and generate freely.</div>
