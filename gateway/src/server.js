@@ -9,6 +9,7 @@ import { assertFalConfigured, normalizeFalResizeOptions, normalizeFalEnhanceOpti
 import { runDurableFalImageTool } from './durable-fal-image-tools.js';
 import { FairConcurrencyGate } from './fair-concurrency-gate.js';
 import { authenticate } from './auth.js';
+import { handleAdminRequest } from './admin.js';
 import { publicGatewayError } from './public-errors.js';
 import { moderateGenerationPrompt, requiresPromptModeration } from './moderation.js';
 import {
@@ -1539,6 +1540,7 @@ async function handle(request, response) {
 
   const user = await authenticate(request);
   if (!user) return send(response, 401, { code: 'invalid-session', message: 'A valid Supabase session is required.' });
+  if (await handleAdminRequest({ request, response, url, user, readJson, send })) return;
   const ip = String(request.headers['x-forwarded-for'] || request.socket.remoteAddress || '').split(',')[0].trim();
   const isVideoStatus = request.method === 'POST' && url.pathname === '/v1/media/video/tasks/status';
   const isThreeDStatus = request.method === 'POST' && url.pathname === '/v1/tools/3d/status';

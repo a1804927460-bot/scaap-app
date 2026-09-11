@@ -3451,6 +3451,11 @@ function showGeneratedMediaDetails(file, anchorElement) {
     && Number.isFinite(Number(rawEstimatedCredits))
     ? Math.max(0, Math.round(Number(rawEstimatedCredits)))
     : null;
+  const rawChargedCredits = billingOperation.creditsCharged;
+  const chargedCredits = rawChargedCredits !== null && rawChargedCredits !== undefined
+    && Number.isFinite(Number(rawChargedCredits))
+    ? Math.max(0, Number(rawChargedCredits))
+    : null;
   const overlay = document.createElement('div');
   overlay.id = 'generated-media-detail-overlay';
   overlay.className = 'generated-media-detail-overlay';
@@ -3529,9 +3534,11 @@ function showGeneratedMediaDetails(file, anchorElement) {
   }
   if (file.aiGeneration || file.butlerOperation) {
     const estimate = document.createElement('span');
-    estimate.textContent = estimatedCredits === null
-      ? `${t('Estimated points', '预估积分', '예상 포인트')} ${t('Not recorded', '未记录', '기록 없음')}`
-      : `${t('Estimated points', '预估积分', '예상 포인트')} ${estimatedCredits}`;
+    estimate.textContent = chargedCredits !== null
+      ? `${t('Actual points', '实际积分', '실제 포인트')} ${chargedCredits}`
+      : estimatedCredits === null
+        ? `${t('Estimated points', '预估积分', '예상 포인트')} ${t('Not recorded', '未记录', '기록 없음')}`
+        : `${t('Estimated points', '预估积分', '예상 포인트')} ${estimatedCredits}`;
     chips.appendChild(estimate);
   }
   if (generatedAt) {

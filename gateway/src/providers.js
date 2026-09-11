@@ -5,6 +5,8 @@ import { MediaRouteCapacity } from './media-route-capacity.js';
 import klingOptions from '../../lib/kling-options.js';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   deleteAi302RelayAsset,
   getAi302RelayAsset,
@@ -59,6 +61,77 @@ const ASYNC_VIDEO_PROTOCOLS = new Set([
 ]);
 const TERMINAL_VIDEO_FAILURES = new Set(['failed', 'cancelled', 'expired']);
 const ROUTED_TASK_PREFIX = 'messs-route:';
+const runtimeRoutes = new Map();
+const runtimeHistory = [];
+let runtimeRevision = 0;
+let runtimeLoaded = false;
+let runtimeProviderDefinitions = [];
+let runtimeProvidersLoaded = false;
+
+function runtimeRouteKey(kind, providerId, routeId = 'default', routeProfile = 'normal') {
+  const profile = String(routeProfile || '').toLowerCase() === 'performance' ? 'performance' : 'normal';
+  return `${String(kind || '').toLowerCase()}:${String(providerId || '').toLowerCase()}:${String(routeId || 'default').toLowerCase()}:${profile}`;
+}
+
+function runtimeFile(envName) {
+  const value = String(process.env[envName] || '').trim();
+  return value ? path.resolve(value) : '';
+}
+
+function atomicJsonWrite(filename, value) {
+  if (!filename) return false;
+  try {
+    fs.mkdirSync(path.dirname(filename), { recursive: true });
+    const temporary = `${filename}.tmp-${process.pid}`;
+    fs.writeFileSync(temporary, JSON.stringify(value, null, 2), { mode: 0o600 });
+    fs.renameSync(temporary, filename);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function normalizedRuntimeIds(value) {
+  return [...new Set((Array.isArray(value) ? value : [value])
+    .map((entry) => String(entry || '').trim().toLowerCase())
+    .filter((entry) => PROVIDER_ID.test(entry)))].slice(0, 20);
+}
+
+function loadRuntimeState() {
+  if (!runtimeLoaded) {
+    runtimeLoaded = true;
+    const filename = runtimeFile('GATEWAY_RUNTIME_CONFIG_FILE');
+    if (filename) try {
+      const parsed = JSON.parse(fs.readFileSync(filename, 'utf8'));
+      for (const entry of Array.isArray(parsed.routes) ? parsed.routes : []) {
+        const ids = normalizedRuntimeIds(entry.ids);
+        if (typeof entry.key === 'string' && ids.length) runtimeRoutes.set(entry.key.toLowerCase(), { ...entry, ids });
+      }
+      runtimeRevision = Math.max(0, Number(parsed.revision) || 0);
+      if (Array.isArray(parsed.history)) runtimeHistory.push(...parsed.history.slice(-100));
+    } catch (error) {
+      if (error.code !== 'ENOENT') console.warn(JSON.stringify({ level:'warn', event:'provider-runtime-load-failed' }));
+    }
+  }
+  if (!runtimeProvidersLoaded) {
+    runtimeProvidersLoaded = true;
+    const filename = runtimeFile('GATEWAY_PROVIDER_CONFIG_FILE');
+    if (filename) try {
+      const parsed = JSON.parse(fs.readFileSync(filename, 'utf8'));
+      runtimeProviderDefinitions = Array.isArray(parsed.providers) ? parsed.providers.slice(0, MAX_PROVIDERS) : [];
+    } catch (error) {
+      if (error.code !== 'ENOENT') console.warn(JSON.stringify({ level:'warn', event:'provider-registry-load-failed' }));
+    }
+  }
+}
+
+function persistRuntimeRoutes() {
+  return atomicJsonWrite(runtimeFile('GATEWAY_RUNTIME_CONFIG_FILE'), {
+    version: 2, revision: runtimeRevision,
+    routes: [...runtimeRoutes.entries()].map(([key, value]) => ({ key, ids:value.ids, updatedAt:value.updatedAt, changedBy:value.changedBy })),
+    history: runtimeHistory.slice(-100)
+  });
+}
 const PUBLIC_CAPABILITY_KEYS = new Set([
   'arbitraryRatios', 'arbitrarySizes', 'bitrateModes', 'counts', 'createTimeoutMs',
   'defaultServiceTier', 'durations', 'enhancePrompt', 'frameReferenceEncoding',
@@ -197,6 +270,7 @@ function builtinProviders() {
 }
 
 function configuredProviders() {
+  loadRuntimeState();
   let extra = [];
   try {
     const parsed = JSON.parse(process.env.AI_PROVIDERS_JSON || '[]');
@@ -205,7 +279,7 @@ function configuredProviders() {
     throw new Error('AI_PROVIDERS_JSON is not valid JSON.');
   }
   const byId = new Map();
-  for (const raw of [...builtinProviders(), ...extra].slice(0, MAX_PROVIDERS)) {
+  for (const raw of [...builtinProviders(), ...extra, ...runtimeProviderDefinitions].slice(0, MAX_PROVIDERS)) {
     const id = String(raw.id || '').trim().toLowerCase();
     const builtin = byId.get(id);
     const lockedPricedImage = [GPT_IMAGE_2_PROVIDER_ID, 'image-1', 'image-2', 'image-18', 'video-14'].includes(id) && builtin;
@@ -253,6 +327,7 @@ function configuredProviders() {
       // publicProvider() so the UI only receives product capabilities.
       routingPolicy: String(raw.routingPolicy || (builtin && builtin.routingPolicy) || '').trim().slice(0, 40),
       hidden: raw.hidden === true || Boolean(builtin && builtin.hidden),
+      balanceEndpoint: safeServerEndpoint(raw.balanceEndpoint || (builtin && builtin.balanceEndpoint)),
       keyEnv
     });
   }
@@ -413,30 +488,34 @@ function providerFor(kind, id) {
 }
 
 function requestRouteIds(provider, body = {}) {
+  const overrideIds = runtimeOverrideIds(provider, body);
+  const applyOverride = (defaults) => overrideIds
+    ? [...overrideIds, ...defaults.filter(id => !overrideIds.includes(id))]
+    : defaults;
   // Retired GPT aliases remain recovery-only. Only the verified FAL contract
   // may join the official primary, never arbitrary historical overrides.
   if (provider && provider.id === GPT_IMAGE_2_PROVIDER_ID) {
-    return [provider.id, ...(provider.fallbackProviderIds || []).filter(id => id === 'fal-backup-gpt-image-2')];
+    return applyOverride([provider.id, ...(provider.fallbackProviderIds || []).filter(id => id === 'fal-backup-gpt-image-2')]);
   }
   const capabilities = provider && provider.capabilities && typeof provider.capabilities === 'object'
     ? provider.capabilities
     : {};
   if (provider.kind === 'image' && Array.isArray(capabilities.upstreamPriority)) {
-    return [...new Set([
+    return applyOverride([...new Set([
       ...capabilities.upstreamPriority,
       provider.id,
       ...(provider.fallbackProviderIds || [])
-    ])];
+    ])]);
   }
   if (provider.kind === 'video') {
     const serviceTier = String(body.serviceTier || capabilities.defaultServiceTier || 'standard').trim().toLowerCase();
     const tierProviderId = capabilities.tierProviderIds && capabilities.tierProviderIds[serviceTier];
     if (tierProviderId) {
-      return [...new Set([
+      return applyOverride([...new Set([
         tierProviderId,
         ...(Array.isArray(capabilities.fallbackProviderIds) ? capabilities.fallbackProviderIds : []),
         ...(Array.isArray(provider.fallbackProviderIds) ? provider.fallbackProviderIds : [])
-      ])];
+      ])]);
     }
     // Older clients may omit videoMode. Infer the same mode used by the
     // validators so logical Seedance requests still try Atlas first.
@@ -465,14 +544,14 @@ function requestRouteIds(provider, body = {}) {
     }
     const route = capabilities.upstreamRoutes && capabilities.upstreamRoutes[videoMode];
     if (Array.isArray(route) && route.length) {
-      return [...new Set([
+      return applyOverride([...new Set([
         ...route,
         ...(Array.isArray(capabilities.fallbackProviderIds) ? capabilities.fallbackProviderIds : []),
         ...(Array.isArray(provider.fallbackProviderIds) ? provider.fallbackProviderIds : [])
-      ])];
+      ])]);
     }
   }
-  return [...new Set([provider.id, ...(provider.fallbackProviderIds || [])])];
+  return applyOverride([...new Set([provider.id, ...(provider.fallbackProviderIds || [])])]);
 }
 
 function isAireiterProvider(provider) {
@@ -557,6 +636,179 @@ function isCompatibleFallbackRoute(requested, candidate) {
   return providerLogicalFamily(requested) === providerLogicalFamily(candidate);
 }
 
+function isAdminCompatibleRoute(requested, candidate) {
+  if (!requested || !candidate || requested.kind !== candidate.kind) return false;
+  return requested.id === candidate.id || candidate.routeAliasOf === requested.id
+    || providerLogicalFamily(requested) === providerLogicalFamily(candidate);
+}
+
+function routeProfile(body = {}) {
+  return String(body.performanceMode || '').toLowerCase() === 'performance' ? 'performance' : 'normal';
+}
+
+function videoModeForRequest(provider, body = {}) {
+  const capabilities = provider?.capabilities || {};
+  let mode = String(body.videoMode || '').trim().toLowerCase();
+  if (!mode && capabilities.atlasRouted === true) {
+    const types = Array.isArray(body.referenceMediaTypes) ? body.referenceMediaTypes.map(String) : [];
+    const count = Array.isArray(body.urls) ? body.urls.filter(Boolean).length : types.length;
+    mode = types.includes('video') || count > 2 ? 'omni' : count === 2 ? 'first-last-frame' : count === 1 ? 'first-frame' : 'text';
+  }
+  return mode;
+}
+
+function providerAdminRouteGroups(provider) {
+  const capabilities = provider?.capabilities || {};
+  if (provider.kind === 'video' && capabilities.tierProviderIds && typeof capabilities.tierProviderIds === 'object') {
+    return Object.entries(capabilities.tierProviderIds).map(([tier,id]) => ({ id:`tier-${String(tier).toLowerCase()}`, serviceTier:String(tier).toLowerCase(), modes:[], providerIds:normalizedRuntimeIds([id,...(capabilities.fallbackProviderIds||[]),...(provider.fallbackProviderIds||[])]) }));
+  }
+  if (provider.kind === 'video' && capabilities.upstreamRoutes && typeof capabilities.upstreamRoutes === 'object') {
+    const groups = new Map();
+    for (const [mode, rawIds] of Object.entries(capabilities.upstreamRoutes)) {
+      const ids = normalizedRuntimeIds([...(Array.isArray(rawIds) ? rawIds : []), ...(capabilities.fallbackProviderIds || [])]);
+      if (!ids.length) continue;
+      const signature = ids.join(',');
+      if (!groups.has(signature)) groups.set(signature, { modes:[], providerIds:ids });
+      groups.get(signature).modes.push(String(mode).toLowerCase());
+    }
+    if (groups.size) return [...groups.values()].map(group => ({ ...group, id:group.modes.slice().sort().join('+') }));
+  }
+  const candidates = configuredProviders();
+  const ids = (provider.kind === 'image' ? candidates.map(candidate => candidate.id) : providerRouteIds(provider))
+    .filter(id => isAdminCompatibleRoute(provider, candidates.find(candidate => candidate.id === id)));
+  return [{ id:'default', modes:[], providerIds:ids.length ? ids : [provider.id] }];
+}
+
+function adminRouteGroupForRequest(provider, body = {}) {
+  const groups = providerAdminRouteGroups(provider);
+  const tier = String(body.serviceTier || provider?.capabilities?.defaultServiceTier || 'standard').toLowerCase();
+  const tierGroup = groups.find(group => group.serviceTier === tier);
+  if (tierGroup) return tierGroup;
+  if (provider.kind !== 'video' || groups.length === 1 && !groups[0].modes.length) return groups[0];
+  const mode = videoModeForRequest(provider, body);
+  return groups.find(group => group.modes.includes(mode)) || groups[0];
+}
+
+function runtimeOverrideIds(provider, body = {}) {
+  loadRuntimeState();
+  const group = adminRouteGroupForRequest(provider, body);
+  const current = runtimeRoutes.get(runtimeRouteKey(provider.kind, provider.id, group.id, routeProfile(body)));
+  return current?.ids?.length ? current.ids : null;
+}
+
+export function providerRuntimeStatus() {
+  loadRuntimeState();
+  const providers = configuredProviders();
+  const routes = [];
+  for (const logical of providers.filter(provider => !provider.hidden)) {
+    const sameKind = providers.filter(provider => provider.kind === logical.kind);
+    const byId = new Map(sameKind.map(provider => [provider.id, provider]));
+    for (const group of providerAdminRouteGroups(logical)) {
+      for (const profile of logical.kind === 'chat' ? ['normal'] : ['normal', 'performance']) {
+        const override = runtimeRoutes.get(runtimeRouteKey(logical.kind, logical.id, group.id, profile));
+        const allowed = sameKind.filter(candidate => group.providerIds.includes(candidate.id) && isAdminCompatibleRoute(logical, candidate));
+        const activeIds = override?.ids?.length ? [...override.ids, ...group.providerIds.filter(id => !override.ids.includes(id))] : group.providerIds;
+        routes.push({
+          kind:logical.kind, providerId:logical.id, routeId:group.id, routeProfile:profile,
+          scopeModes:group.modes, serviceTier:group.serviceTier || null, name:logical.name, protocol:logical.protocol,
+          switchable:allowed.length > 1, defaultProviderIds:group.providerIds, activeProviderIds:activeIds,
+          activeProviders:activeIds.map(id => byId.get(id)).filter(Boolean).map(provider => ({ id:provider.id, name:provider.name, protocol:provider.protocol, configured:Boolean(providerApiKey(provider)) })),
+          availableProviders:allowed.map(provider => ({ id:provider.id, name:provider.name, protocol:provider.protocol, configured:Boolean(providerApiKey(provider)), compatible:true })),
+          overridden:Boolean(override), updatedAt:override?.updatedAt || null
+        });
+      }
+    }
+  }
+  return { revision:runtimeRevision, persisted:Boolean(runtimeFile('GATEWAY_RUNTIME_CONFIG_FILE')), catalogVersion:PROVIDER_CATALOG_VERSION, routes };
+}
+
+export function setProviderRuntimeRoute(kind, providerId, upstreamProviderIds, changedBy = '', routeId = 'default', profile = 'normal') {
+  loadRuntimeState();
+  const normalizedKind = String(kind || '').toLowerCase();
+  const normalizedProviderId = String(providerId || '').toLowerCase();
+  const logical = configuredProviders().find(provider => provider.kind === normalizedKind && provider.id === normalizedProviderId && !provider.hidden);
+  if (!logical) throw Object.assign(new Error('未找到此产品模型，请同步最新上游目录。'), { code:'provider-not-found', status:404 });
+  const group = providerAdminRouteGroups(logical).find(entry => entry.id === String(routeId || 'default').toLowerCase());
+  if (!group) throw Object.assign(new Error('路由范围已更新，请刷新后重试。'), { code:'provider-route-scope-not-found', status:409 });
+  const ids = normalizedRuntimeIds(upstreamProviderIds);
+  if (!ids.length) throw Object.assign(new Error('请至少选择一个上游。'), { code:'invalid-provider-route', status:400 });
+  const providers = configuredProviders();
+  const allowed = new Set(group.providerIds);
+  const invalid = ids.find(id => !allowed.has(id) || !providers.some(candidate => candidate.id === id && isAdminCompatibleRoute(logical, candidate)));
+  if (invalid) throw Object.assign(new Error('所选上游与此产品模型不兼容。'), { code:'provider-incompatible', status:400 });
+  const missing = ids.find(id => !providerApiKey(providers.find(candidate => candidate.id === id)));
+  if (missing) throw Object.assign(new Error('所选上游尚未配置服务端密钥。'), { code:'provider-secret-missing', status:503 });
+  const key = runtimeRouteKey(normalizedKind, normalizedProviderId, group.id, profile);
+  const previous = runtimeRoutes.get(key);
+  const next = { ids, updatedAt:new Date().toISOString(), changedBy:String(changedBy || '').slice(0,160) };
+  runtimeRoutes.set(key, next); runtimeRevision += 1;
+  runtimeHistory.push({ key, previousIds:previous?.ids || null, nextIds:ids, changedAt:next.updatedAt, changedBy:next.changedBy });
+  if (runtimeHistory.length > 100) runtimeHistory.shift();
+  if (runtimeFile('GATEWAY_RUNTIME_CONFIG_FILE') && !persistRuntimeRoutes()) {
+    if (previous) runtimeRoutes.set(key, previous); else runtimeRoutes.delete(key);
+    runtimeRevision -= 1; runtimeHistory.pop();
+    throw Object.assign(new Error('路由配置保存失败，当前路由没有改变。'), { code:'provider-runtime-persist-failed', status:503 });
+  }
+  return { ...providerRuntimeStatus(), changed:{ kind:normalizedKind, providerId:normalizedProviderId, routeId:group.id, routeProfile:routeProfile({performanceMode:profile}), activeProviderIds:ids } };
+}
+
+export function rollbackProviderRuntimeRoute(kind, providerId, changedBy = '', routeId = 'default', profile = 'normal') {
+  loadRuntimeState();
+  const key = runtimeRouteKey(kind, providerId, routeId, profile);
+  const current = runtimeRoutes.get(key);
+  if (!current) throw Object.assign(new Error('此档位当前没有可回滚的路由变更。'), { code:'provider-route-not-found', status:404 });
+  const previous = [...runtimeHistory].reverse().find(entry => entry.key === key && entry.nextIds?.join(',') === current.ids.join(','));
+  if (previous?.previousIds?.length) runtimeRoutes.set(key, { ids:previous.previousIds, updatedAt:new Date().toISOString(), changedBy:String(changedBy || '').slice(0,160) });
+  else runtimeRoutes.delete(key);
+  runtimeRevision += 1;
+  if (runtimeFile('GATEWAY_RUNTIME_CONFIG_FILE') && !persistRuntimeRoutes()) {
+    runtimeRoutes.set(key, current); runtimeRevision -= 1;
+    throw Object.assign(new Error('回滚保存失败，当前路由没有改变。'), { code:'provider-runtime-persist-failed', status:503 });
+  }
+  return providerRuntimeStatus();
+}
+
+export function registerRuntimeProvider(raw = {}) {
+  loadRuntimeState();
+  const id = String(raw.id || '').trim().toLowerCase();
+  const kind = String(raw.kind || '').trim().toLowerCase();
+  const endpoint = safeServerEndpoint(raw.endpoint);
+  const keyEnv = String(raw.keyEnv || '').trim();
+  if (!PROVIDER_ID.test(id) || !['chat','image','video'].includes(kind) || !endpoint || !PROVIDER_KEY_ENV.test(keyEnv)) {
+    throw Object.assign(new Error('上游配置不完整或格式无效。'), { code:'invalid-provider-definition', status:400 });
+  }
+  const definition = { id, kind, name:String(raw.name || id).slice(0,80), endpoint, keyEnv, protocol:String(raw.protocol || '').slice(0,40), model:String(raw.model || '').slice(0,120), logicalModel:String(raw.logicalModel || '').slice(0,120), models:Array.isArray(raw.models) ? raw.models.map(String).slice(0,30) : [], balanceEndpoint:safeServerEndpoint(raw.balanceEndpoint) };
+  const index = runtimeProviderDefinitions.findIndex(provider => String(provider.id).toLowerCase() === id);
+  if (index >= 0) runtimeProviderDefinitions[index] = definition; else runtimeProviderDefinitions.push(definition);
+  if (runtimeFile('GATEWAY_PROVIDER_CONFIG_FILE') && !atomicJsonWrite(runtimeFile('GATEWAY_PROVIDER_CONFIG_FILE'), { version:1, providers:runtimeProviderDefinitions })) {
+    throw Object.assign(new Error('上游目录保存失败。'), { code:'provider-registry-persist-failed', status:503 });
+  }
+  return providerRuntimeStatus();
+}
+
+function numericProviderBalance(payload) {
+  for (const value of [payload?.balance, payload?.credits, payload?.remaining, payload?.data?.balance, payload?.data?.credits]) {
+    const number = Number(value); if (Number.isFinite(number) && number >= 0) return number;
+  }
+  return null;
+}
+
+export async function providerBalanceStatus() {
+  const visible = configuredProviders().filter(provider => !provider.hidden);
+  return { balances:await Promise.all(visible.map(async provider => {
+    if (!provider.balanceEndpoint) return { providerId:provider.id, kind:provider.kind, name:provider.name, configured:false, available:false, balance:null };
+    const apiKey = providerApiKey(provider);
+    if (!apiKey) return { providerId:provider.id, kind:provider.kind, name:provider.name, configured:true, available:false, balance:null, error:'credential-missing' };
+    try {
+      const response = await fetch(provider.balanceEndpoint, { headers:{ Authorization:`Bearer ${apiKey}`, Accept:'application/json' }, signal:AbortSignal.timeout(8000) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw Object.assign(new Error(), { status:response.status });
+      const balance = numericProviderBalance(payload);
+      return { providerId:provider.id, kind:provider.kind, name:provider.name, configured:true, available:balance !== null, balance, checkedAt:new Date().toISOString() };
+    } catch (error) { return { providerId:provider.id, kind:provider.kind, name:provider.name, configured:true, available:false, balance:null, error:Number(error.status)||'unavailable', checkedAt:new Date().toISOString() }; }
+  })) };
+}
+
 function routedCandidateForRequest(requested, candidate) {
   const requestedCapabilities = requested && requested.capabilities && typeof requested.capabilities === 'object'
     ? requested.capabilities
@@ -601,7 +853,10 @@ function providersForRequest(kind, id, body = {}) {
   }
   const byId = new Map(configured.filter((provider) => provider.kind === kind).map((provider) => [provider.id, provider]));
   const candidates = [];
-  const routeIds = orderMixedRouteIds(requestRouteIds(requested, body), byId, requested, body);
+  const selectedRouteIds = requestRouteIds(requested, body);
+  const routeIds = runtimeOverrideIds(requested, body)
+    ? selectedRouteIds
+    : orderMixedRouteIds(selectedRouteIds, byId, requested, body);
   for (const routeId of routeIds) {
     const candidate = byId.get(String(routeId || '').trim().toLowerCase());
     if (!candidate || !providerApiKey(candidate) || candidates.some((entry) => entry.id === candidate.id)) continue;
@@ -3233,12 +3488,11 @@ export async function chat(body, signal, onDelta, billing) {
     endUserId: String(body.endUserId || '').trim().slice(0, 80)
   };
   const byId = new Map(configured.map((entry) => [entry.id, entry]));
-  const candidateIds = orderMixedRouteIds(
-    [selected.id, ...(selected.fallbackProviderIds || [])],
-    byId,
-    selected,
-    body
-  );
+  const chatDefaults = [selected.id, ...(selected.fallbackProviderIds || [])];
+  const chatOverride = runtimeOverrideIds(selected, { performanceMode:'normal' });
+  const candidateIds = chatOverride
+    ? [...chatOverride, ...chatDefaults.filter(id => !chatOverride.includes(id))]
+    : orderMixedRouteIds(chatDefaults, byId, selected, body);
   const candidates = candidateIds
     .map((id) => byId.get(id))
     .filter((entry, index, list) => entry && providerApiKey(entry)
