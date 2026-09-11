@@ -12006,3 +12006,4 @@ body.is-detached-canvas-window #board-panel:not(.is-fullscreen) {
 
 .canvas-library-card.is-reorder-shifting, .canvas-library-folder-card.is-reorder-shifting { transition:translate 220ms cubic-bezier(.2,.8,.2,1); will-change:translate; }
 @media(prefers-reduced-motion:reduce) { .is-reorder-shifting { transition:none!important; } }
+.hub-skill-cover { display:block; width:100%; height:110px; object-fit:cover; border-radius:10px; margin-bottom:12px; background:var(--bg-surface-2); }
