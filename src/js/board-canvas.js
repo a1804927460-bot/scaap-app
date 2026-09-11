@@ -6941,7 +6941,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const skills = Array.isArray(resources) ? resources.filter((entry) => entry.kind === 'skill' && entry.instructions) : [];
     const existing = new Set(promptStyles.map((entry) => entry.id));
     promptStyles = [...promptStyles, ...skills.filter((entry) => !existing.has(entry.id)).map((entry) => ({
-      id: entry.id, name: entry.name, prompt: entry.instructions, source: 'skill',
+      id: entry.id, name: entry.name, prompt: entry.instructions, model: entry.model || '', coverDataUrl: entry.coverDataUrl || '', source: 'skill',
       ownerId: entry.ownerId || '', editable: entry.ownerId === 'local'
     }))];
     try {
@@ -8148,6 +8148,20 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const card = event.target.closest('[data-style-id]');
     if (!card) return;
       selectedPromptStyleId = card.dataset.styleId || '';
+      const selectedSkill = promptStyles.find((entry) => entry.id === selectedPromptStyleId && entry.model);
+      if (selectedSkill) {
+        const model = String(selectedSkill.model).trim();
+        let option = [...modelSelect.options].find((entry) => entry.value === `skill:${selectedSkill.id}`);
+        if (!option) {
+          option = new Option(`✦ 技能自动选择 · ${model}`, `skill:${selectedSkill.id}`);
+          modelSelect.appendChild(option);
+        }
+        modelSelect.value = option.value;
+        modelPickerLabel.textContent = `✦ ${t('Skill auto-select', '技能自动选择')}`;
+        modelPickerLabel.classList.add('is-skill-auto');
+      } else if (!selectedSkill) {
+        modelPickerLabel.classList.remove('is-skill-auto');
+      }
       try {
         const history = JSON.parse(localStorage.getItem(AI_SKILL_HISTORY_KEY) || '[]');
         localStorage.setItem(AI_SKILL_HISTORY_KEY, JSON.stringify([selectedPromptStyleId, ...history.filter((id) => id !== selectedPromptStyleId)].slice(0, 5)));
@@ -8358,6 +8372,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       }
     }
     const promptStyle = selectedPromptStyle();
+    const selectedSkillModel = promptStyle && promptStyle.model ? String(promptStyle.model).trim() : '';
     const upstreamPrompt = promptStyle
       ? `${text}\n\nStyle direction:\n${promptStyle.prompt}`
       : text;
@@ -8387,10 +8402,13 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       videoMode: kind === 'video' ? selectedMode.id : null,
       performanceMode,
       serviceTier: kind === 'video' && selectedProvider?.capabilities?.variantOptions ? serviceTier : undefined,
+      model: selectedSkillModel || undefined,
       generateAudio: kind === 'video' && selectedProvider?.capabilities?.variantOptions ? generateAudio : undefined,
       imageProviderId: kind === 'image' && selectedProvider ? selectedProvider.id : null,
       videoProviderId: kind === 'video' && selectedProvider ? selectedProvider.id : null,
-      modelName: selectedProvider
+      modelName: selectedSkillModel
+        ? `✦ ${t('Skill auto-select', '技能自动选择')}`
+        : selectedProvider
         ? (typeof publicModelLabel === 'function' ? publicModelLabel(selectedProvider.name) : selectedProvider.name)
         : (typeof publicModelLabel === 'function' ? publicModelLabel(aiConfig.videoProviderName || '视频生成', '视频生成') : (aiConfig.videoProviderName || '视频生成')),
       enhancePrompt,

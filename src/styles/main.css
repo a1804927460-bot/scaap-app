@@ -7736,6 +7736,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   color: var(--text-primary);
   box-shadow: var(--shadow-subtle);
 }
+.ai-model-picker-label.is-skill-auto { color:var(--accent); }
 .ai-composer-reference-strip[hidden] { display: none; }
 .ai-composer-reference-strip {
   display: flex;
