@@ -77,11 +77,14 @@ mac:
   hardenedRuntime: true
   gatekeeperAssess: false
 nsis:
-  oneClick: false
+  # User-triggered updates open a visible progress window and advance without
+  # waiting on wizard pages. ZIP extraction is much faster for the bundled
+  # document preview tools than the default solid 7z archive.
+  oneClick: true
+  useZip: true
   perMachine: true
   allowElevation: true
   packElevateHelper: true
-  allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
   include: build-resources/installer.nsh
