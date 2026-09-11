@@ -93,6 +93,7 @@ assert.match(updaterUi, /\['available',\s*'downloading',\s*'downloaded',\s*'inst
 assert.match(updaterUi, /status\s*===\s*'installing'[\s\S]*?Opening installer/);
 assert.match(updaterUi, /update-banner-progress[\s\S]*?aria-valuenow[\s\S]*?fill\.style\.width/);
 assert.doesNotMatch(fs.readFileSync(path.join(root, 'src', 'js', 'board-canvas.js'), 'utf8'), /class="ai-performance-switch"/, 'Generation composer must use the fixed canvas mode switch only.');
+assert.doesNotMatch(fs.readFileSync(path.join(root, 'src', 'js', 'board-canvas.js'), 'utf8'), /class="ai-prompt-style-(?:new|editor|cover-upload)"/, 'Generation composer must select skills without authoring them inline.');
 assert.match(main, /image-resolution-mismatch[\s\S]*?points were refunded[\s\S]*?积分已退还/);
 assert.match(main, /preview\.shutdownProcesses\(\)/);
 assert.match(main, /thumbnails\.shutdownProcesses\(\)/);

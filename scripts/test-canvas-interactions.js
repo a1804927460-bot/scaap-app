@@ -1305,28 +1305,16 @@ assert.match(
 assert.match(boardStyles, /width:\s*min\(760px, calc\(100% - 40px\)\)/, 'The generation composer must keep the shorter centered footprint.');
 assert.match(
   boardSource,
-  /AI_PROMPT_STYLES_STORAGE_KEY = 'messs\.ai-prompt-styles\.v1'[\s\S]*?canvas\.width = 320;[\s\S]*?canvas\.height = 180;/,
-  'Custom prompt styles must persist locally with bounded cover thumbnails.'
+  /class="ai-prompt-style-toggle"[\s\S]*?t\('Skill', '技能'\)[\s\S]*?class="ai-prompt-style-panel"[\s\S]*?t\('Skills', '技能库'\)/,
+  'The generation composer must expose workspace skills as the reusable guidance picker.'
 );
+assert.doesNotMatch(boardSource, /class="ai-prompt-style-(?:new|editor|cover-upload)"/, 'Skills may only be selected from the composer; authoring belongs in the skill library.');
+assert.match(boardSource, /listWorkspaceResources[\s\S]*?entry\.kind === 'skill'[\s\S]*?AI_SKILL_HISTORY_KEY[\s\S]*?slice\(0, 5\)/, 'The composer must load workspace skills and retain only the five most recent selections.');
+assert.match(boardSource, /skillProviderForModel[\s\S]*?modelSelect\.value = provider\.id[\s\S]*?modelSelect\.dataset\.skillModel[\s\S]*?modelPickerTrigger\.disabled = true[\s\S]*?Skill auto-select[\s\S]*?is-skill-auto/, 'A fixed-model skill must own the real provider selection and show the blue automatic model state.');
 assert.match(
   boardSource,
-  /class="ai-prompt-style-cover-upload"[\s\S]*?Upload cover[\s\S]*?promptStyleCoverButton\.addEventListener\('click', \(\) => promptStyleCoverInput\.click\(\)\)/,
-  'The prompt-style editor must expose a dedicated cover upload button wired to the image picker.'
-);
-assert.match(
-  boardSource,
-  /function syncPromptStyleCoverUi\(\)[\s\S]*?promptStyleCoverPreview\.classList\.toggle\('has-cover', hasCover\)[\s\S]*?Replace cover[\s\S]*?Upload cover/,
-  'The cover control must show upload or replace state while retaining the selected thumbnail.'
-);
-assert.match(
-  boardStyles,
-  /\.ai-prompt-style-cover-upload \{[\s\S]*?border:\s*1px solid var\(--action-border\);[\s\S]*?background:\s*var\(--action-gradient\);[\s\S]*?box-shadow:\s*var\(--action-shadow\);/,
-  'The cover upload button must use the same blue glass action surface as Send and Save.'
-);
-assert.match(
-  boardSource,
-  /const upstreamPrompt = promptStyle[\s\S]*?Style direction:[\s\S]*?prompt: upstreamPrompt,[\s\S]*?visiblePrompt: text/,
-  'The selected style prompt must be appended only to the upstream request while preserving the visible textarea value.'
+  /const upstreamPrompt = promptStyle[\s\S]*?Skill instructions:[\s\S]*?prompt: upstreamPrompt,[\s\S]*?visiblePrompt: text/,
+  'The selected skill instructions must be appended only to the upstream request while preserving the visible textarea value.'
 );
 assert.match(
   boardSource,

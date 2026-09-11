@@ -6608,60 +6608,8 @@ function removeAiPlaceholders(placeholders) {
   renderBoard();
 }
 
-const AI_PROMPT_STYLES_STORAGE_KEY = 'messs.ai-prompt-styles.v1';
 const AI_PROMPT_STYLE_SELECTED_KEY = 'messs.ai-prompt-style-selected.v1';
 const AI_SKILL_HISTORY_KEY = 'messs.ai-skill-history.v1';
-
-function loadAiPromptStyles() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(AI_PROMPT_STYLES_STORAGE_KEY) || '[]');
-    if (!Array.isArray(parsed)) return [];
-    return parsed.slice(0, 24).map((entry) => ({
-      id: String(entry && entry.id || '').slice(0, 80),
-      name: String(entry && entry.name || '').trim().slice(0, 40),
-      prompt: String(entry && entry.prompt || '').trim().slice(0, 4000),
-      coverDataUrl: /^data:image\/(?:jpeg|png|webp);base64,/i.test(String(entry && entry.coverDataUrl || ''))
-        ? String(entry.coverDataUrl)
-        : ''
-    })).filter((entry) => entry.id && entry.name && entry.prompt);
-  } catch (error) {
-    return [];
-  }
-}
-
-function saveAiPromptStyles(styles) {
-  try {
-    localStorage.setItem(AI_PROMPT_STYLES_STORAGE_KEY, JSON.stringify(styles.slice(0, 24)));
-  } catch (error) {
-    showToast(t('The style cover is too large to save locally.', '风格封面过大，无法保存到本机。'), 'AI');
-    return false;
-  }
-  return true;
-}
-
-async function aiPromptStyleCoverDataUrl(file) {
-  if (!file || !String(file.type || '').startsWith('image/')) return '';
-  const sourceUrl = URL.createObjectURL(file);
-  try {
-    const image = new Image();
-    image.decoding = 'async';
-    image.src = sourceUrl;
-    await image.decode();
-    const canvas = document.createElement('canvas');
-    canvas.width = 320;
-    canvas.height = 180;
-    const context = canvas.getContext('2d', { alpha: false });
-    const scale = Math.max(canvas.width / image.naturalWidth, canvas.height / image.naturalHeight);
-    const width = image.naturalWidth * scale;
-    const height = image.naturalHeight * scale;
-    context.fillStyle = '#151922';
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.drawImage(image, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
-    return canvas.toDataURL('image/jpeg', 0.82);
-  } finally {
-    URL.revokeObjectURL(sourceUrl);
-  }
-}
 
 function buildAiComposer(aiConfig, initialKind = 'image') {
   const pop = document.createElement('div');
@@ -6727,31 +6675,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       <section class="ai-prompt-style-panel" role="dialog" aria-label="${t('Skills', '技能库')}" hidden>
         <header class="ai-prompt-style-header">
           <div><strong>${t('Skills', '技能库')}</strong><span>${t('Added only for this generation', '仅本次生成使用')}</span></div>
-          <button type="button" class="ai-prompt-style-new">${t('New skill', '新建技能')}</button>
         </header>
         <div class="ai-prompt-style-grid"></div>
-        <div class="ai-prompt-style-editor" hidden>
-          <label><span>${t('Skill name', '技能名称')}</span><input type="text" class="ai-prompt-style-name" maxlength="40"></label>
-          <label><span>${t('Skill instructions', '技能说明')}</span><textarea class="ai-prompt-style-prompt" rows="4" maxlength="4000"></textarea></label>
-          <div class="ai-prompt-style-editor-footer">
-            <div class="ai-prompt-style-cover-controls">
-              <label class="ai-prompt-style-cover-picker">
-                <input type="file" class="ai-prompt-style-cover-input" accept="image/png,image/jpeg,image/webp" hidden>
-                <span class="ai-prompt-style-cover-preview"></span>
-                <span>${t('Custom cover', '自定义封面')}</span>
-              </label>
-              <button type="button" class="ai-prompt-style-cover-upload">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 20h14"/></svg>
-                <span>${t('Upload cover', '上传封面')}</span>
-              </button>
-            </div>
-            <div class="ai-prompt-style-editor-actions">
-              <button type="button" class="ai-prompt-style-delete" hidden>${t('Delete', '删除')}</button>
-              <button type="button" class="ai-prompt-style-cancel">${t('Cancel', '取消')}</button>
-              <button type="button" class="ai-prompt-style-save">${t('Save', '保存')}</button>
-            </div>
-          </div>
-        </div>
       </section>
       <div class="ai-options-panel" hidden>
         <section class="ai-gpt25-options" hidden>
@@ -6804,7 +6729,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
         </div>
         <div class="ai-option-block ai-higgsfield-block" hidden>
           <label class="ai-field-row">
-            <span>${t('Skill', '技能')}</span>
+            <span>${t('Style', '风格')}</span>
             <select class="ai-higgsfield-style"><option value="">${t('No style', '不使用风格')}</option></select>
           </label>
           <label class="ai-field-row ai-field-toggle">
@@ -6898,13 +6823,6 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   const promptStyleToggle = pop.querySelector('.ai-prompt-style-toggle');
   const promptStylePanel = pop.querySelector('.ai-prompt-style-panel');
   const promptStyleGrid = pop.querySelector('.ai-prompt-style-grid');
-  const promptStyleEditor = pop.querySelector('.ai-prompt-style-editor');
-  const promptStyleName = pop.querySelector('.ai-prompt-style-name');
-  const promptStylePrompt = pop.querySelector('.ai-prompt-style-prompt');
-  const promptStyleCoverInput = pop.querySelector('.ai-prompt-style-cover-input');
-  const promptStyleCoverPreview = pop.querySelector('.ai-prompt-style-cover-preview');
-  const promptStyleCoverButton = pop.querySelector('.ai-prompt-style-cover-upload');
-  const promptStyleCoverButtonLabel = promptStyleCoverButton.querySelector('span');
   const cameraMotionGrid = pop.querySelector('.ai-camera-motion-grid');
   const ratioGrid = pop.querySelector('.ai-ratio-grid');
   const status = pop.querySelector('.ai-generation-status');
@@ -6933,28 +6851,23 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   let enhancePrompt = true;
   let seed = null;
   let styleStrength = 1;
-  let promptStyles = loadAiPromptStyles();
-  // Skills are the shared, inspectable source of generation guidance. Keep
-  // locally-authored prompt styles compatible while exposing workspace skills
-  // in the same picker.
+  let promptStyles = [];
+  let selectedPromptStyleId = String(localStorage.getItem(AI_PROMPT_STYLE_SELECTED_KEY) || '');
   Promise.resolve(window.messsAPI?.listWorkspaceResources?.()).then((resources) => {
     const skills = Array.isArray(resources) ? resources.filter((entry) => entry.kind === 'skill' && entry.instructions) : [];
-    const existing = new Set(promptStyles.map((entry) => entry.id));
-    promptStyles = [...promptStyles, ...skills.filter((entry) => !existing.has(entry.id)).map((entry) => ({
+    promptStyles = skills.map((entry) => ({
       id: entry.id, name: entry.name, prompt: entry.instructions, model: entry.model || '', coverDataUrl: entry.coverDataUrl || '', source: 'skill',
       ownerId: entry.ownerId || '', editable: entry.ownerId === 'local'
-    }))];
+    }));
     try {
       const history = JSON.parse(localStorage.getItem(AI_SKILL_HISTORY_KEY) || '[]');
       const rank = new Map(history.map((id, index) => [id, index]));
       promptStyles.sort((a, b) => (rank.get(a.id) ?? 99) - (rank.get(b.id) ?? 99));
     } catch {}
+    if (!promptStyles.some((entry) => entry.id === selectedPromptStyleId)) selectedPromptStyleId = '';
     if (typeof renderPromptStyles === 'function') renderPromptStyles();
+    if (typeof syncSelectedSkillModel === 'function') syncSelectedSkillModel(true);
   }).catch(() => {});
-  let selectedPromptStyleId = String(localStorage.getItem(AI_PROMPT_STYLE_SELECTED_KEY) || '');
-  let editingPromptStyleId = '';
-  let editingPromptStyleCover = '';
-  if (!promptStyles.some((entry) => entry.id === selectedPromptStyleId)) selectedPromptStyleId = '';
   let cameraControl = normalizeAiCameraControl();
   let styleLoadRevision = 0;
   const boardReferences = new Map();
@@ -6987,13 +6900,49 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     return promptStyles.find((entry) => entry.id === selectedPromptStyleId) || null;
   }
 
-  function syncPromptStyleCoverUi() {
-    const hasCover = !!editingPromptStyleCover;
-    promptStyleCoverPreview.style.backgroundImage = hasCover ? `url("${editingPromptStyleCover}")` : '';
-    promptStyleCoverPreview.classList.toggle('has-cover', hasCover);
-    promptStyleCoverButtonLabel.textContent = hasCover
-      ? t('Replace cover', '更换封面')
-      : t('Upload cover', '上传封面');
+  function skillProviderForModel(model) {
+    const target = String(model || '').trim().toLowerCase();
+    if (!target) return null;
+    const compact = (value) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+    const compactTarget = compact(target);
+    const candidates = kind === 'video' ? videoProviders : providers;
+    return candidates.find((provider) => [provider.id, provider.model, provider.name]
+      .filter(Boolean)
+      .some((value) => {
+        const normalized = String(value).trim().toLowerCase();
+        const compactValue = compact(normalized);
+        return target === normalized || compactTarget === compactValue
+          || (compactValue.length >= 6 && compactTarget.endsWith(compactValue));
+      })) || null;
+  }
+
+  function syncSelectedSkillModel(updateGeneration = false) {
+    const selectedSkill = promptStyles.find((entry) => entry.id === selectedPromptStyleId && entry.model);
+    const provider = selectedSkill ? skillProviderForModel(selectedSkill.model) : null;
+    const previousProviderId = modelSelect.value;
+    const wasSkillAuto = modelPickerLabel.classList.contains('is-skill-auto');
+    if (provider) {
+      modelSelect.value = provider.id;
+      modelSelect.dataset.skillModel = String(selectedSkill.model).trim();
+      modelPickerTrigger.disabled = true;
+      modelPickerLabel.textContent = `✦ ${t('Skill auto-select', '技能自动选择')}`;
+      modelPickerLabel.classList.add('is-skill-auto');
+      modelPickerMenu.querySelectorAll('.ai-model-picker-option').forEach((option) => {
+        const active = option.dataset.value === provider.id;
+        option.classList.toggle('is-active', active);
+        option.setAttribute('aria-selected', String(active));
+      });
+      if (updateGeneration && previousProviderId !== provider.id) syncGenerationOptions();
+      return;
+    }
+    delete modelSelect.dataset.skillModel;
+    modelPickerTrigger.disabled = (kind === 'video' ? videoProviders : providers).length === 0;
+    modelPickerLabel.classList.remove('is-skill-auto');
+    if (wasSkillAuto) {
+      const selectedProvider = (kind === 'video' ? videoProviders : providers)
+        .find((entry) => entry.id === modelSelect.value);
+      if (selectedProvider) appendAiModelLabel(modelPickerLabel, selectedProvider, { sparkle: false });
+    }
   }
 
   function renderPromptStyles() {
@@ -7002,7 +6951,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     noStyle.type = 'button';
     noStyle.className = 'ai-prompt-style-card is-no-style' + (!selectedPromptStyleId ? ' is-selected' : '');
     noStyle.dataset.styleId = '';
-    noStyle.innerHTML = `<span class="ai-prompt-style-card-cover">${t('None', '无')}</span><strong>${t('No style', '不使用风格')}</strong>`;
+    noStyle.innerHTML = `<span class="ai-prompt-style-card-cover">${t('None', '无')}</span><strong>${t('No skill', '不使用技能')}</strong>`;
     promptStyleGrid.appendChild(noStyle);
     promptStyles.forEach((entry) => {
       const card = document.createElement('button');
@@ -7015,27 +6964,11 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       else cover.textContent = entry.name.slice(0, 1).toUpperCase();
       const name = document.createElement('strong');
       name.textContent = entry.name;
-      const edit = document.createElement('span');
-      edit.className = 'ai-prompt-style-card-edit';
-      edit.dataset.editStyleId = entry.id;
-      edit.textContent = t('Edit', '编辑');
-      card.append(cover, name, edit);
+      card.append(cover, name);
       promptStyleGrid.appendChild(card);
     });
     const selected = selectedPromptStyle();
     promptStyleToggle.querySelector('span').textContent = selected ? selected.name : t('Skill', '技能');
-  }
-
-  function editPromptStyle(style = null) {
-    editingPromptStyleId = style ? style.id : '';
-    editingPromptStyleCover = style ? style.coverDataUrl : '';
-    promptStyleName.value = style ? style.name : '';
-    promptStylePrompt.value = style ? style.prompt : '';
-    promptStyleCoverInput.value = '';
-    syncPromptStyleCoverUi();
-    promptStyleEditor.hidden = false;
-    pop.querySelector('.ai-prompt-style-delete').hidden = !style;
-    promptStyleName.focus();
   }
 
   function setCameraControlOpen(open, enable = false) {
@@ -7523,9 +7456,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     cameraControlToggle.querySelector('span').textContent = t('Lens', '镜头');
     const activePromptStyle = selectedPromptStyle();
     promptStyleToggle.querySelector('span').textContent = activePromptStyle ? activePromptStyle.name : t('Skill', '技能');
-    promptStyleToggle.title = t('Choose or edit a prompt style', '选择或编辑提示词风格');
+    promptStyleToggle.title = t('Choose a skill', '选择技能');
     promptStyleToggle.setAttribute('aria-label', promptStyleToggle.title);
-    syncPromptStyleCoverUi();
+    syncSelectedSkillModel(true);
     renderCameraControl();
   }
 
@@ -7583,6 +7516,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       ? (typeof publicModelLabel === 'function' ? publicModelLabel(selected.name) : selected.name)
       : t('No model configured', '未配置模型');
     if (selected) appendAiModelLabel(modelPickerLabel, selected, { sparkle: false });
+    syncSelectedSkillModel();
     // A running request must not disable a newly opened composer. Each
     // submission owns its own request and placeholder state.
     syncComposerSubmitAvailability();
@@ -8137,81 +8071,19 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   promptStylePanel.addEventListener('pointerdown', (event) => event.stopPropagation());
   promptStylePanel.addEventListener('wheel', (event) => event.stopPropagation(), { passive: true });
   promptStylePanel.addEventListener('click', (event) => event.stopPropagation());
-  pop.querySelector('.ai-prompt-style-new').addEventListener('click', () => editPromptStyle());
-  promptStyleCoverButton.addEventListener('click', () => promptStyleCoverInput.click());
   promptStyleGrid.addEventListener('click', (event) => {
-    const edit = event.target.closest('[data-edit-style-id]');
-    if (edit) {
-      editPromptStyle(promptStyles.find((entry) => entry.id === edit.dataset.editStyleId) || null);
-      return;
-    }
     const card = event.target.closest('[data-style-id]');
     if (!card) return;
-      selectedPromptStyleId = card.dataset.styleId || '';
-      const selectedSkill = promptStyles.find((entry) => entry.id === selectedPromptStyleId && entry.model);
-      if (selectedSkill) {
-        const model = String(selectedSkill.model).trim();
-        modelSelect.dataset.skillModel = model;
-        modelPickerLabel.textContent = `✦ ${t('Skill auto-select', '技能自动选择')}`;
-        modelPickerLabel.classList.add('is-skill-auto');
-      } else if (!selectedSkill) {
-        delete modelSelect.dataset.skillModel;
-        modelPickerLabel.classList.remove('is-skill-auto');
-      }
-      try {
-        const history = JSON.parse(localStorage.getItem(AI_SKILL_HISTORY_KEY) || '[]');
-        localStorage.setItem(AI_SKILL_HISTORY_KEY, JSON.stringify([selectedPromptStyleId, ...history.filter((id) => id !== selectedPromptStyleId)].slice(0, 5)));
-      } catch {}
-    localStorage.setItem(AI_PROMPT_STYLE_SELECTED_KEY, selectedPromptStyleId);
-    renderPromptStyles();
-  });
-  promptStyleCoverInput.addEventListener('change', async () => {
-    const file = promptStyleCoverInput.files && promptStyleCoverInput.files[0];
-    if (!file) return;
+    selectedPromptStyleId = card.dataset.styleId || '';
+    syncSelectedSkillModel();
     try {
-      editingPromptStyleCover = await aiPromptStyleCoverDataUrl(file);
-      syncPromptStyleCoverUi();
-    } catch (error) {
-      showToast(t('Could not read this cover image.', '无法读取这张封面图。'), 'AI');
-    }
-  });
-  pop.querySelector('.ai-prompt-style-cancel').addEventListener('click', () => {
-    promptStyleEditor.hidden = true;
-    editingPromptStyleId = '';
-  });
-  pop.querySelector('.ai-prompt-style-save').addEventListener('click', () => {
-    const name = promptStyleName.value.trim();
-    const stylePrompt = promptStylePrompt.value.trim();
-    if (!name || !stylePrompt) {
-      showToast(t('Enter both a style name and a style prompt.', '请填写风格名称和风格提示词。'), 'AI');
-      return;
-    }
-    const id = editingPromptStyleId || (window.crypto && typeof window.crypto.randomUUID === 'function'
-      ? window.crypto.randomUUID()
-      : `style-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-    const nextStyle = { id, name: name.slice(0, 40), prompt: stylePrompt.slice(0, 4000), coverDataUrl: editingPromptStyleCover };
-    const existingIndex = promptStyles.findIndex((entry) => entry.id === id);
-    const nextStyles = [...promptStyles];
-    if (existingIndex >= 0) nextStyles.splice(existingIndex, 1, nextStyle);
-    else nextStyles.push(nextStyle);
-    if (!saveAiPromptStyles(nextStyles)) return;
-    promptStyles = nextStyles;
-    selectedPromptStyleId = id;
-    localStorage.setItem(AI_PROMPT_STYLE_SELECTED_KEY, id);
-    promptStyleEditor.hidden = true;
-    editingPromptStyleId = '';
-    renderPromptStyles();
-  });
-  pop.querySelector('.ai-prompt-style-delete').addEventListener('click', () => {
-    if (!editingPromptStyleId) return;
-    promptStyles = promptStyles.filter((entry) => entry.id !== editingPromptStyleId);
-    if (!saveAiPromptStyles(promptStyles)) return;
-    if (selectedPromptStyleId === editingPromptStyleId) {
-      selectedPromptStyleId = '';
-      localStorage.removeItem(AI_PROMPT_STYLE_SELECTED_KEY);
-    }
-    promptStyleEditor.hidden = true;
-    editingPromptStyleId = '';
+      const history = JSON.parse(localStorage.getItem(AI_SKILL_HISTORY_KEY) || '[]');
+      const nextHistory = selectedPromptStyleId
+        ? [selectedPromptStyleId, ...history.filter((id) => id !== selectedPromptStyleId)].slice(0, 5)
+        : history;
+      localStorage.setItem(AI_SKILL_HISTORY_KEY, JSON.stringify(nextHistory));
+    } catch {}
+    localStorage.setItem(AI_PROMPT_STYLE_SELECTED_KEY, selectedPromptStyleId);
     renderPromptStyles();
   });
   pop.querySelector('[data-option="size"]').addEventListener('click', (event) => {
@@ -8368,9 +8240,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       }
     }
     const promptStyle = selectedPromptStyle();
-    const selectedSkillModel = promptStyle && promptStyle.model ? String(promptStyle.model).trim() : '';
+    const selectedSkillModel = String(modelSelect.dataset.skillModel || '').trim();
     const upstreamPrompt = promptStyle
-      ? `${text}\n\nStyle direction:\n${promptStyle.prompt}`
+      ? `${text}\n\nSkill instructions:\n${promptStyle.prompt}`
       : text;
     const selectedReferenceIds = [...boardReferences.values()].map((entry) => entry.fileId);
     const selectedReferenceItems = AppState.boardItems.filter((item) => selectedReferenceIds.includes(item.fileId));

@@ -16,7 +16,12 @@ const { pathToFileURL } = require('node:url');
       window.isBoardFullscreen = () => false;
       window.markBoardUiLayer = () => {};
       window.updateUiLanguage = () => {};
-      window.messsAPI = { quoteAiMedia: async () => ({ credits: 26 }) };
+      window.messsAPI = {
+        quoteAiMedia: async () => ({ credits: 26 }),
+        listWorkspaceResources: async () => [{
+          id: 'skill-test', kind: 'skill', name: '品牌海报', instructions: '保持品牌色和清晰的产品层级。', model: 'image-1'
+        }]
+      };
       const config = {
         imageProviders: [{ id: 'image-1', name: 'Nano Banana Pro', endpoint: 'https://test.invalid', capabilities: { sizes: ['1K','2K','4K'], aspectRatios: ['auto','1:1','16:9','9:16'], maxCount: 4 } }],
         videoProviders: [{ id: 'video-1', name: 'MiniMax H3', endpoint: 'https://test.invalid', capabilities: { resolutions: ['768P','1080P'], aspectRatios: ['16:9','9:16'], durations: [6,10], modes: ['image'] } }]
@@ -28,6 +33,17 @@ const { pathToFileURL } = require('node:url');
     });
     fs.mkdirSync('test-artifacts/moodboard-generation', { recursive: true });
     await page.setViewportSize({width:1560,height:1020});
+    await page.waitForTimeout(100);
+    assert.equal(await page.locator('.ai-prompt-style-card[data-style-id="skill-test"]').count(), 1, 'Workspace skill must load into the composer');
+    assert.equal(await page.locator('.ai-prompt-style-new, .ai-prompt-style-editor').count(), 0, 'Composer skills must be selection-only');
+    await page.locator('.ai-prompt-style-toggle').click();
+    await page.locator('.ai-prompt-style-card[data-style-id="skill-test"]').click();
+    assert.equal(await page.locator('.ai-model-picker-label').textContent(), '✦ 技能自动选择');
+    assert.equal(await page.locator('.ai-model-picker-label').evaluate(element => element.classList.contains('is-skill-auto')), true);
+    assert.equal(await page.locator('.ai-model-picker-trigger').isDisabled(), true, 'A fixed-model skill must own model selection');
+    assert.equal(await page.locator('.ai-model-select').inputValue(), 'image-1', 'Fixed skill model must select the real provider used for pricing and generation');
+    await page.screenshot({path:'test-artifacts/moodboard-generation/skill-picker.png'});
+    await page.locator('.ai-prompt-style-toggle').click();
     for (const canvasWidth of [740,420]) {
       await page.evaluate(width=>{
         const host=document.createElement('div');host.id='composer-host';
