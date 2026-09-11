@@ -6610,6 +6610,7 @@ function removeAiPlaceholders(placeholders) {
 
 const AI_PROMPT_STYLES_STORAGE_KEY = 'messs.ai-prompt-styles.v1';
 const AI_PROMPT_STYLE_SELECTED_KEY = 'messs.ai-prompt-style-selected.v1';
+const AI_SKILL_HISTORY_KEY = 'messs.ai-skill-history.v1';
 
 function loadAiPromptStyles() {
   try {
@@ -6711,7 +6712,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
           </button>
           <button type="button" class="ai-prompt-style-toggle" aria-haspopup="dialog" aria-expanded="false">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18h1.2a1.8 1.8 0 0 0 0-3.6H12a2 2 0 0 1 0-4h2.8A6.2 6.2 0 0 0 21 7.2 4.2 4.2 0 0 0 16.8 3H12Z"/><circle cx="7.5" cy="10" r="1"/><circle cx="10" cy="6.8" r="1"/><circle cx="15" cy="6.8" r="1"/></svg>
-            <span>${t('Style', '风格')}</span>
+            <span>${t('Skill', '技能')}</span>
           </button>
         </div>
         <div class="ai-composer-submit-wrap">
@@ -6723,15 +6724,15 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
           </button>
         </div>
       </div>
-      <section class="ai-prompt-style-panel" role="dialog" aria-label="${t('Prompt styles', '提示词风格')}" hidden>
+      <section class="ai-prompt-style-panel" role="dialog" aria-label="${t('Skills', '技能库')}" hidden>
         <header class="ai-prompt-style-header">
-          <div><strong>${t('Prompt styles', '提示词风格')}</strong><span>${t('Added only when sent', '仅在发送时加入')}</span></div>
-          <button type="button" class="ai-prompt-style-new">${t('New style', '新建风格')}</button>
+          <div><strong>${t('Skills', '技能库')}</strong><span>${t('Added only for this generation', '仅本次生成使用')}</span></div>
+          <button type="button" class="ai-prompt-style-new">${t('New skill', '新建技能')}</button>
         </header>
         <div class="ai-prompt-style-grid"></div>
         <div class="ai-prompt-style-editor" hidden>
-          <label><span>${t('Style name', '风格名称')}</span><input type="text" class="ai-prompt-style-name" maxlength="40"></label>
-          <label><span>${t('Style prompt', '风格提示词')}</span><textarea class="ai-prompt-style-prompt" rows="4" maxlength="4000"></textarea></label>
+          <label><span>${t('Skill name', '技能名称')}</span><input type="text" class="ai-prompt-style-name" maxlength="40"></label>
+          <label><span>${t('Skill instructions', '技能说明')}</span><textarea class="ai-prompt-style-prompt" rows="4" maxlength="4000"></textarea></label>
           <div class="ai-prompt-style-editor-footer">
             <div class="ai-prompt-style-cover-controls">
               <label class="ai-prompt-style-cover-picker">
@@ -6803,7 +6804,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
         </div>
         <div class="ai-option-block ai-higgsfield-block" hidden>
           <label class="ai-field-row">
-            <span>${t('Style', '风格')}</span>
+            <span>${t('Skill', '技能')}</span>
             <select class="ai-higgsfield-style"><option value="">${t('No style', '不使用风格')}</option></select>
           </label>
           <label class="ai-field-row ai-field-toggle">
@@ -6933,6 +6934,18 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   let seed = null;
   let styleStrength = 1;
   let promptStyles = loadAiPromptStyles();
+  // Skills are the shared, inspectable source of generation guidance. Keep
+  // locally-authored prompt styles compatible while exposing workspace skills
+  // in the same picker.
+  Promise.resolve(window.messsAPI?.listWorkspaceResources?.()).then((resources) => {
+    const skills = Array.isArray(resources) ? resources.filter((entry) => entry.kind === 'skill' && entry.instructions) : [];
+    const existing = new Set(promptStyles.map((entry) => entry.id));
+    promptStyles = [...promptStyles, ...skills.filter((entry) => !existing.has(entry.id)).map((entry) => ({
+      id: entry.id, name: entry.name, prompt: entry.instructions, source: 'skill',
+      ownerId: entry.ownerId || '', editable: entry.ownerId === 'local'
+    }))];
+    if (typeof renderPromptStyles === 'function') renderPromptStyles();
+  }).catch(() => {});
   let selectedPromptStyleId = String(localStorage.getItem(AI_PROMPT_STYLE_SELECTED_KEY) || '');
   let editingPromptStyleId = '';
   let editingPromptStyleCover = '';
@@ -7005,7 +7018,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       promptStyleGrid.appendChild(card);
     });
     const selected = selectedPromptStyle();
-    promptStyleToggle.querySelector('span').textContent = selected ? selected.name : t('Style', '风格');
+    promptStyleToggle.querySelector('span').textContent = selected ? selected.name : t('Skill', '技能');
   }
 
   function editPromptStyle(style = null) {
@@ -7504,7 +7517,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       : `${ratio === 'auto' || ratio === 'adaptive' ? autoLabel : ratio} · ${size} · ${t(`x${count}`, `×${count}`)}`;
     cameraControlToggle.querySelector('span').textContent = t('Lens', '镜头');
     const activePromptStyle = selectedPromptStyle();
-    promptStyleToggle.querySelector('span').textContent = activePromptStyle ? activePromptStyle.name : t('Style', '风格');
+    promptStyleToggle.querySelector('span').textContent = activePromptStyle ? activePromptStyle.name : t('Skill', '技能');
     promptStyleToggle.title = t('Choose or edit a prompt style', '选择或编辑提示词风格');
     promptStyleToggle.setAttribute('aria-label', promptStyleToggle.title);
     syncPromptStyleCoverUi();
@@ -8129,7 +8142,11 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     }
     const card = event.target.closest('[data-style-id]');
     if (!card) return;
-    selectedPromptStyleId = card.dataset.styleId || '';
+      selectedPromptStyleId = card.dataset.styleId || '';
+      try {
+        const history = JSON.parse(localStorage.getItem(AI_SKILL_HISTORY_KEY) || '[]');
+        localStorage.setItem(AI_SKILL_HISTORY_KEY, JSON.stringify([selectedPromptStyleId, ...history.filter((id) => id !== selectedPromptStyleId)].slice(0, 5)));
+      } catch {}
     localStorage.setItem(AI_PROMPT_STYLE_SELECTED_KEY, selectedPromptStyleId);
     renderPromptStyles();
   });
