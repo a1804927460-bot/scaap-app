@@ -6944,6 +6944,11 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       id: entry.id, name: entry.name, prompt: entry.instructions, source: 'skill',
       ownerId: entry.ownerId || '', editable: entry.ownerId === 'local'
     }))];
+    try {
+      const history = JSON.parse(localStorage.getItem(AI_SKILL_HISTORY_KEY) || '[]');
+      const rank = new Map(history.map((id, index) => [id, index]));
+      promptStyles.sort((a, b) => (rank.get(a.id) ?? 99) - (rank.get(b.id) ?? 99));
+    } catch {}
     if (typeof renderPromptStyles === 'function') renderPromptStyles();
   }).catch(() => {});
   let selectedPromptStyleId = String(localStorage.getItem(AI_PROMPT_STYLE_SELECTED_KEY) || '');
