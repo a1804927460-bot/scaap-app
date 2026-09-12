@@ -148,6 +148,10 @@ jobs:
           if (-not $installer) { throw 'Windows installer was not generated.' }
           $blockmap = Get-Item "$($installer.FullName).blockmap" -ErrorAction SilentlyContinue
           if (-not $blockmap) { throw 'Windows installer blockmap was not generated.' }
+          $sevenZip = Get-Command 7z.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+          if (-not $sevenZip) { throw '7-Zip is required to verify the NSIS installer payload.' }
+          & $sevenZip t $installer.FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Windows installer payload failed the 7-Zip integrity test.' }
           $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
           if ($env:MESSS_SIGNING_ENABLED -eq 'true') {
             if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate) {
@@ -165,7 +169,7 @@ jobs:
           }
           "MESSS_INSTALLER_PATH=$($installer.FullName)" >> $env:GITHUB_ENV
           "MESSS_BLOCKMAP_PATH=$($blockmap.FullName)" >> $env:GITHUB_ENV
-          Write-Host "Verified $($installer.Name), $($blockmap.Name), latest.yml, and signing state $($signature.Status)"
+          Write-Host "Verified $($installer.Name) extraction, $($blockmap.Name), latest.yml, and signing state $($signature.Status)"
 
       - name: Publish verified updater artifacts
         shell: pwsh

@@ -2,6 +2,7 @@ appId: com.messs.desktop
 productName: Messs
 electronVersion: 43.2.0
 asar: true
+compression: normal
 directories:
   output: release
 files:
@@ -77,11 +78,11 @@ mac:
   hardenedRuntime: true
   gatekeeperAssess: false
 nsis:
-  # User-triggered updates open a visible progress window and advance without
-  # waiting on wizard pages. ZIP extraction is much faster for the bundled
-  # document preview tools than the default solid 7z archive.
+  # User-triggered updates open a visible progress window. Use electron-builder's
+  # standard LZMA/7z payload because NSIS ZIP extraction failed on the large
+  # bundled document-tool archive.
   oneClick: true
-  useZip: true
+  useZip: false
   perMachine: true
   allowElevation: true
   packElevateHelper: true
