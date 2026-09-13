@@ -459,7 +459,6 @@ function validateBody(body, kind) {
   if (kind === 'video' && !PUBLIC_VIDEO_PROVIDER_IDS.has(providerId)) {
     throw invalidOption('provider-not-allowed', 'The selected video model is no longer available.');
   }
-  if (kind === 'video' && providerId === 'video-14') klingOptions.klingInput(body);
   const capabilities = providerCapabilities(kind, providerId) || {};
   const isAtlasVideo = kind === 'video'
     && (String(capabilities.atlasKind || '').length > 0 || capabilities.atlasRouted === true);
@@ -839,7 +838,7 @@ function validateBody(body, kind) {
       if (!modes.has(requestedBitrateMode)) throw invalidOption('invalid-bitrate-mode', 'The selected video bitrate mode is not supported.');
     }
   }
-  return {
+  const normalized = {
     prompt,
     providerId,
     ...(kind === 'image' ? {
@@ -882,6 +881,8 @@ function validateBody(body, kind) {
       ,serviceTier: requestedServiceTier || null
     } : {})
   };
+  if (kind === 'video' && providerId === 'video-14') klingOptions.klingInput(normalized);
+  return normalized;
 }
 
 async function readBuffer(request, maximumBytes) {
@@ -2851,6 +2852,8 @@ const server = http.createServer((request, response) => {
       path: new URL(request.url, 'http://gateway.local').pathname,
       code,
       status,
+      ...(['price-check', 'reference-upload', 'generation-submit'].includes(error.providerStage)
+        ? { providerStage: error.providerStage } : {}),
       ...(Number.isInteger(upstreamStatus) ? { upstreamStatus } : {})
     }));
     const retryAfter = code === 'gateway-queue-full' || code === 'gateway-queue-timeout'

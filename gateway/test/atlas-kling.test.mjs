@@ -7,6 +7,26 @@ import pricing from '../../lib/credit-pricing.js';
 
 const base={providerId:'video-14',prompt:'A slow camera move across the scene',urls:['https://example.com/start.png'],videoMode:'first-frame',aspectRatio:'adaptive',duration:5};
 
+test('Kling quote transport failures cannot be mistaken for an accepted generation', async () => {
+  const previous = globalThis.fetch, oldKey = process.env.ATLASCLOUD_API_KEY;
+  process.env.ATLASCLOUD_API_KEY = 'test-only';
+  try {
+    for (const failure of [new TypeError('connection interrupted'), new DOMException('deadline', 'TimeoutError')]) {
+      const calls = [];
+      globalThis.fetch = async url => { calls.push(String(url)); throw failure; };
+      await assert.rejects(createVideoTask(base), error =>
+        error.preSubmissionFailure === true && error.submissionAmbiguous === false
+        && error.providerStage === 'price-check');
+      assert.equal(calls.length, 1);
+      assert.ok(calls[0].endsWith('/calculate'));
+    }
+  } finally {
+    globalThis.fetch = previous;
+    if (oldKey === undefined) delete process.env.ATLASCLOUD_API_KEY;
+    else process.env.ATLASCLOUD_API_KEY = oldKey;
+  }
+});
+
 test('Kling variants preserve model, sound, dimensions, quote and billing-bound task recovery',async()=>{
   const previous=globalThis.fetch,oldKey=process.env.ATLASCLOUD_API_KEY;
   process.env.ATLASCLOUD_API_KEY='test-only';

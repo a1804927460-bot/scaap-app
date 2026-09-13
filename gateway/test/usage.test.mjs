@@ -247,7 +247,7 @@ test('reserve exposes insufficient-credit denials', async () => {
 });
 
 test('retail formula applies the safety buffer and current segmented gross margins, with one PTC treated as one USD', () => {
-  assert.equal(CREDIT_PRICING_VERSION, '202609090008');
+  assert.equal(CREDIT_PRICING_VERSION, '202609140001');
   assert.equal(APP_CREDITS_PER_CNY, 1000 / 70);
   assert.equal(RETAIL_MARKUP_PERCENT, 33.33333333333333);
   assert.equal(RETAIL_MULTIPLIER, 4 / 3);

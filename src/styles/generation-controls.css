@@ -10,7 +10,7 @@
   overflow-y: auto;
 }
 .ai-composer:not(.is-moodboard-composer) .ai-options-panel {
-  left:auto;right:12px;bottom:calc(100% + 8px);width:min(360px,calc(100% - 24px));
+  left:var(--options-anchor-left, 12px);right:auto;bottom:var(--options-anchor-bottom, 56px);width:min(360px,calc(100% - 24px));
   box-sizing:border-box;z-index:8;border-radius:8px;
   max-height:min(520px,calc(100vh - 310px));overflow-y:auto;
 }

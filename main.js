@@ -1828,6 +1828,7 @@ function fileToPayload(f, aiDeliveryToken = null) {
       requestedDuration: f.aiGeneration.requestedDuration || null,
       videoMode: f.aiGeneration.videoMode || null,
       serviceTier: f.aiGeneration.serviceTier || null,
+      performanceMode: f.aiGeneration.performanceMode === 'performance' ? 'performance' : 'normal',
       generateAudio: f.aiGeneration.generateAudio,
       cameraControl: f.aiGeneration.kind === 'video'
         ? normalizeVideoCameraControl(f.aiGeneration.cameraControl)
@@ -4182,6 +4183,7 @@ function estimatedHistoricalCanvasCredits(file, operation, kind) {
         resolution: operation.resolution,
         duration: operation.requestedDuration ?? operation.duration,
         serviceTier: operation.serviceTier,
+        performanceMode: operation.performanceMode === 'performance' ? 'performance' : 'normal',
         generateAudio: operation.generateAudio,
         count: 1
       });
@@ -4233,6 +4235,7 @@ function canvasUsageEntryFromFile(file) {
       ? Number(operation.requestedDuration ?? operation.duration)
       : null,
     serviceTier: String(operation.serviceTier || '').slice(0, 20) || null,
+    performanceMode: operation.performanceMode === 'performance' ? 'performance' : 'normal',
     generateAudio: operation.generateAudio,
     pricingOptions: kind === '3d'
       ? butlerThreeDPricingOptions(String(operation.modelId || ''), operation.pricingOptions)
@@ -4280,6 +4283,7 @@ function normalizeCanvasUsageEntry(entry) {
     quality: String(entry.quality || '').slice(0, 20) || null,
     duration: Number.isFinite(Number(entry.duration)) ? Number(entry.duration) : null,
     serviceTier: String(entry.serviceTier || '').slice(0, 20) || null,
+    performanceMode: entry.performanceMode === 'performance' ? 'performance' : 'normal',
     generateAudio: entry.generateAudio,
     pricingOptions: entry.kind === '3d'
       ? butlerThreeDPricingOptions(String(entry.providerId || ''), entry.pricingOptions)
@@ -4333,6 +4337,7 @@ function backfillCanvasUsageEstimate(entry) {
       quality: entry.quality,
       duration: entry.duration,
       serviceTier: entry.serviceTier,
+      performanceMode: entry.performanceMode === 'performance' ? 'performance' : 'normal',
       generateAudio: entry.generateAudio,
       count: 1
     });
@@ -4993,7 +4998,9 @@ async function generateAiMediaBuffer(kind, prompt, options = {}) {
         sourceHeight: options.sourceHeight,
         duration: options.duration,
         videoMode: options.videoMode,
-        serviceTier: options.serviceTier,        referenceMediaTypes: options.referenceMediaTypes,
+        serviceTier: options.serviceTier,
+        performanceMode: options.performanceMode === 'performance' ? 'performance' : 'normal',
+        referenceMediaTypes: options.referenceMediaTypes,
         referenceVideoUploadIds: options.referenceVideoUploadIds,
         referenceAudioUrls: options.referenceAudioUrls,
         referenceAudioUploadIds: options.referenceAudioUploadIds,
@@ -5067,7 +5074,9 @@ function aiMediaGenerationOptions(request, providerId) {
     sourceHeight: request.sourceHeight,
     duration: request.duration,
     videoMode: request.videoMode,
-    serviceTier: request.serviceTier,    referenceMediaTypes: request.referenceMediaTypes,
+    serviceTier: request.serviceTier,
+    performanceMode: request.performanceMode === 'performance' ? 'performance' : 'normal',
+    referenceMediaTypes: request.referenceMediaTypes,
     referenceVideoUploadIds: request.referenceVideoUploadIds,
     referenceAudioUrls: request.referenceAudioUrls,
     referenceAudioUploadIds: request.referenceAudioUploadIds,
@@ -5944,6 +5953,7 @@ async function addGeneratedMediaFile(buffer, prompt, folderId, kind, canvasId, r
         : null,
       videoMode: mediaKind === 'video' ? String(request.videoMode || 'text').trim().slice(0, 32) : null,
       serviceTier: mediaKind === 'video' ? String(request.serviceTier || '').trim().toLowerCase().slice(0, 24) || null : null,
+      performanceMode: request.performanceMode === 'performance' ? 'performance' : 'normal',
       generateAudio: request.generateAudio,
       cameraControl: mediaKind === 'video' ? normalizeVideoCameraControl(request.cameraControl) : null,
       referenceFileIds,
@@ -9642,6 +9652,7 @@ function registerIpcHandlers() {
       resolution: request.resolution,
       duration: request.duration,
       serviceTier: request.serviceTier,
+      performanceMode: request.performanceMode === 'performance' ? 'performance' : 'normal',
       generateAudio: request.generateAudio,
       referenceMediaTypes: request.referenceMediaTypes
     });

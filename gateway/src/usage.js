@@ -13,7 +13,7 @@ import operatingCosts from '../../lib/operating-costs.js';
 import creditPricing from '../../lib/credit-pricing.js';
 
 const supabaseUrl = String(process.env.SUPABASE_URL || 'https://trmbhcniijedpmohkbzx.supabase.co').replace(/\/$/, '');
-export const CREDIT_PRICING_VERSION = '202609090008';
+export const CREDIT_PRICING_VERSION = creditPricing.CREDIT_PRICING_VERSION;
 const LEGACY_POINTS_PER_CNY = 10;
 const POINTS_PER_CNY = 1000 / 70;
 const POINT_DENOMINATION_SCALE = POINTS_PER_CNY / LEGACY_POINTS_PER_CNY;
@@ -448,17 +448,15 @@ export function quoteUsage(kind, request = {}) {
       throw Object.assign(new Error('The selected image provider is not allowed.'), { code: 'provider-not-allowed', status: 400 });
     }
     const sharedQuote = creditPricing.quoteMediaCredits({
-      kind: 'image', providerId, count: request.count, quality: request.quality,
+      kind: 'image', providerId, count: request.count, quality: request.quality, performanceMode: request.performanceMode,
       resolution: request.resolution, size: request.size
     });
-    const performance = String(request.performanceMode || '').trim().toLowerCase() === 'performance';
-    const modeMultiplier = performance ? 1.6 : 1;
     return {
       kind: 'image',
       providerId: sharedQuote.providerId,
-      credits: Math.ceil((Number(sharedQuote.totalCredits) || 0) * modeMultiplier),
-      unitCredits: Math.ceil((Number(sharedQuote.unitCredits) || 0) * modeMultiplier),
-      totalCredits: Math.ceil((Number(sharedQuote.totalCredits) || 0) * modeMultiplier),
+      credits: sharedQuote.totalCredits,
+      unitCredits: sharedQuote.unitCredits,
+      totalCredits: sharedQuote.totalCredits,
       count: sharedQuote.count,
       resolution: sharedQuote.quality || sharedQuote.resolution || null,
       ...(sharedQuote.quality ? { quality: sharedQuote.quality } : {}),
@@ -476,17 +474,15 @@ export function quoteUsage(kind, request = {}) {
       throw Object.assign(new Error('The selected video provider is not allowed.'), { code: 'provider-not-allowed', status: 400 });
     }
     const sharedQuote = creditPricing.quoteMediaCredits({
-      kind: 'video', providerId: requestedProviderId, resolution: request.resolution,
+      kind: 'video', providerId: requestedProviderId, resolution: request.resolution, performanceMode: request.performanceMode,
       size: request.size, duration: request.duration, serviceTier: request.serviceTier,
       model: request.model, referenceMediaTypes: request.referenceMediaTypes, generateAudio: request.generateAudio
     });
-    const performance = String(request.performanceMode || '').trim().toLowerCase() === 'performance';
-    const modeMultiplier = performance ? 1.6 : 1;
     return {
       kind: 'video',
       providerId: sharedQuote.providerId,
-      credits: Math.ceil((Number(sharedQuote.totalCredits) || 0) * modeMultiplier),
-      unitCredits: Math.ceil((Number(sharedQuote.unitCredits) || 0) * modeMultiplier),
+      credits: sharedQuote.totalCredits,
+      unitCredits: sharedQuote.unitCredits,
       fixedCredits: sharedQuote.fixedCredits || 0,
       minimumCredits: sharedQuote.minimumCredits || MINIMUM_VIDEO_CREDITS,
       resolution: sharedQuote.resolution,
@@ -611,7 +607,7 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
     p_duration: quote.duration,
     p_expected_credits: quote.credits,
     ...(quote.kind === 'image'
-      ? { p_count: quote.count }
+      ? { p_count: quote.count, ...(request.performanceMode === 'performance' ? { p_performance_mode: 'performance' } : {}) }
       : {
         p_reference_image_count: Array.isArray(request.referenceMediaTypes)
           ? request.referenceMediaTypes.filter((value) => String(value || '').trim().toLowerCase() === 'image').length
@@ -621,7 +617,7 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
       })
   });
   const reserveRpc = quote.kind === 'image'
-    ? 'reserve_ai_media_credits'
+    ? (request.performanceMode === 'performance' ? 'reserve_ai_mode_media_credits' : 'reserve_ai_media_credits')
     : 'reserve_ai_video_credits';
   let { response, payload } = await reserveCredits(headers, requestBody, fetchImpl, reserveRpc);
   // Keep image generation available while the additive media-credit RPC is
@@ -629,7 +625,7 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
   // retrying that server-side function is safe because the request id keeps
   // the reservation idempotent. Never use this path for videos because their
   // reference-media parameters are not represented by the legacy signature.
-  if (!response.ok && quote.kind === 'image' && response.status === 404) {
+  if (!response.ok && quote.kind === 'image' && request.performanceMode !== 'performance' && response.status === 404) {
     const legacyBody = JSON.stringify({
       p_user_id: userId,
       p_kind: quote.kind,
@@ -648,7 +644,7 @@ export async function reserveUsage(userId, kind, requestId, request = {}, fetchI
       p_request_id: requestId, p_resolution: quote.billingResolution || quote.resolution, p_duration: quote.duration,
       p_expected_credits: Number(payload.credits),
       ...(quote.kind === 'image'
-        ? { p_count: quote.count }
+        ? { p_count: quote.count, ...(request.performanceMode === 'performance' ? { p_performance_mode: 'performance' } : {}) }
         : {
           p_reference_image_count: Array.isArray(request.referenceMediaTypes)
             ? request.referenceMediaTypes.filter((value) => String(value || '').trim().toLowerCase() === 'image').length

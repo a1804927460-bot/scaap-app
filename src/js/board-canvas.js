@@ -6882,6 +6882,18 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   let creditQuoteRevision = 0;
 
   function setOptionsOpen(open) {
+    if (open) optionsPanel.hidden = false;
+    if (open && !pop.classList.contains('is-moodboard-composer')) {
+      const host = optionsPanel.offsetParent || pop;
+      const hostRect = host.getBoundingClientRect();
+      const triggerRect = optionsToggle.getBoundingClientRect();
+      const width = Math.min(360, host.clientWidth - 24);
+      const scale = hostRect.width / host.offsetWidth || 1;
+      const left = Math.max(12, Math.min((triggerRect.left - hostRect.left) / scale, host.clientWidth - width - 12));
+      const bottom = host.clientHeight - (triggerRect.top - hostRect.top) / scale + 8;
+      pop.style.setProperty('--options-anchor-left', `${left}px`);
+      pop.style.setProperty('--options-anchor-bottom', `${bottom}px`);
+    }
     optionsPanel.hidden = !open;
     optionsToggle.classList.toggle('is-active', open);
     if (open) {

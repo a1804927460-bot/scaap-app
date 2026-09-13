@@ -28,7 +28,7 @@ const {
 } = require('../lib/credit-pricing');
 
 assert.strictEqual(POINTS_PER_CNY, 1000 / 70);
-assert.strictEqual(CREDIT_PRICING_VERSION, '202609090008');
+assert.strictEqual(CREDIT_PRICING_VERSION, '202609140001');
 assert.strictEqual(RETAIL_GROSS_MARGIN_PERCENT, 16.9);
 assert.strictEqual(RETAIL_MARKUP_PERCENT, 33.33333333333333);
 assert.strictEqual(RETAIL_MULTIPLIER, 4 / 3);
