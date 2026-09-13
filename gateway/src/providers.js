@@ -1006,7 +1006,7 @@ async function generateAtlasGptImage(provider, body, signal, hooks = {}) {
     }) : [];
     const outputFormat = String(body.outputFormat || 'jpeg').trim().toLowerCase();
     const requestBody = {
-      model: urls.length ? 'openai/gpt-image-2/edit' : 'openai/gpt-image-2/text-to-image',
+      model: urls.length ? (provider.editModel || 'openai/gpt-image-2/edit') : (provider.model || 'openai/gpt-image-2/text-to-image'),
       prompt: String(body.prompt || '').trim(),
       size: gptImage2Size(body),
       quality: ['low', 'medium', 'high'].includes(String(body.quality || '').toLowerCase())
@@ -3124,23 +3124,42 @@ async function createAtlasKlingVideoTask(provider, body, signal) {
         {code:'invalid-reference-media',status:400,preSubmissionFailure:true});
     }
   }
-  // Verify the account tariff before spending: discounts can expire.
-  const calculated = await responseJson(await fetch('https://api.atlascloud.ai/api/v1/model/calculate', {
-    method:'POST',headers:providerHeaders(provider,true),signal:providerSignal(signal,15000),
-    body:JSON.stringify({model:input.variant.model,duration:input.duration,resolution:input.resolution,
-      ...(input.variant.sound?{sound:input.sound}:{})})
-  }),provider.name);
+  // A price check cannot create a billable task, even if its transport fails.
+  let calculated;
+  try {
+    calculated = await responseJson(await fetch('https://api.atlascloud.ai/api/v1/model/calculate', {
+      method:'POST',headers:providerHeaders(provider,true),signal:providerSignal(signal,15000),
+      body:JSON.stringify({model:input.variant.model,duration:input.duration,resolution:input.resolution,
+        ...(input.variant.sound?{sound:input.sound}:{})})
+    }),provider.name);
+  } catch (error) {
+    error.preSubmissionFailure = true;
+    error.submissionAmbiguous = false;
+    error.providerStage = 'price-check';
+    throw error;
+  }
   const current = Number(calculated?.data?.price);
   if (calculated?.code !== 200 || !Number.isFinite(current) || current <= 0
       || current > input.usdPerSecond*input.duration + 0.00001) {
     throw Object.assign(new Error('Kling pricing changed or could not be verified. Please refresh the quote.'),
       {code:'provider-price-changed',status:409,safeToFallback:false});
   }
-  input.payload.image = await atlasMediaReference(provider,input.payload.image,'image',signal);
-  if(input.payload.end_image) input.payload.end_image = await atlasMediaReference(provider,input.payload.end_image,'image',signal);
-  const created = await responseJson(await fetch(provider.endpoint,{
-    method:'POST',headers:providerTaskHeaders(provider,body),signal:providerSignal(signal,45000),body:JSON.stringify(input.payload)
-  }),provider.name);
+  try {
+    input.payload.image = await atlasMediaReference(provider,input.payload.image,'image',signal);
+    if(input.payload.end_image) input.payload.end_image = await atlasMediaReference(provider,input.payload.end_image,'image',signal);
+  } catch (error) {
+    error.providerStage = 'reference-upload';
+    throw error;
+  }
+  let created;
+  try {
+    created = await responseJson(await fetch(provider.endpoint,{
+      method:'POST',headers:providerTaskHeaders(provider,body),signal:providerSignal(signal,45000),body:JSON.stringify(input.payload)
+    }),provider.name);
+  } catch (error) {
+    error.providerStage = 'generation-submit';
+    throw error;
+  }
   const taskId=providerVideoTaskId(created);
   if(!taskId || taskId.length>256) throw Object.assign(new Error('Kling did not return a valid task ID.'),{code:'provider-invalid-response',status:502,submissionAmbiguous:true});
   return {providerId:provider.id,taskId};

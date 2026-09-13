@@ -7501,6 +7501,24 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   color: var(--text-primary);
   box-shadow: var(--shadow-subtle);
 }
+/* Keep the fixed canvas switch legible in the light theme.  The generic
+   surface token can be nearly white there, which made the selected tab
+   disappear against the switch background. */
+[data-theme="light"] .ai-media-mode-switch,
+.theme-light .ai-media-mode-switch {
+  background: #eef2f7;
+  border-color: #cfd7e3;
+}
+[data-theme="light"] .ai-media-mode-switch button.is-active,
+.theme-light .ai-media-mode-switch button.is-active {
+  background: #ffffff;
+  color: #162033;
+  box-shadow: 0 2px 8px rgba(31, 45, 61, .18);
+}
+[data-theme="light"] .ai-media-mode-switch button:not(.is-active),
+.theme-light .ai-media-mode-switch button:not(.is-active) {
+  color: #536176;
+}
 .ai-image-prompt {
   width: 100%;
   min-height: 92px;
