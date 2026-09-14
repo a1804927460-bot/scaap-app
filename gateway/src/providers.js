@@ -3113,7 +3113,11 @@ async function createAireiterVideoTask(provider, body, signal) {
 
 async function createAtlasKlingVideoTask(provider, body, signal) {
   const input = klingOptions.klingInput(body);
-  for (const url of body.urls) {
+  // Validation above normalizes the reference list, but older desktop
+  // clients can omit `urls` when they send a single start frame. Avoid a
+  // transport-level TypeError and let the option validator return the normal
+  // pre-submission error instead.
+  for (const url of (Array.isArray(body.urls) ? body.urls : [])) {
     const asset = atlasLocalMediaAsset(url,'image');
     if (!asset) continue;
     const dimensions = generatedImageDimensions(asset.buffer);
