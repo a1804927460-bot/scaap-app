@@ -49,33 +49,48 @@ jobs:
       - name: Bundle document preview tools
         shell: pwsh
         run: |
-          $libreOffice = Join-Path $env:ProgramFiles 'LibreOffice'
-          $libreOfficeExe = Join-Path $libreOffice 'program\soffice.exe'
-          if (-not (Test-Path $libreOfficeExe)) {
-            $libreOfficeVersion = '25.2.3'
-            $libreOfficeMsi = Join-Path $env:RUNNER_TEMP "LibreOffice-$libreOfficeVersion.msi"
-            $libreOfficeUrl = "https://download.documentfoundation.org/libreoffice/stable/$libreOfficeVersion/win/x86_64/LibreOffice_${libreOfficeVersion}_Win_x86-64.msi"
-            # Bound both network and installer waits so a hosted runner cannot
-            # consume the entire workflow indefinitely when a mirror stalls.
-            Invoke-WebRequest -Uri $libreOfficeUrl -OutFile $libreOfficeMsi -UseBasicParsing -TimeoutSec 300
-            $install = Start-Process msiexec.exe -ArgumentList @('/i', $libreOfficeMsi, '/qn', '/norestart') -PassThru
-            if (-not $install.WaitForExit(300000)) {
-              Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue
-              throw 'LibreOffice MSI installation timed out after 300 seconds.'
-            }
-            if ($install.ExitCode -notin @(0, 3010)) { throw "LibreOffice MSI failed with exit code $($install.ExitCode)." }
+          $ErrorActionPreference = 'Stop'
+          $searchRoots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ChocolateyInstall, $env:ChocolateyToolsLocation) | Where-Object { $_ -and (Test-Path $_) }
+          $libreOfficeExe = Get-Command soffice.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+          if (-not $libreOfficeExe) {
+            $libreOfficeExe = Get-ChildItem $searchRoots -Filter soffice.exe -Recurse -File -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
           }
+          if (-not $libreOfficeExe) {
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              choco install libreoffice --no-progress -y --force --execution-timeout=1200 --timeout=1200 --web-request-timeout=300
+              if ($LASTEXITCODE -eq 0) { break }
+              if ($attempt -eq 3) { throw 'LibreOffice installation failed after three attempts.' }
+              Start-Sleep -Seconds 10
+            }
+            Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1" -ErrorAction SilentlyContinue
+            refreshenv
+            $libreOfficeExe = Get-Command soffice.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+          }
+          if (-not $libreOfficeExe) {
+            $libreOfficeExe = Get-ChildItem $searchRoots -Filter soffice.exe -Recurse -File -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $libreOfficeExe) { throw 'LibreOffice soffice.exe was not found after installation.' }
+
           choco install imagemagick.app --no-progress -y --execution-timeout=600
-          $imageMagick = Get-ChildItem -Directory $env:ProgramFiles |
-            Where-Object Name -Like 'ImageMagick-*' |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-          if (-not (Test-Path $libreOfficeExe)) { throw 'LibreOffice was not installed from the official installer.' }
-          if (-not $imageMagick -or -not (Test-Path (Join-Path $imageMagick.FullName 'magick.exe'))) { throw 'ImageMagick was not installed.' }
-          Remove-Item build-resources/tools/libreoffice -Recurse -Force
-          Remove-Item build-resources/tools/imagemagick -Recurse -Force
-          Copy-Item $libreOffice build-resources/tools/libreoffice -Recurse
-          Copy-Item $imageMagick.FullName build-resources/tools/imagemagick -Recurse
+          Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1" -ErrorAction SilentlyContinue
+          refreshenv
+          $imageMagickExe = Get-Command magick.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+          if (-not $imageMagickExe) {
+            $imageMagickExe = Get-ChildItem $searchRoots -Filter magick.exe -Recurse -File -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $imageMagickExe) { throw 'ImageMagick magick.exe was not found after installation.' }
+
+          $libreOffice = Split-Path (Split-Path $libreOfficeExe -Parent) -Parent
+          $imageMagick = Split-Path $imageMagickExe -Parent
+          Remove-Item build-resources/tools/libreoffice -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item build-resources/tools/imagemagick -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item build-resources/tools/libreoffice -ItemType Directory -Force | Out-Null
+          New-Item build-resources/tools/imagemagick -ItemType Directory -Force | Out-Null
+          Copy-Item $libreOffice build-resources/tools/libreoffice -Recurse -Force
+          Copy-Item $imageMagick build-resources/tools/imagemagick -Recurse -Force
 
       - name: Set release version and runtime config
         shell: pwsh
@@ -133,6 +148,10 @@ jobs:
           if (-not $installer) { throw 'Windows installer was not generated.' }
           $blockmap = Get-Item "$($installer.FullName).blockmap" -ErrorAction SilentlyContinue
           if (-not $blockmap) { throw 'Windows installer blockmap was not generated.' }
+          $sevenZip = Get-Command 7z.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+          if (-not $sevenZip) { throw '7-Zip is required to verify the NSIS installer payload.' }
+          & $sevenZip t $installer.FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Windows installer payload failed the 7-Zip integrity test.' }
           $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
           if ($env:MESSS_SIGNING_ENABLED -eq 'true') {
             if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate) {
@@ -150,7 +169,7 @@ jobs:
           }
           "MESSS_INSTALLER_PATH=$($installer.FullName)" >> $env:GITHUB_ENV
           "MESSS_BLOCKMAP_PATH=$($blockmap.FullName)" >> $env:GITHUB_ENV
-          Write-Host "Verified $($installer.Name), $($blockmap.Name), latest.yml, and signing state $($signature.Status)"
+          Write-Host "Verified $($installer.Name) extraction, $($blockmap.Name), latest.yml, and signing state $($signature.Status)"
 
       - name: Publish verified updater artifacts
         shell: pwsh
@@ -197,6 +216,9 @@ jobs:
 
       - name: Install desktop dependencies
         run: npm ci
+
+      - name: Install gateway dependencies
+        run: npm --prefix gateway ci
 
       - name: Set release version and runtime config
         shell: bash
