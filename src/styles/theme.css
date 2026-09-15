@@ -206,11 +206,19 @@ button {
               transform var(--dur-fast) var(--ease-out);
 }
 
-button:active:not(:disabled) { transform: scale(0.95); }
+/* A smaller press response feels tactile without making compact controls
+   jump or changing their hit area. */
+button:active:not(:disabled) { transform: scale(0.975); transition-timing-function: var(--ease-spring); }
 button:disabled { cursor: var(--cursor-default); opacity: .5; }
 button:disabled * { cursor: var(--cursor-default); }
 button svg { transition: transform var(--dur-fast) var(--ease-out); }
 button:not(:disabled):hover > svg { transform: translateY(-.5px); }
+button:not(:disabled):focus-visible { transition-duration: var(--dur-fast); }
+
+/* Canvas controls have their own pointer and camera motion system. Keep the
+   global tactile press effect out of that surface so clicking tools never
+   nudges the canvas or its toolbar. */
+.board-panel button:active:not(:disabled) { transform: none; }
 
 input { font-family: inherit; }
 

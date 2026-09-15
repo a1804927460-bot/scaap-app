@@ -533,7 +533,7 @@ assert.equal(chatCalls[0].options.headers.Authorization, 'Bearer aireiter-secret
 assert.deepEqual(JSON.parse(chatCalls[0].options.body), {
   model: 'chat-gemini-3.1-pro',
   messages: [{ role: 'user', content: 'Hello' }],
-  max_tokens: 4096,
+  max_tokens: 16384,
   stream: false
 });
 

@@ -23,9 +23,9 @@ export function chatBudget(request, usage, rate, turns) {
   const text = JSON.stringify(messages?.length ? messages : request.prompt || '');
   // UTF-8 bytes conservatively bound text tokens; allow upstream/system overhead.
   // Encoded image bytes are not text tokens. Bound each supported vision input.
-  const inputTokens = Buffer.byteLength(text, 'utf8') + 8192 + images * 16384;
+  const inputTokens = Buffer.byteLength(text, 'utf8') + 16384 + images * 16384;
   return pricing.calculateChatCost([
-    ...(turns?.length ? turns : usage ? [usage] : []), { inputTokens, outputTokens: 4096 }
+    ...(turns?.length ? turns : usage ? [usage] : []), { inputTokens, outputTokens: 16384 }
   ], rate).credits;
 }
 

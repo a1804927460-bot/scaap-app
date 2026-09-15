@@ -2130,6 +2130,7 @@ function setCanvasAgentOpen(open, options = {}) {
   if (!agent || !board) return false;
   const allowed = !!open && !board.classList.contains('is-canvas-library');
   const wasOpen = !agent.classList.contains('is-hidden');
+  if (!allowed) setCanvasAgentFloating(false);
   if (wasOpen === allowed) return allowed;
   agent.classList.toggle('is-hidden', !allowed);
   agent.inert = !allowed;
@@ -3051,16 +3052,27 @@ function initCanvasAgentFloating() {
     handle.setPointerCapture(event.pointerId); event.preventDefault();
   });
   handle.addEventListener('pointermove', event => {
-    if (!drag) return;
-    panel.style.left = `${Math.max(0,Math.min(window.innerWidth-panel.offsetWidth,event.clientX-drag.x))}px`;
-    panel.style.top = `${Math.max(0,Math.min(window.innerHeight-56,event.clientY-drag.y))}px`;
+    if (!drag || panel.classList.contains('is-hidden') || !panel.classList.contains('is-floating')) return;
+    positionCanvasAgentFloating(event.clientX-drag.x, event.clientY-drag.y);
   });
   handle.addEventListener('lostpointercapture', () => { drag = null; });
   handle.addEventListener('pointerup', () => { drag = null; });
+  handle.addEventListener('pointercancel', () => { drag = null; });
   window.addEventListener('resize', () => {
     if (!panel.classList.contains('is-floating')) return;
     const rect = panel.getBoundingClientRect();
-    panel.style.left = `${Math.max(0,Math.min(rect.left,window.innerWidth-panel.offsetWidth))}px`;
-    panel.style.top = `${Math.max(0,Math.min(rect.top,window.innerHeight-56))}px`;
+    positionCanvasAgentFloating(rect.left, rect.top);
   });
+}
+
+function positionCanvasAgentFloating(left, top) {
+  const panel = document.getElementById('board-agent-panel');
+  const rect = panel.getBoundingClientRect();
+  const scaleX = rect.width / panel.offsetWidth || 1;
+  const scaleY = rect.height / panel.offsetHeight || 1;
+  const targetLeft = Math.max(0, Math.min(window.innerWidth - rect.width, left));
+  const targetTop = Math.max(0, Math.min(window.innerHeight - rect.height, top));
+  // Convert viewport displacement to the fixed element's containing-block coordinates.
+  panel.style.left = `${(parseFloat(panel.style.left) || 0) + (targetLeft - rect.left) / scaleX}px`;
+  panel.style.top = `${(parseFloat(panel.style.top) || 0) + (targetTop - rect.top) / scaleY}px`;
 }

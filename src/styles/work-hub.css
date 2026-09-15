@@ -7,8 +7,9 @@
 .hub-wordmark { font-weight:850; font-size:24px; color:var(--brand-blue-bright); letter-spacing:-1px; }
 .hub-local { font-size:11px; color:var(--text-tertiary); }
 .hub-top nav { display:flex; gap:8px; }
-.work-hub button,.hub-editor button { font:inherit; color:var(--text-secondary); background:var(--bg-elevated); border:1px solid var(--border-hairline); border-radius:9px; padding:8px 13px; cursor:var(--cursor-click); transition:background .15s; }
-.work-hub button:hover,.hub-editor button:hover { color:var(--text-primary); background:var(--bg-hover); }
+.work-hub button,.hub-editor button { font:inherit; color:var(--text-secondary); background:var(--bg-elevated); border:1px solid var(--border-hairline); border-radius:9px; padding:8px 13px; cursor:var(--cursor-click); transition:background .15s var(--ease-out), border-color .15s var(--ease-out), color .15s var(--ease-out), transform .18s var(--ease-spring), box-shadow .18s var(--ease-out); }
+.work-hub button:hover,.hub-editor button:hover { color:var(--text-primary); background:var(--bg-hover); border-color:var(--border-strong); transform:translateY(-1px); box-shadow:0 5px 14px rgba(0,0,0,.08); }
+.work-hub button:active:not(:disabled),.hub-editor button:active:not(:disabled) { transform:translateY(0) scale(.975); box-shadow:none; }
 .work-hub button:disabled,.hub-editor button:disabled { opacity:.45; cursor:var(--cursor-wait); }
 .work-hub .hub-primary,.hub-editor .hub-primary { color:white; background:#237bdc; border-color:#3989e1; }
 .work-hub .hub-primary:hover,.hub-editor .hub-primary:hover { background:#328ced; color:white; }

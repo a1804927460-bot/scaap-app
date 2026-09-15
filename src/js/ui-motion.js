@@ -41,7 +41,10 @@ window.MesssUiMotion = (() => {
     const controlRect = control.getBoundingClientRect();
     const viewportRect = viewport.getBoundingClientRect();
     const originX = controlRect.left + controlRect.width / 2 - viewportRect.left;
-    const originY = controlRect.top + controlRect.height / 2 - viewportRect.top;
+    // Anchor the wave at the lower edge of the fixed mode switch so the
+    // canvas reacts upward from the control instead of radiating from its
+    // center and spilling the feedback toward the toolbar.
+    const originY = controlRect.bottom - viewportRect.top + 2;
     const farthestX = Math.max(originX, viewportRect.width - originX);
     const farthestY = Math.max(originY, viewportRect.height - originY);
     const finalDiameter = Math.max(750, Math.hypot(farthestX, farthestY) * 2);

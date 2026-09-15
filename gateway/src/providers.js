@@ -561,7 +561,7 @@ function isAireiterProvider(provider) {
   );
 }
 
-function orderMixedRouteIds(routeIds, byId, requested) {
+function orderMixedRouteIds(routeIds, byId, requested, body = {}) {
   const unique = [...new Set(routeIds.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))];
   // These product IDs own their selected primary routes. Do not reorder a
   // hidden compatibility route ahead of the endpoint declared by the model.
@@ -572,6 +572,13 @@ function orderMixedRouteIds(routeIds, byId, requested) {
   });
   const aireiter = unique.filter((id) => isAireiterProvider(byId.get(id)));
   const existing = unique.filter((id) => !aireiter.includes(id) && !atlas.includes(id));
+  const performanceNanoPro = String(body.performanceMode || '').toLowerCase() === 'performance'
+    && requested?.kind === 'image' && requested?.logicalModel === 'nano-banana-pro';
+  if (performanceNanoPro) {
+    const quick = unique.filter((id) => id.startsWith('quickrouter-nano-pro-'));
+    // Prefer verified QuickRouter Banana Pro only for performance mode.
+    return [...quick, ...aireiter.filter(id => !quick.includes(id)), ...atlas, ...existing.filter(id => !quick.includes(id))];
+  }
   if (requested && requested.routingPolicy === 'atlas-primary') {
     // Seedance is explicitly Atlas-first. Approved fallbacks are attempted
     // only after a proven pre-submission rejection; accepted or ambiguous

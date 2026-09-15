@@ -15,6 +15,11 @@ const root = path.resolve(__dirname, '..');
     await page.route('**/js/app.js', route => route.fulfill({ contentType: 'text/javascript', body: '' }));
     await page.goto(pathToFileURL(path.join(root, 'src/index.html')).href);
     const source = fs.readFileSync(path.join(root, 'src/js/canvas-workspace.js'), 'utf8');
+    for (const name of ['setCanvasAgentFloating', 'initCanvasAgentFloating', 'positionCanvasAgentFloating']) {
+      const start = source.indexOf(`function ${name}(`);
+      const end = source.indexOf('\n}', start) + 2;
+      await page.evaluate(`window.${name} = ` + source.slice(start, end));
+    }
     await page.evaluate('window.handleCanvasAgentShortcut = ' + source.slice(source.indexOf('function handleCanvasAgentShortcut('), source.indexOf('function setCanvasAgentOpen(')));
     await page.evaluate('window.setCanvasAgentOpen = ' + source.slice(source.indexOf('function setCanvasAgentOpen('), source.indexOf('function canvasAgentPrompt(')));
     await page.evaluate(() => {
@@ -60,9 +65,27 @@ const root = path.resolve(__dirname, '..');
       assert.equal(await page.locator('#board-agent-panel').evaluate(el => getComputedStyle(el).transitionDuration), '0s');
       assert.equal(await page.locator('.board-agent-message-files').evaluate(el => getComputedStyle(el).display), 'flex');
       assert.equal(await page.locator('#board-panel').evaluate(el => el.classList.contains('is-fullscreen')), false);
+      await page.evaluate(() => {
+        initCanvasAgentFloating();
+        document.getElementById('board-panel').style.transform = 'scale(.85)';
+        setCanvasAgentFloating(true);
+        positionCanvasAgentFloating(400, 110);
+      });
+      const handle = page.locator('#board-agent-drag');
+      const grab = await handle.boundingBox();
+      const before = await page.locator('#board-agent-panel').boundingBox();
+      await page.mouse.move(grab.x + 30, grab.y + 20);
+      await page.mouse.down();
+      await page.mouse.move(grab.x - 90, grab.y + 55, { steps: 5 });
+      await page.mouse.up();
+      const after = await page.locator('#board-agent-panel').boundingBox();
+      assert.ok(Math.abs(after.x - before.x + 120) < 2, 'drag preserves horizontal grab offset');
+      assert.ok(Math.abs(after.y - before.y - 35) < 2, 'drag preserves vertical grab offset');
       await page.keyboard.press('Control+Space');
       await page.waitForTimeout(450);
       assert.equal(await page.locator('#board-agent-panel').isVisible(), false);
+      assert.equal(await page.locator('#board-agent-panel').evaluate(el => el.classList.contains('is-floating') || !!el.style.left || !!el.style.height), false);
+      await page.evaluate(() => document.getElementById('board-panel').style.removeProperty('transform'));
       await page.keyboard.press('Control+Space');
       await page.waitForTimeout(450);
       assert.equal(await page.locator('#board-agent-panel').isVisible(), true);

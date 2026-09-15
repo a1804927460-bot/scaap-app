@@ -2323,6 +2323,8 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   font-family: var(--font-display);
   font-size: 26px;
   font-weight: 900;
+  font-stretch: expanded;
+  letter-spacing: 0;
   line-height: 1;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -2331,6 +2333,10 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 [data-theme="dark"] .ai-assistant-brand-word,
 [data-theme="dark"] .ai-assistant-brand-dot { color: var(--brand-blue-bright); }
 .ai-assistant-brand-dot { color: inherit; }
+[data-theme="light"] .ai-assistant-brand-word,
+[data-theme="light"] .ai-assistant-brand-dot {
+  color: var(--text-primary);
+}
 .ai-assistant-brand:focus-visible { outline: 2px solid var(--brand-blue-bright); outline-offset: 4px; }
 .ai-assistant-panel.is-fullscreen .ai-assistant-brand {
   gap: 12px;
@@ -5271,7 +5277,11 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   backface-visibility: visible;
   z-index: 2;
 }
-.board-canvas.is-transforming { will-change: auto; }
+.board-canvas.is-transforming {
+  /* Promote only during camera movement; the base canvas stays unpromoted so
+     large boards do not permanently consume a compositor surface. */
+  will-change: transform;
+}
 /* While the whole canvas is moving, keep the frame compositor-friendly. */
 .board-canvas.is-transforming .board-item,
 .board-canvas.is-transforming .board-item * {

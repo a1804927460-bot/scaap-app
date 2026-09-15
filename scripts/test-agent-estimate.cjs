@@ -28,7 +28,7 @@ assert.deepEqual(estimateAgentCredits({chatModel:'gpt-5.6-sol',messages:[{conten
 
 const short=estimateAgentCredits({chatModel:'gpt-6-astra',messages:[{role:'user',content:'hello'}]});
 const long=estimateAgentCredits({chatModel:'gpt-6-astra',messages:[{role:'user',content:'x'.repeat(300000)},...Array.from({length:30},()=>({role:'assistant',content:'recent'}))]});
-assert.ok(long.max>short.max*10,'History before the last 19 messages must be included, including long-context tier');
+assert.ok(long.max>short.max*5,'History before the last 19 messages must be included, including long-context tier');
 assert.equal(estimateAgentCredits({chatModel:'gpt-6-astra',attachmentFileIds:['document']}).available,false);
 const attachment=estimateAgentCredits({chatModel:'gpt-6-astra',attachmentsResolved:true,messages:[{role:'user',content:'hello',attachments:[{kind:'file',content:'z'.repeat(50000)}]}]});
 assert.ok(attachment.max>short.max,'Resolved document content contributes to the preview');

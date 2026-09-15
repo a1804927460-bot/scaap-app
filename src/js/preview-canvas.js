@@ -26,6 +26,10 @@ const FullscreenPreviewCleanup = { current: null };
 const FullscreenPreviewState = { sourceVideo: null, cloneVideo: null };
 const PreviewPanCleanup = { current: null };
 const PreviewLanguageState = { unsupported: null };
+// Keep recently resolved preview descriptors warm so clicking between nearby
+// assets opens immediately instead of showing a loading state and repainting
+// the underlying workspace.
+const PreviewDescriptorCache = new Map();
 
 /** Re-centers the previewed image (clears any click-drag pan offset). Used
     when zoom changes �?without this, an existing pan offset gets visually
@@ -108,7 +112,14 @@ async function selectFileForPreview(id) {
   previewFitScale = 1;
   updatePreviewZoomUI();
 
-  const result = await window.messsAPI.getPreview(id);
+  let result = PreviewDescriptorCache.get(id);
+  if (!result) {
+    result = await window.messsAPI.getPreview(id);
+    if (result && !result.error) {
+      PreviewDescriptorCache.set(id, result);
+      if (PreviewDescriptorCache.size > 24) PreviewDescriptorCache.delete(PreviewDescriptorCache.keys().next().value);
+    }
+  }
 
   // The user may have clicked a different file while this was loading.
   if (AppState.activeFileId !== id || requestEpoch !== previewRequestEpoch) return;
