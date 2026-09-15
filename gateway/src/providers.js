@@ -382,6 +382,9 @@ function configuredProviders() {
       endpoint:`https://queue.fal.run/fal-ai/${route.model}`, protocol:route.protocol,
       keyEnv:'FAL_API_KEY', fallbackProviderIds:[], routeAliasOf:primary.id });
     if (process.env.FAL_IMAGE_BACKUP_ENABLED === 'true'
+        || (route.providerId === 'image-19'
+          && process.env.FAL_GPT_IMAGE_25_ENABLED !== 'false'
+          && Boolean(String(process.env.FAL_API_KEY || process.env.FAL_KEY || '').trim()))
         || (route.providerId === 'image-1' && process.env.FAL_NANO_BACKUP_ENABLED === 'true')) primary.fallbackProviderIds.push(route.id);
   }
   for (const route of quickRouterImageRoutes()) {
@@ -578,6 +581,12 @@ function orderMixedRouteIds(routeIds, byId, requested, body = {}) {
     const quick = unique.filter((id) => id.startsWith('quickrouter-nano-pro-'));
     // Prefer verified QuickRouter Banana Pro only for performance mode.
     return [...quick, ...aireiter.filter(id => !quick.includes(id)), ...atlas, ...existing.filter(id => !quick.includes(id))];
+  }
+  const performanceGpt25 = String(body.performanceMode || '').toLowerCase() === 'performance'
+    && requested?.kind === 'image' && requested?.logicalModel === 'gpt-image-2.5';
+  if (performanceGpt25) {
+    const fal = unique.filter((id) => id.startsWith('fal-backup-gpt-image-25-'));
+    return [...fal, ...aireiter.filter(id => !fal.includes(id)), ...atlas, ...existing.filter(id => !fal.includes(id))];
   }
   if (requested && requested.routingPolicy === 'atlas-primary') {
     // Seedance is explicitly Atlas-first. Approved fallbacks are attempted

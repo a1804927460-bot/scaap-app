@@ -351,7 +351,7 @@
       "protocol": "aireiter-async",
       "logicalModel": "gpt-image-2.5",
       "requiresActivation": false,
-      "capabilities": {"resolutionPresets":["1K","2K","4K"],"sizes":["1K","2K","4K"],"ratios":["1:1","16:9","9:16","4:3","3:4"],"maxReferenceImages":9,"referenceMimeTypes":["image/png","image/jpeg","image/webp"],"variantOptions":{"flare":{"label":"Flare","model":"gpt_image_2_5_flare"},"sunburst":{"label":"Sunburst","model":"gpt_image_2_5_sunburst"}}},
+      "capabilities": {"resolutionPresets":["1K","2K","4K"],"sizes":["1K","2K","4K"],"ratios":["1:1","16:9","9:16","4:3","3:4"],"qualities":["low","medium","high"],"maxReferenceImages":9,"referenceMimeTypes":["image/png","image/jpeg","image/webp"],"variantOptions":{"flare":{"label":"Flare","model":"gpt_image_2_5_flare"},"sunburst":{"label":"Sunburst","model":"gpt_image_2_5_sunburst"}}},
       "keyEnv": "AIREITER_API_KEY"
     },
     {

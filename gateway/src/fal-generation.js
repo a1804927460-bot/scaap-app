@@ -4,7 +4,9 @@ const origin = 'https://queue.fal.run';
 export const falImageRoutes = [
   { providerId:'image-1', id:'fal-backup-nano-pro', model:'nano-banana-pro', protocol:'fal-nano-queue' },
   { providerId:'image-2', id:'fal-backup-nano-2', model:'nano-banana-2', protocol:'fal-image-queue' },
-  { providerId:'image-6', id:'fal-backup-gpt-image-2', model:'gpt-image-2', protocol:'fal-image-queue' }
+  { providerId:'image-6', id:'fal-backup-gpt-image-2', model:'gpt-image-2', protocol:'fal-image-queue' },
+  { providerId:'image-19', id:'fal-backup-gpt-image-25-flare', model:'openai/gpt-image-2.5/flare', protocol:'fal-image-queue' },
+  { providerId:'image-19', id:'fal-backup-gpt-image-25-sun', model:'openai/gpt-image-2.5/sun', protocol:'fal-image-queue' }
 ];
 // Exact AIReiter official size table, not an approximate ratio conversion.
 const gptSizes = {
@@ -22,7 +24,7 @@ function incompatibleRequest() {
 export function falImageInput(provider, body) {
   const route = falImageRoutes.find(route => route.id === provider.id);
   if (!route) throw incompatibleRequest();
-  if (route.model !== 'gpt-image-2') return falNanoInput(body);
+  if (route.model !== 'gpt-image-2' && !route.model.startsWith('openai/gpt-image-2.5/')) return falNanoInput(body);
   const prompt = String(body.prompt || '').trim();
   const urls = Array.isArray(body.urls) ? body.urls : [];
   const resolution = String(body.size || body.resolution || '2K').trim().toUpperCase();
@@ -34,6 +36,7 @@ export function falImageInput(provider, body) {
       || (body.outputFormat && !['png','jpeg','webp'].includes(body.outputFormat))) throw incompatibleRequest();
   return { prompt, image_size:{width:dimensions[0],height:dimensions[1]}, quality,
     num_images:1, output_format:body.outputFormat || 'png', sync_mode:false,
+    ...(body.background ? { background:body.background } : {}),
     ...(urls.length ? {image_urls:urls} : {}) };
 }
 const ratios = new Set(['auto','21:9','16:9','3:2','4:3','5:4','1:1','4:5','3:4','2:3','9:16']);
@@ -55,7 +58,11 @@ export function falNanoInput(body) {
 // after transport ambiguity, acceptance, polling, or result-storage failures.
 export async function generateFalImage(provider, body, signal, hooks, deps) {
   const input = falImageInput(provider, body);
-  const model = falImageRoutes.find(route => route.id === provider.id).model;
+  let model = falImageRoutes.find(route => route.id === provider.id).model;
+  if (model === 'openai/gpt-image-2.5/flare'
+      && String(body.variant || '').trim().toLowerCase() === 'sunburst') {
+    model = 'openai/gpt-image-2.5/sun';
+  }
   const modelPath = `/fal-ai/${model}`;
   const endpoint = `${origin}${modelPath}${input.image_urls ? '/edit' : ''}`;
   const fetchImpl = deps.fetchImpl || fetch, sleep = deps.sleep || delay;
