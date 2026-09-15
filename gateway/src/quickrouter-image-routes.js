@@ -8,7 +8,11 @@ const rateTable=value=>Object.fromEntries(Object.entries(value||{}).filter(([siz
 export function quickRouterImageRoutes(env=process.env,now=Date.now()) {
   let profiles={};try{profiles=JSON.parse(env.QUICKROUTER_IMAGE_VERIFIED_PROFILES||'{}');}catch{}
   return DEFINITIONS.map(def=>{
-    const profile=profiles?.[def.id],key=String(env[def.keyEnv]||'').trim();
+    const profile=profiles?.[def.id];
+    // Railway deployments created before the Banana-specific variables used
+    // the shared Quick_API_KEY name. Accept that alias for the signed profile
+    // while keeping the profile hash and expiry checks mandatory.
+    const key=String(env[def.keyEnv] || env.QUICKROUTER_API_KEY || env.QUICK_API_KEY || env.Quick_API_KEY || '').trim();
     const verified=profile&&key&&profile.group===def.group
       && profile.keySha256===createHash('sha256').update(key).digest('hex')
       && Number.isFinite(Date.parse(profile.verifiedAt)) && Date.parse(profile.verifiedAt)<=now
