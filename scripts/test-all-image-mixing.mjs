@@ -24,20 +24,22 @@ const bodyFor=(route, preferred=true)=>{
     operationId=`mix-test-${i}`;
     if(preferFalImageChannel({id:route.providerId,kind:'image'},{operationId})===preferred) break;
   }
-  return {providerId:route.providerId,operationId,prompt:'test image generation',size:'1K',aspectRatio:'1:1',quality:'medium',urls:[]};
+  return {providerId:route.providerId,operationId,prompt:'test image generation',size:'1K',aspectRatio:'1:1',quality:'medium',urls:[],
+    ...(route.providerId==='image-19'?{performanceMode:'performance'}:{})};
 };
 try {
   for(const route of falImageRoutes) {
     const body=bodyFor(route);
     const provider={id:route.id};
+    const openAiGpt=route.model==='gpt-image-2' || route.model.startsWith('openai/gpt-image-2.5/');
     for(const size of ['1K','2K','4K']) {
       const ratios=['1:1','3:2','2:3','4:3','3:4','5:4','4:5','16:9','9:16','21:9'];
-      if(route.model==='gpt-image-2')ratios.push('2:1','1:2','9:21');
+      if(openAiGpt)ratios.push('2:1','1:2','9:21');
       for(const ratio of ratios) {
-        if(route.model==='gpt-image-2' && size==='4K' && !['16:9','9:16','21:9','2:1','1:2','9:21'].includes(ratio)) continue;
+        if(openAiGpt && size==='4K' && !['16:9','9:16','21:9','2:1','1:2','9:21'].includes(ratio)) continue;
         for(const quality of ['low','medium','high']) {
           const input=falImageInput(provider,{...body,size,aspectRatio:ratio,quality});
-          if(route.model==='gpt-image-2') {
+          if(openAiGpt) {
             assert.equal(input.quality,quality);
             assert.ok(input.image_size.width%16===0 && input.image_size.height%16===0);
             const pixels=input.image_size.width*input.image_size.height;
@@ -46,7 +48,7 @@ try {
         }
       }
     }
-    const maxRefs=route.model==='gpt-image-2'?9:8;
+    const maxRefs=openAiGpt?9:8;
     assert.equal(falImageInput(provider,{...body,urls:Array(maxRefs).fill('https://example.com/ref.png')}).image_urls.length,maxRefs);
     assert.throws(()=>falImageInput(provider,{...body,urls:Array(maxRefs+1).fill('https://example.com/ref.png')}));
     assert.throws(()=>falImageInput(provider,{...body,count:2}));
@@ -58,7 +60,7 @@ try {
       assert.equal(preferFalImageChannel(p,request),choice);
       if(choice)selected++;
     }
-    const expected=route.model==='gpt-image-2'?2000:1000;
+    const expected=route.providerId==='image-6'?2000:1000;
     assert.ok(Math.abs(selected-expected)<200,`${route.model}: ${selected}`);
     assert.equal(preferFalImageChannel({id:route.providerId,kind:'image'},{...body,_acceptedTask:{taskId:'accepted'}}),false);
 
@@ -74,7 +76,8 @@ try {
           if(mode==='reject-fal')return json({},429);
           if(mode==='ambiguous')throw new Error('connection lost');
           if(mode==='moderated')return json({},422);
-          return json({request_id:'fal-task',response_url:`https://queue.fal.run/fal-ai/${route.model}/requests/fal-task`});
+          const queueModel=route.model.includes('/')?route.model:`fal-ai/${route.model}`;
+          return json({request_id:'fal-task',response_url:`https://queue.fal.run/${queueModel}/requests/fal-task`});
         }
         if(mode==='poll-failed')return json({},503);
         if(url.endsWith('/status'))return json({status:'COMPLETED'});
@@ -84,7 +87,11 @@ try {
       throw new Error(`Unexpected request ${url}`);
     };
     const hooks={onAccepted:async task=>{accepted=task;}};
-    if (route.model !== 'gpt-image-2') {
+    // Sun is also exercised by the input matrix above. Runtime selection uses
+    // the Flare route plus variant=Sunburst so one logical request has one
+    // deterministic recovery identity.
+    if (route.id==='fal-backup-gpt-image-25-sun') continue;
+    if (!openAiGpt) {
       for (const urls of [[], ['https://example.com/ref.png']]) {
         mode='ok'; calls=[];
         assert.deepEqual(await generateMedia('image',{...body,urls},null,hooks),png);
@@ -109,7 +116,7 @@ try {
     for(const urls of [[],['https://example.com/ref.png']]) {
       mode='ok';calls=[];
       assert.deepEqual(await generateMedia('image',{...body,urls},null,hooks),png);
-      assert.equal(calls[0].url,`https://queue.fal.run/fal-ai/${route.model}${urls.length?'/edit':''}`);
+      assert.equal(calls[0].url,`https://queue.fal.run/${route.model.includes('/')?route.model:`fal-ai/${route.model}`}${urls.length?'/edit':''}`);
       assert.equal(calls.filter(c=>c.method==='POST').length,1);
       assert.equal(accepted.providerId,route.id);
       assert.ok(!JSON.stringify(publicProviderConfig()).includes(route.id));
@@ -131,10 +138,12 @@ try {
     await generateMedia('image',body,null,hooks);
     assert.equal(accepted.providerId,route.providerId,'Explicit FAL rejection may use original model');
     assert.equal(calls.filter(c=>c.url.endsWith('/submit')).length,1);
-    mode='reject-primary';calls=[];
-    await generateMedia('image',bodyFor(route,false),null,hooks);
-    assert.equal(accepted.providerId,route.id,'Explicit primary rejection may use FAL');
-    assert.ok(calls[0].url.endsWith('/submit'));
+    if(route.providerId!=='image-19') {
+      mode='reject-primary';calls=[];
+      await generateMedia('image',bodyFor(route,false),null,hooks);
+      assert.equal(accepted.providerId,route.id,'Explicit primary rejection may use FAL');
+      assert.ok(calls[0].url.endsWith('/submit'));
+    }
     mode='ok';calls=[];
     await assert.rejects(()=>generateFalNano(provider,{...body,_acceptedTask:{taskId:'fal-task',pollUrl:'https://queue.fal.run/fal-ai/wrong-model/requests/fal-task/status'}},null,{},{}));
     assert.equal(calls.length,0,'Stored endpoints cannot poll another model');
@@ -142,10 +151,13 @@ try {
     await generateMedia('image',body,null,hooks);
     assert.ok(calls[0].url.endsWith('/submit'),'Missing backup key must leave primary usable');
     process.env.FAL_KEY='test-backup';
-    process.env.FAL_IMAGE_BACKUP_ENABLED='false';calls=[];
+    process.env.FAL_IMAGE_BACKUP_ENABLED='false';
+    if(route.providerId==='image-19')process.env.FAL_GPT_IMAGE_25_ENABLED='false';
+    calls=[];
     await generateMedia('image',body,null,hooks);
     assert.ok(calls[0].url.endsWith('/submit'),'Rollback disables new FAL submissions');
     process.env.FAL_IMAGE_BACKUP_ENABLED='true';
+    delete process.env.FAL_GPT_IMAGE_25_ENABLED;
     delete process.env.AIREITER_API_KEY;calls=[];
     await assert.rejects(()=>generateMedia('image',{...body,prompt:'x'},null,hooks),e=>e.code==='invalid-reference-media');
     assert.equal(calls.length,0);

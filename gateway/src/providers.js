@@ -376,10 +376,10 @@ function configuredProviders() {
   }
   for (const route of falImageRoutes) {
     const primary = byId.get(route.providerId);
-    if (primary?.logicalModel !== route.model || primary.protocol !== 'aireiter-async') continue;
+    if (primary?.logicalModel !== (route.logicalModel || route.model) || primary.protocol !== 'aireiter-async') continue;
     // Keep identities available after rollback for already accepted jobs.
     byId.set(route.id, { ...primary, id:route.id, hidden:true,
-      endpoint:`https://queue.fal.run/fal-ai/${route.model}`, protocol:route.protocol,
+      endpoint:`https://queue.fal.run/${route.model.includes('/') ? route.model : `fal-ai/${route.model}`}`, protocol:route.protocol,
       keyEnv:'FAL_API_KEY', fallbackProviderIds:[], routeAliasOf:primary.id });
     if (process.env.FAL_IMAGE_BACKUP_ENABLED === 'true'
         || (route.providerId === 'image-19'

@@ -31,3 +31,22 @@ test('an interrupted stored video stream is recoverable and never yields partial
     else process.env.SUPABASE_SECRET_KEY = previous;
   }
 });
+
+test('historical video recovery probes deterministic storage keys when the database reference is missing', async () => {
+  const previous = process.env.SUPABASE_SECRET_KEY;
+  process.env.SUPABASE_SECRET_KEY = 'fixture';
+  try {
+    const bytes = Buffer.from('000000186674797069736f6d0000000069736f6d6d703432', 'hex');
+    const calls = [];
+    const result = await readStoredVideoResult(user, job, null, async (url) => {
+      calls.push(url);
+      return calls.length < 3 ? new Response('missing', { status: 404 }) : new Response(bytes, { headers: { 'Content-Type': 'video/mp4' } });
+    });
+    assert.deepEqual(result.buffer, bytes);
+    assert.match(result.storageRef, new RegExp(`${user}/${job}\\.mov$`));
+    assert.equal(calls.length, 3);
+  } finally {
+    if (previous === undefined) delete process.env.SUPABASE_SECRET_KEY;
+    else process.env.SUPABASE_SECRET_KEY = previous;
+  }
+});

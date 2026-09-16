@@ -171,51 +171,66 @@ export async function readStoredVideoResult(userId, requestId, reference, fetchI
     throw serviceError('video-result-storage-invalid', 'The stored video result is invalid.', 502);
   }
   const parsed = parseReference(reference, userId, requestId);
-  if (!parsed) throw serviceError('video-result-storage-missing', 'The saved video result is not available yet.', 404);
-  if (r2MediaConfigured()) {
-    let stored;
-    try { stored = await getR2Media(`video/${parsed.key}`, MAX_VIDEO_RESULT_BYTES); }
-    catch { throw serviceError('video-result-storage-unavailable', 'The saved video result is temporarily unavailable.'); }
-    if (stored) {
-      const type = videoType(stored.body, stored.contentType);
-      if (!type || !stored.body.length || stored.body.length > MAX_VIDEO_RESULT_BYTES) {
-        throw serviceError('video-result-storage-invalid', 'The saved video result is invalid.', 502);
+  const keys = parsed
+    ? [parsed.key]
+    : ['mp4', 'webm', 'mov'].map((extension) => (
+      `${String(userId).toLowerCase()}/${String(requestId).toLowerCase()}.${extension}`
+    ));
+  for (const key of keys) {
+    if (r2MediaConfigured()) {
+      let stored;
+      try { stored = await getR2Media(`video/${key}`, MAX_VIDEO_RESULT_BYTES); }
+      catch { throw serviceError('video-result-storage-unavailable', 'The saved video result is temporarily unavailable.'); }
+      if (stored) {
+        const type = videoType(stored.body, stored.contentType);
+        if (!type || !stored.body.length || stored.body.length > MAX_VIDEO_RESULT_BYTES) {
+          throw serviceError('video-result-storage-invalid', 'The saved video result is invalid.', 502);
+        }
+        return {
+          buffer: stored.body,
+          contentType: type.contentType,
+          storageRef: `storage://${VIDEO_RESULT_BUCKET}/${key}`
+        };
       }
-      return { buffer: stored.body, contentType: type.contentType };
     }
-  }
-  let response;
-  try {
-    response = await fetchImpl(storageUrl(parsed.key), {
-      headers: { ...serviceHeaders(), Accept: 'video/*,application/octet-stream' },
-      signal: AbortSignal.timeout(120_000)
-    });
-  } catch (error) {
-    throw serviceError('video-result-storage-unavailable', 'The saved video result is temporarily unavailable.');
-  }
-  if (response.status === 404) throw serviceError('video-result-storage-missing', 'The saved video result is not available yet.', 404);
-  if (!response.ok) throw serviceError('video-result-storage-unavailable', 'The saved video result is temporarily unavailable.');
-  const advertised = Number(response.headers.get('content-length')) || 0;
-  if (advertised > MAX_VIDEO_RESULT_BYTES) throw serviceError('video-result-storage-invalid', 'The saved video result is too large.', 502);
-  // Enforce the limit while reading; chunked storage responses may omit size.
-  const chunks = [];
-  let total = 0;
-  try {
-    for await (const chunk of response.body || []) {
-      total += chunk.length;
-      if (total > MAX_VIDEO_RESULT_BYTES) {
-        throw serviceError('video-result-storage-invalid', 'The saved video result is too large.', 502);
+    let response;
+    try {
+      response = await fetchImpl(storageUrl(key), {
+        headers: { ...serviceHeaders(), Accept: 'video/*,application/octet-stream' },
+        signal: AbortSignal.timeout(120_000)
+      });
+    } catch (error) {
+      throw serviceError('video-result-storage-unavailable', 'The saved video result is temporarily unavailable.');
+    }
+    if (response.status === 404) continue;
+    if (!response.ok) throw serviceError('video-result-storage-unavailable', 'The saved video result is temporarily unavailable.');
+    const advertised = Number(response.headers.get('content-length')) || 0;
+    if (advertised > MAX_VIDEO_RESULT_BYTES) throw serviceError('video-result-storage-invalid', 'The saved video result is too large.', 502);
+    // Enforce the limit while reading; chunked storage responses may omit size.
+    const chunks = [];
+    let total = 0;
+    try {
+      for await (const chunk of response.body || []) {
+        total += chunk.length;
+        if (total > MAX_VIDEO_RESULT_BYTES) {
+          throw serviceError('video-result-storage-invalid', 'The saved video result is too large.', 502);
+        }
+        chunks.push(chunk);
       }
-      chunks.push(chunk);
+    } catch (error) {
+      if (error.code === 'video-result-storage-invalid') throw error;
+      throw serviceError('video-result-storage-unavailable', 'The saved video download was interrupted.');
     }
-  } catch (error) {
-    if (error.code === 'video-result-storage-invalid') throw error;
-    throw serviceError('video-result-storage-unavailable', 'The saved video download was interrupted.');
+    const bytes = Buffer.concat(chunks, total);
+    const type = videoType(bytes, response.headers.get('content-type'));
+    if (!type || !bytes.length || bytes.length > MAX_VIDEO_RESULT_BYTES) {
+      throw serviceError('video-result-storage-invalid', 'The saved video result is invalid.', 502);
+    }
+    return {
+      buffer: bytes,
+      contentType: type.contentType,
+      storageRef: `storage://${VIDEO_RESULT_BUCKET}/${key}`
+    };
   }
-  const bytes = Buffer.concat(chunks, total);
-  const type = videoType(bytes, response.headers.get('content-type'));
-  if (!type || !bytes.length || bytes.length > MAX_VIDEO_RESULT_BYTES) {
-    throw serviceError('video-result-storage-invalid', 'The saved video result is invalid.', 502);
-  }
-  return { buffer: bytes, contentType: type.contentType };
+  throw serviceError('video-result-storage-missing', 'The saved video result is not available yet.', 404);
 }

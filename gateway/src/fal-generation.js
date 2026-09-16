@@ -5,8 +5,8 @@ export const falImageRoutes = [
   { providerId:'image-1', id:'fal-backup-nano-pro', model:'nano-banana-pro', protocol:'fal-nano-queue' },
   { providerId:'image-2', id:'fal-backup-nano-2', model:'nano-banana-2', protocol:'fal-image-queue' },
   { providerId:'image-6', id:'fal-backup-gpt-image-2', model:'gpt-image-2', protocol:'fal-image-queue' },
-  { providerId:'image-19', id:'fal-backup-gpt-image-25-flare', model:'openai/gpt-image-2.5/flare', protocol:'fal-image-queue' },
-  { providerId:'image-19', id:'fal-backup-gpt-image-25-sun', model:'openai/gpt-image-2.5/sun', protocol:'fal-image-queue' }
+  { providerId:'image-19', id:'fal-backup-gpt-image-25-flare', model:'openai/gpt-image-2.5/flare', logicalModel:'gpt-image-2.5', protocol:'fal-image-queue' },
+  { providerId:'image-19', id:'fal-backup-gpt-image-25-sun', model:'openai/gpt-image-2.5/sun', logicalModel:'gpt-image-2.5', protocol:'fal-image-queue' }
 ];
 // Exact AIReiter official size table, not an approximate ratio conversion.
 const gptSizes = {
@@ -63,7 +63,7 @@ export async function generateFalImage(provider, body, signal, hooks, deps) {
       && String(body.variant || '').trim().toLowerCase() === 'sunburst') {
     model = 'openai/gpt-image-2.5/sun';
   }
-  const modelPath = `/fal-ai/${model}`;
+  const modelPath = `/${model.includes('/') ? model : `fal-ai/${model}`}`;
   const endpoint = `${origin}${modelPath}${input.image_urls ? '/edit' : ''}`;
   const fetchImpl = deps.fetchImpl || fetch, sleep = deps.sleep || delay;
   let taskId = body._acceptedTask?.taskId || '', submitted = false, accepted = Boolean(taskId);
