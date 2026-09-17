@@ -105,7 +105,7 @@ assert.ok(gptImage25);
 assert.equal(gptImage25.model, 'gpt_image_2_5_flare');
 assert.deepEqual(Object.keys(gptImage25.capabilities.variantOptions), ['flare', 'sunburst']);
 assert.equal(gptImage25.capabilities.variantOptions.sunburst.model, 'gpt_image_2_5_sunburst');
-assert.equal(gptImage25.capabilities.qualities, undefined);
+assert.deepEqual(gptImage25.capabilities.qualities, ['low', 'medium', 'high']);
 assert.equal(gptImage2.capabilities.arbitraryRatios, false);
 assert.deepEqual(gptImage2.capabilities.resolutionRatios['4K'], ['16:9', '9:16', '2:1', '1:2', '21:9', '9:21']);
 assert.equal(gptImage2.capabilities.promptMaxCharacters, 32000);
