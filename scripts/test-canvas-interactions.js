@@ -208,8 +208,8 @@ assert.match(
 );
 assert.doesNotMatch(boardSource, /function boardTransform\(\)[\s\S]{0,200}?translate3d\(/,
   'Wheel interaction must not promote the entire overflow-based canvas into one 3D compositor layer.');
-assert.match(boardStyles, /\.board-canvas\.is-transforming\s*\{\s*will-change:\s*auto;\s*\}/,
-  'Transforming the infinite canvas must not force a single oversized GPU layer.');
+assert.match(boardStyles, /\.board-canvas\.is-transforming\s*\{[\s\S]*?will-change:\s*transform;[\s\S]*?\}/,
+  'Transforming the infinite canvas should promote only during camera movement.');
 assert.match(
   boardSource,
   /const groupMates = item\.isPartition[\s\S]*?: \(item\.selected && selectedMates\.length > 1\)[\s\S]*?\? selectedMates\s*: \[item\]/,
@@ -1232,8 +1232,8 @@ assert.match(
 );
 assert.match(
   boardStyles,
-  /\.board-canvas \{[^}]*will-change:\s*auto[^}]*backface-visibility:\s*visible[^}]*\}[\s\S]*?\.board-canvas\.is-transforming \{\s*will-change:\s*auto;/,
-  'The overflow-based infinite canvas must avoid oversized compositor layers during interaction.'
+  /\.board-canvas \{[^}]*will-change:\s*auto[^}]*backface-visibility:\s*visible[^}]*\}[\s\S]*?\.board-canvas\.is-transforming \{[\s\S]*?will-change:\s*transform;/,
+  'The overflow-based infinite canvas should promote only during interaction.'
 );
 assert.doesNotMatch(
   boardStyles,

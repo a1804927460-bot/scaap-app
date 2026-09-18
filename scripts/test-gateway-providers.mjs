@@ -98,7 +98,7 @@ assert.equal(providerPromptLimit('image', 'image-6', true), 32000);
 const gptImage25Provider = config.providers.find((provider) => provider.id === 'image-19');
 assert.equal(gptImage25Provider.name, 'GPT Image 2.5');
 assert.deepEqual(Object.keys(gptImage25Provider.capabilities.variantOptions), ['flare', 'sunburst']);
-assert.equal(gptImage25Provider.capabilities.qualities, undefined);
+assert.deepEqual(gptImage25Provider.capabilities.qualities, ['low', 'medium', 'high']);
 assert.equal(providerPromptLimit('image', 'image-1', false), 12000);
 assert.equal(providerPromptLimit('video', 'video-1', false), 7000);
 assert.match(
