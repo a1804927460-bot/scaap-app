@@ -1050,7 +1050,7 @@ function syncAssistantMediaOptions() {
     );
   }
 
-  const configuredQualities = !isVideo && Array.isArray(capabilities.qualities)
+  const configuredQualities = !isVideo && selectedAssistantProvider()?.id !== 'image-19' && Array.isArray(capabilities.qualities)
     ? capabilities.qualities.map((value) => String(value || '').trim().toLowerCase())
     : [];
   const visibleQualities = ['low', 'medium', 'high'].filter((quality) => configuredQualities.includes(quality));

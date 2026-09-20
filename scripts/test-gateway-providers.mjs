@@ -511,7 +511,7 @@ assert.deepEqual(await generateMedia('image', {
 const gpt25Submit = gpt25Calls.find((call) => call.url === 'https://aireiter.com/api/openapi/submit');
 const gpt25Body = JSON.parse(gpt25Submit.options.body);
 assert.equal(gpt25Body.model, 'gpt_image_2_5_sunburst');
-assert.deepEqual(gpt25Body.params, { prompt: 'precise edit', aspect_ratio: '1:1', resolution: '2K', background: 'transparent' });
+assert.deepEqual(gpt25Body.params, { prompt: 'precise edit', aspect_ratio: '1:1', resolution: '2K' });
 
 const chatCalls = [];
 globalThis.fetch = async (url, options = {}) => {

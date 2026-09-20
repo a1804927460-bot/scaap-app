@@ -116,7 +116,7 @@ try {
     for(const urls of [[],['https://example.com/ref.png']]) {
       mode='ok';calls=[];
       assert.deepEqual(await generateMedia('image',{...body,urls},null,hooks),png);
-      assert.equal(calls[0].url,`https://queue.fal.run/${route.model.includes('/')?route.model:`fal-ai/${route.model}`}${urls.length?'/edit':''}`);
+      assert.equal(calls[0].url,`https://queue.fal.run/${route.model.includes('/')?route.model:`fal-ai/${route.model}`}${urls.length?'/edit':route.model.startsWith('openai/gpt-image-2.5/')?'/text-to-image':''}`);
       assert.equal(calls.filter(c=>c.method==='POST').length,1);
       assert.equal(accepted.providerId,route.id);
       assert.ok(!JSON.stringify(publicProviderConfig()).includes(route.id));

@@ -6,7 +6,7 @@ export const falImageRoutes = [
   { providerId:'image-2', id:'fal-backup-nano-2', model:'nano-banana-2', protocol:'fal-image-queue' },
   { providerId:'image-6', id:'fal-backup-gpt-image-2', model:'gpt-image-2', protocol:'fal-image-queue' },
   { providerId:'image-19', id:'fal-backup-gpt-image-25-flare', model:'openai/gpt-image-2.5/flare', logicalModel:'gpt-image-2.5', protocol:'fal-image-queue' },
-  { providerId:'image-19', id:'fal-backup-gpt-image-25-sun', model:'openai/gpt-image-2.5/sun', logicalModel:'gpt-image-2.5', protocol:'fal-image-queue' }
+  { providerId:'image-19', id:'fal-backup-gpt-image-25-sun', model:'openai/gpt-image-2.5/sunburst', logicalModel:'gpt-image-2.5', protocol:'fal-image-queue' }
 ];
 // Exact AIReiter official size table, not an approximate ratio conversion.
 const gptSizes = {
@@ -59,12 +59,13 @@ export function falNanoInput(body) {
 export async function generateFalImage(provider, body, signal, hooks, deps) {
   const input = falImageInput(provider, body);
   let model = falImageRoutes.find(route => route.id === provider.id).model;
-  if (model === 'openai/gpt-image-2.5/flare'
-      && String(body.variant || '').trim().toLowerCase() === 'sunburst') {
-    model = 'openai/gpt-image-2.5/sun';
+  const isGpt25 = model.startsWith('openai/gpt-image-2.5/');
+  if (isGpt25 && body.variant) {
+    model = `openai/gpt-image-2.5/${String(body.variant || '').trim().toLowerCase() === 'sunburst' ? 'sunburst' : 'flare'}`;
   }
   const modelPath = `/${model.includes('/') ? model : `fal-ai/${model}`}`;
-  const endpoint = `${origin}${modelPath}${input.image_urls ? '/edit' : ''}`;
+  const endpoint = `${origin}${modelPath}${input.image_urls ? '/edit' : isGpt25 ? '/text-to-image' : ''}`;
+  const resultPaths = [modelPath, `${modelPath}/edit`, ...(isGpt25 ? [`${modelPath}/text-to-image`, '/openai/gpt-image-2.5'] : [])];
   const fetchImpl = deps.fetchImpl || fetch, sleep = deps.sleep || delay;
   let taskId = body._acceptedTask?.taskId || '', submitted = false, accepted = Boolean(taskId);
   let taskUrl = `${endpoint}/requests/${encodeURIComponent(taskId)}`;
@@ -103,13 +104,13 @@ export async function generateFalImage(provider, body, signal, hooks, deps) {
       if (task.response_url) {
         const url = new URL(task.response_url);
         if (url.origin === origin && !url.username && !url.password && !url.search && !url.hash
-          && [`${modelPath}/requests/${taskId}`, `${modelPath}/edit/requests/${taskId}`].includes(url.pathname)) taskUrl = url.href;
+          && resultPaths.map(path => `${path}/requests/${taskId}`).includes(url.pathname)) taskUrl = url.href;
       }
       await hooks.onAccepted?.({ providerId:provider.id, taskId, pollUrl:`${taskUrl}/status` });
     } else if (body._acceptedTask.pollUrl) {
       const url = new URL(body._acceptedTask.pollUrl);
       if (url.origin !== origin || url.username || url.password || url.search || url.hash
-        || ![`${modelPath}/requests/${taskId}/status`, `${modelPath}/edit/requests/${taskId}/status`].includes(url.pathname)) throw new Error('Invalid stored image task endpoint.');
+        || !resultPaths.map(path => `${path}/requests/${taskId}/status`).includes(url.pathname)) throw new Error('Invalid stored image task endpoint.');
       taskUrl = url.href.slice(0,-7);
     }
     const deadline = Date.now() + 20 * 60_000;

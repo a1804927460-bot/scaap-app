@@ -6815,7 +6815,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     window.MesssUiMotion?.canvasModeSwitch(modeSwitch, document.getElementById('board-viewport'), performanceMode, withFeedback);
   };
   applyPerformanceMode(savedPerformanceMode, false);
-  document.getElementById('board-performance-switch')?.addEventListener('click', (event) => { const button = event.target.closest('[data-performance-mode]'); if (button) applyPerformanceMode(button.dataset.performanceMode); });
+  document.getElementById('board-performance-switch')?.addEventListener('click', (event) => { const button = event.target.closest('[data-performance-mode]'); if (button) { applyPerformanceMode(button.dataset.performanceMode); syncGenerationOptions(); } });
   const videoModeTrigger = pop.querySelector('.ai-video-mode-trigger');
   const videoModeLabelElement = pop.querySelector('.ai-video-mode-label');
   const videoModeMenu = pop.querySelector('.ai-video-mode-menu');
@@ -7728,7 +7728,8 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const gpt25Panel = pop.querySelector('.ai-gpt25-options');
     const supportsGpt25Variants = kind === 'image' && selectedImageProvider()?.id === 'image-19';
     gpt25Panel.hidden = !supportsGpt25Variants;
-    pop.querySelector('.ai-gpt25-background').hidden = !supportsGpt25Variants;
+    pop.querySelector('.ai-gpt25-background').hidden = !supportsGpt25Variants || performanceMode !== 'performance';
+    if (supportsGpt25Variants && performanceMode !== 'performance') imageBackground = 'auto';
     pop.querySelectorAll('[data-option="image-background"] button').forEach(button => {
       button.classList.toggle('is-active', button.dataset.value === imageBackground);
       button.setAttribute('aria-pressed', String(button.dataset.value === imageBackground));
@@ -7796,7 +7797,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const supportedCounts = kind === 'image' && Array.isArray(capabilities.counts) && capabilities.counts.length
       ? capabilities.counts.map(Number).filter((value) => Number.isInteger(value) && value >= 1 && value <= 4)
       : [1, 2, 3, 4];
-    const supportedQualities = kind === 'image' && Array.isArray(capabilities.qualities)
+    const supportedQualities = kind === 'image' && !(supportsGpt25Variants && performanceMode !== 'performance') && Array.isArray(capabilities.qualities)
       ? capabilities.qualities.filter((value) => ['low', 'medium', 'high'].includes(value))
       : [];
     if (supportedQualities.length && !supportedQualities.includes(quality)) {

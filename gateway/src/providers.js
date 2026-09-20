@@ -1339,7 +1339,7 @@ function aireiterImageParams(provider, body) {
       ...(urls.length ? { image_url: urls } : {}),
       ...(submittedRatio && submittedRatio !== 'auto' ? { aspect_ratio: submittedRatio } : {}),
       resolution,
-      ...(body.background ? { background: body.background } : {})
+      // AI Reiter GPT 2.5 exposes resolution/ratio, not quality or background.
     };
   }
   if (provider.model === 'mj_v8_1') {

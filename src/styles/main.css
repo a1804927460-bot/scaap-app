@@ -5324,6 +5324,11 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .board-canvas[data-board-renderer="leafer"].is-transforming .board-item.is-selected > :not(.board-resize-handle) {
   visibility: hidden !important;
 }
+/* Remarks remain readable during camera motion, including on unselected media. */
+.board-canvas[data-board-renderer="leafer"].is-transforming .board-item > .board-media-remark,
+.board-canvas[data-board-renderer="leafer"].is-transforming .board-item.is-selected > .board-media-remark {
+  visibility: visible !important;
+}
 /* Keep mounted live media on the same surface throughout camera motion.
    Swapping it for the scene poster changes both its frame and its geometry. */
 .board-canvas[data-board-renderer="leafer"].is-transforming .mini-video-player,
