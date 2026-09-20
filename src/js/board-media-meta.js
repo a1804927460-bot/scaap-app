@@ -1,5 +1,14 @@
 'use strict';
 
+function appendBoardMediaRemark(element, item) {
+  if (!item.mediaRemark) return;
+  const remark = document.createElement('div');
+  remark.className = 'board-media-remark';
+  remark.textContent = String(item.mediaRemark).slice(0, 80);
+  remark.title = remark.textContent;
+  element.appendChild(remark);
+}
+
 function formatBoardMediaSize(file) {
   const width = Number(file.sourceWidth);
   const height = Number(file.sourceHeight);

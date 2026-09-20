@@ -2545,7 +2545,7 @@ function boardItemRenderSignature(item, file) {
   }
   if (!file) return `missing:${item.fileId || ''}`;
   return [
-    'file', item.layoutFrame || '', file.id, file.ext, file.name,
+    'file', item.layoutFrame || '', item.mediaRemark || '', file.id, file.ext, file.name,
     file.url, file.thumbUrl, file.previewUrl, file.modelPreviewUrl,
     file.sourceWidth, file.sourceHeight, file.sourceFolder,
     boardRenderMetadata(file.aiGeneration),
@@ -3301,8 +3301,10 @@ function createBoardItemElement(item) {
   el.appendChild(content);
   renderBoardItemContent(content, f, item);
   if (isImage) {
+    appendBoardMediaRemark(el, item);
     installBoardMediaControls(el, f, item, 'image');
   } else if (isVideo) {
+    appendBoardMediaRemark(el, item);
     installBoardMediaControls(el, f, item, 'video');
   }
 

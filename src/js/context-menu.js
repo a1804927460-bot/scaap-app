@@ -811,6 +811,28 @@ async function removeBoardItemFromCanvas(item) {
   }
 }
 
+async function editBoardMediaRemark(item) {
+  const result = await showCanvasTextDialog({
+    title: t('Remark', '备注'),
+    label: t('Remark (clear to remove)', '备注内容（清空可移除）'),
+    initialValue: String(item.mediaRemark || ''),
+    allowEmpty: true,
+    confirmLabel: t('Save', '保存')
+  });
+  if (!result || !AppState.boardItems.includes(item)) return;
+  const previous = item.mediaRemark;
+  item.mediaRemark = result.name.slice(0, 80);
+  persistBoardItemMutation({ upsert: [item] }, item.canvasId);
+  try {
+    await Board.historyPersistPromise;
+    renderBoard();
+  } catch (error) {
+    item.mediaRemark = previous;
+    renderBoard();
+    showToast(t('Could not save remark. Please retry.', '备注保存失败，请重试。'));
+  }
+}
+
 function showBoardItemContextMenu(item, x, y) {
   if (item.isPartition) {
     buildAndShowSimpleMenu([
@@ -871,6 +893,11 @@ function showBoardItemContextMenu(item, x, y) {
       }
     ];
     if (isImage || isVideo) {
+      items.push({
+        label: item.mediaRemark ? t('Edit remark', '修改备注') : t('Remark', '备注'),
+        icon: 'M4 4h16v12H8l-4 4V4;M8 8h8;M8 12h5',
+        action: () => editBoardMediaRemark(item)
+      });
       items.push({
         label: t('Send to After Effects', '\u53d1\u9001\u5230 After Effects'),
         icon: 'M22 2 11 13;M22 2l-7 20-4-9-9-4z',

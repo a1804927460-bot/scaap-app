@@ -539,6 +539,13 @@ function buildCanvasMosaic(canvas) {
   const mosaic = document.createElement('div');
   mosaic.className = 'canvas-library-mosaic';
   const entries = canvasPreviewEntries(canvas.id);
+  if (!entries.length) {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'canvas-library-thumb is-empty is-empty-canvas';
+    placeholder.textContent = t('Empty canvas', '空白画布');
+    mosaic.appendChild(placeholder);
+    return mosaic;
+  }
   for (let index = 0; index < 5; index += 1) {
     const cell = document.createElement('div');
     cell.className = 'canvas-library-thumb';
@@ -1343,7 +1350,9 @@ function showCanvasTextDialog({
   label,
   initialValue = '',
   projectId = null,
-  includeProject = false
+  includeProject = false,
+  allowEmpty = false,
+  confirmLabel = t('Create', '创建')
 }) {
   return new Promise((resolve) => {
     const old = document.getElementById('canvas-name-dialog');
@@ -1358,7 +1367,7 @@ function showCanvasTextDialog({
         <label class="canvas-project-field"><span>${escapeHtml(t('Folder', '文件夹'))}</span><select class="canvas-project-input"></select></label>
         <div class="canvas-name-dialog-actions">
           <button type="button" class="pill-btn pill-btn-ghost canvas-name-cancel">${escapeHtml(t('Cancel', '取消'))}</button>
-          <button type="submit" class="pill-btn canvas-name-confirm">${escapeHtml(t('Create', '创建'))}</button>
+          <button type="submit" class="pill-btn canvas-name-confirm">${escapeHtml(confirmLabel)}</button>
         </div>
       </form>
     `;
@@ -1388,7 +1397,7 @@ function showCanvasTextDialog({
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       const value = input.value.trim();
-      if (!value) {
+      if (!value && !allowEmpty) {
         input.focus();
         return;
       }
