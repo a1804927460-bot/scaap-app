@@ -83,6 +83,7 @@ function normalizeAiChatSession(session) {
     updatedAt: session.updatedAt || session.createdAt || new Date().toISOString(),
     favorite: session.favorite === true || session.pinned === true,
     unread: session.unread === true,
+    memory: typeof normalizeAgentMemory === 'function' ? normalizeAgentMemory(session.memory) : { facts: [] },
     messages
   };
 }
@@ -155,6 +156,7 @@ function ensureAiChatSession(title) {
     updatedAt: now,
     favorite: false,
     unread: false,
+    memory: { facts: [] },
     messages: []
   };
   AiAssistant.sessions.unshift(session);
@@ -189,6 +191,7 @@ function persistActiveAiChatSession(sessionId = AiAssistant.activeSessionId, mes
         sizeBytes: file.sizeBytes
       })) : []
     }));
+  if (typeof updateAgentMemory === 'function') session.memory = updateAgentMemory(session.memory, session.messages);
   session.updatedAt = new Date().toISOString();
   session.unread = sessionId !== AiAssistant.activeSessionId;
   persistAiChatHistory();
@@ -2040,7 +2043,9 @@ async function executeAssistantMessage(item) {
         permissionSession: item.permissionSession,
         workRequestId,
         prompt,
-        messages: conversationMessages,
+        messages: typeof buildAgentContextMessages === 'function'
+          ? buildAgentContextMessages(conversationMessages, sourceSession.memory)
+          : conversationMessages,
         attachmentFileIds: attachments.filter((item) => !item.attachmentToken).map((item) => item.id),
         attachmentTokens: attachments.map((item) => item.attachmentToken).filter(Boolean),
         chatProviderId: submittedProvider && submittedProvider.providerId,

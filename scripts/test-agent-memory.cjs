@@ -22,3 +22,19 @@ const {createLocalMemory} = require('../lib/agent-local-memory');
     console.log('Local memory passed: retrieval, Chinese segmentation, owner isolation, reload, updates, concurrent writes, deletion and secret rejection.');
   } finally { await fs.rm(root,{recursive:true,force:true}); }
 })().catch(error=>{console.error(error);process.exitCode=1;});
+
+// Shared conversation context policy: explicit preferences persist while old turns are bounded.
+const { updateAgentMemory, buildAgentContextMessages } = require('../src/js/agent-context.js');
+const memory = updateAgentMemory({ facts: [] }, [
+  { role: 'user', content: '记住：默认使用中文，普通模式保持不变。' },
+  { role: 'assistant', content: '好的。' },
+  ...Array.from({ length: 30 }, (_, i) => ({ role: 'user', content: `临时消息 ${i}` }))
+]);
+assert.deepEqual(memory.facts, ['记住：默认使用中文，普通模式保持不变。']);
+const compact = buildAgentContextMessages(
+  Array.from({ length: 40 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `消息 ${i}` })),
+  memory
+);
+assert.ok(compact.length <= 20, 'context window is bounded');
+assert.match(compact.find(message => message.role === 'system')?.content || '', /默认使用中文/);
+console.log('Agent context passed: explicit memory retention and bounded recent context.');

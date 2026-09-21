@@ -204,6 +204,7 @@ function normalizeCanvasAgentSession(session, fallbackCanvasId = null) {
     updatedAt: session.updatedAt || session.createdAt || new Date().toISOString(),
     favorite: session.favorite === true || session.pinned === true,
     unread: session.unread === true,
+    memory: typeof normalizeAgentMemory === 'function' ? normalizeAgentMemory(session.memory) : { facts: [] },
     messages
   };
 }
@@ -315,6 +316,7 @@ function ensureCanvasAgentSession(title = '') {
     updatedAt: now,
     favorite: false,
     unread: false,
+    memory: { facts: [] },
     messages: []
   };
   CanvasWorkspace.agentSessions.unshift(session);
@@ -336,6 +338,7 @@ function persistActiveCanvasAgentSession() {
       id: file.id, name: file.name, mimeType: file.mimeType, sizeBytes: file.sizeBytes, kind: file.kind
     })) : []
   }));
+  if (typeof updateAgentMemory === 'function') session.memory = updateAgentMemory(session.memory, session.messages);
   session.updatedAt = new Date().toISOString();
   session.unread = false;
   if (!session.messages.length) session.title = t('New conversation', '\u65b0\u5bf9\u8bdd');
@@ -2590,7 +2593,9 @@ async function requestCanvasAgentText(options = {}) {
       prompt: contextualPrompt,
       messages: options.isolated === true
         ? [{ role: 'user', content: contextualPrompt }]
-        : CanvasWorkspace.agentMessages,
+        : (typeof buildAgentContextMessages === 'function'
+          ? buildAgentContextMessages(CanvasWorkspace.agentMessages, activeCanvasAgentSession()?.memory)
+          : CanvasWorkspace.agentMessages),
       attachmentFileIds: referenceFiles.map((file) => file.id),
       chatProviderId: selected.providerId,
       routingStrategy: window.MesssAiProviderOptions?.routingStrategy(selected.model, CanvasWorkspace.agentChatUsePreset !== false),
@@ -2691,7 +2696,9 @@ async function submitCanvasAgentMessage() {
       canvasId: activeCanvasId(),
       permissionSession: window.MesssComposerActions?.session,
       prompt: contextualPrompt,
-      messages: CanvasWorkspace.agentMessages,
+      messages: typeof buildAgentContextMessages === 'function'
+        ? buildAgentContextMessages(CanvasWorkspace.agentMessages, activeCanvasAgentSession()?.memory)
+        : CanvasWorkspace.agentMessages,
       attachmentFileIds: referenceFiles.map((file) => file.id),
       chatProviderId: selected.providerId,
       routingStrategy: window.MesssAiProviderOptions?.routingStrategy(selected.model, CanvasWorkspace.agentChatUsePreset !== false),
