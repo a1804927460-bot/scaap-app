@@ -33,6 +33,21 @@
 }
 #board-agent-panel .board-agent-message { max-width: 100%; border-radius: 16px; }
 #board-agent-panel .board-agent-message.is-user { max-width: 88%; border-bottom-right-radius: 5px; }
+
+.agent-question-card { margin: 12px 0; border: 1px solid var(--border-color, #ddd); border-radius: 18px; padding: 16px; background: var(--panel-bg, #fff); box-shadow: 0 8px 28px rgba(0,0,0,.08); }
+.agent-question-head, .agent-question-actions { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.agent-question-head { margin-bottom: 12px; }
+.agent-question-head span { color: var(--muted-color, #888); font-size: 12px; }
+.agent-question-form { max-height: 360px; overflow:auto; }
+.agent-question-block { border:0; padding:0; margin:0 0 14px; }
+.agent-question-block legend { font-weight:600; margin-bottom:8px; }
+.agent-question-option { display:flex; align-items:center; gap:8px; padding:8px 6px; border-radius:9px; cursor:pointer; }
+.agent-question-option:hover { background: color-mix(in srgb, currentColor 7%, transparent); }
+.agent-question-custom { flex:1; min-width:90px; border:0; border-bottom:1px solid var(--border-color,#ddd); background:transparent; padding:3px 5px; }
+.agent-question-actions { justify-content:flex-end; margin-top:8px; }
+.agent-question-actions button { border:1px solid var(--border-color,#ddd); border-radius:10px; padding:7px 14px; background:transparent; cursor:pointer; }
+.agent-question-actions button:last-child { background:var(--accent-color,#222); color:#fff; }
+.agent-question-card.is-complete { opacity:.65; }
 .ai-assistant-panel .ai-assistant-message.is-error .ai-assistant-message-body,
 #board-agent-panel .board-agent-message.is-error {
   padding: 10px 14px; border-radius: 10px;

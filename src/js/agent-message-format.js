@@ -14,7 +14,7 @@ function renderAgentMessageContent(element, text) {
   function append(parent, tokens) {
     for (const token of tokens || []) {
       if (token.type === 'space' || token.type === 'def') continue;
-      if (token.type === 'code' && ['messs-image', 'messs-open'].includes(token.lang)) {
+      if (token.type === 'code' && ['messs-image', 'messs-open', 'messs-question'].includes(token.lang)) {
         const card = createAgentAppAction(token.lang, token.text);
         if (card) { parent.append(card); continue; }
       }
@@ -76,6 +76,7 @@ function createAgentAppAction(kind, raw) {
   let action;
   try { action = JSON.parse(raw); } catch { return null; }
   if (!action || typeof action !== 'object') return null;
+  if (kind === 'messs-question') return createAgentQuestionCard(action);
   const pages = {schedule:'日程',files:'文件',assets:'素材库',skills:'技能'};
   if (kind === 'messs-open') {
     if (!Object.hasOwn(pages, action.page)) return null;
@@ -134,3 +135,57 @@ function createAgentAppAction(kind, raw) {
   };
   return card;
 }
+
+function createAgentQuestionCard(action) {
+  if (!action.questionId || !Array.isArray(action.questions) || !action.questions.length) return null;
+  const questions = action.questions.slice(0, 12).filter(q => q && q.id && q.label && Array.isArray(q.options));
+  if (!questions.length) return null;
+  const card = document.createElement('section'); card.className = 'agent-question-card';
+  card.setAttribute('aria-label', action.title || '提问');
+  const head = document.createElement('div'); head.className = 'agent-question-head';
+  const title = document.createElement('strong'); title.textContent = action.title || '提问';
+  const page = document.createElement('span'); page.textContent = `1 / ${Math.max(1, Math.ceil(questions.length / (Number(action.pageSize) || 2)))}`;
+  head.append(title, page); card.append(head);
+  const form = document.createElement('div'); form.className = 'agent-question-form';
+  const values = Object.create(null); const custom = Object.create(null);
+  questions.forEach((q, index) => {
+    const block = document.createElement('fieldset'); block.className = 'agent-question-block';
+    const legend = document.createElement('legend'); legend.textContent = q.label; block.append(legend);
+    q.options.slice(0, 16).forEach((option, optionIndex) => {
+      if (!option || !option.id || !option.label) return;
+      const label = document.createElement('label'); label.className = 'agent-question-option';
+      const input = document.createElement('input'); input.type = q.type === 'multi' ? 'checkbox' : 'radio'; input.name = `agent-question-${action.questionId}-${q.id}`; input.value = option.id;
+      input.onchange = () => { if (q.type === 'multi') { values[q.id] = [...block.querySelectorAll('input:checked')].map(x => x.value); } else values[q.id] = input.value; custom[q.id] = ''; if (option.allowCustom) custom[q.id] = customInput.value.trim(); submit.disabled = false; };
+      const text = document.createElement('span'); text.textContent = `${String.fromCharCode(65 + optionIndex)}  ${option.label}`; label.append(input, text);
+      let customInput = null;
+      if (option.allowCustom) { customInput = document.createElement('input'); customInput.className = 'agent-question-custom'; customInput.placeholder = '请填写…'; customInput.oninput = () => { custom[q.id] = customInput.value.trim(); submit.disabled = false; }; label.append(customInput); }
+      block.append(label);
+    }); form.append(block);
+  }); card.append(form);
+  const actions = document.createElement('div'); actions.className = 'agent-question-actions';
+  const skip = document.createElement('button'); skip.type = 'button'; skip.textContent = '跳过';
+  const submit = document.createElement('button'); submit.type = 'button'; submit.textContent = '提交'; submit.disabled = true;
+  const finish = (skipped) => { if (card.dataset.done) return; card.dataset.done = 'true'; card.classList.add('is-complete'); skip.disabled = submit.disabled = true; if (typeof window.MesssAgentQuestionAnswer === 'function') window.MesssAgentQuestionAnswer({ questionId: action.questionId, answers: skipped ? {} : values, customAnswers: skipped ? {} : custom, skipped }); };
+  skip.onclick = () => finish(true); submit.onclick = () => finish(false); actions.append(skip, submit); card.append(actions); return card;
+}
+
+// Shared continuation bridge for the main chat and canvas Agent views.
+window.MesssAgentQuestionAnswer = function answerAgentQuestion(payload) {
+  const parts = [];
+  if (payload.skipped) parts.push('我跳过了这个问题，请根据已有信息继续。');
+  else {
+    for (const [id, value] of Object.entries(payload.answers || {})) {
+      const selected = Array.isArray(value) ? value.join('、') : value;
+      if (selected) parts.push(`${id}：${selected}`);
+    }
+    for (const [id, value] of Object.entries(payload.customAnswers || {})) if (value) parts.push(`${id}（自定义）：${value}`);
+    parts.unshift(`提问 ${payload.questionId} 的回答：`);
+  }
+  const message = parts.join('\n');
+  const canvasInput = document.getElementById('board-agent-input');
+  const canvasPanel = document.getElementById('board-agent-panel');
+  const canvasVisible = canvasPanel && !canvasPanel.classList.contains('is-hidden') && canvasPanel.hidden !== true;
+  if (canvasVisible && canvasInput && !canvasInput.disabled && typeof window.submitCanvasAgentMessage === 'function') { canvasInput.value = message; window.submitCanvasAgentMessage(); return; }
+  const chatInput = document.getElementById('ai-assistant-input');
+  if (chatInput && !chatInput.disabled && typeof window.submitAssistantMessage === 'function') { chatInput.value = message; window.submitAssistantMessage(); }
+};

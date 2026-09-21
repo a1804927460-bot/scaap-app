@@ -15,6 +15,14 @@ function setup(overrides={}) {
 test('capability registry exposes configured names but no endpoints or credentials',()=>{
  const text=appCapabilityInstruction({imageProviders:[{id:'image-2',name:'Nano Banana 2',hasApiKey:true,apiKey:'SECRET',endpoint:'SECRET_URL'},{id:'hidden',name:'hidden',hidden:true,hasApiKey:true}]});
  assert.match(text,/Nano Banana 2/);assert.doesNotMatch(text,/SECRET|hidden/);
+ assert.match(text,/messs-question/);assert.match(text,/questionId/);
+});
+
+test('question protocol is shared by chat and canvas renderers',()=>{
+ const format=fs.readFileSync(require.resolve('../src/js/agent-message-format.js'),'utf8');
+ assert.match(format,/createAgentQuestionCard/); assert.match(format,/MesssAgentQuestionAnswer/);
+ for(const file of ['ai-assistant.js','canvas-workspace.js']) assert.match(fs.readFileSync(require.resolve('../src/js/'+file),'utf8'),/renderAgentMessageContent/);
+ assert.match(fs.readFileSync(require.resolve('../src/styles/agent-interface.css'),'utf8'),/agent-question-card/);
 });
 test('shared action quotes before generation and prevents double submission',async()=>{
  const {card,calls}=setup();const c=card(),button=c.children[3];
