@@ -16,7 +16,7 @@ function renderAgentMessageContent(element, text) {
       if (token.type === 'space' || token.type === 'def') continue;
       if (token.type === 'code' && ['messs-image', 'messs-open', 'messs-question'].includes(token.lang)) {
         const card = createAgentAppAction(token.lang, token.text);
-        if (card) { parent.append(card); continue; }
+        if (card) { card._source = element; parent.append(card); continue; }
       }
       if (token.type === 'br') { parent.append(document.createElement('br')); continue; }
       if (token.type === 'hr') { parent.append(document.createElement('hr')); continue; }
@@ -144,7 +144,7 @@ function createAgentQuestionCard(action) {
   card.setAttribute('aria-label', action.title || '提问');
   const head = document.createElement('div'); head.className = 'agent-question-head';
   const title = document.createElement('strong'); title.textContent = action.title || '提问';
-  const page = document.createElement('span'); page.textContent = `1 / ${Math.max(1, Math.ceil(questions.length / (Number(action.pageSize) || 2)))}`;
+  const page = document.createElement('span'); page.textContent = `${questions.length} 个问题`;
   head.append(title, page); card.append(head);
   const form = document.createElement('div'); form.className = 'agent-question-form';
   const values = Object.create(null); const custom = Object.create(null);
@@ -158,34 +158,79 @@ function createAgentQuestionCard(action) {
       input.onchange = () => { if (q.type === 'multi') { values[q.id] = [...block.querySelectorAll('input:checked')].map(x => x.value); } else values[q.id] = input.value; custom[q.id] = ''; if (option.allowCustom) custom[q.id] = customInput.value.trim(); submit.disabled = false; };
       const text = document.createElement('span'); text.textContent = `${String.fromCharCode(65 + optionIndex)}  ${option.label}`; label.append(input, text);
       let customInput = null;
-      if (option.allowCustom) { customInput = document.createElement('input'); customInput.className = 'agent-question-custom'; customInput.placeholder = '请填写…'; customInput.oninput = () => { custom[q.id] = customInput.value.trim(); submit.disabled = false; }; label.append(customInput); }
+      if (option.allowCustom) { customInput = document.createElement('input'); customInput.className = 'agent-question-custom'; customInput.placeholder = '请填写…'; customInput.oninput = () => { input.checked = true; input.dispatchEvent(new Event('change')); custom[q.id] = customInput.value.trim(); submit.disabled = false; }; label.append(customInput); }
       block.append(label);
     }); form.append(block);
   }); card.append(form);
   const actions = document.createElement('div'); actions.className = 'agent-question-actions';
   const skip = document.createElement('button'); skip.type = 'button'; skip.textContent = '跳过';
   const submit = document.createElement('button'); submit.type = 'button'; submit.textContent = '提交'; submit.disabled = true;
-  const finish = (skipped) => { if (card.dataset.done) return; card.dataset.done = 'true'; card.classList.add('is-complete'); skip.disabled = submit.disabled = true; if (typeof window.MesssAgentQuestionAnswer === 'function') window.MesssAgentQuestionAnswer({ questionId: action.questionId, answers: skipped ? {} : values, customAnswers: skipped ? {} : custom, skipped }); };
+  const status = document.createElement('div'); status.setAttribute('role','status'); card.append(status);
+  const finish = async skipped => {
+    if (card.dataset.done || card.dataset.sending) return;
+    if (!skipped && questions.some(q => {
+      const selected=[].concat(values[q.id] || []);
+      return !selected.length || (q.options.some(o => selected.includes(o.id) && o.allowCustom) && !custom[q.id]);
+    })) { status.textContent='请完成每个问题；选择其他时请填写内容。'; return; }
+    card.dataset.sending='true'; skip.disabled=submit.disabled=true;
+    try {
+      await window.MesssAgentQuestionAnswer({questionId:action.questionId, questions, answers:skipped?{}:values, customAnswers:skipped?{}:custom, skipped},card);
+      card.dataset.done='true'; card.hidden=true; syncAgentQuestionDocks();
+    } catch(error) { status.textContent=error.message || '提交失败，请重试'; }
+    finally { delete card.dataset.sending; if (!card.dataset.done) skip.disabled=submit.disabled=false; }
+  };
   skip.onclick = () => finish(true); submit.onclick = () => finish(false); actions.append(skip, submit); card.append(actions); return card;
 }
 
-// Shared continuation bridge for the main chat and canvas Agent views.
-window.MesssAgentQuestionAnswer = function answerAgentQuestion(payload) {
-  const parts = [];
-  if (payload.skipped) parts.push('我跳过了这个问题，请根据已有信息继续。');
-  else {
-    for (const [id, value] of Object.entries(payload.answers || {})) {
-      const selected = Array.isArray(value) ? value.join('、') : value;
-      if (selected) parts.push(`${id}：${selected}`);
-    }
-    for (const [id, value] of Object.entries(payload.customAnswers || {})) if (value) parts.push(`${id}（自定义）：${value}`);
-    parts.unshift(`提问 ${payload.questionId} 的回答：`);
-  }
-  const message = parts.join('\n');
-  const canvasInput = document.getElementById('board-agent-input');
-  const canvasPanel = document.getElementById('board-agent-panel');
-  const canvasVisible = canvasPanel && !canvasPanel.classList.contains('is-hidden') && canvasPanel.hidden !== true;
-  if (canvasVisible && canvasInput && !canvasInput.disabled && typeof window.submitCanvasAgentMessage === 'function') { canvasInput.value = message; window.submitCanvasAgentMessage(); return; }
-  const chatInput = document.getElementById('ai-assistant-input');
-  if (chatInput && !chatInput.disabled && typeof window.submitAssistantMessage === 'function') { chatInput.value = message; window.submitAssistantMessage(); }
+window.MesssAgentQuestionAnswer = async function(payload,card) {
+  const message='提问 '+payload.questionId+' 的回答：\n'+(payload.skipped?'跳过，请根据已有信息继续。':payload.questions.map(q=>{
+    const ids=[].concat(payload.answers[q.id]||[]);
+    return 'Q: '+q.label+'\nA: '+q.options.filter(o=>ids.includes(o.id)).map(o=>o.label).join('、')+(payload.customAnswers[q.id]?'：'+payload.customAnswers[q.id]:'');
+  }).join('\n'));
+  if(card._surface==='canvas') {
+    if(card._canvasId !== (typeof activeCanvasId === 'function' ? activeCanvasId() : null) || card._session!==CanvasWorkspace.activeAgentSessionId) throw Error('请回到原画布会话后提交。');
+    if(CanvasWorkspace.agentBusy) throw Error('Agent 正在回复，请稍后提交。');
+    await requestCanvasAgentText({displayPrompt:message,contextualPrompt:canvasAgentPrompt(message)});
+  } else if(card._surface==='main') {
+    if(card._session!==AiAssistant.activeSessionId) throw Error('请回到原主会话后提交。');
+    if(AiAssistant.busy||AiAssistant.queueRunning) throw Error('Agent 正在回复，请稍后提交。');
+    const provider=selectedAssistantProvider(); if(!provider) throw Error('请先选择可用的 Agent 模型。');
+    AiAssistant.queue.push({id:crypto.randomUUID(),prompt:message,provider:{...provider},attachments:[],kind:'chat',sessionId:card._session,permissionSession:window.MesssComposerActions?.session,routingStrategy:window.MesssAiProviderOptions?.routingStrategy(provider.model,AiAssistant.chatUsePreset!==false),options:{}});
+    renderAssistantQueue(); void drainAssistantQueue();
+  } else throw Error('无法确定原会话，请重新打开对话。');
 };
+function syncAgentQuestionDocks() {
+  for(const surface of ['main','canvas']) {
+    const base=surface==='main'?'ai-assistant':'board-agent';
+    const list=document.getElementById(base+'-messages'), form=document.getElementById(base+'-form'); if(!list||!form) continue;
+    let dock=document.getElementById(base+'-questions');
+    if(!dock) { dock=document.createElement('div'); dock.id=base+'-questions'; dock.className='agent-question-dock'; form.before(dock); }
+    for(const card of list.querySelectorAll('.agent-question-card')) {
+      if(card.closest('.is-pending')) continue;
+      const anchor=document.createElement('span'); anchor.className='agent-question-anchor'; anchor.textContent='请在输入框上方选择';
+      card.before(anchor); anchor._card=card; card._anchor=anchor; card._surface=surface;
+      card._canvasId = surface === 'canvas' && typeof activeCanvasId === 'function' ? activeCanvasId() : null;
+      card._session=card._source?._questionSession||(surface==='main'?AiAssistant.activeSessionId:CanvasWorkspace.activeAgentSessionId); card.remove();
+    }
+    const anchor=[...list.querySelectorAll('.agent-question-anchor')].at(-1); let active=anchor?._card;
+    if(active) {
+      const rows=[...list.children], row=anchor.closest('.ai-assistant-message, .board-agent-message');
+      if(active.dataset.done||rows.slice(rows.indexOf(row)+1).some(r=>r.classList.contains('is-user'))) {
+        if(anchor.textContent!=='提问已结束') anchor.textContent='提问已结束'; active=null;
+      }
+    }
+    if(dock.firstElementChild!==(active||null)) { dock.replaceChildren(); if(active) dock.append(active); }
+    dock.hidden=!active;
+    const style=getComputedStyle(form); dock.style.width=style.width; dock.style.marginLeft=style.marginLeft; dock.style.marginRight=style.marginRight;
+  }
+}
+if(typeof MutationObserver!=='undefined') {
+  const start=()=>{
+    for(const id of ['ai-assistant-messages','board-agent-messages']) {
+      const list=document.getElementById(id); if(list) new MutationObserver(syncAgentQuestionDocks).observe(list,{childList:true,subtree:true,attributes:true,attributeFilter:['class']});
+    }
+    if (typeof ResizeObserver !== 'undefined') { const resize = new ResizeObserver(syncAgentQuestionDocks); for (const id of ['ai-assistant-form','board-agent-form']) { const form=document.getElementById(id); if(form) resize.observe(form); } }
+    window.addEventListener('resize',syncAgentQuestionDocks); syncAgentQuestionDocks();
+  };
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',start,{once:true}); else start();
+}

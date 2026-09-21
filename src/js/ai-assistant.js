@@ -1665,6 +1665,7 @@ function appendAssistantText(role, text, className = '', sessionId = AiAssistant
   row.className = `ai-assistant-message is-${role}${className ? ` ${className}` : ''}`;
   const body = document.createElement('div');
   body.className = 'ai-assistant-message-body';
+  body._questionSession = sessionId;
   body._messageSource = String(text || '');
   if (role === 'assistant') renderAgentMessageContent(body, text);
   else body.textContent = text;
