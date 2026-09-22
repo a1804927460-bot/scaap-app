@@ -114,7 +114,8 @@
 .hub-code { font-family:ui-monospace,Consolas,monospace!important; font-size:12px!important; }
 .hub-asset-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:18px; }
 .hub-asset { min-width:0; border:1px solid var(--border-hairline); border-radius:14px; overflow:hidden; background:var(--bg-elevated); padding:10px; }
-.work-hub .hub-asset-preview { height:155px; width:100%; padding:0; overflow:hidden; border:0; display:flex; align-items:center; justify-content:center; background:var(--bg-base); }
+.work-hub .hub-asset-preview { position:relative; height:155px; width:100%; padding:0; overflow:hidden; border:0; display:flex; align-items:center; justify-content:center; background:var(--bg-base); }
+.work-hub .hub-asset-preview.is-model-fallback .file-thumbnail-model-badge { display:none; }
 .hub-asset-preview img { max-width:100%; max-height:100%; object-fit:contain; }
 .hub-asset>strong { display:block; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:12px 0 7px; }
 .hub-asset>small { display:block; color:var(--text-tertiary); font-size:10px; min-height:18px; }
@@ -173,3 +174,5 @@
 .hub-folder-icon svg { width:58px; height:48px; fill:#237bdc; stroke:#58a5ff; stroke-width:1; filter:drop-shadow(0 5px 8px #237bdc44); }
 .hub-asset-folder strong { font-size:14px; color:var(--text-primary); overflow-wrap:anywhere; }
 .hub-asset-folder small { color:var(--text-tertiary); font-size:10px; }
+.hub-canvas-placement { position:absolute; inset:0; z-index:100; cursor:var(--cursor-crosshair); touch-action:none; outline:none; }
+.hub-canvas-placement > span { position:absolute; top:20px; left:20px; pointer-events:none; padding:8px 12px; border-radius:20px; color:var(--text-primary); background:var(--bg-elevated); border:1px solid var(--border-hairline); font-size:12px; white-space:nowrap; box-shadow:0 4px 16px #0003; }

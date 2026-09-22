@@ -1,6 +1,6 @@
 {
   "name": "messs",
-  "version": "0.0.136",
+  "version": "0.0.137",
   "description": "Messs. — Resolve your confusion. A file preview & organizing desktop app.",
   "main": "main.js",
   "author": "Messs.",
@@ -11,6 +11,7 @@
   "license": "UNLICENSED",
   "private": true,
   "scripts": {
+    "test:agent-isolation": "node scripts/test-agent-session-isolation.cjs && node scripts/test-agent-history-writes.cjs && node scripts/test-ai-host-tools.cjs",
     "test:chat-stream": "node --test scripts/test-chat-stream.cjs scripts/test-chat-stream-main.cjs",
     "test:agent-core": "node scripts/test-agent-routing.cjs && node scripts/test-agent-memory.cjs && npm run test:mcp",
     "test:mcp": "node scripts/test-embedded-mcp.cjs && node scripts/test-ai-host-tools.cjs && node scripts/test-ai-workspace-ipc.cjs",

@@ -1669,7 +1669,8 @@ function openBoardButlerExpandPanel(anchor, file, item) {
     region.setAttribute('aria-hidden', 'true'); frame.append(region); return region;
   });
   const sourceWidth = Number(file.sourceWidth) || 1024, sourceHeight = Number(file.sourceHeight) || 1024;
-  let width = Math.max(64, Math.min(4096, sourceWidth)), height = Math.max(64, Math.min(4096, sourceHeight));
+  const maxSize = 4096;
+  let width = Math.min(maxSize, Math.ceil(sourceWidth * 1.2)), height = Math.min(maxSize, Math.ceil(sourceHeight * 1.2));
   let ratio = 0, drag = null, selectedRatioButton = null;
   for (const [label,value] of [[t('Free','自由'),0],[t('Original','原比例'),sourceWidth/sourceHeight],['1:1',1],['4:3',4/3],['3:4',3/4],['16:9',16/9],['9:16',9/16]]) {
     const button=document.createElement('button'); button.type='button'; button.textContent=label; button.dataset.ratio=String(value);
@@ -1678,7 +1679,7 @@ function openBoardButlerExpandPanel(anchor, file, item) {
     ratioChoices.append(button);
   }
   const inputs = ['width','height'].map((name,index) => {
-    const input=document.createElement('input'); input.type='number'; input.name=name; input.min='64'; input.max='4096'; input.step='1';
+    const input=document.createElement('input'); input.type='number'; input.name=name; input.min=String(index ? sourceHeight : sourceWidth); input.max=String(maxSize); input.step='1';
     input.setAttribute('aria-label',index ? t('Height','高度') : t('Width','宽度')); return input;
   });
   const separator=document.createElement('span'); separator.textContent='×';
@@ -1687,7 +1688,7 @@ function openBoardButlerExpandPanel(anchor, file, item) {
   cancel.title=t('Cancel','取消'); cancel.setAttribute('aria-label',cancel.title);
   const submit=document.createElement('button'); submit.type='submit'; submit.textContent=t('Apply','应用');
   const heading = document.createElement('div'); heading.className = 'board-inline-resize-heading';
-  heading.textContent = t('Resize image', '修改尺寸');
+  heading.textContent = t('Expand image', '扩展图片外围');
   credits.className = 'board-inline-resize-credits';
   const dimensions = document.createElement('div'); dimensions.className = 'board-inline-resize-dimensions';
   dimensions.append(inputs[0],separator,inputs[1],detected);
@@ -1715,12 +1716,19 @@ function openBoardButlerExpandPanel(anchor, file, item) {
     toolbar.style.top=`${Math.max(8,Math.min(viewport.clientHeight-th-8,y+h+12))}px`;
   };
   const setSize = (w,h,axis='width') => {
+    w=Math.max(sourceWidth,w);h=Math.max(sourceHeight,h);
     if (ratio) {
       if(axis==='height') w=h*ratio; else h=w/ratio;
-      const scale=Math.min(1,4096/Math.max(w,h));w*=scale;h*=scale;
-      const minScale=Math.max(1,64/Math.min(w,h));w*=minScale;h*=minScale;
+      const minScale=Math.max(1,sourceWidth/w,sourceHeight/h);w*=minScale;h*=minScale;
+      const minimumWidth=Math.max(sourceWidth,sourceHeight*ratio);
+      const minimumHeight=minimumWidth/ratio;
+      if (minimumWidth<=maxSize && minimumHeight<=maxSize) {
+        const scale=Math.min(1,maxSize/Math.max(w,h));w*=scale;h*=scale;
+      } else {
+        ratio=0;selectedRatioButton=null;
+      }
     }
-    width=Math.max(64,Math.min(4096,Math.round(w)));height=Math.max(64,Math.min(4096,Math.round(h)));
+    width=Math.max(sourceWidth,Math.min(maxSize,Math.round(w)));height=Math.max(sourceHeight,Math.min(maxSize,Math.round(h)));
     inputs[0].value=String(width);inputs[1].value=String(height);
     const presets=[['1:1',1],['4:3',4/3],['3:4',3/4],['16:9',16/9],['9:16',9/16]];
     const match=presets.find(([,value])=>Math.abs(width/height/value-1)<.012);
@@ -1729,6 +1737,8 @@ function openBoardButlerExpandPanel(anchor, file, item) {
       button.setAttribute('aria-pressed',String(button===(selectedRatioButton || ratioChoices.firstElementChild)));
     });
     credits.textContent=`${boardButlerCreditsFromPtc((Math.max(width,height)>2048?.35:.20)+.013/7.3)} ${t('credits','积分')}`;
+    submit.disabled=width>maxSize || height>maxSize || (width===sourceWidth && height===sourceHeight);
+    if(submit.disabled) credits.textContent=t('Expand beyond the original (max 4096 px)','请向外扩展（最大 4096 px）');
     paint();
   };
   inputs.forEach((input,i)=>input.addEventListener('change',()=>{
@@ -1763,7 +1773,7 @@ function openBoardButlerExpandPanel(anchor, file, item) {
   editor.addEventListener('click',e=>e.stopPropagation());
   cancel.addEventListener('click',closeBoardButlerExpandEditor);
   editor.addEventListener('submit',e=>{
-    e.preventDefault();if(drag || !editor.reportValidity())return;
+    e.preventDefault();if(drag || submit.disabled || !editor.reportValidity())return;
     if(launchBoardButlerImageTool('imageExpand',file,item,{width,height}))closeBoardButlerExpandEditor();
   });
   boardButlerExpandEditorKeyHandler=e=>{

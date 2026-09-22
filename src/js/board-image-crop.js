@@ -41,7 +41,9 @@ async function openBoardImageCrop(file, item) {
   overlay.setAttribute('aria-label', t('Crop image', '图片裁切'));
   const surface = document.createElement('div'); surface.className = 'board-image-crop-surface';
   const toolbar = document.createElement('div'); toolbar.className = 'board-image-crop-toolbar';
-  const label = document.createElement('span'); label.textContent = t('Crop image', '图片裁切');
+  toolbar.setAttribute('role', 'toolbar'); toolbar.setAttribute('aria-label', t('Crop controls', '裁切工具'));
+  const label = document.createElement('span'); label.title = t('Crop image', '图片裁切');
+  const cropIcon = document.createElement('img'); cropIcon.src = 'assets/icons/lucide/crop.svg'; cropIcon.alt = ''; label.append(cropIcon);
   const ratios = document.createElement('select'); ratios.setAttribute('aria-label', t('Aspect ratio', '裁切比例'));
   for (const [value, title] of [['', t('Free', '自由')], ['original', t('Original', '原比例')], ['1:1', '1:1'], ['4:3', '4:3'], ['3:4', '3:4'], ['16:9', '16:9'], ['9:16', '9:16']]) {
     const option = document.createElement('option'); option.value = value; option.textContent = title; ratios.append(option);
@@ -59,7 +61,10 @@ async function openBoardImageCrop(file, item) {
   label.className = 'board-image-crop-title';
   status.className = 'board-image-crop-size';
   ratios.disabled = reset.disabled = apply.disabled = true;
-  toolbar.append(label, ratios, status, reset, cancel, apply);
+  const divider = document.createElement('span'); divider.className = 'board-image-crop-divider'; divider.setAttribute('aria-hidden', 'true');
+  toolbar.classList.toggle('is-compact', viewport.clientWidth < 420);
+  toolbar.append(label, ratios, status, divider, reset, cancel, apply);
+  toolbar.style.left = '12px'; toolbar.style.top = '12px';
   overlay.append(surface, toolbar); viewport.append(overlay);
   const state = { overlay, image: new Image(), abort: new AbortController(), app: null, saving: false, canvasId: activeCanvasId() };
   boardImageCrop = state;
@@ -68,6 +73,9 @@ async function openBoardImageCrop(file, item) {
   window.addEventListener('keydown', event => {
     event.stopImmediatePropagation();
     if (event.key === 'Escape') { event.preventDefault(); closeBoardImageCrop(); }
+    if (event.key === 'Enter' && !event.repeat && !['SELECT', 'BUTTON'].includes(document.activeElement?.tagName)) {
+      event.preventDefault(); if (!apply.disabled) apply.click();
+    }
   }, { capture: true, signal });
   overlay.addEventListener('wheel', event => {
     event.preventDefault(); event.stopImmediatePropagation();
@@ -120,11 +128,15 @@ async function openBoardImageCrop(file, item) {
       const rect = { x: node.x * zoom + app.tree.x, y: node.y * zoom + app.tree.y,
         width: node.width * zoom, height: node.height * zoom };
       const tw = toolbar.offsetWidth, th = toolbar.offsetHeight;
-      toolbar.style.left = `${Math.max(8, Math.min(viewport.clientWidth - tw - 8, rect.x + rect.width / 2 - tw / 2))}px`;
-      toolbar.style.top = `${Math.max(8, Math.min(viewport.clientHeight - th - 8, rect.y + rect.height + 12))}px`;
+      const margin = 12, gap = 12;
+      const left = Math.max(margin, Math.min(viewport.clientWidth - tw - margin, rect.x + rect.width / 2 - tw / 2));
+      const below = rect.y + rect.height + gap;
+      const top = below + th <= viewport.clientHeight - margin ? below : rect.y - th - gap;
+      toolbar.style.left = `${left}px`;
+      toolbar.style.top = `${Math.max(margin, Math.min(viewport.clientHeight - th - margin, top))}px`;
     };
     const updateStatus = () => {
-      status.textContent = `${Math.max(1, Math.round(node.width / scale))} x ${Math.max(1, Math.round(node.height / scale))}`;
+      status.textContent = `${Math.max(1, Math.round(node.width / scale))} × ${Math.max(1, Math.round(node.height / scale))}`;
       positionToolbar();
     };
     const camera = { zoom: Board.zoom, panX: Board.panX, panY: Board.panY };

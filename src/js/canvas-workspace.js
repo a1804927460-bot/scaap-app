@@ -4,6 +4,8 @@ const CanvasWorkspace = {
   agentMessages: [],
   agentSessions: [],
   activeAgentSessionId: null,
+  agentSessionViews: new Map(),
+  agentRequestSessionId: null,
   agentHistoryFavoritesOnly: false,
   agentHistoryDate: '',
   agentHistoryLoaded: false,
@@ -325,9 +327,10 @@ function ensureCanvasAgentSession(title = '') {
   return session;
 }
 
-function persistActiveCanvasAgentSession() {
-  const session = ensureCanvasAgentSession();
-  session.messages = CanvasWorkspace.agentMessages.map((message) => ({
+function persistActiveCanvasAgentSession(sessionId, messages = CanvasWorkspace.agentMessages) {
+  const session = sessionId ? CanvasWorkspace.agentSessions.find(entry => entry.id === sessionId) : ensureCanvasAgentSession();
+  if (!session) return;
+  session.messages = messages.map((message) => ({
     role: message.role === 'assistant' ? 'assistant' : 'user',
     creditsCharged: agentRecordedCredits(message.creditsCharged),
     content: String(message.content || '').slice(0, 16000),
@@ -340,7 +343,8 @@ function persistActiveCanvasAgentSession() {
   }));
   if (typeof updateAgentMemory === 'function') session.memory = updateAgentMemory(session.memory, session.messages);
   session.updatedAt = new Date().toISOString();
-  session.unread = false;
+  session.unread = session.id !== CanvasWorkspace.activeAgentSessionId || session.canvasId !== activeCanvasId();
+  if (!session.unread) CanvasWorkspace.agentMessages = messages;
   if (!session.messages.length) session.title = t('New conversation', '\u65b0\u5bf9\u8bdd');
   else {
     const first = session.messages.find((message) => message.role === 'user');
@@ -353,8 +357,10 @@ function persistActiveCanvasAgentSession() {
 }
 
 function clearCanvasAgentMessages() {
+  stashCanvasAgentConversation();
   CanvasWorkspace.activeAgentSessionId = null;
   CanvasWorkspace.agentMessages = [];
+  clearCanvasAgentComposer();
   const list = document.getElementById('board-agent-messages');
   if (list) {
     list.innerHTML = '';
@@ -1866,13 +1872,40 @@ function renderCanvasAgentContext() {
     : t('Current canvas', '当前画布');
 }
 
-function appendCanvasAgentMessage(role, text) {
+function stashCanvasAgentConversation() {
+  const id = CanvasWorkspace.activeAgentSessionId;
   const list = document.getElementById('board-agent-messages');
+  if (!id || !list) return;
+  const fragment = document.createDocumentFragment();
+  while (list.firstChild) fragment.append(list.firstChild);
+  CanvasWorkspace.agentSessionViews.set(id, fragment);
+  for (const key of CanvasWorkspace.agentSessionViews.keys()) {
+    if (CanvasWorkspace.agentSessionViews.size <= 6) break;
+    if (key !== id && key !== CanvasWorkspace.agentRequestSessionId) CanvasWorkspace.agentSessionViews.delete(key);
+  }
+}
+
+function clearCanvasAgentComposer() {
+  const input = document.getElementById('board-agent-input');
+  if (input) input.value = '';
+  CanvasWorkspace.agentReferenceFileIds.clear();
+  CanvasWorkspace.agentSelectionFileIds.clear();
+  renderCanvasAgentReferences();
+}
+
+function appendCanvasAgentMessage(role, text, sessionId = CanvasWorkspace.activeAgentSessionId) {
+  const visible = sessionId === CanvasWorkspace.activeAgentSessionId;
+  let list = visible ? document.getElementById('board-agent-messages') : CanvasWorkspace.agentSessionViews.get(sessionId);
+  if (!list && !visible) {
+    list = document.createDocumentFragment();
+    CanvasWorkspace.agentSessionViews.set(sessionId, list);
+  }
   if (!list) return;
   const welcome = document.getElementById('board-agent-welcome');
-  if (welcome) welcome.hidden = true;
+  if (welcome && visible) welcome.hidden = true;
   const row = document.createElement('div');
   row.className = `board-agent-message is-${role}`;
+  row._questionSession = sessionId;
   if (role === 'assistant') renderAgentMessageContent(row, text);
   else row.textContent = text;
   list.appendChild(row);
@@ -2010,6 +2043,9 @@ function renderCanvasAgentHistory() {
 function loadCanvasAgentSession(sessionId) {
   const session = CanvasWorkspace.agentSessions.find((entry) => entry.id === sessionId);
   if (!session || canvasAgentSessionCanvasId(session) !== activeCanvasId()) return;
+  if (sessionId === CanvasWorkspace.activeAgentSessionId) return;
+  stashCanvasAgentConversation();
+  clearCanvasAgentComposer();
   CanvasWorkspace.activeAgentSessionId = session.id;
   session.unread = false;
   persistCanvasAgentHistory();
@@ -2017,7 +2053,9 @@ function loadCanvasAgentSession(sessionId) {
   const list = document.getElementById('board-agent-messages');
   if (!list) return;
   list.replaceChildren();
-  CanvasWorkspace.agentMessages.forEach((message) => {
+  const cached = CanvasWorkspace.agentSessionViews.get(sessionId);
+  if (cached) list.append(cached);
+  else CanvasWorkspace.agentMessages.forEach((message) => {
     const row = appendCanvasAgentMessage(message.role, message.displayContent || message.content);
     appendCanvasAgentAttachments(row, Array.isArray(message.attachments) ? message.attachments : []);
     appendAssistantOutputFiles(row, message.generatedFiles);
@@ -2114,6 +2152,7 @@ async function deleteCanvasAgentSession(sessionId) {
   if (!confirmed) return;
   CanvasWorkspace.agentSessions = CanvasWorkspace.agentSessions.filter((entry) => entry.id !== sessionId);
   if (CanvasWorkspace.activeAgentSessionId === sessionId) startNewCanvasAgentChat();
+  CanvasWorkspace.agentSessionViews.delete(sessionId);
   persistCanvasAgentHistory();
   renderCanvasAgentHistory();
 }
@@ -2564,21 +2603,24 @@ async function requestCanvasAgentText(options = {}) {
   const referenceFiles = Array.isArray(options.referenceFiles) ? options.referenceFiles.filter(Boolean) : [];
   if (!displayPrompt || !contextualPrompt) return null;
   const selected = activeCanvasAgentProvider();
-  const userRow = appendCanvasAgentMessage('user', displayPrompt);
+  const session = ensureCanvasAgentSession(displayPrompt);
+  const sessionId = session.id, canvasId = session.canvasId;
+  CanvasWorkspace.agentRequestSessionId = sessionId;
+  const messages = CanvasWorkspace.agentMessages.map(message => ({ ...message }));
+  const userRow = appendCanvasAgentMessage('user', displayPrompt, sessionId);
   appendCanvasAgentAttachments(userRow, referenceFiles);
-  ensureCanvasAgentSession(displayPrompt);
-  CanvasWorkspace.agentMessages.push({
+  messages.push({
     role: 'user',
     content: contextualPrompt,
     displayContent: displayPrompt,
     attachmentFileIds: referenceFiles.map((file) => file.id),
     attachments: referenceFiles.map(canvasAgentAttachmentRecord)
   });
-  persistActiveCanvasAgentSession();
+  persistActiveCanvasAgentSession(sessionId, messages);
   CanvasWorkspace.agentBusy = true;
   if (input) input.disabled = true;
   if (submitButton) submitButton.disabled = true;
-  const pending = appendCanvasAgentMessage('assistant', canvasAgentThinkingText());
+  const pending = appendCanvasAgentMessage('assistant', canvasAgentThinkingText(), sessionId);
   pending.classList.add('is-pending');
   const thinkingStartedAt = Date.now();
   const thinkingTimer = window.setInterval(() => {
@@ -2588,14 +2630,14 @@ async function requestCanvasAgentText(options = {}) {
   }, 1000);
   try {
     const response = await chatWithAgentEstimate(pending, {
-      canvasId: activeCanvasId(),
-      permissionSession: window.MesssComposerActions?.session,
+      canvasId,
+      permissionSession: window.MesssComposerActions?.sessionFor('canvas', sessionId),
       prompt: contextualPrompt,
       messages: options.isolated === true
         ? [{ role: 'user', content: contextualPrompt }]
         : (typeof buildAgentContextMessages === 'function'
-          ? buildAgentContextMessages(CanvasWorkspace.agentMessages, activeCanvasAgentSession()?.memory)
-          : CanvasWorkspace.agentMessages),
+          ? buildAgentContextMessages(messages, session.memory)
+          : messages),
       attachmentFileIds: referenceFiles.map((file) => file.id),
       chatProviderId: selected.providerId,
       routingStrategy: window.MesssAiProviderOptions?.routingStrategy(selected.model, CanvasWorkspace.agentChatUsePreset !== false),
@@ -2605,8 +2647,8 @@ async function requestCanvasAgentText(options = {}) {
       throw new Error((response && response.message) || t('Canvas Agent request failed.', '画布 Agent 请求失败。'));
     }
     window.clearInterval(thinkingTimer);
-    CanvasWorkspace.agentMessages.push({ role: 'assistant', content: response.text, displayContent: response.text, creditsCharged: agentRecordedCredits(response.creditsCharged), generatedFiles: normalizeAgentGeneratedFiles(response.files) });
-    persistActiveCanvasAgentSession();
+    messages.push({ role: 'assistant', content: response.text, displayContent: response.text, creditsCharged: agentRecordedCredits(response.creditsCharged), generatedFiles: normalizeAgentGeneratedFiles(response.files) });
+    persistActiveCanvasAgentSession(sessionId, messages);
     pending.classList.remove('is-pending');
     renderAgentMessageContent(pending, response.text);
     if (typeof appendAssistantOutputFiles === 'function') appendAssistantOutputFiles(pending, response.files);
@@ -2616,20 +2658,21 @@ async function requestCanvasAgentText(options = {}) {
   } catch (err) {
     const interrupted = preserveInterruptedAgentReply(pending);
     if (interrupted) {
-      CanvasWorkspace.agentMessages.push(interrupted);
-      persistActiveCanvasAgentSession();
+      messages.push(interrupted);
+      persistActiveCanvasAgentSession(sessionId, messages);
     } else pending.remove();
     appendCanvasAgentMessage('error', typeof publicAiErrorMessage === 'function'
       ? publicAiErrorMessage(err && err.message, t('Canvas Agent request failed.', '画布 Agent 请求失败。'))
-      : (err && err.message ? err.message : t('Canvas Agent request failed.', '画布 Agent 请求失败。')));
+      : (err && err.message ? err.message : t('Canvas Agent request failed.', '画布 Agent 请求失败。')), sessionId);
     if (typeof options.onError === 'function') options.onError(err);
     return null;
   } finally {
     window.clearInterval(thinkingTimer);
     CanvasWorkspace.agentBusy = false;
+    CanvasWorkspace.agentRequestSessionId = null;
     if (input) input.disabled = false;
     if (submitButton) submitButton.disabled = false;
-    if (input && options.focusInput !== false) input.focus();
+    if (input && options.focusInput !== false && CanvasWorkspace.activeAgentSessionId === sessionId && activeCanvasId() === canvasId) input.focus();
   }
 }
 
@@ -2666,70 +2709,8 @@ async function submitCanvasAgentMessage() {
     }
     return;
   }
-  const selected = activeCanvasAgentProvider();
   input.value = '';
-  const userRow = appendCanvasAgentMessage('user', prompt);
-  appendCanvasAgentAttachments(userRow, referenceFiles);
-  const contextualPrompt = canvasAgentPrompt(prompt);
-  ensureCanvasAgentSession(prompt);
-  CanvasWorkspace.agentMessages.push({
-    role: 'user',
-    content: contextualPrompt,
-    displayContent: prompt,
-    attachmentFileIds: referenceFiles.map((file) => file.id),
-    attachments: referenceFiles.map(canvasAgentAttachmentRecord)
-  });
-  persistActiveCanvasAgentSession();
-  CanvasWorkspace.agentBusy = true;
-  input.disabled = true;
-  document.getElementById('board-agent-submit').disabled = true;
-  const pending = appendCanvasAgentMessage('assistant', canvasAgentThinkingText());
-  pending.classList.add('is-pending');
-  const thinkingStartedAt = Date.now();
-  const thinkingTimer = window.setInterval(() => {
-    if (!pending.isConnected || pending.dataset.streaming === 'true') return;
-    const seconds = Math.max(1, Math.floor((Date.now() - thinkingStartedAt) / 1000));
-    pending.textContent = canvasAgentThinkingText(seconds);
-  }, 1000);
-  try {
-    const response = await chatWithAgentEstimate(pending, {
-      canvasId: activeCanvasId(),
-      permissionSession: window.MesssComposerActions?.session,
-      prompt: contextualPrompt,
-      messages: typeof buildAgentContextMessages === 'function'
-        ? buildAgentContextMessages(CanvasWorkspace.agentMessages, activeCanvasAgentSession()?.memory)
-        : CanvasWorkspace.agentMessages,
-      attachmentFileIds: referenceFiles.map((file) => file.id),
-      chatProviderId: selected.providerId,
-      routingStrategy: window.MesssAiProviderOptions?.routingStrategy(selected.model, CanvasWorkspace.agentChatUsePreset !== false),
-      chatModel: selected.model
-    });
-    if (!response || !response.ok) {
-      throw new Error((response && response.message) || t('Canvas Agent request failed.', '画布 Agent 请求失败。'));
-    }
-    window.clearInterval(thinkingTimer);
-    CanvasWorkspace.agentMessages.push({ role: 'assistant', content: response.text, displayContent: response.text, creditsCharged: agentRecordedCredits(response.creditsCharged), generatedFiles: normalizeAgentGeneratedFiles(response.files) });
-    persistActiveCanvasAgentSession();
-    pending.classList.remove('is-pending');
-    renderAgentMessageContent(pending, response.text);
-    if (typeof appendAssistantOutputFiles === 'function') appendAssistantOutputFiles(pending, response.files);
-    appendAgentCharge(pending, response);
-  } catch (err) {
-    const interrupted = preserveInterruptedAgentReply(pending);
-    if (interrupted) {
-      CanvasWorkspace.agentMessages.push(interrupted);
-      persistActiveCanvasAgentSession();
-    } else pending.remove();
-    appendCanvasAgentMessage('error', typeof publicAiErrorMessage === 'function'
-      ? publicAiErrorMessage(err && err.message, t('Canvas Agent request failed.', '画布 Agent 请求失败。'))
-      : (err && err.message ? err.message : t('Canvas Agent request failed.', '画布 Agent 请求失败。')));
-  } finally {
-    window.clearInterval(thinkingTimer);
-    CanvasWorkspace.agentBusy = false;
-    input.disabled = false;
-    document.getElementById('board-agent-submit').disabled = false;
-    input.focus();
-  }
+  return requestCanvasAgentText({ displayPrompt: prompt, contextualPrompt: canvasAgentPrompt(prompt), referenceFiles });
 }
 
 async function importCanvasAgentPastedMedia(file, event) {
@@ -2778,6 +2759,7 @@ function refreshCanvasWorkspaceLanguage() {
     importButton.setAttribute('aria-label', importButton.title);
   }
   setText('#canvas-project-new span', 'New canvas', '新建画布');
+  setText('#canvas-start-creating .canvas-start-label', 'Start creating', '开始创作');
   setText('.canvas-library-topline h2', 'All Canvases', '全部画布');
   setText('#canvas-library-empty', 'No canvases found', '没有找到画布');
   const search = document.getElementById('canvas-library-search');
@@ -2849,6 +2831,7 @@ async function initCanvasWorkspace(initial) {
 
   document.getElementById('canvas-import').addEventListener('click', promptImportCanvas);
   document.getElementById('canvas-project-new').addEventListener('click', promptNewCanvas);
+  document.getElementById('canvas-start-creating')?.addEventListener('click', promptNewCanvas);
   const libraryGrid = document.getElementById('canvas-library-view');
   libraryGrid?.addEventListener('contextmenu', (event) => {
     if (event.target.closest('.canvas-library-card, .canvas-library-folder-card, button, input, select, textarea')) return;

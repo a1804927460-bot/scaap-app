@@ -35,6 +35,8 @@ window.MesssCanvasPluginAdapter = {
     content.closest('.board-text-note').classList.add('is-richtext-editing');
     document.getElementById('text-tool-panel').setAttribute('data-rt-panel', 'true');
     node.onEditingExited = () => { if (this._text === session) commitActiveTextNote(); };
+    // The plugin defaults to a black caret, invisible on the dark canvas.
+    node.cursorColor = getComputedStyle(content).getPropertyValue('--accent').trim() || '#48b5df';
     node.enterEditing();
     void this.warmLocalFont(note).then(() => { if (this._text === session) node.forceRender(); });
     const textarea = document.querySelector('[data-richtext-editor]');

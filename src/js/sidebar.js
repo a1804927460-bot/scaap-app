@@ -1088,6 +1088,11 @@ function refreshApiSettingsLanguage() {
 }
 
 function refreshStaticLanguage() {
+  setText('#account-credit-count + small', ' credits', ' 积分', ' 포인트');
+  setText('#account-plan-note', 'No plan · purchased credits only', '未订阅套餐 · 仅使用已购积分', '구독 없음 · 구매한 포인트만 사용');
+  setText('#account-plan-open', 'Buy credits', '购买积分', '포인트 구매');
+  const planBadge = document.getElementById('account-plan-badge');
+  if (planBadge && /^(free|免费|무료)$/i.test(planBadge.dataset.planName || planBadge.textContent.trim())) planBadge.textContent = t('Free', '免费', '무료');
   setChatProviderColumnLabels();
   document.title = t('Messs. - Resolve your confusion', 'Messs. - 解决你的混乱');
   setAttr('#section-tabs', 'aria-label', 'Sections', '分区');
@@ -2139,7 +2144,7 @@ async function renderAccountSummary(config) {
   if (creditCount) creditCount.textContent = creditValues
     ? creditValues.balance.toLocaleString(appLocale())
     : '...';
-  if (planBadge) planBadge.textContent = plan;
+  if (planBadge) { planBadge.dataset.planName = plan; planBadge.textContent = /^(free|免费|무료)$/i.test(plan) ? t('Free', '免费', '무료') : plan; }
   if (creditValues) renderAccountFooterCredits(membership);
   else renderAccountCreditUnavailable();
   renderAccountProfileText();
@@ -2204,7 +2209,7 @@ function renderMembershipBalance(membership) {
   const creditCount = document.getElementById('account-credit-count');
   const planBadge = document.getElementById('account-plan-badge');
   if (creditCount) creditCount.textContent = creditValues.balance.toLocaleString(appLocale(), { maximumFractionDigits: 2 });
-  if (planBadge) planBadge.textContent = plan;
+  if (planBadge) { planBadge.dataset.planName = plan; planBadge.textContent = /^(free|免费|무료)$/i.test(plan) ? t('Free', '免费', '무료') : plan; }
   renderAccountFooterCredits(membership);
 }
 

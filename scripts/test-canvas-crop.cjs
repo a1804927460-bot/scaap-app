@@ -89,11 +89,24 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
         await page.evaluate(() => openBoardImageCrop(cropFile, cropItem));
         await page.waitForTimeout(200);
         assert.equal(await page.locator('.board-image-crop-toolbar').evaluate(el => el.scrollWidth > el.clientWidth), false);
+        const bar = await page.locator('.board-image-crop-toolbar').boundingBox();
+        assert.ok(bar.height <= 46, `Crop controls must remain a single compact row: ${JSON.stringify(bar)}`);
+        assert.ok(bar.x >= 11 && bar.x + bar.width <= width - 11, 'Toolbar must stay inside viewport');
         assert.equal(await page.locator('.board-image-crop-toolbar img').evaluateAll(images => images.every(img => img.complete && img.naturalWidth > 0)), true);
         await page.screenshot({ path: `test-artifacts/canvas-crop/${theme}-${width}.png` });
         await page.getByRole('button', { name: '取消', exact: true }).click();
       }
     }
+    await page.setViewportSize({width:1100,height:740});
+    await page.evaluate(() => {
+      Board.zoom=1;Board.panX=0;Board.panY=0;
+      cropItem.y=550;cropItem.width=260;cropItem.height=130;
+      return openBoardImageCrop(cropFile,cropItem);
+    });
+    const bottomLayout=await page.evaluate(()=>({bar:document.querySelector('.board-image-crop-toolbar').getBoundingClientRect().toJSON(),y:boardImageCrop.node.y}));
+    assert.ok(bottomLayout.bar.y+bottomLayout.bar.height<bottomLayout.y,'Toolbar should move above a low image');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(()=>!boardImageCrop);
     assert.deepEqual(errors, []);
     console.log('Real crop plugin, ratio, full-resolution pixel export, canvas insertion and cancel passed.');
   } finally { await browser.close(); }

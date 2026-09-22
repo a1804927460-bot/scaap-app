@@ -99,6 +99,49 @@ window.MesssWorkHub = (() => {
       body.innerHTML=`<div class="hub-timeline"><div class="hub-timeline-header"><strong>项目 / 负责人</strong><div class="hub-timeline-days" style="--days:${length}">${Array.from({length},(_,i)=>`<span>${i+1}</span>`).join('')}</div></div>${visible.map(p=>{const left=Math.max(0,difference(p.start,start))/length*100,width=(difference(p.due<end?p.due:end,p.start>start?p.start:start)+1)/length*100;return `<div class="hub-timeline-row"><button data-hub-action="edit-project" data-id="${p.id}"><strong>${esc(p.title)}</strong><small>${esc(p.owner||'待指定')} · ${p.progress}%</small></button><div class="hub-track" style="--days:${length}"><button class="hub-bar status-${p.status}" data-hub-action="edit-project" data-id="${p.id}" style="left:${left}%;width:${width}%" title="${esc(p.title)}：${p.start} 至 ${p.due}"><i style="width:${p.progress}%"></i><span>${p.progress}%</span></button>${p.milestones.filter(m=>m.date>=start&&m.date<=end).map(m=>`<span class="hub-diamond" style="left:${(difference(m.date,start)+.5)/length*100}%" title="${esc(m.title)} · ${m.date}">◇</span>`).join('')}</div></div>`;}).join('')||'<div class="hub-empty">本月没有项目排期</div>'}</div>`;
     } else body.innerHTML=`<div class="hub-project-grid">${rows.map(card).join('')||'<div class="hub-empty">还没有项目。创建一项排期，记录你的下一次交付。</div>'}</div>`;
   }
+  let cancelPlacement = null;
+  async function useFileOnCanvas(fileId) {
+    let target = activeCanvasRecord();
+    const workspace = document.getElementById('board-workspace-body');
+    if (!target || !workspace || !workspace.getClientRects().length || workspace.hidden) {
+      const canvases = AppState.canvases || [];
+      if (!canvases.length) throw Error('请先创建一个画布，再选择放置位置。');
+      const chosen = await new Promise(resolve => {
+        const dialog = editor('选择目标画布', `<label>画布<select name="canvasId" required>${canvases.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select></label>`);
+        dialog.querySelector('[type="submit"]').textContent='选择放置位置';
+        let id = null;
+        dialog.querySelector('form').onsubmit = event => { event.preventDefault(); id=event.target.elements.canvasId.value; dialog.close(); };
+        dialog.addEventListener('close',()=>resolve(id),{once:true});
+      });
+      if (!chosen) return;
+      target = AppState.canvases.find(c=>c.id===chosen);
+      if (!target) throw Error('目标画布已不存在，请重新选择。');
+    }
+    document.querySelector('.section-tab[data-section="messs"]')?.click();
+    switchCanvas(target.id,{enterWorkspace:true});
+    if (activeCanvasId() !== target.id) throw Error('暂时无法切换到目标画布，请稍后重试。');
+    root.close();
+    cancelPlacement?.();
+    const viewport=document.getElementById('board-viewport');
+    const surface=document.createElement('div'); surface.className='hub-canvas-placement';
+    surface.tabIndex=0; surface.setAttribute('aria-label','点击画布放置文件，Escape 取消');
+    const hint=document.createElement('span');hint.textContent='点击放置文件 · Esc 取消';surface.append(hint);
+    viewport.append(surface);
+    const controller=new AbortController();
+    const cleanup=()=>{controller.abort();surface.remove();cancelPlacement=null;};
+    cancelPlacement=cleanup;
+    document.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();cleanup();}},{capture:true,signal:controller.signal});
+    surface.addEventListener('pointermove',event=>{const rect=surface.getBoundingClientRect();hint.style.left=`${Math.min(event.clientX-rect.left+16,Math.max(8,rect.width-210))}px`;hint.style.top=`${Math.min(event.clientY-rect.top+16,Math.max(8,rect.height-40))}px`;});
+    surface.addEventListener('pointerdown',async event=>{
+      if(event.button!==0)return;
+      event.preventDefault();event.stopPropagation();
+      if(activeCanvasId()!==target.id){cleanup();return;}
+      const point=clientToBoardCoords(event.clientX,event.clientY);cleanup();
+      try{await addFilesToBoard([fileId],point.x,point.y,{selectAdded:true});}
+      catch(error){showToast(error.message||'文件放置失败，请重试。');}
+    });
+    surface.focus({preventScroll:true});
+  }
   function editor(title, html) {
     const dialog=document.createElement('dialog');dialog.className='hub-editor';dialog.setAttribute('aria-label',title);
     dialog.innerHTML=`<form><header><h2>${title}</h2><button type="button" data-close aria-label="关闭">×</button></header>${html}<p class="hub-editor-error" role="alert"></p><footer><button type="button" data-close>取消</button><button class="hub-primary" type="submit">保存</button></footer></form>`;
@@ -252,7 +295,7 @@ window.MesssWorkHub = (() => {
     if(name==='preview'){const f=AppState.files.find(f=>f.id===fileId);if(f){window.__messsPreviewReturnToFiles = true;root.close();if(isImageExt(f.ext)||isVideoExt(f.ext)){await openFileFullscreenPreview(f);}else{await selectFileForPreview(f.id);openFullscreenPreview();}}return;}
     if(name==='collect'){await api().saveWorkspaceResource({kind:'asset',fileId,tags:[],favorite:false});await reload();notify('已加入素材库');return;}
     if(name==='asset-edit'){assetEditor(fileId);return;}
-    if(name==='use-file'){if(!activeCanvasRecord())throw Error('请先打开一个画布');const center=boardViewportCenterCoords();await addFilesToBoard([fileId],center.x,center.y);root.close();showCanvasWorkspace();return;}
+    if(name==='use-file'){await useFileOnCanvas(fileId);return;}
     if(name==='new-skill'){skillEditor();return;}
     if(name==='import-skill'){const input=document.createElement('input');input.type='file';input.accept='.md';input.onchange=async()=>{try{const f=input.files[0];if(!f)return;if(f.size>64000)throw Error('SKILL.md 最大为 64 KB');const raw=await f.text();await api().parseWorkspaceSkill(raw);skillEditor(null,raw);}catch(e){notify(e);}};input.click();return;}
     const record=resources.find(r=>r.id===button.closest('[data-skill-id]')?.dataset.skillId);

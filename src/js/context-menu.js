@@ -596,7 +596,7 @@ function showPromptTextContextMenu(event) {
 }
 
 async function sendBoardMediaToCreativeApp(fileId, target) {
-  const appName = target === 'after-effects' ? 'After Effects' : 'Photoshop';
+  const appName = target === 'illustrator' ? 'Adobe Illustrator' : target === 'after-effects' ? 'After Effects' : 'Photoshop';
   try {
     const result = await window.messsAPI.sendToCreativeApp(fileId, target);
     if (result && result.ok) {
@@ -909,6 +909,11 @@ function showBoardItemContextMenu(item, x, y) {
         label: t('Send to Photoshop', '\u53d1\u9001\u5230 Photoshop'),
         icon: 'M4 5h16v14H4z;M8 15l3-3 2 2 2-2 3 3;M16 8h.01',
         action: () => sendBoardMediaToCreativeApp(item.fileId, 'photoshop')
+      });
+      items.push({
+        label: t('Send to Adobe Illustrator', '发送到 Adobe Illustrator'),
+        icon: 'M12 3l8 17H4L12 3;M8 14h8',
+        action: () => sendBoardMediaToCreativeApp(item.fileId, 'illustrator')
       });
     }
     items.push({

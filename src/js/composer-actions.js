@@ -74,6 +74,14 @@ function preserveInterruptedAgentReply(pending) {
 
 window.MesssComposerActions = (() => {
   let session = crypto.randomUUID(), mode = 'ask', initialized = false;
+  const canvasSessions = new Map();
+  function sessionFor(surface, conversationId) {
+    if (surface !== 'canvas') return session;
+    if (!conversationId) return undefined;
+    if (!canvasSessions.has(conversationId)) canvasSessions.set(conversationId, crypto.randomUUID());
+    return canvasSessions.get(conversationId);
+  }
+  const knownSession = value => value === session || [...canvasSessions.values()].includes(value);
   let addMenu, permissionMenu, permissionButton, dialog;
   const label = (en,zh) => t(en,zh);
   function setMenuLabel(button, name, text) {
@@ -114,10 +122,11 @@ window.MesssComposerActions = (() => {
     menu.querySelector('button')?.focus();
     window.MesssUiMotion?.enter(menu);
   }
-  function confirmTask(title,detail) {
+  function confirmTask(title,detail,permissionSession) {
     if (dialog) return Promise.resolve(false);
     return new Promise(resolve => {
       dialog=document.createElement('dialog');dialog.className='messs-permission-dialog';
+      dialog._permissionSession=permissionSession;
       const heading=document.createElement('h3');heading.textContent=title;
       const text=document.createElement('p');text.textContent=detail;
       const actions=document.createElement('footer');
@@ -131,9 +140,12 @@ window.MesssComposerActions = (() => {
       dialog.showModal();cancel.focus();
     });
   }
-  async function resetPermissions() {
-    dialog?._deny();mode='ask';session=crypto.randomUUID();refresh();
-    await window.messsAPI?.setAiPermissionMode?.({session,mode});
+  async function resetPermissions(all = false) {
+    const revoked = [session, ...(all ? canvasSessions.values() : [])];
+    if (all) canvasSessions.clear();
+    if (dialog && (!dialog._permissionSession || revoked.includes(dialog._permissionSession))) dialog._deny();
+    mode='ask';session=crypto.randomUUID();refresh();
+    await Promise.all(revoked.map(session => window.messsAPI?.setAiPermissionMode?.({session,mode:'ask'})));
   }
   function refresh() {
     if (!initialized) return;
@@ -173,7 +185,9 @@ window.MesssComposerActions = (() => {
         closeMenus();const current=session;
         if(value==='full' && !await confirmTask(label('Allow Messs for this session?','允许 Messs 在本次会话中执行？'),label('System commands, internet access and local files. Commands may modify or delete files. Results are sent to the selected model. You can revoke access at any time.','可执行系统命令、联网和访问本地文件；命令可能修改或删除文件。结果会发送给当前模型，可随时撤销。')))return;
         if(current!==session)return;
-        const result=await window.messsAPI.setAiPermissionMode({session,mode:value});mode=result.mode;refresh();
+        const result=await window.messsAPI.setAiPermissionMode({session:current,mode:value});
+        if(current!==session)return;
+        mode=result.mode;refresh();
       };permissionMenu.append(button);
     }
     document.querySelector('.ai-assistant-tools').append(permissionMenu);
@@ -182,11 +196,15 @@ window.MesssComposerActions = (() => {
     document.addEventListener('keydown',event=>{if(event.key==='Escape')closeMenus();});
     window.addEventListener('resize',closeMenus);
     window.messsAPI?.onAiPermissionRequest?.(async request=>{
-      const allowed=request.session===session && await confirmTask(label('Allow this Messs task?','是否允许本次 Messs 任务？'),`${({read:label('Read file','读取文件'),memory:label('Remember file locally','将文件加入本地知识库'),network:label('Access website','访问网站'),command:label('Run command','执行命令')})[request.type]}\n${request.target}\n${request.type === 'memory' ? label('Retrieved excerpts may be sent to the selected model.','检索到的片段可能会发送给当前模型。') : label('Results are sent to the selected model.','结果会发送给当前模型。')}`);
-      await window.messsAPI.replyAiPermission({id:request.id,allow:!!allowed && request.session===session});
+      if (!knownSession(request.session) || dialog) {
+        await window.messsAPI.replyAiPermission({id:request.id,allow:false});
+        return;
+      }
+      const allowed=knownSession(request.session) && await confirmTask(request.session===session ? label('Allow this Agent task?','是否允许主 Agent 的本次任务？') : label('Allow this canvas Agent task?','是否允许画布 Agent 的本次任务？'),`${({read:label('Read file','读取文件'),memory:label('Remember file locally','将文件加入本地知识库'),network:label('Access website','访问网站'),command:label('Run command','执行命令')})[request.type]}\n${request.target}\n${request.type === 'memory' ? label('Retrieved excerpts may be sent to the selected model.','检索到的片段可能会发送给当前模型。') : label('Results are sent to the selected model.','结果会发送给当前模型。')}`,request.session);
+      await window.messsAPI.replyAiPermission({id:request.id,allow:!!allowed && knownSession(request.session)});
     });
-    window.messsAPI?.onCloudSessionChanged?.(()=>void resetPermissions());
+    window.messsAPI?.onCloudSessionChanged?.(()=>void resetPermissions(true));
     refresh();
   }
-  return {init,refresh,setMenuLabel,resetPermissions,get session(){return session;}};
+  return {init,refresh,setMenuLabel,resetPermissions,sessionFor,get session(){return session;}};
 })();

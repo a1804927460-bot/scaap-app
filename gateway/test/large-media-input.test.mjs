@@ -38,16 +38,22 @@ test('padding, invalid characters and non-canonical encodings are still rejected
 });
 
 test('large reference survives actual FAL tool input validation before queue submission', async () => {
-  const png = await sharp({create:{width:64,height:64,channels:4,background:'#00000000'}}).png().toBuffer();
+  const png = await sharp({create:{width:2064,height:2064,channels:4,background:'#00000000'}}).png().toBuffer();
   for (const model of ['feynobg','smart-resize']) {
     let submissions = 0;
-    const output = await runFalImageTool(model,jpeg,{width:1024,height:1024},{
+    const output = await runFalImageTool(model,jpeg,{width:2064,height:2064},{
       env:{FAL_KEY:'test-only'}, sleep:async()=>{},
       fetchImpl:async(url,options)=>{
         url = String(url);
         if(options.method==='POST') {
           submissions++;
-          assert.equal(JSON.parse(options.body).image_url,jpeg);
+          const submittedImage = JSON.parse(options.body).image_url;
+          if (model === 'feynobg') assert.equal(submittedImage,jpeg);
+          else {
+            const metadata = await sharp(parseImageDataUrl(submittedImage).buffer).metadata();
+            assert.equal(metadata.width,2064);
+            assert.equal(metadata.height,2064);
+          }
           return Response.json({request_id:'large-image-task'});
         }
         if(url.endsWith('/status'))return Response.json({status:'COMPLETED'});
@@ -57,6 +63,10 @@ test('large reference survives actual FAL tool input validation before queue sub
       }
     });
     assert.equal(submissions,1);
-    assert.deepEqual(output,png);
+    if (model === 'feynobg') assert.deepEqual(output,png);
+    else {
+      const restored = await sharp(output).extract({left:8,top:8,width:2048,height:2048}).removeAlpha().raw().toBuffer();
+      assert.deepEqual(restored,await sharp(parseImageDataUrl(jpeg).buffer).removeAlpha().raw().toBuffer());
+    }
   }
 });

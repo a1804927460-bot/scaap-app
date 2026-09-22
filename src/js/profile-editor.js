@@ -1,5 +1,19 @@
 'use strict';
 
+const PROFILE_EMOJIS = ['😀', '😎', '🥳', '🤩', '😺', '🦊', '🐼', '🐻', '🐰', '🐸', '🤖', '👽'];
+const profileEmojiImages = new Map();
+function profileEmojiAvatar(index) {
+  if (profileEmojiImages.has(index)) return profileEmojiImages.get(index);
+  const canvas = document.createElement('canvas'); canvas.width = canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = ['#dbeafe', '#e0e7ff', '#fce7f3', '#dcfce7', '#fef3c7', '#ede9fe'][index % 6];
+  ctx.fillRect(0, 0, 256, 256);
+  ctx.font = '164px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(PROFILE_EMOJIS[index], 128, 137);
+  const image = canvas.toDataURL('image/webp', 0.95); profileEmojiImages.set(index, image); return image;
+}
+
 const PROFILE_MOODS = [
   ['', '不设置', 'Not set'], ['focus', '专注中', 'Focused'],
   ['inspired', '灵感来了', 'Inspired'], ['happy', '好心情', 'Happy'],
@@ -52,7 +66,7 @@ function openProfileEditor() {
   let preset = null, avatarDataUrl = '', mood = '', busy = false, moodTouched = false;
   const currentImage = document.querySelector('#account-footer-avatar img');
   const preview = dialog.querySelector('.profile-editor-preview img');
-  preview.src = currentImage?.src || 'assets/avatars/avatar-1.png';
+  preview.src = currentImage?.src || profileEmojiAvatar(0);
   const status = dialog.querySelector('.profile-editor-status');
   const update = () => {
     dialog.querySelector('.profile-editor-preview strong').textContent = name.value || t('Your name', '你的名字');
@@ -61,12 +75,12 @@ function openProfileEditor() {
     dialog.querySelector('.profile-editor-preview span').textContent = mood ? t(entry[2], entry[1]) : '';
     dialog.querySelectorAll('[data-avatar]').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.avatar) === preset)));
   };
-  const choose = value => { preset = value; avatarDataUrl = ''; preview.src = `assets/avatars/avatar-${value}.png`; update(); };
+  const choose = value => { preset = value; avatarDataUrl = profileEmojiAvatar(value - 1); preview.src = avatarDataUrl; update(); };
   for (let i = 1; i <= 12; i++) {
     const button = document.createElement('button');
     button.type = 'button'; button.dataset.avatar = String(i);
-    button.setAttribute('aria-label', `${t('Avatar', '头像')} ${i}`);
-    const image = document.createElement('img'); image.src = `assets/avatars/avatar-${i}.png`; image.alt = ''; image.draggable = false;
+    button.setAttribute('aria-label', `${PROFILE_EMOJIS[i - 1]} ${t('Avatar', '头像')} ${i}`);
+    const image = document.createElement('img'); image.src = profileEmojiAvatar(i - 1); image.alt = ''; image.draggable = false;
     button.append(image); button.addEventListener('click', () => choose(i)); dialog.querySelector('.profile-avatar-grid').append(button);
   }
   PROFILE_MOODS.forEach(entry => {
@@ -102,7 +116,7 @@ function openProfileEditor() {
     if (!name.value.trim()) { name.focus(); return; }
     setBusy(true); status.textContent = t('Saving...', '正在保存…');
     try {
-      const result = await window.messsAPI.saveProfileDraft({ userId, name: name.value, signature: signature.value, preset, avatarDataUrl, mood });
+      const result = await window.messsAPI.saveProfileDraft({ userId, name: name.value, signature: signature.value, preset: null, avatarDataUrl, mood });
       if (!result?.ok || activeAccountAvatarUserId !== userId) throw new Error();
       accountProfileDisplayName = result.name; accountProfileSignature = result.signature;
       renderAccountProfileText(); renderAccountAvatars(result.name[0].toUpperCase(), result.dataUrl); renderProfileMood(result.mood);

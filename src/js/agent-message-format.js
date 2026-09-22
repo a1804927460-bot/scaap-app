@@ -173,6 +173,7 @@ function createAgentQuestionCard(action) {
       return !selected.length || (q.options.some(o => selected.includes(o.id) && o.allowCustom) && !custom[q.id]);
     })) { status.textContent='请完成每个问题；选择其他时请填写内容。'; return; }
     card.dataset.sending='true'; skip.disabled=submit.disabled=true;
+    status.textContent='正在提交回答…';
     try {
       await window.MesssAgentQuestionAnswer({questionId:action.questionId, questions, answers:skipped?{}:values, customAnswers:skipped?{}:custom, skipped},card);
       card.dataset.done='true'; card.hidden=true; syncAgentQuestionDocks();
@@ -194,6 +195,9 @@ window.MesssAgentQuestionAnswer = async function(payload,card) {
   } else if(card._surface==='main') {
     if(card._session!==AiAssistant.activeSessionId) throw Error('请回到原主会话后提交。');
     if(AiAssistant.busy||AiAssistant.queueRunning) throw Error('Agent 正在回复，请稍后提交。');
+    if(AiAssistant.queuePaused || AiAssistant.queueEditing || AiAssistant.queueDragging) throw Error('待发队列已暂停或正在编辑，请先恢复队列后提交。');
+    if(AiAssistant.queue.length >= 50) throw Error('待发队列已满，请先发送或移除待发消息。');
+    if(AiAssistant.kind && AiAssistant.kind !== 'chat') throw Error('请切回 Agent 对话模式后提交回答。');
     const provider=selectedAssistantProvider(); if(!provider) throw Error('请先选择可用的 Agent 模型。');
     AiAssistant.queue.push({id:crypto.randomUUID(),prompt:message,provider:{...provider},attachments:[],kind:'chat',sessionId:card._session,permissionSession:window.MesssComposerActions?.session,routingStrategy:window.MesssAiProviderOptions?.routingStrategy(provider.model,AiAssistant.chatUsePreset!==false),options:{}});
     renderAssistantQueue(); void drainAssistantQueue();
@@ -210,7 +214,8 @@ function syncAgentQuestionDocks() {
       const anchor=document.createElement('span'); anchor.className='agent-question-anchor'; anchor.textContent='请在输入框上方选择';
       card.before(anchor); anchor._card=card; card._anchor=anchor; card._surface=surface;
       card._canvasId = surface === 'canvas' && typeof activeCanvasId === 'function' ? activeCanvasId() : null;
-      card._session=card._source?._questionSession||(surface==='main'?AiAssistant.activeSessionId:CanvasWorkspace.activeAgentSessionId); card.remove();
+      card._session=card._source?._questionSession||(surface==='main'?AiAssistant.activeSessionId:CanvasWorkspace.activeAgentSessionId);
+      card.dataset.surface=surface; card.dataset.session=card._session || ''; card.remove();
     }
     const anchor=[...list.querySelectorAll('.agent-question-anchor')].at(-1); let active=anchor?._card;
     if(active) {

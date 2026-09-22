@@ -117,6 +117,7 @@
 #board-agent-panel .board-agent-form-tools { flex-wrap: wrap; min-width: 0; gap: 6px; }
 .ai-assistant-panel .ai-assistant-form button[type="submit"],
 #board-agent-panel .board-agent-form button[type="submit"] { flex-shrink: 0; margin-inline-start: auto; }
+.ai-assistant-panel .ai-assistant-form-footer:has(.ai-assistant-credit-estimate:not([hidden])) button[type="submit"] { margin-inline-start: 0; }
 .ai-chat-history-sidebar .ai-chat-history-item {
   min-height: 38px; border-radius: 9px; font-weight: 400; line-height: 1.5;
 }
@@ -262,6 +263,9 @@
 
 .agent-question-dock { flex:0 1 auto; min-height:0; box-sizing:border-box; margin-bottom:10px; max-height:48vh; overflow:auto; }
 .agent-question-dock[hidden] { display:none; }
-.agent-question-dock .agent-question-card { margin:0; }
+.agent-question-dock .agent-question-card { margin:0; background:var(--bg-elevated); color:var(--text-primary); box-shadow:none; }
+.agent-question-dock .agent-question-card [role="status"] { color:var(--text-secondary); font-size:12px; overflow-wrap:anywhere; }
+.agent-question-dock .agent-question-option { background:var(--bg-surface); color:var(--text-primary); }
+.agent-question-dock .agent-question-option:has(input:checked) { background:var(--accent-soft); border-color:var(--accent); }
 .agent-question-dock .agent-question-form { max-height:25vh; }
 .agent-question-anchor { color:var(--text-secondary); font-size:12px; }

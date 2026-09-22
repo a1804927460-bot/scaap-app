@@ -611,6 +611,28 @@ function refreshUsageLanguage(renderData = true) {
   if (renderData && UsageSettings.summary) renderUsageSummary(UsageSettings.summary);
 }
 
+function syncUsageYearDropdown(_dates, _text, picker) {
+  picker.calendarContainer.classList.add('usage-date-picker');
+  const heading = picker.currentYearElement.parentElement.parentElement;
+  let select = heading.querySelector('.usage-year-dropdown');
+  if (!select) {
+    select = document.createElement('select');
+    select.className = 'usage-year-dropdown';
+    select.addEventListener('change', () => picker.changeYear(Number(select.value)));
+    heading.append(select);
+  }
+  select.setAttribute('aria-label', usageText('Year', '年份', '연도'));
+  const max = (picker.config.maxDate || new Date()).getFullYear();
+  const min = picker.config.minDate ? picker.config.minDate.getFullYear() : Math.min(1970, picker.currentYear);
+  select.replaceChildren();
+  for (let year = max; year >= min; year--) {
+    const option = document.createElement('option');
+    option.value = String(year); option.textContent = usageText(String(year), `${year}年`, `${year}년`);
+    select.append(option);
+  }
+  select.value = String(picker.currentYear);
+}
+
 function initUsageSettings() {
   if (UsageSettings.initialized || !document.getElementById('settings-usage-view')) return;
   UsageSettings.initialized = true;
@@ -654,8 +676,12 @@ function initUsageSettings() {
           dateFormat: 'Y-m-d', disableMobile: true, maxDate: today,
           locale: usageText('default', 'zh', 'ko'),
           monthSelectorType: 'dropdown',
+          onReady: syncUsageYearDropdown,
+          onYearChange: syncUsageYearDropdown,
+          onMonthChange: syncUsageYearDropdown,
           onOpen: (_dates, _text, picker) => {
             picker.set('locale', usageText('default', 'zh', 'ko'));
+            syncUsageYearDropdown(_dates, _text, picker);
           }
         });
       });

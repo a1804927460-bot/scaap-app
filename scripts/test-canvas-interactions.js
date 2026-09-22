@@ -1247,7 +1247,7 @@ assert.match(
 );
 assert.match(
   workspaceSource,
-  /function canvasAgentThinkingText[\s\S]*?Thinking\.\.\.[\s\S]*?const pending = appendCanvasAgentMessage\('assistant', canvasAgentThinkingText\(\)\)[\s\S]*?setInterval[\s\S]*?renderAgentMessageContent\(pending, response\.text\)[\s\S]*?clearInterval\(thinkingTimer\)/,
+  /function canvasAgentThinkingText[\s\S]*?Thinking\.\.\.[\s\S]*?const pending = appendCanvasAgentMessage\('assistant', canvasAgentThinkingText\(\), sessionId\)[\s\S]*?setInterval[\s\S]*?renderAgentMessageContent\(pending, response\.text\)[\s\S]*?clearInterval\(thinkingTimer\)/,
   'Canvas Agent must show an elapsed thinking state until the response replaces it in place.'
 );
 assert.match(boardSource, /--board-selection-width[\s\S]*?1\.2 \/ Math\.max\(Board\.zoom/);
@@ -1457,7 +1457,7 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /const supported = normalizedTarget === 'photoshop'[\s\S]*?preview\.isImageExt\(ext\)[\s\S]*?preview\.isImageExt\(ext\) \|\| preview\.isVideoExt\(ext\)/,
+  /const supported = normalizedTarget === 'illustrator'[\s\S]*?normalizedTarget === 'photoshop'[\s\S]*?preview\.isImageExt\(ext\)[\s\S]*?preview\.isImageExt\(ext\) \|\| preview\.isVideoExt\(ext\)/,
   'Images must be accepted by both Photoshop and After Effects while videos remain available to After Effects.'
 );
 assert.doesNotMatch(mainSource, /reason:\s*'not-ai-media'/,

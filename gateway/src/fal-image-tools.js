@@ -23,19 +23,42 @@ export function falResizeInput(imageDataUrl, options = {}) {
 }
 
 export async function normalizeFalResizeOptions(imageDataUrl, options = {}) {
-  if (options.width !== undefined || options.height !== undefined) {
-    falResizeInput(imageDataUrl, options);
-    return { width: Number(options.width), height: Number(options.height) };
-  }
-  const edges = ['left', 'right', 'up', 'down'].map(key => Number(options[key] || 0));
-  if (!edges.every(value => Number.isInteger(value) && value >= 0 && value <= 2000) || !edges.some(Boolean)) {
-    throw failure('invalid-image-tool-options', '修改尺寸参数无效。', 400);
-  }
   const { buffer } = parseImageDataUrl(imageDataUrl);
   const metadata = await sharp(buffer, { limitInputPixels: 40_000_000 }).metadata();
-  const normalized = { width: metadata.width + edges[0] + edges[1], height: metadata.height + edges[2] + edges[3] };
+  const swapped = metadata.orientation >= 5 && metadata.orientation <= 8;
+  const sourceWidth = swapped ? metadata.height : metadata.width;
+  const sourceHeight = swapped ? metadata.width : metadata.height;
+  let normalized;
+  if (options.width !== undefined || options.height !== undefined) {
+    falResizeInput(imageDataUrl, options);
+    normalized = { width: Number(options.width), height: Number(options.height) };
+  } else {
+    const edges = ['left', 'right', 'up', 'down'].map(key => Number(options[key] || 0));
+    if (!edges.every(value => Number.isInteger(value) && value >= 0 && value <= 2000) || !edges.some(Boolean)) {
+      throw failure('invalid-image-tool-options', '修改尺寸参数无效。', 400);
+    }
+    normalized = { width: sourceWidth + edges[0] + edges[1], height: sourceHeight + edges[2] + edges[3] };
+  }
   falResizeInput(imageDataUrl, normalized);
+  if (!sourceWidth || !sourceHeight || metadata.pages > 1 || normalized.width < sourceWidth || normalized.height < sourceHeight
+      || (normalized.width === sourceWidth && normalized.height === sourceHeight)) {
+    throw failure('invalid-image-tool-options', '扩图必须保留完整原图，并至少向外扩展一边；最大尺寸为 4096 px。', 400);
+  }
   return normalized;
+}
+
+async function prepareFalExpansion(imageDataUrl, options) {
+  const dimensions = await normalizeFalResizeOptions(imageDataUrl, options);
+  const { buffer } = parseImageDataUrl(imageDataUrl);
+  const source = await sharp(buffer, { limitInputPixels: 40_000_000 }).rotate().toColourspace('srgb').ensureAlpha().png().toBuffer({ resolveWithObject: true });
+  const left = Math.floor((dimensions.width - source.info.width) / 2);
+  const top = Math.floor((dimensions.height - source.info.height) / 2);
+  const padded = await sharp(source.data).extend({ left, top,
+    right: dimensions.width - source.info.width - left, bottom: dimensions.height - source.info.height - top,
+    background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
+  const input = falResizeInput(`data:image/png;base64,${padded.toString('base64')}`, dimensions);
+  input.prompt = `Outpaint only the transparent margins outside the original image. The output canvas is ${dimensions.width}x${dimensions.height} pixels. Keep the original ${source.info.width}x${source.info.height} image fixed at x=${left}, y=${top}, at its original scale. Seamlessly continue its background, lighting and scene into the margins. Do not crop, resize, move, redraw or replace the original content. Fill every transparent margin.`;
+  return { input, source: source.data, left, top, ...dimensions };
 }
 
 export async function normalizeFalEnhanceOptions(imageDataUrl) {
@@ -51,7 +74,8 @@ export async function runFalImageTool(model, imageDataUrl, options = {}, depende
   if (!['smart-resize', 'feynobg', 'topaz/upscale/image'].includes(model)) throw failure('invalid-image-tool', '不支持此图片工具。', 400);
   const key = assertFalConfigured(dependencies.env || process.env);
   parseImageDataUrl(imageDataUrl);
-  const input = model === 'smart-resize' ? falResizeInput(imageDataUrl, options) : model === 'topaz/upscale/image' ? { image_url: imageDataUrl, upscale_factor: 2, model: 'Standard MAX', output_format: 'png', face_enhancement: false } : { image_url: imageDataUrl };
+  const expansion = model === 'smart-resize' ? await prepareFalExpansion(imageDataUrl, options) : null;
+  const input = expansion ? expansion.input : model === 'topaz/upscale/image' ? { image_url: imageDataUrl, upscale_factor: 2, model: 'Standard MAX', output_format: 'png', face_enhancement: false } : { image_url: imageDataUrl };
   const fetchImpl = dependencies.fetchImpl || fetch;
   const sleep = dependencies.sleep || delay;
   const endpoint = `${origin}/fal-ai/${model}`;
@@ -101,7 +125,20 @@ export async function runFalImageTool(model, imageDataUrl, options = {}, depende
         const result = await json(taskUrl);
         const url = model === 'smart-resize' ? result.images?.[0]?.url : result.image?.url;
         if (!url) throw failure('provider-result-missing', '图片结果暂未就绪。');
-        return await downloadAi302ImageResult(url, { fetchImpl });
+        const output = await downloadAi302ImageResult(url, { fetchImpl });
+        if (!expansion) return output;
+        const metadata = await sharp(output, { limitInputPixels: 40_000_000 }).metadata();
+        if (metadata.width !== expansion.width || metadata.height !== expansion.height) {
+          throw failure('provider-invalid-response', '扩图结果尺寸不匹配，请重试。', 502);
+        }
+        // The model generates only the surround; restore the original pixels exactly.
+        const original = await sharp(expansion.source).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+        const pixels = await sharp(output).toColourspace('srgb').ensureAlpha().raw().toBuffer();
+        const rowBytes = original.info.width * 4;
+        for (let row = 0; row < original.info.height; row++) {
+          original.data.copy(pixels, ((row + expansion.top) * expansion.width + expansion.left) * 4, row * rowBytes, (row + 1) * rowBytes);
+        }
+        return await sharp(pixels, { raw: { width: expansion.width, height: expansion.height, channels: 4 } }).png().toBuffer();
       }
       if (!['IN_QUEUE', 'IN_PROGRESS'].includes(state.status)) throw failure('provider-invalid-response', '图片任务状态异常。');
       await sleep(1500);

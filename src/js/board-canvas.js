@@ -9698,7 +9698,9 @@ function enterDoodleMode() {
     doodleHasStrokes = true;
     activeStroke = {
       color: DoodleState.color,
-      size: DoodleState.size / Math.max(0.0001, Board.zoom),
+      // Points and width share board coordinates: zoom must not change the
+      // brush setting between strokes (including eraser strokes).
+      size: DoodleState.size,
       tool: DoodleState.tool,
       points: [pos(e)],
       complete: false

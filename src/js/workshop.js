@@ -13,6 +13,8 @@ const WorkshopState = {
   canvasTargetResolver: null,
   publishFileIds: [],
   publishFileId: null,
+  publishing: false,
+  failedPublishDraft: null,
   awaitingCanvasSelection: false,
   loaded: false,
   loading: false,
@@ -151,7 +153,7 @@ function workshopCreateMedia(post, detail = false) {
     media.muted = true;
     media.playsInline = true;
     media.preload = detail ? 'auto' : 'metadata';
-    media.controls = detail;
+    media.controls = false;
   }
   media.addEventListener('error', () => {
     frame.classList.add('is-missing');
@@ -159,6 +161,7 @@ function workshopCreateMedia(post, detail = false) {
     frame.append(workshopCreateIcon(post.kind), document.createTextNode(workshopText('Media unavailable', '媒体暂不可用')));
   }, { once: true });
   frame.appendChild(media);
+  if (detail) workshopSetupViewer(frame, media, post.kind === 'video');
   if (post.kind === 'video' && !detail) {
     const badge = document.createElement('span');
     badge.className = 'workshop-media-badge';
@@ -166,6 +169,73 @@ function workshopCreateMedia(post, detail = false) {
     frame.appendChild(badge);
   }
   return frame;
+}
+
+function workshopSetupViewer(frame, media, isVideo) {
+  const controls = document.createElement('div');
+  controls.className = 'workshop-viewer-controls';
+  controls.setAttribute('role', 'group');
+  controls.setAttribute('aria-label', workshopText('Media controls', '媒体控制'));
+  const button = (label, symbol, action) => {
+    const el = document.createElement('button');
+    el.type = 'button'; el.textContent = symbol; el.title = label;
+    el.setAttribute('aria-label', label); el.addEventListener('click', action);
+    controls.append(el); return el;
+  };
+  const label = (el, text, symbol) => {
+    el.title = text; el.setAttribute('aria-label', text); el.textContent = symbol;
+  };
+  if (isVideo) {
+    const play = button(workshopText('Play', '播放'), '▶', async () => {
+      if (!media.paused) return media.pause();
+      try { await media.play(); } catch (_) { workshopToast(workshopText('Unable to play this video.', '暂时无法播放此视频。')); }
+    });
+    const syncPlay = () => label(play, media.paused ? workshopText('Play', '播放') : workshopText('Pause', '暂停'), media.paused ? '▶' : 'Ⅱ');
+    media.addEventListener('play', syncPlay); media.addEventListener('pause', syncPlay); media.addEventListener('ended', syncPlay);
+    const time = document.createElement('span'); time.className = 'workshop-viewer-time';
+    const seek = document.createElement('input'); seek.type = 'range'; seek.min = '0'; seek.max = '100'; seek.step = '.1'; seek.value = '0'; seek.disabled = true;
+    seek.setAttribute('aria-label', workshopText('Playback position', '播放进度'));
+    const format = value => { const n = Math.max(0, Math.floor(Number(value) || 0)); return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`; };
+    const syncTime = () => {
+      const valid = Number.isFinite(media.duration) && media.duration > 0;
+      seek.disabled = !valid; seek.value = valid ? String(media.currentTime / media.duration * 100) : '0';
+      time.textContent = `${format(media.currentTime)} / ${format(valid ? media.duration : 0)}`;
+    };
+    seek.addEventListener('input', () => { if (Number.isFinite(media.duration)) media.currentTime = Number(seek.value) / 100 * media.duration; });
+    for (const event of ['timeupdate', 'loadedmetadata', 'durationchange']) media.addEventListener(event, syncTime);
+    controls.append(time, seek); syncTime();
+    const mute = button(workshopText('Unmute', '开启声音'), '♪', () => { media.muted = !media.muted; });
+    const syncMute = () => { mute.setAttribute('aria-pressed', String(!media.muted)); label(mute, media.muted ? workshopText('Unmute', '开启声音') : workshopText('Mute', '静音'), media.muted ? '♪̸' : '♪'); };
+    media.addEventListener('volumechange', syncMute); syncMute();
+  }
+  let spatial = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let drag = null;
+  const reset = () => { drag = null; frame.classList.remove('is-dragging'); media.style.transform = ''; };
+  const space = button(workshopText('Spatial motion', '空间动效'), '◇', () => { spatial = !spatial; reset(); syncSpatial(); });
+  const hint = document.createElement('span'); hint.className = 'workshop-viewer-hint';
+  hint.textContent = workshopText('Drag to explore', '拖动感受空间'); frame.append(hint);
+  function syncSpatial() { space.setAttribute('aria-pressed', String(spatial)); frame.classList.toggle('is-spatial', spatial); hint.hidden = !spatial; }
+  syncSpatial();
+  media.draggable = false;
+  frame.addEventListener('pointerdown', event => {
+    if (!spatial || event.button !== 0 || event.target.closest('.workshop-viewer-controls')) return;
+    drag = { x: event.clientX, y: event.clientY }; frame.setPointerCapture(event.pointerId); frame.classList.add('is-dragging'); event.preventDefault();
+  });
+  frame.addEventListener('pointermove', event => {
+    if (!drag) return;
+    const x = Math.max(-1, Math.min(1, (event.clientX - drag.x) / 240));
+    const y = Math.max(-1, Math.min(1, (event.clientY - drag.y) / 240));
+    media.style.transform = `perspective(1200px) rotateX(${-y * 5}deg) rotateY(${x * 7}deg) scale(1.025)`;
+  });
+  for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) frame.addEventListener(event, reset);
+  const full = button(workshopText('Fullscreen', '全屏'), '⛶', async () => {
+    try {
+      if (document.fullscreenElement === frame) await document.exitFullscreen();
+      else await frame.requestFullscreen();
+    } catch (_) { workshopToast(workshopText('Fullscreen is unavailable.', '暂时无法进入全屏。')); }
+  });
+  frame.addEventListener('fullscreenchange', () => label(full, document.fullscreenElement === frame ? workshopText('Exit fullscreen', '退出全屏') : workshopText('Fullscreen', '全屏'), '⛶'));
+  frame.append(controls);
 }
 
 function workshopBuildCard(post) {
@@ -278,12 +348,24 @@ function renderWorkshopPublishSelection() {
 }
 
 function openWorkshopPublish() {
+  if (WorkshopState.publishing) {
+    workshopToast(workshopText('Publishing in the background. You can keep working.', '正在后台发布，你可以继续操作。'));
+    return;
+  }
   const preserveDraft = WorkshopState.awaitingCanvasSelection;
   WorkshopState.awaitingCanvasSelection = false;
   WorkshopState.publishFileIds = selectedWorkshopFileIds();
   WorkshopState.publishFileId = WorkshopState.publishFileIds[0] || null;
   const form = document.getElementById('workshop-publish-form');
   if (form && !preserveDraft) form.reset();
+  const draft = !preserveDraft && WorkshopState.failedPublishDraft;
+  if (draft) {
+    WorkshopState.publishFileIds = [draft.fileId];
+    WorkshopState.publishFileId = draft.fileId;
+    document.getElementById('workshop-publish-name').value = draft.metadata.title;
+    document.getElementById('workshop-publish-description').value = draft.metadata.description;
+    document.getElementById('workshop-publish-tags').value = draft.metadata.tags.join('、');
+  }
   const status = document.getElementById('workshop-publish-status');
   if (status) status.textContent = '';
   renderWorkshopPublishSelection();
@@ -320,7 +402,25 @@ function workshopPostMetadata() {
   return { title, description, tags };
 }
 
+function renderWorkshopPublishProgress(message, failed = false) {
+  let banner = document.getElementById('workshop-publish-progress');
+  if (!banner) {
+    banner = document.createElement('div'); banner.id = 'workshop-publish-progress';
+    banner.className = 'workshop-publish-progress'; banner.setAttribute('role', 'status');
+    document.getElementById('workshop-grid')?.before(banner);
+  }
+  banner.replaceChildren(); banner.hidden = !message;
+  banner.classList.toggle('is-error', failed);
+  const text = document.createElement('span'); text.textContent = message; banner.append(text);
+  if (failed) {
+    const retry = document.createElement('button'); retry.type = 'button';
+    retry.textContent = workshopText('Review and retry', '查看并重试');
+    retry.onclick = openWorkshopPublish; banner.append(retry);
+  }
+}
+
 async function publishWorkshop() {
+  if (WorkshopState.publishing) return;
   const status = document.getElementById('workshop-publish-status');
   const file = workshopFile(WorkshopState.publishFileId);
   const metadata = workshopPostMetadata();
@@ -333,45 +433,35 @@ async function publishWorkshop() {
     document.getElementById('workshop-publish-name')?.focus();
     return;
   }
-  if (status) status.textContent = workshopText('Publishing...', '正在发布...');
-  const kind = isVideoExt(file.ext) ? 'video' : 'image';
-  let published = null;
-  let cloud = false;
-  try {
-    if (window.messsAPI?.workshop?.publish) {
-      const result = await window.messsAPI.workshop.publish(file.id, metadata);
-      if (result && result.ok && result.post) {
-        published = workshopNormalizePost({ ...result.post, sourceFileId: file.id });
-        cloud = true;
-      }
-    }
-  } catch (error) {}
-  if (!published) {
-    published = workshopNormalizePost({
-      id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      ownerId: 'local',
-      ownerName: workshopText('Me', '我'),
-      ...metadata,
-      kind,
-      sourceFileId: file.id,
-      sourceFileName: file.name,
-      prompt: workshopPostPrompt({ sourceFileId: file.id }),
-      createdAt: new Date().toISOString(),
-      localOnly: true
-    });
-  }
-  WorkshopState.posts = [published, ...WorkshopState.posts.filter((post) => post.id !== published.id)];
-  persistWorkshopPost(published);
-  renderWorkshop();
+  WorkshopState.publishing = true;
+  const draft = { fileId: file.id, metadata };
   closeWorkshopPublish();
-  workshopToast(cloud
-    ? workshopText('Published to Workshop.', '已发布到创意工坊。')
-    : workshopText('Saved locally. Sign in and deploy Workshop storage to share publicly.', '已保存到本地。登录并部署工坊存储后即可公开分享。'));
+  renderWorkshopPublishProgress(workshopText('Publishing in the background…', '正在后台发布…') + ' ' + metadata.title);
+  workshopToast(workshopText('Publishing in the background. You can keep working.', '已转入后台发布，你可以继续操作。'));
+  try {
+    const result = await window.messsAPI?.workshop?.publish?.(file.id, metadata);
+    const published = result?.ok && workshopNormalizePost({ ...result.post, sourceFileId: file.id });
+    if (!published) throw new Error('publish-failed');
+    WorkshopState.posts = [published, ...WorkshopState.posts.filter(post => post.id !== published.id)];
+    persistWorkshopPost(published);
+    WorkshopState.failedPublishDraft = null;
+    renderWorkshop();
+    renderWorkshopPublishProgress('');
+    workshopToast(workshopText('Published to Workshop.', '已发布到创意工坊。'));
+  } catch (error) {
+    WorkshopState.failedPublishDraft = draft;
+    const message = workshopText('Could not publish. Your draft is saved; review and retry.', '发布未完成，已保留填写内容，可查看后重试。');
+    renderWorkshopPublishProgress(message, true);
+    workshopToast(message);
+  } finally {
+    WorkshopState.publishing = false;
+  }
 }
 
 function renderWorkshopDetail(post) {
   const media = document.getElementById('workshop-detail-media');
   if (media) {
+    media.querySelectorAll('video').forEach(video => video.pause());
     media.replaceChildren(workshopCreateMedia(post, true));
   }
   const type = document.getElementById('workshop-detail-type');
@@ -526,6 +616,10 @@ function openWorkshopDetail(post) {
 }
 
 function closeWorkshopDetail() {
+  const host = document.getElementById('workshop-detail-media');
+  host?.querySelectorAll('video').forEach(video => video.pause());
+  if (document.fullscreenElement && host?.contains(document.fullscreenElement)) void document.exitFullscreen().catch(() => {});
+  host?.replaceChildren();
   setWorkshopOverlay('workshop-detail-overlay', false);
   WorkshopState.activePost = null;
 }

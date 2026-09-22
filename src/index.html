@@ -20,6 +20,7 @@
   <link rel="stylesheet" href="../node_modules/flatpickr/dist/flatpickr.min.css" />
   <link rel="stylesheet" href="styles/generation-controls.css" />
   <link rel="stylesheet" href="styles/agent-interface.css" />
+  <link rel="stylesheet" href="styles/ui-motion.css" />
 </head>
 <body>
   <div id="app-titlebar" class="app-titlebar">
@@ -189,7 +190,7 @@
           <button id="account-menu-open" class="account-footer-main" type="button" aria-label="Account and settings">
             <span id="account-footer-avatar" class="account-avatar">M</span>
             <span class="account-footer-copy"><strong id="account-footer-name" data-profile-field="name">Messs user</strong><small id="account-footer-signature" data-profile-field="signature"></small></span>
-            <span id="account-footer-credits" class="account-footer-credits" aria-label="Points unavailable" title="Points unavailable"><i aria-hidden="true">⚡</i><b>...</b><small></small></span>
+            <span id="account-footer-credits" class="account-footer-credits" aria-label="Points unavailable" title="Points unavailable"><i aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13.5 2 4 14h7l-.5 8L20 10h-7z"/></svg></i><b>...</b><small></small></span>
           </button>
         </div>
 
@@ -354,7 +355,7 @@
                 <button id="ai-account-menu-open" class="account-footer-main" type="button" aria-label="Account and settings" data-i18n-aria-label-en="Account and settings" data-i18n-aria-label-zh="账户与设置">
                   <span id="ai-account-footer-avatar" class="account-avatar">M</span>
                   <span class="account-footer-copy"><strong id="ai-account-footer-name">Messs user</strong><small id="ai-account-footer-signature"></small></span>
-                  <span id="ai-account-footer-credits" class="account-footer-credits"><i aria-hidden="true">⚡</i><b>...</b><small></small></span>
+                  <span id="ai-account-footer-credits" class="account-footer-credits"><i aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13.5 2 4 14h7l-.5 8L20 10h-7z"/></svg></i><b>...</b><small></small></span>
                 </button>
               </div>
             </aside>
@@ -492,6 +493,10 @@
         </header>
         <section id="canvas-library-view" class="canvas-library-view">
           <div class="canvas-library-content">
+            <button id="canvas-start-creating" class="canvas-start-creating" type="button">
+              <span class="canvas-start-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+              <span class="canvas-start-label">开始创作</span>
+            </button>
             <div class="canvas-library-topline">
               <div>
                 <button id="canvas-library-folder-back" class="canvas-library-folder-back" type="button" title="All canvases" aria-label="All canvases" hidden>

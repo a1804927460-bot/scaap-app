@@ -4083,6 +4083,11 @@ function sanitizeCanvasAgentHistory(value) {
           role,
           content,
           displayContent,
+          creditsCharged: typeof message?.creditsCharged === 'number' && Number.isFinite(message.creditsCharged) && message.creditsCharged >= 0 ? message.creditsCharged : null,
+          generatedFiles: Array.isArray(message?.generatedFiles) ? message.generatedFiles.slice(0, 6).map(file => ({
+            token: String(file?.token || '').slice(0, 240), name: String(file?.name || '').slice(0, 240),
+            mimeType: String(file?.mimeType || '').slice(0, 120), sizeBytes: Math.max(0, Math.min(1024 * 1024 * 1024, Number(file?.sizeBytes) || 0))
+          })).filter(file => file.token && file.name) : [],
           attachmentFileIds: Array.isArray(message && message.attachmentFileIds)
             ? [...new Set(message.attachmentFileIds.map((entry) => String(entry || '').trim()).filter(Boolean))].slice(0, 50)
             : [],
@@ -8089,26 +8094,27 @@ function registerIpcHandlers() {
     return { ok: true, filePath: result.filePath };
   });
 
-  ipcMain.handle('canvas-agent:getHistory', () => ({
+  const agentHistoryWrites = require('./lib/agent-history-writes').createAgentHistoryWrites();
+  ipcMain.handle('canvas-agent:getHistory', (event) => ({
     ok: true,
-    sessions: sanitizeCanvasAgentHistory(store.data.canvasAgentHistory)
+    sessions: agentHistoryWrites.read(event.sender, 'canvas', sanitizeCanvasAgentHistory(store.data.canvasAgentHistory))
   }));
 
   ipcMain.handle('canvas-agent:saveHistory', (_evt, sessions) => {
     const normalized = sanitizeCanvasAgentHistory(sessions);
-    store.data.canvasAgentHistory = normalized;
+    store.data.canvasAgentHistory = sanitizeCanvasAgentHistory(agentHistoryWrites.save(_evt.sender, 'canvas', sanitizeCanvasAgentHistory(store.data.canvasAgentHistory), normalized));
     store.scheduleSave();
     return { ok: true, sessions: normalized };
   });
 
-  ipcMain.handle('ai-assistant:getHistory', () => ({
+  ipcMain.handle('ai-assistant:getHistory', (event) => ({
     ok: true,
-    sessions: sanitizeAiAssistantHistory(store.data.aiAssistantHistory)
+    sessions: agentHistoryWrites.read(event.sender, 'main', sanitizeAiAssistantHistory(store.data.aiAssistantHistory))
   }));
 
   ipcMain.handle('ai-assistant:saveHistory', (_evt, sessions) => {
     const normalized = sanitizeAiAssistantHistory(sessions);
-    store.data.aiAssistantHistory = normalized;
+    store.data.aiAssistantHistory = sanitizeAiAssistantHistory(agentHistoryWrites.save(_evt.sender, 'main', sanitizeAiAssistantHistory(store.data.aiAssistantHistory), normalized));
     store.scheduleSave();
     return { ok: true, sessions: normalized };
   });
@@ -10660,8 +10666,8 @@ function registerIpcHandlers() {
   ipcMain.handle('shell:sendToCreativeApp', async (_evt, id, target) => {
     const f = store.getFile(id);
     const language = currentLanguage();
-    const normalizedTarget = target === 'photoshop' || target === 'after-effects' ? target : null;
-    const targetName = normalizedTarget === 'after-effects' ? 'After Effects' : 'Photoshop';
+    const normalizedTarget = ['photoshop', 'after-effects', 'illustrator'].includes(target) ? target : null;
+    const targetName = normalizedTarget === 'illustrator' ? 'Adobe Illustrator' : normalizedTarget === 'after-effects' ? 'After Effects' : 'Photoshop';
     if (!normalizedTarget) {
       return {
         ok: false,
@@ -10677,7 +10683,9 @@ function registerIpcHandlers() {
       };
     }
     const ext = path.extname(f.name || f.storedPath || '').toLowerCase();
-    const supported = normalizedTarget === 'photoshop'
+    const supported = normalizedTarget === 'illustrator'
+      ? ['.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.gif', '.psd', '.svg', '.pdf', '.eps', '.ai'].includes(ext)
+      : normalizedTarget === 'photoshop'
       ? preview.isImageExt(ext)
       : preview.isImageExt(ext) || preview.isVideoExt(ext);
     if (!supported) {

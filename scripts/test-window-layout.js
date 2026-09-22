@@ -161,7 +161,7 @@ assert.match(appJs, /initSidebar\(initial\)/, 'Profile settings must be hydrated
 assert.match(indexHtml, /id="account-popover-name"[^>]*data-profile-field="name"/);
 assert.match(indexHtml, /id="account-popover-signature"[^>]*data-profile-field="signature"/);
 assert.match(indexHtml, /id="account-footer-name"[^>]*data-profile-field="name"/);
-assert.match(indexHtml, /id="account-footer-credits"[^>]*class="account-footer-credits"[^>]*>[\s\S]*?⚡[\s\S]*?<b>\.\.\.<\/b>[\s\S]*?<small><\/small>/, 'The account footer must use the compact lightning points icon and omit the points label.');
+assert.match(indexHtml, /id="account-footer-credits"[^>]*class="account-footer-credits"[^>]*>[\s\S]*?<svg[^>]*fill="currentColor"[\s\S]*?<b>\.\.\.<\/b>[\s\S]*?<small><\/small>/, 'The account footer must use the compact lightning points icon and omit the points label.');
 assert.match(sidebarJs, /addEventListener\('dblclick',[\s\S]*?beginAccountProfileEdit/);
 assert.match(sidebarJs, /account-footer-copy[\s\S]*?addEventListener\('dblclick'[\s\S]*?account-popover'\)\.hidden = false[\s\S]*?beginAccountProfileEdit/);
 assert.match(sidebarJs, /event\.key === 'Enter'[\s\S]*?finish\(true\)[\s\S]*?event\.key === 'Escape'[\s\S]*?finish\(false\)/);
