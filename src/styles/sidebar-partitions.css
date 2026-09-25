@@ -1,30 +1,43 @@
 .workspace-shortcuts { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; margin:0 0 18px; }
+#sidebar > .search-box[hidden],
+#sidebar > .file-list-header[hidden],
+#sidebar > .file-list-wrap[hidden] { display:none !important; }
 .workspace-shortcuts button { display:grid; justify-items:center; gap:7px; border:0; background:none; color:var(--text-secondary); padding:0; font:inherit; cursor:var(--cursor-click); }
 .workspace-shortcuts button > span { display:grid; place-items:center; width:min(42px,100%); aspect-ratio:1; border-radius:50%; background:var(--bg-elevated); border:1px solid var(--border-hairline); transition:background 150ms,transform 150ms; }
 .workspace-shortcuts button:hover > span { background:var(--accent-soft); transform:translateY(-2px); }
 .workspace-shortcuts img { width:19px; height:19px; opacity:.8; }
 [data-theme="dark"] .workspace-shortcuts img { filter:invert(1); }
 .workspace-shortcuts small { font-size:10px; }
-#sidebar:not(.is-collapsed) .workspace-shortcuts { grid-template-columns:1fr; gap:8px; }
+#sidebar:not(.is-collapsed) .workspace-shortcuts { grid-template-columns:1fr; gap:2px; }
 #sidebar:not(.is-collapsed) .workspace-shortcuts button {
-  display:flex; align-items:center; justify-content:flex-start; gap:12px;
-  width:100%; min-height:44px; padding:10px 14px; box-sizing:border-box;
-  border:1px solid var(--border-hairline); border-radius:12px;
-  background:var(--bg-elevated); color:var(--text-primary);
-  transition:background 150ms,border-color 150ms;
+  position:relative; display:flex; align-items:center; justify-content:flex-start; gap:10px;
+  width:100%; min-height:36px; padding:7px 10px; box-sizing:border-box;
+  border:1px solid transparent; border-radius:6px;
+  background:transparent; color:var(--text-secondary);
+  transition:background 150ms,color 150ms;
 }
 #sidebar:not(.is-collapsed) .workspace-shortcuts button > span {
-  flex:0 0 22px; width:22px; height:22px; aspect-ratio:auto;
+  flex:0 0 20px; width:20px; height:20px; aspect-ratio:auto;
   border:0; border-radius:0; background:transparent; transform:none;
 }
-#sidebar:not(.is-collapsed) .workspace-shortcuts small { font-size:13px; font-weight:500; }
-#sidebar:not(.is-collapsed) .workspace-shortcuts button:hover { background:var(--accent-soft); border-color:var(--accent); }
+#sidebar:not(.is-collapsed) .workspace-shortcuts button svg { width:18px; height:18px; }
+#sidebar:not(.is-collapsed) .workspace-shortcuts small { font-size:12px; font-weight:550; }
+#sidebar:not(.is-collapsed) .workspace-shortcuts button:hover { background:var(--bg-hover); color:var(--text-primary); }
+#sidebar:not(.is-collapsed) .workspace-shortcuts button.is-active { background:var(--accent-soft); color:var(--accent); }
+#sidebar:not(.is-collapsed) .workspace-shortcuts button.is-active::before {
+  content:""; position:absolute; left:-1px; top:9px; bottom:9px; width:2px; border-radius:2px; background:currentColor;
+}
+#sidebar:not(.is-collapsed) .workspace-shortcuts button[data-workspace-area="schedule"] {
+  margin-top:7px; padding-top:10px; min-height:40px;
+}
+#sidebar:not(.is-collapsed) .workspace-shortcuts button[data-workspace-area="schedule"]::after {
+  content:""; position:absolute; left:4px; right:4px; top:-5px; height:1px; background:var(--border-hairline);
+}
 .workspace-shortcuts button:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
 .sidebar-brand-row { display:flex; align-items:center; gap:10px; margin-bottom:18px; flex-shrink:0; }
 #sidebar .sidebar-brand-row .sidebar-brand { flex:1; width:auto; padding-bottom:0; }
 .sidebar-collapse-toggle { display:grid; place-items:center; width:32px; height:32px; flex:0 0 32px; border:0; background:transparent; color:var(--text-secondary); border-radius:8px; cursor:var(--cursor-click); }
 .sidebar-collapse-toggle:hover { background:var(--bg-surface-2); color:var(--text-primary); }
-.sidebar-rail-actions { display:none; }
 #main-app.sidebar-collapsed { grid-template-columns:72px minmax(0,1fr) var(--stats-w,320px); gap:0 8px; }
 #main-app.is-canvas-only.sidebar-collapsed { grid-template-columns:72px minmax(0,1fr); }
 #sidebar.is-collapsed { padding:14px 8px; opacity:1; pointer-events:auto; border-radius:14px; }
@@ -42,15 +55,67 @@
 #sidebar.is-collapsed > #file-list,
 #sidebar.is-collapsed .account-footer-copy,
 #sidebar.is-collapsed .account-footer-credits { display:none; }
-#sidebar.is-collapsed .workspace-shortcuts { display:flex; flex-direction:column; align-items:center; gap:14px; margin-bottom:18px; }
+#sidebar.is-collapsed .workspace-shortcuts { display:flex; flex-direction:column; align-items:center; gap:7px; margin-bottom:18px; }
 #sidebar.is-collapsed .workspace-shortcuts small { display:none; }
-#sidebar.is-collapsed .workspace-shortcuts button > span { width:40px; height:40px; }
-#sidebar.is-collapsed .sidebar-rail-actions { display:flex; flex-direction:column; align-items:center; gap:10px; padding-top:16px; border-top:1px solid var(--border-hairline); }
-.sidebar-rail-actions button { display:grid; place-items:center; width:40px; height:36px; border:0; border-radius:9px; background:none; color:var(--text-secondary); cursor:var(--cursor-click); }
-.sidebar-rail-actions button:hover { background:var(--bg-surface-2); color:var(--text-primary); }
+#sidebar.is-collapsed .workspace-shortcuts button > span { width:36px; height:36px; border-radius:7px; }
+#sidebar.is-collapsed .workspace-shortcuts button.is-active > span { color:var(--accent); background:var(--accent-soft); border-color:var(--accent); }
+#sidebar.is-collapsed .workspace-shortcuts button[data-workspace-area="schedule"] { margin-top:7px; }
 #sidebar.is-collapsed > .account-footer { margin-top:auto; flex-direction:column; gap:10px; padding:14px 0 0; }
 #sidebar.is-collapsed .account-footer-main { display:flex; flex:none; padding:0; justify-content:center; width:40px; min-width:0; }
 #sidebar.is-collapsed .account-footer-main .account-avatar { width:32px; height:32px; flex:0 0 32px; }
 #sidebar.is-collapsed .account-settings-btn { width:34px; height:34px; flex:0 0 34px; }
 #sidebar.is-collapsed .settings-popover { left:calc(100% + 10px); right:auto; width:min(340px,calc(100vw - 110px)); }
-@media(max-height:740px) { #sidebar.is-collapsed .sidebar-brand-row { gap:10px; margin-bottom:14px; } #sidebar.is-collapsed .workspace-shortcuts { gap:7px; margin-bottom:12px; } #sidebar.is-collapsed .sidebar-rail-actions { gap:4px; padding-top:10px; } }
+
+/* Dark navigation follows the reference's near-black shell and restrained
+   blue-gray selection, while keeping each destination easy to scan. */
+[data-theme="dark"] #sidebar {
+  background:#111315;
+  border-color:rgba(255,255,255,.055);
+}
+[data-theme="dark"] #sidebar:not(.is-collapsed) .workspace-shortcuts button {
+  background:transparent;
+  border-color:transparent;
+  color:#b7bcc1;
+  box-shadow:none;
+}
+[data-theme="dark"] #sidebar:not(.is-collapsed) .workspace-shortcuts button:hover {
+  background:#1b1e20;
+  border-color:transparent;
+  color:#fff;
+}
+[data-theme="dark"] #sidebar:not(.is-collapsed) .workspace-shortcuts button.is-active {
+  background:#19272d;
+  border-color:transparent;
+  color:#f4fbff;
+}
+[data-theme="dark"] #sidebar:not(.is-collapsed) .workspace-shortcuts button.is-active > span {
+  color:#75c8ec;
+}
+[data-theme="dark"] #sidebar > .search-box {
+  background:#24272a;
+  border-color:rgba(255,255,255,.08);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.025);
+}
+[data-theme="dark"] #sidebar > .search-box:focus-within {
+  border-color:#49798d;
+  box-shadow:0 0 0 2px rgba(87,188,232,.10);
+}
+[data-theme="dark"] #sidebar .file-list-header,
+[data-theme="dark"] #sidebar > .account-footer {
+  border-color:rgba(255,255,255,.085);
+}
+[data-theme="dark"] #sidebar .folder-item:hover,
+[data-theme="dark"] #sidebar .account-footer-main:hover,
+[data-theme="dark"] #sidebar .account-settings-btn:hover {
+  background:#202326;
+}
+[data-theme="dark"] #sidebar.is-collapsed .workspace-shortcuts button > span {
+  background:transparent;
+  border-color:transparent;
+}
+[data-theme="dark"] #sidebar.is-collapsed .workspace-shortcuts button.is-active > span {
+  color:#75c8ec;
+  background:#1b3039;
+  border-color:#355866;
+}
+@media(max-height:740px) { #sidebar.is-collapsed .sidebar-brand-row { gap:10px; margin-bottom:14px; } #sidebar.is-collapsed .workspace-shortcuts { gap:7px; margin-bottom:12px; } }

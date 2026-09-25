@@ -16,12 +16,17 @@ test('capability registry exposes configured names but no endpoints or credentia
  const text=appCapabilityInstruction({imageProviders:[{id:'image-2',name:'Nano Banana 2',hasApiKey:true,apiKey:'SECRET',endpoint:'SECRET_URL'},{id:'hidden',name:'hidden',hidden:true,hasApiKey:true}]});
  assert.match(text,/Nano Banana 2/);assert.doesNotMatch(text,/SECRET|hidden/);
  assert.match(text,/messs-question/);assert.match(text,/questionId/);
+ assert.match(text,/Never mention protocol names/);
 });
 
 test('question protocol is shared by chat and canvas renderers',()=>{
  const format=fs.readFileSync(require.resolve('../src/js/agent-message-format.js'),'utf8');
  assert.match(format,/createAgentQuestionCard/); assert.match(format,/MesssAgentQuestionAnswer/);
- for(const file of ['ai-assistant.js','canvas-workspace.js']) assert.match(fs.readFileSync(require.resolve('../src/js/'+file),'utf8'),/renderAgentMessageContent/);
+ assert.match(format,/agentVisiblePreviewText/); assert.doesNotMatch(format,/提问 '\+payload\.questionId/);
+ for(const file of ['ai-assistant.js','canvas-workspace.js']) {
+  const source=fs.readFileSync(require.resolve('../src/js/'+file),'utf8');
+  assert.match(source,/renderAgentMessageContent/); assert.match(source,/agentVisibleUserText/);
+ }
  assert.match(fs.readFileSync(require.resolve('../src/styles/agent-interface.css'),'utf8'),/agent-question-card/);
 });
 test('shared action quotes before generation and prevents double submission',async()=>{

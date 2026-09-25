@@ -1095,11 +1095,13 @@ function refreshStaticLanguage() {
   if (planBadge && /^(free|免费|무료)$/i.test(planBadge.dataset.planName || planBadge.textContent.trim())) planBadge.textContent = t('Free', '免费', '무료');
   setChatProviderColumnLabels();
   document.title = t('Messs. - Resolve your confusion', 'Messs. - 解决你的混乱');
-  setAttr('#section-tabs', 'aria-label', 'Sections', '分区');
-  setText('.section-tab[data-section="messs"]', 'Workspace', '工作区');
-  setText('.section-tab[data-section="assistant"]', 'Messs', 'Messs');
-  setText('.section-tab[data-section="market"]', 'Market', '市场');
-  setText('.section-tab[data-section="workshop"]', 'Workshop', '创意工坊');
+  setAttr('#workspace-shortcuts', 'aria-label', 'Main navigation', '主导航');
+  setText('[data-app-surface="agent"] small', 'Agent', 'Agent');
+  setText('[data-app-surface="market"] small', 'Market', '市场');
+  setText('[data-app-surface="workshop"] small', 'Workshop', '创意工坊');
+  setTitleAndLabel('[data-app-surface="agent"]', 'Agent', 'Agent');
+  setTitleAndLabel('[data-app-surface="market"]', 'Market', '市场');
+  setTitleAndLabel('[data-app-surface="workshop"]', 'Workshop', '创意工坊');
   setTitleAndLabel('#win-minimize-btn', 'Minimize', '最小化');
   setTitleAndLabel('#win-close-btn', 'Close', '关闭');
 
@@ -1142,7 +1144,7 @@ function refreshStaticLanguage() {
   setText('#preview-reveal', 'Show in Folder', '在文件夹中显示');
   setText('#preview-loading p', 'Generating preview...', '正在生成预览...');
 
-  setText('#ai-assistant-home h2', 'Messs resolves your confusion.', 'Messs 帮你理清混乱。');
+  setText('#ai-assistant-home h2', 'Agent resolves your confusion.', 'Agent 帮你理清混乱。');
   setText('#ai-assistant-home p', 'What should we solve today?', '今天要解决什么？');
   setText('.ai-assistant-quick-prompts [data-ai-quick-action="poster"]', 'Create Poster', '生成海报');
   setText('.ai-assistant-quick-prompts [data-ai-quick-action="logo"]', 'Create LOGO', '生成 LOGO');
@@ -1194,13 +1196,13 @@ function refreshStaticLanguage() {
   setAttr('#text-align-left', 'title', 'Align left', '左对齐');
   setAttr('#text-align-center', 'title', 'Center align', '居中对齐');
   setAttr('#text-align-right', 'title', 'Align right', '右对齐');
-  setTitleAndLabel('#board-theme-toggle', 'Toggle theme', '切换主题');
-  setTitleAndLabel('#board-shortcuts-btn', 'Shortcuts', '快捷键');
+  setTitleAndLabel('#board-settings-toggle', 'Canvas settings', '画布设置');
   setTitleAndLabel('#board-tool-upload', 'Upload files', '上传文件');
   setTitleAndLabel('#board-tool-ai-image', 'AI image', 'AI 图片');
   setTitleAndLabel('#board-tool-ai-video', 'AI video', 'AI 视频');
   setTitleAndLabel('#board-tool-text', 'Text', '文字');
-  setTitleAndLabel('#board-tool-doodle', 'Draw', '绘制');
+  setTitleAndLabel('#board-tool-doodle', 'Pen', '钢笔');
+  setTitleAndLabel('#board-tool-moodboard', 'Moodboard', '情绪板');
   setAttr('#board-bottom-zoom-out', 'title', 'Zoom out', '缩小');
   setAttr('#board-bottom-zoom-in', 'title', 'Zoom in', '放大');
   setTitleAndLabel('#board-bottom-fullscreen-toggle', 'Exit fullscreen', '退出全屏');
@@ -1334,7 +1336,7 @@ function applyLanguageChoice(language, options = {}) {
   setTitleAndLabel('#start-btn', 'Start', 'Start');
   setTitleAndLabel('#import-btn', 'Upload files', '\u4e0a\u4f20\u6587\u4ef6');
   setTitleAndLabel('#import-folder-btn', 'Upload folder', '\u4e0a\u4f20\u6587\u4ef6\u5939');
-  setText('.ai-assistant-compact h2', 'Messs resolves your confusion.', 'Messs \u5e2e\u4f60\u7406\u6e05\u6df7\u4e71\u3002');
+  setText('.ai-assistant-compact h2', 'Agent resolves your confusion.', 'Agent \u5e2e\u4f60\u7406\u6e05\u6df7\u4e71\u3002');
   setText('.ai-assistant-compact p', 'What should we solve today?', '\u4eca\u5929\u8981\u89e3\u51b3\u4ec0\u4e48\uff1f');
   refreshAccountAuthLanguage();
   refreshApiSettingsLanguage();

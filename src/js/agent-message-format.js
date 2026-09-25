@@ -7,6 +7,51 @@ function normalizeAgentGeneratedFiles(files) {
   })) : [];
 }
 
+function stripAgentPrivateReasoning(text) {
+  return String(text || '')
+    .replace(/<(think|analysis|reasoning)(?:\s[^>]*)?>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<(think|analysis|reasoning)(?:\s[^>]*)?>[\s\S]*$/gi, '')
+    .replace(/```(?:analysis|reasoning|thinking)\b[^\r\n]*\r?\n[\s\S]*?(?:\r?\n```|$)/gi, '');
+}
+
+function stripAgentInternalNames(text) {
+  return String(text || '')
+    .replace(/\bclarify-generation-request\b/gi, '')
+    .replace(/\bmesss-(?:question|image|open)\b/gi, '');
+}
+
+function agentVisiblePreviewText(text) {
+  return stripAgentInternalNames(stripAgentPrivateReasoning(text)
+    .replace(/```messs-[a-z0-9-]+\b[^\r\n]*\r?\n[\s\S]*?(?:\r?\n```|$)/gi, '')
+  ).trim();
+}
+
+function agentVisibleUserText(text) {
+  return String(text || '')
+    .replace(/^提问\s+[^\r\n]+?\s+的回答：/u, '提问的回答：')
+    .replace(/^Question\s+[^\r\n]+?\s+answers?:/i, 'Question answers:');
+}
+
+function leadingAgentJsonEnd(text) {
+  const source = String(text || '');
+  const start = source.search(/\S/);
+  if (start < 0 || source[start] !== '{') return -1;
+  let depth = 0, quoted = false, escaped = false;
+  for (let index = start; index < source.length; index += 1) {
+    const character = source[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') quoted = false;
+      continue;
+    }
+    if (character === '"') quoted = true;
+    else if (character === '{') depth += 1;
+    else if (character === '}' && --depth === 0) return index + 1;
+  }
+  return -1;
+}
+
 function renderAgentMessageContent(element, text) {
   const source = String(text || '');
   element._messageSource = source;
@@ -14,9 +59,12 @@ function renderAgentMessageContent(element, text) {
   function append(parent, tokens) {
     for (const token of tokens || []) {
       if (token.type === 'space' || token.type === 'def') continue;
-      if (token.type === 'code' && ['messs-image', 'messs-open', 'messs-question'].includes(token.lang)) {
-        const card = createAgentAppAction(token.lang, token.text);
+      if (token.type === 'code' && /^messs-/i.test(String(token.lang || ''))) {
+        const kind = String(token.lang || '').toLowerCase();
+        const card = ['messs-image', 'messs-open', 'messs-question'].includes(kind)
+          ? createAgentAppAction(kind, token.text) : null;
         if (card) { card._source = element; parent.append(card); continue; }
+        continue;
       }
       if (token.type === 'br') { parent.append(document.createElement('br')); continue; }
       if (token.type === 'hr') { parent.append(document.createElement('hr')); continue; }
@@ -63,11 +111,39 @@ function renderAgentMessageContent(element, text) {
     }
   }
   try {
-    append(fragment, marked.lexer(source, { gfm: true, breaks: true }));
+    const visibleSource = stripAgentPrivateReasoning(source);
+    const protocol = /```(messs-[a-z0-9-]+)\b[^\r\n]*\r?\n/gi;
+    let cursor = 0, match;
+    const appendMarkdown = value => {
+      const visible = stripAgentInternalNames(value);
+      if (visible) append(fragment, marked.lexer(visible, { gfm: true, breaks: true }));
+    };
+    while ((match = protocol.exec(visibleSource))) {
+      appendMarkdown(visibleSource.slice(cursor, match.index));
+      const bodyStart = protocol.lastIndex;
+      const remainder = visibleSource.slice(bodyStart);
+      const closing = /\r?\n```[ \t]*(?:\r?\n|$)/.exec(remainder);
+      const jsonEnd = leadingAgentJsonEnd(remainder);
+      const raw = closing ? remainder.slice(0, closing.index) : (jsonEnd >= 0 ? remainder.slice(0, jsonEnd) : remainder);
+      const kind = match[1].toLowerCase();
+      const card = ['messs-image', 'messs-open', 'messs-question'].includes(kind)
+        ? createAgentAppAction(kind, raw.trim()) : null;
+      if (card) { card._source = element; fragment.append(card); }
+      cursor = closing
+        ? bodyStart + closing.index + closing[0].length
+        : (jsonEnd >= 0 ? bodyStart + jsonEnd : visibleSource.length);
+      protocol.lastIndex = cursor;
+    }
+    appendMarkdown(visibleSource.slice(cursor));
+    if (!fragment.childNodes.length && visibleSource.trim()) {
+      const fallback = document.createElement('p');
+      fallback.textContent = '这条回复暂时无法显示，请重试。';
+      fragment.append(fallback);
+    }
     element.replaceChildren(fragment);
     element.classList.add('is-formatted-response');
   } catch {
-    element.textContent = source;
+    element.textContent = agentVisiblePreviewText(source) || '这条回复暂时无法显示，请重试。';
     element.classList.remove('is-formatted-response');
   }
 }
@@ -184,7 +260,7 @@ function createAgentQuestionCard(action) {
 }
 
 window.MesssAgentQuestionAnswer = async function(payload,card) {
-  const message='提问 '+payload.questionId+' 的回答：\n'+(payload.skipped?'跳过，请根据已有信息继续。':payload.questions.map(q=>{
+  const message='提问的回答：\n'+(payload.skipped?'跳过，请根据已有信息继续。':payload.questions.map(q=>{
     const ids=[].concat(payload.answers[q.id]||[]);
     return 'Q: '+q.label+'\nA: '+q.options.filter(o=>ids.includes(o.id)).map(o=>o.label).join('、')+(payload.customAnswers[q.id]?'：'+payload.customAnswers[q.id]:'');
   }).join('\n'));

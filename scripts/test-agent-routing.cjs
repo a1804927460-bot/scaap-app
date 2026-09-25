@@ -6,7 +6,8 @@ const route = (strategy,prompt) => resolveAgentRoute({strategy,prompt,providers}
 for (const strategy of ['fast','balanced','ultimate']) assert.equal(route(strategy,'hello').model,policy.models.light);
 assert.equal(route('balanced','implement python code').model,policy.models.standard);
 assert.equal(route('balanced','concurrency architecture refactor').model,policy.models.advanced);
-assert.equal(route('fast','concurrency architecture refactor').model,policy.models.standard);
+assert.equal(route('fast','implement python code').model,policy.models.light);
+assert.equal(route('fast','concurrency architecture refactor').model,policy.models.light);
 assert.equal(route('ultimate','implement python code').model,policy.models.advanced);
 assert.equal(resolveAgentRoute({strategy:'balanced',prompt:'continue',providers,messages:[{role:'user',content:'architecture refactor'}]}).model,policy.models.advanced);
 assert.equal(route(null,'hello'),null,'manual model is not rerouted');

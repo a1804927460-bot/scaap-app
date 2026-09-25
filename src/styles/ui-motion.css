@@ -13,6 +13,9 @@
 /* Individual scale composes with positioned controls' existing transforms. */
 :is(.pill-btn, .icon-btn-sm, .section-tab, .canvas-library-action,
     .canvas-start-creating, .ai-assistant-submit, .board-agent-submit,
+    .ai-composer-submit, .ai-composer-mode button, .ai-model-picker-trigger,
+    .ai-video-mode-trigger, .ai-options-toggle, .ai-camera-control-toggle,
+    .ai-prompt-style-toggle,
     .workspace-shortcuts button, .workshop-viewer-controls button,
     .agent-question-actions button, .hub-primary, .hub-close,
     .profile-editor-save, .account-plan-button, .text-tool-btn) {
@@ -24,6 +27,9 @@
 }
 :is(.pill-btn, .icon-btn-sm, .section-tab, .canvas-library-action,
     .canvas-start-creating, .ai-assistant-submit, .board-agent-submit,
+    .ai-composer-submit, .ai-composer-mode button, .ai-model-picker-trigger,
+    .ai-video-mode-trigger, .ai-options-toggle, .ai-camera-control-toggle,
+    .ai-prompt-style-toggle,
     .workspace-shortcuts button, .workshop-viewer-controls button,
     .agent-question-actions button, .hub-primary, .hub-close,
     .profile-editor-save, .account-plan-button, .text-tool-btn):active:not(:disabled):not([aria-disabled="true"]) {
@@ -36,6 +42,9 @@
 :is(.work-hub, .hub-editor, #profile-editor)[open] {
   animation: messs-surface-enter var(--motion-settle) var(--motion-standard);
 }
+.work-hub.is-preview-return[open] {
+  animation: none;
+}
 @keyframes messs-surface-enter {
   from { opacity: 0; translate: 0 6px; }
   to { opacity: 1; translate: 0 0; }
@@ -45,6 +54,9 @@
     --motion-popup-duration: 0ms; --motion-menu-duration: 0ms; }
   :is(.pill-btn, .icon-btn-sm, .section-tab, .canvas-library-action,
       .canvas-start-creating, .ai-assistant-submit, .board-agent-submit,
+      .ai-composer-submit, .ai-composer-mode button, .ai-model-picker-trigger,
+      .ai-video-mode-trigger, .ai-options-toggle, .ai-camera-control-toggle,
+      .ai-prompt-style-toggle,
       .workspace-shortcuts button, .workshop-viewer-controls button,
       .agent-question-actions button, .hub-primary, .hub-close,
       .profile-editor-save, .account-plan-button, .text-tool-btn) { scale: none !important; transition: none !important; }

@@ -116,15 +116,10 @@ function updateAssistantCompactState() {
 }
 
 function syncAssistantFullscreenNavigation(expanded) {
-  const section = expanded ? 'assistant' : 'messs';
-  document.querySelectorAll('.section-tab').forEach((tab) => {
-    const active = tab.dataset.section === section;
-    tab.classList.toggle('is-active', active);
-    tab.setAttribute('aria-selected', String(active));
-  });
-  document.querySelectorAll('.app-section').forEach((element) => {
-    element.classList.toggle('is-active', element.id === 'section-messs');
-  });
+  if (typeof setAppSurfaceNavigationActive === 'function') {
+    setAppSurfaceNavigationActive(expanded ? 'agent' : '');
+  }
+  document.body.classList.toggle('is-app-surface-open', expanded);
 }
 
 function assistantOccupiesFullscreenLayer(panel) {
@@ -158,6 +153,15 @@ function setAssistantFullscreen(expanded, options = {}) {
     restoreAssistantPanelToWorkspace(panel);
   }
   panel.classList.toggle('is-fullscreen', expanded);
+  if (expanded) {
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('aria-label', 'Agent');
+  } else {
+    panel.removeAttribute('role');
+    panel.removeAttribute('aria-modal');
+    panel.removeAttribute('aria-label');
+  }
   document.body.classList.toggle('is-ai-assistant-fullscreen', expanded);
   button.hidden = expanded;
   button.title = t('Return to chat home', '返回对话首页');
@@ -167,6 +171,8 @@ function setAssistantFullscreen(expanded, options = {}) {
     homeButton.title = button.title;
     homeButton.setAttribute('aria-label', button.title);
   }
+  const closeButton = document.getElementById('ai-assistant-dialog-close');
+  if (closeButton) closeButton.hidden = !expanded;
   button.innerHTML = expanded ? ASSISTANT_ICON_COMPRESS : ASSISTANT_ICON_EXPAND;
   if (options.syncNavigation === true) syncAssistantFullscreenNavigation(expanded);
   updateAssistantCompactState();
@@ -208,6 +214,10 @@ function initStatsDetail() {
     sidebarToggle.setAttribute('aria-label', sidebarToggle.title);
   });
   document.getElementById('ai-assistant-home-button').addEventListener('click', returnToAssistantHome);
+  document.getElementById('ai-assistant-dialog-close')?.addEventListener('click', () => {
+    setAssistantFullscreen(false, { syncNavigation: true });
+    document.querySelector('[data-app-surface="agent"]')?.focus();
+  });
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
     if (!document.getElementById('fullscreen-overlay')?.hidden) return;

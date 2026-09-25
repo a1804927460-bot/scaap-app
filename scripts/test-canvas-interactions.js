@@ -23,6 +23,88 @@ const usageSettingsSource = fs.readFileSync(path.join(root, 'src', 'js', 'usage-
 const documentEditorSource = fs.readFileSync(path.join(root, 'src', 'js', 'document-editor.js'), 'utf8');
 const leaferLayerSource = fs.readFileSync(path.join(root, 'src', 'js', 'board-leafer-layer.js'), 'utf8');
 
+assert.doesNotMatch(
+  indexHtml,
+  /id="board-theme-toggle"|id="board-shortcuts-btn"/,
+  'Theme and shortcut controls must no longer occupy the center canvas toolbar.'
+);
+assert.match(
+  indexHtml,
+  /id="board-canvas-settings"[\s\S]*?id="board-settings-theme"[\s\S]*?id="board-settings-watermark"[\s\S]*?id="board-settings-shortcuts"[\s\S]*?id="board-settings-toggle"/,
+  'The lower-right canvas settings must contain theme, AI generation mark and shortcut controls.'
+);
+assert.match(
+  indexHtml,
+  /id="board-agent-model-trigger"[^>]*>\s*<span id="board-agent-model-label">Agent<\/span>\s*<svg/,
+  'The Canvas Agent model trigger must not show a redundant icon before the active model label.'
+);
+assert.match(
+  workspaceSource,
+  /showCanvasLibrary\(\)[\s\S]*?canvasSettings\.hidden = true[\s\S]*?shortcuts-popover'\)\?\.remove\(\)[\s\S]*?showCanvasWorkspace\(\)[\s\S]*?board-canvas-settings'\)\.hidden = false/,
+  'Canvas settings must follow the library/workspace visibility state.'
+);
+assert.match(
+  boardStyles,
+  /\.board-canvas-settings\s*\{[\s\S]*?right:\s*16px;[\s\S]*?bottom:\s*16px;/,
+  'Canvas settings must be anchored in the lower-right corner.'
+);
+assert.match(
+  boardSource,
+  /prompt\.addEventListener\('keydown',[\s\S]*?event\.key === 'Enter'[\s\S]*?event\.ctrlKey \|\| event\.metaKey[\s\S]*?form\.requestSubmit\(\)/,
+  'Image and video generation must submit on Ctrl/Cmd+Enter while leaving Enter for a newline.'
+);
+assert.match(
+  workspaceSource,
+  /board-agent-input'\)\.addEventListener\('keydown',[\s\S]*?event\.key === 'Enter'[\s\S]*?event\.ctrlKey \|\| event\.metaKey[\s\S]*?board-agent-form'\)\.requestSubmit\(\)/,
+  'Canvas Agent must submit on Ctrl/Cmd+Enter while leaving Enter for a newline.'
+);
+
+assert.doesNotMatch(
+  indexHtml,
+  /board-performance-switch|data-performance-mode/,
+  'The canvas must not expose the removed normal/performance mode control.'
+);
+assert.doesNotMatch(
+  boardStyles,
+  /\.board-performance-switch|\.ai-performance-option/,
+  'Removed generation-mode controls must not leave stale styling behind.'
+);
+assert.match(
+  boardSource,
+  /localStorage\.removeItem\('messs-canvas-performance-mode'\);/,
+  'The composer must discard the retired generation-mode preference.'
+);
+assert.match(
+  boardSource,
+  /const generationRequest = \{ \.\.\.request, performanceMode: 'normal', watermark: boardAiWatermarkEnabled\(\), canvasId: activeCanvasId\(\) \};/,
+  'Board generation must use the standard pricing path.'
+);
+assert.match(
+  boardSource,
+  /async function generateAiMediaForBoardV3\(request\)[\s\S]*?const generationRequest = \{ \.\.\.request, performanceMode: 'normal', watermark: boardAiWatermarkEnabled\(\), canvasId: targetCanvasId \};[\s\S]*?MesssCredits\.ensure\(generationRequest\)[\s\S]*?generateAiMedia\(\{ \.\.\.generationRequest, folderId, placements \}\)/,
+  'Quick and automated board generation must quote and submit through the standard pricing path.'
+);
+assert.match(
+  boardSource,
+  /const request = \{[\s\S]*?performanceMode: 'normal',[\s\S]*?quoteApi\.call\(window\.messsAPI, request\)/,
+  'Credit estimates must use the same standard pricing path as generation.'
+);
+assert.match(
+  boardSource,
+  /pop\.querySelector\('\.ai-gpt25-background'\)\.hidden = !supportsGpt25Variants;/,
+  'Mess Image2.5 background controls must remain available without a performance mode.'
+);
+assert.match(
+  boardSource,
+  /const supportedQualities = kind === 'image' && Array\.isArray\(capabilities\.qualities\)/,
+  'Image quality controls must continue to follow model capabilities.'
+);
+assert.doesNotMatch(
+  boardSource,
+  /supportsGpt25Variants && performanceMode|performanceMode !== 'performance'/,
+  'Mess Image2.5 options must not depend on the removed mode.'
+);
+
 assert.match(
   boardStyles,
   /\.ai-model-picker-menu\s*\{[\s\S]*?min-width:\s*224px;[\s\S]*?max-height:\s*300px;/,
@@ -266,7 +348,7 @@ assert.match(
   'Durable generated media must display before the duplicate reconciliation write.'
 );
 assert.match(boardSource,
-  /await replaceAiPlaceholders\(placeholders, files, request, res\.boardItems \|\| \[\]\);\s*generatedFiles = await confirmAiMediaDeliveries\(files\);/,
+  /await replaceAiPlaceholders\(placeholders, files, generationRequest, res\.boardItems \|\| \[\]\);\s*generatedFiles = await confirmAiMediaDeliveries\(files\);/,
   'Delivery confirmation must still follow awaited board reconciliation.');
 assert.match(
   boardSource,
@@ -734,6 +816,10 @@ assert.doesNotMatch(
   'Ctrl+Space must remain a reliable Agent toggle even when an editor has focus.'
 );
 assert.match(indexHtml, /id="board-agent-welcome"[\s\S]*?assets\/logo-mark\.png[\s\S]*?Messs Agent/);
+assert.match(indexHtml, /id="board-agent-toggle"[\s\S]*?message-square\.svg[\s\S]*?board-agent-toggle-label">Messs Agent/,
+  'The canvas Agent entry should show a chat icon before its label.');
+assert.match(workspaceSource, /toggle\?\.querySelector\('\.board-agent-toggle-label'\)[\s\S]*?toggleLabel\.textContent = 'Messs Agent'/,
+  'Language refresh must preserve the canvas Agent entry icon.');
 assert.match(
   boardStyles,
   /\.board-panel\.is-canvas-library #board-agent-toggle[\s\S]*?display:\s*none;/,
@@ -889,12 +975,17 @@ assert.match(
   /button\.addEventListener\('contextmenu',[\s\S]*?event\.preventDefault\(\);[\s\S]*?event\.stopPropagation\(\);[\s\S]*?Delete folder[\s\S]*?promptDeleteCanvasProject\(project\.id\)[\s\S]*?canvas-project-context-menu/,
   'Right-clicking a folder must open its management menu without triggering the folder filter.'
 );
-assert.match(indexHtml, /id="canvas-project-new"[\s\S]*?New canvas/,
-  'The canvas library must expose its primary new-canvas entry point.');
+assert.match(indexHtml, /id="canvas-folder-new"[\s\S]*?New folder/,
+  'The canvas library toolbar must expose its new-folder entry point.');
 assert.match(
   indexHtml,
-  /id="canvas-library-view"[\s\S]*?canvas-library-toolbar[\s\S]*?id="canvas-library-search"[\s\S]*?canvas-library-actions[\s\S]*?id="canvas-import"[\s\S]*?id="canvas-project-new"[\s\S]*?New canvas/,
-  'Canvas library must retain search, import, and new-canvas controls beside the search field.'
+  /id="canvas-library-view"[\s\S]*?canvas-library-toolbar[\s\S]*?id="canvas-library-search"[\s\S]*?canvas-library-actions[\s\S]*?id="canvas-import"[\s\S]*?id="canvas-folder-new"[\s\S]*?New folder/,
+  'Canvas library must retain search, import, and new-folder controls beside the search field.'
+);
+assert.match(
+  workspaceSource,
+  /getElementById\('canvas-folder-new'\)\.addEventListener\('click', promptNewProject\)/,
+  'The canvas library new-folder control must open the folder creation flow.'
 );
 assert.doesNotMatch(indexHtml, /id="canvas-header-new"/, 'The duplicate top-right new-canvas plus button must be removed.');
 assert.doesNotMatch(indexHtml, /class="sidebar-projects"/, 'The sidebar project management block must be removed.');
@@ -1490,7 +1581,7 @@ assert.match(
 );
 assert.match(
   themeSource,
-  /\[data-theme="dark"\][\s\S]*?--bg-deep:\s*#0a0a0a;[\s\S]*?--bg-base:\s*#101112;[\s\S]*?--bg-elevated:\s*#1a1b1d;[\s\S]*?--bg-surface:\s*#151618;[\s\S]*?--bg-surface-2:\s*#292b2e;[\s\S]*?--bg-frame:\s*#101112;/,
+  /\[data-theme="dark"\][\s\S]*?--bg-deep:\s*#070808;[\s\S]*?--bg-base:\s*#0b0c0d;[\s\S]*?--bg-elevated:\s*#181a1c;[\s\S]*?--bg-surface:\s*#111315;[\s\S]*?--bg-surface-2:\s*#24272a;[\s\S]*?--bg-frame:\s*#0b0c0d;/,
   'Dark mode must preserve distinct frame, workspace, panel, card, and interaction layers.'
 );
 assert.match(
@@ -1532,7 +1623,7 @@ assert.match(boardStyles, /\.app-titlebar \{[\s\S]*?background:\s*var\(--bg-fram
   'The light title bar must use the sampled frame gray while dark mode keeps its fallback.');
 assert.match(
   themeSource,
-  /\[data-theme="dark"\][\s\S]*?--board-workspace-bg:\s*#0a0a0a/,
+  /\[data-theme="dark"\][\s\S]*?--board-workspace-bg:\s*#070808/,
   'Dark canvas modes must share the existing node-canvas background color.'
 );
 assert.match(

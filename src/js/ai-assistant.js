@@ -637,7 +637,7 @@ function renderAssistantModels() {
     menuOption.className = 'ai-model-picker-option';
     menuOption.dataset.value = provider.id;
     menuOption.setAttribute('role', 'option');
-    appendAiModelLabel(menuOption, provider);
+    appendAiModelLabel(menuOption, provider, { details: true });
     menuOption.addEventListener('click', () => {
       if (AiAssistant.kind === 'chat') {
         AiAssistant.chatUsePreset = false;
@@ -1668,7 +1668,7 @@ function appendAssistantText(role, text, className = '', sessionId = AiAssistant
   body._questionSession = sessionId;
   body._messageSource = String(text || '');
   if (role === 'assistant') renderAgentMessageContent(body, text);
-  else body.textContent = text;
+  else body.textContent = typeof agentVisibleUserText === 'function' ? agentVisibleUserText(text) : text;
   row.appendChild(body);
   messages.appendChild(row);
   messages.scrollTop = messages.scrollHeight;
@@ -1887,7 +1887,8 @@ function submitAssistantMessage() {
   const input = document.getElementById('ai-assistant-input');
   const prompt = input.value.trim();
   const provider = selectedAssistantProvider();
-  if (!provider || (!prompt && !AiAssistant.attachments.length)) return;
+  const localBrandReply = window.MesssAgentBrandPolicy?.replyForRequest(prompt);
+  if ((!provider && !localBrandReply) || (!prompt && !AiAssistant.attachments.length)) return;
   if (AiAssistant.queue.length >= 50) {
     showToast(t('The waiting queue is full. Send or remove queued messages first.', '\u5f85\u53d1\u961f\u5217\u5df2\u6ee1\uff0c\u8bf7\u5148\u53d1\u9001\u6216\u5220\u9664\u90e8\u5206\u6d88\u606f\u3002'));
     return;
@@ -1897,9 +1898,9 @@ function submitAssistantMessage() {
   persistAiChatHistory();
   const videoMode = AiAssistant.kind === 'video' ? assistantVideoModeForAttachments(attachments) : null;
   AiAssistant.queue.push({
-    id: crypto.randomUUID(), prompt, provider: { ...provider }, attachments, kind: AiAssistant.kind,
+    id: crypto.randomUUID(), prompt, provider: provider ? { ...provider } : null, attachments, kind: AiAssistant.kind,
     sessionId, permissionSession: window.MesssComposerActions?.session,
-    routingStrategy: window.MesssAiProviderOptions?.routingStrategy(provider.model, AiAssistant.chatUsePreset !== false),
+    routingStrategy: window.MesssAiProviderOptions?.routingStrategy(provider?.model, AiAssistant.chatUsePreset !== false),
     canvasId: activeCanvasId(),
     folderId: AppState.activeFolderId && AppState.activeFolderId !== 'default' ? AppState.activeFolderId : null,
     videoMode, videoCapabilities: AiAssistant.kind === 'video' ? assistantVideoCapabilities() : null,
@@ -2002,6 +2003,16 @@ async function executeAssistantMessage(item) {
     }))
   });
   persistConversation();
+
+  const confidentialityReply = submittedKind === 'chat'
+    ? window.MesssAgentBrandPolicy?.replyForRequest(prompt)
+    : null;
+  if (confidentialityReply) {
+    conversationMessages.push({ role: 'assistant', content: confidentialityReply, creditsCharged: null, generatedFiles: [] });
+    persistConversation();
+    appendAssistantText('assistant', confidentialityReply, '', sessionId);
+    return true;
+  }
 
   setAssistantBusy(true);
   const modelName = submittedProvider
@@ -2264,7 +2275,7 @@ function initAiAssistant() {
     if ((event.ctrlKey || event.metaKey) && ['a', 'c', 'v', 'x'].includes(event.key.toLowerCase())) {
       event.stopPropagation();
     }
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) {
       event.preventDefault();
       form.requestSubmit();
     }

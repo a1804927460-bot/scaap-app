@@ -1438,13 +1438,20 @@ function finalizeFullscreenPreviewClose() {
   overlay._returnFocus = null;
   if (window.__messsPreviewReturnToFiles && window.MesssWorkHub) {
     window.__messsPreviewReturnToFiles = false;
-    window.MesssWorkHub.open('files').catch(() => {});
+    window.MesssWorkHub.open('files', { restoreFromPreview: true }).catch(() => {});
   }
 }
 
 function closeFullscreenPreview() {
   const overlay = document.getElementById('fullscreen-overlay');
   if (!overlay || overlay.hidden || overlay.classList.contains('is-closing')) return;
+  // The native work-hub dialog lives in the top layer. Reopening it after the
+  // preview fade exposes the canvas for one frame, so restore both surfaces in
+  // the same task and skip only this return path's exit animation.
+  if (window.__messsPreviewReturnToFiles && window.MesssWorkHub) {
+    finalizeFullscreenPreviewClose();
+    return;
+  }
   overlay.classList.add('is-closing');
   overlay._closeTimer = window.setTimeout(finalizeFullscreenPreviewClose, 150);
 }

@@ -21,8 +21,10 @@ async function chatWithAgentEstimate(pending, request) {
     const follow = scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 64;
     pending.dataset.streaming = 'true';
     pending.classList.add('is-streaming');
-    pending.agentPreviewText = event.text;
-    body.textContent = event.text;
+    const visibleText = typeof agentVisiblePreviewText === 'function'
+      ? agentVisiblePreviewText(event.text) : event.text;
+    pending.agentPreviewText = visibleText;
+    body.textContent = visibleText || t('Preparing response...', '正在整理回复...');
     if (follow) scroller.scrollTop = scroller.scrollHeight;
   });
   const unsubscribeWork = window.messsAPI.onAiWorkProgress?.(event => {
@@ -59,7 +61,8 @@ async function chatWithAgentEstimate(pending, request) {
 }
 
 function preserveInterruptedAgentReply(pending) {
-  const preview = pending.agentPreviewText;
+  const preview = typeof agentVisiblePreviewText === 'function'
+    ? agentVisiblePreviewText(pending.agentPreviewText) : pending.agentPreviewText;
   if (typeof preview !== 'string' || !preview.trim()) return null;
   const text = preview + '\n\n' + t(
     '[Reply incomplete: the request did not finish. Received text has been retained.]',

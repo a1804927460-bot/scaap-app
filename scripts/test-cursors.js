@@ -30,8 +30,8 @@ const cursorAssets = {
 const compactHandCursors = new Set(['click', 'grab', 'grabbing']);
 
 for (const theme of ['light', 'dark']) {
-  const expectedCore = theme === 'light' ? '#111318' : '#fff';
-  const expectedOutline = theme === 'light' ? '#fff' : '#080a0d';
+  const expectedCore = theme === 'light' ? '#111318' : '#080a0d';
+  const expectedOutline = '#fff';
 
   for (const [semantic, assetName] of Object.entries(cursorAssets)) {
     const fileName = `${assetName}-${theme}.svg`;

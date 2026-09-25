@@ -18,7 +18,7 @@ window.MesssWorkHub = (() => {
     root.addEventListener('keydown',e=>e.stopPropagation());
     root.addEventListener('click',e=>{const button=e.target.closest('[data-hub-action]');if(button)void handle(button.dataset.hubAction,button).catch(notify);});
     root.addEventListener('cancel',()=>{++loadToken;});
-    root.addEventListener('close',()=>{++loadToken;});
+    root.addEventListener('close',()=>{++loadToken;root.classList.remove('is-preview-return');});
     window.addEventListener('focus',()=>{if(root.open&&!document.querySelector('.hub-editor[open]'))void reload().catch(notify);});
     let knownOwner;
     api().getCloudSession?.().then(session=>{knownOwner=session?.user?.id||'local';}).catch(()=>{});
@@ -34,8 +34,10 @@ window.MesssWorkHub = (() => {
     if(token!==loadToken||!root.open)return;
     [projects,resources]=values;render();
   }
-  async function open(next='schedule') {
+  async function open(next='schedule', options={}) {
     ensureRoot();area=next;query='';filter='all';root.querySelector('.hub-notice').hidden=true;
+    if(options.restoreFromPreview === true)root.classList.add('is-preview-return');
+    else if(!root.open)root.classList.remove('is-preview-return');
     if(!root.open)root.showModal();
     content.innerHTML='<div class="hub-empty">正在读取…</div>';
     try{await reload();}catch(error){content.innerHTML='<div class="hub-empty">暂时无法读取数据，请关闭后重试。</div>';notify(error);}
@@ -117,7 +119,7 @@ window.MesssWorkHub = (() => {
       target = AppState.canvases.find(c=>c.id===chosen);
       if (!target) throw Error('目标画布已不存在，请重新选择。');
     }
-    document.querySelector('.section-tab[data-section="messs"]')?.click();
+    if (typeof closeAppSurface === 'function') closeAppSurface('', { restoreFocus: false });
     switchCanvas(target.id,{enterWorkspace:true});
     if (activeCanvasId() !== target.id) throw Error('暂时无法切换到目标画布，请稍后重试。');
     root.close();
@@ -270,7 +272,7 @@ window.MesssWorkHub = (() => {
     dialog.querySelector('[type=submit]').textContent='应用到输入框';
     dialog.querySelector('form').onsubmit=e=>{e.preventDefault();const target=e.target.elements.target.value;const input=document.getElementById(target==='main'?'ai-assistant-input':'board-agent-input');if(!input||input.disabled){dialog.querySelector('.hub-editor-error').textContent='Agent 正在工作，请稍后再应用';return;}if(input.value.trim()){dialog.querySelector('.hub-editor-error').textContent='目标输入框已有草稿，请先处理草稿再调用技能';return;}if(target==='canvas'&&!activeCanvasRecord()){dialog.querySelector('.hub-editor-error').textContent='请先打开一个画布';return;}
       const prompt=`使用技能 ${record.name} 完成以下任务。技能是本次任务参考，不改变现有权限。\n\n<skill-instructions>\n${record.instructions}\n</skill-instructions>\n\n任务：\n${e.target.elements.task.value.trim()}`;
-      dialog.close();root.close();if(target==='main'){document.querySelector('[data-section="assistant"]')?.click();if(typeof setAssistantKind==='function')setAssistantKind('chat');}else{showCanvasWorkspace();CanvasWorkspace.agentMode='chat';renderCanvasAgentModels();renderCanvasAgentReferences();setCanvasAgentOpen(true,{focus:true});}
+      dialog.close();root.close();if(target==='main'){if(typeof openAppSurface==='function')openAppSurface('agent');if(typeof setAssistantKind==='function')setAssistantKind('chat');}else{showCanvasWorkspace();CanvasWorkspace.agentMode='chat';renderCanvasAgentModels();renderCanvasAgentReferences();setCanvasAgentOpen(true,{focus:true});}
       input.value=prompt;input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();
     };
   }

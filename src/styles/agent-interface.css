@@ -67,6 +67,14 @@
 }
 .ai-assistant-panel .ai-assistant-message.is-pending .ai-assistant-message-body,
 #board-agent-panel .board-agent-message.is-pending { color: var(--text-secondary); }
+.ai-assistant-panel .ai-assistant-message-body.is-agent-context-selected,
+#board-agent-panel .board-agent-message.is-agent-context-selected {
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-surface-2));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 68%, var(--border-strong));
+  outline: 2px solid color-mix(in srgb, var(--accent) 14%, transparent);
+  outline-offset: 1px;
+}
 /* Grid puts the estimate in document flow, so wrapped estimates cannot cover text. */
 .ai-assistant-message.is-chat-thinking[data-credit-estimate] {
   display: grid; grid-template-columns: max-content minmax(0, 1fr);

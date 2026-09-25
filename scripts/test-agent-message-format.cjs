@@ -45,6 +45,19 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
   assert.equal(await page.locator('#canvas-parity h4').textContent(),'Model');
   assert.equal(await page.locator('#canvas-parity .ai-assistant-output-file').count(),1);
   assert.ok(!(await page.locator('#canvas-parity').textContent()).includes('[File:'));
+  const question = JSON.stringify({questionId:'meal-scene-details',title:'提问',questions:[{id:'characters',label:'吃饭场景中保留哪些角色？',type:'single',options:[{id:'five',label:'全部保留'}]}]});
+  await page.evaluate(question => {
+    const row = document.createElement('div'); row.id = 'private-protocol'; document.body.append(row);
+    renderAgentMessageContent(row, `<think>internal routing</think>\n\n\`\`\`messs-question\n${question}`);
+  }, question);
+  assert.equal(await page.locator('#private-protocol .agent-question-card').count(), 1);
+  const protocolText = await page.locator('#private-protocol').textContent();
+  assert.ok(!protocolText.includes('messs-question') && !protocolText.includes('questionId') && !protocolText.includes('internal routing'));
+  await page.evaluate(() => renderAgentMessageContent(document.getElementById('private-protocol'), '```messs-question\n{"questionId":'));
+  assert.ok(!(await page.locator('#private-protocol').textContent()).includes('messs-question'));
+  assert.equal(await page.evaluate(() => agentVisibleUserText('提问 clarify-generation-request 的回答：\nQ: 内容？\nA: 保留')), '提问的回答：\nQ: 内容？\nA: 保留');
+  await page.evaluate(() => renderAgentMessageContent(document.getElementById('private-protocol'), '内部工具 clarify-generation-request 已完成。'));
+  assert.ok(!(await page.locator('#private-protocol').textContent()).includes('clarify-generation-request'));
   fs.mkdirSync('test-artifacts/agent-format',{recursive:true});
   for(const theme of ['dark','light']){
    await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);await page.waitForTimeout(350);

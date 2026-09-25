@@ -18,7 +18,7 @@
 .ai-composer:not(.is-moodboard-composer) .ai-composer-controls > .ai-model-picker { flex:0 1 auto;max-width:100%; }
 .ai-composer:not(.is-moodboard-composer) .ai-model-picker-trigger { max-width:100%; }
 .ai-composer:not(.is-moodboard-composer) .ai-options-toggle { flex:0 0 auto;min-height:32px;height:auto; }
-.ai-composer:not(.is-moodboard-composer):has(.ai-options-panel:not([hidden])) .ai-composer-close {
+.ai-composer:not(.is-moodboard-composer):has(.ai-options-panel:not([hidden])) :is(.ai-composer-close, .ai-composer-optimize) {
   visibility:hidden;
 }
 .ai-assistant-main { position: relative; }
@@ -208,3 +208,373 @@
 }
 .usage-date-picker .flatpickr-current-month select:hover { background:var(--bg-surface-2); }
 .usage-date-picker .flatpickr-current-month select:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+
+/* AI Elements-inspired composer polish: one calm prompt surface with a
+   compact, clearly separated action rail. No generation behavior changes. */
+.ai-image-popover.ai-composer:not(.is-moodboard-composer) {
+  --composer-focus-ring: color-mix(in srgb, var(--accent) 11%, transparent);
+  --composer-focus-border: color-mix(in srgb, var(--accent) 36%, var(--border-hairline));
+  min-height: 198px;
+  border-color: color-mix(in srgb, var(--border-hairline) 90%, var(--text-primary) 10%);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--bg-elevated) 97%, var(--bg-surface-2));
+  box-shadow:
+    0 22px 54px rgba(15, 23, 42, .14),
+    0 5px 14px rgba(15, 23, 42, .06),
+    inset 0 1px 0 rgba(255, 255, 255, .5);
+  animation: messs-generation-composer-in var(--motion-popup-duration, 220ms) var(--motion-popup-spring, cubic-bezier(.16, 1, .3, 1)) both;
+  transition:
+    border-color var(--motion-feedback, 160ms) var(--motion-standard, ease),
+    box-shadow var(--motion-feedback, 160ms) var(--motion-standard, ease),
+    background-color var(--motion-feedback, 160ms) var(--motion-standard, ease);
+}
+.ai-image-popover.ai-composer:not(.is-moodboard-composer)::before {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 54%, transparent);
+}
+.ai-image-popover.ai-composer:not(.is-moodboard-composer) > * {
+  position: relative;
+  z-index: 1;
+}
+.ai-image-popover.ai-composer:not(.is-moodboard-composer):focus-within {
+  border-color: var(--composer-focus-border);
+  background: color-mix(in srgb, var(--bg-elevated) 99%, var(--accent-soft));
+  box-shadow:
+    0 24px 58px rgba(15, 23, 42, .17),
+    0 0 0 3px var(--composer-focus-ring),
+    inset 0 1px 0 rgba(255, 255, 255, .56);
+}
+.ai-image-popover.ai-composer:not(.is-moodboard-composer).is-closing {
+  pointer-events: none;
+  animation: messs-generation-composer-out 160ms cubic-bezier(.4, 0, 1, 1) both;
+}
+[data-theme="dark"] .ai-image-popover.ai-composer:not(.is-moodboard-composer) {
+  border-color: color-mix(in srgb, var(--border-hairline) 86%, #fff 14%);
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, .4),
+    0 5px 16px rgba(0, 0, 0, .24),
+    inset 0 1px 0 rgba(255, 255, 255, .07);
+}
+[data-theme="dark"] .ai-image-popover.ai-composer:not(.is-moodboard-composer)::before {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .055);
+}
+[data-theme="dark"] .ai-image-popover.ai-composer:not(.is-moodboard-composer):focus-within {
+  box-shadow:
+    0 26px 64px rgba(0, 0, 0, .46),
+    0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, .09);
+}
+.ai-composer:not(.is-moodboard-composer) .ai-composer-form {
+  min-height: 198px;
+  padding: 10px 14px 11px;
+}
+.ai-composer:not(.is-moodboard-composer) .ai-composer-mode-row {
+  min-height: 34px;
+}
+.ai-composer.is-moodboard-composer .ai-composer-optimize { display: none; }
+.ai-composer:not(.is-moodboard-composer) .ai-composer-mode {
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--border-hairline) 72%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--bg-surface-2) 82%, transparent);
+}
+.ai-composer:not(.is-moodboard-composer) .ai-composer-mode button {
+  height: 28px;
+  border-radius: 8px;
+  transition:
+    color var(--motion-feedback, 160ms) var(--motion-standard, ease),
+    background-color var(--motion-feedback, 160ms) var(--motion-standard, ease),
+    box-shadow var(--motion-feedback, 160ms) var(--motion-standard, ease),
+    translate var(--motion-feedback, 160ms) var(--motion-standard, ease);
+}
+.ai-composer:not(.is-moodboard-composer) .ai-composer-mode button:hover:not(.is-active) {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-elevated) 54%, transparent);
+}
+.ai-composer:not(.is-moodboard-composer) .ai-composer-mode button.is-active {
+  box-shadow:
+    0 1px 4px rgba(15, 23, 42, .08),
+    inset 0 0 0 1px color-mix(in srgb, var(--border-hairline) 72%, transparent);
+}
+.ai-composer:not(.is-moodboard-composer) .ai-composer-prompt {
+  min-height: 82px;
+  padding: 12px 4px 10px;
+  font-size: 14.5px;
+  line-height: 1.55;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-hairline) transparent;
+}
+.ai-composer:not(.is-moodboard-composer) .ai-composer-prompt::placeholder {
+  color: var(--text-tertiary);
+  opacity: .82;
+}
+.ai-composer:not(.is-moodboard-composer) .ai-composer-footer {
+  min-height: 43px;
+  margin-inline: -2px;
+  padding: 7px 2px 0;
+  border-top: 1px solid color-mix(in srgb, var(--border-hairline) 72%, transparent);
+}
+.ai-composer:not(.is-moodboard-composer) :is(
+  .ai-model-picker-trigger,
+  .ai-video-mode-trigger,
+  .ai-options-toggle,
+  .ai-camera-control-toggle,
+  .ai-prompt-style-toggle
+) {
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  transition:
+    color var(--motion-feedback, 160ms) var(--motion-standard, ease),
+    background-color var(--motion-feedback, 160ms) var(--motion-standard, ease),
+    border-color var(--motion-feedback, 160ms) var(--motion-standard, ease),
+    translate var(--motion-feedback, 160ms) var(--motion-standard, ease);
+}
+.ai-composer:not(.is-moodboard-composer) :is(
+  .ai-model-picker-trigger,
+  .ai-video-mode-trigger,
+  .ai-options-toggle,
+  .ai-camera-control-toggle,
+  .ai-prompt-style-toggle
+):hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--border-hairline) 82%, transparent);
+  background: color-mix(in srgb, var(--bg-surface-2) 88%, transparent);
+  translate: 0 -1px;
+}
+.ai-composer:not(.is-moodboard-composer) :is(
+  .ai-model-picker-trigger[aria-expanded="true"],
+  .ai-video-mode-trigger[aria-expanded="true"],
+  .ai-options-toggle.is-active,
+  .ai-camera-control-toggle[aria-expanded="true"],
+  .ai-prompt-style-toggle.is-active
+) {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border-hairline));
+  background: color-mix(in srgb, var(--accent-soft) 62%, var(--bg-surface-2));
+  color: var(--text-primary);
+}
+.ai-composer:not(.is-moodboard-composer) .ai-composer-submit {
+  height: 38px;
+  border-radius: 11px;
+  transition:
+    translate var(--motion-feedback, 160ms) var(--motion-standard, ease),
+    scale var(--motion-feedback, 160ms) var(--motion-standard, ease),
+    filter var(--motion-feedback, 160ms) linear,
+    box-shadow var(--motion-feedback, 160ms) var(--motion-standard, ease);
+}
+.ai-composer:not(.is-moodboard-composer) .ai-composer-submit:hover:not(:disabled) {
+  transform: none;
+  translate: 0 -1px;
+}
+.ai-composer:not(.is-moodboard-composer) .ai-composer-submit:active:not(:disabled) {
+  translate: 0 0;
+  scale: .975;
+}
+.ai-composer:not(.is-moodboard-composer) .ai-composer-submit[aria-busy="true"] > svg {
+  animation: messs-generation-submit-wait 900ms ease-in-out infinite alternate;
+}
+.ai-composer:not(.is-moodboard-composer) .ai-composer-reference-thumb {
+  animation: messs-generation-reference-in var(--motion-settle, 220ms) var(--motion-popup-spring, ease-out) both;
+}
+.ai-composer .ai-generation-status:not(:empty) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ai-composer .ai-generation-status:not(:empty)::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  flex: 0 0 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+  animation: messs-generation-status-pulse 900ms ease-in-out infinite alternate;
+}
+.ai-composer :is(
+  .ai-model-picker-menu,
+  .ai-video-mode-menu,
+  .ai-options-panel,
+  .ai-prompt-style-panel,
+  .ai-camera-control-panel
+) {
+  border-color: color-mix(in srgb, var(--border-hairline) 88%, var(--text-primary) 12%);
+  box-shadow:
+    0 20px 48px rgba(15, 23, 42, .16),
+    0 4px 12px rgba(15, 23, 42, .06),
+    inset 0 1px 0 rgba(255, 255, 255, .42);
+}
+[data-theme="dark"] .ai-composer :is(
+  .ai-model-picker-menu,
+  .ai-video-mode-menu,
+  .ai-options-panel,
+  .ai-prompt-style-panel,
+  .ai-camera-control-panel
+) {
+  box-shadow:
+    0 22px 54px rgba(0, 0, 0, .48),
+    0 4px 14px rgba(0, 0, 0, .28),
+    inset 0 1px 0 rgba(255, 255, 255, .07);
+}
+
+/* Moodboard generation is an anchored settings surface, so it gets the same
+   materials and feedback without the centered composer's translateX. */
+.ai-image-popover.ai-composer.is-moodboard-composer {
+  border-color: color-mix(in srgb, var(--border-hairline) 88%, var(--text-primary) 12%);
+  border-radius: 14px;
+  box-shadow:
+    0 22px 52px rgba(15, 23, 42, .16),
+    0 4px 12px rgba(15, 23, 42, .06),
+    inset 0 1px 0 rgba(255, 255, 255, .42);
+  animation: messs-moodboard-composer-in var(--motion-popup-duration, 220ms) var(--motion-popup-spring, cubic-bezier(.16, 1, .3, 1)) both;
+}
+.ai-image-popover.ai-composer.is-moodboard-composer.is-closing {
+  pointer-events: none;
+  animation: messs-moodboard-composer-out 150ms cubic-bezier(.4, 0, 1, 1) both;
+}
+[data-theme="dark"] .ai-image-popover.ai-composer.is-moodboard-composer {
+  box-shadow:
+    0 24px 58px rgba(0, 0, 0, .46),
+    0 4px 14px rgba(0, 0, 0, .26),
+    inset 0 1px 0 rgba(255, 255, 255, .07);
+}
+.is-moodboard-composer .ai-composer-mode {
+  border: 1px solid color-mix(in srgb, var(--border-hairline) 72%, transparent);
+}
+.is-moodboard-composer .ai-composer-submit {
+  min-height: 38px;
+  border-radius: 10px;
+  transition:
+    translate var(--motion-feedback, 160ms) var(--motion-standard, ease),
+    scale var(--motion-feedback, 160ms) var(--motion-standard, ease),
+    box-shadow var(--motion-feedback, 160ms) var(--motion-standard, ease);
+}
+.is-moodboard-composer .ai-composer-submit:hover:not(:disabled) {
+  transform: none;
+  translate: 0 -1px;
+}
+.is-moodboard-composer .ai-composer-submit:active:not(:disabled) {
+  translate: 0 0;
+  scale: .985;
+}
+
+/* Main Agent uses the same quiet surface and bottom-rail feedback while
+   keeping its existing dimensions, modes and attachment workflow intact. */
+.ai-assistant-form {
+  overflow: visible;
+}
+.ai-assistant-form::after {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 45%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--border-hairline) 24%, transparent);
+}
+.ai-assistant-form-footer {
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border-hairline) 68%, transparent);
+}
+.ai-assistant-form :is(
+  .ai-assistant-upload-top,
+  .ai-assistant-mode button,
+  .ai-model-picker-trigger,
+  #ai-assistant-options-toggle,
+  .ai-assistant-submit
+) {
+  transition:
+    color var(--motion-feedback, 160ms) var(--motion-standard, ease),
+    background-color var(--motion-feedback, 160ms) var(--motion-standard, ease),
+    border-color var(--motion-feedback, 160ms) var(--motion-standard, ease),
+    box-shadow var(--motion-feedback, 160ms) var(--motion-standard, ease),
+    translate var(--motion-feedback, 160ms) var(--motion-standard, ease),
+    scale var(--motion-feedback, 160ms) var(--motion-standard, ease);
+}
+.ai-assistant-form :is(
+  .ai-assistant-upload-top,
+  .ai-assistant-mode button,
+  .ai-model-picker-trigger,
+  #ai-assistant-options-toggle
+):hover:not(:disabled) {
+  translate: 0 -1px;
+}
+.ai-assistant-submit:hover:not(:disabled) {
+  transform: none;
+  translate: 0 -1px;
+}
+.ai-assistant-submit:active:not(:disabled) {
+  translate: 0 0;
+  scale: .96;
+}
+.ai-assistant-form.is-image-dragover {
+  scale: 1.004;
+}
+
+@keyframes messs-generation-composer-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px) scale(.985); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+@keyframes messs-generation-composer-out {
+  from { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+  to { opacity: 0; transform: translateX(-50%) translateY(7px) scale(.985); }
+}
+@keyframes messs-moodboard-composer-in {
+  from { opacity: 0; translate: 0 8px; scale: .985; }
+  to { opacity: 1; translate: 0 0; scale: 1; }
+}
+@keyframes messs-moodboard-composer-out {
+  from { opacity: 1; translate: 0 0; scale: 1; }
+  to { opacity: 0; translate: 0 5px; scale: .99; }
+}
+@keyframes messs-generation-reference-in {
+  from { opacity: 0; scale: .92; }
+  to { opacity: 1; scale: 1; }
+}
+@keyframes messs-generation-submit-wait {
+  from { translate: 0 1px; opacity: .68; }
+  to { translate: 0 -1px; opacity: 1; }
+}
+@keyframes messs-generation-status-pulse {
+  from { opacity: .46; scale: .82; }
+  to { opacity: 1; scale: 1; }
+}
+
+@media (max-width: 760px) {
+  .ai-image-popover.ai-composer:not(.is-moodboard-composer) {
+    min-height: 172px;
+    border-radius: 17px;
+  }
+  .ai-composer:not(.is-moodboard-composer) .ai-composer-form { min-height: 172px; }
+  .ai-composer:not(.is-moodboard-composer) .ai-composer-prompt {
+    min-height: 62px;
+    padding-top: 9px;
+    font-size: 14px;
+  }
+  .ai-composer:not(.is-moodboard-composer) .ai-composer-footer {
+    gap: 7px;
+    padding-top: 6px;
+  }
+  .ai-composer:not(.is-moodboard-composer) .ai-options-panel {
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-width: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-image-popover.ai-composer,
+  .ai-composer .ai-composer-reference-thumb,
+  .ai-composer .ai-generation-status:not(:empty)::before,
+  .ai-composer .ai-composer-submit[aria-busy="true"] > svg {
+    animation: none !important;
+  }
+  .ai-image-popover.ai-composer,
+  .ai-image-popover.ai-composer *,
+  .ai-assistant-form,
+  .ai-assistant-form * {
+    transition-duration: 1ms !important;
+  }
+  .ai-assistant-form.is-image-dragover { scale: 1; }
+}

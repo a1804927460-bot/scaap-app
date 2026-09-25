@@ -35,6 +35,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     assert.equal(await page.locator('main').innerText().then(text => text.includes('MUST NOT APPEAR')), false);
     await page.evaluate(() => emit('main', '<img src=x onerror="window.bad=true">'));
     assert.equal(await page.locator('#main-pending img').count(), 0, 'Stream previews must be inert text');
+    await page.evaluate(() => emit('main', '<think>private reasoning</think>\n```messs-question\n{"questionId":"private"}'));
+    const privatePreview = await page.locator('#main-pending').innerText();
+    assert.ok(!privatePreview.includes('private reasoning') && !privatePreview.includes('messs-question') && !privatePreview.includes('questionId'));
     await page.evaluate(() => emit('main', '\u6211\u4f1a\u5148\u68c0\u67e5\u8d44\u6599\uff0c\u518d\u6574\u7406\u4e3a\u53ef\u4e0b\u8f7d\u7684\u6587\u4ef6\u3002\n\u5df2\u6536\u5230\u7b2c\u4e00\u90e8\u5206\u5185\u5bb9\u3002'));
     for (const theme of ['light', 'dark']) {
       for (const width of [480, 1280]) {
@@ -60,7 +63,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     assert.equal(await page.locator('#main-pending').innerText(), before);
     // Both real thinking timers must yield once actual streamed content exists.
     assert.match(fs.readFileSync('src/js/ai-assistant.js', 'utf8'), /const progress = setInterval\(\(\) => \{\s*if \(pending\.dataset\.streaming === 'true'\) return/);
-    assert.equal((fs.readFileSync('src/js/canvas-workspace.js', 'utf8').match(/if \(!pending\.isConnected \|\| pending\.dataset\.streaming === 'true'\) return/g) || []).length, 2);
+    assert.equal((fs.readFileSync('src/js/canvas-workspace.js', 'utf8').match(/if \(!pending\.isConnected \|\| pending\.dataset\.streaming === 'true'\) return/g) || []).length, 1);
     console.log('Both Agent streaming previews: isolation, cleanup, safe text, desktop/compact light/dark passed.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

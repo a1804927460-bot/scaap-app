@@ -53,15 +53,15 @@
 
 /* -------- Dark theme (default) -------- */
 [data-theme="dark"] {
-  --bg-deep: #0a0a0a;
-  --bg-base: #101112;
-  --bg-elevated: #1a1b1d;
-  --bg-surface: #151618;
-  --bg-surface-2: #292b2e;
-  --bg-frame: #101112;
-  --board-workspace-bg: #0a0a0a;
-  --canvas-toolbar-bg: rgba(21, 22, 24, .97);
-  --canvas-toolbar-border: rgba(255, 255, 255, .13);
+  --bg-deep: #070808;
+  --bg-base: #0b0c0d;
+  --bg-elevated: #181a1c;
+  --bg-surface: #111315;
+  --bg-surface-2: #24272a;
+  --bg-frame: #0b0c0d;
+  --board-workspace-bg: #070808;
+  --canvas-toolbar-bg: rgba(17, 19, 21, .97);
+  --canvas-toolbar-border: rgba(255, 255, 255, .12);
   --canvas-toolbar-text: var(--text-secondary);
   --canvas-toolbar-hover: var(--bg-surface-2);
   --canvas-control-bg: var(--bg-surface);
@@ -72,12 +72,12 @@
   --canvas-control-muted: var(--text-tertiary);
   --canvas-control-panel: var(--bg-elevated);
   --canvas-control-panel-border: var(--border-hairline);
-  --border-hairline: rgba(255, 255, 255, 0.09);
-  --border-strong: rgba(255, 255, 255, 0.17);
+  --border-hairline: rgba(255, 255, 255, 0.10);
+  --border-strong: rgba(255, 255, 255, 0.18);
 
-  --text-primary: #f2f3f4;
-  --text-secondary: #b7b9bd;
-  --text-tertiary: #7e8187;
+  --text-primary: #f4f5f6;
+  --text-secondary: #c1c4c8;
+  --text-tertiary: #858a91;
 
   --title-accent: #f3f3f3;
 

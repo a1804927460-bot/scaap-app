@@ -14,6 +14,7 @@ const startupThemeJs = read('src/js/startup-theme.js');
 const themeJs = read('src/js/theme.js');
 const startScreenJs = read('src/js/start-screen.js');
 const sidebarJs = read('src/js/sidebar.js');
+const sidebarPartitionsJs = read('src/js/sidebar-partitions.js');
 const titlebarJs = read('src/js/titlebar.js');
 const statsDetailJs = read('src/js/stats-detail.js');
 const appJs = read('src/js/app.js');
@@ -28,28 +29,28 @@ assert.match(themeCss, /--app-shell-inset:\s*10px[\s\S]*?--app-shell-radius:\s*v
   'Major application surfaces must share the workspace inset and radius hierarchy.');
 assert.match(themeCss, /body\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?inset:\s*0;/);
 assert.match(mainCss, /\.app-section\s*\{[\s\S]*?top:\s*var\(--titlebar-h\);[\s\S]*?bottom:\s*0;/);
-assert.match(indexHtml, /data-section="assistant"[^>]*>[\s\S]*?Messs<\/button>[\s\S]*?data-section="messs"[^>]*>[\s\S]*?Workspace<\/button>/,
-  'The title bar must expose Messs before the renamed Workspace entry.');
+assert.doesNotMatch(indexHtml, /id="section-tabs"|class="section-tab|data-section="(assistant|messs|market|workshop)"/,
+  'Top-level navigation must no longer occupy the title bar.');
 assert.doesNotMatch(indexHtml, /data-section="chat"|id="section-chat"|styles\/chat\.css|js\/chat\.js|emoji-picker-loader\.js/,
   'The removed social chat feature must not return to navigation or renderer startup.');
 assert.match(mainCss, /\.titlebar-drag-region\s*\{\s*flex:\s*1\s*;/,
-  'The title bar drag region must leave the navigation centered independently of the window controls.');
-assert.match(mainCss, /\.section-tabs\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?left:\s*50%;[\s\S]*?top:\s*50%;[\s\S]*?transform:\s*translate\(-50%,\s*-50%\);/,
-  'The section tabs must stay centered in the title bar.');
-assert.match(titlebarJs, /const isAssistantSection = section === 'assistant';[\s\S]*?setAssistantFullscreen\(true\)[\s\S]*?section-' \+ \(isAssistantSection \? 'messs' : section\)/,
-  'The Messs entry must open the existing AI panel without changing the internal workspace section id.');
-assert.match(statsDetailJs, /function syncAssistantFullscreenNavigation\(expanded\)[\s\S]*?expanded \? 'assistant' : 'messs'[\s\S]*?aria-selected/,
-  'Expanding and collapsing Messs must keep the title-bar selection synchronized.');
+  'The title bar drag region must fill the area beside the native window controls.');
+assert.match(sidebarPartitionsJs, /id:'agent', label:'Agent', surface:true[\s\S]*?id:'market', label:'市场', surface:true[\s\S]*?id:'workshop', label:'创意工坊', surface:true/,
+  'Agent, Market and Workshop must live in the sidebar shortcut group.');
+assert.match(titlebarJs, /function openAppSurface\(surface\)[\s\S]*?setAssistantFullscreen\(true\)[\s\S]*?section\.classList\.add\('is-active'\)/,
+  'Sidebar navigation must open Agent and the content surfaces as dialogs.');
+assert.match(statsDetailJs, /function syncAssistantFullscreenNavigation\(expanded\)[\s\S]*?setAppSurfaceNavigationActive\(expanded \? 'agent' : ''\)/,
+  'Expanding and collapsing Agent must keep the sidebar entry synchronized.');
 assert.match(statsDetailJs, /function returnToAssistantHome[\s\S]*?setAssistantFullscreen\(true, \{ syncNavigation: true \}\)[\s\S]*?getElementById\('ai-assistant-history'\).addEventListener\('click', returnToAssistantHome\)/,
   'The assistant header button must return to the conversation home.');
 assert.match(statsDetailJs, /function restoreAssistantPanelToWorkspace[\s\S]*?document\.querySelector\('\.stats-panel'\)[\s\S]*?workspaceHost\.insertBefore\(panel, workspaceHost\.firstChild\)/,
-  'Collapsing Messs must restore the panel even when its original DOM anchor was lost.');
-assert.match(titlebarJs, /assistantExpanded[\s\S]*?assistantOccupiesFullscreenLayer\(assistant\)[\s\S]*?setAssistantFullscreen\(false\)/,
-  'Leaving Messs through the title bar must also recover an orphaned fullscreen panel.');
+  'Closing Agent must restore the panel even when its original DOM anchor was lost.');
+assert.match(titlebarJs, /surface !== 'agent'[\s\S]*?setAssistantFullscreen\(false\)/,
+  'Opening another sidebar surface must close an expanded Agent first.');
 assert.equal((statsDetailJs.match(/document\.addEventListener\('keydown'/g) || []).length, 1,
   'The assistant must register only one Escape handler.');
-assert.match(sidebarJs, /section-tab\[data-section="messs"\][\s\S]*?Workspace[\s\S]*?section-tab\[data-section="assistant"\][\s\S]*?Messs/,
-  'Navigation labels must localize the assistant and workspace entries.');
+assert.match(sidebarJs, /data-app-surface="agent"[\s\S]*?Agent[\s\S]*?data-app-surface="market"[\s\S]*?Market[\s\S]*?data-app-surface="workshop"[\s\S]*?Workshop/,
+  'Sidebar surface labels must be localized without restoring Workspace.');
 assert.match(mainCss, /\.main-app\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0;/);
 assert.match(
   indexHtml,
@@ -152,9 +153,11 @@ assert.match(panelLayoutJs, /detachWatchTimer[\s\S]*?beginCanvasDetachDrag\(acti
 assert.match(mainCss, /body\.is-detached-canvas-window #main-app[\s\S]*?grid-template-areas:\s*"board";[\s\S]*?#main-app > :not\(#board-panel\)/,
   'Detached windows must render a focused canvas-only layout.');
 assert.match(mainCss, /\.ai-assistant-panel\.is-fullscreen\s*\{[\s\S]*?inset:\s*calc\(var\(--titlebar-h\) \+ var\(--app-shell-inset\)\)[\s\S]*?border-radius:\s*var\(--app-shell-radius\);/,
-  'Fullscreen Messs must use the shared inset rounded shell.');
-assert.match(mainCss, /\.market-section,[\s\S]*?\.workshop-section\s*\{[\s\S]*?padding:\s*var\(--app-shell-inset\);[\s\S]*?\.market-shell,[\s\S]*?\.workshop-shell\s*\{[\s\S]*?height:\s*100%;[\s\S]*?border-radius:\s*var\(--app-shell-radius\);/,
-  'Market and Workshop must render as full-height workspace-style surfaces.');
+  'Fullscreen Agent must use the shared inset rounded shell.');
+assert.match(mainCss, /\.market-section,[\s\S]*?\.workshop-section\s*\{[\s\S]*?background:\s*color-mix[\s\S]*?backdrop-filter:\s*blur\(12px\)[\s\S]*?\.market-shell,[\s\S]*?\.workshop-shell\s*\{[\s\S]*?width:\s*min\(1320px, 100%\);[\s\S]*?height:\s*min\(880px, 100%\);/,
+  'Market and Workshop must render as bounded modal surfaces.');
+assert.match(mainCss, /\.canvas-start-creating\s*\{[\s\S]*?min-height:180px;[\s\S]*?padding:28px;/,
+  'The restored Start creating banner must retain its large primary size.');
 assert.match(mainCss, /\.board-panel\.is-fullscreen\s*\{[\s\S]*?border-radius:\s*0;/,
   'True canvas fullscreen must remain edge-to-edge.');
 assert.match(appJs, /initSidebar\(initial\)/, 'Profile settings must be hydrated before account rendering.');

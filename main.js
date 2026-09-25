@@ -9934,6 +9934,9 @@ function registerIpcHandlers() {
     } catch { return {available:false,reason:'context-unavailable'}; }
   });
   ipcMain.handle('ai:chat', async (_evt, request = {}) => {
+    const brandPolicy = require('./src/js/agent-brand-policy');
+    const directBrandReply = brandPolicy.replyForRequest(request.prompt);
+    if (directBrandReply) return { ok: true, text: directBrandReply, files: [], creditsCharged: null, localPolicy: true };
     const preparationStartedAt = Date.now();
     const permissionSession = request.permissionSession;
     const workspaceOwner = aiWorkspaceOwner();
@@ -9944,7 +9947,7 @@ function registerIpcHandlers() {
     const reportWork = phase => { if (!_evt.sender.isDestroyed()) _evt.sender.send('ai:workProgress', {requestId:workRequestId,phase}); };
     const reportPreview = text => {
       if (workRequestId && workspaceOwner === aiWorkspaceOwner() && !_evt.sender.isDestroyed()) {
-        _evt.sender.send('ai:chatDelta', { requestId: workRequestId, text });
+        _evt.sender.send('ai:chatDelta', { requestId: workRequestId, text: brandPolicy.protectResponse(text, request.prompt) });
       }
     };
     let safeRequest;
@@ -10079,7 +10082,8 @@ function registerIpcHandlers() {
       if (requiresModelArtifact(prompt) && !files.length && !executionMessage) {
         executionMessage = '本次尚未生成可下载的 3D 模型文件，不能作为已完成交付。';
       }
-      const text = [parsed.text, executionMessage].filter(Boolean).join('\n\n') || (files.length ? localizedMessage('File ready.', '文件已生成。', '파일이 준비되었습니다.') : '');
+      const responseText = [parsed.text, executionMessage].filter(Boolean).join('\n\n') || (files.length ? localizedMessage('File ready.', '文件已生成。', '파일이 준비되었습니다.') : '');
+      const text = brandPolicy.protectResponse(responseText, prompt);
       membershipService.finishUsage(usage.usageId, {
         status: 'succeeded',
         resultUnits: 1,

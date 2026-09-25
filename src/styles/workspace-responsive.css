@@ -47,27 +47,6 @@
   box-shadow: 0 4px 14px rgba(29, 39, 52, .12);
   --text-secondary: #424d59; --text-tertiary: #58636f;
 }
-/* The fixed canvas mode switch must use the light surface tokens as well;
-   its dark fallback otherwise makes the normal tab look like a disabled
-   control in the light workspace. */
-[data-theme="light"] .board-performance-switch {
-  border-color: #cbd4df;
-  background: rgba(246, 248, 251, .96);
-  box-shadow: 0 10px 30px rgba(37, 49, 64, .16), inset 0 1px rgba(255,255,255,.9);
-}
-[data-theme="light"] .board-performance-thumb {
-  background: #ffffff;
-  border-color: #c5cfdb;
-  box-shadow: 0 4px 14px rgba(31, 45, 61, .18), inset 0 1px rgba(255,255,255,.9);
-}
-[data-theme="light"] .board-performance-switch.is-performance .board-performance-thumb {
-  background: #e3f1ff;
-  border-color: #77b9ef;
-  box-shadow: 0 4px 18px rgba(10,111,201,.2), inset 0 1px rgba(255,255,255,.9);
-}
-[data-theme="light"] .ai-performance-option { color: #657286; }
-[data-theme="light"] .ai-performance-option.is-active { color: #182335; }
-[data-theme="light"] .ai-performance-option[data-performance-mode="performance"].is-active { color: #1767a8; }
 [data-theme="light"] .ai-image-popover,
 [data-theme="light"] .ai-image-popover.ai-composer {
   color: #20242b;

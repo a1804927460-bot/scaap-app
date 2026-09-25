@@ -72,6 +72,7 @@ const BOARD_UI_EVENT_SELECTOR = [
   '.board-quick-generate',
   '.board-agent-panel',
   '.board-bottom-bar',
+  '.board-canvas-settings',
   '.shortcuts-popover',
   '.board-butler-menu',
   '.board-butler-config-panel',
@@ -3822,12 +3823,51 @@ function makeBoardItemDraggable(el, item) {
         const boxes = groupStartPositions.map(entry => ({ ...boardItemBounds(entry.item), x: entry.startLeft, y: entry.startTop }));
         const x = Math.min(...boxes.map(b => b.x)), y = Math.min(...boxes.map(b => b.y));
         const moving = { x: x + dx, y: y + dy, w: Math.max(...boxes.map(b => b.x+b.w))-x, h: Math.max(...boxes.map(b => b.y+b.h))-y };
-        const margin = 12 / Board.zoom;
+        const snapRadius = Math.max(8, Number(adapter.snapCaptureRadius) || 20);
+        const margin = snapRadius / Board.zoom;
+        const viewport = document.getElementById('board-viewport');
+        const viewportRect = viewport.getBoundingClientRect();
+        const viewportTopLeft = clientToBoardCoords(viewportRect.left, viewportRect.top);
+        const viewportBottomRight = clientToBoardCoords(viewportRect.right, viewportRect.bottom);
+        const searchLeft = Math.min(moving.x, viewportTopLeft.x) - margin;
+        const searchTop = Math.min(moving.y, viewportTopLeft.y) - margin;
+        const searchRight = Math.max(moving.x + moving.w, viewportBottomRight.x) + margin;
+        const searchBottom = Math.max(moving.y + moving.h, viewportBottomRight.y) + margin;
         const ownIds = new Set(groupMates.map(entry => entry.id));
-        const candidates = [...Board.spatialIndex.query({ x: moving.x-margin, y: moving.y-margin, w: moving.w+margin*2, h: moving.h+margin*2 })]
+        const candidateIds = new Set([
+          ...Board.spatialIndex.query({
+            x: moving.x - margin,
+            y: searchTop,
+            w: moving.w + margin * 2,
+            h: searchBottom - searchTop
+          }),
+          ...Board.spatialIndex.query({
+            x: searchLeft,
+            y: moving.y - margin,
+            w: searchRight - searchLeft,
+            h: moving.h + margin * 2
+          })
+        ]);
+        const movingAxes = {
+          x: [moving.x, moving.x + moving.w / 2, moving.x + moving.w],
+          y: [moving.y, moving.y + moving.h / 2, moving.y + moving.h]
+        };
+        const candidates = [...candidateIds]
           .filter(id => !ownIds.has(id)).map(id => Board.itemsById.get(id))
           .filter(entry => entry && !entry.isPartition && entry.partitionId === item.partitionId)
-          .slice(0, 256).map(entry => boardItemBounds(entry));
+          .map(entry => boardItemBounds(entry))
+          .sort((left, right) => {
+            const axisDistance = (bounds) => {
+              const xAxes = [bounds.x, bounds.x + bounds.w / 2, bounds.x + bounds.w];
+              const yAxes = [bounds.y, bounds.y + bounds.h / 2, bounds.y + bounds.h];
+              return Math.min(
+                ...movingAxes.x.flatMap(value => xAxes.map(candidate => Math.abs(value - candidate))),
+                ...movingAxes.y.flatMap(value => yAxes.map(candidate => Math.abs(value - candidate)))
+              );
+            };
+            return axisDistance(left) - axisDistance(right);
+          })
+          .slice(0, 256);
         const snap = adapter.snap(moving, candidates, Board.zoom);
         dx += snap.dx; dy += snap.dy; snapLines = snap.lines;
       }
@@ -5244,7 +5284,9 @@ function renderShortcutsPopover(pop) {
     ]],
     ['AI & workflow', 'AI 与工作流', [
       ['Ctrl + Space', 'Toggle Agent', '显示 / 隐藏 Agent'],
-      ['Tab', 'Generate from selection', '打开所选素材的生成面板']
+      ['Tab', 'Generate from selection', '打开所选素材的生成面板'],
+      ['Enter', 'New line in generation prompt', '生成提示词换行'],
+      ['Ctrl + Enter', 'Confirm generation', '确认生成']
     ]]
   ];
   pop.setAttribute('role', 'dialog'); pop.setAttribute('aria-label', t('Shortcuts', '快捷键'));
@@ -5287,6 +5329,25 @@ function refreshBoardLanguage() {
   if (composer && typeof composer._refreshLanguage === 'function') composer._refreshLanguage();
   const shortcuts = document.getElementById('shortcuts-popover');
   if (shortcuts) renderShortcutsPopover(shortcuts);
+  const settingsToggle = document.getElementById('board-settings-toggle');
+  if (settingsToggle) {
+    settingsToggle.title = t('Canvas settings', '画布设置');
+    settingsToggle.setAttribute('aria-label', settingsToggle.title);
+  }
+  const settingsPopover = document.getElementById('board-canvas-settings-popover');
+  if (settingsPopover) {
+    settingsPopover.setAttribute('aria-label', t('Canvas settings', '画布设置'));
+    const heading = settingsPopover.querySelector('.board-canvas-settings-heading');
+    const themeLabel = document.querySelector('#board-settings-theme .board-canvas-settings-row-label');
+    const watermarkLabel = document.querySelector('#board-settings-watermark .board-canvas-settings-row-label');
+    const watermarkValue = document.getElementById('board-settings-watermark-value');
+    const shortcutsLabel = document.querySelector('#board-settings-shortcuts .board-canvas-settings-row-label');
+    if (heading) heading.textContent = t('Canvas settings', '画布设置');
+    if (themeLabel) themeLabel.textContent = t('Dark mode', '深色模式');
+    if (watermarkLabel) watermarkLabel.textContent = t('AI generation mark', 'AI 生成标识');
+    if (watermarkValue) watermarkValue.textContent = boardAiWatermarkEnabled() ? t('On', '开启') : t('Off', '关闭');
+    if (shortcutsLabel) shortcutsLabel.textContent = t('Shortcuts', '快捷键');
+  }
 }
 
 let aiImagePopoverClickCloser = null;
@@ -5768,7 +5829,7 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
   submitBtn.disabled = true;
   cancelBtn.disabled = true;
   controls.forEach((control) => { control.disabled = true; });
-  const generationRequest = { ...request, performanceMode: request.performanceMode || 'normal', canvasId: activeCanvasId() };
+  const generationRequest = { ...request, performanceMode: 'normal', watermark: boardAiWatermarkEnabled(), canvasId: activeCanvasId() };
   const placeholders = createAiPlaceholders(generationRequest);
   const defaultButtonText = request.kind === 'video' ? '生成视频' : '生成图片';
   const startedAt = Date.now();
@@ -6612,6 +6673,15 @@ function removeAiPlaceholders(placeholders) {
 
 const AI_PROMPT_STYLE_SELECTED_KEY = 'messs.ai-prompt-style-selected.v1';
 const AI_SKILL_HISTORY_KEY = 'messs.ai-skill-history.v1';
+const BOARD_AI_WATERMARK_KEY = 'messs.canvas-ai-watermark.v1';
+
+function boardAiWatermarkEnabled() {
+  try {
+    return localStorage.getItem(BOARD_AI_WATERMARK_KEY) === 'true';
+  } catch (error) {
+    return false;
+  }
+}
 
 function buildAiComposer(aiConfig, initialKind = 'image') {
   const pop = document.createElement('div');
@@ -6620,6 +6690,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   markBoardUiLayer(pop);
   pop.innerHTML = `
     <form class="ai-composer-form">
+      <button type="button" class="ai-composer-optimize" title="${t('Optimize prompt with Agent', '使用 Agent 优化提示词')}" aria-label="${t('Optimize prompt with Agent', '使用 Agent 优化提示词')}">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16z"/></svg>
+      </button>
       <button type="button" class="ai-composer-close">
         <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
@@ -6655,7 +6728,6 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
             </button>
             <div class="ai-video-mode-menu" role="listbox" hidden></div>
           </div>
-          <button type="button" class="ai-options-toggle" aria-haspopup="true"></button>
           <button type="button" class="ai-camera-control-toggle" aria-haspopup="dialog" aria-expanded="false" aria-pressed="false" hidden>
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M14.5 5H9.4L8 7H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-1.5-2Z"/><circle cx="12" cy="13" r="3.2"/></svg>
             <span>${t('Lens', '镜头')}</span>
@@ -6667,6 +6739,18 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
         </div>
         <div class="ai-composer-submit-wrap">
           <span class="ai-generation-status"></span>
+          <button type="button" class="ai-options-toggle" aria-haspopup="true" aria-expanded="false">
+            <svg class="ai-options-toggle-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+              <path d="M4 7h10M18 7h2M4 17h2M10 17h10"/>
+              <circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>
+            </svg>
+            <span class="ai-options-summary"></span>
+            <svg class="ai-options-toggle-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+          </button>
+          <span class="ai-savings-badge" aria-label="${t('Current offer saves 50 percent', '当前优惠省50%')}">
+            <span>${t('Save 50%', '省50%')}</span>
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </span>
           <button type="submit" class="ai-composer-submit" aria-label="开始生成">
             <img class="ai-submit-logo" src="assets/logo-mark.png" alt="" draggable="false">
             <span class="ai-credit-estimate" aria-live="polite">--</span>
@@ -6682,7 +6766,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       </section>
       <div class="ai-options-panel" hidden>
         <section class="ai-gpt25-options" hidden>
-          <div class="ai-options-heading"><strong>${t('Model type', '模型类型')}</strong><span>GPT Image 2.5</span></div>
+          <div class="ai-options-heading"><strong>${t('Model type', '模型类型')}</strong><span>Mess Image2.5</span></div>
           <div class="ai-gpt25-variants" data-option="image-variant">
             <button type="button" data-value="flare" class="is-active">Flare</button>
             <button type="button" data-value="sunburst">Sunburst</button>
@@ -6799,23 +6883,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   const form = pop.querySelector('form');
   const prompt = pop.querySelector('.ai-composer-prompt');
   const videoModeControl = pop.querySelector('.ai-video-mode-picker');
-  const savedPerformanceMode = localStorage.getItem('messs-canvas-performance-mode') === 'performance' ? 'performance' : 'normal';
-  let performanceMode = savedPerformanceMode;
-  const applyPerformanceMode = (mode, withFeedback = true) => {
-    const performance = mode === 'performance';
-    performanceMode = performance ? 'performance' : 'normal';
-    const modeSwitch = document.getElementById('board-performance-switch');
-    modeSwitch?.querySelectorAll('[data-performance-mode]').forEach((button) => {
-      const active = button.dataset.performanceMode === performanceMode;
-      button.classList.toggle('is-active', active);
-      button.setAttribute('aria-pressed', String(active));
-    });
-    modeSwitch?.classList.toggle('is-performance', performance);
-    localStorage.setItem('messs-canvas-performance-mode', mode);
-    window.MesssUiMotion?.canvasModeSwitch(modeSwitch, document.getElementById('board-viewport'), performanceMode, withFeedback);
-  };
-  applyPerformanceMode(savedPerformanceMode, false);
-  document.getElementById('board-performance-switch')?.addEventListener('click', (event) => { const button = event.target.closest('[data-performance-mode]'); if (button) { applyPerformanceMode(button.dataset.performanceMode); syncGenerationOptions(); } });
+  localStorage.removeItem('messs-canvas-performance-mode');
   const videoModeTrigger = pop.querySelector('.ai-video-mode-trigger');
   const videoModeLabelElement = pop.querySelector('.ai-video-mode-label');
   const videoModeMenu = pop.querySelector('.ai-video-mode-menu');
@@ -6837,6 +6905,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   const status = pop.querySelector('.ai-generation-status');
   const creditEstimate = pop.querySelector('.ai-credit-estimate');
   const submit = pop.querySelector('.ai-composer-submit');
+  const optimizePrompt = pop.querySelector('.ai-composer-optimize');
   const close = pop.querySelector('.ai-composer-close');
   const higgsfieldBlock = pop.querySelector('.ai-higgsfield-block');
   const higgsfieldStyle = pop.querySelector('.ai-higgsfield-style');
@@ -6898,6 +6967,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     }
     optionsPanel.hidden = !open;
     optionsToggle.classList.toggle('is-active', open);
+    optionsToggle.setAttribute('aria-expanded', String(open));
     if (open) {
       setCameraControlOpen(false);
       setPromptStylePanelOpen(false);
@@ -7471,7 +7541,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     pop.querySelector('.ai-resolution-hint').textContent = `≈ ${px}`;
     pop.querySelector('.ai-duration-value').textContent = videoDurationDisplayLabel(duration);
     refreshCreditEstimateLanguage();
-    optionsToggle.textContent = kind === 'video'
+    optionsToggle.querySelector('.ai-options-summary').textContent = kind === 'video'
       ? `${ratio === 'adaptive' ? adaptiveRatioDisplayLabel(true) : ratio} · ${size} · ${videoDurationDisplayLabel(duration, true)}`
       : `${ratio === 'auto' || ratio === 'adaptive' ? autoLabel : ratio} · ${size} · ${t(`x${count}`, `×${count}`)}`;
     cameraControlToggle.querySelector('span').textContent = t('Lens', '镜头');
@@ -7514,7 +7584,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       option.className = 'ai-model-picker-option';
       option.dataset.value = provider.id;
       option.setAttribute('role', 'option');
-      appendAiModelLabel(option, provider);
+      appendAiModelLabel(option, provider, { details: true });
       option.addEventListener('click', () => {
         modelSelect.value = provider.id;
         appendAiModelLabel(modelPickerLabel, provider, { sparkle: false });
@@ -7607,7 +7677,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       resolution: size,
       duration: kind === 'video' ? duration : undefined,
       serviceTier: kind === 'video' && provider.capabilities?.variantOptions ? serviceTier : undefined,
-      performanceMode,
+      performanceMode: 'normal',
       generateAudio: kind === 'video' && provider.capabilities?.variantOptions ? generateAudio : undefined
     };
     Promise.resolve(quoteApi.call(window.messsAPI, request)).then((pricing) => {
@@ -7728,8 +7798,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const gpt25Panel = pop.querySelector('.ai-gpt25-options');
     const supportsGpt25Variants = kind === 'image' && selectedImageProvider()?.id === 'image-19';
     gpt25Panel.hidden = !supportsGpt25Variants;
-    pop.querySelector('.ai-gpt25-background').hidden = !supportsGpt25Variants || performanceMode !== 'performance';
-    if (supportsGpt25Variants && performanceMode !== 'performance') imageBackground = 'auto';
+    pop.querySelector('.ai-gpt25-background').hidden = !supportsGpt25Variants;
     pop.querySelectorAll('[data-option="image-background"] button').forEach(button => {
       button.classList.toggle('is-active', button.dataset.value === imageBackground);
       button.setAttribute('aria-pressed', String(button.dataset.value === imageBackground));
@@ -7797,7 +7866,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const supportedCounts = kind === 'image' && Array.isArray(capabilities.counts) && capabilities.counts.length
       ? capabilities.counts.map(Number).filter((value) => Number.isInteger(value) && value >= 1 && value <= 4)
       : [1, 2, 3, 4];
-    const supportedQualities = kind === 'image' && !(supportsGpt25Variants && performanceMode !== 'performance') && Array.isArray(capabilities.qualities)
+    const supportedQualities = kind === 'image' && Array.isArray(capabilities.qualities)
       ? capabilities.qualities.filter((value) => ['low', 'medium', 'high'].includes(value))
       : [];
     if (supportedQualities.length && !supportedQualities.includes(quality)) {
@@ -7957,7 +8026,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     const ratioLabel = ratio === 'adaptive'
       ? adaptiveRatioDisplayLabel(true)
       : ratio === 'auto' ? t('Auto', '\u81ea\u52a8') : ratio;
-    optionsToggle.textContent = kind === 'video'
+    optionsToggle.querySelector('.ai-options-summary').textContent = kind === 'video'
       ? `${ratioLabel} · ${size} · ${videoDurationDisplayLabel(duration, true)}`
       : `${ratioLabel} · ${size} · ${t(`x${count}`, `×${count}`)}`;
   }
@@ -8195,12 +8264,21 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     setPromptStylePanelOpen(false);
   });
   prompt.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) {
       event.preventDefault();
       form.requestSubmit();
     }
   });
   prompt.addEventListener('contextmenu', showPromptTextContextMenu);
+  optimizePrompt.addEventListener('mousedown', (event) => event.preventDefault());
+  optimizePrompt.addEventListener('click', () => {
+    const start = Number.isInteger(prompt.selectionStart) ? prompt.selectionStart : 0;
+    const end = Number.isInteger(prompt.selectionEnd) ? prompt.selectionEnd : start;
+    const selectedOnly = end > start && !!prompt.value.slice(start, end).trim();
+    void openPromptOptimizerDialog(prompt, selectedOnly
+      ? { start, end }
+      : { start: 0, end: prompt.value.length });
+  });
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -8290,7 +8368,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
           : videoModeRatios(selectedMode, videoCapabilities)[0])
         : ratio,
       videoMode: kind === 'video' ? selectedMode.id : null,
-      performanceMode,
+      performanceMode: 'normal',
       serviceTier: kind === 'video' && selectedProvider?.capabilities?.variantOptions ? serviceTier : undefined,
       model: selectedSkillModel || undefined,
       generateAudio: kind === 'video' && selectedProvider?.capabilities?.variantOptions ? generateAudio : undefined,
@@ -8380,10 +8458,11 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
 
 async function generateAiMediaForBoardV2(request, pop, status, submit) {
   const targetCanvasId = activeCanvasId();
-  const taskId = beginAiMediaTask(request);
+  const generationRequest = { ...request, performanceMode: 'normal', watermark: boardAiWatermarkEnabled(), canvasId: targetCanvasId };
+  const taskId = beginAiMediaTask(generationRequest);
   const controls = [...pop.querySelectorAll('button, textarea, select, input')];
   controls.forEach((control) => { control.disabled = true; });
-  const placeholders = createAiPlaceholders(request);
+  const placeholders = createAiPlaceholders(generationRequest);
   let generatedFiles = [];
   const startedAt = Date.now();
   status.textContent = '已提交';
@@ -8396,7 +8475,7 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
     const folderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
       ? AppState.activeFolderId
       : null;
-    const res = await window.messsAPI.generateAiMedia({ ...request, folderId, canvasId: targetCanvasId });
+    const res = await window.messsAPI.generateAiMedia({ ...generationRequest, folderId });
     const files = res && Array.isArray(res.files) ? res.files : (res && res.file ? [res.file] : []);
     generatedFiles = files;
     if (!res || !res.ok || !files.length) {
@@ -8411,7 +8490,7 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
     AppState.files = [...files, ...AppState.files.filter((file) => !files.some((next) => next.id === file.id))];
     renderFileList(currentFileListScope());
     renderFolderGridIfActive();
-    await replaceAiPlaceholders(placeholders, files, request, res.boardItems || []);
+    await replaceAiPlaceholders(placeholders, files, generationRequest, res.boardItems || []);
     generatedFiles = await confirmAiMediaDeliveries(files);
     selectFileForPreview(files[0].id);
     if (res.unlocked && res.unlocked.length) await refreshAchievements();
@@ -8461,9 +8540,9 @@ function aiMediaCanvasCompletionMessage(kind, count, canvasId, failedCount = 0) 
 }
 
 async function generateAiMediaForBoardV3(request) {
-  const taskId = beginAiMediaTask(request);
   const targetCanvasId = activeCanvasId();
-  const generationRequest = { ...request, canvasId: targetCanvasId };
+  const generationRequest = { ...request, performanceMode: 'normal', watermark: boardAiWatermarkEnabled(), canvasId: targetCanvasId };
+  const taskId = beginAiMediaTask(generationRequest);
   const placeOnBoard = request.placeOnBoard !== false;
   const placeholders = placeOnBoard ? createAiPlaceholders(generationRequest) : [];
   let generatedFiles = [];
@@ -9162,28 +9241,124 @@ async function showAiImagePopover(initialKind = 'image') {
 function initBoardBottomBar() {
   void loadAiMediaConfigCached();
 
-  document.getElementById('board-theme-toggle').addEventListener('click', async () => {
-    const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-    applyTheme(next);
-    await window.messsAPI.setTheme(next);
-  });
-
-  document.getElementById('board-shortcuts-btn').addEventListener('click', () => {
+  const settings = document.getElementById('board-canvas-settings');
+  const settingsToggle = document.getElementById('board-settings-toggle');
+  const settingsPopover = document.getElementById('board-canvas-settings-popover');
+  const themeToggle = document.getElementById('board-settings-theme');
+  const watermarkToggle = document.getElementById('board-settings-watermark');
+  const watermarkValue = document.getElementById('board-settings-watermark-value');
+  const shortcutsToggle = document.getElementById('board-settings-shortcuts');
+  const watermarkOverlay = document.getElementById('board-watermark-overlay');
+  const watermarkSwitch = document.getElementById('board-watermark-switch');
+  const setSettingsOpen = (open) => {
+    settingsPopover.hidden = !open;
+    settingsToggle.classList.toggle('is-active', open);
+    settingsToggle.setAttribute('aria-expanded', String(open));
+  };
+  const syncThemeToggle = () => {
+    themeToggle.setAttribute('aria-checked', String(document.documentElement.getAttribute('data-theme') === 'dark'));
+  };
+  const syncWatermarkSummary = () => {
+    watermarkValue.textContent = boardAiWatermarkEnabled() ? t('On', '开启') : t('Off', '关闭');
+  };
+  const refreshWatermarkLanguage = () => {
+    document.querySelector('.board-watermark-header small').textContent = t('Messs creation settings', 'Messs 创作设置');
+    document.getElementById('board-watermark-title').textContent = t('Messs AI generation mark', 'Messs AI 生成标识');
+    document.getElementById('board-watermark-description').textContent = t(
+      'Messs supports clear and responsible sharing of AI-assisted work. When enabled, supported generation models will add a visible AI-generated mark so viewers can identify the content source.',
+      'Messs 鼓励清晰、负责地分享 AI 辅助创作。开启后，支持此选项的生成模型会为输出添加可见的“AI 生成”标识，方便观众识别内容来源。'
+    );
+    document.getElementById('board-watermark-disclaimer').textContent = t(
+      'When disabled, Messs will not request this mark. Some models or publishing platforms may still retain or add labels under their own rules. Follow applicable laws and platform requirements when sharing generated content.',
+      '关闭后，Messs 不会主动请求添加该标识。部分模型或发布平台仍可能依据自身规则保留或添加标记；分享生成内容时，请遵守所在地法规和发布平台要求。'
+    );
+    document.getElementById('board-watermark-option-title').textContent = t('Add an AI generation mark', '添加 AI 生成标识');
+    document.getElementById('board-watermark-option-note').textContent = t(
+      'Off by default. This applies only to future generations and does not modify existing files.',
+      '默认关闭。仅影响之后生成的内容，不会修改已有文件。'
+    );
+    document.getElementById('board-watermark-save').textContent = t('Save setting', '保存设置');
+    document.getElementById('board-watermark-close').setAttribute('aria-label', t('Close', '关闭'));
+    watermarkOverlay.querySelector('.board-watermark-backdrop').setAttribute('aria-label', t('Close', '关闭'));
+  };
+  let watermarkCloseTimer = 0;
+  const closeWatermarkDialog = () => {
+    if (watermarkOverlay.hidden) return;
+    watermarkOverlay.classList.remove('is-visible');
+    window.clearTimeout(watermarkCloseTimer);
+    watermarkCloseTimer = window.setTimeout(() => { watermarkOverlay.hidden = true; }, 160);
+  };
+  const openWatermarkDialog = () => {
+    window.clearTimeout(watermarkCloseTimer);
+    refreshWatermarkLanguage();
+    watermarkSwitch.setAttribute('aria-checked', String(boardAiWatermarkEnabled()));
+    setSettingsOpen(false);
+    watermarkOverlay.hidden = false;
+    requestAnimationFrame(() => watermarkOverlay.classList.add('is-visible'));
+    watermarkSwitch.focus({ preventScroll: true });
+  };
+  const closeShortcuts = () => {
+    document.getElementById('shortcuts-popover')?.remove();
+    shortcutsToggle.setAttribute('aria-expanded', 'false');
+  };
+  const toggleShortcuts = () => {
     const existing = document.getElementById('shortcuts-popover');
     if (existing) { existing.remove(); return; }
     const pop = document.createElement('div');
     pop.id = 'shortcuts-popover';
-    pop.className = 'shortcuts-popover';
+    pop.className = 'shortcuts-popover is-settings-shortcuts';
     markBoardUiLayer(pop);
     renderShortcutsPopover(pop);
-    document.getElementById('board-bottom-bar').appendChild(pop);
-    setTimeout(() => document.addEventListener('click', function closeOnce(e) {
-      if (!pop.contains(e.target) && e.target.id !== 'board-shortcuts-btn') {
-        pop.remove();
-        document.removeEventListener('click', closeOnce);
-      }
-    }), 0);
+    pop.querySelector('.shortcuts-heading button').onclick = closeShortcuts;
+    settings.appendChild(pop);
+    shortcutsToggle.setAttribute('aria-expanded', 'true');
+    setSettingsOpen(false);
+  };
+  syncThemeToggle();
+  settingsToggle.addEventListener('click', (event) => {
+    event.stopPropagation();
+    closeShortcuts();
+    syncThemeToggle();
+    setSettingsOpen(settingsPopover.hidden);
   });
+  themeToggle.addEventListener('click', async () => {
+    const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    applyTheme(next);
+    syncThemeToggle();
+    await window.messsAPI.setTheme(next);
+  });
+  watermarkToggle.addEventListener('click', openWatermarkDialog);
+  watermarkSwitch.addEventListener('click', () => {
+    watermarkSwitch.setAttribute('aria-checked', String(watermarkSwitch.getAttribute('aria-checked') !== 'true'));
+  });
+  document.getElementById('board-watermark-save').addEventListener('click', () => {
+    const enabled = watermarkSwitch.getAttribute('aria-checked') === 'true';
+    try {
+      if (enabled) localStorage.setItem(BOARD_AI_WATERMARK_KEY, 'true');
+      else localStorage.removeItem(BOARD_AI_WATERMARK_KEY);
+    } catch (error) {}
+    syncWatermarkSummary();
+    closeWatermarkDialog();
+    showToast(enabled
+      ? t('AI generation mark enabled', '已开启 AI 生成标识')
+      : t('AI generation mark disabled', '已关闭 AI 生成标识'));
+  });
+  document.getElementById('board-watermark-close').addEventListener('click', closeWatermarkDialog);
+  watermarkOverlay.querySelector('.board-watermark-backdrop').addEventListener('click', closeWatermarkDialog);
+  shortcutsToggle.addEventListener('click', toggleShortcuts);
+  document.addEventListener('click', (event) => {
+    if (!settings.contains(event.target)) {
+      setSettingsOpen(false);
+      closeShortcuts();
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    setSettingsOpen(false);
+    closeShortcuts();
+    closeWatermarkDialog();
+  });
+  syncWatermarkSummary();
 
   document.getElementById('board-tool-upload').addEventListener('click', async () => {
     const paths = await window.messsAPI.pickFiles();

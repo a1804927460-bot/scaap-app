@@ -16,6 +16,7 @@ const { pathToFileURL } = require('node:url');
       window.isBoardFullscreen = () => false;
       window.markBoardUiLayer = () => {};
       window.updateUiLanguage = () => {};
+      window.requestCanvasAgentText = async () => ({ ok: true, text: '' });
       window.messsAPI = {
         quoteAiMedia: async () => ({ credits: 26 }),
         listWorkspaceResources: async () => [{
@@ -34,6 +35,15 @@ const { pathToFileURL } = require('node:url');
     fs.mkdirSync('test-artifacts/moodboard-generation', { recursive: true });
     await page.setViewportSize({width:1560,height:1020});
     await page.waitForTimeout(100);
+    assert.equal(await page.locator('.ai-composer-optimize').isVisible(), true, 'The normal generation composer must show prompt optimization.');
+    const topActions = await page.locator('.ai-composer-close, .ai-composer-optimize').evaluateAll(elements => elements.map(element => element.getBoundingClientRect().x));
+    assert.ok(topActions[0] < topActions[1], 'Prompt optimization must sit to the left of close.');
+    await page.locator('.ai-composer-prompt').evaluate(element => element.setSelectionRange(0, 4));
+    await page.locator('.ai-composer-optimize').click();
+    assert.equal(await page.locator('.prompt-optimizer-original').inputValue(), '柔和光线', 'The toolbar entry must preserve and optimize the current selection.');
+    await page.screenshot({ path: 'test-artifacts/moodboard-generation/composer-optimizer-entry.png' });
+    await page.locator('.prompt-optimizer-close').click();
+    await page.waitForTimeout(220);
     assert.equal(await page.locator('.ai-prompt-style-card[data-style-id="skill-test"]').count(), 1, 'Workspace skill must load into the composer');
     assert.equal(await page.locator('.ai-prompt-style-new, .ai-prompt-style-editor').count(), 0, 'Composer skills must be selection-only');
     await page.locator('.ai-prompt-style-toggle').click();
@@ -65,6 +75,7 @@ const { pathToFileURL } = require('node:url');
         });
         assert.ok(fit.inside&&fit.clickable,JSON.stringify({canvasWidth,kind,fit}));
         assert.equal(await page.locator('.ai-composer-close').isVisible(),false,'Composer close must not bleed through settings');
+        assert.equal(await page.locator('.ai-composer-optimize').isVisible(),false,'Prompt optimization must not bleed through settings');
         await page.screenshot({path:`test-artifacts/moodboard-generation/settings-${canvasWidth}-${kind}.png`});
         await page.locator('.ai-options-toggle').click();
       }

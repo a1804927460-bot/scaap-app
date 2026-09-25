@@ -8,7 +8,7 @@
   },
   "strategies": {
     "auto": ["light", "standard", "advanced"],
-    "fast": ["light", "light", "standard"],
+    "fast": ["light", "light", "light"],
     "balanced": ["light", "standard", "advanced"],
     "ultimate": ["light", "advanced", "advanced"]
   }

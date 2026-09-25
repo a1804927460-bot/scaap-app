@@ -6,7 +6,9 @@
   overflow-wrap: anywhere;
 }
 .ai-assistant-message.is-pending.is-chat-thinking::before,
-#board-agent-panel .board-agent-message.is-pending::before {
+.ai-assistant-message.is-assistant:not(.is-pending)::before,
+#board-agent-panel .board-agent-message.is-pending::before,
+#board-agent-panel .board-agent-message.is-assistant:not(.is-pending)::before {
   content: 'Messs.';
   display: block;
   min-height: 24px;

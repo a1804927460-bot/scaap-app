@@ -3,7 +3,7 @@
 
 function initTitlebar() {
   initWindowControls();
-  initSectionTabs();
+  initAppSurfaceNavigation();
 }
 
 function initWindowControls() {
@@ -51,34 +51,80 @@ function refreshTitlebarLanguage() {
   }
 }
 
-function initSectionTabs() {
-  document.querySelectorAll('.section-tab').forEach((tab) => {
-    tab.addEventListener('click', () => {
-      const section = tab.dataset.section;
-      const assistant = document.getElementById('ai-assistant-panel');
-      const isAssistantSection = section === 'assistant';
-      const assistantExpanded = typeof assistantOccupiesFullscreenLayer === 'function'
-        ? assistantOccupiesFullscreenLayer(assistant)
-        : !!assistant && assistant.classList.contains('is-fullscreen');
-      if (assistantExpanded && !isAssistantSection && typeof setAssistantFullscreen === 'function') {
-        setAssistantFullscreen(false);
-      }
-      if (typeof isBoardFullscreen === 'function' && isBoardFullscreen() && typeof exitBoardFullscreen === 'function') {
-        exitBoardFullscreen();
-      }
-      if (isAssistantSection) {
-        const fileDetail = document.getElementById('file-detail-panel');
-        if (fileDetail && !fileDetail.hidden && typeof hideFileDetailPanel === 'function') hideFileDetailPanel();
-        if (assistant && typeof setAssistantFullscreen === 'function') setAssistantFullscreen(true);
-      }
-      document.querySelectorAll('.section-tab').forEach((t) => {
-        const isActive = t === tab;
-        t.classList.toggle('is-active', isActive);
-        t.setAttribute('aria-selected', String(isActive));
-      });
-      document.querySelectorAll('.app-section').forEach((el) => {
-        el.classList.toggle('is-active', el.id === 'section-' + (isAssistantSection ? 'messs' : section));
-      });
+function setAppSurfaceNavigationActive(surface = '') {
+  document.querySelectorAll('[data-app-surface]').forEach((button) => {
+    const active = button.dataset.appSurface === surface;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+}
+
+function closeAppSurface(surface = '', options = {}) {
+  const assistant = document.getElementById('ai-assistant-panel');
+  const activeSurface = surface
+    || document.querySelector('.app-surface-dialog.is-active')?.id.replace('section-', '')
+    || (assistant?.classList.contains('is-fullscreen') ? 'agent' : '');
+  if (activeSurface === 'agent') {
+    if (typeof setAssistantFullscreen === 'function') setAssistantFullscreen(false);
+  } else if (activeSurface) {
+    const section = document.getElementById(`section-${activeSurface}`);
+    if (section) {
+      section.classList.remove('is-active');
+      section.setAttribute('aria-hidden', 'true');
+    }
+  }
+  document.body.classList.remove('is-app-surface-open');
+  setAppSurfaceNavigationActive('');
+  if (options.restoreFocus !== false && activeSurface) {
+    document.querySelector(`[data-app-surface="${activeSurface}"]`)?.focus();
+  }
+}
+
+function openAppSurface(surface) {
+  if (!['agent', 'market', 'workshop'].includes(surface)) return;
+  const assistant = document.getElementById('ai-assistant-panel');
+  document.querySelectorAll('.app-surface-dialog.is-active').forEach((section) => {
+    section.classList.remove('is-active');
+    section.setAttribute('aria-hidden', 'true');
+  });
+  if (surface !== 'agent' && assistant && typeof setAssistantFullscreen === 'function') {
+    setAssistantFullscreen(false);
+  }
+  if (typeof isBoardFullscreen === 'function' && isBoardFullscreen() && typeof exitBoardFullscreen === 'function') {
+    exitBoardFullscreen();
+  }
+  if (surface === 'agent') {
+    const fileDetail = document.getElementById('file-detail-panel');
+    if (fileDetail && !fileDetail.hidden && typeof hideFileDetailPanel === 'function') hideFileDetailPanel();
+    if (assistant && typeof setAssistantFullscreen === 'function') setAssistantFullscreen(true);
+  } else {
+    const section = document.getElementById(`section-${surface}`);
+    if (!section) return;
+    section.classList.add('is-active');
+    section.setAttribute('aria-hidden', 'false');
+    section.dispatchEvent(new CustomEvent('messs:surface-opened', { bubbles: true, detail: { surface } }));
+    requestAnimationFrame(() => section.querySelector('[data-app-surface-panel]')?.focus?.());
+  }
+  document.body.classList.add('is-app-surface-open');
+  setAppSurfaceNavigationActive(surface);
+}
+
+function initAppSurfaceNavigation() {
+  document.querySelectorAll('[data-close-app-surface]').forEach((button) => {
+    button.addEventListener('click', () => closeAppSurface(button.dataset.closeAppSurface));
+  });
+  document.querySelectorAll('.app-surface-dialog').forEach((section) => {
+    section.addEventListener('click', (event) => {
+      if (event.target === section) closeAppSurface(section.id.replace('section-', ''));
     });
   });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    const section = document.querySelector('.app-surface-dialog.is-active');
+    if (!section) return;
+    const nestedDialog = section.querySelector(
+      '.market-detail-overlay:not([hidden]), .workshop-overlay:not([hidden]), .workshop-detail-overlay:not([hidden])'
+    );
+    if (!nestedDialog) closeAppSurface(section.id.replace('section-', ''));
+  }, true);
 }

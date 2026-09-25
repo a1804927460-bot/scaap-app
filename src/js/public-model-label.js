@@ -12,6 +12,20 @@ function compactPublicText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+function brandedPublicModelLabel(value) {
+  const key = compactPublicText(value).toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const labels = {
+    nanobananapro: 'Mess NPro',
+    nanobanapro: 'Mess NPro',
+    nanobanana2: 'Mess N2',
+    gptimage2: 'Mess Image2',
+    gptimage25: 'Mess Image2.5',
+    midjourneyv82: 'Mess Jennie',
+    midjoureyv82: 'Mess Jennie'
+  };
+  return labels[key] || value;
+}
+
 function publicModelLabel(value, fallback = 'AI model') {
   let text = compactPublicText(value);
   if (!text) return fallback;
@@ -26,7 +40,7 @@ function publicModelLabel(value, fallback = 'AI model') {
     .replace(/\(\s*[\)\]]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
-  return text || fallback;
+  return brandedPublicModelLabel(text) || fallback;
 }
 
 function publicAiErrorMessage(value, fallback = 'The AI service could not complete this request.', reason = '') {

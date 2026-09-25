@@ -221,14 +221,32 @@ function hideContextMenu() {
   setTimeout(() => { menu.hidden = true; }, 160);
 }
 
-function buildAndShowSimpleMenu(items, x, y, menuId = 'simple-context-menu') {
+function buildAndShowSimpleMenu(items, x, y, menuId = 'simple-context-menu', options = {}) {
   const existing = document.getElementById(menuId);
-  if (existing) existing.remove();
+  if (existing) {
+    if (typeof existing.closeContextMenu === 'function') existing.closeContextMenu();
+    else existing.remove();
+  }
 
   const menu = document.createElement('ul');
   menu.id = menuId;
   menu.className = 'context-menu is-visible';
   document.body.appendChild(menu);
+
+  let closed = false;
+  const closeMenu = () => {
+    if (closed) return;
+    closed = true;
+    menu.remove();
+    document.removeEventListener('click', closeOnce);
+    document.removeEventListener('keydown', closeOnEscape);
+    window.removeEventListener('blur', closeMenu);
+    if (typeof options.onClose === 'function') options.onClose();
+  };
+  const closeOnEscape = (event) => {
+    if (event.key === 'Escape') closeMenu();
+  };
+  menu.closeContextMenu = closeMenu;
 
   for (const item of items) {
     if (item.divider) {
@@ -236,6 +254,7 @@ function buildAndShowSimpleMenu(items, x, y, menuId = 'simple-context-menu') {
       divider.className = 'context-menu-divider';
       divider.setAttribute('role', 'separator');
       menu.appendChild(divider);
+      continue;
     }
     const li = document.createElement('li');
     li.className = 'context-menu-item' + (item.danger ? ' is-danger' : '');
@@ -246,7 +265,7 @@ function buildAndShowSimpleMenu(items, x, y, menuId = 'simple-context-menu') {
     } else {
       li.textContent = item.label;
     }
-    li.addEventListener('click', () => { menu.remove(); item.action(); });
+    li.addEventListener('click', () => { closeMenu(); item.action(); });
     menu.appendChild(li);
   }
 
@@ -257,12 +276,11 @@ function buildAndShowSimpleMenu(items, x, y, menuId = 'simple-context-menu') {
   menu.style.top = Math.max(8, Math.min(y, maxY)) + 'px';
 
   const closeOnce = (e) => {
-    if (!menu.contains(e.target)) {
-      menu.remove();
-      document.removeEventListener('click', closeOnce);
-    }
+    if (!menu.contains(e.target)) closeMenu();
   };
   setTimeout(() => document.addEventListener('click', closeOnce), 0);
+  document.addEventListener('keydown', closeOnEscape);
+  window.addEventListener('blur', closeMenu);
   return menu;
 }
 
@@ -395,18 +413,19 @@ function createPromptOptimizerDialog(selectedOnly) {
     <section class="prompt-optimizer-dialog" role="dialog" aria-modal="true" aria-labelledby="prompt-optimizer-title">
       <header class="prompt-optimizer-header">
         <span class="prompt-optimizer-mark" aria-hidden="true">${buildIconSvg('M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z;M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16z')}</span>
-        <div><h2 id="prompt-optimizer-title">${t('Optimize prompt with Agent', '使用 Agent 优化提示词', 'Agent로 프롬프트 최적화')}</h2><p>${selectedOnly ? t('Review the selected-text revision before replacing it.', '查看选中文字的优化结果，再决定是否替换。', '선택한 텍스트의 수정 결과를 확인한 후 교체 여부를 결정하세요.') : t('Compare both versions before replacing the current prompt.', '对比优化前后的提示词，再决定是否替换。', '현재 프롬프트를 교체하기 전에 두 버전을 비교하세요.')}</p></div>
+        <div><h2 id="prompt-optimizer-title">${t('Optimize prompt with Agent', '使用 Agent 优化提示词', 'Agent로 프롬프트 최적화')}</h2><p>${selectedOnly ? t('Edit the selected text, then confirm before Agent optimizes it.', '先修改选中的文字，确认后再交给 Agent 优化。', '선택한 텍스트를 수정한 뒤 확인하면 Agent가 최적화합니다.') : t('Edit the prompt, then confirm before Agent optimizes it.', '先检查或修改提示词，确认后再交给 Agent 优化。', '프롬프트를 수정한 뒤 확인하면 Agent가 최적화합니다.')}</p></div>
         <button class="prompt-optimizer-close" type="button" title="${t('Keep original', '保留原文', '원문 유지')}" aria-label="${t('Keep original', '保留原文', '원문 유지')}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       </header>
       <div class="prompt-optimizer-compare">
-        <label><span>${t('Original prompt', '原提示词', '원래 프롬프트')}</span><textarea class="prompt-optimizer-original" readonly spellcheck="false"></textarea></label>
-        <label><span>${t('Agent revision', 'Agent 优化结果', 'Agent 수정 결과')}</span><textarea class="prompt-optimizer-result" readonly spellcheck="true" placeholder="${t('Agent is optimizing...', 'Agent 正在优化...', 'Agent가 최적화하고 있습니다...')}"></textarea></label>
+        <label><span>${t('Prompt to optimize', '待优化提示词', '최적화할 프롬프트')}</span><textarea class="prompt-optimizer-original" spellcheck="true"></textarea></label>
+        <label><span>${t('Agent revision', 'Agent 优化结果', 'Agent 수정 결과')}</span><textarea class="prompt-optimizer-result" readonly spellcheck="true" placeholder="${t('Confirm to start optimization', '确认后开始优化', '확인 후 최적화를 시작합니다')}"></textarea></label>
       </div>
       <footer class="prompt-optimizer-footer">
-        <span class="prompt-optimizer-status" role="status">${t('Agent is optimizing...', 'Agent 正在优化...', 'Agent가 최적화하고 있습니다...')}</span>
+        <span class="prompt-optimizer-status" role="status">${t('Review or edit the text before continuing.', '请检查或修改文字，确认后再开始优化。', '계속하기 전에 텍스트를 확인하거나 수정하세요.')}</span>
         <div class="prompt-optimizer-actions">
           <button class="prompt-optimizer-keep" type="button">${t('Keep original', '保留原文', '원문 유지')}</button>
-          <button class="prompt-optimizer-replace" type="button" disabled>${selectedOnly ? t('Replace selection', '替换选中文字', '선택 영역 교체') : t('Replace prompt', '替换提示词', '프롬프트 교체')}</button>
+          <button class="prompt-optimizer-confirm" type="button">${t('Confirm and optimize', '确认并优化', '확인 후 최적화')}</button>
+          <button class="prompt-optimizer-replace" type="button" disabled hidden>${selectedOnly ? t('Replace selection', '替换选中文字', '선택 영역 교체') : t('Replace prompt', '替换提示词', '프롬프트 교체')}</button>
         </div>
       </footer>
     </section>
@@ -425,6 +444,76 @@ function createPromptOptimizerDialog(selectedOnly) {
   document.body.appendChild(overlay);
   requestAnimationFrame(() => overlay.classList.add('is-open'));
   return overlay;
+}
+
+async function runPromptOptimization(overlay, options) {
+  if (!overlay || !overlay.isConnected || overlay.dataset.optimizing === 'true') return null;
+  const { kind, selectedOnly, revision } = options;
+  const sourceField = overlay.querySelector('.prompt-optimizer-original');
+  const resultField = overlay.querySelector('.prompt-optimizer-result');
+  const status = overlay.querySelector('.prompt-optimizer-status');
+  const confirmButton = overlay.querySelector('.prompt-optimizer-confirm');
+  const replaceButton = overlay.querySelector('.prompt-optimizer-replace');
+  const sourceText = String(sourceField.value || '').trim().slice(0, 20000);
+  if (!sourceText) {
+    status.textContent = t('Enter text before starting optimization.', '请输入需要优化的文字。', '최적화할 텍스트를 입력하세요.');
+    status.dataset.state = 'error';
+    sourceField.focus({ preventScroll: true });
+    return null;
+  }
+
+  PromptOptimizerState.sourceText = sourceText;
+  sourceField.value = sourceText;
+  sourceField.readOnly = true;
+  overlay.dataset.optimizing = 'true';
+  confirmButton.disabled = true;
+  status.dataset.state = 'working';
+  status.textContent = t('Agent is optimizing...', 'Agent 正在优化...', 'Agent가 최적화하고 있습니다...');
+  resultField.placeholder = t('Agent is optimizing...', 'Agent 正在优化...', 'Agent가 최적화하고 있습니다...');
+  resultField.value = '';
+  let requestFailed = false;
+  let response = null;
+  try {
+    response = await requestCanvasAgentText({
+      displayPrompt: selectedOnly
+        ? t('Optimize the selected prompt text', '优化选中的提示词', '선택한 프롬프트 텍스트 최적화')
+        : t(`Optimize the current ${kind} prompt`, `优化当前${kind === 'video' ? '视频' : '生图'}提示词`, `현재 ${kind === 'video' ? '비디오' : '이미지'} 프롬프트 최적화`),
+      contextualPrompt: promptOptimizerInstruction(sourceText, kind, selectedOnly),
+      referenceFiles: [],
+      focusInput: false,
+      isolated: true,
+      onResponse: (responseText) => {
+        if (revision !== PromptOptimizerState.revision || !overlay.isConnected) return;
+        const optimized = normalizeAgentPromptSuggestion(responseText);
+        if (!optimized) return;
+        overlay.dataset.optimizing = 'false';
+        resultField.value = optimized;
+        resultField.readOnly = false;
+        confirmButton.hidden = true;
+        replaceButton.hidden = false;
+        replaceButton.disabled = false;
+        status.textContent = t('Review the result, edit it if needed, then choose whether to replace.', '请查看优化结果；可以继续修改，再选择是否替换。', '결과를 확인하고 필요하면 수정한 뒤 교체 여부를 선택하세요.');
+        status.dataset.state = 'ready';
+        resultField.focus({ preventScroll: true });
+        resultField.setSelectionRange(0, 0);
+      },
+      onError: () => { requestFailed = true; }
+    });
+  } catch (error) {
+    requestFailed = true;
+  }
+  if (revision === PromptOptimizerState.revision && overlay.isConnected && !resultField.value) {
+    overlay.dataset.optimizing = 'false';
+    sourceField.readOnly = false;
+    confirmButton.disabled = false;
+    resultField.placeholder = t('Confirm to start optimization', '确认后开始优化', '확인 후 최적화를 시작합니다');
+    status.textContent = requestFailed
+      ? t('Agent could not optimize this prompt. Edit it or try again.', 'Agent 未能完成优化，可以修改后重试。', 'Agent가 프롬프트를 최적화하지 못했습니다. 수정하거나 다시 시도하세요.')
+      : t('Agent is busy. Please try again shortly.', 'Agent 正在处理其他任务，请稍后重试。', 'Agent가 다른 작업을 처리 중입니다. 잠시 후 다시 시도하세요.');
+    status.dataset.state = 'error';
+    sourceField.focus({ preventScroll: true });
+  }
+  return response;
 }
 
 async function openPromptOptimizerDialog(input, selection = {}) {
@@ -451,42 +540,15 @@ async function openPromptOptimizerDialog(input, selection = {}) {
   PromptOptimizerState.revision += 1;
   const revision = PromptOptimizerState.revision;
   const overlay = createPromptOptimizerDialog(selectedOnly);
-  overlay.querySelector('.prompt-optimizer-original').value = sourceText;
-  overlay.querySelector('.prompt-optimizer-result').focus({ preventScroll: true });
-  const status = overlay.querySelector('.prompt-optimizer-status');
-  const resultField = overlay.querySelector('.prompt-optimizer-result');
-  const replaceButton = overlay.querySelector('.prompt-optimizer-replace');
+  const sourceField = overlay.querySelector('.prompt-optimizer-original');
+  sourceField.value = sourceText;
   const kind = composer && composer.dataset.kind === 'video' ? 'video' : 'image';
-  let requestFailed = false;
-  const response = await requestCanvasAgentText({
-    displayPrompt: selectedOnly
-      ? t('Optimize the selected prompt text', '优化选中的提示词', '선택한 프롬프트 텍스트 최적화')
-      : t(`Optimize the current ${kind} prompt`, `优化当前${kind === 'video' ? '视频' : '生图'}提示词`, `현재 ${kind === 'video' ? '비디오' : '이미지'} 프롬프트 최적화`),
-    contextualPrompt: promptOptimizerInstruction(sourceText, kind, selectedOnly),
-    referenceFiles: [],
-    focusInput: false,
-    isolated: true,
-    onResponse: (responseText) => {
-      if (revision !== PromptOptimizerState.revision || !overlay.isConnected) return;
-      const optimized = normalizeAgentPromptSuggestion(responseText);
-      if (!optimized) return;
-      resultField.value = optimized;
-      resultField.readOnly = false;
-      replaceButton.disabled = false;
-      status.textContent = t('Review the result, edit it if needed, then choose whether to replace.', '请查看优化结果；可以继续修改，再选择是否替换。', '결과를 확인하고 필요하면 수정한 뒤 교체 여부를 선택하세요.');
-      status.dataset.state = 'ready';
-      resultField.focus({ preventScroll: true });
-      resultField.setSelectionRange(0, 0);
-    },
-    onError: () => { requestFailed = true; }
+  overlay.querySelector('.prompt-optimizer-confirm').addEventListener('click', () => {
+    void runPromptOptimization(overlay, { kind, selectedOnly, revision });
   });
-  if (revision === PromptOptimizerState.revision && overlay.isConnected && (!response || !resultField.value)) {
-    status.textContent = requestFailed
-      ? t('Agent could not optimize this prompt. Please try again.', 'Agent 未能完成优化，请重试。', 'Agent가 프롬프트를 최적화하지 못했습니다. 다시 시도하세요.')
-      : t('Agent is busy. Please try again shortly.', 'Agent 正在处理其他任务，请稍后重试。', 'Agent가 다른 작업을 처리 중입니다. 잠시 후 다시 시도하세요.');
-    status.dataset.state = 'error';
-  }
-  return response;
+  sourceField.focus({ preventScroll: true });
+  sourceField.setSelectionRange(sourceField.value.length, sourceField.value.length);
+  return overlay;
 }
 
 function promptTextSelection(editable) {
@@ -536,6 +598,10 @@ function showAgentTextContextMenu(event) {
     return true;
   }
 
+  document.querySelectorAll('.is-agent-context-selected').forEach((element) => {
+    element.classList.remove('is-agent-context-selected');
+  });
+  message.classList.add('is-agent-context-selected');
   const text = textSelectionInside(message) || message.innerText || message.textContent;
   const items = [{
     label: t('Copy', '\u590d\u5236'),
@@ -549,7 +615,9 @@ function showAgentTextContextMenu(event) {
       action: () => openMoodboardTargetPicker(text)
     });
   }
-  buildAndShowSimpleMenu(items, event.clientX, event.clientY, 'agent-text-context-menu');
+  buildAndShowSimpleMenu(items, event.clientX, event.clientY, 'agent-text-context-menu', {
+    onClose: () => message.classList.remove('is-agent-context-selected')
+  });
   return true;
 }
 
@@ -765,8 +833,208 @@ async function openCanvasUsageDetails(canvasId) {
   }
 }
 
+let canvasGenerationHistoryFilter = 'all';
+let canvasGenerationHistoryCloseTimer = 0;
+
+function canvasGeneratedFiles(canvasId = activeCanvasId()) {
+  return (Array.isArray(AppState.files) ? AppState.files : [])
+    .filter((file) => file && file.canvasId === canvasId)
+    .filter((file) => file.aiGeneration || file.butlerOperation || file.sourceFolder === 'AI Generated')
+    .filter((file) => isImageExt(file.ext) || isVideoExt(file.ext))
+    .sort((left, right) => {
+      const leftTime = new Date(left.aiGeneration?.createdAt || left.butlerOperation?.createdAt || left.importedAt || 0).getTime() || 0;
+      const rightTime = new Date(right.aiGeneration?.createdAt || right.butlerOperation?.createdAt || right.importedAt || 0).getTime() || 0;
+      return rightTime - leftTime;
+    });
+}
+
+function formatCanvasGenerationHistoryDate(value) {
+  const date = new Date(value || 0);
+  if (!Number.isFinite(date.getTime())) return '';
+  return new Intl.DateTimeFormat(undefined, {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+  }).format(date);
+}
+
+function canvasGenerationHistorySvg(path, size = 15) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', String(size));
+  svg.setAttribute('height', String(size));
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.8');
+  svg.setAttribute('aria-hidden', 'true');
+  const shape = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  shape.setAttribute('d', path);
+  svg.appendChild(shape);
+  return svg;
+}
+
+function canvasGenerationHistoryLabel(file) {
+  const operation = file.aiGeneration || file.butlerOperation || {};
+  const raw = file.aiGeneration ? operation.modelName : operation.modelId;
+  if (!raw) return file.aiGeneration ? t('Generated', '生成') : t('Edited', '处理');
+  return typeof publicModelLabel === 'function' ? publicModelLabel(raw, t('Generated', '生成')) : raw;
+}
+
+function renderCanvasGenerationHistory() {
+  const overlay = document.getElementById('canvas-generation-history-overlay');
+  const grid = document.getElementById('canvas-generation-history-grid');
+  const empty = document.getElementById('canvas-generation-history-empty');
+  const count = document.getElementById('canvas-generation-history-count');
+  if (!overlay || !grid || !empty || !count) return;
+
+  const allFiles = canvasGeneratedFiles(overlay.dataset.canvasId || activeCanvasId());
+  const files = allFiles.filter((file) => (
+    canvasGenerationHistoryFilter === 'all'
+      || (canvasGenerationHistoryFilter === 'image' ? isImageExt(file.ext) : isVideoExt(file.ext))
+  ));
+  count.textContent = t(`${files.length} items`, `${files.length} 个文件`);
+  grid.replaceChildren(...files.map((file) => {
+    const isVideo = isVideoExt(file.ext);
+    const operation = file.aiGeneration || file.butlerOperation || {};
+    const card = document.createElement('article');
+    card.className = 'canvas-generation-history-card';
+
+    const preview = document.createElement('button');
+    preview.className = 'canvas-generation-history-preview';
+    preview.type = 'button';
+    preview.title = t('Open preview', '放大查看');
+    preview.setAttribute('aria-label', t(`Preview ${file.name || 'generated file'}`, `查看 ${file.name || '生成文件'}`));
+    appendFileThumbnail(preview, file, file.name || '');
+    const kind = document.createElement('span');
+    kind.className = 'canvas-generation-history-kind';
+    kind.append(
+      canvasGenerationHistorySvg(isVideo ? 'M8 5v14l11-7z' : 'M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4', 11),
+      document.createTextNode(isVideo ? t('Video', '视频') : t('Image', '图片'))
+    );
+    preview.appendChild(kind);
+    preview.addEventListener('click', () => openFileFullscreenPreview(file));
+
+    const body = document.createElement('div');
+    body.className = 'canvas-generation-history-body';
+    const name = document.createElement('div');
+    name.className = 'canvas-generation-history-name';
+    name.title = file.name || '';
+    name.textContent = file.name || t('Generated file', '生成文件');
+    const prompt = document.createElement('div');
+    prompt.className = 'canvas-generation-history-prompt';
+    prompt.textContent = String(operation.prompt || t('Generated canvas media', '画布生成内容')).trim();
+    const meta = document.createElement('div');
+    meta.className = 'canvas-generation-history-meta';
+    const model = document.createElement('span');
+    model.textContent = canvasGenerationHistoryLabel(file);
+    model.title = model.textContent;
+    const date = document.createElement('span');
+    date.textContent = formatCanvasGenerationHistoryDate(operation.createdAt || file.importedAt);
+    meta.append(model, date);
+
+    const actions = document.createElement('div');
+    actions.className = 'canvas-generation-history-actions';
+    const view = document.createElement('button');
+    view.type = 'button';
+    view.title = t('Open preview', '放大查看');
+    view.setAttribute('aria-label', view.title);
+    view.appendChild(canvasGenerationHistorySvg('M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z'));
+    view.addEventListener('click', () => openFileFullscreenPreview(file));
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.append(canvasGenerationHistorySvg('M12 5v14M5 12h14'), document.createTextNode(t('Add to canvas', '放到画布')));
+    add.addEventListener('click', async () => {
+      const point = boardViewportCenterCoords();
+      await addFilesToBoard([file.id], point.x, point.y, { selectAdded: true, promptDuplicates: true });
+    });
+    actions.append(view, add);
+    body.append(name, prompt, meta, actions);
+    card.append(preview, body);
+    return card;
+  }));
+
+  grid.hidden = files.length === 0;
+  empty.hidden = files.length > 0;
+  empty.querySelector('strong').textContent = canvasGenerationHistoryFilter === 'all'
+    ? t('No generations yet', '暂无生成记录')
+    : t('No matching files', '暂无此类文件');
+  empty.querySelector('span').textContent = canvasGenerationHistoryFilter === 'all'
+    ? t('Images and videos generated on this canvas will appear here.', '当前画布生成的图片和视频会显示在这里。')
+    : t('Try another media filter.', '可以切换其他类型查看。');
+}
+
+function closeCanvasGenerationHistory() {
+  const overlay = document.getElementById('canvas-generation-history-overlay');
+  if (!overlay || overlay.hidden) return;
+  overlay.classList.remove('is-visible');
+  window.clearTimeout(canvasGenerationHistoryCloseTimer);
+  canvasGenerationHistoryCloseTimer = window.setTimeout(() => {
+    overlay.hidden = true;
+    delete overlay.dataset.canvasId;
+  }, 160);
+}
+
+function initCanvasGenerationHistoryDialog() {
+  const overlay = document.getElementById('canvas-generation-history-overlay');
+  if (!overlay || overlay.dataset.initialized === 'true') return overlay;
+  overlay.dataset.initialized = 'true';
+  document.getElementById('canvas-generation-history-close').addEventListener('click', closeCanvasGenerationHistory);
+  document.getElementById('canvas-generation-history-filters').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-history-filter]');
+    if (!button) return;
+    canvasGenerationHistoryFilter = button.dataset.historyFilter;
+    overlay.querySelectorAll('[data-history-filter]').forEach((candidate) => {
+      candidate.setAttribute('aria-selected', String(candidate === button));
+    });
+    renderCanvasGenerationHistory();
+  });
+  overlay.addEventListener('pointerdown', (event) => {
+    if (event.target === overlay) closeCanvasGenerationHistory();
+  });
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !overlay.hidden) closeCanvasGenerationHistory();
+  });
+  return overlay;
+}
+
+function openCanvasGenerationHistory() {
+  const overlay = initCanvasGenerationHistoryDialog();
+  if (!overlay) return;
+  window.clearTimeout(canvasGenerationHistoryCloseTimer);
+  canvasGenerationHistoryFilter = 'all';
+  overlay.dataset.canvasId = activeCanvasId();
+  overlay.querySelectorAll('[data-history-filter]').forEach((button) => {
+    button.setAttribute('aria-selected', String(button.dataset.historyFilter === 'all'));
+  });
+  document.getElementById('canvas-generation-history-kicker').textContent = t('Current canvas', '当前画布');
+  document.getElementById('canvas-generation-history-title').textContent = t('Generation history', '生成历史');
+  document.getElementById('canvas-generation-history-close').title = t('Close', '关闭');
+  document.getElementById('canvas-generation-history-close').setAttribute('aria-label', t('Close', '关闭'));
+  const labels = [t('All', '全部'), t('Images', '图片'), t('Videos', '视频')];
+  overlay.querySelectorAll('[data-history-filter]').forEach((button, index) => { button.textContent = labels[index]; });
+  renderCanvasGenerationHistory();
+  overlay.hidden = false;
+  requestAnimationFrame(() => overlay.classList.add('is-visible'));
+  document.getElementById('canvas-generation-history-close').focus({ preventScroll: true });
+}
+
 function showBoardCanvasContextMenu(x, y) {
   buildAndShowSimpleMenu([
+    {
+      label: t('3D Director', '3D \u5bfc\u6f14\u53f0'),
+      icon: 'M3 7h11v10H3z;M14 10l7-4v12l-7-4z;M7 4h4',
+      action: () => {
+        if (window.MesssThreeDDirector && typeof window.MesssThreeDDirector.open === 'function') {
+          window.MesssThreeDDirector.open();
+        } else {
+          showToast(t('3D Director is unavailable.', '3D \u5bfc\u6f14\u53f0\u6682\u4e0d\u53ef\u7528\u3002'), '3D');
+        }
+      }
+    },
+    { divider: true },
+    {
+      label: t('Generation history', '生成历史'),
+      icon: 'M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 7v5l3 2',
+      action: openCanvasGenerationHistory
+    },
     {
       label: t('Import files', '\u5bfc\u5165\u6587\u4ef6'),
       icon: 'M12 3v12;M7 8l5-5 5 5;M4 20h16',

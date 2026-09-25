@@ -2,6 +2,7 @@
 // Pinned leafer-x-snap 1.0.7 bridge: Messs owns dragging, indexing and overlays.
 // The plugin only resolves candidate alignment; it never installs editor events.
 window.MesssCanvasPluginAdapter = {
+  snapCaptureRadius: 20,
   warmLocalFont(note) {
     if (!document.fonts) return Promise.resolve();
     const family = !note.fontFamily || note.fontFamily === 'inherit' ? 'Segoe UI, PingFang SC, Microsoft YaHei, Arial, sans-serif' : note.fontFamily;
@@ -123,7 +124,7 @@ window.MesssCanvasPluginAdapter = {
   snap(bounds, candidates, zoom) {
     const snap = this._snap || (this._snap = new MesssCanvasPlugins.Snap({
       isApp: true, tree: {}, editor: { multiple: false }, zoomLayer: { scaleX: 1 }
-    }, { snapSize: 8, showLinePoints: false }));
+    }, { snapSize: this.snapCaptureRadius, showLinePoints: false }));
     const points = b => ({ tl: { x: b.x, y: b.y }, tr: { x: b.x + b.w, y: b.y },
       bl: { x: b.x, y: b.y + b.h }, br: { x: b.x + b.w, y: b.y + b.h }, c: { x: b.x + b.w / 2, y: b.y + b.h / 2 } });
     const lines = [];
@@ -137,7 +138,7 @@ window.MesssCanvasPluginAdapter = {
     // Avoid the plugin's integer rounding expanding the tolerance at high zoom.
     // Use a slightly wider screen-space capture radius so alignment engages
     // before the edges are nearly touching, while remaining predictable.
-    snap.isInRange = (a, b) => Math.abs(a - b) * zoom <= 8;
+    snap.isInRange = (a, b) => Math.abs(a - b) * zoom <= this.snapCaptureRadius;
     snap.getSnapPoints = points;
     snap.snapPoints = candidates.map(points);
     const target = { ...bounds };

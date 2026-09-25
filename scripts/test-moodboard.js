@@ -38,7 +38,9 @@ assert(api.moodboardPlainTextFromDelta({ ops: [{ insert: 'x'.repeat(50000) }] })
 
 assert.strictEqual(packageJson.dependencies.quill, '2.0.3', 'Quill must stay pinned to the reviewed version.');
 assert.match(notices, /Quill[\s\S]*github\.com\/slab\/quill[\s\S]*BSD 3-Clause License/);
-assert.match(index, /id="board-tool-moodboard"[\s\S]*Text moodboard/);
+assert.match(index, /id="board-tool-moodboard"[\s\S]*title="Moodboard"/);
+assert.match(index, /id="board-tool-ai-video"[\s\S]*id="board-tool-text"[\s\S]*id="board-tool-doodle"[\s\S]*id="board-tool-moodboard"/,
+  'Canvas creation tools must end with video, text, pen, then moodboard.');
 assert.match(index, /quill\.snow\.css[\s\S]*quill\.js[\s\S]*js\/moodboard\.js[\s\S]*js\/board-canvas\.js/,
   'Quill and the moodboard module must load before the canvas initializes.');
 assert.match(index, /id="moodboard-overlay"[\s\S]*data-moodboard-agent-action="polish"[\s\S]*id="moodboard-editor"[\s\S]*id="moodboard-agent-suggestion"/);

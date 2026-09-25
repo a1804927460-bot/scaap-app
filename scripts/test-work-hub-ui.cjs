@@ -23,7 +23,7 @@ const {createScheduleService}=require('../lib/project-schedule');const {createRe
       window.testApplied={};window.setAssistantKind=kind=>window.testApplied.mainKind=kind;window.showCanvasWorkspace=()=>{};window.activeCanvasRecord=()=>AppState.canvases[0];window.renderCanvasAgentModels=()=>{};window.renderCanvasAgentReferences=()=>{};window.setCanvasAgentOpen=open=>window.testApplied.canvasOpen=open;
       window.appendFileThumbnail=(node)=>{node.textContent='PNG';};
     });
-    assert.deepEqual(await page.locator('#workspace-shortcuts button').allTextContents(),['日程','文件','素材库','技能']);
+    assert.deepEqual(await page.locator('#workspace-shortcuts [data-workspace-area]').allTextContents(),['日程','文件','素材库','技能']);
     assert.equal(await page.locator('.partition-wheel-logo').count(),0);
     await page.evaluate(()=>MesssWorkHub.open('schedule'));
     await page.locator('[data-hub-action="new-project"]').click();
@@ -43,8 +43,11 @@ const {createScheduleService}=require('../lib/project-schedule');const {createRe
     await page.screenshot({path:'test-artifacts/work-hub/schedule-compact.png'});
     await page.setViewportSize({width:1440,height:1000});await page.evaluate(()=>document.documentElement.dataset.theme='light');await page.waitForTimeout(220);
     await page.screenshot({path:'test-artifacts/work-hub/schedule-light.png'});
-    await page.locator('.hub-top [data-hub-action="files"]').click();await page.locator('[data-hub-action="collect"]').click();
+    await page.locator('.hub-top [data-hub-action="files"]').click();
+    await page.screenshot({path:'test-artifacts/work-hub/files-light.png'});
+    await page.locator('[data-hub-action="collect"]').click();
     await page.locator('.hub-top [data-hub-action="assets"]').click();assert.equal(await page.locator('.hub-asset').count(),1);
+    await page.screenshot({path:'test-artifacts/work-hub/assets-light.png'});
     await page.locator('[data-hub-action="asset-edit"]').click();await page.locator('[name=tags]').fill('品牌, 包装');await page.locator('[name=favorite]').check();await page.locator('.hub-editor [type=submit]').click();await page.locator('.hub-editor').waitFor({state:'detached'});
     assert.equal(resources.list().find(r=>r.kind==='asset').favorite,true);
     await page.locator('.hub-top [data-hub-action="skills"]').click();await page.locator('[data-hub-action="new-skill"]').click();await page.locator('.hub-editor [type=submit]').click();await page.locator('.hub-editor').waitFor({state:'detached'});

@@ -6,6 +6,7 @@ const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'src', 'index.html'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'src', 'styles', 'main.css'), 'utf8');
 const interfaceCss = fs.readFileSync(path.join(root, 'src', 'styles', 'agent-interface.css'), 'utf8');
+const capsuleCss = fs.readFileSync(path.join(root, 'src', 'styles', 'canvas-agent-capsule.css'), 'utf8');
 const statsSource = fs.readFileSync(path.join(root, 'src', 'js', 'stats-detail.js'), 'utf8');
 const assistantSource = fs.readFileSync(path.join(root, 'src', 'js', 'ai-assistant.js'), 'utf8');
 const sidebarSource = fs.readFileSync(path.join(root, 'src', 'js', 'sidebar.js'), 'utf8');
@@ -14,12 +15,22 @@ const preloadSource = fs.readFileSync(path.join(root, 'preload.js'), 'utf8');
 const storeSource = fs.readFileSync(path.join(root, 'lib', 'store.js'), 'utf8');
 
 assert.match(
+  assistantSource,
+  /ai-assistant-input'\)\.addEventListener\('keydown',[\s\S]*?event\.key === 'Enter'[\s\S]*?event\.ctrlKey \|\| event\.metaKey[\s\S]*?form\.requestSubmit\(\)/,
+  'Agent generation must submit on Ctrl/Cmd+Enter while leaving Enter for a newline.'
+);
+
+assert.match(
   html,
-  /class="ai-assistant-brand"[\s\S]*?src="assets\/logo-mark\.png"[\s\S]*?class="ai-assistant-brand-word">Messs<span class="ai-assistant-brand-dot"/,
-  'the Agent header should use the Messs logo and wordmark instead of a plain text title'
+  /class="ai-assistant-brand"[\s\S]*?aria-label="Agent"[\s\S]*?src="assets\/logo-mark\.png"[\s\S]*?class="ai-assistant-brand-word">Agent<\/span>/,
+  'the Agent dialog header should pair the product mark with the Agent name'
 );
 assert.match(css, /\.ai-assistant-brand\s*\{[\s\S]*?display: flex;[\s\S]*?align-items: center;/,
   'the Agent header brand should keep its mark and wordmark aligned');
+assert.match(capsuleCss, /\.ai-assistant-message\.is-assistant:not\(\.is-pending\)::before/,
+  'completed main Agent replies should keep the Messs mark');
+assert.match(capsuleCss, /#board-agent-panel \.board-agent-message\.is-assistant:not\(\.is-pending\)::before/,
+  'completed canvas Agent replies should keep the Messs mark');
 assert.match(html, /id="ai-assistant-sidebar-toggle"[^>]*aria-expanded="true"/,
   'the Agent history sidebar should start expanded and expose a collapse control');
 assert.match(statsSource, /sidebarToggle\.addEventListener\('click',[\s\S]*?classList\.toggle\('is-history-collapsed'\)[\s\S]*?aria-expanded/,
@@ -28,6 +39,13 @@ assert.match(interfaceCss, /\.is-history-collapsed \.ai-assistant-header\s*\{[\s
   'the collapsed rail must stack the logo and toggle instead of overlapping them');
 assert.match(interfaceCss, /\.is-history-collapsed \.ai-assistant-brand-word\s*\{\s*display:none;/,
   'the collapsed rail should retain the logo mark while hiding only the wordmark');
+assert.match(interfaceCss, /\.ai-assistant-message-body\.is-agent-context-selected[\s\S]*?box-shadow:/,
+  'right-clicking an Agent text box should show a persistent selected state');
+assert.match(
+  fs.readFileSync(path.join(root, 'src', 'js', 'context-menu.js'), 'utf8'),
+  /message\.classList\.add\('is-agent-context-selected'\)[\s\S]*?onClose:[\s\S]*?classList\.remove\('is-agent-context-selected'\)/,
+  'the Agent text selection should clear when its context menu closes'
+);
 
 const footerStart = html.indexOf('<div class="ai-assistant-form-footer">');
 const modeStart = html.indexOf('<div class="ai-assistant-mode"');

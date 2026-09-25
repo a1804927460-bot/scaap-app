@@ -56,12 +56,14 @@ async function testCompletionDestination() {
   const context = vm.createContext({
     AppState: state, t: (en, zh) => zh,
     activeCanvasId: () => state.activeCanvasId,
+    boardAiWatermarkEnabled: () => false,
     beginAiMediaTask: () => 'task', finishAiMediaTask() {}, createAiPlaceholders: () => [],
     removeAiPlaceholders() {}, replaceAiPlaceholders: async () => {},
     confirmAiMediaDeliveries: async files => files, renderFileList() {}, currentFileListScope() {},
     renderFolderGridIfActive() {}, selectFileForPreview() {}, showToast: (message, type) => notices.push({ message, type }),
     window: { MesssCredits: { ensure: async () => ({ ok: true }) }, messsAPI: { generateAiMedia: async request => {
       assert.equal(request.canvasId, 'origin');
+      assert.equal(request.watermark, false);
       state.activeCanvasId = 'other';
       return { ok: true, files: [{ id: 'result' }] };
     } } }

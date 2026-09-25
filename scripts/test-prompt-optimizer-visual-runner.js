@@ -39,7 +39,11 @@ async function run() {
     window.isZh=()=>true;
     window.isKo=()=>false;
     window.showToast=()=>{};
+    window.promptOptimizerRequests=0;
+    window.promptOptimizerSource='';
     window.requestCanvasAgentText=async(options)=>{
+      window.promptOptimizerRequests+=1;
+      window.promptOptimizerSource=options.contextualPrompt;
       await new Promise((resolve)=>setTimeout(resolve,40));
       const text='将图1的 Logo 清晰地置于图2左上角，保持图2原有构图与画面比例，并严格保留 Logo 的品牌色。';
       await options.onResponse(text,{ok:true,text});
@@ -65,14 +69,31 @@ async function run() {
     })()`);
     if (menuLabel !== '使用 Agent 优化提示词') throw new Error(`Prompt menu was not localized: ${menuLabel}`);
     await win.webContents.executeJavaScript(`document.querySelector('#prompt-text-context-menu .context-menu-item').click()`);
+    await wait(240);
+    const beforeConfirm = await win.webContents.executeJavaScript(`(() => ({
+      requests:window.promptOptimizerRequests,
+      editable:!document.querySelector('.prompt-optimizer-original').readOnly,
+      result:document.querySelector('.prompt-optimizer-result').value,
+      prompt:document.querySelector('.ai-composer-prompt').value,
+      confirmVisible:!document.querySelector('.prompt-optimizer-confirm').hidden
+    }))()`);
+    if (beforeConfirm.requests !== 0 || !beforeConfirm.editable || beforeConfirm.result || !beforeConfirm.confirmVisible) throw new Error(`Optimization started before confirmation: ${JSON.stringify(beforeConfirm)}`);
+    fs.writeFileSync(path.join(outputDir, 'prompt-optimizer-confirm.png'), (await win.webContents.capturePage()).toPNG());
+    const editedSource = '把图1的 Logo 放到图2左上角，保持构图、比例和品牌颜色不变。';
+    await win.webContents.executeJavaScript(`(() => {
+      const field=document.querySelector('.prompt-optimizer-original');
+      field.value=${JSON.stringify('把图1的 Logo 放到图2左上角，保持构图、比例和品牌颜色不变。')};
+      document.querySelector('.prompt-optimizer-confirm').click();
+    })()`);
     await wait(100);
     const readMetrics = () => win.webContents.executeJavaScript(`(() => {
       const rect=(selector)=>{const r=document.querySelector(selector).getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:Math.round(r.width),height:Math.round(r.height)}};
       const result=document.querySelector('.prompt-optimizer-result');
-      return {viewport:{width:innerWidth,height:innerHeight},dialog:rect('.prompt-optimizer-dialog'),original:rect('.prompt-optimizer-original'),result:rect('.prompt-optimizer-result'),originalText:document.querySelector('.prompt-optimizer-original').value,resultText:result.value,resultEditable:!result.readOnly,replaceEnabled:!document.querySelector('.prompt-optimizer-replace').disabled,prompt:document.querySelector('.ai-composer-prompt').value};
+      return {viewport:{width:innerWidth,height:innerHeight},dialog:rect('.prompt-optimizer-dialog'),original:rect('.prompt-optimizer-original'),result:rect('.prompt-optimizer-result'),originalText:document.querySelector('.prompt-optimizer-original').value,resultText:result.value,resultEditable:!result.readOnly,replaceEnabled:!document.querySelector('.prompt-optimizer-replace').disabled,prompt:document.querySelector('.ai-composer-prompt').value,requests:window.promptOptimizerRequests,source:window.promptOptimizerSource};
     })()`);
     const desktop = await readMetrics();
     if (!desktop.resultText || !desktop.resultEditable || !desktop.replaceEnabled) throw new Error(`Agent result was not reviewable: ${JSON.stringify(desktop)}`);
+    if (desktop.requests !== 1 || desktop.originalText !== editedSource || !desktop.source.includes(editedSource)) throw new Error(`Edited prompt was not confirmed before optimization: ${JSON.stringify(desktop)}`);
     if (desktop.dialog.left < 12 || desktop.dialog.top < 12 || desktop.dialog.right > desktop.viewport.width - 12 || desktop.dialog.bottom > desktop.viewport.height - 12) throw new Error(`Desktop dialog escaped viewport: ${JSON.stringify(desktop)}`);
     if (desktop.original.width < 350 || desktop.result.width < 350 || desktop.original.right > desktop.result.left + 1) throw new Error(`Desktop comparison overlapped: ${JSON.stringify(desktop)}`);
     if (desktop.prompt === desktop.resultText) throw new Error('The prompt changed before explicit confirmation.');

@@ -1290,6 +1290,13 @@ function showCanvasLibrary() {
   workspace.hidden = true;
   document.getElementById('canvas-library-back').hidden = true;
   document.getElementById('board-bottom-bar').hidden = true;
+  const canvasSettings = document.getElementById('board-canvas-settings');
+  canvasSettings.hidden = true;
+  document.getElementById('board-canvas-settings-popover').hidden = true;
+  document.getElementById('board-settings-toggle').classList.remove('is-active');
+  document.getElementById('board-settings-toggle').setAttribute('aria-expanded', 'false');
+  document.getElementById('board-settings-shortcuts').setAttribute('aria-expanded', 'false');
+  document.getElementById('shortcuts-popover')?.remove();
   setCanvasAgentOpen(false);
   syncCanvasLibraryScopePicker();
   if (typeof closeAiImagePopover === 'function') closeAiImagePopover();
@@ -1306,6 +1313,7 @@ function showCanvasWorkspace() {
   workspace.hidden = false;
   document.getElementById('canvas-library-back').hidden = false;
   document.getElementById('board-bottom-bar').hidden = false;
+  document.getElementById('board-canvas-settings').hidden = false;
   const active = activeCanvasRecord();
   document.getElementById('board-panel-title').textContent = active ? active.name : t('Integrated Canvas', '整合画布');
   requestAnimationFrame(() => {
@@ -1549,6 +1557,18 @@ async function promptNewCanvas() {
     includeProject: true
   });
   if (result) await createCanvasForProject(result.projectId, result.name);
+}
+
+// The prominent entry point remains the one-click canvas flow. The compact
+// toolbar action creates folders for organizing those canvases.
+async function startCreatingCanvas() {
+  const scopedProjects = canvasProjectsForScope();
+  const project = scopedProjects.find(isSystemCanvasProject) || scopedProjects[0];
+  if (!project) {
+    showToast(t('Unable to create a canvas right now.', '暂时无法新建画布。'), 'Canvas');
+    return;
+  }
+  await createCanvasForProject(project.id, t('Untitled', '未命名'));
 }
 
 async function promptNewProject() {
@@ -1907,7 +1927,7 @@ function appendCanvasAgentMessage(role, text, sessionId = CanvasWorkspace.active
   row.className = `board-agent-message is-${role}`;
   row._questionSession = sessionId;
   if (role === 'assistant') renderAgentMessageContent(row, text);
-  else row.textContent = text;
+  else row.textContent = typeof agentVisibleUserText === 'function' ? agentVisibleUserText(text) : text;
   list.appendChild(row);
   list.scrollTop = list.scrollHeight;
   return row;
@@ -2617,6 +2637,15 @@ async function requestCanvasAgentText(options = {}) {
     attachments: referenceFiles.map(canvasAgentAttachmentRecord)
   });
   persistActiveCanvasAgentSession(sessionId, messages);
+  const confidentialityReply = window.MesssAgentBrandPolicy?.replyForRequest(displayPrompt);
+  if (confidentialityReply) {
+    const response = { ok: true, text: confidentialityReply, files: [], creditsCharged: null, localPolicy: true };
+    messages.push({ role: 'assistant', content: confidentialityReply, displayContent: confidentialityReply, creditsCharged: null, generatedFiles: [] });
+    persistActiveCanvasAgentSession(sessionId, messages);
+    appendCanvasAgentMessage('assistant', confidentialityReply, sessionId);
+    if (typeof options.onResponse === 'function') await options.onResponse(confidentialityReply, response);
+    return response;
+  }
   CanvasWorkspace.agentBusy = true;
   if (input) input.disabled = true;
   if (submitButton) submitButton.disabled = true;
@@ -2758,7 +2787,7 @@ function refreshCanvasWorkspaceLanguage() {
     importButton.title = t('Import canvas', '导入画布');
     importButton.setAttribute('aria-label', importButton.title);
   }
-  setText('#canvas-project-new span', 'New canvas', '新建画布');
+  setText('#canvas-folder-new span', 'New folder', '新建文件夹');
   setText('#canvas-start-creating .canvas-start-label', 'Start creating', '开始创作');
   setText('.canvas-library-topline h2', 'All Canvases', '全部画布');
   setText('#canvas-library-empty', 'No canvases found', '没有找到画布');
@@ -2774,7 +2803,8 @@ function refreshCanvasWorkspaceLanguage() {
   const agentSubtitle = document.querySelector('.board-agent-welcome span');
   if (agentSubtitle) agentSubtitle.textContent = t('Solve your problem.', '解决你的问题。');
   const input = document.getElementById('board-agent-input');
-  if (toggle) toggle.textContent = 'Messs Agent';
+  const toggleLabel = toggle?.querySelector('.board-agent-toggle-label');
+  if (toggleLabel) toggleLabel.textContent = 'Messs Agent';
   if (input) input.placeholder = t('Ask about this canvas...', '询问这个画布...');
   const historyTitle = document.querySelector('.board-agent-history-drawer > header strong');
   if (historyTitle) historyTitle.textContent = t('Agent history', 'Agent \u5386\u53f2\u8bb0\u5f55');
@@ -2830,8 +2860,8 @@ async function initCanvasWorkspace(initial) {
   CanvasWorkspace.libraryScope = canvasProjectScope(activeProject);
 
   document.getElementById('canvas-import').addEventListener('click', promptImportCanvas);
-  document.getElementById('canvas-project-new').addEventListener('click', promptNewCanvas);
-  document.getElementById('canvas-start-creating')?.addEventListener('click', promptNewCanvas);
+  document.getElementById('canvas-folder-new').addEventListener('click', promptNewProject);
+  document.getElementById('canvas-start-creating')?.addEventListener('click', startCreatingCanvas);
   const libraryGrid = document.getElementById('canvas-library-view');
   libraryGrid?.addEventListener('contextmenu', (event) => {
     if (event.target.closest('.canvas-library-card, .canvas-library-folder-card, button, input, select, textarea')) return;
@@ -2969,7 +2999,7 @@ async function initCanvasWorkspace(initial) {
     if ((event.ctrlKey || event.metaKey) && ['a', 'c', 'v', 'x'].includes(event.key.toLowerCase())) {
       event.stopPropagation();
     }
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) {
       event.preventDefault();
       document.getElementById('board-agent-form').requestSubmit();
     }

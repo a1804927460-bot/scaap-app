@@ -15,7 +15,7 @@ const migration = read('supabase', 'migrations', '202608220001_workshop_posts.sq
 const followupMigration = read('supabase', 'migrations', '202608220005_workshop_prompt_and_delete.sql');
 const deleteRpcMigration = read('supabase', 'migrations', '202609040001_workshop_delete_rpc.sql');
 
-assert.match(html, /id="section-workshop" class="app-section workshop-section"/);
+assert.match(html, /id="section-workshop" class="app-section app-surface-dialog workshop-section"[^>]*role="dialog"/);
 ['workshop-grid', 'workshop-publish-overlay', 'workshop-detail-overlay', 'workshop-select-from-canvas', 'workshop-detail-prompt', 'workshop-copy-title', 'workshop-copy-description', 'workshop-copy-prompt', 'workshop-detail-delete', 'workshop-canvas-target-overlay', 'workshop-canvas-target-list', 'workshop-canvas-target-confirm'].forEach((id) => {
   assert.match(html, new RegExp(`id="${id}"`), `Workshop is missing ${id}`);
 });
