@@ -68,7 +68,8 @@ const output = path.join(root, 'test-artifacts', 'three-d-director');
 
     fs.mkdirSync(output, { recursive: true });
     const canvasPath = path.join(output, 'scene.png');
-    await canvas.screenshot({ path: canvasPath });
+    const canvasDataUrl = await canvas.evaluate(element => element.toDataURL('image/png'));
+    fs.writeFileSync(canvasPath, Buffer.from(canvasDataUrl.split(',')[1], 'base64'));
     const stats = await sharp(canvasPath).stats();
     const spread = stats.channels.slice(0, 3).reduce((sum, channel) => sum + channel.stdev, 0);
     const brightness = stats.channels.slice(0, 3).reduce((sum, channel) => sum + channel.mean, 0);
