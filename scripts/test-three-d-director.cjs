@@ -78,7 +78,9 @@ const output = path.join(root, 'test-artifacts', 'three-d-director');
     await page.locator('[data-shot="close"]').click();
     await page.locator('[data-layout="product"]').click();
     await page.locator('[data-light="sunset"]').click();
-    await page.locator('[data-aspect="9:16"]').click();
+    // WebGL can intercept the scroll phase on hosted Windows runners even
+    // when the control is visible and stable; the click target is verified.
+    await page.locator('[data-aspect="9:16"]').click({ force: true });
     assert.equal(await page.locator('[data-aspect="9:16"]').getAttribute('class'), 'is-active');
     assert.equal(await page.locator('[data-aspect="16:9"]').getAttribute('class'), '');
     await page.waitForFunction(() => (
