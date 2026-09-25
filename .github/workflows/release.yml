@@ -23,6 +23,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # The hosted runners already provide Chrome for the Playwright visual checks.
+  # Keep npm ci from downloading a second browser bundle.
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
 jobs:
   windows-release:
     if: ${{ inputs.macos_only != true }}
