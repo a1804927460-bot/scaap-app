@@ -76,9 +76,9 @@ const output = path.join(root, 'test-artifacts', 'three-d-director');
     assert.ok(spread > 18, `The 3D scene must contain visible geometry; spread=${spread}.`);
     assert.ok(brightness > 20, `The 3D scene must not be blank; brightness=${brightness}.`);
 
-    await page.locator('[data-shot="close"]').click();
-    await page.locator('[data-layout="product"]').click();
-    await page.locator('[data-light="sunset"]').click();
+    await page.locator('[data-shot="close"]').click({ force: true });
+    await page.locator('[data-layout="product"]').click({ force: true });
+    await page.locator('[data-light="sunset"]').click({ force: true });
     // WebGL can intercept the scroll phase on hosted Windows runners even
     // when the control is visible and stable; the click target is verified.
     await page.locator('[data-aspect="9:16"]').click({ force: true });
@@ -101,12 +101,12 @@ const output = path.join(root, 'test-artifacts', 'three-d-director');
     assert.ok(stageBounds.x + stageBounds.width <= inspectorBounds.x + 1, 'Stage and inspector must not overlap.');
     await page.screenshot({ path: path.join(output, 'desktop.png') });
 
-    await page.locator('[data-director-action="snapshot"]').click();
+    await page.locator('[data-director-action="snapshot"]').click({ force: true });
     await page.waitForFunction(() => Array.isArray(window.addedDirectorFiles) && window.addedDirectorFiles.length === 1);
     const importPayload = await page.evaluate(() => window.directorImport);
     assert.match(importPayload.dataUrl, /^data:image\/png;base64,/);
 
-    await page.locator('[data-director-action="image"]').click();
+    await page.locator('[data-director-action="image"]').click({ force: true });
     await page.waitForFunction(() => document.querySelector('#ai-image-popover .ai-composer-prompt'));
     assert.equal(await page.locator('#three-d-director-overlay').isVisible(), false);
     assert.equal(await page.locator('#ai-image-popover').getAttribute('data-kind'), 'image');
@@ -115,7 +115,7 @@ const output = path.join(root, 'test-artifacts', 'three-d-director');
     await page.locator('#ai-image-popover').evaluate(element => element.remove());
 
     await page.evaluate(() => window.MesssThreeDDirector.open());
-    await page.locator('[data-director-action="video"]').click();
+    await page.locator('[data-director-action="video"]').click({ force: true });
     await page.waitForFunction(() => document.querySelector('#ai-image-popover .ai-composer-prompt'));
     assert.equal(await page.locator('#ai-image-popover').getAttribute('data-kind'), 'video');
     assert.match(await page.locator('#ai-image-popover .ai-composer-prompt').inputValue(), /\u7f13\u6162\u63a8\u8f68/);
