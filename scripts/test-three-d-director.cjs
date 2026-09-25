@@ -101,7 +101,6 @@ const output = path.join(root, 'test-artifacts', 'three-d-director');
       return { stage: rect('.three-d-director-stage'), inspector: rect('.three-d-director-inspector') };
     });
     assert.ok(bounds.stage.x + bounds.stage.width <= bounds.inspector.x + 1, 'Stage and inspector must not overlap.');
-    await page.screenshot({ path: path.join(output, 'desktop.png') });
 
     await page.locator('[data-director-action="snapshot"]').click({ force: true });
     await page.waitForFunction(() => Array.isArray(window.addedDirectorFiles) && window.addedDirectorFiles.length === 1);
@@ -136,7 +135,6 @@ const output = path.join(root, 'test-artifacts', 'three-d-director');
     const mobileFooter = mobileBounds.footer;
     assert.ok(mobileInspector.y + mobileInspector.height <= mobileFooter.y + 1);
     assert.ok(mobileShell.width <= 690 && mobileShell.height <= 782);
-    await page.screenshot({ path: path.join(output, 'mobile.png') });
 
     await page.evaluate(() => window.MesssThreeDDirector.close());
     assert.equal(await overlay.isVisible(), false);
