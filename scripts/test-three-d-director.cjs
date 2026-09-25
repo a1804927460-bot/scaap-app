@@ -96,9 +96,11 @@ const output = path.join(root, 'test-artifacts', 'three-d-director');
     assert.match(prompt, /\u9ec4\u660f/);
     assert.match(prompt, /9:16/);
 
-    const stageBounds = await page.locator('.three-d-director-stage').boundingBox();
-    const inspectorBounds = await page.locator('.three-d-director-inspector').boundingBox();
-    assert.ok(stageBounds.x + stageBounds.width <= inspectorBounds.x + 1, 'Stage and inspector must not overlap.');
+    const bounds = await page.evaluate(() => {
+      const rect = selector => { const box = document.querySelector(selector).getBoundingClientRect(); return { x: box.x, y: box.y, width: box.width, height: box.height }; };
+      return { stage: rect('.three-d-director-stage'), inspector: rect('.three-d-director-inspector') };
+    });
+    assert.ok(bounds.stage.x + bounds.stage.width <= bounds.inspector.x + 1, 'Stage and inspector must not overlap.');
     await page.screenshot({ path: path.join(output, 'desktop.png') });
 
     await page.locator('[data-director-action="snapshot"]').click({ force: true });
@@ -125,9 +127,13 @@ const output = path.join(root, 'test-artifacts', 'three-d-director');
     await page.evaluate(() => window.MesssThreeDDirector.open());
     await page.setViewportSize({ width: 690, height: 820 });
     await page.waitForTimeout(400);
-    const mobileShell = await page.locator('.three-d-director-shell').boundingBox();
-    const mobileInspector = await page.locator('.three-d-director-inspector').boundingBox();
-    const mobileFooter = await page.locator('.three-d-director-footer').boundingBox();
+    const mobileBounds = await page.evaluate(() => {
+      const rect = selector => { const box = document.querySelector(selector).getBoundingClientRect(); return { x: box.x, y: box.y, width: box.width, height: box.height }; };
+      return { shell: rect('.three-d-director-shell'), inspector: rect('.three-d-director-inspector'), footer: rect('.three-d-director-footer') };
+    });
+    const mobileShell = mobileBounds.shell;
+    const mobileInspector = mobileBounds.inspector;
+    const mobileFooter = mobileBounds.footer;
     assert.ok(mobileInspector.y + mobileInspector.height <= mobileFooter.y + 1);
     assert.ok(mobileShell.width <= 690 && mobileShell.height <= 782);
     await page.screenshot({ path: path.join(output, 'mobile.png') });
