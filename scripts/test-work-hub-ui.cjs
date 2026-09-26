@@ -23,7 +23,7 @@ const {createScheduleService}=require('../lib/project-schedule');const {createRe
       window.testApplied={};window.setAssistantKind=kind=>window.testApplied.mainKind=kind;window.showCanvasWorkspace=()=>{};window.activeCanvasRecord=()=>AppState.canvases[0];window.renderCanvasAgentModels=()=>{};window.renderCanvasAgentReferences=()=>{};window.setCanvasAgentOpen=open=>window.testApplied.canvasOpen=open;
       window.appendFileThumbnail=(node)=>{node.textContent='PNG';};
     });
-    assert.deepEqual(await page.locator('#workspace-shortcuts [data-workspace-area]').allTextContents(),['日程','文件','素材库','技能']);
+    assert.deepEqual(await page.locator('#workspace-shortcuts [data-workspace-area]').allTextContents(),['日程','文件','资产','技能']);
     assert.equal(await page.locator('.partition-wheel-logo').count(),0);
     await page.evaluate(()=>MesssWorkHub.open('schedule'));
     await page.locator('[data-hub-action="new-project"]').click();

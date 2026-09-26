@@ -153,7 +153,7 @@ function createAgentAppAction(kind, raw) {
   try { action = JSON.parse(raw); } catch { return null; }
   if (!action || typeof action !== 'object') return null;
   if (kind === 'messs-question') return createAgentQuestionCard(action);
-  const pages = {schedule:'日程',files:'文件',assets:'素材库',skills:'技能'};
+  const pages = {schedule:'日程',files:'文件',assets:'资产',skills:'技能'};
   if (kind === 'messs-open') {
     if (!Object.hasOwn(pages, action.page)) return null;
     const button = document.createElement('button'); button.type = 'button';

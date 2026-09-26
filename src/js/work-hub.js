@@ -13,7 +13,7 @@ window.MesssWorkHub = (() => {
   function ensureRoot() {
     if(root)return;
     root=document.createElement('dialog');root.className='work-hub';root.setAttribute('aria-label','工作管理');
-    root.innerHTML=`<header class="hub-top"><div><span class="hub-wordmark">Messs.</span><span class="hub-local">本机工作管理</span></div><nav>${['schedule','files','assets','skills'].map((id,i)=>action(id,['日程','文件','素材库','技能'][i])).join('')}</nav>${action('close','×','hub-close')}</header><p class="hub-notice" role="alert" hidden></p><main class="hub-content"></main>`;
+    root.innerHTML=`<header class="hub-top"><div><span class="hub-wordmark">Messs.</span><span class="hub-local">本机工作管理</span></div><nav>${['schedule','files','assets','skills'].map((id,i)=>action(id,['日程','文件','资产','技能'][i])).join('')}</nav>${action('close','×','hub-close')}</header><p class="hub-notice" role="alert" hidden></p><main class="hub-content"></main>`;
     document.body.append(root);content=root.querySelector('main');
     root.addEventListener('keydown',e=>e.stopPropagation());
     root.addEventListener('click',e=>{const button=e.target.closest('[data-hub-action]');if(button)void handle(button.dataset.hubAction,button).catch(notify);});
@@ -179,7 +179,7 @@ window.MesssWorkHub = (() => {
     const records=resources.filter(r=>r.kind==='asset');
     const folders=assets?resources.filter(r=>r.kind==='asset-folder'):[];
     const files=(AppState.files||[]).filter(f=>!assets||records.some(r=>r.fileId===f.id)).filter(f=>{const meta=records.find(r=>r.fileId===f.id);const type=/\.(png|jpe?g|webp|gif|svg|avif)$/i.test(f.name)?'image':/\.(mp4|mov|webm|mkv)$/i.test(f.name)?'video':'other';return (filter==='all'||filter===type||(filter==='favorite'&&meta?.favorite))&&`${f.name} ${meta?.tags?.join(' ')||''}`.toLowerCase().includes(query.toLowerCase());});
-    content.innerHTML=heading(assets?'素材库':'文件',assets?'收集自己的图片、视频与文档，让每次创作都有积累。':'本机文件，集中浏览与复用。',assets?action('new-asset-folder','＋ 新建文件夹')+action('add-existing','从文件添加')+action('upload','↑ 导入素材','hub-primary'):action('upload','↑ 导入文件','hub-primary'))+`<div class="hub-toolbar">${search()}<div class="hub-segment">${['all','image','video','other',...(assets?['favorite']:[])].map((v,i)=>action('filter-'+v,['全部','图片','视频','其他','收藏'][i],filter===v?'is-active':'')).join('')}</div><small>${files.length} 个文件</small></div><div class="hub-asset-grid">${folders.map(folder=>`<article class="hub-asset-folder" data-folder-id="${esc(folder.id)}"><div class="hub-folder-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></div><strong>${esc(folder.name)}</strong><small>素材文件夹</small></article>`).join('')+files.slice(0,300).map(f=>{const meta=records.find(r=>r.fileId===f.id);return `<article class="hub-asset" data-file-id="${esc(f.id)}"><button class="hub-asset-preview" data-hub-action="preview" data-id="${esc(f.id)}" aria-label="预览 ${esc(f.name)}"></button><strong title="${esc(f.name)}">${esc(f.name)}</strong><small>${esc(meta?.tags?.join(' · ')||f.ext||'文件')}</small><div>${action('use-file','用于画布')}${assets?action('asset-edit','管理'):action('collect','加入素材库')}</div></article>`;}).join('')||(query||filter!=='all'?'<div class="hub-empty">没有匹配的文件<br>请更换关键词或筛选条件。</div>':'<div class="hub-empty">这里还没有素材<br>导入自己的文件，或从已有文件中添加。</div>')}</div>${files.length>300?'<p>仅显示前 300 项，请搜索缩小范围。</p>':''}`;
+    content.innerHTML=heading(assets?'资产':'文件',assets?'收集自己的图片、视频与文档，让每次创作都有积累。':'本机文件，集中浏览与复用。',assets?action('new-asset-folder','＋ 新建文件夹')+action('add-existing','从文件添加')+action('upload','↑ 导入资产','hub-primary'):action('upload','↑ 导入文件','hub-primary'))+`<div class="hub-toolbar">${search()}<div class="hub-segment">${['all','image','video','other',...(assets?['favorite']:[])].map((v,i)=>action('filter-'+v,['全部','图片','视频','其他','收藏'][i],filter===v?'is-active':'')).join('')}</div><small>${files.length} 个文件</small></div><div class="hub-asset-grid">${folders.map(folder=>`<article class="hub-asset-folder" data-folder-id="${esc(folder.id)}"><div class="hub-folder-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></div><strong>${esc(folder.name)}</strong><small>资产文件夹</small></article>`).join('')+files.slice(0,300).map(f=>{const meta=records.find(r=>r.fileId===f.id);return `<article class="hub-asset" data-file-id="${esc(f.id)}"><button class="hub-asset-preview" data-hub-action="preview" data-id="${esc(f.id)}" aria-label="预览 ${esc(f.name)}"></button><strong title="${esc(f.name)}">${esc(f.name)}</strong><small>${esc(meta?.tags?.join(' · ')||f.ext||'文件')}</small><div>${action('use-file','用于画布')}${assets?action('asset-edit','管理'):action('collect','加入资产')}</div></article>`;}).join('')||(query||filter!=='all'?'<div class="hub-empty">没有匹配的文件<br>请更换关键词或筛选条件。</div>':'<div class="hub-empty">这里还没有资产<br>导入自己的文件，或从已有文件中添加。</div>')}</div>${files.length>300?'<p>仅显示前 300 项，请搜索缩小范围。</p>':''}`;
     content.querySelectorAll('.hub-asset').forEach(card=>{
       const f=files.find(f=>f.id===card.dataset.fileId);
       if(typeof appendFileThumbnail==='function')appendFileThumbnail(card.querySelector('.hub-asset-preview'),f);
@@ -197,10 +197,10 @@ window.MesssWorkHub = (() => {
   }
   async function deleteHubFile(file) {
     if (!file || document.querySelector('.hub-delete-dialog[open]')) return;
-    const dialog = editor('删除素材', '<p>请选择“'+esc(file.name)+'”的删除方式。</p><p>仅从素材库删除：保留本地文件，仍可从文件页面访问。</p><p>同时删除本地文件：从素材库和文件库移除，并永久删除本地文件，无法恢复。</p>');
+    const dialog = editor('删除资产', '<p>请选择“'+esc(file.name)+'”的删除方式。</p><p>仅从资产删除：保留本地文件，仍可从文件页面访问。</p><p>同时删除本地文件：从资产和文件库移除，并永久删除本地文件，无法恢复。</p>');
     dialog.classList.add('hub-delete-dialog');
     const library = dialog.querySelector('[type=submit]');
-    library.type = 'button'; library.textContent = '仅从素材库删除';
+    library.type = 'button'; library.textContent = '仅从资产删除';
     const local = document.createElement('button');
     local.type = 'button'; local.className = 'hub-danger'; local.textContent = '同时删除本地文件';
     library.after(local);
@@ -226,14 +226,14 @@ window.MesssWorkHub = (() => {
         const record = resources.find(item=>item.kind==='asset'&&item.fileId===file.id);
         if (record) await api().removeWorkspaceResource(record);
         dialog.close();
-        showToast(localDeleted?'文件已从素材库和本地永久删除':'文件已从素材库移除，本地文件已保留');
+        showToast(localDeleted?'文件已从资产和本地永久删除':'文件已从资产移除，本地文件已保留');
         try { await reload(); } catch(error) { notify('删除已完成，但列表刷新失败，请重新打开此页面。'); }
       } catch(error) {
-        dialog.querySelector('.hub-editor-error').textContent=(localDeleted?'本地文件已删除，素材记录清理失败。点击删除可重试清理。 ':'')+(error.message||String(error));
+        dialog.querySelector('.hub-editor-error').textContent=(localDeleted?'本地文件已删除，资产记录清理失败。点击删除可重试清理。 ':'')+(error.message||String(error));
       } finally {
         busy=false; dialog.removeAttribute('aria-busy'); button.textContent=label;
         dialog.querySelectorAll('button').forEach(b=>b.disabled=false);
-        if (localDeleted) { library.disabled=true; local.textContent='重试清理素材记录'; }
+        if (localDeleted) { library.disabled=true; local.textContent='重试清理资产记录'; }
       }
     };
     library.onclick=()=>remove('library'); local.onclick=()=>remove('local');
@@ -249,8 +249,8 @@ window.MesssWorkHub = (() => {
     if(typeof renderFileList==='function')renderFileList(currentFileListScope());
   }
   function assetEditor(id) {
-    const record=resources.find(r=>r.kind==='asset'&&r.fileId===id),f=AppState.files.find(f=>f.id===id);if(!f||!record){notify('素材记录已变化，请重新打开素材库。');return;}
-    const dialog=editor('素材管理',`<p>${esc(f.name)}</p><label>标签（用逗号分隔）<input name="tags" value="${esc(record.tags.join(', '))}" maxlength="500"></label><label class="hub-check"><input name="favorite" type="checkbox" ${record.favorite?'checked':''}>收藏素材</label><button type="button" data-remove>从素材库移除（保留原文件）</button>`);
+    const record=resources.find(r=>r.kind==='asset'&&r.fileId===id),f=AppState.files.find(f=>f.id===id);if(!f||!record){notify('资产记录已变化，请重新打开资产。');return;}
+    const dialog=editor('资产管理',`<p>${esc(f.name)}</p><label>标签（用逗号分隔）<input name="tags" value="${esc(record.tags.join(', '))}" maxlength="500"></label><label class="hub-check"><input name="favorite" type="checkbox" ${record.favorite?'checked':''}>收藏资产</label><button type="button" data-remove>从资产移除（保留原文件）</button>`);
     dialog.querySelector('form').onsubmit=async e=>{e.preventDefault();try{await api().saveWorkspaceResource({...record,tags:e.target.elements.tags.value.split(/[,，]/),favorite:e.target.elements.favorite.checked});dialog.close();await reload();}catch(error){dialog.querySelector('.hub-editor-error').textContent=error.message;}};
     dialog.querySelector('[data-remove]').onclick=async()=>{try{await api().removeWorkspaceResource(record);dialog.close();await reload();}catch(error){dialog.querySelector('.hub-editor-error').textContent=error.message;}};
   }
@@ -289,13 +289,13 @@ window.MesssWorkHub = (() => {
     if(name==='edit-project'){editProject(button.dataset.id);return;}
     if(name==='export-calendar'){exportCalendar();return;}
     if(name==='new-asset-folder'){
-      const dialog=editor('新建素材文件夹','<label>文件夹名称<input name="name" maxlength="120" required placeholder="例如：品牌参考"></label>');
+      const dialog=editor('新建资产文件夹','<label>文件夹名称<input name="name" maxlength="120" required placeholder="例如：品牌参考"></label>');
       dialog.querySelector('form').onsubmit=async e=>{e.preventDefault();const button=dialog.querySelector('[type=submit]');button.disabled=true;try{await api().saveWorkspaceResource({kind:'asset-folder',name:e.target.elements.name.value});dialog.close();await reload();}catch(error){dialog.querySelector('.hub-editor-error').textContent=error.message;button.disabled=false;}};return;}
     if(name==='upload'){button.disabled=true;try{await upload();}finally{button.disabled=false;}return;}
     if(name==='add-existing'){area='files';render();return;}
     const fileId=button.dataset.id||button.closest('[data-file-id]')?.dataset.fileId;
     if(name==='preview'){const f=AppState.files.find(f=>f.id===fileId);if(f){window.__messsPreviewReturnToFiles = true;root.close();if(isImageExt(f.ext)||isVideoExt(f.ext)){await openFileFullscreenPreview(f);}else{await selectFileForPreview(f.id);openFullscreenPreview();}}return;}
-    if(name==='collect'){await api().saveWorkspaceResource({kind:'asset',fileId,tags:[],favorite:false});await reload();notify('已加入素材库');return;}
+    if(name==='collect'){await api().saveWorkspaceResource({kind:'asset',fileId,tags:[],favorite:false});await reload();notify('已加入资产');return;}
     if(name==='asset-edit'){assetEditor(fileId);return;}
     if(name==='use-file'){await useFileOnCanvas(fileId);return;}
     if(name==='new-skill'){skillEditor();return;}

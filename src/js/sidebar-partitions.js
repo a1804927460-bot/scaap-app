@@ -11,7 +11,7 @@ function initSidebarPartitions() {
     { id:'workshop', label:'创意工坊', surface:true },
     { id:'schedule', label:'日程' },
     { id:'files', label:'文件' },
-    { id:'assets', label:'素材库' },
+    { id:'assets', label:'资产' },
     { id:'skills', label:'技能' }
   ];
   for (const { id, label, surface } of entries) {

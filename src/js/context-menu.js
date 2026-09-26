@@ -1062,7 +1062,7 @@ function showBoardCanvasContextMenu(x, y) {
       action: openCanvasGenerationHistory
     },
     {
-      label: t('Asset library', '素材库'),
+      label: t('Assets', '资产'),
       icon: 'M3 7v12a2 2 0 0 0 2 2h12M6 3h12a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H6Z;M9 8h7M9 12h5',
       action: () => {
         if (window.MesssWorkHub && typeof window.MesssWorkHub.open === 'function') window.MesssWorkHub.open('assets');
