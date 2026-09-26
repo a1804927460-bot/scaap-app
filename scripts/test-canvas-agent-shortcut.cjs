@@ -81,6 +81,21 @@ const root = path.resolve(__dirname, '..');
       assert.ok(initial.panel.bottom <= initial.viewport.bottom - 11);
       assert.ok(Math.abs((initial.panel.left + initial.panel.right) / 2 - (initial.viewport.left + initial.viewport.right) / 2) < 2,
         'detached Agent starts centered in the visible canvas');
+      const floatingBrand = await page.evaluate(() => {
+        const drag = document.getElementById('board-agent-drag');
+        const logo = drag.querySelector('img');
+        const detach = document.getElementById('board-agent-detach');
+        const dragRect = drag.getBoundingClientRect();
+        const detachRect = detach.getBoundingClientRect();
+        return {
+          text: drag.querySelector('span')?.textContent.trim(),
+          logoVisible: !!logo && getComputedStyle(logo).display !== 'none' && logo.getBoundingClientRect().width > 0,
+          clearsControls: dragRect.right <= detachRect.left
+        };
+      });
+      assert.deepEqual(floatingBrand, { text: 'Messs Agent', logoVisible: true, clearsControls: true });
+      fs.mkdirSync(path.join(root, 'test-artifacts/canvas-agent'), { recursive: true });
+      await page.screenshot({ path: path.join(root, `test-artifacts/canvas-agent/${detached ? 'floating-detached' : 'floating-normal'}.png`) });
       await page.evaluate(() => {
         positionCanvasAgentFloating(400, 110);
       });
@@ -112,7 +127,6 @@ const root = path.resolve(__dirname, '..');
       assert.equal(await page.locator('#board-agent-panel').isVisible(), true);
       await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', ctrlKey: true, repeat: true, bubbles: true })));
       assert.equal(await page.locator('#board-agent-panel').isVisible(), true);
-      fs.mkdirSync(path.join(root, 'test-artifacts/canvas-agent'), { recursive: true });
       await page.screenshot({ path: path.join(root, `test-artifacts/canvas-agent/${detached ? 'detached' : 'normal'}.png`) });
       await page.keyboard.press('Control+Space');
       await page.waitForTimeout(450);

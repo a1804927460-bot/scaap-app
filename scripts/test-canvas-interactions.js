@@ -10,6 +10,7 @@ const root = path.join(__dirname, '..');
 const boardSource = fs.readFileSync(path.join(root, 'src', 'js', 'board-canvas.js'), 'utf8');
 const workspaceSource = fs.readFileSync(path.join(root, 'src', 'js', 'canvas-workspace.js'), 'utf8');
 const boardStyles = fs.readFileSync(path.join(root, 'src', 'styles', 'main.css'), 'utf8');
+const agentInterfaceStyles = fs.readFileSync(path.join(root, 'src', 'styles', 'agent-interface.css'), 'utf8');
 const indexHtml = fs.readFileSync(path.join(root, 'src', 'index.html'), 'utf8');
 const mainSource = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
 const gatewayServerSource = fs.readFileSync(path.join(root, 'gateway', 'src', 'server.js'), 'utf8');
@@ -816,6 +817,10 @@ assert.doesNotMatch(
   'Ctrl+Space must remain a reliable Agent toggle even when an editor has focus.'
 );
 assert.match(indexHtml, /id="board-agent-welcome"[\s\S]*?assets\/logo-mark\.png[\s\S]*?Messs Agent/);
+assert.match(indexHtml, /id="board-agent-drag"[\s\S]*?assets\/logo-mark\.png[\s\S]*?Messs Agent/,
+  'The floating Agent title must reuse the Messs logo and full Agent name.');
+assert.match(agentInterfaceStyles, /#board-agent-panel\.is-floating #board-agent-drag \{[^}]*display:flex[^}]*align-items:center[^}]*font-weight:800/,
+  'The floating Agent title must align the Messs logo and label without crowding its controls.');
 assert.match(indexHtml, /id="board-agent-toggle"[\s\S]*?message-square\.svg[\s\S]*?board-agent-toggle-label">Messs Agent/,
   'The canvas Agent entry should show a chat icon before its label.');
 assert.match(workspaceSource, /toggle\?\.querySelector\('\.board-agent-toggle-label'\)[\s\S]*?toggleLabel\.textContent = 'Messs Agent'/,
