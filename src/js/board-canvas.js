@@ -4383,7 +4383,7 @@ function initBoardCanvas() {
     // rename fields, the document editor, etc.).
     const tag = document.activeElement && document.activeElement.tagName;
     const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || (document.activeElement && document.activeElement.isContentEditable);
-    if (isEditable || e.isComposing || e.defaultPrevented || document.querySelector('dialog[open]') || document.getElementById('shortcuts-popover') || !isBoardWorkspaceActive()) return;
+    if (isEditable || e.isComposing || e.defaultPrevented || document.querySelector('dialog[open]') || document.getElementById('shortcuts-popover') || document.getElementById('messs-template-library') || !isBoardWorkspaceActive()) return;
     if (typeof CanvasNodeMode !== 'undefined' && CanvasNodeMode.mode === 'node') return;
 
     if (!e.repeat) {
@@ -6916,6 +6916,9 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   markBoardUiLayer(pop);
   pop.innerHTML = `
     <form class="ai-composer-form">
+      <button type="button" class="ai-composer-templates" title="${t('Templates', '模板')}" aria-label="${t('Templates', '模板')}">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6M10 22h4"/><path d="M8.2 14.8A7 7 0 1 1 15.8 14.8C14.8 15.6 14.5 16.4 14.5 18h-5c0-1.6-.3-2.4-1.3-3.2Z"/></svg>
+      </button>
       <button type="button" class="ai-composer-optimize" title="${t('Optimize prompt with Agent', '使用 Agent 优化提示词')}" aria-label="${t('Optimize prompt with Agent', '使用 Agent 优化提示词')}">
         <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16z"/></svg>
       </button>
@@ -7131,6 +7134,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   const status = pop.querySelector('.ai-generation-status');
   const creditEstimate = pop.querySelector('.ai-credit-estimate');
   const submit = pop.querySelector('.ai-composer-submit');
+  const templatesButton = pop.querySelector('.ai-composer-templates');
   const optimizePrompt = pop.querySelector('.ai-composer-optimize');
   const close = pop.querySelector('.ai-composer-close');
   const higgsfieldBlock = pop.querySelector('.ai-higgsfield-block');
@@ -8551,6 +8555,20 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   });
   prompt.addEventListener('contextmenu', showPromptTextContextMenu);
   optimizePrompt.addEventListener('mousedown', (event) => event.preventDefault());
+  templatesButton.addEventListener('mousedown', (event) => event.preventDefault());
+  templatesButton.addEventListener('click', () => {
+    if (typeof window.openMesssTemplateLibrary !== 'function') return;
+    window.openMesssTemplateLibrary({
+      kind,
+      onSelect(template) {
+        const nextKind = template.kind === 'video' ? 'video' : 'image';
+        if (nextKind !== kind) pop.querySelector(`[data-ai-kind="${nextKind}"]`)?.click();
+        prompt.value = String(template.prompt || '').trim();
+        prompt.dispatchEvent(new Event('input', { bubbles: true }));
+        prompt.focus();
+      }
+    });
+  });
   optimizePrompt.addEventListener('click', () => {
     const start = Number.isInteger(prompt.selectionStart) ? prompt.selectionStart : 0;
     const end = Number.isInteger(prompt.selectionEnd) ? prompt.selectionEnd : start;

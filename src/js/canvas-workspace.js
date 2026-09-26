@@ -2181,7 +2181,7 @@ function toggleCanvasAgentHistory(open = null) {
 }
 
 function handleCanvasAgentShortcut(event) {
-  if (document.getElementById('shortcuts-popover')) return;
+  if (document.getElementById('shortcuts-popover') || document.getElementById('messs-template-library')) return;
   const matches = typeof matchesMesssShortcut === 'function'
     ? matchesMesssShortcut(event, 'toggleAgent')
     : event.code === 'Space' && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey;

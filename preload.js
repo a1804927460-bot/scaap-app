@@ -339,6 +339,9 @@ contextBridge.exposeInMainWorld('messsAPI', {
     importMedia: (postId, folderId, canvasId) => ipcRenderer.invoke('workshop:importMedia', postId, folderId, canvasId),
     delete: (postId) => ipcRenderer.invoke('workshop:delete', postId)
   }),
+  content: Object.freeze({
+    list: (surface) => ipcRenderer.invoke('content:list', surface)
+  }),
   butler: Object.freeze({
     confirmDelivery: (deliveryToken) => ipcRenderer.invoke('butler:confirmDelivery', deliveryToken),
     releaseDelivery: (deliveryToken) => ipcRenderer.invoke('butler:releaseDelivery', deliveryToken),

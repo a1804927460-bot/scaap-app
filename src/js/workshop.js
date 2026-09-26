@@ -830,6 +830,7 @@ function initWorkshop() {
   document.getElementById('workshop-publish-open')?.addEventListener('click', openWorkshopPublish);
   document.getElementById('section-workshop')?.addEventListener('messs:surface-opened', () => {
     if (WorkshopState.awaitingCanvasSelection) openWorkshopPublish();
+    void loadWorkshopPosts();
   });
   document.getElementById('workshop-publish-close')?.addEventListener('click', closeWorkshopPublish);
   document.getElementById('workshop-detail-close')?.addEventListener('click', closeWorkshopDetail);

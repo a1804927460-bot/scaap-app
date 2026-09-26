@@ -2580,6 +2580,70 @@ function appFetch(url, options) {
   return net.fetch(url, options);
 }
 
+const PUBLIC_CONTENT_SURFACES = new Set(['templates', 'market']);
+
+function normalizePublicContentItem(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = String(raw.id || '').trim().slice(0, 120);
+  const surface = String(raw.surface || '').trim().toLowerCase();
+  const title = String(raw.title || '').trim().slice(0, 120);
+  if (!id || !title || !PUBLIC_CONTENT_SURFACES.has(surface)) return null;
+  const safeHttpsUrl = (value) => {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    try { return new URL(text).protocol === 'https:' ? text.slice(0, 2048) : ''; }
+    catch (error) { return ''; }
+  };
+  const metadata = raw.metadata && typeof raw.metadata === 'object' && !Array.isArray(raw.metadata)
+    ? raw.metadata : {};
+  return {
+    id,
+    surface,
+    category: String(raw.category || 'other').trim().slice(0, 60) || 'other',
+    title,
+    description: String(raw.description || '').trim().slice(0, 600),
+    prompt: String(raw.prompt || '').trim().slice(0, 12000),
+    kind: ['image', 'video'].includes(String(raw.kind || '').toLowerCase()) ? String(raw.kind).toLowerCase() : 'image',
+    imageUrl: safeHttpsUrl(raw.image_url || raw.imageUrl),
+    actionUrl: safeHttpsUrl(raw.action_url || raw.actionUrl),
+    metadata,
+    sortOrder: Math.max(-100000, Math.min(100000, Math.round(Number(raw.sort_order ?? raw.sortOrder) || 0))),
+    updatedAt: String(raw.updated_at || raw.updatedAt || '').slice(0, 40)
+  };
+}
+
+async function listPublicContent(surface) {
+  const normalizedSurface = String(surface || '').trim().toLowerCase();
+  if (!PUBLIC_CONTENT_SURFACES.has(normalizedSurface)) {
+    throw workshopCloudError('invalid-content-surface', 'The requested content surface is invalid.', 400);
+  }
+  if (!runtimeConfig || !runtimeConfig.supabaseUrl || !runtimeConfig.supabasePublishableKey) {
+    throw workshopCloudError('cloud-not-configured', 'Remote content is not configured in this build.');
+  }
+  let token = '';
+  try { token = await supabaseAuth?.getAccessToken(); } catch (error) {}
+  const url = new URL(`${String(runtimeConfig.supabaseUrl).replace(/\/$/, '')}/rest/v1/app_content_items`);
+  url.searchParams.set('select', 'id,surface,category,title,description,prompt,kind,image_url,action_url,metadata,sort_order,updated_at');
+  url.searchParams.set('surface', `eq.${normalizedSurface}`);
+  url.searchParams.set('published', 'eq.true');
+  url.searchParams.set('order', 'sort_order.asc,updated_at.desc');
+  url.searchParams.set('limit', '500');
+  const response = await appFetch(url.toString(), {
+    headers: {
+      apikey: runtimeConfig.supabasePublishableKey,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      Accept: 'application/json'
+    }
+  });
+  if (!response.ok) throw workshopCloudError('content-cloud-unavailable', `Remote content request failed (HTTP ${response.status}).`, response.status);
+  const payload = await response.json();
+  return {
+    ok: true,
+    items: (Array.isArray(payload) ? payload : []).map(normalizePublicContentItem).filter(Boolean),
+    fetchedAt: new Date().toISOString()
+  };
+}
+
 const MAX_WORKSHOP_MEDIA_BYTES = 128 * 1024 * 1024;
 const WORKSHOP_MEDIA_BUCKET = 'workshop-media';
 
@@ -8228,6 +8292,18 @@ function registerIpcHandlers() {
         ok: false,
         reason: error && error.code || 'workshop-cloud-unavailable',
         message: error && error.message || 'Workshop cloud sharing is unavailable.'
+      };
+    }
+  });
+
+  ipcMain.handle('content:list', async (_evt, surface) => {
+    try {
+      return await listPublicContent(surface);
+    } catch (error) {
+      return {
+        ok: false,
+        reason: error && error.code || 'content-cloud-unavailable',
+        message: error && error.message || 'Remote content is temporarily unavailable.'
       };
     }
   });

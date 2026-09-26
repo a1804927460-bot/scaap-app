@@ -1,6 +1,7 @@
 'use strict';
 
-const MARKET_ITEMS = [
+const MARKET_CONTENT_CACHE_KEY = 'messs.remote-content.market.v1';
+const MARKET_FALLBACK_ITEMS = [
   { id: 'phasex', type: 'software', title: 'PHASE X 舞美工作台', description: '舞美项目、屏幕画面、时间段与会议记录管理。Windows 64 位便携版，所有人免费下载，无需积分。', version: '1.0.0 · Windows x64 · 99.4 MB', tone: 'phasex', featured: 100, image: 'assets/phasex-wordmark.png', downloadUrl: 'https://github.com/a1804927460-bot/messs-releases/releases/download/phasex-v1.0.0/PHASE-X-1.0.0-Windows-x64.exe' },
   { id: 'workflow-kit', type: 'plugin', title: 'Workflow Kit', description: 'Batch naming, export queues and reusable production actions.', version: 'v1.0', tone: 'blue', featured: 9 },
   { id: 'canvas-notes', type: 'plugin', title: 'Canvas Notes', description: 'Structured notes and review markers that stay attached to canvas items.', version: 'v1.0', tone: 'green', featured: 8 },
@@ -11,6 +12,7 @@ const MARKET_ITEMS = [
   { id: 'social-pack', type: 'template', title: 'Social Campaign', description: 'Flexible campaign layouts for square, portrait and landscape outputs.', version: '16 layouts', tone: 'coral', featured: 6 },
   { id: 'asset-audit', type: 'plugin', title: 'Asset Audit', description: 'Find duplicates, missing links and oversized source files before delivery.', version: 'v1.0', tone: 'slate', featured: 7 }
 ];
+let MARKET_ITEMS = MARKET_FALLBACK_ITEMS.slice();
 
 const MarketState = { category: 'all', query: '', sort: 'featured', detailItem: null };
 
@@ -28,6 +30,47 @@ function marketIcon(type) {
   if (type === 'plugin') return '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 3v4M16 3v4M6 7h12v5a6 6 0 0 1-12 0z"/><path d="M12 18v3"/></svg>';
   if (type === 'preset') return '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>';
   return '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 10v10"/></svg>';
+}
+
+function normalizeMarketItem(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = String(raw.id || '').trim();
+  const title = String(raw.title || '').trim();
+  if (!id || !title) return null;
+  const metadata = raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {};
+  const allowedTypes = ['software', 'plugin', 'preset', 'template'];
+  const type = allowedTypes.includes(raw.category)
+    ? raw.category : (allowedTypes.includes(metadata.type) ? metadata.type : 'template');
+  return {
+    id: id.slice(0, 120), type, title: title.slice(0, 120),
+    description: String(raw.description || '').trim().slice(0, 600),
+    version: String(metadata.version || '').trim().slice(0, 100),
+    tone: String(metadata.tone || 'slate').replace(/[^a-z0-9-]/gi, '').slice(0, 24) || 'slate',
+    featured: Number(metadata.featured) || 0,
+    image: String(raw.imageUrl || '').trim(),
+    downloadUrl: String(raw.actionUrl || '').trim(),
+    author: String(metadata.author || 'Messs Studio').trim().slice(0, 80) || 'Messs Studio'
+  };
+}
+
+function mergeMarketItems(remoteItems) {
+  const merged = new Map(MARKET_FALLBACK_ITEMS.map((item) => [item.id, item]));
+  (Array.isArray(remoteItems) ? remoteItems : []).map(normalizeMarketItem).filter(Boolean).forEach((item) => merged.set(item.id, item));
+  MARKET_ITEMS = [...merged.values()];
+}
+
+async function loadRemoteMarketItems() {
+  try {
+    mergeMarketItems(JSON.parse(localStorage.getItem(MARKET_CONTENT_CACHE_KEY) || '[]'));
+    renderMarket();
+  } catch (error) {}
+  try {
+    const result = await window.messsAPI?.content?.list?.('market');
+    if (!result?.ok || !Array.isArray(result.items)) return;
+    localStorage.setItem(MARKET_CONTENT_CACHE_KEY, JSON.stringify(result.items));
+    mergeMarketItems(result.items);
+    renderMarket();
+  } catch (error) {}
 }
 
 function filteredMarketItems() {
@@ -62,6 +105,7 @@ function renderMarket() {
       </button>`;
     card.querySelector('h2').textContent = item.title;
     card.querySelector('p').textContent = item.description;
+    card.querySelector('.market-card-copy > div > span').textContent = item.author || 'Messs Studio';
     if (item.image) renderMarketProductImage(card.querySelector('.market-card-visual'), item);
     if (item.downloadUrl) card.querySelector('.market-card-copy strong').textContent = t('Free download', '免费下载');
     card.querySelector('button').addEventListener('click', () => openMarketDetail(item));
@@ -103,7 +147,7 @@ function refreshMarketDownloadAction() {
 
 function downloadMarketItem() {
   const url = MarketState.detailItem?.downloadUrl;
-  if (!url || !url.startsWith('https://github.com/a1804927460-bot/messs-releases/releases/download/')) return;
+  if (!/^https:\/\//i.test(String(url || ''))) return;
   window.open(url, '_blank', 'noopener,noreferrer');
 }
 
@@ -165,7 +209,9 @@ function initMarket() {
     if (event.key === 'Escape' && !document.getElementById('market-detail-overlay').hidden) closeMarketDetail();
   });
   document.addEventListener('messs:language-changed', refreshMarketLanguage);
+  document.getElementById('section-market')?.addEventListener('messs:surface-opened', () => { void loadRemoteMarketItems(); });
   refreshMarketLanguage();
+  void loadRemoteMarketItems();
 }
 
 document.addEventListener('DOMContentLoaded', initMarket);
