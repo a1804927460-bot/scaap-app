@@ -56,11 +56,13 @@ const { chromium } = require('playwright');
 
     await page.locator('[data-shortcut-category="view"]').click();
     await page.locator('[data-shortcut-action="zoomIn"]').click();
-    await page.keyboard.press('Control+Shift+K');
-    assert.equal(await page.locator('[data-shortcut-action="zoomIn"]').innerText(), 'Ctrl + Shift + K');
+    const primaryModifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+    const primaryLabel = process.platform === 'darwin' ? 'Command' : 'Ctrl';
+    await page.keyboard.press(`${primaryModifier}+Shift+K`);
+    assert.equal(await page.locator('[data-shortcut-action="zoomIn"]').innerText(), `${primaryLabel} + Shift + K`);
     await page.locator('[data-shortcut-save]').click();
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('messs.canvas-shortcuts.v1')).zoomIn.code), 'KeyK');
-    assert.equal(await page.evaluate(() => ShortcutTest.matchesMesssShortcut(new KeyboardEvent('keydown', { code: 'KeyK', ctrlKey: true, shiftKey: true }), 'zoomIn')), true);
+    assert.equal(await page.evaluate(({ primaryModifier }) => ShortcutTest.matchesMesssShortcut(new KeyboardEvent('keydown', { code: 'KeyK', ctrlKey: primaryModifier === 'Control', metaKey: primaryModifier === 'Meta', shiftKey: true }), 'zoomIn'), { primaryModifier }), true);
     assert.equal(await page.evaluate(() => ShortcutTest.matchesMesssShortcut(new KeyboardEvent('keydown', { code: 'Equal', ctrlKey: true }), 'zoomIn')), false);
 
     await page.evaluate(() => {
