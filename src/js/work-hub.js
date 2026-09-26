@@ -21,7 +21,7 @@ window.MesssWorkHub = (() => {
   function ensureRoot() {
     if(root)return;
     root=document.createElement('dialog');root.className='work-hub';root.setAttribute('aria-label','工作管理');
-    root.innerHTML=`<header class="hub-top"><div><span class="hub-wordmark">Messs.</span><span class="hub-local">本机工作管理</span></div><nav>${['schedule','files','assets','skills'].map((id,i)=>action(id,['日程','文件','资产','技能'][i])).join('')}</nav>${action('close','×','hub-close')}</header><p class="hub-notice" role="alert" hidden></p><main class="hub-content"></main><button type="button" class="hub-scroll-top" data-hub-action="scroll-top" aria-label="返回顶部" title="返回顶部" aria-hidden="true" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg></button>`;
+    root.innerHTML=`<header class="hub-top"><div><span class="hub-wordmark">SCAAP.</span><span class="hub-local">本机工作管理</span></div><nav>${['schedule','files','assets','skills'].map((id,i)=>action(id,['日程','文件','资产','技能'][i])).join('')}</nav>${action('close','×','hub-close')}</header><p class="hub-notice" role="alert" hidden></p><main class="hub-content"></main><button type="button" class="hub-scroll-top" data-hub-action="scroll-top" aria-label="返回顶部" title="返回顶部" aria-hidden="true" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg></button>`;
     document.body.append(root);content=root.querySelector('main');
     content.addEventListener('scroll',updateScrollTopButton,{passive:true});
     root.addEventListener('keydown',e=>e.stopPropagation());
@@ -88,7 +88,7 @@ window.MesssWorkHub = (() => {
       if (input._flatpickr) return;
       flatpickr(input, { dateFormat:'Y-m-d', disableMobile:true, allowInput:true, static:true, animate:false,
         minDate:input.min || '2000-01-01', maxDate:input.max || '2199-12-31',
-        locale:AppState.language==='ko'?'ko':AppState.language==='en'?'default':'zh',
+        locale:AppState.language==='ja'?'ja':AppState.language==='en'?'default':'zh',
         monthSelectorType:'dropdown', ariaDateFormat:'Y-m-d',
         onReady:(_, __, instance)=>instance.calendarContainer.classList.add('hub-date-picker') });
     });
@@ -190,13 +190,13 @@ window.MesssWorkHub = (() => {
   function exportCalendar() {
     const escape=s=>String(s).replace(/\\/g,'\\\\').replace(/\r?\n/g,'\\n').replace(/[,;]/g,'\\$&');
     const stamp=new Date().toISOString().replace(/[-:]/g,'').replace(/\.\d{3}/,'');
-    const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Messs//Project Schedule//ZH','CALSCALE:GREGORIAN'];
+    const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//SCAAP//Project Schedule//ZH','CALSCALE:GREGORIAN'];
     filteredProjects().filter(p=>!p.deletedAt).forEach(p=>{[{title:p.title+' · 交付',date:p.due},...p.milestones].forEach((m,i)=>lines.push('BEGIN:VEVENT',`UID:${p.id}-${i}@messs.local`,`DTSTAMP:${stamp}`,`DTSTART;VALUE=DATE:${m.date.replaceAll('-','')}`,`DTEND;VALUE=DATE:${addDays(m.date,1).replaceAll('-','')}`,`SUMMARY:${escape(m.title)}`,`DESCRIPTION:${escape(p.owner+' · '+p.progress+'%\n'+p.notes)}`,'END:VEVENT'));});
     lines.push('END:VCALENDAR');
     // RFC 5545 folds at 75 octets without splitting a UTF-8 character.
     const encoder=new TextEncoder();
     const fold=line=>{let result='',width=0;for(const character of line){const size=encoder.encode(character).length;if(width+size>75){result+='\r\n ';width=1;}result+=character;width+=size;}return result;};
-    download('Messs-项目日程.ics',lines.map(fold).join('\r\n')+'\r\n','text/calendar');
+    download('SCAAP-项目日程.ics',lines.map(fold).join('\r\n')+'\r\n','text/calendar');
   }
   function renderFiles() {
     const assets=area==='assets';

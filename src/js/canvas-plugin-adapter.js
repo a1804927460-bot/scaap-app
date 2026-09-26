@@ -1,5 +1,5 @@
 'use strict';
-// Pinned leafer-x-snap 1.0.7 bridge: Messs owns dragging, indexing and overlays.
+// Pinned leafer-x-snap 1.0.7 bridge: SCAAP owns dragging, indexing and overlays.
 // The plugin only resolves candidate alignment; it never installs editor events.
 window.MesssCanvasPluginAdapter = {
   snapCaptureRadius: 20,

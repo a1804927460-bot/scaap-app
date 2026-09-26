@@ -4788,7 +4788,7 @@ function initBoardCanvas() {
       if (result.failed && result.failed.length) {
         const failure = result.failed[0] || {};
         showToast(failure.reason === 'EACCES' || failure.reason === 'EPERM'
-          ? t('macOS blocked access to this file. Choose it again from Finder or allow Messs access in System Settings.', 'macOS 阻止了这个文件的访问，请从 Finder 重新选择，或在系统设置中允许 Messs 访问文件和文件夹。')
+          ? t('macOS blocked access to this file. Choose it again from Finder or allow SCAAP access in System Settings.', 'macOS 阻止了这个文件的访问，请从 Finder 重新选择，或在系统设置中允许 SCAAP 访问文件和文件夹。')
           : t('Some dropped files could not be imported.', `部分拖入文件导入失败${failure.name ? `：${failure.name}` : ''}。`));
       }
       if (result.unlocked && result.unlocked.length) await refreshAchievements();
@@ -9570,15 +9570,15 @@ function initBoardBottomBar() {
     watermarkValue.textContent = boardAiWatermarkEnabled() ? t('On', '开启') : t('Off', '关闭');
   };
   const refreshWatermarkLanguage = () => {
-    document.querySelector('.board-watermark-header small').textContent = t('Messs creation settings', 'Messs 创作设置');
-    document.getElementById('board-watermark-title').textContent = t('Messs AI generation mark', 'Messs AI 生成标识');
+    document.querySelector('.board-watermark-header small').textContent = t('SCAAP creation settings', 'SCAAP 创作设置');
+    document.getElementById('board-watermark-title').textContent = t('SCAAP AI generation mark', 'SCAAP AI 生成标识');
     document.getElementById('board-watermark-description').textContent = t(
-      'Messs supports clear and responsible sharing of AI-assisted work. When enabled, supported generation models will add a visible AI-generated mark so viewers can identify the content source.',
-      'Messs 鼓励清晰、负责地分享 AI 辅助创作。开启后，支持此选项的生成模型会为输出添加可见的“AI 生成”标识，方便观众识别内容来源。'
+      'SCAAP supports clear and responsible sharing of AI-assisted work. When enabled, supported generation models will add a visible AI-generated mark so viewers can identify the content source.',
+      'SCAAP 鼓励清晰、负责地分享 AI 辅助创作。开启后，支持此选项的生成模型会为输出添加可见的“AI 生成”标识，方便观众识别内容来源。'
     );
     document.getElementById('board-watermark-disclaimer').textContent = t(
-      'When disabled, Messs will not request this mark. Some models or publishing platforms may still retain or add labels under their own rules. Follow applicable laws and platform requirements when sharing generated content.',
-      '关闭后，Messs 不会主动请求添加该标识。部分模型或发布平台仍可能依据自身规则保留或添加标记；分享生成内容时，请遵守所在地法规和发布平台要求。'
+      'When disabled, SCAAP will not request this mark. Some models or publishing platforms may still retain or add labels under their own rules. Follow applicable laws and platform requirements when sharing generated content.',
+      '关闭后，SCAAP 不会主动请求添加该标识。部分模型或发布平台仍可能依据自身规则保留或添加标记；分享生成内容时，请遵守所在地法规和发布平台要求。'
     );
     document.getElementById('board-watermark-option-title').textContent = t('Add an AI generation mark', '添加 AI 生成标识');
     document.getElementById('board-watermark-option-note').textContent = t(

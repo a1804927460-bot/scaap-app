@@ -22,7 +22,7 @@ function minimalTriangleGlb() {
   [0, 1, 2].forEach((value, index) => indices.writeUInt16LE(value, index * 2));
   const binary = padChunk(Buffer.concat([positions, indices]), 0);
   const document = {
-    asset: { version: '2.0', generator: 'Messs visual test' },
+    asset: { version: '2.0', generator: 'SCAAP visual test' },
     scene: 0,
     scenes: [{ nodes: [0] }],
     nodes: [{ mesh: 0 }],
@@ -87,7 +87,7 @@ function pbrTriangleGlb(textures) {
   const normalTextureView = append(textures.normal);
   const binary = padChunk(Buffer.concat(chunks), 0);
   const document = {
-    asset: { version: '2.0', generator: 'Messs PBR visual test' },
+    asset: { version: '2.0', generator: 'SCAAP PBR visual test' },
     scene: 0,
     scenes: [{ nodes: [0] }],
     nodes: [{ mesh: 0 }],
@@ -153,7 +153,7 @@ function minimalTriangleFbx() {
     'FBXHeaderExtension:  {',
     '\tFBXHeaderVersion: 1003',
     '\tFBXVersion: 7400',
-    '\tCreator: "Messs visual test"',
+    '\tCreator: "SCAAP visual test"',
     '}',
     'Objects:  {',
     '\tGeometry: 1, "Geometry::MesssTriangle", "Mesh" {',

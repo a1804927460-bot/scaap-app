@@ -24,7 +24,7 @@ __export(stdin_exports, {
 });
 module.exports = __toCommonJS(stdin_exports);
 
-// node_modules/three/examples/jsm/exporters/OBJExporter.js
+// ../../../../2026-08-21/messssss-thread-019ff71f-bfe2-7f03-8e54/work/gateway-v080-deploy/node_modules/three/examples/jsm/exporters/OBJExporter.js
 var import_three = require("three");
 var OBJExporter = class {
   /**
@@ -169,7 +169,7 @@ var OBJExporter = class {
   }
 };
 
-// node_modules/three/examples/jsm/exporters/STLExporter.js
+// ../../../../2026-08-21/messssss-thread-019ff71f-bfe2-7f03-8e54/work/gateway-v080-deploy/node_modules/three/examples/jsm/exporters/STLExporter.js
 var import_three2 = require("three");
 var STLExporter = class {
   /**

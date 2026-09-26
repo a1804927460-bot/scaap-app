@@ -53,8 +53,8 @@ const UNSUPPORTED_REASON_TEXT = {
 function missingToolsMessage(missingTools) {
   const tools = missingTools && missingTools.length ? missingTools : ['LibreOffice', 'ImageMagick'];
   return t(
-    `Preview requires: ${tools.join(', ')}. Install or bundle the tool, then restart Messs.`,
-    `预览需要：${tools.join(', ')}。安装或内置工具后，请重启 Messs。`
+    `Preview requires: ${tools.join(', ')}. Install or bundle the tool, then restart SCAAP.`,
+    `预览需要：${tools.join(', ')}。安装或内置工具后，请重启 SCAAP。`
   );
 }
 function setPreviewPanelState(state) {

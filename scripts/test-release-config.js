@@ -19,10 +19,10 @@ const catalog = require('../config/provider-catalog.json');
 
 assert.match(pkg.version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
 assert.equal(runtime.githubOwner, 'a1804927460-bot');
-assert.equal(runtime.githubRepo, 'messs-releases');
+assert.equal(runtime.githubRepo, 'scaap-releases');
 assert.match(builder, /provider:\s*github/);
 assert.match(builder, /owner:\s*a1804927460-bot/);
-assert.match(builder, /repo:\s*messs-releases/);
+assert.match(builder, /repo:\s*scaap-releases/);
 assert.match(builder, /private:\s*false/);
 assert.match(builder, /perMachine:\s*true/);
 assert.match(builder, /allowElevation:\s*true/);
@@ -87,7 +87,7 @@ assert.ok(
   'Updater artifacts must be verified before publication.'
 );
 assert.match(main, /owner:\s*'a1804927460-bot'/);
-assert.match(main, /repo:\s*'messs-releases'/);
+assert.match(main, /repo:\s*'scaap-releases'/);
 assert.match(main, /app\.setAppUserModelId\(APP_USER_MODEL_ID\)/);
 assert.match(main, /autoUpdater\.autoInstallOnAppQuit\s*=\s*updaterState\.enabled/);
 assert.match(main, /autoUpdater\.quitAndInstall\(false,\s*true\)/);

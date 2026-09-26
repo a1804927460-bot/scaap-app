@@ -29,8 +29,8 @@ async function run() {
       .fixture-panel h1{margin:0 0 22px;font-size:28px}.fixture-panel i{display:block;height:42px;margin:10px 0;border-radius:7px;background:var(--bg-elevated);border:1px solid var(--border-hairline)}
       .fixture-panel strong{display:block;margin:8px 0 20px}.fixture-detail{background:var(--bg-surface)}
     </style></head><body>
-      <div class="app-titlebar"><div class="titlebar-drag-region"></div><nav class="section-tabs"><button class="section-tab is-active">Messs</button><button class="section-tab">Chat</button><button class="section-tab">Market</button></nav><div class="titlebar-window-controls"></div></div>
-      <main class="fixture"><aside class="fixture-panel"><h1>Messs.</h1><i></i><i></i><i></i><i></i></aside><section class="fixture-main"><header class="fixture-header">Integrated canvas</header><div class="fixture-canvas"><div class="fixture-media"></div></div></section><aside class="fixture-panel fixture-detail"><strong>File details</strong><i></i><i></i><i></i></aside></main>
+      <div class="app-titlebar"><div class="titlebar-drag-region"></div><nav class="section-tabs"><button class="section-tab is-active">SCAAP</button><button class="section-tab">Chat</button><button class="section-tab">Market</button></nav><div class="titlebar-window-controls"></div></div>
+      <main class="fixture"><aside class="fixture-panel"><h1>SCAAP.</h1><i></i><i></i><i></i><i></i></aside><section class="fixture-main"><header class="fixture-header">Integrated canvas</header><div class="fixture-canvas"><div class="fixture-media"></div></div></section><aside class="fixture-panel fixture-detail"><strong>File details</strong><i></i><i></i><i></i></aside></main>
     </body></html>`, 'utf8');
 
   const window = new BrowserWindow({

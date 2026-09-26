@@ -30,14 +30,14 @@ function sha256(buffer) {
 (async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'messs-canvas-package-'));
   try {
-    const sourceBytes = Buffer.from('Messs canvas package integrity test\n\x00\x01\x02', 'utf8');
+    const sourceBytes = Buffer.from('SCAAP canvas package integrity test\n\x00\x01\x02', 'utf8');
     const sourcePath = path.join(directory, 'source.bin');
-    const packagePath = path.join(directory, 'canvas.Messs');
+    const packagePath = path.join(directory, 'canvas.SCAAP');
     const extractedPath = path.join(directory, 'extracted.bin');
     fs.writeFileSync(sourcePath, sourceBytes);
     const prepared = {
       manifest: {
-        format: 'messs-canvas-package',
+        format: 'scaap-canvas-package',
         version: 1,
         canvas: { id: 'canvas-test', name: 'Package Test' },
         boardItems: [{ id: 'item-test', canvasId: 'canvas-test', fileId: 'file-test', x: 1, y: 2 }],
@@ -50,9 +50,19 @@ function sha256(buffer) {
     fs.writeFileSync(exportTarget, Buffer.from('old export'));
     await sandbox.canvasPackageApi.copyFileAtomically(sourcePath, exportTarget);
     assert.deepEqual(fs.readFileSync(exportTarget), sourceBytes, 'ordinary exports must replace atomically');
-    assert.strictEqual(sandbox.canvasPackageApi.ensureCanvasPackagePath(path.join(directory, 'Canvas.MESSS')).endsWith('Canvas.Messs'), true);
+    assert.strictEqual(sandbox.canvasPackageApi.ensureCanvasPackagePath(path.join(directory, 'Canvas.Messs')).endsWith('Canvas.SCAAP'), true);
+    assert.strictEqual(sandbox.canvasPackageApi.ensureCanvasPackagePath(path.join(directory, 'Canvas.SCAAP')).endsWith('Canvas.SCAAP'), true);
     const parsed = await sandbox.canvasPackageApi.readCanvasPackageManifest(packagePath);
     assert.equal(parsed.manifest.files.length, 1);
+    const legacyPath = path.join(directory, 'legacy.Messs');
+    const legacyBytes = fs.readFileSync(packagePath);
+    Buffer.from('MESSS-CANVAS-PKG').copy(legacyBytes, 0);
+    const formatOffset = legacyBytes.indexOf(Buffer.from('scaap-canvas-package'));
+    assert.ok(formatOffset > 0);
+    Buffer.from('messs-canvas-package').copy(legacyBytes, formatOffset);
+    fs.writeFileSync(legacyPath, legacyBytes);
+    const legacy = await sandbox.canvasPackageApi.readCanvasPackageManifest(legacyPath);
+    assert.equal(legacy.manifest.format, 'messs-canvas-package');
     const packageHandle = await fs.promises.open(packagePath, 'r');
     await sandbox.canvasPackageApi.extractCanvasPackageFile(
       packageHandle,
@@ -64,7 +74,7 @@ function sha256(buffer) {
     await packageHandle.close();
     assert.deepEqual(fs.readFileSync(extractedPath), sourceBytes);
 
-    const damagedPath = path.join(directory, 'damaged.Messs');
+    const damagedPath = path.join(directory, 'damaged.SCAAP');
     fs.copyFileSync(packagePath, damagedPath);
     const damagedHandle = await fs.promises.open(damagedPath, 'r+');
     const damagedPosition = parsed.payloadOffset;

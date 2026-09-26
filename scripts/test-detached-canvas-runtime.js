@@ -29,7 +29,7 @@ async function waitForTargets(predicate, timeoutMs = 12_000) {
     } catch (error) {}
     await wait(100);
   }
-  throw new Error('Timed out waiting for the expected Messs renderer windows.');
+  throw new Error('Timed out waiting for the expected SCAAP renderer windows.');
 }
 
 function connectDebugger(url) {

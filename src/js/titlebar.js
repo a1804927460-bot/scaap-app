@@ -81,7 +81,7 @@ function closeAppSurface(surface = '', options = {}) {
 }
 
 function openAppSurface(surface) {
-  if (!['agent', 'market', 'workshop'].includes(surface)) return;
+  if (surface !== 'agent') return;
   const assistant = document.getElementById('ai-assistant-panel');
   document.querySelectorAll('.app-surface-dialog.is-active').forEach((section) => {
     section.classList.remove('is-active');
@@ -123,7 +123,7 @@ function initAppSurfaceNavigation() {
     const section = document.querySelector('.app-surface-dialog.is-active');
     if (!section) return;
     const nestedDialog = section.querySelector(
-      '.market-detail-overlay:not([hidden]), .workshop-overlay:not([hidden]), .workshop-detail-overlay:not([hidden])'
+      '.app-surface-dialog.is-active'
     );
     if (!nestedDialog) closeAppSurface(section.id.replace('section-', ''));
   }, true);

@@ -222,7 +222,7 @@ function chatProfileCopy(profile) {
   const copy = document.createElement('span');
   copy.className = 'chat-person-copy';
   const strong = document.createElement('strong');
-  strong.textContent = profile && profile.displayName || t('Messs user', 'Messs 用户');
+  strong.textContent = profile && profile.displayName || t('SCAAP user', 'SCAAP 用户');
   copy.appendChild(strong);
   const account = chatAccountLabel(profile);
   if (account) {
@@ -244,7 +244,7 @@ function chatPublicProfile(profile) {
   return {
     id: source.id || nestedUser.id || null,
     email: email || String(source.email || nestedUser.email || '').trim(),
-    displayName: source.displayName || source.display_name || nestedUser.displayName || nestedUser.display_name || t('Messs user', 'Messs 用户'),
+    displayName: source.displayName || source.display_name || nestedUser.displayName || nestedUser.display_name || t('SCAAP user', 'SCAAP 用户'),
     avatarUrl: source.avatarUrl || source.avatar_url || nestedUser.avatarUrl || nestedUser.avatar_url || null,
     relationshipStatus: source.relationshipStatus || source.relationship_status || null
   };
@@ -254,7 +254,7 @@ function chatConversationProfile(conversation) {
   if (conversation && conversation.type === 'group') {
     return { displayName: conversation.name || t('Group chat', '群聊'), email: '' };
   }
-  return conversation && conversation.other || { displayName: t('Messs user', 'Messs 用户'), email: '' };
+  return conversation && conversation.other || { displayName: t('SCAAP user', 'SCAAP 用户'), email: '' };
 }
 
 function chatTime(value) {
@@ -337,7 +337,7 @@ function renderChatShell() {
     closeChatThread();
     return;
   }
-  const profile = state.profile || { displayName: state.user && state.user.email || t('Messs user', 'Messs 用户') };
+  const profile = state.profile || { displayName: state.user && state.user.email || t('SCAAP user', 'SCAAP 用户') };
   renderChatAvatarElement(chatEl('chat-rail-avatar'), profile, ChatUiState.ownAvatarDataUrl);
   renderChatRequests(state.requests || []);
   renderChatFriends(state.friends || []);
@@ -412,7 +412,7 @@ function renderChatConversations(conversations) {
     const copy = document.createElement('span');
     copy.className = 'chat-conversation-copy';
     const name = document.createElement('strong');
-    name.textContent = profile.displayName || t('Messs user', 'Messs 用户');
+    name.textContent = profile.displayName || t('SCAAP user', 'SCAAP 用户');
     if (conversation.type === 'group') name.textContent = profile.displayName;
     copy.appendChild(name);
     const account = conversation.type === 'direct' ? chatAccountLabel(profile) : '';
@@ -451,7 +451,7 @@ function renderChatThreadHeader() {
   }
   chatEl('chat-add-group-members-btn').hidden = true;
   renderChatAvatarElement(chatEl('chat-thread-avatar'), conversation.other);
-  chatEl('chat-thread-name').textContent = conversation.other && conversation.other.displayName || t('Messs user', 'Messs 用户');
+  chatEl('chat-thread-name').textContent = conversation.other && conversation.other.displayName || t('SCAAP user', 'SCAAP 用户');
   chatEl('chat-thread-id').textContent = chatAccountLabel(conversation.other) || t('Account unavailable', '账号暂不可用');
 }
 
@@ -835,12 +835,12 @@ function chatMessageIsText(message) {
 function chatMessageProfile(message, own = message && message.senderId === chatCurrentUserId()) {
   if (own) return ChatUiState.state && ChatUiState.state.profile || { id: chatCurrentUserId(), displayName: t('Me', '我') };
   const conversation = activeChatConversation();
-  if (!conversation) return { id: message && message.senderId, displayName: t('Messs user', 'Messs 用户') };
+  if (!conversation) return { id: message && message.senderId, displayName: t('SCAAP user', 'SCAAP 用户') };
   if (conversation.type === 'group') {
     return (conversation.members || []).find((member) => member.id === message.senderId)
       || { id: message.senderId, displayName: t('Group member', '群成员') };
   }
-  return conversation.other || { id: message.senderId, displayName: t('Messs user', 'Messs 用户') };
+  return conversation.other || { id: message.senderId, displayName: t('SCAAP user', 'SCAAP 用户') };
 }
 
 async function copyChatText(text) {
@@ -860,9 +860,9 @@ function closeChatProfileModal() {
 }
 
 function openChatProfileModal(profile, preferredDataUrl = '') {
-  const safeProfile = chatPublicProfile(profile) || { displayName: t('Messs user', 'Messs 用户') };
+  const safeProfile = chatPublicProfile(profile) || { displayName: t('SCAAP user', 'SCAAP 用户') };
   renderChatAvatarElement(chatEl('chat-profile-avatar'), safeProfile, preferredDataUrl);
-  chatEl('chat-profile-name').textContent = safeProfile.displayName || t('Messs user', 'Messs 用户');
+  chatEl('chat-profile-name').textContent = safeProfile.displayName || t('SCAAP user', 'SCAAP 用户');
   chatEl('chat-profile-email').textContent = safeProfile.email || '';
   chatEl('chat-profile-email').hidden = !safeProfile.email;
   chatEl('chat-profile-id').textContent = safeProfile.id || t('Unavailable', '暂无');
@@ -901,7 +901,7 @@ function openChatForwardModal(text) {
     const copy = document.createElement('span');
     copy.className = 'chat-forward-option-copy';
     const name = document.createElement('strong');
-    name.textContent = profile.displayName || t('Messs user', 'Messs 用户');
+    name.textContent = profile.displayName || t('SCAAP user', 'SCAAP 用户');
     const detail = document.createElement('small');
     detail.textContent = conversation.type === 'group'
       ? t(`${conversation.memberCount || conversation.members.length} members`, `${conversation.memberCount || conversation.members.length} 位成员`)
@@ -1508,7 +1508,7 @@ function refreshChatLanguage() {
     if (node) node.setAttribute(name, t(en, zh));
   };
 
-  setAttr('#chat-shell', 'aria-label', 'Messs Chat', 'Messs 聊天');
+  setAttr('#chat-shell', 'aria-label', 'SCAAP Chat', 'SCAAP 聊天');
   setAttr('#chat-rail-avatar', 'title', 'Right-click to change profile image', '右键更换头像');
   setAttr('#chat-rail-avatar', 'aria-label', 'Profile image; right-click to change', '头像；右键更换');
   setAttr('[data-chat-view="messages"]', 'title', 'Messages', '消息');
@@ -1544,7 +1544,7 @@ function refreshChatLanguage() {
   setAttr('#chat-send-btn', 'aria-label', 'Send', '发送');
   setText('#chat-profile-modal header > strong', 'Account details', '账号资料');
   setAttr('#chat-profile-close', 'aria-label', 'Close', '关闭');
-  setText('#chat-profile-modal dt', 'Messs ID', 'Messs ID');
+  setText('#chat-profile-modal dt', 'SCAAP ID', 'SCAAP ID');
   setText('#chat-reader-title', 'Enlarge reading', '放大阅读');
   setAttr('#chat-reader-close', 'aria-label', 'Close', '关闭');
   setText('#chat-reader-copy', 'Copy', '复制');
@@ -1555,7 +1555,7 @@ function refreshChatLanguage() {
   setText('#chat-multi-delete', 'Delete', '删除');
   setText('#chat-multi-cancel', 'Cancel', '取消');
   setText('#chat-auth-empty strong', 'Sign in to start chatting', '登录后开始聊天');
-  setText('#chat-auth-empty small', 'Sign in to Messs from More Settings', '请在更多设置中登录 Messs');
+  setText('#chat-auth-empty small', 'Sign in to SCAAP from More Settings', '请在更多设置中登录 SCAAP');
   setText('#chat-open-settings', 'Open Settings', '打开设置');
 
   document.querySelectorAll('.chat-message.is-recalled .chat-message-bubble').forEach((node) => {

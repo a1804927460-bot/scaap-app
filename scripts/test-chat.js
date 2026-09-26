@@ -208,7 +208,7 @@ function message(clientId, conversationId, createdAt, extra = {}) {
       getPublicSession: () => ({ authenticated: true, user: { id: USER_ID, email: 'a@example.com' } }),
       fetchImpl: global.fetch
     });
-    // Chat reuses the already authenticated Messs/Supabase session; there is
+    // Chat reuses the already authenticated SCAAP/Supabase session; there is
     // no second chat-specific login state.
     service.syncRemote = async () => ({ authenticated: true, status: 'online' });
     const initialized = await service.initialize();

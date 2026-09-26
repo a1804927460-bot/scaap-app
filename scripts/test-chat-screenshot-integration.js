@@ -101,7 +101,7 @@ async function run() {
   currentStage = 'waiting for app renderer';
   const appTarget = await waitForTarget(
     (target) => target.type === 'page' && /src[\\/]index\.html|src%5Cindex\.html/i.test(target.url),
-    'Messs renderer'
+    'SCAAP renderer'
   );
   const appDebugger = await connectDebugger(appTarget.webSocketDebuggerUrl);
   await appDebugger.send('Runtime.enable');

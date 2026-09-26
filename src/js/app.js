@@ -71,6 +71,23 @@ async function startMainApp() {
   delete document.documentElement.dataset.startupPending;
   requestAnimationFrame(() => {
     window.messsAPI.readyForInteraction();
+    const launch = document.getElementById('scaap-launch');
+    const video = document.getElementById('scaap-launch-video');
+    if (!detachedCanvasId && launch && video) {
+      launch.hidden = false;
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        launch.remove();
+      };
+      video.addEventListener('ended', finish, { once: true });
+      video.addEventListener('error', finish, { once: true });
+      setTimeout(finish, 6000);
+      setTimeout(() => { void video.play().catch(finish); }, 150);
+    } else {
+      launch?.remove();
+    }
     setTimeout(() => {
       initUpdater();
       beginRefreshRateSampling();
@@ -84,7 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const language = document.documentElement.dataset.language;
     const messages = language === 'zh'
       ? ['工作区加载失败', '重新加载']
-      : language === 'ko' ? ['작업 공간을 불러오지 못했습니다', '다시 로드'] : ['Workspace could not load', 'Reload'];
+      : language === 'ja' ? ['ワークスペースを読み込めませんでした', '再読み込み'] : ['Workspace could not load', 'Reload'];
     const panel = document.createElement('main');
     panel.className = 'startup-error';
     const title = document.createElement('h1');

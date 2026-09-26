@@ -12,7 +12,7 @@ let accountSummaryRenderGeneration = 0;
 let accountAvatarLoadGeneration = 0;
 let accountProfileDisplayName = '';
 let accountProfileSignature = '';
-let accountProfileFallbackName = 'Messs user';
+let accountProfileFallbackName = 'SCAAP user';
 let accountAuthMode = 'signin';
 let accountAuthInitialized = false;
 let colorManagementState = { profile: 'auto', activeProfile: 'auto', restartRequired: false };
@@ -661,7 +661,7 @@ function initSidebar(initial = {}) {
     const draggedAt = Number(event.currentTarget.closest('.sidebar').dataset.layoutDraggedAt || 0);
     if (Date.now() - draggedAt < 450) return;
     resetPanelLayout();
-    showToast(t('Default layout restored', '已恢复默认布局'), 'Messs');
+    showToast(t('Default layout restored', '已恢复默认布局'), 'SCAAP');
   });
 
   document.getElementById('sidebar-brand-btn').addEventListener('contextmenu', (event) => {
@@ -671,7 +671,7 @@ function initSidebar(initial = {}) {
       {
         label: t('Sponsor', '\u8d5e\u52a9'),
         icon: 'M12 21s-8-4.8-8-11a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 20 10c0 6.2-8 11-8 11z',
-        action: () => showToast(t('Sponsorship is coming soon.', '\u8d5e\u52a9\u529f\u80fd\u5f85\u5b9a\u3002'), 'Messs')
+        action: () => showToast(t('Sponsorship is coming soon.', '\u8d5e\u52a9\u529f\u80fd\u5f85\u5b9a\u3002'), 'SCAAP')
       }
     ], event.clientX, event.clientY, 'brand-context-menu');
   });
@@ -735,25 +735,25 @@ const AUTH_LEGAL_DOCUMENTS = Object.freeze({
   privacy: {
     title: ['Privacy', '隐私协议', '개인정보 보호'],
     body: [
-      'Messs stores the account, canvas, file, and usage data needed to provide the app. Provider credentials remain on the configured gateway and are not shown in the renderer.',
-      'Messs 会保存提供服务所需的账号、画布、文件和用量数据，包括登录标识、工作区设置、生成记录、积分余额与扣费明细。文件和媒体仅用于完成你发起的任务、同步到你的工作区以及提供历史记录功能。我们会采取访问控制、传输加密和最小权限措施保护数据；上游密钥保存在已配置的网关中，不会显示在客户端。你可以在设置中管理存储位置、退出账号或申请删除数据。部分请求会发送到所选 AI 上游，具体处理遵循对应服务商的隐私政策。',
-      'Messs는 서비스 제공에 필요한 계정, 캔버스, 파일 및 사용량 데이터를 저장합니다. 공급자 키는 구성된 게이트웨이에 보관되며 앱 화면에 표시되지 않습니다.'
+      'SCAAP stores the account, canvas, file, and usage data needed to provide the app. Provider credentials remain on the configured gateway and are not shown in the renderer.',
+      'SCAAP 会保存提供服务所需的账号、画布、文件和用量数据，包括登录标识、工作区设置、生成记录、积分余额与扣费明细。文件和媒体仅用于完成你发起的任务、同步到你的工作区以及提供历史记录功能。我们会采取访问控制、传输加密和最小权限措施保护数据；上游密钥保存在已配置的网关中，不会显示在客户端。你可以在设置中管理存储位置、退出账号或申请删除数据。部分请求会发送到所选 AI 上游，具体处理遵循对应服务商的隐私政策。',
+      'SCAAP는 서비스 제공에 필요한 계정, 캔버스, 파일 및 사용량 데이터를 저장합니다. 공급자 키는 구성된 게이트웨이에 보관되며 앱 화면에 표시되지 않습니다.'
     ]
   },
   terms: {
     title: ['Terms', '用户协议', '이용 약관'],
     body: [
-      'Use Messs lawfully and keep your account secure. You are responsible for content submitted to AI services and for checking generated results before publishing or sharing them.',
-      '请合法使用 Messs 并保护账号安全。你需要对提交给 AI 服务的提示词、上传文件、参考素材及生成结果负责，确认你拥有必要的版权、肖像和商标授权。不得绕过安全限制、滥用服务、批量制造垃圾请求或干扰其他用户。积分按实际消耗或已确认的任务计费，网络故障、上游限制和第三方服务变化可能影响结果；发布或分享前请自行检查生成结果。',
-      'Messs를 합법적으로 사용하고 계정을 안전하게 관리하세요. AI 서비스에 제출하는 콘텐츠와 게시 또는 공유 전 결과 확인에 대한 책임은 사용자에게 있습니다.'
+      'Use SCAAP lawfully and keep your account secure. You are responsible for content submitted to AI services and for checking generated results before publishing or sharing them.',
+      '请合法使用 SCAAP 并保护账号安全。你需要对提交给 AI 服务的提示词、上传文件、参考素材及生成结果负责，确认你拥有必要的版权、肖像和商标授权。不得绕过安全限制、滥用服务、批量制造垃圾请求或干扰其他用户。积分按实际消耗或已确认的任务计费，网络故障、上游限制和第三方服务变化可能影响结果；发布或分享前请自行检查生成结果。',
+      'SCAAP를 합법적으로 사용하고 계정을 안전하게 관리하세요. AI 서비스에 제출하는 콘텐츠와 게시 또는 공유 전 결과 확인에 대한 책임은 사용자에게 있습니다.'
     ]
   },
   content: {
     title: ['Content rules', '内容规范', '콘텐츠 규정'],
     body: [
-      'Do not use Messs to create illegal, abusive, deceptive, or privacy-invasive content. Respect copyright, likeness, trademarks, and the rights of other people when uploading references or generating media.',
-      '请勿使用 Messs 制作违法、暴力威胁、骚扰仇恨、欺诈误导、侵犯隐私、色情剥削或帮助规避监管的内容。不得上传恶意软件、未经授权的个人信息、机密资料或受限制的版权素材。上传参考素材或生成媒体时，请尊重版权、肖像、商标及他人的合法权益；涉及真实人物、未成年人、医疗、金融或公共事件时，应取得明确授权并进行人工核验。发现违规内容、侵权通知或安全问题，请通过客服渠道联系我们。',
-      'Messs를 사용해 불법적이거나 괴롭힘, 기만, 개인정보 침해에 해당하는 콘텐츠를 만들지 마세요. 참고 자료를 업로드하거나 미디어를 생성할 때 저작권, 초상, 상표 및 타인의 권리를 존중하세요.'
+      'Do not use SCAAP to create illegal, abusive, deceptive, or privacy-invasive content. Respect copyright, likeness, trademarks, and the rights of other people when uploading references or generating media.',
+      '请勿使用 SCAAP 制作违法、暴力威胁、骚扰仇恨、欺诈误导、侵犯隐私、色情剥削或帮助规避监管的内容。不得上传恶意软件、未经授权的个人信息、机密资料或受限制的版权素材。上传参考素材或生成媒体时，请尊重版权、肖像、商标及他人的合法权益；涉及真实人物、未成年人、医疗、金融或公共事件时，应取得明确授权并进行人工核验。发现违规内容、侵权通知或安全问题，请通过客服渠道联系我们。',
+      'SCAAP를 사용해 불법적이거나 괴롭힘, 기만, 개인정보 침해에 해당하는 콘텐츠를 만들지 마세요. 참고 자료를 업로드하거나 미디어를 생성할 때 저작권, 초상, 상표 및 타인의 권리를 존중하세요.'
     ]
   }
 });
@@ -795,7 +795,7 @@ function initAuthLegalLinks() {
 
 function refreshAccountAuthLanguage() {
   const isSignUp = accountAuthMode === 'signup';
-  setText('#account-auth-title', isSignUp ? 'Create your Messs account' : 'Sign in to continue', isSignUp ? '创建 Messs 账号' : '登录以继续', isSignUp ? 'Messs 계정 만들기' : '계속하려면 로그인하세요');
+  setText('#account-auth-title', isSignUp ? 'Create your SCAAP account' : 'Sign in to continue', isSignUp ? '创建 SCAAP 账号' : '登录以继续', isSignUp ? 'SCAAP 계정 만들기' : '계속하려면 로그인하세요');
   setText('#account-auth-submit', isSignUp ? 'Create Account' : 'Sign In', isSignUp ? '注册' : '登录', isSignUp ? '계정 만들기' : '로그인');
   setText('#account-auth-mode-toggle', isSignUp ? 'Already have an account? Sign in' : 'No account? Create one', isSignUp ? '已有账号？登录' : '没有账号？注册', isSignUp ? '이미 계정이 있나요? 로그인' : '계정이 없나요? 가입');
   const password = document.getElementById('account-auth-password');
@@ -1001,7 +1001,7 @@ function beginAccountProfileEdit(field) {
       if (field === 'name') accountProfileDisplayName = previousValue === accountProfileFallbackName ? '' : previousValue;
       else accountProfileSignature = previousValue;
       renderAccountProfileText();
-      showToast(error && error.message ? error.message : t('Could not save profile.', '无法保存个人资料。'), 'Messs');
+      showToast(error && error.message ? error.message : t('Could not save profile.', '无法保存个人资料。'), 'SCAAP');
     }
   };
 
@@ -1100,14 +1100,10 @@ function refreshStaticLanguage() {
   const planBadge = document.getElementById('account-plan-badge');
   if (planBadge && /^(free|免费|무료)$/i.test(planBadge.dataset.planName || planBadge.textContent.trim())) planBadge.textContent = t('Free', '免费', '무료');
   setChatProviderColumnLabels();
-  document.title = t('Messs. - Resolve your confusion', 'Messs. - 解决你的混乱');
+  document.title = 'SCAAP';
   setAttr('#workspace-shortcuts', 'aria-label', 'Main navigation', '主导航');
   setText('[data-app-surface="agent"] small', 'Agent', 'Agent');
-  setText('[data-app-surface="market"] small', 'Market', '市场');
-  setText('[data-app-surface="workshop"] small', 'Workshop', '创意工坊');
   setTitleAndLabel('[data-app-surface="agent"]', 'Agent', 'Agent');
-  setTitleAndLabel('[data-app-surface="market"]', 'Market', '市场');
-  setTitleAndLabel('[data-app-surface="workshop"]', 'Workshop', '创意工坊');
   setTitleAndLabel('#win-minimize-btn', 'Minimize', '最小化');
   setTitleAndLabel('#win-close-btn', 'Close', '关闭');
 
@@ -1280,8 +1276,6 @@ function refreshStaticLanguage() {
   setTitleAndLabel('#editor-underline', 'Underline', '下划线');
   setTitleAndLabel('#editor-close', 'Close editor', '关闭编辑器');
   setText('#section-chat .section-placeholder-name', 'Chat', '聊天');
-  setText('#section-market .section-placeholder-name', 'Market', '市场');
-  setText('#section-workshop .section-placeholder-name', 'Workshop', '创意工坊');
   document.querySelectorAll('.section-placeholder-inner p').forEach((p) => { p.textContent = t('Coming soon.', '即将推出。'); });
   renderColorManagementSettings();
 }
@@ -1318,7 +1312,7 @@ function refreshLanguageDependentViews() {
 function applyLanguageChoice(language, options = {}) {
   const lang = normalizeAppLanguage(language);
   AppState.language = lang;
-  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : (lang === 'ko' ? 'ko' : 'en');
+  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : (lang === 'ja' ? 'ja' : 'en');
   document.documentElement.dataset.language = lang;
   document.querySelectorAll('.language-opt').forEach((btn) => {
     const active = btn.dataset.languageChoice === lang;
@@ -1326,7 +1320,9 @@ function applyLanguageChoice(language, options = {}) {
     btn.setAttribute('aria-pressed', String(active));
   });
   document.querySelectorAll('[data-i18n-en]').forEach((node) => {
-    const next = t(node.dataset.i18nEn, node.dataset.i18nZh, node.dataset.i18nKo);
+    const next = lang === 'ja'
+      ? (node.dataset.i18nJa || t(node.dataset.i18nEn, node.dataset.i18nZh))
+      : t(node.dataset.i18nEn, node.dataset.i18nZh);
     if (next) node.textContent = next;
   });
   document.querySelectorAll('[data-i18n-placeholder-en]').forEach((node) => {
@@ -1354,7 +1350,7 @@ function applyLanguageChoice(language, options = {}) {
 
 function initLanguageSettings() {
   if (document.documentElement.dataset.localizedLanguage !== normalizeAppLanguage(AppState.language)) {
-    applyLanguageChoice(AppState.language || 'ko', { rerender: false });
+    applyLanguageChoice(AppState.language || 'zh', { rerender: false });
   }
   document.querySelectorAll('.language-opt').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -1641,7 +1637,7 @@ async function importFilePathsCore(paths, targetFolderId) {
   if (result && result.failed && result.failed.length) {
     const failure = result.failed[0] || {};
     showToast(failure.reason === 'EACCES' || failure.reason === 'EPERM'
-      ? t('macOS blocked access to this file. Choose it again from Finder or allow Messs access in System Settings.', 'macOS 阻止了这个文件的访问，请从 Finder 重新选择，或在系统设置中允许 Messs 访问文件和文件夹。')
+      ? t('macOS blocked access to this file. Choose it again from Finder or allow SCAAP access in System Settings.', 'macOS 阻止了这个文件的访问，请从 Finder 重新选择，或在系统设置中允许 SCAAP 访问文件和文件夹。')
       : t('Some files could not be imported.', `部分文件导入失败${failure.name ? `：${failure.name}` : ''}。`));
   }
 }
@@ -1703,7 +1699,7 @@ async function handleExternalDrop(dataTransfer, targetFolderId) {
     if (result.failed && result.failed.length) {
       const failure = result.failed[0] || {};
       const message = failure.reason === 'EACCES' || failure.reason === 'EPERM'
-        ? t('macOS blocked access to this file. Choose it again from Finder or allow Messs access in System Settings.', 'macOS 阻止了这个文件的访问，请从 Finder 重新选择，或在系统设置中允许 Messs 访问文件和文件夹。')
+        ? t('macOS blocked access to this file. Choose it again from Finder or allow SCAAP access in System Settings.', 'macOS 阻止了这个文件的访问，请从 Finder 重新选择，或在系统设置中允许 SCAAP 访问文件和文件夹。')
         : t('Some dropped files could not be imported.', `部分拖入文件导入失败${failure.name ? `：${failure.name}` : ''}。`);
       showToast(message);
     }
@@ -1758,7 +1754,7 @@ function initLibraryPathSettings() {
     try {
       const result = await window.messsAPI.pickLibraryPath();
       if (result && result.restarted) {
-        showToast(t('Storage location changed. Messs will restart now.', '存储位置已更改，Messs 即将重启。'));
+        showToast(t('Storage location changed. SCAAP will restart now.', '存储位置已更改，SCAAP 即将重启。'));
       } else if (result && result.path) {
         refreshLibraryPathUI();
       }
@@ -1769,7 +1765,7 @@ function initLibraryPathSettings() {
         : reason === 'storage-path-nested'
           ? t('The new location cannot be inside the current library.', '新位置不能位于当前资料库内部。')
           : t('The storage location could not be changed.', '无法更改存储位置。');
-      showToast(message, 'Messs');
+      showToast(message, 'SCAAP');
     } finally {
       button.disabled = false;
     }
@@ -1907,7 +1903,7 @@ function renderChatProviderSlots(providers, activeProviderId, allowFallback = tr
   const list = Array.isArray(providers) ? providers : [];
   Array.from({ length: Math.max(10, list.length) }, (_, index) => list[index] || {
     id: `chat-${index + 1}`,
-    name: index === 0 && allowFallback ? 'Messs AI' : '',
+    name: index === 0 && allowFallback ? 'SCAAP AI' : '',
     endpoint: '',
     models: index === 0 && allowFallback ? ['gemini-2.5-pro', 'gemini-2.5-flash'] : []
   }).forEach((provider, index) => {
@@ -2084,7 +2080,7 @@ async function chooseAccountAvatar() {
     if (avatarLoadGeneration !== accountAvatarLoadGeneration || activeAccountAvatarUserId !== accountUserId) return;
     if (!result || !result.ok) {
       if (result && !['cancelled', 'auth-required', 'account-changed'].includes(result.reason)) {
-        showToast(t('Could not update the profile image.', '无法更新头像。'), 'Messs');
+        showToast(t('Could not update the profile image.', '无法更新头像。'), 'SCAAP');
       }
       return;
     }
@@ -2094,9 +2090,9 @@ async function chooseAccountAvatar() {
     document.dispatchEvent(new CustomEvent('messs:profile-avatar-updated', {
       detail: { userId: accountUserId, dataUrl: dataUrl || '' }
     }));
-    showToast(t('Profile image updated.', '头像已更新。'), 'Messs');
+    showToast(t('Profile image updated.', '头像已更新。'), 'SCAAP');
   } catch (error) {
-    showToast(error && error.message ? error.message : t('Could not update the profile image.', '无法更新头像。'), 'Messs');
+    showToast(error && error.message ? error.message : t('Could not update the profile image.', '无法更新头像。'), 'SCAAP');
   } finally {
     button.disabled = !activeAccountAvatarUserId || button.dataset.accountUserId !== activeAccountAvatarUserId;
   }
@@ -2112,7 +2108,7 @@ async function renderAccountSummary(config) {
   const previousAccountUserId = activeAccountAvatarUserId;
   activeAccountAvatarUserId = accountUserId || null;
   if (typeof refreshProfileMood === 'function') void refreshProfileMood();
-  const fallbackName = authenticated ? (email.split('@')[0] || 'Messs user') : t('Messs user', 'Messs 用户');
+  const fallbackName = authenticated ? (email.split('@')[0] || 'SCAAP user') : t('SCAAP user', 'SCAAP 用户');
   const fallbackInitial = (fallbackName.trim()[0] || 'M').toUpperCase();
   const avatarButton = document.getElementById('account-popover-avatar');
   if (avatarButton) {
@@ -2135,8 +2131,8 @@ async function renderAccountSummary(config) {
   } catch (error) {}
   if (summaryRenderGeneration !== accountSummaryRenderGeneration || activeAccountAvatarUserId !== (accountUserId || null)) return;
   accountProfileFallbackName = authenticated
-    ? ((membership && membership.account && membership.account.displayName) || email.split('@')[0] || 'Messs user')
-    : t('Messs user', 'Messs 用户');
+    ? ((membership && membership.account && membership.account.displayName) || email.split('@')[0] || 'SCAAP user')
+    : t('SCAAP user', 'SCAAP 用户');
   const displayName = accountProfileDisplayName || accountProfileFallbackName;
   const plan = membership && membership.plan && membership.plan.name || t('Free', '免费');
   const creditValues = membershipCreditValues(membership, {
@@ -2319,7 +2315,7 @@ function renderCloudSecurity(config) {
     );
   } else if (authenticated) {
     state.textContent = t('Secure gateway ready', '\u5b89\u5168\u7f51\u5173\u5df2\u5c31\u7eea');
-    if (user) user.textContent = session.user && session.user.email || t('Messs account', 'Messs \u8d26\u53f7');
+    if (user) user.textContent = session.user && session.user.email || t('SCAAP account', 'SCAAP \u8d26\u53f7');
     note.textContent = t(
       'Provider keys stay in sealed Railway variables. Only a short-lived account token is stored encrypted on this device.',
       '\u670d\u52a1\u5546\u5bc6\u94a5\u53ea\u4fdd\u5b58\u5728 Railway \u5c01\u5b58\u53d8\u91cf\u4e2d\uff1b\u672c\u673a\u4ec5\u52a0\u5bc6\u4fdd\u5b58\u77ed\u671f\u8d26\u53f7\u4f1a\u8bdd\u3002'
@@ -2359,8 +2355,8 @@ function confirmSignOutCloudAccount() {
   dialog.setAttribute('aria-labelledby', 'sign-out-title');
   dialog.setAttribute('aria-describedby', 'sign-out-description');
   dialog.innerHTML = `<form method="dialog">
-    <img class="sign-out-brand" src="assets/logo-mark.png" alt="Messs">
-    <h2 id="sign-out-title">${t('Sign out of Messs?', '退出 Messs 登录？', 'Messs에서 로그아웃할까요?')}</h2>
+    <img class="sign-out-brand" src="assets/logo-mark.png" alt="SCAAP">
+    <h2 id="sign-out-title">${t('Sign out of SCAAP?', '退出 SCAAP 登录？', 'SCAAP에서 로그아웃할까요?')}</h2>
     <p id="sign-out-description">${t('You will need to sign in again to use account services.', '退出后，使用账户服务需要重新登录。', '계정 서비스를 사용하려면 다시 로그인해야 합니다.')}</p>
     <p class="sign-out-error" role="alert"></p>
     <footer><button type="button" data-sign-out-cancel>${t('Cancel', '取消', '취소')}</button><button type="submit" class="sign-out-confirm">${t('Sign out', '退出登录', '로그아웃')}</button></footer>
@@ -2461,7 +2457,7 @@ async function refreshAiMediaSettings() {
   }
 
   const hasChatEndpoint = !!String(config.chatEndpoint || '').trim();
-  document.getElementById('ai-chat-provider-name').value = hasChatEndpoint ? (config.chatProviderName || 'Messs AI') : 'Messs AI';
+  document.getElementById('ai-chat-provider-name').value = hasChatEndpoint ? (config.chatProviderName || 'SCAAP AI') : 'SCAAP AI';
   document.getElementById('ai-chat-endpoint').value = hasChatEndpoint ? config.chatEndpoint : '';
   document.getElementById('ai-chat-model').value = hasChatEndpoint ? (config.chatModel || 'gpt-4o-mini') : 'gemini-2.5-pro';
   document.getElementById('ai-chat-api-key').value = '';
@@ -2699,7 +2695,7 @@ async function initAiMediaSettings() {
       const config = await window.messsAPI.setAiMediaConfig(collectAiMediaSettings());
       await refreshAiMediaSettings();
       document.dispatchEvent(new CustomEvent('messs:ai-config-updated', { detail: config }));
-      showToast(t('Settings saved', '设置已保存'), 'Messs');
+      showToast(t('Settings saved', '设置已保存'), 'SCAAP');
       closeAiProviderManager();
     } catch (err) {
       showToast(err && err.message ? err.message : t('Could not save AI settings', '无法保存 AI 设置'), 'AI');

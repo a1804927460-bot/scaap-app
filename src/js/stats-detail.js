@@ -13,7 +13,7 @@ function renderTopStats() {
 const ACHIEVEMENT_COPY = {
   first_import: {
     title: ['Ordered Chaos', '混乱有序'],
-    desc: ['Imported the first file into Messs.', '第一次把文件导入 Messs。']
+    desc: ['Imported the first file into SCAAP.', '第一次把文件导入 SCAAP。']
   },
   deep_search: {
     title: ['Search Wizard', '神级搜索术'],

@@ -51,7 +51,7 @@ assert.equal(renderer.publicAiErrorMessage('', 'fallback', 'provider-request-fai
 assert.equal(renderer.publicAiErrorMessage(rejected + ' No points were charged.'), localizedRejection + '\u672c\u6b21\u672a\u6263\u79ef\u5206\u3002');
 renderer.document.documentElement.dataset.language = 'en';
 assert.equal(renderer.publicAiErrorMessage(rejected), rejected);
-renderer.document.documentElement.dataset.language = 'ko';
+renderer.document.documentElement.dataset.language = 'ja';
 assert.doesNotMatch(renderer.publicAiErrorMessage(rejected), /generation request/);
 renderer.document.documentElement.dataset.language = 'zh';
 const boardSource = fs.readFileSync(path.resolve(__dirname, '../src/js/board-media-meta.js'), 'utf8');

@@ -1,4 +1,4 @@
-name: Build and publish Messs
+name: Build and publish SCAAP
 
 on:
   push:
@@ -111,7 +111,7 @@ jobs:
             supabasePublishableKey = $env:MESSS_SUPABASE_PUBLISHABLE_KEY
             aiGatewayUrl = $env:MESSS_AI_GATEWAY_URL
             githubOwner = 'a1804927460-bot'
-            githubRepo = 'messs-releases'
+            githubRepo = 'scaap-releases'
           } | ConvertTo-Json
           Set-Content -LiteralPath config/runtime.json -Value $config -Encoding utf8
 
@@ -124,7 +124,7 @@ jobs:
           $config = Get-Content -Raw config/runtime.json | ConvertFrom-Json
           if (-not $config.supabasePublishableKey) { throw 'Repository variable SUPABASE_PUBLISHABLE_KEY is missing.' }
           if ($config.aiGatewayUrl -notmatch '^https://') { throw 'Repository variable AI_GATEWAY_URL must be HTTPS.' }
-          if ($config.githubOwner -ne 'a1804927460-bot' -or $config.githubRepo -ne 'messs-releases') { throw 'Public updater repository is misconfigured.' }
+          if ($config.githubOwner -ne 'a1804927460-bot' -or $config.githubRepo -ne 'scaap-releases') { throw 'Public updater repository is misconfigured.' }
           if (-not $env:GH_TOKEN) { throw 'RELEASES_TOKEN is missing.' }
           if ($env:SIGNING_CERT_PRESENT -ne $env:SIGNING_PASSWORD_PRESENT) {
             throw 'CSC_LINK and CSC_KEY_PASSWORD must be configured together.'
@@ -149,7 +149,7 @@ jobs:
         shell: pwsh
         run: |
           if (-not (Test-Path release/latest.yml)) { throw 'latest.yml was not generated.' }
-          $installer = Get-ChildItem release -Filter 'Messs-*-Setup.exe' | Select-Object -First 1
+          $installer = Get-ChildItem release -Filter 'SCAAP-*-Setup.exe' | Select-Object -First 1
           if (-not $installer) { throw 'Windows installer was not generated.' }
           $blockmap = Get-Item "$($installer.FullName).blockmap" -ErrorAction SilentlyContinue
           if (-not $blockmap) { throw 'Windows installer blockmap was not generated.' }
@@ -179,7 +179,7 @@ jobs:
       - name: Publish verified updater artifacts
         shell: pwsh
         run: |
-          $repo = 'a1804927460-bot/messs-releases'
+          $repo = 'a1804927460-bot/scaap-releases'
           $assets = @($env:MESSS_INSTALLER_PATH, $env:MESSS_BLOCKMAP_PATH, (Resolve-Path release/latest.yml).Path)
           $draftState = & gh release view $env:MESSS_RELEASE_TAG --repo $repo --json isDraft --jq '.isDraft' 2>$null
           if ($LASTEXITCODE -eq 0) {
@@ -189,8 +189,8 @@ jobs:
             }
           } else {
             & gh release create $env:MESSS_RELEASE_TAG --repo $repo --target main --draft `
-              --title "Messs $env:MESSS_RELEASE_TAG" `
-              --notes "Messs $env:MESSS_RELEASE_TAG Windows update."
+              --title "SCAAP $env:MESSS_RELEASE_TAG" `
+              --notes "SCAAP $env:MESSS_RELEASE_TAG Windows update."
             if ($LASTEXITCODE -ne 0) { throw 'Creating the draft release failed.' }
           }
           & gh release upload $env:MESSS_RELEASE_TAG @assets --repo $repo --clobber
@@ -247,7 +247,7 @@ jobs:
             supabasePublishableKey: process.env.MESSS_SUPABASE_PUBLISHABLE_KEY,
             aiGatewayUrl: process.env.MESSS_AI_GATEWAY_URL,
             githubOwner: 'a1804927460-bot',
-            githubRepo: 'messs-releases'
+            githubRepo: 'scaap-releases'
           };
           fs.writeFileSync('config/runtime.json', `${JSON.stringify(config, null, 2)}\n`, 'utf8');
           NODE
@@ -264,7 +264,7 @@ jobs:
           const config = require('./config/runtime.json');
           if (!config.supabasePublishableKey) throw new Error('Repository variable SUPABASE_PUBLISHABLE_KEY is missing.');
           if (!/^https:\/\//.test(config.aiGatewayUrl || '')) throw new Error('Repository variable AI_GATEWAY_URL must be HTTPS.');
-          if (config.githubOwner !== 'a1804927460-bot' || config.githubRepo !== 'messs-releases') throw new Error('Public updater repository is misconfigured.');
+          if (config.githubOwner !== 'a1804927460-bot' || config.githubRepo !== 'scaap-releases') throw new Error('Public updater repository is misconfigured.');
           NODE
           if [ -z "$GH_TOKEN" ]; then echo 'RELEASES_TOKEN is missing.' >&2; exit 1; fi
           if [ "$SIGNING_CERT_PRESENT" != "$SIGNING_PASSWORD_PRESENT" ]; then
@@ -296,10 +296,10 @@ jobs:
         shell: bash
         run: |
           test -f release/latest-mac.yml || { echo 'latest-mac.yml was not generated.' >&2; exit 1; }
-          test "$(find release -maxdepth 1 -name 'Messs-*-x64.dmg' | wc -l)" -ge 1 || { echo 'Intel DMG was not generated.' >&2; exit 1; }
-          test "$(find release -maxdepth 1 -name 'Messs-*-arm64.dmg' | wc -l)" -ge 1 || { echo 'Apple Silicon DMG was not generated.' >&2; exit 1; }
-          test "$(find release -maxdepth 1 -name 'Messs-*-x64.zip' | wc -l)" -ge 1 || { echo 'Intel ZIP was not generated.' >&2; exit 1; }
-          test "$(find release -maxdepth 1 -name 'Messs-*-arm64.zip' | wc -l)" -ge 1 || { echo 'Apple Silicon ZIP was not generated.' >&2; exit 1; }
+          test "$(find release -maxdepth 1 -name 'SCAAP-*-x64.dmg' | wc -l)" -ge 1 || { echo 'Intel DMG was not generated.' >&2; exit 1; }
+          test "$(find release -maxdepth 1 -name 'SCAAP-*-arm64.dmg' | wc -l)" -ge 1 || { echo 'Apple Silicon DMG was not generated.' >&2; exit 1; }
+          test "$(find release -maxdepth 1 -name 'SCAAP-*-x64.zip' | wc -l)" -ge 1 || { echo 'Intel ZIP was not generated.' >&2; exit 1; }
+          test "$(find release -maxdepth 1 -name 'SCAAP-*-arm64.zip' | wc -l)" -ge 1 || { echo 'Apple Silicon ZIP was not generated.' >&2; exit 1; }
           grep -Eq "^version: $MESSS_RELEASE_VERSION$" release/latest-mac.yml || { echo 'latest-mac.yml has the wrong version.' >&2; exit 1; }
 
       - name: Publish macOS updater artifacts
@@ -308,4 +308,4 @@ jobs:
           shopt -s nullglob
           assets=(release/latest-mac.yml release/*.dmg release/*.zip)
           if [ "${#assets[@]}" -lt 5 ]; then echo 'macOS release asset set is incomplete.' >&2; exit 1; fi
-          gh release upload "$MESSS_RELEASE_TAG" "${assets[@]}" --repo a1804927460-bot/messs-releases --clobber
+          gh release upload "$MESSS_RELEASE_TAG" "${assets[@]}" --repo a1804927460-bot/scaap-releases --clobber

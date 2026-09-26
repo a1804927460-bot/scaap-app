@@ -69,53 +69,53 @@
 /* Dark navigation follows the reference's near-black shell and restrained
    blue-gray selection, while keeping each destination easy to scan. */
 [data-theme="dark"] #sidebar {
-  background:#111315;
-  border-color:rgba(255,255,255,.055);
+  background:#131313;
+  border-color:rgba(255, 255, 255, .055);
 }
 [data-theme="dark"] #sidebar:not(.is-collapsed) .workspace-shortcuts button {
   background:transparent;
   border-color:transparent;
-  color:#b7bcc1;
+  color:#bbbbbb;
   box-shadow:none;
 }
 [data-theme="dark"] #sidebar:not(.is-collapsed) .workspace-shortcuts button:hover {
-  background:#1b1e20;
+  background:#1e1e1e;
   border-color:transparent;
-  color:#fff;
+  color:#ffffff;
 }
 [data-theme="dark"] #sidebar:not(.is-collapsed) .workspace-shortcuts button.is-active {
-  background:#19272d;
+  background:#242424;
   border-color:transparent;
-  color:#f4fbff;
+  color:#fafafa;
 }
 [data-theme="dark"] #sidebar:not(.is-collapsed) .workspace-shortcuts button.is-active > span {
-  color:#75c8ec;
+  color:#b9b9b9;
 }
 [data-theme="dark"] #sidebar > .search-box {
-  background:#24272a;
-  border-color:rgba(255,255,255,.08);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.025);
+  background:#272727;
+  border-color:rgba(255, 255, 255, .08);
+  box-shadow:inset 0 1px 0 rgba(255, 255, 255, .025);
 }
 [data-theme="dark"] #sidebar > .search-box:focus-within {
-  border-color:#49798d;
-  box-shadow:0 0 0 2px rgba(87,188,232,.10);
+  border-color:#707070;
+  box-shadow:0 0 0 2px rgba(170, 170, 170, .10);
 }
 [data-theme="dark"] #sidebar .file-list-header,
 [data-theme="dark"] #sidebar > .account-footer {
-  border-color:rgba(255,255,255,.085);
+  border-color:rgba(255, 255, 255, .085);
 }
 [data-theme="dark"] #sidebar .folder-item:hover,
 [data-theme="dark"] #sidebar .account-footer-main:hover,
 [data-theme="dark"] #sidebar .account-settings-btn:hover {
-  background:#202326;
+  background:#232323;
 }
 [data-theme="dark"] #sidebar.is-collapsed .workspace-shortcuts button > span {
   background:transparent;
   border-color:transparent;
 }
 [data-theme="dark"] #sidebar.is-collapsed .workspace-shortcuts button.is-active > span {
-  color:#75c8ec;
-  background:#1b3039;
-  border-color:#355866;
+  color:#b9b9b9;
+  background:#2c2c2c;
+  border-color:#525252;
 }
 @media(max-height:740px) { #sidebar.is-collapsed .sidebar-brand-row { gap:10px; margin-bottom:14px; } #sidebar.is-collapsed .workspace-shortcuts { gap:7px; margin-bottom:12px; } }

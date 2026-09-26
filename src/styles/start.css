@@ -322,10 +322,10 @@ body.is-auth-required .section-tabs { display: none; }
   height: 24px;
   display: grid;
   place-items: center;
-  border: 1px solid #dadce0;
+  border: 1px solid #dcdcdc;
   border-radius: 50%;
-  color: #4285f4;
-  background: #fff;
+  color: #7f7f7f;
+  background: #ffffff;
   font-size: 14px;
   font-weight: 800;
 }
@@ -393,8 +393,8 @@ body.is-auth-required .section-tabs { display: none; }
   font-size: 12px;
   line-height: 1.5;
 }
-.account-auth-status.is-error { color: #c94b42; background: color-mix(in srgb, #c94b42 9%, var(--bg-elevated)); }
-.account-auth-status.is-success { color: #278552; background: color-mix(in srgb, #278552 9%, var(--bg-elevated)); }
+.account-auth-status.is-error { color: #656565; background: color-mix(in srgb, #656565 9%, var(--bg-elevated)); }
+.account-auth-status.is-success { color: #6d6d6d; background: color-mix(in srgb, #6d6d6d 9%, var(--bg-elevated)); }
 .account-auth-submit {
   margin-top: -2px;
   border-color: var(--text-primary);

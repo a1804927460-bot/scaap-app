@@ -1,20 +1,20 @@
 /* ===========================================================
-   Messs. �?design tokens
+   SCAAP. �?design tokens
    Brand blue sampled from the supplied logo reference: #0052A6
    =========================================================== */
 
 :root {
   --titlebar-h: 38px;
-  --brand-blue: #0052A6;
-  --brand-blue-bright: #2C7BE0;
-  --brand-yellow: #F2C94C;
-  --brand-yellow-bright: #FFD45A;
+  --brand-blue: #474747;
+  --brand-blue-bright: #717171;
+  --brand-yellow: #c9c9c9;
+  --brand-yellow-bright: #d4d4d4;
 
   /* Shared action surface used by Send and other primary commands. */
-  --action-gradient: linear-gradient(135deg, rgba(29, 132, 244, .92), rgba(73, 173, 255, .74));
-  --action-border: rgba(143, 207, 255, .64);
-  --action-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 5px 16px rgba(24, 117, 218, .24);
-  --action-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, .36), 0 7px 20px rgba(24, 117, 218, .3);
+  --action-gradient: linear-gradient(135deg, rgba(118, 118, 118, .92), rgba(158, 158, 158, .74));
+  --action-border: rgba(197, 197, 197, .64);
+  --action-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 5px 16px rgba(105, 105, 105, .24);
+  --action-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, .36), 0 7px 20px rgba(105, 105, 105, .3);
 
   --radius-sm: 8px;
   --radius-md: 14px;
@@ -53,14 +53,14 @@
 
 /* -------- Dark theme (default) -------- */
 [data-theme="dark"] {
-  --bg-deep: #070808;
-  --bg-base: #0b0c0d;
-  --bg-elevated: #181a1c;
-  --bg-surface: #111315;
-  --bg-surface-2: #24272a;
-  --bg-frame: #0b0c0d;
-  --board-workspace-bg: #070808;
-  --canvas-toolbar-bg: rgba(17, 19, 21, .97);
+  --bg-deep: #080808;
+  --bg-base: #0c0c0c;
+  --bg-elevated: #1a1a1a;
+  --bg-surface: #131313;
+  --bg-surface-2: #272727;
+  --bg-frame: #0c0c0c;
+  --board-workspace-bg: #080808;
+  --canvas-toolbar-bg: rgba(19, 19, 19, .97);
   --canvas-toolbar-border: rgba(255, 255, 255, .12);
   --canvas-toolbar-text: var(--text-secondary);
   --canvas-toolbar-hover: var(--bg-surface-2);
@@ -75,22 +75,22 @@
   --border-hairline: rgba(255, 255, 255, 0.10);
   --border-strong: rgba(255, 255, 255, 0.18);
 
-  --text-primary: #f4f5f6;
-  --text-secondary: #c1c4c8;
-  --text-tertiary: #858a91;
+  --text-primary: #f5f5f5;
+  --text-secondary: #c4c4c4;
+  --text-tertiary: #898989;
 
   --title-accent: #f3f3f3;
 
-  --accent: #57bce8;
-  --accent-soft: rgba(87, 188, 232, 0.14);
-  --accent-ink: #0b1114;
-  --accent-glow: rgba(87, 188, 232, 0.22);
-  --selection-outline: #6bc5eb;
-  --selection-handle: #e8f8ff;
-  --glow-color: rgba(87, 188, 232, 0.18);
+  --accent: #aaaaaa;
+  --accent-soft: rgba(170, 170, 170, 0.14);
+  --accent-ink: #101010;
+  --accent-glow: rgba(170, 170, 170, 0.22);
+  --selection-outline: #b5b5b5;
+  --selection-handle: #f5f5f5;
+  --glow-color: rgba(170, 170, 170, 0.18);
   --resize-handle-line: rgba(255, 255, 255, 0.08);
   --resize-handle-hover: rgba(255, 255, 255, 0.24);
-  --resize-handle-active: rgba(87, 188, 232, 0.68);
+  --resize-handle-active: rgba(170, 170, 170, 0.68);
 
   --shadow-subtle: 0 1px 0 rgba(255, 255, 255, .025), 0 8px 20px rgba(0, 0, 0, .2);
   --shadow-elevated: 0 20px 60px rgba(0, 0, 0, 0.68);
@@ -145,13 +145,13 @@
   --accent: var(--brand-blue);
   --accent-soft: rgba(86, 86, 86, 0.16);
   --accent-ink: #ffffff;
-  --accent-glow: rgba(0, 82, 166, 0.25);
+  --accent-glow: rgba(71, 71, 71, 0.25);
   --selection-outline: #565656;
   --selection-handle: #ffffff;
   --glow-color: rgba(86, 86, 86, 0.06);
   --resize-handle-line: rgba(86, 86, 86, 0.10);
   --resize-handle-hover: rgba(86, 86, 86, 0.26);
-  --resize-handle-active: rgba(0, 82, 166, 0.60);
+  --resize-handle-active: rgba(71, 71, 71, 0.60);
 
   --shadow-elevated: 0 20px 50px rgba(0, 0, 0, 0.10);
   --scrollbar-thumb: rgba(0, 0, 0, 0.14);

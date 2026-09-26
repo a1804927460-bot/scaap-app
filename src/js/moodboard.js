@@ -423,7 +423,7 @@ function buildBoardMoodboardElement(item) {
     event.stopPropagation();
     const prompt = moodboardPlainText(item).trim();
     if (!prompt) {
-      showToast(t('Add text to the moodboard first.', '请先填写情绪板内容。'), 'Messs');
+      showToast(t('Add text to the moodboard first.', '请先填写情绪板内容。'), 'SCAAP');
       openMoodboardEditor(item);
       return;
     }
@@ -547,7 +547,7 @@ async function requestMoodboardAgentOptimization(action, customInstruction = '')
     document.getElementById('moodboard-agent-instruction').focus();
     return null;
   }
-  const locale = isZh() ? 'Return Simplified Chinese.' : (isKo() ? 'Return Korean.' : 'Return English.');
+  const locale = isZh() ? 'Return Simplified Chinese.' : (isJa() ? 'Return Japanese.' : 'Return English.');
   const prompt = [
     'You are refining a text-only creative moodboard.',
     locale,

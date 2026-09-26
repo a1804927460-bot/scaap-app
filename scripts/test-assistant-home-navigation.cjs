@@ -49,6 +49,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       assert.equal(colors.word, colors.dot);
       await page.screenshot({ path: `test-artifacts/assistant-home/${theme}.png` });
     }
-    console.log('Full Messs view hides the secondary button; workspace entry and brand return home without losing history; both themes passed.');
+    console.log('Full SCAAP view hides the secondary button; workspace entry and brand return home without losing history; both themes passed.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -13,36 +13,34 @@ const mainSource = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
 const chatSource = fs.readFileSync(path.join(root, 'src', 'js', 'chat.js'), 'utf8');
 const packageData = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 
-assert.deepStrictEqual([...SUPPORTED_LANGUAGES], ['en', 'zh', 'ko']);
+assert.deepStrictEqual([...SUPPORTED_LANGUAGES], ['en', 'zh', 'ja']);
 assert.strictEqual(normalizeLanguage('EN'), 'en');
 assert.strictEqual(normalizeLanguage('zh'), 'zh');
-assert.strictEqual(normalizeLanguage('KO'), 'ko');
-for (const invalid of ['', null, 'ja', 'korean']) assert.strictEqual(normalizeLanguage(invalid), 'ko');
+assert.strictEqual(normalizeLanguage('JA'), 'ja');
+for (const invalid of ['', null, 'ko', 'korean']) assert.strictEqual(normalizeLanguage(invalid), 'zh');
 
 assert.strictEqual(localeForLanguage('en'), 'en-US');
 assert.strictEqual(localeForLanguage('zh'), 'zh-CN');
-assert.strictEqual(localeForLanguage('ko'), 'ko-KR');
-assert.strictEqual(localeForLanguage('bad'), 'ko-KR');
+assert.strictEqual(localeForLanguage('ja'), 'ja-JP');
+assert.strictEqual(localeForLanguage('bad'), 'zh-CN');
 
-const koreanSamples = {
-  'More Settings': '추가 설정',
-  Language: '언어',
-  'Search files': '파일 검색',
-  'Integrated Canvas': '통합 캔버스',
-  'Generate image': '이미지 생성',
-  'Generate video': '비디오 생성',
-  Chat: '채팅',
-  Market: '마켓',
-  'Software Update': '소프트웨어 업데이트',
-  'Sign in to start chatting': '로그인하고 채팅을 시작하세요',
-  'Just now': '방금',
-  Auto: '자동',
-  'AI model': 'AI 모델',
-  'Chat image': '채팅 이미지',
-  'Organize the selected canvas objects into a clear visual hierarchy.': '선택한 캔버스 개체를 명확한 시각적 계층으로 정리하세요.'
+const japaneseSamples = {
+  'More Settings': 'その他の設定',
+  Language: '言語',
+  'Search files': 'ファイルを検索',
+  'Integrated Canvas': '統合キャンバス',
+  'Generate image': '画像を生成',
+  'Generate video': '動画を生成',
+  Chat: 'チャット',
+  'Software Update': 'ソフトウェア更新',
+  'Sign in to start chatting': 'ログインしてチャットを開始',
+  'Just now': 'たった今',
+  Auto: '自動',
+  'AI model': 'AI モデル',
+  'Chat image': 'チャット画像'
 };
-for (const [english, korean] of Object.entries(koreanSamples)) {
-  assert.strictEqual(translate('ko', english), korean, `Missing Korean translation for ${english}`);
+for (const [english, japanese] of Object.entries(japaneseSamples)) {
+  assert.strictEqual(translate('ja', english), japanese, `Missing Japanese translation for ${english}`);
   assert.strictEqual(translate('en', english), english);
   assert.strictEqual(translate('zh', english), english);
 }
@@ -53,21 +51,22 @@ assert.ok(selectorIndex > indexSource.indexOf('id="ai-provider-overlay"'), 'Lang
 assert.ok(selectorIndex < indexSource.indexOf('id="detail-overlay"'), 'Language selector must not leak outside More Settings.');
 const languageChoices = [...indexSource.matchAll(/<button class="language-opt[^>]*data-language-choice="([^"]+)"[^>]*>([^<]+)<\/button>/g)]
   .map((match) => [match[1], match[2].trim()]);
-assert.deepStrictEqual(languageChoices, [['en', 'English'], ['zh', '中文'], ['ko', '한국어']]);
+assert.deepStrictEqual(languageChoices, [['en', 'English'], ['zh', '中文'], ['ja', '日本語']]);
+assert.doesNotMatch(indexSource, /data-i18n-ko|data-language-choice="ko"/);
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'messs-language-'));
 try {
   const freshStore = new Store(tempRoot);
-  assert.strictEqual(freshStore.data.settings.language, 'ko', 'Fresh installs must default to Korean.');
-  freshStore.data.settings.language = 'ko';
+  assert.strictEqual(freshStore.data.settings.language, 'zh', 'Fresh installs must default to Chinese.');
+  freshStore.data.settings.language = 'ja';
   freshStore.save();
   const restoredStore = new Store(tempRoot);
-  assert.strictEqual(restoredStore.data.settings.language, 'ko', 'Saved Korean choice must survive restart.');
+  assert.strictEqual(restoredStore.data.settings.language, 'ja', 'Saved Japanese choice must survive restart.');
 
   const raw = JSON.parse(fs.readFileSync(restoredStore.dataPath, 'utf8'));
   delete raw.settings.language;
   fs.writeFileSync(restoredStore.dataPath, JSON.stringify(raw), 'utf8');
-  assert.strictEqual(new Store(tempRoot).data.settings.language, 'ko', 'Older stores without a language must fall back to Korean.');
+  assert.strictEqual(new Store(tempRoot).data.settings.language, 'zh', 'Older stores without a language must fall back to Chinese.');
 } finally {
   fs.rmSync(tempRoot, { recursive: true, force: true });
 }
@@ -79,7 +78,7 @@ const initialStateHandler = mainSource.slice(
   mainSource.indexOf("ipcMain.handle('settings:setTheme'")
 );
 assert.doesNotMatch(initialStateHandler, /await\s+hydrateMissingMediaMetadata|await\s+syncGatewayAccount/, 'Slow startup maintenance must not block interaction.');
-assert.match(mainSource, /settings:setLanguage[\s\S]*?settings\.language\s*=\s*normalizeLanguage\(language\)[\s\S]*?scheduleSave\(\)/, 'Language IPC must normalize and persist Korean.');
+assert.match(mainSource, /settings:setLanguage[\s\S]*?settings\.language\s*=\s*normalizeLanguage\(language\)[\s\S]*?scheduleSave\(\)/, 'Language IPC must normalize and persist Japanese.');
 assert.match(chatSource, /function refreshChatLanguage\(\)/, 'Chat needs an immediate language refresh path.');
 assert.match(chatSource, /addEventListener\('messs:language-changed',\s*refreshChatLanguage\)/, 'Chat refresh must run whenever the language changes.');
 assert.strictEqual((packageData.scripts.test.match(/node scripts\/test-language-localization\.js/g) || []).length, 1);

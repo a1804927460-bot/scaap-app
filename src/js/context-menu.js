@@ -420,7 +420,7 @@ function createPromptOptimizerDialog(selectedOnly) {
       </header>
       <div class="prompt-optimizer-compare">
         <div class="prompt-optimizer-intro">
-          <div class="prompt-optimizer-brand"><img src="assets/logo-mark.png" alt="" draggable="false"><strong>Messs.</strong></div>
+          <div class="prompt-optimizer-brand"><img src="assets/logo-mark.png" alt="" draggable="false"><strong>SCAAP.</strong></div>
           <p>${t('I can help turn your idea into a clearer generation prompt.', '我可以帮你把想法整理成更清晰的生成提示词。', '아이디어를 더 명확한 생성 프롬프트로 다듬어 드릴게요.')}</p>
           <div class="prompt-optimizer-modes" role="group" aria-label="${t('Optimization mode', '优化方式', '최적화 방식')}">
             <button type="button" data-optimizer-mode="expand">${t('Expand prompt', '扩写提示词', '프롬프트 확장')}</button>
@@ -428,7 +428,7 @@ function createPromptOptimizerDialog(selectedOnly) {
           </div>
         </div>
         <label class="prompt-optimizer-response">
-          <span class="prompt-optimizer-brand"><img src="assets/logo-mark.png" alt="" draggable="false"><strong>Messs.</strong></span>
+          <span class="prompt-optimizer-brand"><img src="assets/logo-mark.png" alt="" draggable="false"><strong>SCAAP.</strong></span>
           <textarea class="prompt-optimizer-result" readonly spellcheck="true" placeholder="${t('The optimized prompt will appear here.', '优化后的提示词会显示在这里。', '최적화된 프롬프트가 여기에 표시됩니다.')}"></textarea>
         </label>
         <label class="prompt-optimizer-composer">

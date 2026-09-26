@@ -50,7 +50,7 @@ assert.equal((boardSource.match(/watermark: boardAiWatermarkEnabled\(\)/g) || []
     const overlay = page.locator('#board-watermark-overlay');
     assert.equal(await overlay.isVisible(), true);
     assert.equal(await page.locator('#board-watermark-switch').getAttribute('aria-checked'), 'false');
-    assert.match(await page.locator('#board-watermark-description').innerText(), /Messs/);
+    assert.match(await page.locator('#board-watermark-description').innerText(), /SCAAP/);
     assert.match(await page.locator('#board-watermark-option-note').innerText(), /默认关闭/);
 
     fs.mkdirSync(output, { recursive: true });
@@ -70,7 +70,7 @@ assert.equal((boardSource.match(/watermark: boardAiWatermarkEnabled\(\)/g) || []
     await page.waitForTimeout(190);
     assert.equal(await page.evaluate(() => localStorage.getItem('messs.canvas-ai-watermark.v1')), null);
     assert.equal(await page.locator('#board-settings-watermark-value').innerText(), '关闭');
-    console.log('Canvas AI generation mark: default-off, Messs copy, persistence and generation wiring passed.');
+    console.log('Canvas AI generation mark: default-off, SCAAP copy, persistence and generation wiring passed.');
   } finally {
     await browser.close();
   }

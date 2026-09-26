@@ -19,15 +19,15 @@
 .moodboard-editor-panel .ql-toolbar { display: flex; flex-wrap: wrap; padding: 8px 12px; }
 .moodboard-editor-panel .ql-editor { padding: 20px; font-size: 16px; line-height: 1.7; color: var(--text-primary); }
 .board-moodboard {
-  background: #202223; border: 1px solid #36393b; border-radius: 8px;
+  background: #222222; border: 1px solid #393939; border-radius: 8px;
   box-shadow: none; grid-template-rows: 61px minmax(0, 1fr);
 }
-.board-moodboard.is-selected { border-color: #53b8dd; box-shadow: none; }
+.board-moodboard.is-selected { border-color: #a5a5a5; box-shadow: none; }
 .board-moodboard-header {
   display: flex; padding: 0 58px 0 24px; margin: 0;
   background: transparent; border: 0; position: relative;
 }
-.board-moodboard-header::after { content: ''; position: absolute; left: 24px; right: 24px; bottom: 0; height: 1px; background: #383c3e; }
+.board-moodboard-header::after { content: ''; position: absolute; left: 24px; right: 24px; bottom: 0; height: 1px; background: #3b3b3b; }
 .board-moodboard-icon { display: none; }
 .board-moodboard-title { font-size: 18px; font-weight: 600; line-height: 1.25; }
 .board-moodboard-preview { padding: 19px 24px 24px; font-size: 17px; font-weight: 400; line-height: 1.65; }
@@ -38,8 +38,8 @@
   position: absolute; right: 16px; top: 16px;
   display: grid; place-items: center;
   width: 30px; height: 30px; min-width: 30px; padding: 0;
-  border-radius: 8px; border: 1px solid #424749;
-  background: #2c3032; color: #f3f5f8;
+  border-radius: 8px; border: 1px solid #464646;
+  background: #2f2f2f; color: #f5f5f5;
   font: inherit; font-size: 13px; cursor: var(--cursor-click);
 }
 #board-canvas[data-board-renderer="leafer"] .board-moodboard .board-moodboard-generate {
@@ -53,7 +53,7 @@
 #board-canvas[data-board-renderer="leafer"].is-transforming .board-moodboard-generate img {
   filter: invert(1) !important;
 }
-.board-moodboard .board-moodboard-generate:hover { background: #41464b; }
+.board-moodboard .board-moodboard-generate:hover { background: #454545; }
 .board-moodboard .board-moodboard-open { display: none; }
 .board-moodboard-generate img { filter: invert(1); pointer-events: none; }
 .ai-image-popover.ai-composer.is-moodboard-composer {

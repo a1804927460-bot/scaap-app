@@ -173,7 +173,7 @@
     const reason = String(value.reason || value.code || `${stage}-failed`).slice(0, 80);
     let message = String(value.message || 'The selected file could not be imported.').trim();
     if (reason === 'EACCES' || reason === 'EPERM') {
-      message = 'macOS denied access to this file. Choose it again from Finder or allow Messs to access Files and Folders in System Settings.';
+      message = 'macOS denied access to this file. Choose it again from Finder or allow SCAAP to access Files and Folders in System Settings.';
     } else if (message.includes('/') || message.includes('\\')) {
       message = 'The selected file could not be imported.';
     }

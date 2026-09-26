@@ -1,5 +1,5 @@
-appId: com.messs.desktop
-productName: Messs
+appId: com.scaap.desktop
+productName: SCAAP
 electronVersion: 43.2.0
 asar: true
 directories:

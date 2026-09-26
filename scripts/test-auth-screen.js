@@ -16,7 +16,7 @@ const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
   'account-auth-password', 'account-auth-submit', 'account-auth-forgot',
   'account-auth-mode-toggle'
 ].forEach((id) => assert(html.includes(`id="${id}"`), `missing ${id}`));
-assert.match(html, /account-auth-brand[\s\S]*?assets\/logo-mark\.png[\s\S]*?Messs/);
+assert.match(html, /account-auth-brand[\s\S]*?assets\/logo-mark\.png[\s\S]*?SCAAP/);
 assert.match(css, /\.account-auth-screen\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?place-items:\s*center;/);
 assert.match(css, /body\.is-auth-required \.section-tabs\s*\{\s*display:\s*none;/);
 assert.match(sidebar, /function syncAccountAuthScreen[\s\S]*?session\.authenticated[\s\S]*?is-auth-required[\s\S]*?section\.inert = required/);

@@ -35,8 +35,10 @@ assert.doesNotMatch(indexHtml, /data-section="chat"|id="section-chat"|styles\/ch
   'The removed social chat feature must not return to navigation or renderer startup.');
 assert.match(mainCss, /\.titlebar-drag-region\s*\{\s*flex:\s*1\s*;/,
   'The title bar drag region must fill the area beside the native window controls.');
-assert.match(sidebarPartitionsJs, /id:'agent', label:'Agent', surface:true[\s\S]*?id:'market', label:'市场', surface:true[\s\S]*?id:'workshop', label:'创意工坊', surface:true/,
-  'Agent, Market and Workshop must live in the sidebar shortcut group.');
+assert.match(sidebarPartitionsJs, /id:'agent', label:'Agent', surface:true/,
+  'Agent must live in the sidebar shortcut group.');
+assert.doesNotMatch(sidebarPartitionsJs, /id:'market'|id:'workshop'/,
+  'Market and Workshop must be absent from SCAAP navigation.');
 assert.match(titlebarJs, /function openAppSurface\(surface\)[\s\S]*?setAssistantFullscreen\(true\)[\s\S]*?section\.classList\.add\('is-active'\)/,
   'Sidebar navigation must open Agent and the content surfaces as dialogs.');
 assert.match(statsDetailJs, /function syncAssistantFullscreenNavigation\(expanded\)[\s\S]*?setAppSurfaceNavigationActive\(expanded \? 'agent' : ''\)/,
@@ -49,8 +51,10 @@ assert.match(titlebarJs, /surface !== 'agent'[\s\S]*?setAssistantFullscreen\(fal
   'Opening another sidebar surface must close an expanded Agent first.');
 assert.equal((statsDetailJs.match(/document\.addEventListener\('keydown'/g) || []).length, 1,
   'The assistant must register only one Escape handler.');
-assert.match(sidebarJs, /data-app-surface="agent"[\s\S]*?Agent[\s\S]*?data-app-surface="market"[\s\S]*?Market[\s\S]*?data-app-surface="workshop"[\s\S]*?Workshop/,
-  'Sidebar surface labels must be localized without restoring Workspace.');
+assert.match(sidebarJs, /data-app-surface="agent"[\s\S]*?Agent/,
+  'The Agent sidebar label must be localized.');
+assert.doesNotMatch(sidebarJs, /data-app-surface="(?:market|workshop)"/,
+  'Removed surfaces must not be localized as sidebar entries.');
 assert.match(mainCss, /\.main-app\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0;/);
 assert.match(
   indexHtml,
@@ -201,8 +205,8 @@ assert.match(startScreenJs, /setAttribute\('data-view',\s*'start'\);[\s\S]*?sync
 assert.match(main, /ipcMain\.handle\('settings:setTheme',[\s\S]*?setWindowBackgroundColor\(store\.data\.settings\.theme\)/);
 assert.match(main, /new Tray\(trayIconPath\(\)\)/, 'Closing to background requires a system tray icon.');
 assert.match(main, /mainWindow\.on\('close',[\s\S]*?event\.preventDefault\(\);[\s\S]*?mainWindow\.hide\(\)/, 'The close button must hide the app unless it is really quitting.');
-assert.match(main, /label:\s*localizedMessage\('Quit Messs'[\s\S]*?isQuitting = true;[\s\S]*?app\.quit\(\)/, 'The tray must provide an explicit real quit command.');
-assert.match(main, /app\.requestSingleInstanceLock\(\)/, 'Launching Messs again should restore the existing background instance.');
+assert.match(main, /label:\s*localizedMessage\('Quit SCAAP'[\s\S]*?isQuitting = true;[\s\S]*?app\.quit\(\)/, 'The tray must provide an explicit real quit command.');
+assert.match(main, /app\.requestSingleInstanceLock\(\)/, 'Launching SCAAP again should restore the existing background instance.');
 assert.match(main, /app\.on\('second-instance', revealMainWindow\)/);
 assert.match(main, /new Notification\(\{[\s\S]*?title:\s*sender,[\s\S]*?body:\s*chatNotificationText\(detail\)/, 'Incoming chats need native notifications.');
 assert.match(main, /notification\.on\('click',[\s\S]*?revealMainWindow\(\)[\s\S]*?chat:openConversation/, 'Clicking a notification must restore the related conversation.');

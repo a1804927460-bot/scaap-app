@@ -79,7 +79,7 @@ async function run() {
       brand:document.querySelector('.prompt-optimizer-brand strong')?.textContent,
       modes:document.querySelectorAll('button[data-optimizer-mode]').length
     }))()`);
-    if (beforeConfirm.requests !== 0 || !beforeConfirm.editable || beforeConfirm.result || !beforeConfirm.confirmVisible || beforeConfirm.brand !== 'Messs.' || beforeConfirm.modes !== 2) throw new Error(`Optimization dialog was not ready: ${JSON.stringify(beforeConfirm)}`);
+    if (beforeConfirm.requests !== 0 || !beforeConfirm.editable || beforeConfirm.result || !beforeConfirm.confirmVisible || beforeConfirm.brand !== 'SCAAP.' || beforeConfirm.modes !== 2) throw new Error(`Optimization dialog was not ready: ${JSON.stringify(beforeConfirm)}`);
     fs.writeFileSync(path.join(outputDir, 'prompt-optimizer-confirm.png'), (await win.webContents.capturePage()).toPNG());
     const editedSource = '把图1的 Logo 放到图2左上角，保持构图、比例和品牌颜色不变。';
     await win.webContents.executeJavaScript(`(() => {

@@ -9,7 +9,7 @@
 .ai-assistant-message.is-assistant:not(.is-pending)::before,
 #board-agent-panel .board-agent-message.is-pending::before,
 #board-agent-panel .board-agent-message.is-assistant:not(.is-pending)::before {
-  content: 'Messs.';
+  content: 'SCAAP';
   display: block;
   min-height: 24px;
   padding-left: 32px;

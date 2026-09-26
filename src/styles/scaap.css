@@ -1,0 +1,89 @@
+.scaap-launch[hidden] { display: none; }
+
+.scaap-launch {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  background: #ffffff;
+}
+
+html[data-theme="dark"] {
+  --brand-blue: #fff;
+  --brand-blue-bright: #fff;
+  --brand-yellow: #ccc;
+  --brand-yellow-bright: #eee;
+  --accent: #fff;
+  --accent-ink: #000;
+}
+
+html[data-theme="light"] {
+  --brand-blue: #000;
+  --brand-blue-bright: #111;
+  --brand-yellow: #555;
+  --brand-yellow-bright: #333;
+  --accent: #111;
+  --accent-ink: #fff;
+}
+
+.scaap-launch video {
+  display: block;
+  width: 76%;
+  height: 76%;
+  object-fit: contain;
+  background: #ffffff;
+}
+
+.account-auth-screen:not([hidden]) .account-auth-brand,
+.account-auth-screen:not([hidden]) .account-auth-card h1,
+.account-auth-screen:not([hidden]) .account-auth-form {
+  animation: scaap-reveal 380ms cubic-bezier(.2,.75,.25,1) both;
+}
+
+.account-auth-screen:not([hidden]) .account-auth-card h1 { animation-delay: 70ms; }
+.account-auth-screen:not([hidden]) .account-auth-form { animation-delay: 120ms; }
+
+@keyframes scaap-reveal {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+#sidebar:not(.is-collapsed) .workspace-shortcuts button {
+  transition: background-color 180ms ease, color 180ms ease, transform 180ms ease;
+}
+
+#sidebar:not(.is-collapsed) .workspace-shortcuts button:hover {
+  transform: translateX(3px);
+}
+
+#sidebar:not(.is-collapsed) .workspace-shortcuts button:active {
+  transform: translateX(1px) scale(.98);
+}
+
+.chat-send-button {
+  transition: transform 180ms ease, box-shadow 180ms ease, opacity 180ms ease;
+}
+
+.chat-send-button:active:not(:disabled) { transform: scale(.95); }
+
+@media (prefers-reduced-motion: reduce) {
+  .account-auth-screen:not([hidden]) .account-auth-brand,
+  .account-auth-screen:not([hidden]) .account-auth-card h1,
+  .account-auth-screen:not([hidden]) .account-auth-form { animation: none; }
+  #sidebar:not(.is-collapsed) .workspace-shortcuts button,
+  .chat-send-button { transition: none; }
+}
+
+html[data-theme="dark"] img[src$="logo-mark.png"] {
+  filter: invert(1);
+}
+
+html[data-theme="dark"] .canvas-library-folder-icon img {
+  filter: grayscale(1);
+}
+
+html[data-theme="dark"] .hub-folder-icon svg {
+  fill: #777777;
+  stroke: #aaaaaa;
+}

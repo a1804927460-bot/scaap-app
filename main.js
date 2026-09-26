@@ -12,7 +12,7 @@ const nodeNet = require('net');
 const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 const { autoUpdater } = require('electron-updater');
-const APP_USER_MODEL_ID = 'com.messs.desktop';
+const APP_USER_MODEL_ID = 'com.scaap.desktop';
 if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID);
 let ElectronScreenshots = null;
 try {
@@ -193,10 +193,10 @@ const AI_VIDEO_CAMERA_DEFAULTS = Object.freeze({
 const PUBLIC_RELEASE = Object.freeze({
   provider: 'github',
   owner: 'a1804927460-bot',
-  repo: 'messs-releases'
+  repo: 'scaap-releases'
 });
 const WINDOW_BACKGROUND_COLORS = Object.freeze({
-  dark: '#080A0D',
+  dark: '#080808',
   light: '#FFFFFF'
 });
 
@@ -273,7 +273,7 @@ let sharp;
 try { sharp = require('sharp'); } catch (err) { sharp = null; }
 
 // Removes the default File/Edit/View/... menu bar everywhere (Windows/Linux's
-// per-window menu bar and macOS's global app menu) so only Messs.'s own UI shows.
+// per-window menu bar and macOS's global app menu) so only SCAAP.'s own UI shows.
 Menu.setApplicationMenu(null);
 
 protocol.registerSchemesAsPrivileged([
@@ -815,8 +815,8 @@ function createStoreWithFallback() {
   const candidates = [
     configured,
     getDefaultLibraryRoot(),
-    path.join(app.getPath('documents'), 'MesssLibrary'),
-    path.join(app.getPath('userData'), 'MesssLibrary')
+    path.join(app.getPath('documents'), 'SCAAPLibrary'),
+    path.join(app.getPath('userData'), 'SCAAPLibrary')
   ].filter(Boolean);
   const attempted = new Set();
   let firstError = null;
@@ -859,7 +859,8 @@ async function relocateLibraryStore(selectedPath) {
   return { ok: true, path: movedPath, restarted: true };
 }
 
-const CANVAS_PACKAGE_MAGIC = Buffer.from('MESSS-CANVAS-PKG', 'ascii');
+const CANVAS_PACKAGE_MAGIC = Buffer.from('SCAAP-CANVAS-PKG', 'ascii');
+const LEGACY_CANVAS_PACKAGE_MAGIC = Buffer.from('MESSS-CANVAS-PKG', 'ascii');
 const CANVAS_PACKAGE_VERSION = 1;
 const CANVAS_PACKAGE_HEADER_BYTES = CANVAS_PACKAGE_MAGIC.length + 8;
 const MAX_CANVAS_PACKAGE_BYTES = 8 * 1024 * 1024 * 1024;
@@ -884,7 +885,7 @@ async function writeCanvasPackageBytes(handle, buffer) {
   let offset = 0;
   while (offset < buffer.length) {
     const result = await handle.write(buffer, offset, buffer.length - offset, null);
-    if (!result || !result.bytesWritten) throw canvasPackageError('package-write-failed', 'The .Messs package could not be written completely.');
+    if (!result || !result.bytesWritten) throw canvasPackageError('package-write-failed', 'The .SCAAP package could not be written completely.');
     offset += result.bytesWritten;
   }
 }
@@ -894,7 +895,7 @@ async function readCanvasPackageBytes(handle, length, position) {
   let offset = 0;
   while (offset < length) {
     const result = await handle.read(buffer, offset, length - offset, position + offset);
-    if (!result || !result.bytesRead) throw canvasPackageError('truncated-package', 'The .Messs package ended before all data was read.');
+    if (!result || !result.bytesRead) throw canvasPackageError('truncated-package', 'The .SCAAP package ended before all data was read.');
     offset += result.bytesRead;
   }
   return buffer;
@@ -934,7 +935,7 @@ async function assertCanvasPackageSource(file) {
   }
   const relative = path.relative(libraryRoot, sourcePath);
   if (!sourceStat.isFile() || sourceStat.isSymbolicLink() || !relative || relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) {
-    throw canvasPackageError('unsafe-canvas-file', `The canvas file "${file.name || 'Unknown'}" is outside the Messs library.`);
+    throw canvasPackageError('unsafe-canvas-file', `The canvas file "${file.name || 'Unknown'}" is outside the SCAAP library.`);
   }
   if (!Number.isSafeInteger(sourceStat.size) || sourceStat.size < 0) {
     throw canvasPackageError('invalid-canvas-file', `The canvas file "${file.name || 'Unknown'}" has an invalid size.`);
@@ -977,7 +978,7 @@ async function prepareCanvasPackageExport(canvas) {
     const { sourcePath, sourceStat } = await assertCanvasPackageSource(file);
     totalBytes += sourceStat.size;
     if (totalBytes > MAX_CANVAS_PACKAGE_BYTES) {
-      throw canvasPackageError('package-too-large', 'This canvas is too large to export as one .Messs file.');
+      throw canvasPackageError('package-too-large', 'This canvas is too large to export as one .SCAAP file.');
     }
     sources.push({
       sourceId: String(file.id),
@@ -989,7 +990,7 @@ async function prepareCanvasPackageExport(canvas) {
     });
   }
   const manifest = {
-    format: 'messs-canvas-package',
+    format: 'scaap-canvas-package',
     version: CANVAS_PACKAGE_VERSION,
     exportedAt: new Date().toISOString(),
     project: canvasPackageJsonClone(store.data.canvasProjects.find((entry) => entry.id === canvas.projectId) || null),
@@ -1099,32 +1100,33 @@ async function writeCanvasPackage(targetPath, prepared) {
 async function readCanvasPackageManifest(packagePath) {
   const stat = await fs.promises.stat(packagePath);
   if (!stat.isFile() || stat.size > MAX_CANVAS_PACKAGE_BYTES) {
-    throw canvasPackageError('package-too-large', 'This .Messs package is too large or is not a file.');
+    throw canvasPackageError('package-too-large', 'This .SCAAP package is too large or is not a file.');
   }
-  if (stat.size < CANVAS_PACKAGE_HEADER_BYTES) throw canvasPackageError('invalid-package', 'This is not a valid .Messs canvas package.');
+  if (stat.size < CANVAS_PACKAGE_HEADER_BYTES) throw canvasPackageError('invalid-package', 'This is not a valid .SCAAP canvas package.');
   const handle = await fs.promises.open(packagePath, 'r');
   try {
     const header = await readCanvasPackageBytes(handle, CANVAS_PACKAGE_HEADER_BYTES, 0);
-    if (!header.subarray(0, CANVAS_PACKAGE_MAGIC.length).equals(CANVAS_PACKAGE_MAGIC)) {
-      throw canvasPackageError('invalid-package', 'This is not a valid .Messs canvas package.');
+    const magic = header.subarray(0, CANVAS_PACKAGE_MAGIC.length);
+    if (!magic.equals(CANVAS_PACKAGE_MAGIC) && !magic.equals(LEGACY_CANVAS_PACKAGE_MAGIC)) {
+      throw canvasPackageError('invalid-package', 'This is not a valid .SCAAP canvas package.');
     }
     const version = header.readUInt32LE(CANVAS_PACKAGE_MAGIC.length);
     const manifestLength = header.readUInt32LE(CANVAS_PACKAGE_MAGIC.length + 4);
     if (version !== CANVAS_PACKAGE_VERSION || manifestLength <= 0 || manifestLength > MAX_CANVAS_PACKAGE_MANIFEST_BYTES) {
-      throw canvasPackageError('unsupported-package', 'This .Messs package was created by an unsupported version of Messs.');
+      throw canvasPackageError('unsupported-package', 'This .SCAAP package was created by an unsupported version of SCAAP.');
     }
     const manifestBuffer = await readCanvasPackageBytes(handle, manifestLength, CANVAS_PACKAGE_HEADER_BYTES);
     let manifest;
     try {
       manifest = JSON.parse(manifestBuffer.toString('utf8'));
     } catch (error) {
-      throw canvasPackageError('invalid-package', 'The .Messs package metadata is damaged.');
+      throw canvasPackageError('invalid-package', 'The .SCAAP package metadata is damaged.');
     }
-    if (!manifest || manifest.format !== 'messs-canvas-package' || manifest.version !== CANVAS_PACKAGE_VERSION ||
+    if (!manifest || !['scaap-canvas-package', 'messs-canvas-package'].includes(manifest.format) || manifest.version !== CANVAS_PACKAGE_VERSION ||
         !manifest.canvas || typeof manifest.canvas !== 'object' || !Array.isArray(manifest.boardItems) || !Array.isArray(manifest.files)) {
-      throw canvasPackageError('invalid-package', 'The .Messs package metadata is incomplete.');
+      throw canvasPackageError('invalid-package', 'The .SCAAP package metadata is incomplete.');
     }
-    if (manifest.files.length > MAX_CANVAS_PACKAGE_FILES) throw canvasPackageError('package-too-many-files', 'This .Messs package contains too many files.');
+    if (manifest.files.length > MAX_CANVAS_PACKAGE_FILES) throw canvasPackageError('package-too-many-files', 'This .SCAAP package contains too many files.');
     const ids = new Set();
     let payloadBytes = 0;
     manifest.files.forEach((entry) => {
@@ -1134,15 +1136,15 @@ async function readCanvasPackageManifest(packagePath) {
       if (!id || id.length > 128 || ids.has(id) || !name || path.basename(name) !== name || name.includes('\0') ||
           !Number.isSafeInteger(sizeBytes) || sizeBytes < 0 || !/^[a-f0-9]{64}$/i.test(String(entry.sha256 || '')) ||
           !entry.metadata || typeof entry.metadata !== 'object' || Array.isArray(entry.metadata)) {
-        throw canvasPackageError('invalid-package', 'The .Messs package contains an invalid file entry.');
+        throw canvasPackageError('invalid-package', 'The .SCAAP package contains an invalid file entry.');
       }
       ids.add(id);
       payloadBytes += sizeBytes;
-      if (payloadBytes > MAX_CANVAS_PACKAGE_BYTES) throw canvasPackageError('package-too-large', 'This .Messs package is too large.');
+      if (payloadBytes > MAX_CANVAS_PACKAGE_BYTES) throw canvasPackageError('package-too-large', 'This .SCAAP package is too large.');
     });
     const payloadOffset = CANVAS_PACKAGE_HEADER_BYTES + manifestLength;
     if (payloadOffset + payloadBytes !== stat.size) {
-      throw canvasPackageError('truncated-package', 'The .Messs package does not contain exactly the files listed in its metadata.');
+      throw canvasPackageError('truncated-package', 'The .SCAAP package does not contain exactly the files listed in its metadata.');
     }
     return { manifest, payloadOffset, stat };
   } finally {
@@ -1169,7 +1171,7 @@ async function extractCanvasPackageFile(handle, packagePath, position, entry, ta
   try {
     while (readTotal < entry.sizeBytes) {
       const result = await handle.read(buffer, 0, Math.min(buffer.length, entry.sizeBytes - readTotal), position + readTotal);
-      if (!result || !result.bytesRead) throw canvasPackageError('truncated-package', `The .Messs package is missing data for "${entry.name}".`);
+      if (!result || !result.bytesRead) throw canvasPackageError('truncated-package', `The .SCAAP package is missing data for "${entry.name}".`);
       hash.update(buffer.subarray(0, result.bytesRead));
       await writeCanvasPackageBytes(output, buffer.subarray(0, result.bytesRead));
       readTotal += result.bytesRead;
@@ -1233,7 +1235,7 @@ async function importCanvasPackage(packagePath, targetProjectId) {
     }
     await packageHandle.close();
     packageHandle = null;
-    if (position !== parsed.stat.size) throw canvasPackageError('truncated-package', 'The .Messs package contains unexpected trailing data.');
+    if (position !== parsed.stat.size) throw canvasPackageError('truncated-package', 'The .SCAAP package contains unexpected trailing data.');
 
     const now = new Date().toISOString();
     const canvas = {
@@ -1260,7 +1262,7 @@ async function importCanvasPackage(packagePath, targetProjectId) {
         ...metadata,
         id: item.newId,
         name: item.entry.name,
-        originalPath: `Messs package: ${path.basename(packagePath)}`,
+        originalPath: `SCAAP package: ${path.basename(packagePath)}`,
         storedPath: destinationPath,
         importedAt: now,
         sizeBytes: stat.size,
@@ -1336,8 +1338,8 @@ async function importCanvasPackage(packagePath, targetProjectId) {
 
 function ensureCanvasPackagePath(filePath) {
   const normalized = String(filePath || '').trim();
-  if (!normalized.toLowerCase().endsWith('.messs')) return `${normalized}.Messs`;
-  return `${normalized.slice(0, -'.messs'.length)}.Messs`;
+  if (!/\.(scaap|messs)$/i.test(normalized)) return `${normalized}.SCAAP`;
+  return `${normalized.replace(/\.(scaap|messs)$/i, '')}.SCAAP`;
 }
 
 function canvasFolderName(name) {
@@ -1595,7 +1597,7 @@ function setupAutoUpdater() {
 }
 
 function oauthResponseHtml(success, message) {
-  const title = success ? 'Messs login complete' : 'Messs login failed';
+  const title = success ? 'SCAAP login complete' : 'SCAAP login failed';
   const safeMessage = String(message || '').replace(/[&<>"']/g, (char) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[char]));
@@ -1632,7 +1634,7 @@ function signInWithGoogle() {
         if (oauthError || !code) throw new Error(oauthError || 'Google did not return an authorization code.');
         const session = await supabaseAuth.exchangeOAuthCode(code, verifier);
         response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        response.end(oauthResponseHtml(true, 'You can close this window and return to Messs.'));
+        response.end(oauthResponseHtml(true, 'You can close this window and return to SCAAP.'));
         finish(null, session);
       } catch (error) {
         response.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -1690,7 +1692,7 @@ function createWindow() {
     icon: app.isPackaged ? process.execPath : path.join(__dirname, 'build-resources', 'icon.png'),
     // Match Chromium's first paint to the persisted theme so Windows never
     // exposes a differently colored native surface during startup.
-    backgroundColor: WINDOW_BACKGROUND_COLORS[initialTheme],
+    backgroundColor: WINDOW_BACKGROUND_COLORS.light,
     frame: false, // We draw our own top bar (see src/index.html #app-titlebar) so it
                    // always matches the app's theme instead of the OS's default chrome.
     webPreferences: {
@@ -1775,7 +1777,7 @@ function getAchievementsPayload() {
 /**
  * Removes file records whose actual copy on disk (in the library folder)
  * has gone missing 锟?e.g. someone manually deleted it from
- * C:\MesssLibrary\library\ outside of Messs. itself. Runs once at startup
+ * C:\SCAAPLibrary\library\ outside of SCAAP. itself. Runs once at startup
  * rather than on every render, since stat-ing every file on each state
  * fetch would be wasteful; new deletions made through the app's own UI are
  * already reflected immediately without needing this.
@@ -1899,7 +1901,7 @@ async function installDownloadedUpdate() {
   }, 15_000);
   updateInstallFallbackTimer.unref?.();
   // A user-triggered install must show the NSIS wizard so progress remains
-  // visible after Messs exits. Normal app quit still uses the updater's
+  // visible after SCAAP exits. Normal app quit still uses the updater's
   // separate silent-install path.
   autoUpdater.quitAndInstall(false, true);
   return { ok: true, installing: true };
@@ -2006,10 +2008,10 @@ function trayIconPath() {
 function updateTrayMenu() {
   if (!tray || tray.isDestroyed()) return;
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: localizedMessage('Show Messs', '显示 Messs', 'Messs 열기'), click: revealMainWindow },
+    { label: localizedMessage('Show SCAAP', '显示 SCAAP', 'SCAAP 열기'), click: revealMainWindow },
     { type: 'separator' },
     {
-      label: localizedMessage('Quit Messs', '退出 Messs', 'Messs 종료'),
+      label: localizedMessage('Quit SCAAP', '退出 SCAAP', 'SCAAP 종료'),
       click: () => {
         isQuitting = true;
         app.quit();
@@ -2021,7 +2023,7 @@ function updateTrayMenu() {
 function createTray() {
   if (tray && !tray.isDestroyed()) return tray;
   tray = new Tray(trayIconPath());
-  tray.setToolTip('Messs');
+  tray.setToolTip('SCAAP');
   tray.on('click', revealMainWindow);
   updateTrayMenu();
   return tray;
@@ -2366,8 +2368,8 @@ function fileImportFailure(originalPath, error, stage = 'import') {
     message = 'The selected file is no longer available.';
   } else if (code === 'EACCES' || code === 'EPERM') {
     message = process.platform === 'darwin'
-      ? 'macOS denied access to this file. Choose it again from Finder or allow Messs to access Files and Folders in System Settings.'
-      : 'Messs could not access this file.';
+      ? 'macOS denied access to this file. Choose it again from Finder or allow SCAAP to access Files and Folders in System Settings.'
+      : 'SCAAP could not access this file.';
   } else if (stage === 'prepare') {
     message = 'The file was imported, but it could not be prepared as an AI attachment.';
   } else if (code === 'not-a-file') {
@@ -2417,7 +2419,7 @@ async function importFilePaths(filePaths, folderId, canvasId, options = {}, owne
       failed.some((entry) => entry && ['EACCES', 'EPERM'].includes(entry.reason))) {
     try {
       const recovery = await dialog.showOpenDialog(ownerWindow && !ownerWindow.isDestroyed() ? ownerWindow : mainWindow, {
-        title: 'Allow Messs to import the selected file',
+        title: 'Allow SCAAP to import the selected file',
         defaultPath: paths[0],
         properties: ['openFile', 'multiSelections']
       });
@@ -2580,7 +2582,7 @@ function appFetch(url, options) {
   return net.fetch(url, options);
 }
 
-const PUBLIC_CONTENT_SURFACES = new Set(['templates', 'market']);
+const PUBLIC_CONTENT_SURFACES = new Set(['templates']);
 
 function normalizePublicContentItem(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -2705,7 +2707,7 @@ function workshopSourceFile(fileId) {
   }
   const relative = path.relative(libraryRoot, resolvedPath);
   if (!relative || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
-    throw workshopCloudError('unsafe-file', 'The selected file is outside the Messs library.', 400);
+    throw workshopCloudError('unsafe-file', 'The selected file is outside the SCAAP library.', 400);
   }
   const stat = fs.statSync(resolvedPath);
   if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_WORKSHOP_MEDIA_BYTES) {
@@ -3487,7 +3489,7 @@ function createDetachedCanvasWindow(canvasId, launchPoint = {}, sourceWebContent
     icon: app.isPackaged ? process.execPath : path.join(__dirname, 'build-resources', 'icon.png'),
     backgroundColor: WINDOW_BACKGROUND_COLORS[initialTheme],
     frame: false,
-    title: `${canvas.name} - Messs.`,
+    title: `${canvas.name} - SCAAP.`,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -3726,7 +3728,7 @@ async function requestRemoteClipboardImage(urlValue) {
       headers: {
         Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.5',
         'Accept-Encoding': 'identity',
-        'User-Agent': 'Messs Clipboard Image Import'
+        'User-Agent': 'SCAAP Clipboard Image Import'
       },
       lookup(_hostname, _options, callback) {
         callback(null, resolved.address, resolved.family);
@@ -4702,7 +4704,7 @@ function getAiMediaConfig() {
     videoProviderName: activeVideoProvider.name || DEFAULT_CATALOG_VIDEO.name,
     chatProviders,
     activeChatProviderId,
-    chatProviderName: activeChatProvider.name || String(saved.chatProviderName || 'Messs AI').trim().slice(0, 40) || 'Messs AI',
+    chatProviderName: activeChatProvider.name || String(saved.chatProviderName || 'SCAAP AI').trim().slice(0, 40) || 'SCAAP AI',
     chatEndpoint: activeChatProvider.endpoint,
     chatModel: activeChatProvider.models[0] || DEFAULT_CATALOG_CHAT.models[0]
   };
@@ -4906,7 +4908,7 @@ async function getPublicAiMediaConfig() {
     videoProviders: config.videoProviders.map(publicProvider),
     chatProviders: config.chatProviders.map(publicProvider),
     videoProviderName: sanitizePublicModelLabel(config.videoProviderName, 'AI video'),
-    chatProviderName: sanitizePublicModelLabel(config.chatProviderName, 'Messs AI')
+    chatProviderName: sanitizePublicModelLabel(config.chatProviderName, 'SCAAP AI')
   };
   const savedKeys = readSavedAiApiKeys();
   const fallbackKey = savedKeys.default || getEnvironmentAiApiKey();
@@ -6522,7 +6524,7 @@ async function countFilesRecursive(dirPath) {
 }
 
 /**
- * Recursively imports a real OS directory: creates a matching Messs folder
+ * Recursively imports a real OS directory: creates a matching SCAAP folder
  * (nested under parentFolderId if given), imports every file directly
  * inside it into that folder, and recurses into subdirectories so they
  * become nested sub-folders 锟?this is the "second-level menu" behaviour.
@@ -8073,7 +8075,7 @@ function registerIpcHandlers() {
         return {
           ok: false,
           reason: 'sign-in-required',
-          message: 'Sign in to your Messs account before redeeming this code.'
+          message: 'Sign in to your SCAAP account before redeeming this code.'
         };
       }
       try {
@@ -8148,7 +8150,7 @@ function registerIpcHandlers() {
       `# ${title}`,
       '',
       ...messages.flatMap((message) => [
-        `## ${message.role === 'assistant' ? 'Messs AI' : 'You'}`,
+        `## ${message.role === 'assistant' ? 'SCAAP AI' : 'You'}`,
         '',
         message.content,
         ''
@@ -8650,7 +8652,7 @@ function registerIpcHandlers() {
       activeVideoProviderId,
       chatProviders,
       activeChatProviderId,
-      chatProviderName: activeChatProvider.name || 'Messs AI',
+      chatProviderName: activeChatProvider.name || 'SCAAP AI',
       chatEndpoint: activeChatProvider.endpoint,
       chatModel: activeChatProvider.models[0] || DEFAULT_CATALOG_CHAT.models[0],
       resultEndpoint: normalized.resultEndpoint,
@@ -8987,7 +8989,7 @@ function registerIpcHandlers() {
   ipcMain.handle('files:recoverDroppedImport', async (event, folderId, canvasId) => {
     const ownerWindow = rendererWindowForEvent(event);
     const result = await dialog.showOpenDialog(ownerWindow, {
-      title: 'Allow Messs to import the selected file',
+      title: 'Allow SCAAP to import the selected file',
       properties: ['openFile', 'multiSelections']
     });
     if (result.canceled || !result.filePaths.length) return { canceled: true, imported: [], unlocked: [], failed: [] };
@@ -10574,8 +10576,8 @@ function registerIpcHandlers() {
     if (!canvas) return { ok: false, reason: 'not-found' };
     const result = await dialog.showSaveDialog(rendererWindowForEvent(event), {
       title: 'Export canvas',
-      defaultPath: `${canvasFolderName(canvas.name)}.Messs`,
-      filters: [{ name: 'Messs Canvas Package', extensions: ['Messs'] }]
+      defaultPath: `${canvasFolderName(canvas.name)}.SCAAP`,
+      filters: [{ name: 'SCAAP Canvas Package', extensions: ['SCAAP'] }]
     });
     if (result.canceled || !result.filePath) return { ok: false, canceled: true };
     try {
@@ -10595,9 +10597,9 @@ function registerIpcHandlers() {
 
   ipcMain.handle('canvas:import', async (event, targetProjectId) => {
     const result = await dialog.showOpenDialog(rendererWindowForEvent(event), {
-      title: 'Import .Messs canvas',
+      title: 'Import .SCAAP canvas',
       properties: ['openFile'],
-      filters: [{ name: 'Messs Canvas Package', extensions: ['Messs'] }]
+      filters: [{ name: 'SCAAP Canvas Package', extensions: ['SCAAP', 'Messs'] }]
     });
     if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true };
     try {
@@ -10607,7 +10609,7 @@ function registerIpcHandlers() {
       return {
         ok: false,
         reason: error && error.code || 'import-failed',
-        message: error && error.message || 'The .Messs canvas could not be imported safely.'
+        message: error && error.message || 'The .SCAAP canvas could not be imported safely.'
       };
     }
   });
@@ -10920,7 +10922,7 @@ function registerIpcHandlers() {
         error: ['EACCES', 'EPERM'].includes(reason)
           ? (process.platform === 'darwin'
             ? 'macOS denied access to the selected export location.'
-            : 'Messs could not write to the selected export location.')
+            : 'SCAAP could not write to the selected export location.')
           : 'The file could not be exported safely.'
       };
     }

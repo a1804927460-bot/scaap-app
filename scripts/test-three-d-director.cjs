@@ -88,9 +88,9 @@ const output = path.join(root, 'test-artifacts', 'three-d-director');
     assert.equal(await page.locator('[data-aspect="9:16"]').getAttribute('class'), 'is-active');
     assert.equal(await page.locator('[data-aspect="16:9"]').getAttribute('class'), '');
     await page.waitForFunction(() => (
-      getComputedStyle(document.querySelector('[data-aspect="9:16"]')).backgroundColor === 'rgb(27, 48, 57)'
+      getComputedStyle(document.querySelector('[data-aspect="9:16"]')).backgroundColor === 'rgb(44, 44, 44)'
     ));
-    assert.equal(await page.locator('[data-aspect="9:16"]').evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(27, 48, 57)');
+    assert.equal(await page.locator('[data-aspect="9:16"]').evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(44, 44, 44)');
     await page.locator('#three-d-director-movement').selectOption('dolly');
     const prompt = await page.locator('.three-d-director-prompt').inputValue();
     assert.match(prompt, /\u7279\u5199/);

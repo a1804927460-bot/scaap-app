@@ -28,9 +28,9 @@ assert.match(
 assert.match(css, /\.ai-assistant-brand\s*\{[\s\S]*?display: flex;[\s\S]*?align-items: center;/,
   'the Agent header brand should keep its mark and wordmark aligned');
 assert.match(capsuleCss, /\.ai-assistant-message\.is-assistant:not\(\.is-pending\)::before/,
-  'completed main Agent replies should keep the Messs mark');
+  'completed main Agent replies should keep the SCAAP mark');
 assert.match(capsuleCss, /#board-agent-panel \.board-agent-message\.is-assistant:not\(\.is-pending\)::before/,
-  'completed canvas Agent replies should keep the Messs mark');
+  'completed canvas Agent replies should keep the SCAAP mark');
 assert.match(html, /id="ai-assistant-sidebar-toggle"[^>]*aria-expanded="true"/,
   'the Agent history sidebar should start expanded and expose a collapse control');
 assert.match(statsSource, /sidebarToggle\.addEventListener\('click',[\s\S]*?classList\.toggle\('is-history-collapsed'\)[\s\S]*?aria-expanded/,
@@ -67,7 +67,7 @@ assert.match(css, /\.ai-assistant-upload-top\s*\{[\s\S]*?width: 38px;[\s\S]*?hei
   'the assistant attachment action should match the larger Canvas Agent action button');
 assert.match(css, /\.ai-assistant-upload-top svg \{ width: 20px; height: 20px; \}/,
   'the assistant attachment icon should not be rendered at the old tiny size');
-assert.match(css, /\.ai-assistant-mode button\.ai-assistant-upload-top\s*\{[\s\S]*?height: 38px;[\s\S]*?padding: 0;[\s\S]*?color: #fff;/,
+assert.match(css, /\.ai-assistant-mode button\.ai-assistant-upload-top\s*\{[\s\S]*?height: 38px;[\s\S]*?padding: 0;[\s\S]*?color: #(?:fff|ffffff);/,
   'the assistant attachment action should keep the Canvas Agent height and white icon after mode button rules');
 ['ai-assistant-ratio', 'ai-assistant-size', 'ai-assistant-count', 'ai-assistant-duration'].forEach((id) => {
   assert(html.includes(`data-option-picker="${id}"`), `missing canvas-style picker for ${id}`);

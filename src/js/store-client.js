@@ -20,39 +20,39 @@ const AppState = {
   viewMode: 'grid',
   gridThumbSize: 140,
   theme: 'dark',
-  language: document.documentElement.dataset.language || 'ko'
+  language: document.documentElement.dataset.language || 'zh'
 };
 
 function isZh() {
   return AppState.language === 'zh';
 }
 
-function isKo() {
-  return AppState.language === 'ko';
+function isJa() {
+  return AppState.language === 'ja';
 }
 
 function normalizeAppLanguage(language) {
   return window.MesssI18n
     ? window.MesssI18n.normalizeLanguage(language)
-    : (language === 'en' || language === 'zh' ? language : 'ko');
+    : (language === 'en' || language === 'zh' || language === 'ja' ? language : 'zh');
 }
 
 function appLocale() {
   return window.MesssI18n
     ? window.MesssI18n.localeForLanguage(AppState.language)
-    : (isZh() ? 'zh-CN' : (isKo() ? 'ko-KR' : 'en-US'));
+    : (isZh() ? 'zh-CN' : (isJa() ? 'ja-JP' : 'en-US'));
 }
 
-function t(en, zh, ko) {
+function t(en, zh) {
   if (isZh()) return zh;
-  if (isKo() && window.MesssI18n) return window.MesssI18n.translate('ko', en, ko);
+  if (isJa() && window.MesssI18n) return window.MesssI18n.translate('ja', en);
   return en;
 }
 
 function countText(count, singular, plural, zhUnit) {
   if (isZh()) return `${count} ${zhUnit}`;
   const english = `${count} ${count === 1 ? singular : plural}`;
-  return isKo() && window.MesssI18n ? window.MesssI18n.translate('ko', english) : english;
+  return isJa() && window.MesssI18n ? window.MesssI18n.translate('ja', english) : english;
 }
 
 function createLatestFrameRunner(callback) {
@@ -143,10 +143,10 @@ function formatDuration(totalSeconds) {
     if (m > 0) return `${m} 分钟 ${s % 60} 秒`;
     return `${s} 秒`;
   }
-  if (AppState.language === 'ko') {
-    if (h > 0) return `${h}시간 ${m}분`;
-    if (m > 0) return `${m}분 ${s % 60}초`;
-    return `${s}초`;
+  if (AppState.language === 'ja') {
+    if (h > 0) return `${h}時間 ${m}分`;
+    if (m > 0) return `${m}分 ${s % 60}秒`;
+    return `${s}秒`;
   }
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${s % 60}s`;

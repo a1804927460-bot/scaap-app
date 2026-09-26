@@ -69,7 +69,7 @@
 [data-theme="dark"] .messs-permission-icon { filter:invert(1); }
 #messs-permission-menu button[aria-checked="true"] .messs-permission-icon { filter:invert(38%) sepia(94%) saturate(2420%) hue-rotate(201deg) brightness(99%) contrast(101%); }
 .messs-permission-dialog { width:min(360px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;padding:20px;border:1px solid var(--border-hairline);border-radius:8px;color:var(--text-primary);background:var(--bg-elevated); }
-.messs-permission-dialog::backdrop { background:#0006; }
+.messs-permission-dialog::backdrop { background:#00000066; }
 .messs-permission-dialog h3 { font-size:15px;margin:0 0 10px; }
 .messs-permission-dialog p { font-size:12px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;color:var(--text-secondary); }
 .messs-permission-dialog footer { display:flex;justify-content:flex-end;gap:8px;margin-top:16px; }
@@ -160,7 +160,7 @@
 }
 .flatpickr-calendar .flatpickr-day { color: var(--text-primary); border-radius: 6px; }
 .flatpickr-calendar .flatpickr-day:hover { background: var(--bg-hover); border-color: var(--border-hairline); }
-.flatpickr-calendar .flatpickr-day.selected { background: var(--accent); border-color: var(--accent); color: #fff; }
+.flatpickr-calendar .flatpickr-day.selected { background: var(--accent); border-color: var(--accent); color: #ffffff; }
 .flatpickr-calendar .flatpickr-day.flatpickr-disabled,
 .flatpickr-calendar .flatpickr-day.prevMonthDay,
 .flatpickr-calendar .flatpickr-day.nextMonthDay { color: var(--text-tertiary); opacity: .55; }
@@ -185,14 +185,14 @@
 .ai-gpt25-variants { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; margin-top:10px; }
 .ai-gpt25-variants button { min-height:36px; padding:7px 10px; border:1px solid transparent; border-radius:9px; background:var(--bg-surface-2); color:var(--text-secondary); font:inherit; font-size:12px; cursor:var(--cursor-click); }
 .ai-gpt25-variants button:hover { background:var(--bg-elevated); color:var(--text-primary); }
-.ai-gpt25-variants button.is-active { background:rgba(52,156,229,.14); border-color:rgba(75,174,242,.35); color:#77c8ff; }
+.ai-gpt25-variants button.is-active { background:rgba(139, 139, 139, .14); border-color:rgba(158, 158, 158, .35); color:#bbbbbb; }
 .ai-kling-variants { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 10px 0 14px; }
 .ai-kling-variants button { min-height: 36px; padding: 7px 8px; border: 1px solid transparent; border-radius: 9px; background: var(--bg-surface-2); color: var(--text-secondary); font: inherit; font-size: 12px; cursor: var(--cursor-click); }
 .ai-kling-variants button:hover { background: var(--bg-elevated); color: var(--text-primary); }
-.ai-kling-variants button.is-active { background: rgba(52,156,229,.14); border-color: rgba(75,174,242,.35); color: #77c8ff; }
+.ai-kling-variants button.is-active { background: rgba(139, 139, 139, .14); border-color: rgba(158, 158, 158, .35); color: #bbbbbb; }
 .ai-kling-audio { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--text-secondary); }
 .ai-kling-audio label { display: flex; gap: 7px; align-items: center; cursor: var(--cursor-click); }
-.ai-kling-sound { accent-color: #45a9ed; }
+.ai-kling-sound { accent-color: #999999; }
 .ai-kling-hint { margin: 10px 0 0; font-size: 11px; line-height: 1.6; color: var(--text-secondary); }
 
 .ai-composer .ai-ratio-grid[hidden] { display: none; }
@@ -219,8 +219,8 @@
   border-radius: 20px;
   background: color-mix(in srgb, var(--bg-elevated) 97%, var(--bg-surface-2));
   box-shadow:
-    0 22px 54px rgba(15, 23, 42, .14),
-    0 5px 14px rgba(15, 23, 42, .06),
+    0 22px 54px rgba(23, 23, 23, .14),
+    0 5px 14px rgba(23, 23, 23, .06),
     inset 0 1px 0 rgba(255, 255, 255, .5);
   animation: messs-generation-composer-in var(--motion-popup-duration, 220ms) var(--motion-popup-spring, cubic-bezier(.16, 1, .3, 1)) both;
   transition:
@@ -235,7 +235,7 @@
   z-index: 0;
   pointer-events: none;
   border-radius: inherit;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 54%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 54%, transparent);
 }
 .ai-image-popover.ai-composer:not(.is-moodboard-composer) > * {
   position: relative;
@@ -245,7 +245,7 @@
   border-color: var(--composer-focus-border);
   background: color-mix(in srgb, var(--bg-elevated) 99%, var(--accent-soft));
   box-shadow:
-    0 24px 58px rgba(15, 23, 42, .17),
+    0 24px 58px rgba(23, 23, 23, .17),
     0 0 0 3px var(--composer-focus-ring),
     inset 0 1px 0 rgba(255, 255, 255, .56);
 }
@@ -254,7 +254,7 @@
   animation: messs-generation-composer-out 160ms cubic-bezier(.4, 0, 1, 1) both;
 }
 [data-theme="dark"] .ai-image-popover.ai-composer:not(.is-moodboard-composer) {
-  border-color: color-mix(in srgb, var(--border-hairline) 86%, #fff 14%);
+  border-color: color-mix(in srgb, var(--border-hairline) 86%, #ffffff 14%);
   box-shadow:
     0 24px 60px rgba(0, 0, 0, .4),
     0 5px 16px rgba(0, 0, 0, .24),
@@ -298,7 +298,7 @@
 }
 .ai-composer:not(.is-moodboard-composer) .ai-composer-mode button.is-active {
   box-shadow:
-    0 1px 4px rgba(15, 23, 42, .08),
+    0 1px 4px rgba(23, 23, 23, .08),
     inset 0 0 0 1px color-mix(in srgb, var(--border-hairline) 72%, transparent);
 }
 .ai-composer:not(.is-moodboard-composer) .ai-composer-prompt {
@@ -404,8 +404,8 @@
 ) {
   border-color: color-mix(in srgb, var(--border-hairline) 88%, var(--text-primary) 12%);
   box-shadow:
-    0 20px 48px rgba(15, 23, 42, .16),
-    0 4px 12px rgba(15, 23, 42, .06),
+    0 20px 48px rgba(23, 23, 23, .16),
+    0 4px 12px rgba(23, 23, 23, .06),
     inset 0 1px 0 rgba(255, 255, 255, .42);
 }
 [data-theme="dark"] .ai-composer :is(
@@ -427,8 +427,8 @@
   border-color: color-mix(in srgb, var(--border-hairline) 88%, var(--text-primary) 12%);
   border-radius: 14px;
   box-shadow:
-    0 22px 52px rgba(15, 23, 42, .16),
-    0 4px 12px rgba(15, 23, 42, .06),
+    0 22px 52px rgba(23, 23, 23, .16),
+    0 4px 12px rgba(23, 23, 23, .06),
     inset 0 1px 0 rgba(255, 255, 255, .42);
   animation: messs-moodboard-composer-in var(--motion-popup-duration, 220ms) var(--motion-popup-spring, cubic-bezier(.16, 1, .3, 1)) both;
 }
@@ -469,7 +469,7 @@
 }
 .ai-assistant-form::after {
   box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 45%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #ffffff 45%, transparent),
     inset 0 -1px 0 color-mix(in srgb, var(--border-hairline) 24%, transparent);
 }
 .ai-assistant-form-footer {

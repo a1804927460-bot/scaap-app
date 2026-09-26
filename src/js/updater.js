@@ -18,12 +18,12 @@ function showUpdateBanner(state = latestUpdaterState, force = false) {
   if (status === 'installing') {
     text.textContent = state.platform === 'darwin'
       ? t(
-        'The macOS update is opening. Approve the update if macOS asks, then Messs will restart automatically.',
-        '正在打开 macOS 更新，请按系统提示允许更新，Messs 会自动重启。'
+        'The macOS update is opening. Approve the update if macOS asks, then SCAAP will restart automatically.',
+        '正在打开 macOS 更新，请按系统提示允许更新，SCAAP 会自动重启。'
       )
       : t(
-        'Opening the installer. Follow its progress to finish the update; Messs will reopen when complete.',
-        '正在打开安装程序，请按安装界面查看进度并完成更新；完成后 Messs 会重新打开。'
+        'Opening the installer. Follow its progress to finish the update; SCAAP will reopen when complete.',
+        '正在打开安装程序，请按安装界面查看进度并完成更新；完成后 SCAAP 会重新打开。'
       );
     installBtn.disabled = true;
     installBtn.textContent = t('Opening installer...', '正在打开安装程序...');

@@ -19,14 +19,14 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
    await page.waitForTimeout(250);
    for(const selector of ['.is-chat-thinking','.board-agent-message']){
     const style=await page.locator(selector).evaluate(el=>({content:getComputedStyle(el,'::before').content,image:getComputedStyle(el,'::before').backgroundImage,color:getComputedStyle(el,'::before').color}));
-    assert.equal(style.content,'"Messs."');assert.match(style.image,/logo-mark\.png/);
+    assert.equal(style.content,'"SCAAP."');assert.match(style.image,/logo-mark\.png/);
     assert.equal(style.color,await page.locator(selector).evaluate(el=>getComputedStyle(el).getPropertyValue('--text-primary').trim().startsWith('#') ? getComputedStyle(document.body).color : getComputedStyle(el,'::before').color));
    }
    assert.equal(await page.locator('#media').evaluate(el=>getComputedStyle(el,'::before').content),'none');
    await page.screenshot({path:`test-artifacts/thinking-brand/${theme}.png`});
   }
   await page.locator('.board-agent-message').evaluate(el=>el.textContent='思考中... 7 秒');
-  assert.equal(await page.locator('.board-agent-message').evaluate(el=>getComputedStyle(el,'::before').content),'"Messs."');
+  assert.equal(await page.locator('.board-agent-message').evaluate(el=>getComputedStyle(el,'::before').content),'"SCAAP."');
   await page.locator('.is-chat-thinking, .board-agent-message').evaluateAll(elements=>elements.forEach(el=>el.classList.remove('is-pending')));
   assert.equal(await page.locator('.board-agent-message').evaluate(el=>getComputedStyle(el,'::before').content),'none');
   console.log('Thinking brand: both chat surfaces, themes, timer updates, completion and media exclusion passed.');

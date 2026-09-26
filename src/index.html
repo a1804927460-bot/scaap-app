@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ko" data-theme="light" data-view="main" data-language="ko" data-text-size="medium">
+<html lang="zh-CN" data-theme="light" data-view="main" data-language="zh" data-text-size="medium">
 <head>
   <meta charset="UTF-8" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: messs-file: messs-preview: messs-thumb: https://*.supabase.co; media-src 'self' messs-file: messs-transcode: https://*.supabase.co; font-src 'self'; connect-src messs-file: blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none';" />
-  <title>Messs. - Resolve your confusion</title>
+  <title>SCAAP</title>
   <script src="js/startup-theme.js"></script>
   <link rel="stylesheet" href="styles/theme.css" />
   <link rel="stylesheet" href="styles/start.css" />
@@ -23,8 +23,12 @@
   <link rel="stylesheet" href="styles/three-d-director.css" />
   <link rel="stylesheet" href="styles/canvas-generation-history.css" />
   <link rel="stylesheet" href="styles/ui-motion.css" />
+  <link rel="stylesheet" href="styles/scaap.css" />
 </head>
 <body>
+  <div id="scaap-launch" class="scaap-launch" role="presentation" hidden>
+    <video id="scaap-launch-video" src="assets/scaap-startup.mp4" preload="auto" playsinline muted poster="assets/scaap-startup-poster.png"></video>
+  </div>
   <div id="app-titlebar" class="app-titlebar">
     <div class="titlebar-drag-region"></div>
     <div class="titlebar-window-controls">
@@ -42,7 +46,7 @@
 
   <div id="activation-overlay" class="activation-overlay" hidden>
     <section class="activation-dialog" role="dialog" aria-modal="true" aria-labelledby="activation-title">
-      <div class="activation-brand">Messs<span>.</span></div>
+      <div class="activation-brand">SCAAP</div>
       <p class="activation-kicker">DEVELOPMENT ACCESS</p>
       <h1 id="activation-title">Activate this build</h1>
       <p class="activation-copy">Enter the testing activation code to continue.</p>
@@ -54,36 +58,36 @@
         </div>
         <p id="activation-error" class="activation-error" role="alert" hidden>Invalid activation code.</p>
       </form>
-      <small>Development v0.0.2</small>
+      <small>V0.0.1</small>
     </section>
   </div>
 
   <div id="account-auth-screen" class="account-auth-screen" hidden aria-hidden="true">
     <section class="account-auth-card" role="dialog" aria-modal="true" aria-labelledby="account-auth-title">
-      <div class="account-auth-brand" aria-label="Messs">
+      <div class="account-auth-brand" aria-label="SCAAP">
         <img src="assets/logo-mark.png" alt="" draggable="false" />
-        <span>Messs<span aria-hidden="true">.</span></span>
+        <span>SCAAP</span>
       </div>
-      <h1 id="account-auth-title" data-i18n-en="Sign in to continue" data-i18n-zh="登录以继续" data-i18n-ko="계속하려면 로그인하세요">Sign in to continue</h1>
+      <h1 id="account-auth-title" data-i18n-en="Sign in to continue" data-i18n-zh="登录以继续" data-i18n-ja="ログインして続行">Sign in to continue</h1>
 
       <form id="account-auth-form" class="account-auth-form" novalidate>
         <button id="account-auth-google" class="account-auth-google" type="button">
           <span class="account-auth-google-mark" aria-hidden="true">G</span>
-          <span data-i18n-en="Continue with Google" data-i18n-zh="使用 Google 登录" data-i18n-ko="Google로 계속하기">Continue with Google</span>
+          <span data-i18n-en="Continue with Google" data-i18n-zh="使用 Google 登录" data-i18n-ja="Google で続行">Continue with Google</span>
         </button>
 
-        <p class="account-auth-google-note" data-i18n-en="Use your Google account to keep points, files, and canvases synced." data-i18n-zh="使用 Google 账号同步积分、文件和画布。" data-i18n-ko="Google 계정으로 포인트, 파일, 캔버스를 동기화하세요.">Use your Google account to keep points, files, and canvases synced.</p>
+        <p class="account-auth-google-note" data-i18n-en="Use your Google account to keep points, files, and canvases synced." data-i18n-zh="使用 Google 账号同步积分、文件和画布。" data-i18n-ja="Google アカウントでポイント、ファイル、キャンバスを同期できます。">Use your Google account to keep points, files, and canvases synced.</p>
 
         <div id="account-auth-email-fallback" class="account-auth-email-fallback" hidden aria-hidden="true">
           <div class="account-auth-divider">
-            <span data-i18n-en="Legacy account access" data-i18n-zh="旧账号登录" data-i18n-ko="기존 계정 로그인">Legacy account access</span>
+            <span data-i18n-en="Legacy account access" data-i18n-zh="旧账号登录" data-i18n-ja="以前のアカウントでログイン">Legacy account access</span>
           </div>
           <label for="account-auth-email">
-            <span data-i18n-en="Email" data-i18n-zh="邮箱" data-i18n-ko="이메일">Email</span>
+            <span data-i18n-en="Email" data-i18n-zh="邮箱" data-i18n-ja="メールアドレス">Email</span>
             <input id="account-auth-email" type="email" autocomplete="email" inputmode="email" />
           </label>
           <label for="account-auth-password">
-            <span data-i18n-en="Password" data-i18n-zh="密码" data-i18n-ko="비밀번호">Password</span>
+            <span data-i18n-en="Password" data-i18n-zh="密码" data-i18n-ja="パスワード">Password</span>
             <span class="account-auth-password-field">
               <input id="account-auth-password" type="password" autocomplete="current-password" minlength="8" />
               <button id="account-auth-password-toggle" type="button" title="Show password" aria-label="Show password" aria-pressed="false">
@@ -95,14 +99,14 @@
           <p id="account-auth-status" class="account-auth-status" role="status" aria-live="polite" hidden></p>
           <button id="account-auth-submit" class="account-auth-submit" type="submit">Sign In</button>
           <footer class="account-auth-footer">
-            <button id="account-auth-forgot" type="button" data-i18n-en="Forgot password?" data-i18n-zh="忘记密码？" data-i18n-ko="비밀번호를 잊으셨나요?">Forgot password?</button>
+            <button id="account-auth-forgot" type="button" data-i18n-en="Forgot password?" data-i18n-zh="忘记密码？" data-i18n-ja="パスワードをお忘れですか？">Forgot password?</button>
             <button id="account-auth-mode-toggle" type="button">No account? Create one</button>
           </footer>
         </div>
         <nav class="account-auth-legal" aria-label="Legal documents">
-          <button type="button" data-auth-legal="privacy" data-i18n-en="Privacy" data-i18n-zh="隐私协议" data-i18n-ko="개인정보 보호">Privacy</button>
-          <button type="button" data-auth-legal="terms" data-i18n-en="Terms" data-i18n-zh="用户协议" data-i18n-ko="이용 약관">Terms</button>
-          <button type="button" data-auth-legal="content" data-i18n-en="Content rules" data-i18n-zh="内容规范" data-i18n-ko="콘텐츠 규정">Content rules</button>
+          <button type="button" data-auth-legal="privacy" data-i18n-en="Privacy" data-i18n-zh="隐私协议" data-i18n-ja="プライバシー">Privacy</button>
+          <button type="button" data-auth-legal="terms" data-i18n-en="Terms" data-i18n-zh="用户协议" data-i18n-ja="利用規約">Terms</button>
+          <button type="button" data-auth-legal="content" data-i18n-en="Content rules" data-i18n-zh="内容规范" data-i18n-ja="コンテンツ規約">Content rules</button>
         </nav>
       </form>
     </section>
@@ -118,8 +122,7 @@
   <div id="section-messs" class="app-section is-active">
     <section id="start-screen" class="start-screen" hidden>
       <div class="start-content">
-        <h1 class="start-title">M<span class="title-e">e</span><span class="sss-wrap"><span class="sss-char">s</span><span class="sss-char">s</span><span class="sss-char">s</span><span class="sss-char start-title-dot">.</span></span></h1>
-        <p class="start-subtitle">Resolve your confusion</p>
+        <h1 class="start-title">SCAAP</h1>
         <button id="start-btn" class="start-btn" aria-label="Start">
           <span class="start-btn-icon">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -140,7 +143,7 @@
         <div class="sidebar-brand-row">
         <button id="sidebar-brand-btn" class="sidebar-brand" title="Restore default layout" aria-label="Restore default layout">
           <img class="brand-mark" src="assets/logo-mark.png" alt="" draggable="false" />
-          <span class="brand-word">Messs<span class="brand-dot">.</span></span>
+          <span class="brand-word">SCAAP</span>
         </button>
         <button id="collapse-sidebar-btn" class="sidebar-collapse-toggle" type="button" title="收起侧边栏" aria-label="收起侧边栏" aria-expanded="true" aria-controls="sidebar">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>
@@ -185,7 +188,7 @@
         <div class="sidebar-footer account-footer">
           <button id="account-menu-open" class="account-footer-main" type="button" aria-label="Account and settings">
             <span id="account-footer-avatar" class="account-avatar">M</span>
-            <span class="account-footer-copy"><strong id="account-footer-name" data-profile-field="name">Messs user</strong><small id="account-footer-signature" data-profile-field="signature"></small></span>
+            <span class="account-footer-copy"><strong id="account-footer-name" data-profile-field="name">SCAAP user</strong><small id="account-footer-signature" data-profile-field="signature"></small></span>
             <span id="account-footer-credits" class="account-footer-credits" aria-label="Points unavailable" title="Points unavailable"><i aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13.5 2 4 14h7l-.5 8L20 10h-7z"/></svg></i><b>...</b><small></small></span>
           </button>
         </div>
@@ -202,7 +205,7 @@
               </span>
             </span>
             <span class="account-profile-copy">
-              <strong id="account-popover-name" class="account-profile-editable" data-profile-field="name">Messs user</strong>
+              <strong id="account-popover-name" class="account-profile-editable" data-profile-field="name">SCAAP user</strong>
               <small id="account-popover-signature" class="account-profile-editable" data-profile-field="signature"></small>
             </span>
           </div>
@@ -294,7 +297,7 @@
           <div id="preview-folder-grid" class="preview-folder-grid" hidden></div>
           <div id="preview-unsupported" class="preview-unsupported" hidden>
             <div class="generic-file-icon" id="preview-unsupported-icon">FILE</div>
-            <p id="preview-unsupported-title">This file cannot be previewed inside Messs.</p>
+            <p id="preview-unsupported-title">This file cannot be previewed inside SCAAP.</p>
             <p id="preview-unsupported-detail" class="preview-empty-sub"></p>
             <div class="preview-unsupported-actions">
               <button id="preview-open-external" class="pill-btn">Open in Default App</button>
@@ -353,7 +356,7 @@
               <div class="sidebar-footer account-footer ai-account-footer">
                 <button id="ai-account-menu-open" class="account-footer-main" type="button" aria-label="Account and settings" data-i18n-aria-label-en="Account and settings" data-i18n-aria-label-zh="账户与设置">
                   <span id="ai-account-footer-avatar" class="account-avatar">M</span>
-                  <span class="account-footer-copy"><strong id="ai-account-footer-name">Messs user</strong><small id="ai-account-footer-signature"></small></span>
+                  <span class="account-footer-copy"><strong id="ai-account-footer-name">SCAAP user</strong><small id="ai-account-footer-signature"></small></span>
                   <span id="ai-account-footer-credits" class="account-footer-credits"><i aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13.5 2 4 14h7l-.5 8L20 10h-7z"/></svg></i><b>...</b><small></small></span>
                 </button>
               </div>
@@ -478,9 +481,9 @@
             <span id="board-panel-title" class="panel-title">All Canvases</span>
           </div>
           <div class="panel-tools">
-            <button id="board-agent-toggle" class="pill-btn pill-btn-ghost board-workspace-only" type="button" title="Messs Agent" aria-label="Messs Agent" aria-expanded="false">
+            <button id="board-agent-toggle" class="pill-btn pill-btn-ghost board-workspace-only" type="button" title="SCAAP Agent" aria-label="SCAAP Agent" aria-expanded="false">
               <img class="board-agent-toggle-icon" src="assets/icons/lucide/message-square.svg" alt="" aria-hidden="true" draggable="false" />
-              <span class="board-agent-toggle-label">Messs Agent</span>
+              <span class="board-agent-toggle-label">SCAAP Agent</span>
             </button>
             <button id="board-zoom-out" class="icon-btn-sm board-workspace-only" title="Zoom out" aria-label="Zoom out">-</button>
             <button id="board-zoom-label" class="zoom-label zoom-reset-button board-workspace-only" type="button" title="Reset to 100%" aria-label="Reset canvas zoom to 100%">100%</button>
@@ -543,10 +546,10 @@
           <aside id="board-agent-panel" class="board-agent-panel is-hidden" data-board-ui-layer="true">
             <div id="board-agent-drag" aria-hidden="true">
               <img src="assets/logo-mark.png" alt="" draggable="false" />
-              <span>Messs Agent</span>
+              <span>SCAAP Agent</span>
             </div>
             <button id="board-agent-detach" class="board-agent-history-toggle" type="button" title="取下 Agent" aria-label="取下 Agent" aria-pressed="false"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3h7v7M21 3l-9 9M10 5H4v15h15v-6"/></svg></button>
-            <button id="board-agent-close" class="board-agent-close" type="button" title="Close Messs Agent" aria-label="Close Messs Agent">
+            <button id="board-agent-close" class="board-agent-close" type="button" title="Close SCAAP Agent" aria-label="Close SCAAP Agent">
               <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg>
             </button>
             <button id="board-agent-history" class="board-agent-history-toggle" type="button" title="Conversation history" aria-label="Conversation history" aria-expanded="false">
@@ -566,7 +569,7 @@
             <div id="board-agent-messages" class="board-agent-messages" aria-live="polite">
               <div id="board-agent-welcome" class="board-agent-welcome">
                 <img src="assets/logo-mark.png" alt="" draggable="false" />
-                <strong>Messs Agent</strong>
+                <strong>SCAAP Agent</strong>
                 <span>Solve your problem.</span>
               </div>
             </div>
@@ -727,7 +730,7 @@
           <button class="board-watermark-backdrop" type="button" aria-label="Close"></button>
           <section class="board-watermark-dialog" role="dialog" aria-modal="true" aria-labelledby="board-watermark-title">
             <header class="board-watermark-header">
-              <div><small>Messs creation settings</small><h2 id="board-watermark-title">Messs AI generation mark</h2></div>
+              <div><small>SCAAP creation settings</small><h2 id="board-watermark-title">SCAAP AI generation mark</h2></div>
               <button id="board-watermark-close" type="button" aria-label="Close">
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg>
               </button>
@@ -784,7 +787,7 @@
                 <div class="language-switch preference-choice-switch" role="group" aria-label="Language">
                   <button class="language-opt" data-language-choice="en">English</button>
                   <button class="language-opt" data-language-choice="zh">中文</button>
-                  <button class="language-opt is-active" data-language-choice="ko">한국어</button>
+                  <button class="language-opt" data-language-choice="ja">日本語</button>
                 </div>
               </div>
               <div class="preference-settings-row text-size-settings-row">
@@ -848,17 +851,17 @@
           </section>
 
           <section class="ai-provider-section settings-account-actions-section">
-            <button id="account-sign-out" class="account-sign-out" type="button" hidden><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg><span data-i18n-en="Sign Out" data-i18n-zh="退出登录" data-i18n-ko="로그아웃">Sign Out</span></button>
+            <button id="account-sign-out" class="account-sign-out" type="button" hidden><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg><span data-i18n-en="Sign Out" data-i18n-zh="退出登录" data-i18n-ja="ログアウト">Sign Out</span></button>
             <nav class="settings-legal-links" aria-label="Legal documents">
-              <button type="button" data-auth-legal="privacy" data-i18n-en="Privacy" data-i18n-zh="隐私协议" data-i18n-ko="개인정보 보호">Privacy</button>
-              <button type="button" data-auth-legal="terms" data-i18n-en="Terms" data-i18n-zh="用户协议" data-i18n-ko="이용 약관">Terms</button>
-              <button type="button" data-auth-legal="content" data-i18n-en="Content rules" data-i18n-zh="内容规范" data-i18n-ko="콘텐츠 규정">Content rules</button>
+              <button type="button" data-auth-legal="privacy" data-i18n-en="Privacy" data-i18n-zh="隐私协议" data-i18n-ja="プライバシー">Privacy</button>
+              <button type="button" data-auth-legal="terms" data-i18n-en="Terms" data-i18n-zh="用户协议" data-i18n-ja="利用規約">Terms</button>
+              <button type="button" data-auth-legal="content" data-i18n-en="Content rules" data-i18n-zh="内容规范" data-i18n-ja="コンテンツ規約">Content rules</button>
             </nav>
           </section>
 
           <section class="ai-provider-section cloud-security-section" hidden aria-hidden="true">
             <div class="ai-provider-section-heading">
-              <div><strong>Cloud Account</strong><small>Secure access to Messs AI Gateway</small></div>
+              <div><strong>Cloud Account</strong><small>Secure access to SCAAP AI Gateway</small></div>
               <span id="cloud-security-state">Not configured</span>
             </div>
             <div id="cloud-account-signed-out" class="cloud-account-form">
@@ -1172,7 +1175,7 @@
   </div>
 
   <template id="removed-chat-ui">
-    <div id="chat-shell" class="chat-shell" aria-label="Messs Chat">
+    <div id="chat-shell" class="chat-shell" aria-label="SCAAP Chat">
       <nav class="chat-nav-rail" aria-label="Chat navigation">
         <button id="chat-rail-avatar" class="chat-rail-avatar" type="button" title="Right-click to change profile image" aria-label="Profile image; right-click to change">M</button>
         <div class="chat-nav-actions">
@@ -1304,7 +1307,7 @@
         <section class="chat-profile-modal" role="dialog" aria-modal="true" aria-labelledby="chat-profile-name">
           <header><strong>账号资料</strong><button id="chat-profile-close" class="chat-icon-button" type="button" aria-label="关闭">x</button></header>
           <div class="chat-profile-summary"><span id="chat-profile-avatar" class="chat-avatar">M</span><div><strong id="chat-profile-name"></strong><small id="chat-profile-email"></small></div></div>
-          <dl><div><dt>Messs ID</dt><dd id="chat-profile-id"></dd></div></dl>
+          <dl><div><dt>SCAAP ID</dt><dd id="chat-profile-id"></dd></div></dl>
         </section>
       </div>
 
@@ -1328,155 +1331,11 @@
           <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10z"/><path d="M3 22a9 9 0 0 1 18 0"/></svg>
         </span>
         <strong>Sign in to start chatting</strong>
-        <small>Sign in to Messs from More Settings</small>
+        <small>Sign in to SCAAP from More Settings</small>
         <button id="chat-open-settings" type="button">Open Settings</button>
       </div>
     </div>
   </template>
-  <div id="section-market" class="app-section app-surface-dialog market-section" role="dialog" aria-modal="true" aria-labelledby="market-surface-title" aria-hidden="true">
-    <div class="market-shell" data-app-surface-panel tabindex="-1">
-      <button class="icon-btn-sm app-surface-close" type="button" data-close-app-surface="market" aria-label="Close market">
-        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
-      </button>
-      <header class="market-header">
-        <div class="market-heading">
-          <span class="market-kicker">Messs Market</span>
-          <h1 id="market-surface-title">Plugins, presets and templates</h1>
-        </div>
-        <label class="market-search" for="market-search-input">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
-          <input id="market-search-input" type="search" autocomplete="off" placeholder="Search market" />
-        </label>
-      </header>
-      <div class="market-toolbar">
-        <div id="market-categories" class="market-categories" role="tablist" aria-label="Market categories">
-          <button class="is-active" type="button" data-market-category="all" aria-selected="true">All</button>
-          <button type="button" data-market-category="software" aria-selected="false">软件</button>
-          <button type="button" data-market-category="plugin" aria-selected="false">Plugins</button>
-          <button type="button" data-market-category="preset" aria-selected="false">Presets</button>
-          <button type="button" data-market-category="template" aria-selected="false">Templates</button>
-        </div>
-        <label class="market-sort-label">Sort
-          <select id="market-sort">
-            <option value="featured">Featured</option>
-            <option value="newest">Newest</option>
-            <option value="name">Name</option>
-          </select>
-        </label>
-      </div>
-      <main id="market-grid" class="market-grid" aria-live="polite"></main>
-      <div id="market-empty" class="market-empty" hidden>No matching items.</div>
-    </div>
-    <div id="market-detail-overlay" class="market-detail-overlay" hidden>
-      <section class="market-detail" role="dialog" aria-modal="true" aria-labelledby="market-detail-title">
-        <button id="market-detail-close" class="icon-btn-sm market-detail-close" type="button" aria-label="Close">x</button>
-        <div id="market-detail-visual" class="market-detail-visual"></div>
-        <span id="market-detail-category" class="market-detail-category"></span>
-        <h2 id="market-detail-title"></h2>
-        <p id="market-detail-description"></p>
-        <div class="market-detail-meta"><span>Messs Studio</span><span id="market-detail-version"></span></div>
-        <button id="market-detail-action" class="market-detail-action" type="button" disabled>Coming soon</button>
-      </section>
-    </div>
-  </div>
-  <div id="section-workshop" class="app-section app-surface-dialog workshop-section" role="dialog" aria-modal="true" aria-labelledby="workshop-surface-title" aria-hidden="true">
-    <div class="workshop-shell" data-app-surface-panel tabindex="-1">
-      <button class="icon-btn-sm app-surface-close" type="button" data-close-app-surface="workshop" aria-label="关闭创意工坊">
-        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
-      </button>
-      <header class="workshop-header">
-        <div class="workshop-heading">
-          <span class="workshop-kicker">Messs Workshop</span>
-          <h1 id="workshop-surface-title">创意工坊</h1>
-          <p>从画布分享灵感，按热度发现好作品。</p>
-        </div>
-        <button id="workshop-publish-open" class="workshop-publish-button" type="button">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>
-          <span>分享作品</span>
-        </button>
-      </header>
-      <div class="workshop-toolbar">
-        <div id="workshop-categories" class="workshop-categories" role="tablist" aria-label="Workshop categories">
-          <button type="button" class="is-active" data-workshop-category="all" aria-selected="true">全部</button>
-          <button type="button" data-workshop-category="image" aria-selected="false">图片</button>
-          <button type="button" data-workshop-category="video" aria-selected="false">视频</button>
-          <button type="button" data-workshop-category="mine" aria-selected="false">我的分享</button>
-        </div>
-        <div class="workshop-toolbar-actions">
-          <label class="workshop-search" for="workshop-search-input">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
-            <input id="workshop-search-input" type="search" autocomplete="off" placeholder="搜索作品" />
-          </label>
-          <label class="workshop-sort-label">排序
-            <select id="workshop-sort">
-              <option value="hot">点击热度</option>
-              <option value="newest">最新发布</option>
-            </select>
-          </label>
-        </div>
-      </div>
-      <main id="workshop-grid" class="workshop-grid" aria-live="polite"></main>
-      <div id="workshop-empty" class="workshop-empty" hidden>
-        <strong>还没有分享内容</strong>
-        <span>在画布选中图片或视频，再点击右上角分享。</span>
-      </div>
-    </div>
-
-    <div id="workshop-publish-overlay" class="workshop-overlay" hidden>
-      <section class="workshop-dialog" role="dialog" aria-modal="true" aria-labelledby="workshop-publish-title">
-        <header class="workshop-dialog-header">
-          <div><span class="workshop-dialog-kicker">Workshop</span><h2 id="workshop-publish-title">分享作品</h2></div>
-          <button id="workshop-publish-close" class="icon-btn-sm" type="button" aria-label="关闭">x</button>
-        </header>
-        <div id="workshop-publish-selection" class="workshop-publish-selection"></div>
-        <button id="workshop-select-from-canvas" class="workshop-secondary-button" type="button">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 16l5-5 4 4 3-3 6 6"/></svg>
-          <span>回到画布选择</span>
-        </button>
-        <form id="workshop-publish-form" class="workshop-publish-form">
-          <label><span>标题</span><input id="workshop-publish-name" maxlength="80" required /></label>
-          <label><span>描述</span><textarea id="workshop-publish-description" rows="3" maxlength="300" placeholder="写一句简短介绍"></textarea></label>
-          <label><span>标签</span><input id="workshop-publish-tags" maxlength="120" placeholder="例如：海报、产品、灵感" /></label>
-          <div class="workshop-publish-footer"><span id="workshop-publish-status" role="status"></span><button class="workshop-primary-button" type="submit">发布分享</button></div>
-        </form>
-      </section>
-    </div>
-
-    <div id="workshop-detail-overlay" class="workshop-overlay" hidden>
-      <section class="workshop-dialog workshop-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="workshop-detail-title">
-        <button id="workshop-detail-close" class="icon-btn-sm workshop-detail-close" type="button" aria-label="关闭">x</button>
-        <div id="workshop-detail-media" class="workshop-detail-media"></div>
-        <div class="workshop-detail-copy">
-          <span id="workshop-detail-type" class="workshop-card-type"></span>
-          <div class="workshop-copy-field workshop-copy-title">
-            <h2 id="workshop-detail-title"></h2>
-            <button id="workshop-copy-title" class="workshop-copy-button" type="button" title="复制标题" aria-label="复制标题"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></button>
-          </div>
-          <div id="workshop-detail-description-row" class="workshop-copy-field workshop-copy-description">
-            <p id="workshop-detail-description"></p>
-            <button id="workshop-copy-description" class="workshop-copy-button" type="button" title="复制描述" aria-label="复制描述"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></button>
-          </div>
-          <div id="workshop-detail-tags" class="workshop-detail-tags"></div>
-          <section id="workshop-detail-prompt" class="workshop-detail-prompt" hidden><header><span>图片提示词</span><button id="workshop-copy-prompt" class="workshop-copy-button" type="button" title="复制提示词" aria-label="复制提示词"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></button></header><p></p></section>
-        </div>
-        <div class="workshop-detail-meta"><span id="workshop-detail-author"></span><span id="workshop-detail-created"></span></div>
-        <div class="workshop-detail-actions"><button id="workshop-detail-like" class="workshop-secondary-button" type="button"></button><button id="workshop-detail-share" class="workshop-secondary-button" type="button"></button><button id="workshop-detail-delete" class="workshop-secondary-button is-danger" type="button" hidden>删除作品</button><button id="workshop-detail-canvas" class="workshop-primary-button" type="button"></button></div>
-      </section>
-    </div>
-    <div id="workshop-canvas-target-overlay" class="workshop-overlay workshop-canvas-target-overlay" hidden>
-      <section class="workshop-dialog workshop-canvas-target-dialog" role="dialog" aria-modal="true" aria-labelledby="workshop-canvas-target-title">
-        <header class="workshop-dialog-header">
-          <div><span id="workshop-canvas-target-kicker" class="workshop-card-type">Canvas</span><h2 id="workshop-canvas-target-title">选择目标画布</h2></div>
-          <button id="workshop-canvas-target-close" class="icon-btn-sm" type="button" aria-label="关闭">x</button>
-        </header>
-        <p id="workshop-canvas-target-description" class="workshop-canvas-target-description">选择后，作品图片和提示词会一起发送到该画布。</p>
-        <div id="workshop-canvas-target-list" class="workshop-canvas-target-list" role="listbox" aria-label="目标画布"></div>
-        <div id="workshop-canvas-target-empty" class="workshop-selection-empty" hidden>还没有可用画布。</div>
-        <footer class="workshop-canvas-target-footer"><span id="workshop-canvas-target-status" role="status"></span><div><button id="workshop-canvas-target-cancel" class="workshop-secondary-button" type="button">取消</button><button id="workshop-canvas-target-confirm" class="workshop-primary-button" type="button">发送到画布</button></div></footer>
-      </section>
-    </div>
-  </div>
-
   <div id="canvas-usage-overlay" class="canvas-usage-overlay" hidden>
     <section class="canvas-usage-dialog" role="dialog" aria-modal="true" aria-labelledby="canvas-usage-title">
       <header class="canvas-usage-header">
@@ -1544,12 +1403,10 @@
   <script src="js/credit-access.js"></script>
   <script src="../node_modules/flatpickr/dist/flatpickr.min.js"></script>
   <script src="../node_modules/flatpickr/dist/l10n/zh.js"></script>
-  <script src="../node_modules/flatpickr/dist/l10n/ko.js"></script>
+  <script src="../node_modules/flatpickr/dist/l10n/ja.js"></script>
   <script src="js/usage-settings.js"></script>
   <script src="js/model-badges.js"></script>
   <script src="js/titlebar.js"></script>
-  <script src="js/market.js"></script>
-  <script src="js/workshop.js"></script>
   <script src="js/theme.js"></script>
   <script src="js/start-screen.js"></script>
   <script src="js/context-menu.js"></script>

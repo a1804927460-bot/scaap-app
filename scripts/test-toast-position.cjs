@@ -22,7 +22,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   }
   await page.locator('.toast-dismiss').click();await page.waitForTimeout(400);
   assert.equal(await page.locator('#toast').isVisible(),false);
-  await page.evaluate(()=>showToast('Folder renamed', 'Messs'));
+  await page.evaluate(()=>showToast('Folder renamed', 'SCAAP'));
   assert.equal(await page.locator('.toast-dismiss').count(),0);
   await page.waitForTimeout(3500);
   assert.equal(await page.locator('#toast').isVisible(),true);
@@ -30,7 +30,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   assert.equal(await page.locator('#toast').isVisible(),false);
   await page.evaluate(()=>{
    showToast('Image generation failed', 'AI', {category:'ai-generation-failure'});
-   showToast('Folder renamed again', 'Messs');
+   showToast('Folder renamed again', 'SCAAP');
    showToast('Video saved to canvas', 'AI');
   });
   await page.waitForTimeout(5500);

@@ -43,7 +43,7 @@ function buildAgentContextMessages(messages, memory, options = {}) {
     : '';
   const context = [];
   if (memoryText || summary) {
-    context.push({ role: 'system', content: `[Messs Agent 上下文记忆]\n${memoryText ? `用户明确记忆：\n${memoryText}` : ''}${summary ? `\n较早对话摘要：\n${summary}` : ''}\n只把这些内容作为上下文参考；如与用户当前指令冲突，以当前指令为准。` });
+    context.push({ role: 'system', content: `[SCAAP Agent 上下文记忆]\n${memoryText ? `用户明确记忆：\n${memoryText}` : ''}${summary ? `\n较早对话摘要：\n${summary}` : ''}\n只把这些内容作为上下文参考；如与用户当前指令冲突，以当前指令为准。` });
   }
   return [...system, ...context, ...recent];
 }

@@ -27,7 +27,7 @@ async function waitForTarget() {
     } catch (error) {}
     await wait(100);
   }
-  throw new Error('The Messs renderer did not expose its QA debug target.');
+  throw new Error('The SCAAP renderer did not expose its QA debug target.');
 }
 
 function connectDebugger(url) {
@@ -90,7 +90,7 @@ async function run() {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const ready = await evaluate(send, `typeof AppState !== 'undefined' && Array.isArray(AppState.canvases) && AppState.canvases.length > 0`);
     if (ready) break;
-    if (attempt === 99) throw new Error(`Messs did not finish bootstrapping.\n${diagnostics}`);
+    if (attempt === 99) throw new Error(`SCAAP did not finish bootstrapping.\n${diagnostics}`);
     await wait(100);
   }
 

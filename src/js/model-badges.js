@@ -51,7 +51,7 @@ function aiModelIcon(kind) {
 
 function localizedModelDescription(values) {
   const language = document.documentElement?.dataset.language || 'en';
-  return language === 'zh' ? values[1] : language === 'ko' ? values[2] : values[0];
+  return language === 'zh' ? values[1] : values[0];
 }
 
 function appendAiModelLabel(container, provider, options = {}) {

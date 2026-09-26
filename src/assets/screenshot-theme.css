@@ -1,14 +1,14 @@
-/* Messs screenshot editor theme. The editor is a separate BrowserView, so
+/* SCAAP screenshot editor theme. The editor is a separate BrowserView, so
    this file is injected by the main process instead of the app stylesheet. */
 :root {
   color-scheme: dark;
-  --messs-shot-panel: rgba(24, 27, 33, 0.96);
+  --messs-shot-panel: rgba(27, 27, 27, 0.96);
   --messs-shot-panel-border: rgba(255, 255, 255, 0.14);
-  --messs-shot-icon: #d9e1ec;
-  --messs-shot-icon-muted: #7f8b9a;
+  --messs-shot-icon: #e0e0e0;
+  --messs-shot-icon-muted: #8a8a8a;
   --messs-shot-hover: rgba(255, 255, 255, 0.1);
-  --messs-shot-active: rgba(63, 147, 255, 0.22);
-  --messs-shot-accent: #4da3ff;
+  --messs-shot-active: rgba(137, 137, 137, 0.22);
+  --messs-shot-accent: #979797;
 }
 
 .screenshots-operations {
@@ -49,15 +49,15 @@
 }
 
 .screenshots-button-checked {
-  color: #f3f8ff;
+  color: #f7f7f7;
   background: var(--messs-shot-active);
-  outline: 1px solid rgba(77, 163, 255, 0.42);
-  box-shadow: inset 0 0 0 1px rgba(77, 163, 255, 0.08);
+  outline: 1px solid rgba(151, 151, 151, 0.42);
+  box-shadow: inset 0 0 0 1px rgba(151, 151, 151, 0.08);
 }
 
 .screenshots-button-checked:hover {
-  background: rgba(63, 147, 255, 0.3);
-  outline-color: rgba(126, 190, 255, 0.62);
+  background: rgba(137, 137, 137, 0.3);
+  outline-color: rgba(181, 181, 181, 0.62);
 }
 
 .screenshots-button-disabled,
@@ -71,16 +71,16 @@
 .screenshots-button:has(.icon-ok) {
   color: #ffffff;
   background: var(--messs-shot-accent);
-  box-shadow: 0 3px 10px rgba(77, 163, 255, 0.26);
+  box-shadow: 0 3px 10px rgba(151, 151, 151, 0.26);
 }
 
 .screenshots-button:has(.icon-ok):hover {
-  background: #6ab2ff;
+  background: #a8a8a8;
 }
 
 .screenshots-button:has(.icon-cancel):hover {
   color: #ffffff;
-  background: rgba(255, 124, 134, 0.2);
+  background: rgba(153, 153, 153, 0.2);
 }
 
 .screenshots-operations-divider {
@@ -128,17 +128,17 @@
 }
 
 .screenshots-size-pointer {
-  background: #aab6c5;
+  background: #b5b5b5;
 }
 
 .screenshots-size-active > .screenshots-size-pointer {
   background: var(--messs-shot-accent);
-  box-shadow: 0 0 0 2px rgba(77, 163, 255, 0.22);
+  box-shadow: 0 0 0 2px rgba(151, 151, 151, 0.22);
 }
 
 .screenshots-canvas-size {
-  color: #f7fbff;
-  background: rgba(16, 19, 24, 0.94);
+  color: #fafafa;
+  background: rgba(19, 19, 19, 0.94);
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 6px;
   padding: 4px 8px;
@@ -154,7 +154,7 @@
 .screenshots-canvas-border-bottom,
 .screenshots-canvas-border-left {
   background: var(--messs-shot-accent);
-  box-shadow: 0 0 0 1px rgba(77, 163, 255, 0.08), 0 0 8px rgba(77, 163, 255, 0.28);
+  box-shadow: 0 0 0 1px rgba(151, 151, 151, 0.08), 0 0 8px rgba(151, 151, 151, 0.28);
 }
 
 .screenshots-canvas-border-top,
@@ -177,12 +177,12 @@
 .screenshots-canvas-point-left-top {
   width: 8px;
   height: 8px;
-  background: #f6fbff;
+  background: #fafafa;
   border: 2px solid var(--messs-shot-accent);
-  box-shadow: 0 0 0 1px rgba(16, 19, 24, 0.6), 0 0 8px rgba(77, 163, 255, 0.36);
+  box-shadow: 0 0 0 1px rgba(19, 19, 19, 0.6), 0 0 8px rgba(151, 151, 151, 0.36);
 }
 
 .screenshots-textarea {
   border-color: var(--messs-shot-accent);
-  box-shadow: 0 0 0 1px rgba(77, 163, 255, 0.12);
+  box-shadow: 0 0 0 1px rgba(151, 151, 151, 0.12);
 }

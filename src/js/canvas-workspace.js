@@ -114,7 +114,7 @@ function applyRemoteCanvasStateChange(payload = {}) {
   const active = activeCanvasRecord();
   const title = document.getElementById('board-panel-title');
   if (title && active) title.textContent = active.name;
-  if (isDetachedCanvasWindow() && active) document.title = `${active.name} - Messs.`;
+  if (isDetachedCanvasWindow() && active) document.title = `${active.name} - SCAAP.`;
   if (document.getElementById('board-panel').classList.contains('is-canvas-library')) renderCanvasLibrary();
 }
 
@@ -367,7 +367,7 @@ function clearCanvasAgentMessages() {
     const welcome = document.createElement('div');
     welcome.id = 'board-agent-welcome';
     welcome.className = 'board-agent-welcome';
-    welcome.innerHTML = '<img src="assets/logo-mark.png" alt="" draggable="false"><strong>Messs Agent</strong><span></span>';
+    welcome.innerHTML = '<img src="assets/logo-mark.png" alt="" draggable="false"><strong>SCAAP Agent</strong><span></span>';
     welcome.querySelector('span').textContent = t('Solve your problem.', '\u89e3\u51b3\u4f60\u7684\u95ee\u9898\u3002');
     list.appendChild(welcome);
   }
@@ -1696,7 +1696,7 @@ async function promptImportCanvas() {
       ? activeProject.id
       : scopedProjects[0].id);
   const projectId = await showCanvasFolderDialog({
-    title: t('Import .Messs canvas', '导入 .Messs 画布'),
+    title: t('Import .SCAAP canvas', '导入 .SCAAP 画布'),
     projectId: targetProjectId,
     folderLabel: t('Import into folder', '导入到文件夹'),
     confirmLabel: t('Import', '导入')
@@ -1824,7 +1824,7 @@ async function exportCanvasFile(canvasId) {
     const result = await window.messsAPI.exportCanvas(canvasId);
     if (result && result.ok) {
       showToast(
-        t(`Canvas exported as .Messs with ${result.fileCount || 0} file${result.fileCount === 1 ? '' : 's'}.`, `画布已导出为 .Messs 文件，共 ${result.fileCount || 0} 个文件。`),
+        t(`Canvas exported as .SCAAP with ${result.fileCount || 0} file${result.fileCount === 1 ? '' : 's'}.`, `画布已导出为 .SCAAP 文件，共 ${result.fileCount || 0} 个文件。`),
         'Canvas'
       );
     } else if (result && !result.canceled) {
@@ -2248,7 +2248,7 @@ function canvasAgentPrompt(prompt) {
     .map((file) => `${file.name} [${isVideoExt(file.ext) ? 'video' : isImageExt(file.ext) ? 'image' : 'file'}]`);
   const locale = isZh()
     ? 'Reply in Simplified Chinese.'
-    : (isKo() ? 'Reply in Korean.' : 'Reply in English.');
+    : (isJa() ? 'Reply in Japanese.' : 'Reply in English.');
   return [
     locale,
     `Canvas: ${active ? active.name : 'Untitled'}`,
@@ -2785,12 +2785,12 @@ function refreshCanvasWorkspaceLanguage() {
   }
   const agentTitle = document.querySelector('.board-agent-welcome strong');
   const toggle = document.getElementById('board-agent-toggle');
-  if (agentTitle) agentTitle.textContent = 'Messs Agent';
+  if (agentTitle) agentTitle.textContent = 'SCAAP Agent';
   const agentSubtitle = document.querySelector('.board-agent-welcome span');
   if (agentSubtitle) agentSubtitle.textContent = t('Solve your problem.', '解决你的问题。');
   const input = document.getElementById('board-agent-input');
   const toggleLabel = toggle?.querySelector('.board-agent-toggle-label');
-  if (toggleLabel) toggleLabel.textContent = 'Messs Agent';
+  if (toggleLabel) toggleLabel.textContent = 'SCAAP Agent';
   if (input) input.placeholder = t('Ask about this canvas...', '询问这个画布...');
   const historyTitle = document.querySelector('.board-agent-history-drawer > header strong');
   if (historyTitle) historyTitle.textContent = t('Agent history', 'Agent \u5386\u53f2\u8bb0\u5f55');
@@ -3020,7 +3020,7 @@ async function initCanvasWorkspace(initial) {
   });
   if (isDetachedCanvasWindow()) {
     document.body.classList.add('is-detached-canvas-window');
-    document.title = `${activeCanvasRecord().name} - Messs.`;
+    document.title = `${activeCanvasRecord().name} - SCAAP.`;
     showCanvasWorkspace();
   } else {
     showCanvasLibrary();

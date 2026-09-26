@@ -158,8 +158,8 @@ window.MesssComposerActions = (() => {
     setMenuLabel(document.querySelector('[data-assistant-kind="image"]'), 'image', label('Image','图片'));
     setMenuLabel(document.querySelector('[data-assistant-kind="video"]'), 'video', label('Video','视频'));
     permissionLabel(permissionButton, mode, mode==='full'?label('Full access','完全访问'):label('Ask permission','请求批准'));
-    permissionButton.title=label('Messs permissions','Messs 权限');
-    permissionMenu.querySelector('strong').textContent=label('Messs permissions','Messs 权限');
+    permissionButton.title=label('SCAAP permissions','SCAAP 权限');
+    permissionMenu.querySelector('strong').textContent=label('SCAAP permissions','SCAAP 权限');
     const buttons=permissionMenu.querySelectorAll('button');
     permissionLabel(buttons[0], 'ask', label('Ask for each host operation','逐次请求批准'));
     permissionLabel(buttons[1], 'full', label('Full access for this session','本次会话完全访问'));
@@ -186,7 +186,7 @@ window.MesssComposerActions = (() => {
       const button=document.createElement('button');button.type='button';button.setAttribute('role','menuitemradio');
       button.onclick=async()=>{
         closeMenus();const current=session;
-        if(value==='full' && !await confirmTask(label('Allow Messs for this session?','允许 Messs 在本次会话中执行？'),label('System commands, internet access and local files. Commands may modify or delete files. Results are sent to the selected model. You can revoke access at any time.','可执行系统命令、联网和访问本地文件；命令可能修改或删除文件。结果会发送给当前模型，可随时撤销。')))return;
+        if(value==='full' && !await confirmTask(label('Allow SCAAP for this session?','允许 SCAAP 在本次会话中执行？'),label('System commands, internet access and local files. Commands may modify or delete files. Results are sent to the selected model. You can revoke access at any time.','可执行系统命令、联网和访问本地文件；命令可能修改或删除文件。结果会发送给当前模型，可随时撤销。')))return;
         if(current!==session)return;
         const result=await window.messsAPI.setAiPermissionMode({session:current,mode:value});
         if(current!==session)return;

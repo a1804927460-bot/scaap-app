@@ -93,7 +93,7 @@ const root = path.resolve(__dirname, '..');
           clearsControls: dragRect.right <= detachRect.left
         };
       });
-      assert.deepEqual(floatingBrand, { text: 'Messs Agent', logoVisible: true, clearsControls: true });
+      assert.deepEqual(floatingBrand, { text: 'SCAAP Agent', logoVisible: true, clearsControls: true });
       fs.mkdirSync(path.join(root, 'test-artifacts/canvas-agent'), { recursive: true });
       await page.screenshot({ path: path.join(root, `test-artifacts/canvas-agent/${detached ? 'floating-detached' : 'floating-normal'}.png`) });
       await page.evaluate(() => {

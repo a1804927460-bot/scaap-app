@@ -809,12 +809,12 @@ assert.doesNotMatch(indexHtml, /id="board-(?:bottom-)?fullscreen-toggle"/,
 assert.match(
   workspaceSource,
   /function setCanvasAgentOpen[\s\S]*?!!open && !board\.classList\.contains\('is-canvas-library'\)[\s\S]*?agent\.classList\.toggle\('is-hidden', !allowed\)/,
-  'Messs Agent must open beside a normal canvas without requiring fullscreen.'
+  'SCAAP Agent must open beside a normal canvas without requiring fullscreen.'
 );
 assert.match(
   workspaceSource,
   /function handleCanvasAgentShortcut[\s\S]*?shortcuts-popover[\s\S]*?matchesMesssShortcut\(event, 'toggleAgent'\)[\s\S]*?event\.repeat \|\| event\.isComposing[\s\S]*?setCanvasAgentOpen\(!!agent\?\.classList\.contains\('is-hidden'\), \{ focus: true \}\)/,
-  'The configured Agent shortcut must toggle Messs Agent in the canvas workspace.'
+  'The configured Agent shortcut must toggle SCAAP Agent in the canvas workspace.'
 );
 assert.match(boardSource, /document\.querySelector\('dialog\[open\]'\)[\s\S]*?document\.getElementById\('shortcuts-popover'\)[\s\S]*?!isBoardWorkspaceActive\(\)/,
   'Canvas shortcuts must pause while the centered shortcut editor records a new binding.');
@@ -823,14 +823,14 @@ assert.doesNotMatch(
   /isEditableTarget[\s\S]*?!isEditableTarget/,
   'The Agent shortcut must remain reliable even when an editor has focus.'
 );
-assert.match(indexHtml, /id="board-agent-welcome"[\s\S]*?assets\/logo-mark\.png[\s\S]*?Messs Agent/);
-assert.match(indexHtml, /id="board-agent-drag"[\s\S]*?assets\/logo-mark\.png[\s\S]*?Messs Agent/,
-  'The floating Agent title must reuse the Messs logo and full Agent name.');
+assert.match(indexHtml, /id="board-agent-welcome"[\s\S]*?assets\/logo-mark\.png[\s\S]*?SCAAP Agent/);
+assert.match(indexHtml, /id="board-agent-drag"[\s\S]*?assets\/logo-mark\.png[\s\S]*?SCAAP Agent/,
+  'The floating Agent title must reuse the SCAAP logo and full Agent name.');
 assert.match(agentInterfaceStyles, /#board-agent-panel\.is-floating #board-agent-drag \{[^}]*display:flex[^}]*align-items:center[^}]*font-weight:800/,
-  'The floating Agent title must align the Messs logo and label without crowding its controls.');
-assert.match(indexHtml, /id="board-agent-toggle"[\s\S]*?message-square\.svg[\s\S]*?board-agent-toggle-label">Messs Agent/,
+  'The floating Agent title must align the SCAAP logo and label without crowding its controls.');
+assert.match(indexHtml, /id="board-agent-toggle"[\s\S]*?message-square\.svg[\s\S]*?board-agent-toggle-label">SCAAP Agent/,
   'The canvas Agent entry should show a chat icon before its label.');
-assert.match(workspaceSource, /toggle\?\.querySelector\('\.board-agent-toggle-label'\)[\s\S]*?toggleLabel\.textContent = 'Messs Agent'/,
+assert.match(workspaceSource, /toggle\?\.querySelector\('\.board-agent-toggle-label'\)[\s\S]*?toggleLabel\.textContent = 'SCAAP Agent'/,
   'Language refresh must preserve the canvas Agent entry icon.');
 assert.match(
   boardStyles,
@@ -1106,15 +1106,15 @@ assert.match(
 assert.match(mainSource, /lastOpenedAt: canvas\.lastOpenedAt \|\| null,[\s\S]*?pinned: canvas\.pinned === true/,
   'Canvas pin state must survive the main-process canvas-state normalization.');
 assert.match(indexHtml, /id="canvas-import"[^>]*title="Import canvas"/,
-  'The canvas library must expose a .Messs import entry point.');
+  'The canvas library must expose a .SCAAP import entry point.');
 assert.match(workspaceSource, /async function promptImportCanvas[\s\S]*?window\.messsAPI\.importCanvas\(projectId\)[\s\S]*?switchCanvas\(result\.canvas\.id/,
-  'Importing a .Messs package must merge its files and layout, then open the imported canvas.');
-assert.match(mainSource, /const CANVAS_PACKAGE_MAGIC = Buffer\.from\('MESSS-CANVAS-PKG'/,
+  'Importing a .SCAAP package must merge its files and layout, then open the imported canvas.');
+assert.match(mainSource, /const CANVAS_PACKAGE_MAGIC = Buffer\.from\('SCAAP-CANVAS-PKG'/,
   'Canvas packages must use an application-specific binary signature.');
 assert.match(mainSource, /function prepareCanvasPackageExport[\s\S]*?file\.canvasId === canvas\.id \|\| fileIds\.has[\s\S]*?hashArchivedFile/,
   'Canvas export must include every file assigned to the canvas and hash each payload.');
-assert.match(mainSource, /ipcMain\.handle\('canvas:export'[\s\S]*?extensions: \['Messs'\][\s\S]*?ensureCanvasPackagePath[\s\S]*?writeCanvasPackage/,
-  'Canvas export must write a .Messs package instead of a metadata-only JSON file.');
+assert.match(mainSource, /ipcMain\.handle\('canvas:export'[\s\S]*?extensions: \['SCAAP'\][\s\S]*?ensureCanvasPackagePath[\s\S]*?writeCanvasPackage/,
+  'Canvas export must write a .SCAAP package instead of a metadata-only JSON file.');
 assert.match(mainSource, /function readCanvasPackageManifest[\s\S]*?payloadOffset \+ payloadBytes !== stat\.size/,
   'Canvas import must reject truncated or extra package data before touching application state.');
 assert.match(mainSource, /function extractCanvasPackageFile[\s\S]*?sha256\.toLowerCase\(\) !== String\(entry\.sha256\)\.toLowerCase\(\)/,
@@ -1432,7 +1432,7 @@ assert.match(
 assert.match(
   boardSource,
   /class="ai-composer-submit"[\s\S]*?assets\/logo-mark\.png[\s\S]*?class="ai-credit-estimate"/,
-  'The submit control must use the Messs mark and keep the estimated points inside the button.'
+  'The submit control must use the SCAAP mark and keep the estimated points inside the button.'
 );
 assert.match(boardStyles, /\.ai-composer-submit \{[\s\S]*?min-width:\s*112px;[\s\S]*?border-radius:\s*11px;[\s\S]*?backdrop-filter:\s*blur\(14px\)/);
 assert.match(
@@ -1521,7 +1521,7 @@ assert.match(
   /fullscreen-overlay'\)\.addEventListener\('click',[\s\S]*?event\.target\.closest\([\s\S]*?#fullscreen-stage > img[\s\S]*?#fullscreen-stage video[\s\S]*?video-control-capsule[\s\S]*?if \(!mediaHit\) closeFullscreenPreview\(\)/,
   'Clicking outside the actual fullscreen image or video controls must close the viewer.'
 );
-assert.match(boardStyles, /\.fullscreen-overlay \{[\s\S]*?z-index:\s*400;[\s\S]*?background:\s*rgba\(5, 6, 8, \.88\)/,
+assert.match(boardStyles, /\.fullscreen-overlay \{[\s\S]*?z-index:\s*400;[\s\S]*?background:\s*rgba\(6, 6, 6, \.88\)/,
   'The fullscreen media viewer must render above the fullscreen board and Butler overlays.');
 assert.match(
   boardStyles,
@@ -1603,7 +1603,7 @@ assert.match(
 );
 assert.match(
   themeSource,
-  /\[data-theme="dark"\][\s\S]*?--bg-deep:\s*#070808;[\s\S]*?--bg-base:\s*#0b0c0d;[\s\S]*?--bg-elevated:\s*#181a1c;[\s\S]*?--bg-surface:\s*#111315;[\s\S]*?--bg-surface-2:\s*#24272a;[\s\S]*?--bg-frame:\s*#0b0c0d;/,
+  /\[data-theme="dark"\][\s\S]*?--bg-deep:\s*#080808;[\s\S]*?--bg-base:\s*#0c0c0c;[\s\S]*?--bg-elevated:\s*#1a1a1a;[\s\S]*?--bg-surface:\s*#131313;[\s\S]*?--bg-surface-2:\s*#272727;[\s\S]*?--bg-frame:\s*#0c0c0c;/,
   'Dark mode must preserve distinct frame, workspace, panel, card, and interaction layers.'
 );
 assert.match(
@@ -1645,7 +1645,7 @@ assert.match(boardStyles, /\.app-titlebar \{[\s\S]*?background:\s*var\(--bg-fram
   'The light title bar must use the sampled frame gray while dark mode keeps its fallback.');
 assert.match(
   themeSource,
-  /\[data-theme="dark"\][\s\S]*?--board-workspace-bg:\s*#070808/,
+  /\[data-theme="dark"\][\s\S]*?--board-workspace-bg:\s*#080808/,
   'Dark canvas modes must share the existing node-canvas background color.'
 );
 assert.match(

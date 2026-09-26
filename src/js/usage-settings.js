@@ -674,13 +674,13 @@ function initUsageSettings() {
         input._flatpickr?.destroy();
         flatpickr(input, {
           dateFormat: 'Y-m-d', disableMobile: true, maxDate: today,
-          locale: usageText('default', 'zh', 'ko'),
+          locale: AppState.language === 'ja' ? 'ja' : usageText('default', 'zh'),
           monthSelectorType: 'dropdown',
           onReady: syncUsageYearDropdown,
           onYearChange: syncUsageYearDropdown,
           onMonthChange: syncUsageYearDropdown,
           onOpen: (_dates, _text, picker) => {
-            picker.set('locale', usageText('default', 'zh', 'ko'));
+            picker.set('locale', AppState.language === 'ja' ? 'ja' : usageText('default', 'zh'));
             syncUsageYearDropdown(_dates, _text, picker);
           }
         });

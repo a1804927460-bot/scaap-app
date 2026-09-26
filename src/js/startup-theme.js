@@ -8,11 +8,11 @@ document.documentElement.dataset.theme = startupTheme === 'dark' ? 'dark' : 'lig
 
 // Apply the persisted language before CSS and the first paint.
 const startupLanguage = new URLSearchParams(window.location.search).get('language');
-const normalizedStartupLanguage = ['en', 'zh', 'ko'].includes(startupLanguage) ? startupLanguage : 'ko';
+const normalizedStartupLanguage = ['en', 'zh', 'ja'].includes(startupLanguage) ? startupLanguage : 'zh';
 document.documentElement.dataset.language = normalizedStartupLanguage;
 document.documentElement.lang = normalizedStartupLanguage === 'zh'
   ? 'zh-CN'
-  : (normalizedStartupLanguage === 'ko' ? 'ko' : 'en');
+  : (normalizedStartupLanguage === 'ja' ? 'ja' : 'en');
 
 const startupTextSize = new URLSearchParams(window.location.search).get('textSize');
 document.documentElement.dataset.textSize = ['extra-small', 'small', 'medium', 'large', 'extra-large'].includes(startupTextSize)

@@ -13,7 +13,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
    delete document.documentElement.dataset.startupPending;
    document.body.innerHTML='<div id="ai-assistant-messages" style="padding:30px"></div>';
    window.showToast=()=>{};window.showFullscreenMedia=image=>{window.previewOpened=image.src;};
-   const svg='<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200"><rect width="320" height="200" fill="#2575dd"/><text x="40" y="110" fill="white" font-size="30">Messs image</text><script>window.svgExecuted=true</script></svg>';
+   const svg='<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200"><rect width="320" height="200" fill="#2575dd"/><text x="40" y="110" fill="white" font-size="30">SCAAP image</text><script>window.svgExecuted=true</script></svg>';
    window.messsAPI={previewGeneratedAiFile:async()=>({ok:true,dataUrl:'data:image/svg+xml;base64,'+btoa(svg)}),saveGeneratedAiFile:async()=>{window.downloaded=true;return {ok:true};}};
    const row=document.createElement('div');document.getElementById('ai-assistant-messages').append(row);
    appendAssistantOutputFiles(row,[{token:'work-test',name:'picture.svg',sizeBytes:1234}]);

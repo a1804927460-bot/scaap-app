@@ -25,7 +25,7 @@ async function run() {
       <script src="${freehandUrl}"></script>
     </head><body class="main-app">
       <section id="board-panel" class="board-panel is-fullscreen">
-        <header class="panel-header"><span class="panel-title">Project</span><div class="panel-tools"><button id="board-agent-toggle" class="pill-btn pill-btn-ghost">Messs Agent</button><span class="zoom-label">100%</span></div></header>
+        <header class="panel-header"><span class="panel-title">Project</span><div class="panel-tools"><button id="board-agent-toggle" class="pill-btn pill-btn-ghost">SCAAP Agent</button><span class="zoom-label">100%</span></div></header>
         <div class="board-workspace-body">
           <div id="board-viewport" class="board-viewport"><div class="fixture-canvas"></div>
             <div class="board-item board-text-note qa-text"><div class="board-text-note-content">Confirmed text</div></div>
@@ -36,7 +36,7 @@ async function run() {
           <div id="resize-handle-board-agent" class="resize-handle resize-handle-v"></div>
           <aside id="board-agent-panel" class="board-agent-panel">
             <button id="board-agent-close" class="board-agent-close"><span>x</span></button>
-            <div id="board-agent-messages" class="board-agent-messages"><div id="board-agent-welcome" class="board-agent-welcome"><img src="${logoUrl}" alt=""><strong>Messs Agent</strong><span>Solve your problem.</span></div></div>
+            <div id="board-agent-messages" class="board-agent-messages"><div id="board-agent-welcome" class="board-agent-welcome"><img src="${logoUrl}" alt=""><strong>SCAAP Agent</strong><span>Solve your problem.</span></div></div>
             <form class="board-agent-form">
               <div class="board-agent-references"><button class="board-agent-reference"><img src="${logoUrl}" alt="Reference"><span>&times;</span></button></div>
               <textarea rows="2" placeholder="Ask about this canvas..."></textarea>

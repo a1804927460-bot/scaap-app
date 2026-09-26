@@ -1,5 +1,5 @@
-appId: com.messs.desktop
-productName: Messs
+appId: com.scaap.desktop
+productName: SCAAP
 electronVersion: 43.2.0
 asar: true
 compression: normal
@@ -59,7 +59,7 @@ win:
     - target: nsis
       arch:
         - x64
-  artifactName: "Messs-${version}-${arch}-Setup.${ext}"
+  artifactName: "SCAAP-${version}-${arch}-Setup.${ext}"
 mac:
   # Keep both Intel and Apple Silicon artifacts in the same latest-mac.yml so
   # electron-updater can select the correct download for each Mac.
@@ -74,7 +74,7 @@ mac:
       arch:
         - x64
         - arm64
-  artifactName: "Messs-${version}-${arch}.${ext}"
+  artifactName: "SCAAP-${version}-${arch}.${ext}"
   hardenedRuntime: true
   gatekeeperAssess: false
 nsis:
@@ -92,6 +92,6 @@ nsis:
 publish:
   provider: github
   owner: a1804927460-bot
-  repo: messs-releases
+  repo: scaap-releases
   private: false
   releaseType: release

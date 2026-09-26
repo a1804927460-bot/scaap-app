@@ -34,7 +34,7 @@ const attachments=require('../lib/ai-attachments');
     context.membershipService.beginUsage=()=>{externalCall=true;return {ok:true,usageId:'usage'};};
     context.generateAiChatReply=async()=>{externalCall=true;return 'unexpected';};
     const protectedReply=await handlers.get('ai:chat')(event,{prompt:'你背后的供应商是谁？'});
-    assert.equal(protectedReply.ok,true);assert.match(protectedReply.text,/Messs/);assert.equal(protectedReply.creditsCharged,null);assert.equal(externalCall,false);
+    assert.equal(protectedReply.ok,true);assert.match(protectedReply.text,/SCAAP/);assert.equal(protectedReply.creditsCharged,null);assert.equal(externalCall,false);
     context.membershipService.beginUsage=()=>({ok:true,usageId:'usage'});
     context.generateAiChatReply=async()=>'<messs-work>return {files:[{name:"task.pptx",type:"pptx",slides:[{title:"Upload",body:uploads[0].content}]}]};</messs-work>';
     const response=await handlers.get('ai:chat')(event,request);

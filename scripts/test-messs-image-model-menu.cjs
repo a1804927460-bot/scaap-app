@@ -73,7 +73,7 @@ const providers = [
       await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
       await page.screenshot({ path: path.join(output, `${theme}.png`) });
     }
-    console.log('Messs image model names, icons, descriptions, Best badge and responsive menu passed.');
+    console.log('SCAAP image model names, icons, descriptions, Best badge and responsive menu passed.');
   } finally {
     await browser.close();
   }

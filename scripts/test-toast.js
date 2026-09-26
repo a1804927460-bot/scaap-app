@@ -82,7 +82,7 @@ assert.strictEqual(toast.hidden, true);
 sandbox.__showToast('Prompt copied', 'AI');
 assert.strictEqual(toast.classList.contains('is-persistent'), false);
 assert.strictEqual(timers.at(-1).delay, 5000);
-sandbox.__showToast('Folder renamed', 'Messs', { durationMs: 3000 });
+sandbox.__showToast('Folder renamed', 'SCAAP', { durationMs: 3000 });
 assert.strictEqual(timers.at(-1).delay, 5000);
 
 assert.match(css, /\.toast\.is-persistent\s*\{/);

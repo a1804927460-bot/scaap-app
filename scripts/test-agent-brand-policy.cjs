@@ -20,7 +20,7 @@ for (const prompt of [
 ]) {
   const reply = policy.replyForRequest(prompt);
   assert.ok(reply, `expected protected request: ${prompt}`);
-  assert.match(reply, /Messs/);
+  assert.match(reply, /SCAAP/);
   assert.doesNotMatch(reply, /OpenAI|Gemini|Claude|DeepSeek/i);
 }
 
@@ -32,8 +32,9 @@ for (const prompt of [
   'Create a cinematic storyboard'
 ]) assert.equal(policy.replyForRequest(prompt), null, `unexpected block: ${prompt}`);
 
-assert.match(policy.protectResponse('我是由某个外部模型提供的。', '中文'), /Messs/);
-assert.match(policy.protectResponse('I am powered by a third-party provider.', 'English'), /Messs/);
+assert.match(policy.protectResponse('我是由某个外部模型提供的。', '中文'), /SCAAP/);
+assert.match(policy.protectResponse('I am powered by a third-party provider.', 'English'), /SCAAP/);
+assert.match(policy.replyForRequest('SCAAP 使用什么模型？'), /SCAAP/);
 assert.equal(policy.protectResponse('我是这样理解这张海报的。', '中文'), '我是这样理解这张海报的。');
 assert.equal(policy.protectResponse('这张海报由三组视觉元素构成。', '中文'), '这张海报由三组视觉元素构成。');
 
@@ -44,4 +45,4 @@ for (const file of ['ai-assistant.js', 'canvas-workspace.js']) {
   const source = fs.readFileSync(require.resolve(`../src/js/${file}`), 'utf8');
   assert.match(source, /MesssAgentBrandPolicy\?\.replyForRequest/);
 }
-console.log('Messs Agent identity policy blocks disclosure requests locally and at IPC, preserves normal creative prompts, and sanitizes identity claims.');
+console.log('SCAAP Agent identity policy blocks disclosure requests locally and at IPC, preserves normal creative prompts, and sanitizes identity claims.');
