@@ -102,7 +102,7 @@ const output = path.join(root, 'test-artifacts', 'three-d-director');
     });
     assert.ok(bounds.stage.x + bounds.stage.width <= bounds.inspector.x + 1, 'Stage and inspector must not overlap.');
 
-    await page.locator('[data-director-action="snapshot"]').click({ force: true });
+    await page.locator('[data-director-action="snapshot"]').click({ force: true, noWaitAfter: true });
     await page.waitForFunction(() => Array.isArray(window.addedDirectorFiles) && window.addedDirectorFiles.length === 1);
     const importPayload = await page.evaluate(() => window.directorImport);
     assert.match(importPayload.dataUrl, /^data:image\/png;base64,/);
