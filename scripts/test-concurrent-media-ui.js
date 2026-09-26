@@ -6,6 +6,16 @@ const path = require('path');
 
 const boardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'board-canvas.js'), 'utf8');
 const assistantSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'ai-assistant.js'), 'utf8');
+const boardStyles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles', 'main.css'), 'utf8');
+
+assert.match(boardSource, /class="ai-pending-spinner"/,
+  'Canvas generation placeholders must render the rotating loader.');
+assert.doesNotMatch(boardSource, /ai-pending-visual[^']*<span><\/span><span><\/span><span><\/span>/,
+  'Canvas generation placeholders must not restore the old three-dot indicator.');
+assert.match(boardStyles, /\.ai-pending-spinner \{[\s\S]*?animation:\s*ai-placeholder-spin \.8s linear infinite/,
+  'The generation loader must rotate continuously.');
+assert.match(boardStyles, /\.ai-pending-copy \{[\s\S]*?left:\s*50%;[\s\S]*?justify-items:\s*center;[\s\S]*?text-align:\s*center;/,
+  'Generation status text and its estimate must stay centered.');
 
 assert.doesNotMatch(
   boardSource,

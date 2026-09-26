@@ -2845,8 +2845,8 @@ function buildAiPlaceholderElement(item) {
   const failed = item.aiPlaceholderState === 'failed';
   el.classList.toggle('is-failed', failed);
   el.innerHTML = failed
-    ? '<div class="ai-pending-visual" aria-hidden="true"><span></span><span></span><span></span></div><div class="ai-pending-copy"><strong>生成失败</strong><small></small><div class="ai-pending-actions"><button type="button" data-ai-placeholder-retry>重试</button><button type="button" data-ai-placeholder-cancel>取消</button></div></div>'
-    : '<div class="ai-pending-visual" aria-hidden="true"><span></span><span></span><span></span></div><div class="ai-pending-copy"><strong>生成中</strong><small></small></div>';
+    ? '<div class="ai-pending-visual" aria-hidden="true"><span class="ai-pending-failure-mark">!</span></div><div class="ai-pending-copy"><strong>生成失败</strong><small></small><div class="ai-pending-actions"><button type="button" data-ai-placeholder-retry>重试</button><button type="button" data-ai-placeholder-cancel>取消</button></div></div>'
+    : '<div class="ai-pending-visual" aria-hidden="true"><span class="ai-pending-spinner"></span></div><div class="ai-pending-copy"><strong>生成中</strong><small></small></div>';
   const copy = el.querySelector('.ai-pending-copy small');
   if (copy) copy.textContent = failed ? (item.aiPlaceholderError || '内容未通过审核，请修改提示词后重试') : (item.aiPlaceholderEstimate || '正在准备，请稍候');
   el.querySelector('[data-ai-placeholder-retry]')?.addEventListener('click', (event) => {
@@ -2875,8 +2875,8 @@ function buildAiPlaceholderElementLocalized(item) {
   const failed = item.aiPlaceholderState === 'failed';
   el.classList.toggle('is-failed', failed);
   el.innerHTML = failed
-    ? '<div class="ai-pending-visual" aria-hidden="true"><span></span><span></span><span></span></div><div class="ai-pending-copy"><strong>生成失败</strong><small></small><div class="ai-pending-actions"><button type="button" data-ai-placeholder-retry>重试</button><button type="button" data-ai-placeholder-cancel>取消</button></div></div>'
-    : '<div class="ai-pending-visual" aria-hidden="true"><span></span><span></span><span></span></div><div class="ai-pending-copy"><strong>生成中</strong><small></small></div>';
+    ? '<div class="ai-pending-visual" aria-hidden="true"><span class="ai-pending-failure-mark">!</span></div><div class="ai-pending-copy"><strong>生成失败</strong><small></small><div class="ai-pending-actions"><button type="button" data-ai-placeholder-retry>重试</button><button type="button" data-ai-placeholder-cancel>取消</button></div></div>'
+    : '<div class="ai-pending-visual" aria-hidden="true"><span class="ai-pending-spinner"></span></div><div class="ai-pending-copy"><strong>生成中</strong><small></small></div>';
   const copy = el.querySelector('.ai-pending-copy small');
   if (copy) copy.textContent = failed ? (item.aiPlaceholderError || '内容未通过审核，请修改提示词后重试') : (item.aiPlaceholderEstimate || '正在准备，请稍候');
   el.querySelector('[data-ai-placeholder-retry]')?.addEventListener('click', (event) => {
