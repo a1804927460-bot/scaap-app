@@ -1073,8 +1073,8 @@ assert.match(
 );
 assert.match(
   workspaceSource,
-  /function filteredCanvases\(ignoreQuery = false\)[\s\S]*?Number\(b\.pinned === true\)[\s\S]*?canvas\.pinned === true[\s\S]*?Pin canvas/,
-  'Pinned canvases must remain visible and sort ahead of recent canvases.'
+  /function filteredCanvases\(ignoreQuery = false\)[\s\S]*?\.sort\(\(a, b\) => new Date\(b\.lastOpenedAt \|\| b\.updatedAt \|\| b\.createdAt \|\| 0\)[\s\S]*?function filteredCanvasProjects/,
+  'Canvas cards must follow the user\'s open history, with newly opened canvases first.'
 );
 assert.match(
   workspaceSource,
@@ -1341,7 +1341,7 @@ assert.match(
   /function canvasAgentThinkingText[\s\S]*?Thinking\.\.\.[\s\S]*?const pending = appendCanvasAgentMessage\('assistant', canvasAgentThinkingText\(\), sessionId\)[\s\S]*?setInterval[\s\S]*?renderAgentMessageContent\(pending, response\.text\)[\s\S]*?clearInterval\(thinkingTimer\)/,
   'Canvas Agent must show an elapsed thinking state until the response replaces it in place.'
 );
-assert.match(boardSource, /--board-selection-width[\s\S]*?1\.2 \/ Math\.max\(Board\.zoom/);
+assert.match(boardSource, /--board-selection-width[\s\S]*?2\.2 \/ Math\.max\(Board\.zoom/);
 assert.match(
   boardSource,
   /function boardToolbarScreenScale\(zoom\)[\s\S]*?BOARD_TOOLBAR_COMPACT_START_ZOOM[\s\S]*?BOARD_TOOLBAR_MIN_SCREEN_SCALE[\s\S]*?eased/,
