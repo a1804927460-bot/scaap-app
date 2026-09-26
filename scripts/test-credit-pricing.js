@@ -415,6 +415,7 @@ const settledUsageReportMigration = fs.readFileSync(path.join(__dirname, '..', '
 const authoritativeUsageReportMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608230002_authoritative_settled_usage_reporting.sql'), 'utf8');
 const unifiedMediaMarginMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202609050002_unified_media_margin.sql'), 'utf8');
 const mediaMargin30Migration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202609270001_media_margin30_pricing.sql'), 'utf8');
+const falToolPricingMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202609270002_fal_tool_pricing_isolation.sql'), 'utf8');
 const legnextMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608180005_legnext_midjourney_credits.sql'), 'utf8');
 const redemptionMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '202608180002_three_666_credit_codes.sql'), 'utf8');
 const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
@@ -497,6 +498,19 @@ assert.match(unifiedMediaMarginMigration, /\* \(10\.0 \/ 7\.0\) \* 1\.10 \/ 0\.8
 assert.match(unifiedMediaMarginMigration, /when '1k' then 0\.14 \* 7\.3 \* 10\.0/);
 assert.match(unifiedMediaMarginMigration, /when '1k' then 0\.048 \* 7\.3 \* 10\.0/);
 assert.match(mediaMargin30Migration, /target a 30% gross/i);
+assert.match(falToolPricingMigration, /quote_fal_tool_retail_credits_from_cny\(upstream_usd \* 7\.3 \+ 0\.013\)/);
+assert.match(falToolPricingMigration, /1\.10 \/ 0\.75/);
+assert.doesNotMatch(falToolPricingMigration, /quote_media_retail_credits_from_cny\(upstream_usd/);
+const { quoteFalTool } = require('../lib/fal-pricing');
+for (const [providerId, options, upstreamUsd] of [
+  ['background-remove', {}, 0.001],
+  ['clipdrop-uncrop', { width: 1024 }, 0.20],
+  ['clipdrop-uncrop', { width: 4096 }, 0.35],
+  ['clipdrop-upscale', { megapixels: 12 }, 0.08]
+]) {
+  const databaseQuote = Math.ceil((upstreamUsd * USD_TO_CNY + 0.013) * POINTS_PER_CNY * 1.10 / 0.75);
+  assert.strictEqual(quoteFalTool(providerId, options).credits, databaseQuote, `${providerId} tool reservation must match gateway pricing.`);
+}
 assert.match(mediaMargin30Migration, /1\.10 \/ 0\.619/);
 assert.match(mediaMargin30Migration, /image-19/);
 assert.match(mediaMargin30Migration, /aireiter-image-gpt25-flare/);
