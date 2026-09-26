@@ -80,11 +80,11 @@ const output = path.join(root, 'test-artifacts', 'three-d-director');
     assert.ok(brightness > 20, `The 3D scene must not be blank; brightness=${brightness}.`);
 
     await page.locator('[data-shot="close"]').click({ force: true });
-    await page.locator('[data-layout="product"]').click({ force: true });
-    await page.locator('[data-light="sunset"]').click({ force: true });
+    await page.locator('[data-layout="product"]').evaluate(button => button.click());
+    await page.locator('[data-light="sunset"]').evaluate(button => button.click());
     // WebGL can intercept the scroll phase on hosted Windows runners even
     // when the control is visible and stable; the click target is verified.
-    await page.locator('[data-aspect="9:16"]').click({ force: true });
+    await page.locator('[data-aspect="9:16"]').evaluate(button => button.click());
     assert.equal(await page.locator('[data-aspect="9:16"]').getAttribute('class'), 'is-active');
     assert.equal(await page.locator('[data-aspect="16:9"]').getAttribute('class'), '');
     await page.waitForFunction(() => (
