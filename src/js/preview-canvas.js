@@ -1437,8 +1437,10 @@ function finalizeFullscreenPreviewClose() {
   if (overlay._returnFocus?.isConnected) overlay._returnFocus.focus({ preventScroll: true });
   overlay._returnFocus = null;
   if (window.__messsPreviewReturnToFiles && window.MesssWorkHub) {
+    const returnArea = window.__messsPreviewReturnArea || 'files';
     window.__messsPreviewReturnToFiles = false;
-    window.MesssWorkHub.open('files', { restoreFromPreview: true }).catch(() => {});
+    window.__messsPreviewReturnArea = '';
+    window.MesssWorkHub.open(returnArea, { restoreFromPreview: true }).catch(() => {});
   }
 }
 

@@ -6,7 +6,7 @@ window.MesssWorkHub = (() => {
   const addDays = (s, n) => { const d = new Date(s+'T12:00:00'); d.setDate(d.getDate()+n); return day(d); };
   const difference = (a,b) => Math.round((Date.parse(a+'T12:00:00Z')-Date.parse(b+'T12:00:00Z'))/86400000);
   const statusNames = { planned:'待开始', active:'进行中', blocked:'受阻', done:'已交付' };
-  let root, content, projects=[], resources=[], area='schedule', view='month', month=today().slice(0,7), selected=today(), query='', filter='all', archived=false, loadToken=0;
+  let root, content, projects=[], resources=[], area='schedule', view='month', month=today().slice(0,7), selected=today(), query='', filter='all', archived=false, loadToken=0, previewReturnState=null;
   const api = () => window.messsAPI;
   const action = (id,label,cls='') => `<button type="button" data-hub-action="${id}" class="${cls}">${label}</button>`;
   function notify(error) { const el=root?.querySelector('.hub-notice'); if(el){el.textContent=error.message || String(error);el.hidden=false;} }
@@ -35,12 +35,25 @@ window.MesssWorkHub = (() => {
     [projects,resources]=values;render();
   }
   async function open(next='schedule', options={}) {
-    ensureRoot();area=next;query='';filter='all';root.querySelector('.hub-notice').hidden=true;
-    if(options.restoreFromPreview === true)root.classList.add('is-preview-return');
+    ensureRoot();
+    const restoring = options.restoreFromPreview === true && previewReturnState?.area === next;
+    area=next;
+    if(restoring){query=previewReturnState.query;filter=previewReturnState.filter;}
+    else{query='';filter='all';previewReturnState=null;}
+    root.querySelector('.hub-notice').hidden=true;
+    if(restoring)root.classList.add('is-preview-return');
     else if(!root.open)root.classList.remove('is-preview-return');
     if(!root.open)root.showModal();
     content.innerHTML='<div class="hub-empty">正在读取…</div>';
-    try{await reload();}catch(error){content.innerHTML='<div class="hub-empty">暂时无法读取数据，请关闭后重试。</div>';notify(error);}
+    try{
+      await reload();
+      if(restoring){
+        const state=previewReturnState;
+        previewReturnState=null;
+        await new Promise(resolve=>requestAnimationFrame(resolve));
+        content.scrollTop=state.scrollTop;
+      }
+    }catch(error){content.innerHTML='<div class="hub-empty">暂时无法读取数据，请关闭后重试。</div>';notify(error);}
   }
   function heading(title, subtitle, buttons) { return `<div class="hub-heading"><div><p class="hub-eyebrow">WORKSPACE / ${area.toUpperCase()}</p><h1>${title}</h1><p>${subtitle}</p></div><div class="hub-actions">${buttons}</div></div>`; }
   function search() { return `<input class="hub-search" type="search" placeholder="搜索名称、负责人或标签…" aria-label="搜索" value="${esc(query)}">`; }
@@ -297,6 +310,8 @@ window.MesssWorkHub = (() => {
     if(name==='preview'){
       const f=AppState.files.find(f=>f.id===fileId);
       if(f){
+        previewReturnState={area,query,filter,scrollTop:content.scrollTop,fileId:f.id};
+        window.__messsPreviewReturnArea=area;
         root.close();
         if(typeof isModelFile==='function'&&isModelFile(f)&&typeof openBoardModelViewer==='function'){
           openBoardModelViewer(f);

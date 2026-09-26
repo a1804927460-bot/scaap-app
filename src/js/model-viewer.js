@@ -122,8 +122,10 @@ function closeBoardModelViewer() {
     window.setTimeout(() => disposeBoardModelViewerSnapshot(snapshot), 150);
   }
   if (snapshot.overlay && window.__messsModelPreviewReturnToFiles && window.MesssWorkHub) {
+    const returnArea = window.__messsPreviewReturnArea || 'files';
     window.__messsModelPreviewReturnToFiles = false;
-    window.MesssWorkHub.open('files', { restoreFromPreview: true }).catch(() => {});
+    window.__messsPreviewReturnArea = '';
+    window.MesssWorkHub.open(returnArea, { restoreFromPreview: true }).catch(() => {});
   }
 }
 

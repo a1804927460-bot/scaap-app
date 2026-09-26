@@ -24,7 +24,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       window.svgPreviewSource = svgUrl;
       AppState.files = [
         { id: 'svg-file', name: 'vector.svg', ext: '.svg', url: svgUrl, thumbUrl: 'broken:thumbnail' },
-        { id: 'model-file', name: 'scene.glb', ext: '.glb' }
+        { id: 'model-file', name: 'scene.glb', ext: '.glb' },
+        ...Array.from({ length: 36 }, (_, index) => ({
+          id: `image-${index}`,
+          name: `image-${index}.png`,
+          ext: '.png',
+          url: modelPreview,
+          thumbUrl: modelPreview
+        }))
       ];
       AppState.canvases = [];
       window.messsAPI = {
@@ -56,8 +63,17 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     await page.locator('[data-file-id="model-file"] .hub-asset-preview').click();
     assert.equal(await page.evaluate(() => window.openedModelViewer), 'model-file');
     await page.evaluate(() => MesssWorkHub.open('files'));
-    await page.locator('[data-file-id="svg-file"] .hub-asset-preview').click();
+    await page.locator('[data-hub-action="filter-image"]').click();
+    const previousScrollTop = await page.locator('.hub-content').evaluate(node => {
+      node.scrollTop = 720;
+      return node.scrollTop;
+    });
+    assert.ok(previousScrollTop > 0);
+    await page.locator('[data-file-id="svg-file"] .hub-asset-preview').evaluate(button => button.click());
     assert.equal(await page.evaluate(() => window.openedMediaPreview), 'svg-file');
+    await page.evaluate(() => MesssWorkHub.open('files', { restoreFromPreview: true }));
+    assert.equal(await page.locator('.hub-content').evaluate(node => node.scrollTop), previousScrollTop);
+    assert.equal(await page.locator('[data-hub-action="filter-image"]').getAttribute('class'), 'is-active');
 
     console.log('PASS work hub renders safe SVG and 3D thumbnails and opens their dedicated previews');
   } finally {
