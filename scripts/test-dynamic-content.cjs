@@ -54,7 +54,9 @@ const { chromium } = require('playwright');
       openMesssTemplateLibrary({ onSelect: item => { window.__selectedTemplate = item; } });
     ` });
     await page.waitForFunction(() => document.querySelector('[data-template-id="remote-stage-loop"]'));
-    await page.waitForTimeout(650);
+    await page.locator('.messs-template-dialog').evaluate(async (dialog) => {
+      await Promise.all(dialog.getAnimations().map((animation) => animation.finished));
+    });
     assert.equal(await page.locator('.messs-template-dialog').evaluate((element) => {
       const rect = element.getBoundingClientRect();
       return Math.abs(rect.left + rect.width / 2 - innerWidth / 2) < 2
@@ -69,7 +71,9 @@ const { chromium } = require('playwright');
 
     await page.evaluate(() => openMesssTemplateLibrary({ onSelect: item => { window.__selectedTemplate = item; } }));
     await page.waitForFunction(() => document.querySelector('[data-template-id="remote-stage-loop"]'));
-    await page.waitForTimeout(650);
+    await page.locator('.messs-template-dialog').evaluate(async (dialog) => {
+      await Promise.all(dialog.getAnimations().map((animation) => animation.finished));
+    });
     const artifactDir = path.join(root, 'test-artifacts', 'dynamic-content');
     fs.mkdirSync(artifactDir, { recursive: true });
     await page.screenshot({ path: path.join(artifactDir, 'template-library.png') });
