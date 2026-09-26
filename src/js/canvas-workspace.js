@@ -593,8 +593,10 @@ function filteredCanvases(ignoreQuery = false) {
       ? canvas.projectId === CanvasWorkspace.libraryProjectId
       : (!canvas.projectId || rootProjectIds.has(canvas.projectId)))
       && (!query || canvas.name.toLowerCase().includes(query)))
-    .sort((a, b) => Number(b.pinned === true) - Number(a.pinned === true)
-      || new Date(b.lastOpenedAt || b.updatedAt || b.createdAt || 0) - new Date(a.lastOpenedAt || a.updatedAt || a.createdAt || 0));
+    // Canvas order follows the user's open history. A newly created canvas is
+    // opened immediately, so it naturally becomes the first card as well.
+    .sort((a, b) => new Date(b.lastOpenedAt || b.updatedAt || b.createdAt || 0)
+      - new Date(a.lastOpenedAt || a.updatedAt || a.createdAt || 0));
 }
 
 function filteredCanvasProjects(ignoreQuery = false) {
@@ -609,9 +611,7 @@ function canvasLibraryOrderedEntries(ignoreQuery = false) {
   return [
     ...filteredCanvasProjects(ignoreQuery).map((record) => ({ key: `folder:${record.id}`, record })),
     ...filteredCanvases(ignoreQuery).map((record) => ({ key: `canvas:${record.id}`, record }))
-  ].sort((a, b) => (Number.isFinite(a.record.libraryOrder) ? a.record.libraryOrder : Number.MAX_SAFE_INTEGER)
-      - (Number.isFinite(b.record.libraryOrder) ? b.record.libraryOrder : Number.MAX_SAFE_INTEGER)
-    || Number(b.record.pinned === true) - Number(a.record.pinned === true));
+  ];
 }
 
 let canvasLibraryShiftPreview = null;
@@ -1214,7 +1214,8 @@ function renderCanvasLibrary() {
     grid.appendChild(card);
   });
   const libraryNodes = new Map(Array.from(grid.children).map((card) => {
-    if (card.dataset.canvasId) bindCanvasLibraryReorder(card, `canvas:${card.dataset.canvasId}`);
+    // Canvas cards are ordered by lastOpenedAt, not by manual drag order.
+    // Keep the native draggable behavior for tearing a canvas off into a window.
     return [card.dataset.libraryKey, card];
   }));
   canvasLibraryOrderedEntries().forEach(({ key }) => {
@@ -1520,6 +1521,7 @@ async function createCanvasForProject(projectId, name) {
     projectId: project.id,
     name: uniqueCanvasName(name),
     createdAt: now,
+    lastOpenedAt: now,
     updatedAt: now
   };
   AppState.canvases.push(canvas);

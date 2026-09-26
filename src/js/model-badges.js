@@ -57,7 +57,7 @@ function localizedModelDescription(values) {
 function appendAiModelLabel(container, provider, options = {}) {
   container.replaceChildren();
   const presentation = aiModelPresentation(provider);
-  if (presentation) {
+  if (presentation && options.showIcon !== false) {
     const badge = document.createElement('span');
     badge.className = `ai-model-badge ai-model-badge-${presentation.kind}`;
     badge.innerHTML = aiModelIcon(presentation.kind);

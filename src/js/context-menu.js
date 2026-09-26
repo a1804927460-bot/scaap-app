@@ -357,9 +357,12 @@ function closePromptOptimizerDialog(options = {}) {
   }
 }
 
-function promptOptimizerInstruction(sourceText, kind, selectedOnly) {
+function promptOptimizerInstruction(sourceText, kind, selectedOnly, mode = 'rewrite') {
   return [
     `You are optimizing an AI ${kind === 'video' ? 'video' : 'image'} generation prompt.`,
+    mode === 'expand'
+      ? 'Expand the prompt with useful visual detail while preserving its intent and all concrete requirements.'
+      : 'Rewrite the prompt for clarity, precision, and direct use while preserving its intent.',
     'Keep the source prompt language. Do not translate it, and keep necessary model terms unchanged.',
     selectedOnly
       ? 'Optimize only the selected fragment so it can replace the original fragment cleanly.'
@@ -412,19 +415,32 @@ function createPromptOptimizerDialog(selectedOnly) {
     <button class="prompt-optimizer-backdrop" type="button" aria-label="${t('Keep original prompt', '保留原提示词', '원래 프롬프트 유지')}"></button>
     <section class="prompt-optimizer-dialog" role="dialog" aria-modal="true" aria-labelledby="prompt-optimizer-title">
       <header class="prompt-optimizer-header">
-        <span class="prompt-optimizer-mark" aria-hidden="true">${buildIconSvg('M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z;M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16z')}</span>
-        <div><h2 id="prompt-optimizer-title">${t('Optimize prompt with Agent', '使用 Agent 优化提示词', 'Agent로 프롬프트 최적화')}</h2><p>${selectedOnly ? t('Edit the selected text, then confirm before Agent optimizes it.', '先修改选中的文字，确认后再交给 Agent 优化。', '선택한 텍스트를 수정한 뒤 확인하면 Agent가 최적화합니다.') : t('Edit the prompt, then confirm before Agent optimizes it.', '先检查或修改提示词，确认后再交给 Agent 优化。', '프롬프트를 수정한 뒤 확인하면 Agent가 최적화합니다.')}</p></div>
+        <h2 id="prompt-optimizer-title">${t('Prompt optimization', '提示词优化', '프롬프트 최적화')}</h2>
         <button class="prompt-optimizer-close" type="button" title="${t('Keep original', '保留原文', '원문 유지')}" aria-label="${t('Keep original', '保留原文', '원문 유지')}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       </header>
       <div class="prompt-optimizer-compare">
-        <label><span>${t('Prompt to optimize', '待优化提示词', '최적화할 프롬프트')}</span><textarea class="prompt-optimizer-original" spellcheck="true"></textarea></label>
-        <label><span>${t('Agent revision', 'Agent 优化结果', 'Agent 수정 결과')}</span><textarea class="prompt-optimizer-result" readonly spellcheck="true" placeholder="${t('Confirm to start optimization', '确认后开始优化', '확인 후 최적화를 시작합니다')}"></textarea></label>
+        <div class="prompt-optimizer-intro">
+          <div class="prompt-optimizer-brand"><img src="assets/logo-mark.png" alt="" draggable="false"><strong>Messs.</strong></div>
+          <p>${t('I can help turn your idea into a clearer generation prompt.', '我可以帮你把想法整理成更清晰的生成提示词。', '아이디어를 더 명확한 생성 프롬프트로 다듬어 드릴게요.')}</p>
+          <div class="prompt-optimizer-modes" role="group" aria-label="${t('Optimization mode', '优化方式', '최적화 방식')}">
+            <button type="button" data-optimizer-mode="expand">${t('Expand prompt', '扩写提示词', '프롬프트 확장')}</button>
+            <button type="button" data-optimizer-mode="rewrite" class="is-active">${t('Rewrite prompt', '改写提示词', '프롬프트 재작성')}</button>
+          </div>
+        </div>
+        <label class="prompt-optimizer-response">
+          <span class="prompt-optimizer-brand"><img src="assets/logo-mark.png" alt="" draggable="false"><strong>Messs.</strong></span>
+          <textarea class="prompt-optimizer-result" readonly spellcheck="true" placeholder="${t('The optimized prompt will appear here.', '优化后的提示词会显示在这里。', '최적화된 프롬프트가 여기에 표시됩니다.')}"></textarea>
+        </label>
+        <label class="prompt-optimizer-composer">
+          <span>${t('Prompt to optimize', '待优化提示词', '최적화할 프롬프트')}</span>
+          <textarea class="prompt-optimizer-original" spellcheck="true" placeholder="${t('Send directly, or describe your idea', '直接发送，或描述你的想法', '바로 보내거나 아이디어를 설명하세요')}"></textarea>
+          <button class="prompt-optimizer-confirm" type="button" title="${t('Confirm and optimize', '确认并优化', '확인 후 최적화')}" aria-label="${t('Confirm and optimize', '确认并优化', '확인 후 최적화')}"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+        </label>
       </div>
       <footer class="prompt-optimizer-footer">
         <span class="prompt-optimizer-status" role="status">${t('Review or edit the text before continuing.', '请检查或修改文字，确认后再开始优化。', '계속하기 전에 텍스트를 확인하거나 수정하세요.')}</span>
         <div class="prompt-optimizer-actions">
           <button class="prompt-optimizer-keep" type="button">${t('Keep original', '保留原文', '원문 유지')}</button>
-          <button class="prompt-optimizer-confirm" type="button">${t('Confirm and optimize', '确认并优化', '확인 후 최적화')}</button>
           <button class="prompt-optimizer-replace" type="button" disabled hidden>${selectedOnly ? t('Replace selection', '替换选中文字', '선택 영역 교체') : t('Replace prompt', '替换提示词', '프롬프트 교체')}</button>
         </div>
       </footer>
@@ -435,6 +451,16 @@ function createPromptOptimizerDialog(selectedOnly) {
   overlay.querySelector('.prompt-optimizer-close').addEventListener('click', close);
   overlay.querySelector('.prompt-optimizer-keep').addEventListener('click', close);
   overlay.querySelector('.prompt-optimizer-replace').addEventListener('click', replacePromptWithAgentSuggestion);
+  overlay.dataset.optimizerMode = 'rewrite';
+  overlay.querySelectorAll('[data-optimizer-mode]').forEach((button) => {
+    button.addEventListener('click', () => {
+      overlay.dataset.optimizerMode = button.dataset.optimizerMode;
+      overlay.querySelectorAll('[data-optimizer-mode]').forEach((item) => item.classList.toggle('is-active', item === button));
+      overlay.querySelector('.prompt-optimizer-status').textContent = button.dataset.optimizerMode === 'expand'
+        ? t('Expansion mode selected. Confirm when the prompt is ready.', '已选择扩写，请确认提示词后发送。', '확장 모드를 선택했습니다. 프롬프트를 확인한 뒤 보내세요.')
+        : t('Rewrite mode selected. Confirm when the prompt is ready.', '已选择改写，请确认提示词后发送。', '재작성 모드를 선택했습니다. 프롬프트를 확인한 뒤 보내세요.');
+    });
+  });
   overlay.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
     event.preventDefault();
@@ -478,7 +504,7 @@ async function runPromptOptimization(overlay, options) {
       displayPrompt: selectedOnly
         ? t('Optimize the selected prompt text', '优化选中的提示词', '선택한 프롬프트 텍스트 최적화')
         : t(`Optimize the current ${kind} prompt`, `优化当前${kind === 'video' ? '视频' : '生图'}提示词`, `현재 ${kind === 'video' ? '비디오' : '이미지'} 프롬프트 최적화`),
-      contextualPrompt: promptOptimizerInstruction(sourceText, kind, selectedOnly),
+      contextualPrompt: promptOptimizerInstruction(sourceText, kind, selectedOnly, options.mode),
       referenceFiles: [],
       focusInput: false,
       isolated: true,
@@ -544,7 +570,7 @@ async function openPromptOptimizerDialog(input, selection = {}) {
   sourceField.value = sourceText;
   const kind = composer && composer.dataset.kind === 'video' ? 'video' : 'image';
   overlay.querySelector('.prompt-optimizer-confirm').addEventListener('click', () => {
-    void runPromptOptimization(overlay, { kind, selectedOnly, revision });
+    void runPromptOptimization(overlay, { kind, selectedOnly, revision, mode: overlay.dataset.optimizerMode });
   });
   sourceField.focus({ preventScroll: true });
   sourceField.setSelectionRange(sourceField.value.length, sourceField.value.length);
@@ -1034,6 +1060,13 @@ function showBoardCanvasContextMenu(x, y) {
       label: t('Generation history', '生成历史'),
       icon: 'M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 7v5l3 2',
       action: openCanvasGenerationHistory
+    },
+    {
+      label: t('Asset library', '素材库'),
+      icon: 'M3 7v12a2 2 0 0 0 2 2h12M6 3h12a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H6Z;M9 8h7M9 12h5',
+      action: () => {
+        if (window.MesssWorkHub && typeof window.MesssWorkHub.open === 'function') window.MesssWorkHub.open('assets');
+      }
     },
     {
       label: t('Import files', '\u5bfc\u5165\u6587\u4ef6'),

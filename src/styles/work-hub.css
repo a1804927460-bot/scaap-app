@@ -177,11 +177,16 @@
 .hub-canvas-placement { position:absolute; inset:0; z-index:100; cursor:var(--cursor-crosshair); touch-action:none; outline:none; }
 .hub-canvas-placement > span { position:absolute; top:20px; left:20px; pointer-events:none; padding:8px 12px; border-radius:20px; color:var(--text-primary); background:var(--bg-elevated); border:1px solid var(--border-hairline); font-size:12px; white-space:nowrap; box-shadow:0 4px 16px #0003; }
 
-/* Desktop-tool treatment: flatter hierarchy, denser scanning, fewer card-like
-   surfaces. The DOM and actions stay unchanged. */
-.work-hub,.hub-editor { border-radius:8px; box-shadow:0 18px 48px rgba(0,0,0,.32); }
-.work-hub { width:calc(100vw - 28px); height:calc(100vh - 66px); }
-.work-hub::backdrop { background:rgba(0,0,0,.38); backdrop-filter:blur(3px); }
+/* Keep dense tool content inside a clearly elevated window. */
+.work-hub,.hub-editor {
+  border-radius:18px;
+  box-shadow:0 30px 90px rgba(0,0,0,.52), 0 0 0 1px color-mix(in srgb,var(--border-strong) 38%,transparent);
+}
+.work-hub {
+  width:min(1440px,calc(100vw - 64px));
+  height:calc(100vh - 104px);
+}
+.work-hub::backdrop { background:rgba(0,0,0,.48); backdrop-filter:blur(8px); }
 .hub-top { min-height:52px; padding:0 18px; gap:14px; }
 .hub-top>div { gap:10px; }
 .hub-wordmark { color:var(--text-primary); font-size:14px; font-weight:700; letter-spacing:0; }
@@ -258,12 +263,12 @@
 .hub-skill>div:last-child { grid-column:5; grid-row:1; margin:0; white-space:nowrap; }
 .hub-skill button { min-height:28px; padding:4px 8px; font-size:10px; }
 .hub-footnote { margin-top:14px; }
-.hub-editor { width:min(600px,calc(100vw - 32px)); padding:20px; }
+.hub-editor { width:min(600px,calc(100vw - 40px)); padding:20px; border-radius:16px; }
 .hub-editor header { margin-bottom:16px; }
 .hub-editor h2 { font-size:18px; }
 
 @media(max-width:850px) {
-  .work-hub { width:calc(100vw - 16px); height:calc(100vh - 32px); }
+  .work-hub { width:calc(100vw - 32px); height:calc(100vh - 48px); border-radius:14px; }
   .hub-content { padding:18px; }
   .hub-skill { grid-template-columns:26px minmax(120px,1fr) auto; gap:10px; }
   .hub-skill h3 { grid-column:2; }
@@ -272,7 +277,7 @@
   .hub-skill>div:last-child { grid-column:3; grid-row:1; }
 }
 @media(max-width:540px) {
-  .work-hub { width:calc(100vw - 8px); height:calc(100vh - 16px); border-radius:7px; }
+  .work-hub { width:calc(100vw - 12px); height:calc(100vh - 24px); border-radius:12px; }
   .hub-top { min-height:48px; padding:0 9px; }
   .hub-top nav { gap:7px; }
   .hub-top nav button { min-width:42px; }

@@ -75,9 +75,11 @@ async function run() {
       editable:!document.querySelector('.prompt-optimizer-original').readOnly,
       result:document.querySelector('.prompt-optimizer-result').value,
       prompt:document.querySelector('.ai-composer-prompt').value,
-      confirmVisible:!document.querySelector('.prompt-optimizer-confirm').hidden
+      confirmVisible:!document.querySelector('.prompt-optimizer-confirm').hidden,
+      brand:document.querySelector('.prompt-optimizer-brand strong')?.textContent,
+      modes:document.querySelectorAll('button[data-optimizer-mode]').length
     }))()`);
-    if (beforeConfirm.requests !== 0 || !beforeConfirm.editable || beforeConfirm.result || !beforeConfirm.confirmVisible) throw new Error(`Optimization started before confirmation: ${JSON.stringify(beforeConfirm)}`);
+    if (beforeConfirm.requests !== 0 || !beforeConfirm.editable || beforeConfirm.result || !beforeConfirm.confirmVisible || beforeConfirm.brand !== 'Messs.' || beforeConfirm.modes !== 2) throw new Error(`Optimization dialog was not ready: ${JSON.stringify(beforeConfirm)}`);
     fs.writeFileSync(path.join(outputDir, 'prompt-optimizer-confirm.png'), (await win.webContents.capturePage()).toPNG());
     const editedSource = '把图1的 Logo 放到图2左上角，保持构图、比例和品牌颜色不变。';
     await win.webContents.executeJavaScript(`(() => {
@@ -95,7 +97,7 @@ async function run() {
     if (!desktop.resultText || !desktop.resultEditable || !desktop.replaceEnabled) throw new Error(`Agent result was not reviewable: ${JSON.stringify(desktop)}`);
     if (desktop.requests !== 1 || desktop.originalText !== editedSource || !desktop.source.includes(editedSource)) throw new Error(`Edited prompt was not confirmed before optimization: ${JSON.stringify(desktop)}`);
     if (desktop.dialog.left < 12 || desktop.dialog.top < 12 || desktop.dialog.right > desktop.viewport.width - 12 || desktop.dialog.bottom > desktop.viewport.height - 12) throw new Error(`Desktop dialog escaped viewport: ${JSON.stringify(desktop)}`);
-    if (desktop.original.width < 350 || desktop.result.width < 350 || desktop.original.right > desktop.result.left + 1) throw new Error(`Desktop comparison overlapped: ${JSON.stringify(desktop)}`);
+    if (desktop.original.width < 500 || desktop.result.width < 500 || desktop.result.bottom > desktop.original.top + 1) throw new Error(`Desktop conversation layout overlapped: ${JSON.stringify(desktop)}`);
     if (desktop.prompt === desktop.resultText) throw new Error('The prompt changed before explicit confirmation.');
     fs.writeFileSync(path.join(outputDir, 'prompt-optimizer-dark.png'), (await win.webContents.capturePage()).toPNG());
 
@@ -103,7 +105,7 @@ async function run() {
     await wait(120);
     const compact = await readMetrics();
     if (compact.dialog.left < 8 || compact.dialog.right > compact.viewport.width - 8 || compact.dialog.bottom > compact.viewport.height - 8) throw new Error(`Compact dialog escaped viewport: ${JSON.stringify(compact)}`);
-    if (compact.original.bottom > compact.result.top + 1 || compact.original.height < 140 || compact.result.height < 140) throw new Error(`Compact comparison did not stack safely: ${JSON.stringify(compact)}`);
+    if (compact.result.bottom > compact.original.top + 1 || compact.original.height < 70 || compact.result.height < 100) throw new Error(`Compact conversation did not stack safely: ${JSON.stringify(compact)}`);
     fs.writeFileSync(path.join(outputDir, 'prompt-optimizer-compact.png'), (await win.webContents.capturePage()).toPNG());
 
     const replacement = compact.resultText;

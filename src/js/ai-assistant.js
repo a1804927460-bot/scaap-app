@@ -624,7 +624,9 @@ function renderAssistantModels() {
     }, t);
   }
 
-  providers.forEach((provider) => {
+  // Agent routing is intentionally presented as three capabilities. Keep
+  // configured provider/model identifiers out of the user-facing picker.
+  if (AiAssistant.kind !== 'chat') providers.forEach((provider) => {
     const option = document.createElement('option');
     option.value = provider.id;
     option.textContent = typeof publicModelLabel === 'function' ? publicModelLabel(provider.name) : provider.name;
@@ -644,7 +646,7 @@ function renderAssistantModels() {
         AiAssistant.chatSelectedId = provider.id;
       }
       select.value = provider.id;
-      appendAiModelLabel(label, provider);
+      appendAiModelLabel(label, provider, { showIcon: false });
       menu.querySelectorAll('.ai-model-picker-option').forEach((item) => {
         const active = item === menuOption;
         item.classList.toggle('is-active', active);
@@ -681,7 +683,7 @@ function renderAssistantModels() {
   label.textContent = selected
     ? (typeof publicModelLabel === 'function' ? publicModelLabel(selected.name) : selected.name)
     : t('No provider configured', '未配置服务商');
-  if (selected) appendAiModelLabel(label, selected);
+  if (selected) appendAiModelLabel(label, selected, { showIcon: false });
   menu.querySelectorAll('[data-preset-model]').forEach((item) => {
     const active = item.dataset.presetModel === selected?.model;
     item.classList.toggle('is-active', active);
@@ -2048,6 +2050,7 @@ async function executeAssistantMessage(item) {
   }, 1000);
   let mediaPlaceholders = [];
   let generatedMediaFiles = [];
+  let mediaRequest = null;
 
   try {
     if (submittedKind === 'chat') {
@@ -2101,6 +2104,7 @@ async function executeAssistantMessage(item) {
         canvasId: item.canvasId,
         folderId: item.folderId
       };
+      mediaRequest = request;
       if (typeof createAiPlaceholders === 'function') {
         mediaPlaceholders = createAiPlaceholders(request);
         request.placements = mediaPlaceholders.map((placeholder) => ({
@@ -2163,9 +2167,11 @@ async function executeAssistantMessage(item) {
         '生成结果已安全保存，画布同步将自动恢复。'
       );
       appendAssistantMedia(generatedMediaFiles, submittedKind, sessionId);
-    } else if (mediaPlaceholders.length && typeof removeAiPlaceholders === 'function') {
-      removeAiPlaceholders(mediaPlaceholders);
-      mediaPlaceholders = [];
+    } else if (mediaPlaceholders.length && typeof preserveAiPlaceholders === 'function') {
+      const retryMedia = mediaRequest && typeof generateAiMediaForBoardV3 === 'function'
+        ? () => { removeAiPlaceholders(mediaPlaceholders); return generateAiMediaForBoardV3({ ...mediaRequest }); }
+        : null;
+      preserveAiPlaceholders(mediaPlaceholders, err && err.message ? err.message : t('内容可能不合规，请修改提示词后重试。', '内容可能不合规，请修改提示词后重试。'), retryMedia);
     }
     if (!generatedMediaFiles.length) {
       const interrupted = submittedKind === 'chat' && preserveInterruptedAgentReply(pending);

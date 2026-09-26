@@ -1195,7 +1195,7 @@ function applyBoardTransformNow() {
   );
   canvas.style.setProperty(
     '--board-selection-width',
-    `${Math.min(40, Math.max(0.2, 1.2 / Math.max(Board.zoom, 0.001)))}px`
+    `${Math.min(40, Math.max(0.8, 2.2 / Math.max(Board.zoom, 0.001)))}px`
   );
   canvas.style.setProperty('--board-expand-hit-size', `${18 / Math.max(Board.zoom, 0.001)}px`);
   canvas.style.setProperty('--board-expand-grip-thickness', `${4 / Math.max(Board.zoom, 0.001)}px`);
@@ -2842,7 +2842,23 @@ function buildAiPlaceholderElement(item) {
   el.style.height = item.height + 'px';
   el.style.zIndex = item.zIndex || 1;
   el.dataset.boardId = item.id;
-  el.innerHTML = '<div class="ai-pending-visual" aria-hidden="true"></div>';
+  const failed = item.aiPlaceholderState === 'failed';
+  el.classList.toggle('is-failed', failed);
+  el.innerHTML = failed
+    ? '<div class="ai-pending-visual" aria-hidden="true"><span></span><span></span><span></span></div><div class="ai-pending-copy"><strong>生成失败</strong><small></small><div class="ai-pending-actions"><button type="button" data-ai-placeholder-retry>重试</button><button type="button" data-ai-placeholder-cancel>取消</button></div></div>'
+    : '<div class="ai-pending-visual" aria-hidden="true"><span></span><span></span><span></span></div><div class="ai-pending-copy"><strong>生成中</strong><small></small></div>';
+  const copy = el.querySelector('.ai-pending-copy small');
+  if (copy) copy.textContent = failed ? (item.aiPlaceholderError || '内容未通过审核，请修改提示词后重试') : (item.aiPlaceholderEstimate || '正在准备，请稍候');
+  el.querySelector('[data-ai-placeholder-retry]')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const retry = aiPlaceholderRetries.get(item.id);
+    if (retry) void retry();
+  });
+  el.querySelector('[data-ai-placeholder-cancel]')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    removeAiPlaceholders([item]);
+    aiPlaceholderRetries.delete(item.id);
+  });
   makeBoardItemDraggable(el, item);
   return el;
 }
@@ -2856,7 +2872,23 @@ function buildAiPlaceholderElementLocalized(item) {
   el.style.height = item.height + 'px';
   el.style.zIndex = item.zIndex || 1;
   el.dataset.boardId = item.id;
-  el.innerHTML = '<div class="ai-pending-visual" aria-hidden="true"></div>';
+  const failed = item.aiPlaceholderState === 'failed';
+  el.classList.toggle('is-failed', failed);
+  el.innerHTML = failed
+    ? '<div class="ai-pending-visual" aria-hidden="true"><span></span><span></span><span></span></div><div class="ai-pending-copy"><strong>生成失败</strong><small></small><div class="ai-pending-actions"><button type="button" data-ai-placeholder-retry>重试</button><button type="button" data-ai-placeholder-cancel>取消</button></div></div>'
+    : '<div class="ai-pending-visual" aria-hidden="true"><span></span><span></span><span></span></div><div class="ai-pending-copy"><strong>生成中</strong><small></small></div>';
+  const copy = el.querySelector('.ai-pending-copy small');
+  if (copy) copy.textContent = failed ? (item.aiPlaceholderError || '内容未通过审核，请修改提示词后重试') : (item.aiPlaceholderEstimate || '正在准备，请稍候');
+  el.querySelector('[data-ai-placeholder-retry]')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const retry = aiPlaceholderRetries.get(item.id);
+    if (retry) void retry();
+  });
+  el.querySelector('[data-ai-placeholder-cancel]')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    removeAiPlaceholders([item]);
+    aiPlaceholderRetries.delete(item.id);
+  });
   makeBoardItemDraggable(el, item);
   return el;
 }
@@ -6377,6 +6409,32 @@ function getConfiguredVideoProviders(aiConfig = {}) {
   }];
 }
 
+const aiPlaceholderRetries = new Map();
+
+function updateAiPlaceholderStatus(placeholders, state, message = '') {
+  const ids = new Set((placeholders || []).map((item) => item && item.id).filter(Boolean));
+  AppState.allBoardItems.forEach((item) => {
+    if (!ids.has(item.id)) return;
+    item.aiPlaceholderState = state;
+    item.aiPlaceholderError = state === 'failed' ? String(message || '生成失败，请重试') : '';
+    item.aiPlaceholderEstimate = state === 'pending' ? '预计约 30 秒' : '';
+  });
+  AppState.boardItems.forEach((item) => {
+    if (!ids.has(item.id)) return;
+    item.aiPlaceholderState = state;
+    item.aiPlaceholderError = state === 'failed' ? String(message || '生成失败，请重试') : '';
+    item.aiPlaceholderEstimate = state === 'pending' ? '预计约 30 秒' : '';
+  });
+  renderBoard();
+}
+
+function preserveAiPlaceholders(placeholders, message, retry) {
+  updateAiPlaceholderStatus(placeholders, 'failed', message);
+  (placeholders || []).forEach((item) => {
+    if (typeof retry === 'function') aiPlaceholderRetries.set(item.id, retry);
+  });
+}
+
 function createAiPlaceholders(request) {
   const count = request.kind === 'image' ? Math.max(1, Math.min(4, Number(request.count) || 1)) : 1;
   const requestedRatio = String(request.aspectRatio || '').trim().toLowerCase();
@@ -6415,7 +6473,9 @@ function createAiPlaceholders(request) {
     ...(targetPartition ? { partitionId: targetPartition.id } : {})
   }));
   if (targetPartition) fitBoardItemsIntoPartition(items, targetPartition);
+  items.forEach((item) => { item.aiPlaceholderState = 'pending'; item.aiPlaceholderEstimate = '预计约 30 秒'; });
   AppState.boardItems.push(...items);
+  AppState.allBoardItems.push(...items.filter((item) => !AppState.allBoardItems.some((existing) => existing.id === item.id)));
   items.forEach(canvasWorkspaceAddItem);
   renderBoard();
   return items;
@@ -6664,6 +6724,7 @@ function removeAiPlaceholders(placeholders) {
   AppState.boardItems = AppState.boardItems.filter((item) => !ids.has(item.id));
   canvasWorkspaceRemoveItems([...ids]);
   ids.forEach((id) => {
+    aiPlaceholderRetries.delete(id);
     if (window.messsAPI && typeof window.messsAPI.removeBoardItem === 'function') {
       Promise.resolve(window.messsAPI.removeBoardItem(id)).catch(() => {});
     }
@@ -7032,7 +7093,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     if (wasSkillAuto) {
       const selectedProvider = (kind === 'video' ? videoProviders : providers)
         .find((entry) => entry.id === modelSelect.value);
-      if (selectedProvider) appendAiModelLabel(modelPickerLabel, selectedProvider, { sparkle: false });
+      if (selectedProvider) appendAiModelLabel(modelPickerLabel, selectedProvider, { sparkle: false, showIcon: false });
     }
   }
 
@@ -7171,6 +7232,59 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     syncAiComposerReferenceClasses();
   }
 
+  function bindReferenceHoldPreview(thumb, image) {
+    if (!image.src) return;
+    thumb.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || event.target.closest('.ai-composer-reference-remove')) return;
+      const origin = { x: event.clientX, y: event.clientY };
+      let preview = null;
+      let timer = window.setTimeout(() => {
+        const rect = thumb.getBoundingClientRect();
+        preview = document.createElement('div');
+        preview.className = 'ai-reference-hold-preview';
+        preview.setAttribute('aria-hidden', 'true');
+        const largeImage = document.createElement('img');
+        largeImage.src = image.src;
+        largeImage.alt = '';
+        preview.appendChild(largeImage);
+        document.body.appendChild(preview);
+        const availableHeight = Math.max(90, rect.top - 28);
+        const previewWidth = Math.min(360, window.innerWidth - 32, availableHeight * 4 / 3);
+        const center = rect.left + rect.width / 2;
+        preview.style.width = `${previewWidth}px`;
+        preview.style.left = `${Math.max(16, Math.min(window.innerWidth - previewWidth - 16, center - previewWidth / 2))}px`;
+        preview.style.bottom = `${Math.max(16, window.innerHeight - rect.top + 12)}px`;
+        requestAnimationFrame(() => preview?.classList.add('is-visible'));
+      }, 280);
+
+      const cleanup = () => {
+        window.clearTimeout(timer);
+        timer = 0;
+        if (preview) {
+          preview.classList.remove('is-visible');
+          const stale = preview;
+          preview = null;
+          window.setTimeout(() => stale.remove(), 130);
+        }
+        window.removeEventListener('pointerup', cleanup, true);
+        window.removeEventListener('pointercancel', cleanup, true);
+        window.removeEventListener('blur', cleanup, true);
+        thumb.removeEventListener('pointerleave', cleanup);
+        thumb.removeEventListener('dragstart', cleanup, true);
+        window.removeEventListener('pointermove', onMove, true);
+      };
+      const onMove = (moveEvent) => {
+        if (Math.hypot(moveEvent.clientX - origin.x, moveEvent.clientY - origin.y) > 8) cleanup();
+      };
+      window.addEventListener('pointerup', cleanup, true);
+      window.addEventListener('pointercancel', cleanup, true);
+      window.addEventListener('blur', cleanup, true);
+      window.addEventListener('pointermove', onMove, true);
+      thumb.addEventListener('pointerleave', cleanup);
+      thumb.addEventListener('dragstart', cleanup, true);
+    });
+  }
+
   function renderBoardReferences() {
     referenceStrip.innerHTML = '';
     referenceStrip.hidden = boardReferences.size === 0;
@@ -7190,6 +7304,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       if (previewUrl) image.src = previewUrl;
       image.alt = entry.name;
       image.draggable = false;
+      bindReferenceHoldPreview(thumb, image);
       if (entry.kind === 'video' || entry.kind === 'audio') {
         thumb.classList.add('is-video-reference');
         const mediaKind = document.createElement('span');
@@ -7587,7 +7702,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       appendAiModelLabel(option, provider, { details: true });
       option.addEventListener('click', () => {
         modelSelect.value = provider.id;
-        appendAiModelLabel(modelPickerLabel, provider, { sparkle: false });
+        appendAiModelLabel(modelPickerLabel, provider, { sparkle: false, showIcon: false });
         modelPickerMenu.querySelectorAll('.ai-model-picker-option').forEach((item) => {
           item.classList.toggle('is-active', item === option);
           item.setAttribute('aria-selected', String(item === option));
@@ -7606,7 +7721,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     modelPickerLabel.textContent = selected
       ? (typeof publicModelLabel === 'function' ? publicModelLabel(selected.name) : selected.name)
       : t('No model configured', '未配置模型');
-    if (selected) appendAiModelLabel(modelPickerLabel, selected, { sparkle: false });
+    if (selected) appendAiModelLabel(modelPickerLabel, selected, { sparkle: false, showIcon: false });
     syncSelectedSkillModel();
     // A running request must not disable a newly opened composer. Each
     // submission owns its own request and placeholder state.
@@ -8546,6 +8661,12 @@ async function generateAiMediaForBoardV3(request) {
   const placeOnBoard = request.placeOnBoard !== false;
   const placeholders = placeOnBoard ? createAiPlaceholders(generationRequest) : [];
   let generatedFiles = [];
+  const retry = async () => {
+    if (placeholders.length) removeAiPlaceholders(placeholders);
+    await generateAiMediaForBoardV3({ ...request });
+  };
+  placeholders.forEach((item) => aiPlaceholderRetries.set(item.id, retry));
+  if (typeof updateAiPlaceholderStatus === 'function') updateAiPlaceholderStatus(placeholders, 'pending');
 
   try {
     // Give the user an immediate, correctly positioned pending card while the
@@ -8553,7 +8674,8 @@ async function generateAiMediaForBoardV3(request) {
     // authoritative reservation, so this does not bypass credit enforcement.
     const creditAccess = await window.MesssCredits.ensure(generationRequest);
     if (!creditAccess.ok) {
-      removeAiPlaceholders(placeholders);
+      if (typeof preserveAiPlaceholders === 'function') preserveAiPlaceholders(placeholders, t('积分不足，请补充积分后重试。', '积分不足，请补充积分后重试。'), retry);
+      else removeAiPlaceholders(placeholders);
       return [];
     }
     const folderId = AppState.activeFolderId && AppState.activeFolderId !== 'default'
@@ -8581,7 +8703,8 @@ async function generateAiMediaForBoardV3(request) {
           '请先在设置的 AI 接口管理中保存 API Key。'
         )
         : (res && res.message) || t('AI generation failed.', 'AI 生成失败。');
-      removeAiPlaceholders(placeholders);
+      if (typeof preserveAiPlaceholders === 'function') preserveAiPlaceholders(placeholders, message, retry);
+      else removeAiPlaceholders(placeholders);
       showToast(message, 'AI', { category: 'ai-generation-failure' });
       return [];
     }
@@ -8591,6 +8714,7 @@ async function generateAiMediaForBoardV3(request) {
     renderFolderGridIfActive();
     if (placeOnBoard) {
       await replaceAiPlaceholders(placeholders, files, generationRequest, res.boardItems || []);
+      placeholders.forEach((item) => aiPlaceholderRetries.delete(item.id));
       selectFileForPreview(files[0].id);
     }
     generatedFiles = await confirmAiMediaDeliveries(files);
@@ -8625,7 +8749,8 @@ async function generateAiMediaForBoardV3(request) {
       ), 'AI');
       return generatedFiles;
     }
-    removeAiPlaceholders(placeholders);
+    if (typeof preserveAiPlaceholders === 'function') preserveAiPlaceholders(placeholders, err && err.message ? err.message : t('AI generation failed. Please try again.', '生成失败，请重试。'), retry);
+    else removeAiPlaceholders(placeholders);
     showToast(err && err.message ? err.message : t('AI generation failed.', 'AI 生成失败。'), 'AI', { category: 'ai-generation-failure' });
     return [];
   } finally {

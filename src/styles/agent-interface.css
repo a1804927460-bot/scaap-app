@@ -267,7 +267,7 @@
 #board-agent-panel.is-floating #board-agent-drag { display:block; position:absolute; inset:0 126px auto 0; height:54px; padding:18px; box-sizing:border-box; cursor:var(--cursor-grab); touch-action:none; color:var(--text-secondary); font-size:12px; z-index:5; }
 #board-panel.has-floating-agent #resize-handle-board-agent { display:none; }
 
-.agent-charge-receipt { display: block; margin-top: 8px; color: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.agent-charge-receipt { display: block; margin-top: 8px; color: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; user-select: none; }
 
 .agent-question-dock { flex:0 1 auto; min-height:0; box-sizing:border-box; margin-bottom:10px; max-height:48vh; overflow:auto; }
 .agent-question-dock[hidden] { display:none; }

@@ -16,6 +16,9 @@
     .ai-composer-submit, .ai-composer-mode button, .ai-model-picker-trigger,
     .ai-video-mode-trigger, .ai-options-toggle, .ai-camera-control-toggle,
     .ai-prompt-style-toggle,
+    #board-agent-toggle, .board-image-toolbar-button, .board-butler-trigger,
+    .board-butler-menu-item, .board-node-add-menu button,
+    .board-node-connection-menu button,
     .workspace-shortcuts button, .workshop-viewer-controls button,
     .agent-question-actions button, .hub-primary, .hub-close,
     .profile-editor-save, .account-plan-button, .text-tool-btn) {
@@ -30,6 +33,9 @@
     .ai-composer-submit, .ai-composer-mode button, .ai-model-picker-trigger,
     .ai-video-mode-trigger, .ai-options-toggle, .ai-camera-control-toggle,
     .ai-prompt-style-toggle,
+    #board-agent-toggle, .board-image-toolbar-button, .board-butler-trigger,
+    .board-butler-menu-item, .board-node-add-menu button,
+    .board-node-connection-menu button,
     .workspace-shortcuts button, .workshop-viewer-controls button,
     .agent-question-actions button, .hub-primary, .hub-close,
     .profile-editor-save, .account-plan-button, .text-tool-btn):active:not(:disabled):not([aria-disabled="true"]) {
@@ -53,12 +59,16 @@
   :root { --motion-press: 0ms; --motion-feedback: 0ms; --motion-settle: 0ms;
     --motion-popup-duration: 0ms; --motion-menu-duration: 0ms; }
   :is(.pill-btn, .icon-btn-sm, .section-tab, .canvas-library-action,
-      .canvas-start-creating, .ai-assistant-submit, .board-agent-submit,
-      .ai-composer-submit, .ai-composer-mode button, .ai-model-picker-trigger,
-      .ai-video-mode-trigger, .ai-options-toggle, .ai-camera-control-toggle,
-      .ai-prompt-style-toggle,
-      .workspace-shortcuts button, .workshop-viewer-controls button,
+    .canvas-start-creating, .ai-assistant-submit, .board-agent-submit,
+    .ai-composer-submit, .ai-composer-mode button, .ai-model-picker-trigger,
+    .ai-video-mode-trigger, .ai-options-toggle, .ai-camera-control-toggle,
+    .ai-prompt-style-toggle,
+    #board-agent-toggle, .board-image-toolbar-button, .board-butler-trigger,
+    .board-butler-menu-item, .board-node-add-menu button,
+    .board-node-connection-menu button,
+    .workspace-shortcuts button, .workshop-viewer-controls button,
       .agent-question-actions button, .hub-primary, .hub-close,
       .profile-editor-save, .account-plan-button, .text-tool-btn) { scale: none !important; transition: none !important; }
   :is(.work-hub, .hub-editor, #profile-editor)[open] { animation: none; }
+  .board-agent-panel { transition: none !important; transform: none !important; }
 }

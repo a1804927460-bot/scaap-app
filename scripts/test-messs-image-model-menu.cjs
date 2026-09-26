@@ -58,6 +58,15 @@ const providers = [
     assert.equal(await page.locator('.ai-model-picker-option').evaluateAll(items =>
       items.every(item => item.scrollWidth <= item.clientWidth)), true);
 
+    await page.evaluate((provider) => {
+      const label = document.createElement('span');
+      label.id = 'selected-model-label';
+      appendAiModelLabel(label, provider, { showIcon: false });
+      document.querySelector('main').append(label);
+    }, providers[0]);
+    assert.equal(await page.locator('#selected-model-label .ai-model-badge').count(), 0);
+    assert.equal(await page.locator('#selected-model-label .ai-model-best').count(), 1);
+
     const output = path.join(root, 'test-artifacts/messs-image-model-menu');
     fs.mkdirSync(output, { recursive: true });
     for (const theme of ['dark', 'light']) {
