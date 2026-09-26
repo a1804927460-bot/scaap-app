@@ -36,15 +36,6 @@ const extract = (file, start, end) => {
       window.canvasAgentChatProviders = () => testProviders;
       window.canvasAgentMediaProviders = () => [{ id: 'image-1', name: 'Nano Banana Pro' }, { id: 'image-2', name: 'Nano Banana 2' }, { id: 'image-6', name: 'GPT Image 2' }];
       window.activeCanvasAgentProvider = () => testProviders.find(p => p.model === CanvasWorkspace.agentChatModel);
-      document.getElementById('board-agent-chat-options').addEventListener('click', event => {
-        const option = event.target.closest('[data-agent-chat-model]');
-        if (!option) return;
-        CanvasWorkspace.agentMode = 'chat';
-        CanvasWorkspace.agentChatUsePreset = false;
-        CanvasWorkspace.agentChatModel = option.dataset.agentChatModel;
-        CanvasWorkspace.agentChatProviderId = option.dataset.agentChatProviderId;
-        renderCanvasAgentModels();
-      });
     });
     await page.evaluate(extract('src/js/ai-assistant.js', 'renderAssistantModels', 'selectedAssistantProvider'));
     await page.evaluate(extract('src/js/canvas-workspace.js', 'renderCanvasAgentModels', 'canvasAgentReferenceLimit'));
@@ -64,19 +55,9 @@ const extract = (file, start, end) => {
         assert.equal(await page.locator(`#${menu} .ai-chat-preset.is-active, #${menu} .ai-model-picker-option.is-active, #${menu} [data-agent-chat-model].is-active`).count(), 1);
       }
       await page.locator(`#${menu}`).evaluate(el => { el.hidden = false; });
-      const named = menu === 'ai-assistant-model-menu'
-        ? `#${menu} .ai-model-picker-option[data-value="chat-0::gemini-3.8-flash"]`
-        : `#${menu} [data-agent-chat-model="gemini-3.8-flash"]`;
-      await page.locator(named).click();
-      await page.evaluate(id => id === 'ai-assistant-model-menu' ? renderAssistantModels() : renderCanvasAgentModels(), menu);
-      assert.equal(await page.locator(`#${menu} .ai-chat-preset.is-active`).count(), 0);
-      assert.equal(await page.locator(named).evaluate(el => el.classList.contains('is-active')), true);
-      const labelId = menu === 'ai-assistant-model-menu' ? 'ai-assistant-model-label' : 'board-agent-model-label';
-      assert.notEqual(await page.locator(`#${labelId}`).textContent(), '\u5feb\u901f');
-      await page.locator(`#${menu}`).evaluate(el => { el.hidden = false; });
     }
-    assert.equal(await page.locator('.ai-model-picker-option').count(), 4);
-    assert.equal(await page.locator('[data-agent-chat-model]').count(), 4);
+    assert.equal(await page.locator('.ai-model-picker-option').count(), 0);
+    assert.equal(await page.locator('[data-agent-chat-model]').count(), 0);
     assert.equal(await page.locator('#board-agent-model-options button').count(), 3);
     fs.mkdirSync(path.join(root, 'test-artifacts/chat-presets'), { recursive: true });
     for (const width of [1440, 720]) {
@@ -95,6 +76,6 @@ const extract = (file, start, end) => {
       MesssAiProviderOptions.appendChatPresets(holder, [], null, () => { throw new Error('Unavailable model selected'); }, t);
       if ([...holder.querySelectorAll('button')].some(button => !button.disabled)) throw new Error('Unavailable preset enabled');
     });
-    console.log('Chat presets: both selectors, model mappings, retained options, missing providers and four layouts passed.');
+    console.log('Chat presets: both selectors, hidden provider identities, model mappings, missing providers and four layouts passed.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

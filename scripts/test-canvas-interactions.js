@@ -853,10 +853,10 @@ assert.match(
 assert.match(boardStyles, /\.ai-video-mode-picker \{[\s\S]*?position:\s*relative;[\s\S]*?\.ai-video-mode-menu \{[\s\S]*?bottom:\s*calc\(100% \+ 7px\)/);
 assert.match(indexHtml, /id="board-agent-references"[\s\S]*?id="board-agent-add-reference"[\s\S]*?id="board-agent-model-menu"[\s\S]*?data-agent-kind="image"[\s\S]*?data-agent-kind="video"/,
   'Canvas Agent must expose references plus image/video model selection.');
-assert.match(workspaceSource, /button\.className = `board-agent-model-option is-chat-option[\s\S]*?button\.querySelector\('span'\)\.textContent = entry\.name/,
-  'Canvas Agent chat model options must use the full-width chat row variant.');
-assert.match(boardStyles, /\.board-agent-model-option\.is-chat-option \{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) 16px;/,
-  'Canvas Agent chat model names must not be constrained by the media icon column.');
+assert.match(workspaceSource, /appendChatPresets\(chatList[\s\S]*?CanvasWorkspace\.agentChatProviderId = entry\.providerId;[\s\S]*?CanvasWorkspace\.agentChatModel = entry\.model;[\s\S]*?CanvasWorkspace\.agentChatUsePreset = true/,
+  'Canvas Agent presets must directly select their internal route without exposing provider options.');
+assert.doesNotMatch(workspaceSource, /button\.className = `board-agent-model-option is-chat-option/,
+  'Canvas Agent must not render concrete chat provider or model names.');
 assert.match(boardStyles, /\.board-agent-form textarea \{[\s\S]*?min-height:\s*58px;[\s\S]*?max-height:\s*112px;/,
   'The Canvas Agent prompt must be approximately half its previous height.');
 assert.match(

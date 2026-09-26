@@ -616,11 +616,21 @@ function renderAssistantModels() {
   menu.innerHTML = '';
 
   if (AiAssistant.kind === 'chat') {
+    providers.forEach((provider) => {
+      const option = document.createElement('option');
+      option.value = provider.id;
+      option.dataset.providerId = provider.providerId || '';
+      option.dataset.model = provider.model || '';
+      select.appendChild(option);
+    });
     MesssAiProviderOptions.appendChatPresets(menu, providers, null, (provider) => {
-      [...menu.querySelectorAll('.ai-model-picker-option')]
-        .find((item) => item.dataset.value === provider.id)?.click();
       AiAssistant.chatUsePreset = true;
+      AiAssistant.chatSelectedId = provider.id;
+      select.value = provider.id;
       MesssAiProviderOptions.syncChatPresetSelection(menu, label, provider.model, true, t);
+      menu.hidden = true;
+      trigger.setAttribute('aria-expanded', 'false');
+      updateAssistantCreditEstimate();
     }, t);
   }
 

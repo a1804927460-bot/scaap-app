@@ -2313,26 +2313,12 @@ function renderCanvasAgentModels() {
   MesssAiProviderOptions.appendChatPresets(chatList, chatProviders,
     CanvasWorkspace.agentMode === 'chat' ? CanvasWorkspace.agentChatModel : null,
     (entry) => {
-      [...chatList.querySelectorAll('[data-agent-chat-model]')]
-        .find((button) => button.dataset.agentChatModel === entry.model
-          && button.dataset.agentChatProviderId === entry.providerId)?.click();
+      CanvasWorkspace.agentMode = 'chat';
+      CanvasWorkspace.agentChatProviderId = entry.providerId;
+      CanvasWorkspace.agentChatModel = entry.model;
       CanvasWorkspace.agentChatUsePreset = true;
       renderCanvasAgentModels();
     }, t);
-  chatProviders.forEach((entry) => {
-    const button = document.createElement('button');
-    const active = CanvasWorkspace.agentMode === 'chat'
-      && entry.providerId === CanvasWorkspace.agentChatProviderId
-      && entry.model === CanvasWorkspace.agentChatModel;
-    button.type = 'button';
-    button.className = `board-agent-model-option is-chat-option${active ? ' is-active' : ''}`;
-    button.dataset.agentChatProviderId = entry.providerId;
-    button.dataset.agentChatModel = entry.model;
-    button.setAttribute('role', 'option');
-    button.innerHTML = '<span></span><i aria-hidden="true">✓</i>';
-    button.querySelector('span').textContent = entry.name;
-    chatList.appendChild(button);
-  });
   const providers = canvasAgentMediaProviders();
   if (!providers.some((provider) => provider.id === CanvasWorkspace.agentProviderId)) {
     const config = CanvasWorkspace.config || {};
