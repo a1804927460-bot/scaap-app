@@ -3030,6 +3030,18 @@ async function initCanvasWorkspace(initial) {
   renderCanvasAgentHistory();
   void loadCanvasAgentHistory();
 }
+function canvasAgentFloatingBounds() {
+  const viewport = document.getElementById('board-viewport');
+  const workspace = document.getElementById('board-workspace-body');
+  const target = viewport && !viewport.hidden && viewport.getBoundingClientRect().width
+    ? viewport
+    : workspace;
+  return target ? target.getBoundingClientRect() : {
+    left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight,
+    width: window.innerWidth, height: window.innerHeight
+  };
+}
+
 function setCanvasAgentFloating(floating) {
   const panel = document.getElementById('board-agent-panel');
   const button = document.getElementById('board-agent-detach');
@@ -3039,11 +3051,19 @@ function setCanvasAgentFloating(floating) {
   button.title = floating ? '放回 Agent' : '取下 Agent';
   button.setAttribute('aria-label', button.title);
   if (floating) {
-    panel.style.width = `${Math.min(480, window.innerWidth - 24)}px`;
-    panel.style.height = `${Math.min(680, window.innerHeight - 88)}px`;
-    panel.style.left = `${Math.max(12, window.innerWidth - Math.min(480, window.innerWidth - 24) - 24)}px`;
-    panel.style.top = '64px';
+    const workspace = document.getElementById('board-workspace-body');
+    const bounds = canvasAgentFloatingBounds();
+    const width = Math.min(480, Math.max(240, (workspace?.clientWidth || bounds.width) - 24));
+    const height = Math.min(680, Math.max(260, (workspace?.clientHeight || bounds.height) - 24));
+    panel.style.width = `${width}px`;
+    panel.style.height = `${height}px`;
+    panel.style.left = '0px';
+    panel.style.top = '0px';
     setCanvasAgentOpen(true, {focus:true});
+    positionCanvasAgentFloating(
+      bounds.left + (bounds.width - panel.getBoundingClientRect().width) / 2,
+      bounds.top + (bounds.height - panel.getBoundingClientRect().height) / 2
+    );
   } else {
     for (const key of ['width','height','left','top']) panel.style.removeProperty(key);
   }
@@ -3068,6 +3088,11 @@ function initCanvasAgentFloating() {
   handle.addEventListener('pointercancel', () => { drag = null; });
   window.addEventListener('resize', () => {
     if (!panel.classList.contains('is-floating')) return;
+    const workspace = document.getElementById('board-workspace-body');
+    if (workspace) {
+      panel.style.width = `${Math.min(panel.offsetWidth, Math.max(240, workspace.clientWidth - 24))}px`;
+      panel.style.height = `${Math.min(panel.offsetHeight, Math.max(260, workspace.clientHeight - 24))}px`;
+    }
     const rect = panel.getBoundingClientRect();
     positionCanvasAgentFloating(rect.left, rect.top);
   });
@@ -3076,10 +3101,16 @@ function initCanvasAgentFloating() {
 function positionCanvasAgentFloating(left, top) {
   const panel = document.getElementById('board-agent-panel');
   const rect = panel.getBoundingClientRect();
+  const bounds = canvasAgentFloatingBounds();
+  const inset = 12;
   const scaleX = rect.width / panel.offsetWidth || 1;
   const scaleY = rect.height / panel.offsetHeight || 1;
-  const targetLeft = Math.max(0, Math.min(window.innerWidth - rect.width, left));
-  const targetTop = Math.max(0, Math.min(window.innerHeight - rect.height, top));
+  const minLeft = bounds.left + inset;
+  const minTop = bounds.top + inset;
+  const maxLeft = Math.max(minLeft, bounds.right - rect.width - inset);
+  const maxTop = Math.max(minTop, bounds.bottom - rect.height - inset);
+  const targetLeft = Math.max(minLeft, Math.min(maxLeft, left));
+  const targetTop = Math.max(minTop, Math.min(maxTop, top));
   // Convert viewport displacement to the fixed element's containing-block coordinates.
   panel.style.left = `${(parseFloat(panel.style.left) || 0) + (targetLeft - rect.left) / scaleX}px`;
   panel.style.top = `${(parseFloat(panel.style.top) || 0) + (targetTop - rect.top) / scaleY}px`;

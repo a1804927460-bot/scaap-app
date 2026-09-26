@@ -15,7 +15,7 @@ const root = path.resolve(__dirname, '..');
     await page.route('**/js/app.js', route => route.fulfill({ contentType: 'text/javascript', body: '' }));
     await page.goto(pathToFileURL(path.join(root, 'src/index.html')).href);
     const source = fs.readFileSync(path.join(root, 'src/js/canvas-workspace.js'), 'utf8');
-    for (const name of ['setCanvasAgentFloating', 'initCanvasAgentFloating', 'positionCanvasAgentFloating']) {
+    for (const name of ['canvasAgentFloatingBounds', 'setCanvasAgentFloating', 'initCanvasAgentFloating', 'positionCanvasAgentFloating']) {
       const start = source.indexOf(`function ${name}(`);
       const end = source.indexOf('\n}', start) + 2;
       await page.evaluate(`window.${name} = ` + source.slice(start, end));
@@ -69,6 +69,19 @@ const root = path.resolve(__dirname, '..');
         initCanvasAgentFloating();
         document.getElementById('board-panel').style.transform = 'scale(.85)';
         setCanvasAgentFloating(true);
+      });
+      const initial = await page.evaluate(() => {
+        const panel = document.getElementById('board-agent-panel').getBoundingClientRect();
+        const viewport = document.getElementById('board-viewport').getBoundingClientRect();
+        return { panel, viewport };
+      });
+      assert.ok(initial.panel.left >= initial.viewport.left + 11);
+      assert.ok(initial.panel.right <= initial.viewport.right - 11);
+      assert.ok(initial.panel.top >= initial.viewport.top + 11);
+      assert.ok(initial.panel.bottom <= initial.viewport.bottom - 11);
+      assert.ok(Math.abs((initial.panel.left + initial.panel.right) / 2 - (initial.viewport.left + initial.viewport.right) / 2) < 2,
+        'detached Agent starts centered in the visible canvas');
+      await page.evaluate(() => {
         positionCanvasAgentFloating(400, 110);
       });
       const handle = page.locator('#board-agent-drag');
@@ -76,11 +89,19 @@ const root = path.resolve(__dirname, '..');
       const before = await page.locator('#board-agent-panel').boundingBox();
       await page.mouse.move(grab.x + 30, grab.y + 20);
       await page.mouse.down();
-      await page.mouse.move(grab.x - 90, grab.y + 55, { steps: 5 });
+      await page.mouse.move(grab.x - 90, grab.y + 30, { steps: 5 });
       await page.mouse.up();
       const after = await page.locator('#board-agent-panel').boundingBox();
-      assert.ok(Math.abs(after.x - before.x + 120) < 2, 'drag preserves horizontal grab offset');
-      assert.ok(Math.abs(after.y - before.y - 35) < 2, 'drag preserves vertical grab offset');
+      assert.ok(Math.abs(after.x - before.x + 120) < 2, `drag preserves horizontal grab offset: ${JSON.stringify({ before, after })}`);
+      assert.ok(Math.abs(after.y - before.y - 10) < 2, `drag preserves vertical grab offset: ${JSON.stringify({ before, after })}`);
+      await page.evaluate(() => positionCanvasAgentFloating(10000, 10000));
+      const bounded = await page.evaluate(() => {
+        const panel = document.getElementById('board-agent-panel').getBoundingClientRect();
+        const viewport = document.getElementById('board-viewport').getBoundingClientRect();
+        return { panel, viewport };
+      });
+      assert.ok(bounded.panel.right <= bounded.viewport.right - 11);
+      assert.ok(bounded.panel.bottom <= bounded.viewport.bottom - 11);
       await page.keyboard.press('Control+Space');
       await page.waitForTimeout(450);
       assert.equal(await page.locator('#board-agent-panel').isVisible(), false);

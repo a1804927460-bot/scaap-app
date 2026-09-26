@@ -7397,7 +7397,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 /* The toolbar is a child of the full board panel while the drawable viewport
    shares that panel with the Agent. Offset it by the live Agent width so its
    visual centre stays on the canvas as the sidebar is opened or resized. */
-.board-panel:has(.board-agent-panel:not(.is-hidden)) .board-bottom-bar {
+.board-panel:has(.board-agent-panel:not(.is-hidden):not(.is-floating)) .board-bottom-bar {
   left: calc((100% - var(--agent-w, 420px)) / 2);
 }
 .board-bottom-group { display: flex; align-items: center; gap: 4px; padding: 0 4px; }
