@@ -837,8 +837,8 @@ assert.match(
 );
 assert.match(
   boardStyles,
-  /\.board-panel:has\(\.board-agent-panel:not\(\.is-hidden\)\) \.board-bottom-bar \{[\s\S]*?left:\s*calc\(\(100% - var\(--agent-w, 420px\)\) \/ 2\)/,
-  'The toolbar must stay centered in the drawable canvas when Agent is open.'
+  /\.board-panel:has\(\.board-agent-panel:not\(\.is-hidden\):not\(\.is-floating\)\) \.board-bottom-bar \{[\s\S]*?left:\s*calc\(\(100% - var\(--agent-w, 420px\)\) \/ 2\)/,
+  'The toolbar must avoid a docked Agent but stay centered when Agent floats over the canvas.'
 );
 assert.match(
   boardStyles,
