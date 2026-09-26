@@ -1519,6 +1519,9 @@ async function createCanvasForProject(projectId, name) {
   AppState.allBoardItems.forEach((item) => { item.selected = false; });
   await canvasWorkspaceSave();
   switchCanvas(canvas.id, { enterWorkspace: true });
+  if (typeof openAiComposerForSelection === 'function') {
+    await openAiComposerForSelection('image');
+  }
 }
 
 async function promptNewCanvas() {

@@ -780,6 +780,11 @@ assert.match(
   'Returning from the canvas library must always enter the canvas at 100%.'
 );
 assert.match(
+  workspaceSource,
+  /async function createCanvasForProject[\s\S]*?switchCanvas\(canvas\.id, \{ enterWorkspace: true \}\);[\s\S]*?await openAiComposerForSelection\('image'\);/,
+  'Every newly created canvas must enter the workspace with the image generation composer open.'
+);
+assert.match(
   mainSource,
   /function persistentBoardItem[\s\S]*?delete normalized\.selected;[\s\S]*?function ensureCanvasState[\s\S]*?store\.data\.boardItems\.forEach[\s\S]*?delete item\.selected;/,
   'Canvas selection must remain renderer-only and stale saved selections must be migrated away.'
