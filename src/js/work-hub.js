@@ -294,7 +294,23 @@ window.MesssWorkHub = (() => {
     if(name==='upload'){button.disabled=true;try{await upload();}finally{button.disabled=false;}return;}
     if(name==='add-existing'){area='files';render();return;}
     const fileId=button.dataset.id||button.closest('[data-file-id]')?.dataset.fileId;
-    if(name==='preview'){const f=AppState.files.find(f=>f.id===fileId);if(f){window.__messsPreviewReturnToFiles = true;root.close();if(isImageExt(f.ext)||isVideoExt(f.ext)){await openFileFullscreenPreview(f);}else{await selectFileForPreview(f.id);openFullscreenPreview();}}return;}
+    if(name==='preview'){
+      const f=AppState.files.find(f=>f.id===fileId);
+      if(f){
+        root.close();
+        if(typeof isModelFile==='function'&&isModelFile(f)&&typeof openBoardModelViewer==='function'){
+          openBoardModelViewer(f);
+          window.__messsModelPreviewReturnToFiles = true;
+        }else if(isImageExt(f.ext)||isVideoExt(f.ext)){
+          window.__messsPreviewReturnToFiles = true;
+          await openFileFullscreenPreview(f);
+        }else{
+          await selectFileForPreview(f.id);
+          openFullscreenPreview();
+        }
+      }
+      return;
+    }
     if(name==='collect'){await api().saveWorkspaceResource({kind:'asset',fileId,tags:[],favorite:false});await reload();notify('已加入资产');return;}
     if(name==='asset-edit'){assetEditor(fileId);return;}
     if(name==='use-file'){await useFileOnCanvas(fileId);return;}

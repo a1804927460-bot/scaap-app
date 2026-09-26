@@ -112,7 +112,13 @@ function appendFileThumbnail(container, file, alt = '') {
     return image;
   }
 
-  const sources = [file.thumbUrl, file.previewUrl, file.url]
+  // SVG stays sharp at every card size and is safe when loaded through an
+  // image element. Prefer the archived original instead of asking the raster
+  // thumbnail service to convert it.
+  const sources = String(file.ext || '').toLowerCase() === '.svg'
+    ? [file.url, file.previewUrl, file.thumbUrl]
+    : [file.thumbUrl, file.previewUrl, file.url];
+  const normalizedSources = sources
     .map((source) => String(source || '').trim()).filter(Boolean);
   let sourceIndex = 0;
   const showFallback = () => {
@@ -121,14 +127,14 @@ function appendFileThumbnail(container, file, alt = '') {
   };
   image.addEventListener('error', () => {
     sourceIndex += 1;
-    if (sources[sourceIndex]) {
-      image.src = sources[sourceIndex];
+    if (normalizedSources[sourceIndex]) {
+      image.src = normalizedSources[sourceIndex];
       return;
     }
     showFallback();
   });
   container.appendChild(image);
-  if (sources.length) image.src = sources[0];
+  if (normalizedSources.length) image.src = normalizedSources[0];
   else showFallback();
   return image;
 }

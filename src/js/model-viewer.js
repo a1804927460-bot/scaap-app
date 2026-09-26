@@ -121,6 +121,10 @@ function closeBoardModelViewer() {
   if (snapshot.overlay || snapshot.renderer || snapshot.root) {
     window.setTimeout(() => disposeBoardModelViewerSnapshot(snapshot), 150);
   }
+  if (snapshot.overlay && window.__messsModelPreviewReturnToFiles && window.MesssWorkHub) {
+    window.__messsModelPreviewReturnToFiles = false;
+    window.MesssWorkHub.open('files', { restoreFromPreview: true }).catch(() => {});
+  }
 }
 
 function createBoardWebglRenderer(THREE, options = {}) {
