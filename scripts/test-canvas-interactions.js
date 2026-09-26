@@ -51,8 +51,8 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /prompt\.addEventListener\('keydown',[\s\S]*?event\.key === 'Enter'[\s\S]*?event\.ctrlKey \|\| event\.metaKey[\s\S]*?form\.requestSubmit\(\)/,
-  'Image and video generation must submit on Ctrl/Cmd+Enter while leaving Enter for a newline.'
+  /prompt\.addEventListener\('keydown',[\s\S]*?matchesMesssShortcut\(event, 'submitGeneration'\)[\s\S]*?form\.requestSubmit\(\)/,
+  'Image and video generation must use the configurable submit shortcut while leaving plain Enter for a newline.'
 );
 assert.match(
   workspaceSource,
@@ -397,12 +397,12 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /Delete'[\s\S]*?removeBoardItemsWithHistory\(selected\)/,
+  /matchesMesssShortcut\(e, 'deleteSelection'\)[\s\S]*?removeBoardItemsWithHistory\(selected\)/,
   'Keyboard deletion must enter the same undo history as context-menu deletion.'
 );
 assert.match(
   boardSource,
-  /if \(moved\) \{[\s\S]*?recordBoardMoveHistory\(groupStartPositions\)[\s\S]*?shortcutKey === 'z'[\s\S]*?undoBoardMove\(\)/,
+  /if \(moved\) \{[\s\S]*?recordBoardMoveHistory\(groupStartPositions\)[\s\S]*?matchesMesssShortcut\(e, 'undo'\)[\s\S]*?undoBoardMove\(\)/,
   'Completed single or grouped drags must become one keyboard undo step.'
 );
 assert.match(
@@ -813,13 +813,15 @@ assert.match(
 );
 assert.match(
   workspaceSource,
-  /function handleCanvasAgentShortcut[\s\S]*?event\.code !== 'Space'[\s\S]*?event\.ctrlKey \|\| event\.metaKey[\s\S]*?event\.repeat \|\| event\.isComposing[\s\S]*?setCanvasAgentOpen\(!!agent\?\.classList\.contains\('is-hidden'\), \{ focus: true \}\)/,
-  'Ctrl or Command plus Space must toggle Messs Agent in the canvas workspace.'
+  /function handleCanvasAgentShortcut[\s\S]*?shortcuts-popover[\s\S]*?matchesMesssShortcut\(event, 'toggleAgent'\)[\s\S]*?event\.repeat \|\| event\.isComposing[\s\S]*?setCanvasAgentOpen\(!!agent\?\.classList\.contains\('is-hidden'\), \{ focus: true \}\)/,
+  'The configured Agent shortcut must toggle Messs Agent in the canvas workspace.'
 );
+assert.match(boardSource, /document\.querySelector\('dialog\[open\]'\)[\s\S]*?document\.getElementById\('shortcuts-popover'\)[\s\S]*?!isBoardWorkspaceActive\(\)/,
+  'Canvas shortcuts must pause while the centered shortcut editor records a new binding.');
 assert.doesNotMatch(
   workspaceSource,
   /isEditableTarget[\s\S]*?!isEditableTarget/,
-  'Ctrl+Space must remain a reliable Agent toggle even when an editor has focus.'
+  'The Agent shortcut must remain reliable even when an editor has focus.'
 );
 assert.match(indexHtml, /id="board-agent-welcome"[\s\S]*?assets\/logo-mark\.png[\s\S]*?Messs Agent/);
 assert.match(indexHtml, /id="board-agent-drag"[\s\S]*?assets\/logo-mark\.png[\s\S]*?Messs Agent/,
@@ -900,7 +902,7 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /const selection = window\.getSelection[\s\S]*?shortcutKey === 'c'[\s\S]*?!selection\.isCollapsed[\s\S]*?return;/,
+  /const selection = window\.getSelection[\s\S]*?matchesMesssShortcut\(e, 'copy'\)[\s\S]*?!selection\.isCollapsed[\s\S]*?return;/,
   'Canvas copy shortcuts must not intercept a real text selection inside Agent.'
 );
 assert.match(
@@ -962,8 +964,8 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /e\.key\.toLowerCase\(\) === 'v'[\s\S]*?clipboardPasteTimer[\s\S]*?pasteBoardClipboardOrExternal/,
-  'Ctrl/Cmd+V must use a delayed desktop fallback so the native paste event can run first.'
+  /matchesMesssShortcut\(e, 'paste'\)[\s\S]*?clipboardPasteTimer[\s\S]*?pasteBoardClipboardOrExternal/,
+  'The configured paste shortcut must use a delayed desktop fallback so the native paste event can run first.'
 );
 assert.match(
   contextMenuSource,

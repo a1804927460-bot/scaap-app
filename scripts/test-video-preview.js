@@ -192,8 +192,8 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /e\.key === 'Tab'[\s\S]*?selectedBoardVideoItems\(\)\.length[\s\S]*?openAiComposerForSelection\(editKind\)/,
-  'Tab must route a selected video into the video composer instead of the image composer.'
+  /matchesMesssShortcut\(e, 'openComposer'\)[\s\S]*?selectedBoardVideoItems\(\)\.length[\s\S]*?openAiComposerForSelection\(editKind\)/,
+  'The configured generation-panel shortcut must route a selected video into the video composer instead of the image composer.'
 );
 assert.match(
   mediaMetaSource,

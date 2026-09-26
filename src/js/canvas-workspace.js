@@ -2181,7 +2181,11 @@ function toggleCanvasAgentHistory(open = null) {
 }
 
 function handleCanvasAgentShortcut(event) {
-  if (event.code !== 'Space' || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+  if (document.getElementById('shortcuts-popover')) return;
+  const matches = typeof matchesMesssShortcut === 'function'
+    ? matchesMesssShortcut(event, 'toggleAgent')
+    : event.code === 'Space' && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey;
+  if (!matches) return;
   if (typeof isBoardWorkspaceActive !== 'function' || !isBoardWorkspaceActive()) return;
   event.preventDefault();
   event.stopImmediatePropagation();

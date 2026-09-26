@@ -4383,42 +4383,40 @@ function initBoardCanvas() {
     // rename fields, the document editor, etc.).
     const tag = document.activeElement && document.activeElement.tagName;
     const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || (document.activeElement && document.activeElement.isContentEditable);
-    if (isEditable || e.isComposing || e.defaultPrevented || document.querySelector('dialog[open]') || !isBoardWorkspaceActive()) return;
+    if (isEditable || e.isComposing || e.defaultPrevented || document.querySelector('dialog[open]') || document.getElementById('shortcuts-popover') || !isBoardWorkspaceActive()) return;
     if (typeof CanvasNodeMode !== 'undefined' && CanvasNodeMode.mode === 'node') return;
 
-    if (!e.altKey && !e.repeat) {
-      const command = e.ctrlKey || e.metaKey;
-      if (command && ['+', '=', '-', '0'].includes(e.key)) {
+    if (!e.repeat) {
+      if (matchesMesssShortcut(e, 'zoomIn') || matchesMesssShortcut(e, 'zoomOut') || matchesMesssShortcut(e, 'resetZoom')) {
         e.preventDefault();
-        if (e.key === '0') resetBoardZoomTo100();
-        else document.getElementById(e.key === '-' ? 'board-zoom-out' : 'board-zoom-in').click();
+        if (matchesMesssShortcut(e, 'resetZoom')) resetBoardZoomTo100();
+        else document.getElementById(matchesMesssShortcut(e, 'zoomOut') ? 'board-zoom-out' : 'board-zoom-in').click();
         return;
       }
-      if (!command && e.shiftKey && ['Digit1', 'Digit2'].includes(e.code)) {
+      if (matchesMesssShortcut(e, 'fitCanvas') || matchesMesssShortcut(e, 'fitSelection')) {
         e.preventDefault();
         const items = boardSelectionContextItems();
-        fitBoardItemsToViewport(e.code === 'Digit2' ? items.filter(item => item.selected) : items);
+        fitBoardItemsToViewport(matchesMesssShortcut(e, 'fitSelection') ? items.filter(item => item.selected) : items);
         return;
       }
     }
-    const shortcutKey = e.key.toLowerCase();
     const selection = window.getSelection && window.getSelection();
-    if ((e.ctrlKey || e.metaKey) && shortcutKey === 'c' && selection && !selection.isCollapsed && selection.toString()) {
+    if (matchesMesssShortcut(e, 'copy') && selection && !selection.isCollapsed && selection.toString()) {
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && shortcutKey === 'z') {
-      const handled = e.shiftKey ? redoBoardMove() : undoBoardMove();
+    if (matchesMesssShortcut(e, 'redo')) {
+      const handled = redoBoardMove();
       if (handled) e.preventDefault();
-    } else if ((e.ctrlKey || e.metaKey) && shortcutKey === 'y') {
-      if (redoBoardMove()) e.preventDefault();
-    } else if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    } else if (matchesMesssShortcut(e, 'undo')) {
+      if (undoBoardMove()) e.preventDefault();
+    } else if (matchesMesssShortcut(e, 'openComposer')) {
       const editKind = selectedBoardVideoItems().length
         ? 'video'
         : 'image';
       e.preventDefault();
       e.stopPropagation();
       void openAiComposerForSelection(editKind);
-    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+    } else if (matchesMesssShortcut(e, 'selectAll')) {
       e.preventDefault();
       const contextIds = new Set(boardSelectionContextItems().map((item) => item.id));
       AppState.boardItems.forEach((item) => {
@@ -4426,7 +4424,7 @@ function initBoardCanvas() {
       });
       syncBoardSelectionClasses();
       scheduleBoardReconcile();
-    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+    } else if (matchesMesssShortcut(e, 'copy')) {
       const selected = AppState.boardItems.filter((item) => item.selected);
       if (!selected.length) return;
       e.preventDefault();
@@ -4439,7 +4437,7 @@ function initBoardCanvas() {
       } else {
         void captureBoardClipboardSignature();
       }
-    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+    } else if (matchesMesssShortcut(e, 'paste')) {
       // Chromium dispatches the real paste event after keydown. Let that event
       // expose browser clipboard files/data URLs first; the timer is only a
       // fallback for native desktop clipboard providers that emit no event.
@@ -4450,17 +4448,17 @@ function initBoardCanvas() {
           showToast(error && error.message ? error.message : t('Could not paste the image', '无法粘贴图片'));
         });
       }, 220);
-    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
+    } else if (matchesMesssShortcut(e, 'deselect')) {
       e.preventDefault();
       AppState.boardItems.forEach((item) => { item.selected = false; });
       syncBoardSelectionClasses();
       scheduleBoardReconcile();
-    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+    } else if (matchesMesssShortcut(e, 'deleteSelection')) {
       const selected = AppState.boardItems.filter((item) => item.selected);
       if (!selected.length) return;
       e.preventDefault();
       removeBoardItemsWithHistory(selected);
-    } else if (e.key === 'Escape') {
+    } else if (matchesMesssShortcut(e, 'cancel')) {
       closeBoardQuickGenerate();
       AppState.boardItems.forEach((item) => { item.selected = false; });
       setActiveBoardPartition(null);
@@ -5237,6 +5235,108 @@ const SHORTCUTS_TEXT = [
   ['Middle drag', 'Pan board', '平移画布']
 ];
 
+const MESSS_SHORTCUTS_STORAGE_KEY = 'messs.canvas-shortcuts.v1';
+const MESSS_SHORTCUT_CATEGORIES = [
+  { id: 'edit', en: 'Edit actions', zh: '编辑操作' },
+  { id: 'view', en: 'View & navigation', zh: '视图与导航' },
+  { id: 'workflow', en: 'AI & workflow', zh: 'AI 与工作流' }
+];
+const MESSS_SHORTCUT_DEFINITIONS = [
+  { id: 'undo', category: 'edit', en: 'Undo', zh: '撤销', binding: { code: 'KeyZ', primary: true } },
+  { id: 'redo', category: 'edit', en: 'Redo', zh: '重做', binding: { code: 'KeyZ', primary: true, shift: true } },
+  { id: 'copy', category: 'edit', en: 'Copy selection', zh: '复制所选', binding: { code: 'KeyC', primary: true } },
+  { id: 'paste', category: 'edit', en: 'Paste', zh: '粘贴', binding: { code: 'KeyV', primary: true } },
+  { id: 'selectAll', category: 'edit', en: 'Select all', zh: '全选', binding: { code: 'KeyA', primary: true } },
+  { id: 'deselect', category: 'edit', en: 'Deselect', zh: '取消选择', binding: { code: 'KeyD', primary: true } },
+  { id: 'deleteSelection', category: 'edit', en: 'Remove from canvas', zh: '从画布移除', binding: { code: 'Delete' } },
+  { id: 'cancel', category: 'edit', en: 'Exit current operation', zh: '退出当前操作', binding: { code: 'Escape' } },
+  { id: 'zoomIn', category: 'view', en: 'Zoom in', zh: '放大', binding: { code: 'Equal', primary: true, shift: true } },
+  { id: 'zoomOut', category: 'view', en: 'Zoom out', zh: '缩小', binding: { code: 'Minus', primary: true } },
+  { id: 'resetZoom', category: 'view', en: 'Reset to 100%', zh: '重置为 100%', binding: { code: 'Digit0', primary: true } },
+  { id: 'fitCanvas', category: 'view', en: 'Fit canvas', zh: '适应画布', binding: { code: 'Digit1', shift: true } },
+  { id: 'fitSelection', category: 'view', en: 'Fit selection', zh: '适应选中', binding: { code: 'Digit2', shift: true } },
+  { id: 'toggleAgent', category: 'workflow', en: 'Show / hide Agent', zh: '显示 / 隐藏 Agent', binding: { code: 'Space', primary: true } },
+  { id: 'openComposer', category: 'workflow', en: 'Open generation panel', zh: '打开生成面板', binding: { code: 'Tab' } },
+  { id: 'submitGeneration', category: 'workflow', en: 'Confirm generation', zh: '确认生成', binding: { code: 'Enter', primary: true } }
+];
+
+let messsShortcutBindingsCache = null;
+
+function normalizedMesssShortcutBinding(binding) {
+  if (!binding || typeof binding.code !== 'string' || !binding.code) return null;
+  return {
+    code: binding.code,
+    primary: !!binding.primary,
+    shift: !!binding.shift,
+    alt: !!binding.alt
+  };
+}
+
+function defaultMesssShortcutBindings() {
+  return Object.fromEntries(MESSS_SHORTCUT_DEFINITIONS.map((definition) => [
+    definition.id,
+    normalizedMesssShortcutBinding(definition.binding)
+  ]));
+}
+
+function getMesssShortcutBindings() {
+  if (messsShortcutBindingsCache) return structuredClone(messsShortcutBindingsCache);
+  const defaults = defaultMesssShortcutBindings();
+  try {
+    const saved = JSON.parse(localStorage.getItem(MESSS_SHORTCUTS_STORAGE_KEY) || '{}');
+    for (const definition of MESSS_SHORTCUT_DEFINITIONS) {
+      const normalized = normalizedMesssShortcutBinding(saved[definition.id]);
+      if (normalized) defaults[definition.id] = normalized;
+    }
+  } catch (error) {}
+  messsShortcutBindingsCache = defaults;
+  return structuredClone(defaults);
+}
+
+function saveMesssShortcutBindings(bindings) {
+  const normalized = defaultMesssShortcutBindings();
+  for (const definition of MESSS_SHORTCUT_DEFINITIONS) {
+    const next = normalizedMesssShortcutBinding(bindings && bindings[definition.id]);
+    if (next) normalized[definition.id] = next;
+  }
+  messsShortcutBindingsCache = normalized;
+  try { localStorage.setItem(MESSS_SHORTCUTS_STORAGE_KEY, JSON.stringify(normalized)); } catch (error) {}
+  window.dispatchEvent(new CustomEvent('messs-shortcuts-changed', { detail: structuredClone(normalized) }));
+}
+
+function messsShortcutFromEvent(event) {
+  if (!event || !event.code || ['ControlLeft', 'ControlRight', 'MetaLeft', 'MetaRight', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight'].includes(event.code)) return null;
+  return normalizedMesssShortcutBinding({
+    code: event.code,
+    primary: event.ctrlKey || event.metaKey,
+    shift: event.shiftKey,
+    alt: event.altKey
+  });
+}
+
+function matchesMesssShortcut(event, actionId, bindings = null) {
+  const binding = (bindings || getMesssShortcutBindings())[actionId];
+  if (!binding || event.code !== binding.code) return false;
+  return (event.ctrlKey || event.metaKey) === !!binding.primary &&
+    !!event.shiftKey === !!binding.shift && !!event.altKey === !!binding.alt;
+}
+
+function sameMesssShortcut(left, right) {
+  return !!left && !!right && left.code === right.code && left.primary === right.primary && left.shift === right.shift && left.alt === right.alt;
+}
+
+function messsShortcutDisplay(binding) {
+  if (!binding) return t('Not set', '未设置');
+  const keys = [];
+  if (binding.primary) keys.push(navigator.platform && /Mac/i.test(navigator.platform) ? 'Command' : 'Ctrl');
+  if (binding.alt) keys.push(navigator.platform && /Mac/i.test(navigator.platform) ? 'Option' : 'Alt');
+  if (binding.shift && binding.code !== 'Equal') keys.push('Shift');
+  const labels = { Equal: '+', Minus: '-', Space: 'Space', Escape: 'Esc', Delete: 'Delete', Tab: 'Tab', Enter: 'Enter' };
+  let key = labels[binding.code] || binding.code.replace(/^Key/, '').replace(/^Digit/, '');
+  keys.push(key);
+  return keys.join(' + ');
+}
+
 function boardFullscreenToggleTitle() {
   return isBoardFullscreen()
     ? t('Exit fullscreen', '退出全屏')
@@ -5301,32 +5401,97 @@ function boardAiDurationValue(seconds) {
 }
 
 function renderShortcutsPopover(pop) {
-  const groups = [
-    ['Edit', '编辑', [
-      ['Ctrl + Z', 'Undo', '撤销'], ['Ctrl + Shift + Z', 'Redo', '重做'],
-      ['Ctrl + C', 'Copy selection', '复制所选'], ['Ctrl + V', 'Paste', '粘贴'],
-      ['Ctrl + A', 'Select all', '全选'], ['Ctrl + D', 'Deselect', '取消选择'],
-      ['Delete', 'Remove from canvas', '从画布移除'], ['Esc', 'Exit current operation', '退出当前操作']
-    ]],
-    ['View', '视图', [
-      ['Ctrl + +', 'Zoom in', '放大'], ['Ctrl + −', 'Zoom out', '缩小'],
-      ['Ctrl + 0', 'Reset to 100%', '重置为 100%'],
-      ['Shift + 1', 'Fit canvas', '适应画布'], ['Shift + 2', 'Fit selection', '适应选中'],
-      ['Shift + wheel', 'Pan horizontally', '水平滚动画布'], ['Middle drag', 'Pan canvas', '平移画布']
-    ]],
-    ['AI & workflow', 'AI 与工作流', [
-      ['Ctrl + Space', 'Toggle Agent', '显示 / 隐藏 Agent'],
-      ['Tab', 'Generate from selection', '打开所选素材的生成面板'],
-      ['Enter', 'New line in generation prompt', '生成提示词换行'],
-      ['Ctrl + Enter', 'Confirm generation', '确认生成']
-    ]]
-  ];
-  pop.setAttribute('role', 'dialog'); pop.setAttribute('aria-label', t('Shortcuts', '快捷键'));
-  pop.innerHTML = '<header class="shortcuts-heading"><strong>' + t('Messs shortcuts', 'Messs 快捷键') + '</strong><button type="button" aria-label="'+t('Close','关闭')+'">×</button></header><div class="shortcuts-columns">' + groups.map(([en,zh,rows]) =>
-    '<section><h3>'+escapeHtml(t(en,zh))+'</h3>'+rows.map(([key,en,zh])=>
-      '<div class="shortcuts-row"><span>'+escapeHtml(t(en,zh))+'</span><kbd>'+escapeHtml(key)+'</kbd></div>').join('')+'</section>'
-  ).join('')+'</div><p class="shortcuts-footnote">'+t('Canvas shortcuts are inactive while typing. On macOS use Command instead of Ctrl.', '输入文字时不触发画布快捷键。macOS 使用 Command 代替 Ctrl。')+'</p>';
-  pop.querySelector('.shortcuts-heading button').onclick = () => pop.remove();
+  pop._shortcutDraft ||= getMesssShortcutBindings();
+  const activeCategory = pop.dataset.shortcutCategory || MESSS_SHORTCUT_CATEGORIES[0].id;
+  const category = MESSS_SHORTCUT_CATEGORIES.find((entry) => entry.id === activeCategory) || MESSS_SHORTCUT_CATEGORIES[0];
+  pop.dataset.shortcutCategory = category.id;
+  pop.setAttribute('role', 'presentation');
+  pop.innerHTML = `
+    <button class="shortcuts-backdrop" type="button" aria-label="${escapeHtml(t('Close', '关闭'))}"></button>
+    <section class="shortcuts-popover" role="dialog" aria-modal="true" aria-label="${escapeHtml(t('Shortcut settings', '快捷键设置'))}">
+      <header class="shortcuts-heading">
+        <strong>${escapeHtml(t('Shortcut settings', '快捷键设置'))}</strong>
+        <button class="shortcuts-close" type="button" aria-label="${escapeHtml(t('Close', '关闭'))}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </header>
+      <div class="shortcuts-settings-body">
+        <nav class="shortcuts-categories" aria-label="${escapeHtml(t('Shortcut categories', '快捷键分类'))}">
+          ${MESSS_SHORTCUT_CATEGORIES.map((entry) => `<button type="button" data-shortcut-category="${entry.id}" class="${entry.id === category.id ? 'is-active' : ''}">${escapeHtml(t(entry.en, entry.zh))}</button>`).join('')}
+        </nav>
+        <main class="shortcuts-editor">
+          <h3>${escapeHtml(t(category.en, category.zh))}</h3>
+          <div class="shortcuts-editor-list">
+            ${MESSS_SHORTCUT_DEFINITIONS.filter((definition) => definition.category === category.id).map((definition) => `
+              <div class="shortcuts-row">
+                <span>${escapeHtml(t(definition.en, definition.zh))}</span>
+                <button type="button" class="shortcuts-binding" data-shortcut-action="${definition.id}">${escapeHtml(messsShortcutDisplay(pop._shortcutDraft[definition.id]))}</button>
+              </div>`).join('')}
+          </div>
+          <p class="shortcuts-record-status" role="status"></p>
+        </main>
+      </div>
+      <footer class="shortcuts-actions">
+        <button type="button" data-shortcut-reset>${escapeHtml(t('Reset all', '全部重置'))}</button>
+        <span></span>
+        <button type="button" data-shortcut-cancel>${escapeHtml(t('Cancel', '取消'))}</button>
+        <button type="button" class="is-primary" data-shortcut-save>${escapeHtml(t('Save', '保存'))}</button>
+      </footer>
+    </section>`;
+
+  const close = () => typeof pop._closeShortcuts === 'function' ? pop._closeShortcuts() : pop.remove();
+  pop.querySelector('.shortcuts-backdrop').onclick = close;
+  pop.querySelector('.shortcuts-close').onclick = close;
+  pop.querySelector('[data-shortcut-cancel]').onclick = close;
+  pop.querySelectorAll('[data-shortcut-category]').forEach((button) => {
+    button.onclick = () => {
+      pop.dataset.shortcutCategory = button.dataset.shortcutCategory;
+      renderShortcutsPopover(pop);
+    };
+  });
+  let recordingAction = null;
+  const status = pop.querySelector('.shortcuts-record-status');
+  const stopRecording = () => {
+    recordingAction = null;
+    pop.querySelectorAll('.shortcuts-binding').forEach((button) => button.classList.remove('is-recording'));
+  };
+  pop.querySelectorAll('.shortcuts-binding').forEach((button) => {
+    button.onclick = () => {
+      stopRecording();
+      recordingAction = button.dataset.shortcutAction;
+      button.classList.add('is-recording');
+      button.textContent = t('Press shortcut', '请按快捷键');
+      status.textContent = '';
+      button.focus();
+    };
+  });
+  pop.onkeydown = (event) => {
+    if (!recordingAction) {
+      if (event.key === 'Escape') { event.preventDefault(); close(); }
+      return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const binding = messsShortcutFromEvent(event);
+    if (!binding) return;
+    const conflict = MESSS_SHORTCUT_DEFINITIONS.find((definition) =>
+      definition.id !== recordingAction && sameMesssShortcut(pop._shortcutDraft[definition.id], binding)
+    );
+    if (conflict) {
+      status.textContent = t(`Already used by ${conflict.en}`, `已被“${conflict.zh}”使用`);
+      return;
+    }
+    pop._shortcutDraft[recordingAction] = binding;
+    stopRecording();
+    renderShortcutsPopover(pop);
+  };
+  pop.querySelector('[data-shortcut-reset]').onclick = () => {
+    pop._shortcutDraft = defaultMesssShortcutBindings();
+    renderShortcutsPopover(pop);
+  };
+  pop.querySelector('[data-shortcut-save]').onclick = () => {
+    saveMesssShortcutBindings(pop._shortcutDraft);
+    close();
+    showToast(t('Shortcut settings saved', '快捷键设置已保存'));
+  };
 }
 
 function refreshBoardLanguage() {
@@ -8379,7 +8544,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     setPromptStylePanelOpen(false);
   });
   prompt.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) {
+    if (matchesMesssShortcut(event, 'submitGeneration') && !event.isComposing) {
       event.preventDefault();
       form.requestSubmit();
     }
@@ -9428,16 +9593,17 @@ function initBoardBottomBar() {
   };
   const toggleShortcuts = () => {
     const existing = document.getElementById('shortcuts-popover');
-    if (existing) { existing.remove(); return; }
+    if (existing) { closeShortcuts(); return; }
     const pop = document.createElement('div');
     pop.id = 'shortcuts-popover';
-    pop.className = 'shortcuts-popover is-settings-shortcuts';
+    pop.className = 'shortcuts-overlay is-settings-shortcuts';
     markBoardUiLayer(pop);
+    pop._closeShortcuts = closeShortcuts;
     renderShortcutsPopover(pop);
-    pop.querySelector('.shortcuts-heading button').onclick = closeShortcuts;
-    settings.appendChild(pop);
+    document.body.appendChild(pop);
     shortcutsToggle.setAttribute('aria-expanded', 'true');
     setSettingsOpen(false);
+    pop.querySelector('.shortcuts-binding')?.focus({ preventScroll: true });
   };
   syncThemeToggle();
   settingsToggle.addEventListener('click', (event) => {
@@ -9472,6 +9638,7 @@ function initBoardBottomBar() {
   watermarkOverlay.querySelector('.board-watermark-backdrop').addEventListener('click', closeWatermarkDialog);
   shortcutsToggle.addEventListener('click', toggleShortcuts);
   document.addEventListener('click', (event) => {
+    if (event.target.closest?.('#shortcuts-popover')) return;
     if (!settings.contains(event.target)) {
       setSettingsOpen(false);
       closeShortcuts();
