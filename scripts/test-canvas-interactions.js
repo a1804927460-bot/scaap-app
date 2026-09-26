@@ -1052,6 +1052,16 @@ assert.match(
 );
 assert.match(
   workspaceSource,
+  /function buildCanvasLibraryFolderCard[\s\S]*?card\.dataset\.libraryKey = `folder:\$\{project\.id\}`[\s\S]*?function renderCanvasLibrary[\s\S]*?projects\.forEach\(\(project\) => grid\.appendChild\(buildCanvasLibraryFolderCard\(project\)\)[\s\S]*?canvases\.forEach/,
+  'Folders must be non-reorderable and always render before canvas cards.'
+);
+assert.doesNotMatch(
+  workspaceSource,
+  /function buildCanvasLibraryFolderCard[\s\S]{0,240}?bindCanvasLibraryReorder/,
+  'Folder cards must never participate in manual ordering that can place them behind canvases.'
+);
+assert.match(
+  workspaceSource,
   /canvas-library-folder-back[\s\S]*?selectAllCanvasLibraryItems/,
   'Opening a folder must provide a reliable return-to-all-canvases control.'
 );

@@ -827,7 +827,7 @@ function buildCanvasLibraryFolderCard(project) {
   const card = document.createElement('article');
   card.className = 'canvas-library-folder-card';
   card.dataset.projectId = project.id;
-  bindCanvasLibraryReorder(card, `folder:${project.id}`, true);
+  card.dataset.libraryKey = `folder:${project.id}`;
   card.tabIndex = 0;
   card.setAttribute('role', 'button');
   card.setAttribute('aria-label', t(`Open folder ${project.name}`, `打开文件夹“${project.name}”`));
@@ -1212,15 +1212,6 @@ function renderCanvasLibrary() {
       }
     });
     grid.appendChild(card);
-  });
-  const libraryNodes = new Map(Array.from(grid.children).map((card) => {
-    // Canvas cards are ordered by lastOpenedAt, not by manual drag order.
-    // Keep the native draggable behavior for tearing a canvas off into a window.
-    return [card.dataset.libraryKey, card];
-  }));
-  canvasLibraryOrderedEntries().forEach(({ key }) => {
-    const card = libraryNodes.get(key);
-    if (card) grid.appendChild(card);
   });
   observeCanvasCardDensity(grid);
   const empty = document.getElementById('canvas-library-empty');
