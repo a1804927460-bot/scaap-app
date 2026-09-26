@@ -1086,11 +1086,6 @@ function showBoardCanvasContextMenu(x, y) {
         await addFilesToBoard(imported.map((file) => file.id), point.x, point.y, { selectAdded: true });
         showToast(t('Imported and added to the canvas', '\u5df2\u5bfc\u5165\u5e76\u653e\u5165\u753b\u5e03'));
       }
-    },
-    {
-      label: t('View points usage', '\u67e5\u770b\u79ef\u5206\u7528\u91cf'),
-      icon: 'M4 19V5M4 19h16M8 16v-4M12 16V8M16 16v-7',
-      action: openCanvasUsageDetails
     }
   ], x, y, 'board-canvas-context-menu');
 }

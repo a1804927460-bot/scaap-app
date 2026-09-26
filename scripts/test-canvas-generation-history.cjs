@@ -51,7 +51,9 @@ const output = path.join(root, 'test-artifacts', 'canvas-generation-history');
     await page.addScriptTag({ url: pathToFileURL(path.join(root, 'src', 'js', 'context-menu.js')).href });
 
     await page.evaluate(() => showBoardCanvasContextMenu(100, 100));
-    assert.match(await page.locator('#board-canvas-context-menu').innerText(), /生成历史/);
+    const canvasMenuText = await page.locator('#board-canvas-context-menu').innerText();
+    assert.match(canvasMenuText, /生成历史/);
+    assert.doesNotMatch(canvasMenuText, /查看积分用量/);
     await page.getByText('生成历史', { exact: true }).click();
 
     const overlay = page.locator('#canvas-generation-history-overlay');
