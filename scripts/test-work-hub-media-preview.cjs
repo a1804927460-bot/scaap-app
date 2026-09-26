@@ -74,6 +74,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     await page.evaluate(() => MesssWorkHub.open('files', { restoreFromPreview: true }));
     assert.equal(await page.locator('.hub-content').evaluate(node => node.scrollTop), previousScrollTop);
     assert.equal(await page.locator('[data-hub-action="filter-image"]').getAttribute('class'), 'is-active');
+    const scrollTopButton = page.locator('.hub-scroll-top');
+    assert.equal(await scrollTopButton.getAttribute('aria-hidden'), 'false');
+    const [hubBox, buttonBox] = await Promise.all([page.locator('.work-hub').boundingBox(), scrollTopButton.boundingBox()]);
+    assert.ok(buttonBox.x >= hubBox.x && buttonBox.x + buttonBox.width <= hubBox.x + hubBox.width);
+    assert.ok(buttonBox.y >= hubBox.y && buttonBox.y + buttonBox.height <= hubBox.y + hubBox.height);
+    await scrollTopButton.click();
+    await page.waitForFunction(() => document.querySelector('.hub-content').scrollTop === 0);
+    assert.equal(await scrollTopButton.getAttribute('aria-hidden'), 'true');
 
     console.log('PASS work hub renders safe SVG and 3D thumbnails and opens their dedicated previews');
   } finally {

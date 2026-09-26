@@ -10,11 +10,20 @@ window.MesssWorkHub = (() => {
   const api = () => window.messsAPI;
   const action = (id,label,cls='') => `<button type="button" data-hub-action="${id}" class="${cls}">${label}</button>`;
   function notify(error) { const el=root?.querySelector('.hub-notice'); if(el){el.textContent=error.message || String(error);el.hidden=false;} }
+  function updateScrollTopButton() {
+    const button=root?.querySelector('.hub-scroll-top');
+    if(!button||!content)return;
+    const visible=(area==='files'||area==='assets')&&content.scrollTop>Math.max(480,content.clientHeight*.75);
+    button.classList.toggle('is-visible',visible);
+    button.setAttribute('aria-hidden',String(!visible));
+    button.tabIndex=visible?0:-1;
+  }
   function ensureRoot() {
     if(root)return;
     root=document.createElement('dialog');root.className='work-hub';root.setAttribute('aria-label','工作管理');
-    root.innerHTML=`<header class="hub-top"><div><span class="hub-wordmark">Messs.</span><span class="hub-local">本机工作管理</span></div><nav>${['schedule','files','assets','skills'].map((id,i)=>action(id,['日程','文件','资产','技能'][i])).join('')}</nav>${action('close','×','hub-close')}</header><p class="hub-notice" role="alert" hidden></p><main class="hub-content"></main>`;
+    root.innerHTML=`<header class="hub-top"><div><span class="hub-wordmark">Messs.</span><span class="hub-local">本机工作管理</span></div><nav>${['schedule','files','assets','skills'].map((id,i)=>action(id,['日程','文件','资产','技能'][i])).join('')}</nav>${action('close','×','hub-close')}</header><p class="hub-notice" role="alert" hidden></p><main class="hub-content"></main><button type="button" class="hub-scroll-top" data-hub-action="scroll-top" aria-label="返回顶部" title="返回顶部" aria-hidden="true" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg></button>`;
     document.body.append(root);content=root.querySelector('main');
+    content.addEventListener('scroll',updateScrollTopButton,{passive:true});
     root.addEventListener('keydown',e=>e.stopPropagation());
     root.addEventListener('click',e=>{const button=e.target.closest('[data-hub-action]');if(button)void handle(button.dataset.hubAction,button).catch(notify);});
     root.addEventListener('cancel',()=>{++loadToken;});
@@ -52,6 +61,7 @@ window.MesssWorkHub = (() => {
         previewReturnState=null;
         await new Promise(resolve=>requestAnimationFrame(resolve));
         content.scrollTop=state.scrollTop;
+        updateScrollTopButton();
       }
     }catch(error){content.innerHTML='<div class="hub-empty">暂时无法读取数据，请关闭后重试。</div>';notify(error);}
   }
@@ -62,6 +72,7 @@ window.MesssWorkHub = (() => {
     root.querySelectorAll('.hub-top nav button').forEach(b=>{b.classList.toggle('is-active',b.dataset.hubAction===area);b.setAttribute('aria-current',b.dataset.hubAction===area?'page':'false');});
     if(area==='schedule')renderSchedule();else if(area==='skills')renderSkills();else renderFiles();
     wireSearch();
+    updateScrollTopButton();
   }
   function filteredProjects() {return projects.filter(p=>Boolean(p.deletedAt)===archived && (filter==='all'||p.status===filter) && `${p.title} ${p.owner}`.toLowerCase().includes(query.toLowerCase())).sort((a,b)=>a.due.localeCompare(b.due));}
   function badge(p) {return `<span class="hub-status status-${p.status}">${p.status!=='done'&&p.due<today()?'已逾期 · ':''}${statusNames[p.status]}</span>`;}
@@ -292,6 +303,11 @@ window.MesssWorkHub = (() => {
   async function handle(name, button) {
     if(['schedule','files','assets','skills'].includes(name)){await open(name);return;}
     if(name==='close'){root.close();return;}
+    if(name==='scroll-top'){
+      const reduced=window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      content.scrollTo({top:0,behavior:reduced?'auto':'smooth'});
+      return;
+    }
     if(name.startsWith('view-')){view=name.slice(5);render();return;}
     if(name.startsWith('filter-')){filter=name.slice(7);render();return;}
     if(name==='previous'||name==='next'){const d=new Date(month+'-01T12:00:00');d.setMonth(d.getMonth()+(name==='next'?1:-1));month=day(d).slice(0,7);render();return;}
