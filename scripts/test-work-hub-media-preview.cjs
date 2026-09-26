@@ -7,9 +7,8 @@ const { pathToFileURL } = require('node:url');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 
 (async () => {
-  const systemChrome = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
   const browser = await chromium.launch({
-    ...(fs.existsSync(systemChrome) ? { executablePath: systemChrome } : {}),
+    channel: 'chrome',
     headless: true
   });
   try {

@@ -1,7 +1,7 @@
 const assert=require('node:assert/strict');
 const {chromium}=require('playwright');
 const {pathToFileURL}=require('node:url');const path=require('node:path');
-(async()=>{const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});try{
+(async()=>{const browser=await chromium.launch({channel:'chrome',headless:true});try{
 const page=await browser.newPage({viewport:{width:1280,height:800}});
 await page.route('**/js/app.js',r=>r.fulfill({body:''}));
 await page.goto(pathToFileURL(path.resolve('src/index.html')).href);

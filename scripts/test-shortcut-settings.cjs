@@ -17,7 +17,7 @@ const { chromium } = require('playwright');
   assert.ok(settingsStart >= 0 && settingsEnd > settingsStart && renderStart >= 0 && renderEnd > renderStart);
 
   const browser = await chromium.launch({
-    executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
+    channel: 'chrome',
     headless: true
   });
   try {

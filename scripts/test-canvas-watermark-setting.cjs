@@ -17,7 +17,7 @@ assert.equal((boardSource.match(/watermark: boardAiWatermarkEnabled\(\)/g) || []
 
 (async () => {
   const browser = await chromium.launch({
-    executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
+    channel: 'chrome',
     headless: true
   });
   try {

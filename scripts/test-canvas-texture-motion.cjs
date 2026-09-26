@@ -5,7 +5,7 @@ const { pathToFileURL } = require('node:url');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 
 (async () => {
-  const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     for (const dpr of [1, 1.5, 2]) {
       const page = await browser.newPage({ viewport: { width: 780, height: 580 }, deviceScaleFactor: dpr });

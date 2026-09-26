@@ -1,5 +1,5 @@
 const {chromium}=require('playwright');const fs=require('fs'),path=require('path'),assert=require('assert/strict');const {pathToFileURL}=require('url');
-(async()=>{const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});try {
+(async()=>{const browser=await chromium.launch({channel:'chrome',headless:true});try {
  const page=await browser.newPage({viewport:{width:1100,height:850}});await page.route('**/js/app.js',r=>r.fulfill({body:''}));await page.goto(pathToFileURL(path.resolve('src/index.html')).href);
  const result=await page.evaluate(async()=>{
   window.t=(en,zh)=>zh;AppState.language='zh';delete document.documentElement.dataset.startupPending;

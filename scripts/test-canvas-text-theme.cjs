@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 (async () => {
-  const browser = await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+  const browser = await chromium.launch({channel:'chrome',headless:true});
   try {
     const page = await browser.newPage();
     await page.setContent('<canvas id="board-overview"></canvas><div id="board-canvas"></div>');

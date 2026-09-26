@@ -11,11 +11,8 @@ const root = path.resolve(__dirname, '..');
 const output = path.join(root, 'test-artifacts', 'three-d-director');
 
 (async () => {
-  const chromePath = process.platform === 'win32'
-    ? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
-    : '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
   const browser = await chromium.launch({
-    executablePath: chromePath,
+    channel: 'chrome',
     headless: true,
     args: ['--use-angle=swiftshader', '--enable-webgl']
   });

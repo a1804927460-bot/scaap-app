@@ -11,7 +11,7 @@ const output = path.join(root, 'test-artifacts', 'canvas-generation-history');
 
 (async () => {
   const browser = await chromium.launch({
-    executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
+    channel: 'chrome',
     headless: true
   });
   try {

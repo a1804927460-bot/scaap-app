@@ -3,7 +3,7 @@ const {chromium}=require('playwright');
 const {pathToFileURL}=require('node:url');
 const path=require('node:path');
 (async()=>{
-  const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+  const browser=await chromium.launch({channel:'chrome',headless:true});
   try {
     const page=await browser.newPage();
     await page.route('**/js/app.js',r=>r.fulfill({body:''}));

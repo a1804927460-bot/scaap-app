@@ -4,7 +4,7 @@ const {pathToFileURL} = require('node:url');
 const {chromium} = require('playwright');
 
 (async () => {
-  const browser = await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+  const browser = await chromium.launch({channel:'chrome',headless:true});
   try {
     for (const detached of [false, true]) {
       const page = await browser.newPage();

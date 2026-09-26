@@ -1,5 +1,5 @@
 const {chromium}=require('playwright');const fs=require('fs');const assert=require('node:assert/strict');
-(async()=>{const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});try {
+(async()=>{const browser=await chromium.launch({channel:'chrome',headless:true});try {
 const page=await browser.newPage({viewport:{width:1000,height:900}});
 await page.route('http://localhost/**',r=>r.fulfill({body:'<html></html>'}));await page.goto('http://localhost/');
 await page.setContent('<html data-theme="dark"><body><main class="ai-assistant-main"><div id="ai-assistant-messages"></div><form id="ai-assistant-form"><textarea></textarea></form></main><aside id="board-agent-panel"><div id="board-agent-messages"></div><form id="board-agent-form"><textarea></textarea></form></aside></body></html>');

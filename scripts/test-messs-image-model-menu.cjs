@@ -17,7 +17,7 @@ const providers = [
 
 (async () => {
   const browser = await chromium.launch({
-    executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
+    channel: 'chrome',
     headless: true
   });
   try {

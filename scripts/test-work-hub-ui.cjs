@@ -3,7 +3,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const assert=require('node:assert/strict');const path=require('node:path');const fs=require('node:fs');const {pathToFileURL}=require('node:url');
 const {createScheduleService}=require('../lib/project-schedule');const {createResourceService}=require('../lib/workspace-resources');
 (async()=>{
-  const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+  const browser=await chromium.launch({channel:'chrome',headless:true});
   try{
     const store={data:{files:[{id:'fixture-file',name:'品牌参考.png',ext:'.png'}]},save(){}};
     const service=createScheduleService(store,()=> 'fixture');const resources=createResourceService(store,()=> 'fixture');

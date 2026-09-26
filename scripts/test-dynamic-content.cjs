@@ -30,7 +30,7 @@ const { chromium } = require('playwright');
   assert.match(migration, /revoke insert, update, delete[\s\S]*?anon, authenticated/);
 
   const browser = await chromium.launch({
-    executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
+    channel: 'chrome',
     headless: true
   });
   try {

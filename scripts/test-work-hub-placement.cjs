@@ -1,5 +1,5 @@
 const {chromium}=require('playwright');const assert=require('node:assert/strict');const {pathToFileURL}=require('url');const path=require('path');
-(async()=>{const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});try{const page=await browser.newPage();await page.route('**/js/app.js',r=>r.fulfill({body:''}));await page.goto(pathToFileURL(path.resolve('src/index.html')).href);await page.evaluate(()=>{
+(async()=>{const browser=await chromium.launch({channel:'chrome',headless:true});try{const page=await browser.newPage();await page.route('**/js/app.js',r=>r.fulfill({body:''}));await page.goto(pathToFileURL(path.resolve('src/index.html')).href);await page.evaluate(()=>{
  delete document.documentElement.dataset.startupPending;
  AppState.files=[{id:'f',name:'Photo.png',ext:'.png'}];AppState.canvases=[{id:'a',name:'画布一'},{id:'b',name:'画布二'}];
  window.messsAPI={listScheduleProjects:async()=>[],listWorkspaceResources:async()=>[]};window.appendFileThumbnail=el=>el.textContent='Photo';
