@@ -46,7 +46,9 @@ const { chromium } = require('playwright');
       document.body.append(overlay);
       ShortcutTest.renderShortcutsPopover(overlay);
     });
-    await page.waitForTimeout(500);
+    await page.locator('.shortcuts-popover').evaluate(async (dialog) => {
+      await Promise.all(dialog.getAnimations().map((animation) => animation.finished));
+    });
     assert.equal(await page.locator('button[data-shortcut-category]').count(), 3);
     let bounds = await page.locator('.shortcuts-popover').boundingBox();
     assert.ok(Math.abs(bounds.x + bounds.width / 2 - 600) < 2, JSON.stringify(bounds));
