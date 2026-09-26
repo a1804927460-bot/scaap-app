@@ -65,7 +65,7 @@ test('start is idempotency-bound to operation, owner token, and canonical reques
         reason: calls.length === 1 ? 'reserved' : 'already-started',
         requestId: operationId,
         status: 'starting',
-        credits: 194
+        credits: 244
       });
     };
 
@@ -74,13 +74,13 @@ test('start is idempotency-bound to operation, owner token, and canonical reques
 
     assert.equal(created.created, true);
     assert.equal(repeated.created, false);
-    assert.equal(created.credits, 194);
+    assert.equal(created.credits, 244);
     assert.match(calls[0].url, /\/rpc\/start_ai_video_job$/);
     assert.equal(calls[0].body.p_request_id, operationId);
     assert.equal(calls[0].body.p_user_id, userId);
     assert.equal(calls[0].body.p_token_hash, hashVideoTaskToken(taskToken));
     assert.equal(calls[0].body.p_request_hash, calls[1].body.p_request_hash);
-    assert.equal(calls[0].body.p_expected_credits, 201);
+    assert.equal(calls[0].body.p_expected_credits, 244);
     assert.equal(JSON.stringify(calls[0].body).includes(taskToken), false);
     assert.equal(JSON.stringify(calls[0].body).includes('private prompt text'), false);
   });
@@ -97,14 +97,14 @@ test('start accepts only a higher server-authorized price without exposing an ac
       fetchImpl: async (_url, options) => {
         calls.push(JSON.parse(options.body));
         return calls.length === 1
-          ? jsonResponse({ ok: false, reason: 'pricing-mismatch', credits: 210 })
-          : jsonResponse({ ok: true, reason: 'reserved', credits: 210, status: 'starting' });
+          ? jsonResponse({ ok: false, reason: 'pricing-mismatch', credits: 260 })
+          : jsonResponse({ ok: true, reason: 'reserved', credits: 260, status: 'starting' });
       }
     });
     assert.equal(calls.length, 2);
-    assert.equal(calls[0].p_expected_credits, 201);
-    assert.equal(calls[1].p_expected_credits, 210);
-    assert.equal(created.credits, 210);
+    assert.equal(calls[0].p_expected_credits, 244);
+    assert.equal(calls[1].p_expected_credits, 260);
+    assert.equal(created.credits, 260);
     assert.equal(JSON.stringify(created).includes('pricingTier'), false);
   });
 });

@@ -21,7 +21,7 @@ window.MesssWorkHub = (() => {
   function ensureRoot() {
     if(root)return;
     root=document.createElement('dialog');root.className='work-hub';root.setAttribute('aria-label','工作管理');
-    root.innerHTML=`<header class="hub-top"><div><span class="hub-wordmark">Messs.</span><span class="hub-local">本机工作管理</span></div><nav>${['schedule','files','assets','skills'].map((id,i)=>action(id,['日程','文件','资产','技能'][i])).join('')}</nav>${action('close','×','hub-close')}</header><p class="hub-notice" role="alert" hidden></p><main class="hub-content"></main><button type="button" class="hub-scroll-top" data-hub-action="scroll-top" aria-label="返回顶部" title="返回顶部" aria-hidden="true" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg></button>`;
+    root.innerHTML=`<header class="hub-top"><div><span class="hub-wordmark">Messs.</span></div><nav>${['schedule','files','assets','skills'].map((id,i)=>action(id,['日程','文件','资产','技能'][i])).join('')}</nav>${action('close','×','hub-close')}</header><p class="hub-notice" role="alert" hidden></p><main class="hub-content"></main><button type="button" class="hub-scroll-top" data-hub-action="scroll-top" aria-label="返回顶部" title="返回顶部" aria-hidden="true" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg></button>`;
     document.body.append(root);content=root.querySelector('main');
     content.addEventListener('scroll',updateScrollTopButton,{passive:true});
     root.addEventListener('keydown',e=>e.stopPropagation());
@@ -66,7 +66,7 @@ window.MesssWorkHub = (() => {
     }catch(error){content.innerHTML='<div class="hub-empty">暂时无法读取数据，请关闭后重试。</div>';notify(error);}
   }
   function heading(title, subtitle, buttons) { return `<div class="hub-heading"><div><p class="hub-eyebrow">WORKSPACE / ${area.toUpperCase()}</p><h1>${title}</h1><p>${subtitle}</p></div><div class="hub-actions">${buttons}</div></div>`; }
-  function search() { return `<input class="hub-search" type="search" placeholder="搜索名称、负责人或标签…" aria-label="搜索" value="${esc(query)}">`; }
+  function search() { return `<label class="hub-search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg><input class="hub-search" type="search" placeholder="搜索名称" aria-label="搜索名称" value="${esc(query)}"></label>`; }
   function wireSearch() { const input=content.querySelector('.hub-search');if(input)input.addEventListener('input',()=>{query=input.value;const pos=input.selectionStart;render();const next=content.querySelector('.hub-search');next.focus();try{next.setSelectionRange(pos,pos);}catch{}}); }
   function render() {
     root.querySelectorAll('.hub-top nav button').forEach(b=>{b.classList.toggle('is-active',b.dataset.hubAction===area);b.setAttribute('aria-current',b.dataset.hubAction===area?'page':'false');});

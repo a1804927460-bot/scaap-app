@@ -44,6 +44,9 @@ const {createScheduleService}=require('../lib/project-schedule');const {createRe
     await page.setViewportSize({width:1440,height:1000});await page.evaluate(()=>document.documentElement.dataset.theme='light');await page.waitForTimeout(220);
     await page.screenshot({path:'test-artifacts/work-hub/schedule-light.png'});
     await page.locator('.hub-top [data-hub-action="files"]').click();
+    assert.equal(await page.locator('.hub-local').count(),0);
+    assert.equal(await page.locator('.hub-search').getAttribute('placeholder'),'搜索名称');
+    assert.equal(await page.locator('.hub-search-field > svg').count(),1);
     await page.screenshot({path:'test-artifacts/work-hub/files-light.png'});
     await page.locator('[data-hub-action="collect"]').click();
     await page.locator('.hub-top [data-hub-action="assets"]').click();assert.equal(await page.locator('.hub-asset').count(),1);
@@ -52,7 +55,11 @@ const {createScheduleService}=require('../lib/project-schedule');const {createRe
     assert.equal(resources.list().find(r=>r.kind==='asset').favorite,true);
     await page.locator('.hub-top [data-hub-action="skills"]').click();await page.locator('[data-hub-action="new-skill"]').click();await page.locator('.hub-editor [type=submit]').click();await page.locator('.hub-editor').waitFor({state:'detached'});
     assert.equal(await page.locator('.hub-skill').count(),1);
-    await page.evaluate(()=>document.documentElement.dataset.theme='dark');await page.screenshot({path:'test-artifacts/work-hub/skills-dark.png'});
+    await page.evaluate(()=>document.documentElement.dataset.theme='dark');
+    await page.waitForTimeout(240);
+    const darkSearchRgb=await page.locator('.hub-search-field').evaluate(element=>getComputedStyle(element).backgroundColor.match(/\d+/g).map(Number));
+    assert.ok(Math.max(...darkSearchRgb.slice(0,3))<80,'Dark search hover must stay dark');
+    await page.screenshot({path:'test-artifacts/work-hub/skills-dark.png'});
     for(const target of ['main','canvas']){
       await page.locator('[data-hub-action="skill-use"]').click();await page.locator('[name=task]').fill('检查本周交付');await page.locator('[name=target]').selectOption(target);await page.locator('.hub-editor [type=submit]').click();
       const selector=target==='main'?'#ai-assistant-input':'#board-agent-input';assert.match(await page.locator(selector).inputValue(),/检查本周交付/);

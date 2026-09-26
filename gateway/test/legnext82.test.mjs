@@ -9,10 +9,10 @@ const png=Buffer.alloc(24);Buffer.from([137,80,78,71,13,10,26,10]).copy(png);png
 test('Midjourney 8.2 public entry, version lock and bounded pricing',()=>{
   const old=process.env.LEGNEXT_API_KEY;process.env.LEGNEXT_API_KEY='test';
   try {const p=publicProviderConfig().providers;assert.equal(p.filter(x=>x.id==='image-18').length,1);assert.equal(p.some(x=>x.id==='image-17'),false);}finally{if(old===undefined)delete process.env.LEGNEXT_API_KEY;else process.env.LEGNEXT_API_KEY=old;}
-  for(const [size,cost,expected] of [['1K',.08,13],['2K',.12,19]]) {
+  for(const [size,cost,expected] of [['1K',.08,16],['2K',.12,23]]) {
     for(const count of [1,2,4])assert.equal(quoteUsage('image',{providerId:'image-18',size,count}).credits,expected*count);
     assert.equal(pricing.quoteMediaCredits({kind:'image',providerId:'image-18',size}).totalCredits,expected);
-    assert.ok((expected*.07*.919-cost*7.3-.013)/(expected*.07)>=.10);
+    assert.ok((expected*.07*.919-(cost*7.3+.013)*1.10)/(expected*.07)>=.30);
     const text=media.withLegnextMidjourneyParameters('scene --v 7 --q 4 --turbo --hd','8.2','16:9',size);
     assert.equal(text,`scene --v 8.2 --ar 16:9${size==='2K'?' --hd':''} --fast`);
   }

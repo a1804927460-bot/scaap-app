@@ -5,7 +5,6 @@
 .hub-top { min-height:68px; display:flex; align-items:center; justify-content:space-between; gap:20px; padding:0 28px; border-bottom:1px solid var(--border-hairline); }
 .hub-top>div { display:flex; align-items:center; gap:18px; }
 .hub-wordmark { font-weight:850; font-size:24px; color:var(--brand-blue-bright); letter-spacing:-1px; }
-.hub-local { font-size:11px; color:var(--text-tertiary); }
 .hub-top nav { display:flex; gap:8px; }
 .work-hub button,.hub-editor button { font:inherit; color:var(--text-secondary); background:var(--bg-elevated); border:1px solid var(--border-hairline); border-radius:9px; padding:8px 13px; cursor:var(--cursor-click); transition:background .15s var(--ease-out), border-color .15s var(--ease-out), color .15s var(--ease-out), transform .18s var(--ease-spring), box-shadow .18s var(--ease-out); }
 .work-hub button:hover,.hub-editor button:hover { color:var(--text-primary); background:var(--bg-hover); border-color:var(--border-strong); transform:translateY(-1px); box-shadow:0 5px 14px rgba(0,0,0,.08); }
@@ -43,7 +42,21 @@
 .hub-segment { display:flex; padding:3px; background:var(--bg-elevated); border-radius:11px; }
 .hub-segment button { border:0; background:transparent; padding:7px 14px; font-size:12px; }
 .work-hub input,.work-hub select,.hub-editor input,.hub-editor textarea,.hub-editor select { font:inherit; color:var(--text-primary); background:var(--bg-elevated); border:1px solid var(--border-hairline); border-radius:9px; padding:9px 12px; box-sizing:border-box; min-width:0; }
-.hub-search { flex:1; max-width:360px; min-width:170px!important; }
+.hub-search-field {
+  display:flex; align-items:center; gap:11px; flex:1; width:100%; max-width:360px; min-width:170px;
+  min-height:42px; padding:0 16px; box-sizing:border-box; overflow:hidden;
+  border:1px solid var(--border-hairline); border-radius:999px; background:var(--bg-elevated);
+  color:var(--text-tertiary);
+  transition:border-color .18s var(--ease-out),background .18s var(--ease-out),box-shadow .2s var(--ease-out),transform .2s var(--ease-spring);
+}
+.hub-search-field:hover { border-color:var(--border-strong); background:color-mix(in srgb,var(--bg-elevated) 88%,var(--text-primary) 12%); }
+.hub-search-field:focus-within {
+  color:var(--text-secondary); border-color:color-mix(in srgb,var(--brand-blue-bright) 62%,var(--border-strong));
+  background:var(--bg-surface); box-shadow:0 0 0 3px color-mix(in srgb,var(--brand-blue-bright) 14%,transparent);
+}
+.hub-search-field>svg { width:18px; height:18px; flex:0 0 auto; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+.work-hub .hub-search { flex:1; width:100%; min-width:0!important; padding:0; border:0; border-radius:0; outline:0; background:transparent; box-shadow:none; color:var(--text-primary); }
+.work-hub .hub-search::placeholder { color:var(--text-tertiary); opacity:1; }
 .hub-month-nav { display:flex; align-items:center; gap:9px; margin:18px 0; }
 .hub-month-nav h2 { margin:0 10px; font-size:18px; font-weight:650; }
 .hub-month-nav button { padding:5px 12px; }
@@ -147,7 +160,7 @@
 [data-theme="light"] .work-hub .status-blocked { color:#956320; }
 [data-theme="light"] .work-hub .status-done { color:#2c7961; }
 @media(max-width:1100px) { .hub-agenda { width:210px; } .hub-content { padding:24px; } .hub-month-nav>span { display:none; } .hub-day { min-height:93px; } }
-@media(max-width:850px) { .hub-schedule-body { flex-direction:column; } .hub-calendar,.hub-agenda { width:100%; } .hub-agenda { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; } .hub-agenda>div:first-child,.hub-agenda>p { grid-column:1/-1; } .hub-local { display:none; } .hub-heading { align-items:flex-start; flex-direction:column; } .hub-metrics { gap:8px; } .hub-metrics>div { padding:12px; } }
+@media(max-width:850px) { .hub-schedule-body { flex-direction:column; } .hub-calendar,.hub-agenda { width:100%; } .hub-agenda { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; } .hub-agenda>div:first-child,.hub-agenda>p { grid-column:1/-1; } .hub-heading { align-items:flex-start; flex-direction:column; } .hub-metrics { gap:8px; } .hub-metrics>div { padding:12px; } }
 @media(max-width:540px) { .work-hub { width:calc(100vw - 12px); height:calc(100vh - 24px); border-radius:16px; } .hub-top { padding:0 12px; gap:8px; } .hub-wordmark { display:none; } .hub-top nav { gap:2px; } .hub-content { padding:16px 10px; } .hub-metrics { grid-template-columns:1fr 1fr; } .hub-day { min-height:78px; padding:4px 2px; } .hub-weekdays span { padding:10px 0; } .work-hub .hub-calendar-event { font-size:9px; padding:3px 2px; } .hub-calendar-event span { display:none; } .hub-form-grid { grid-template-columns:1fr; } .hub-editor { padding:16px; } .hub-milestone { grid-template-columns:18px 1fr 112px 22px; gap:4px; } .hub-milestone input { padding:7px 3px; } .hub-actions { flex-wrap:wrap; } .hub-agenda { grid-template-columns:1fr; } }
 
 .hub-editor .hub-danger { background:#c93636; border-color:#c93636; color:#fff; }
@@ -200,7 +213,6 @@
 .hub-top { min-height:52px; padding:0 18px; gap:14px; }
 .hub-top>div { gap:10px; }
 .hub-wordmark { color:var(--text-primary); font-size:14px; font-weight:700; letter-spacing:0; }
-.hub-local { padding-left:10px; border-left:1px solid var(--border-hairline); font-size:10px; }
 .hub-top nav { align-self:stretch; gap:18px; }
 .hub-top nav button {
   position:relative; min-width:48px; height:100%; padding:0 2px; border:0; border-radius:0;
@@ -236,7 +248,7 @@
 .hub-segment { padding:2px; border:1px solid var(--border-hairline); border-radius:6px; background:transparent; }
 .hub-segment button { min-height:27px; padding:4px 10px; border-radius:4px; font-size:11px; }
 .work-hub input,.work-hub select,.hub-editor input,.hub-editor textarea,.hub-editor select { border-radius:6px; }
-.hub-search { max-width:320px; }
+.hub-search-field { max-width:360px; min-height:40px; }
 .hub-month-nav { margin:13px 0; }
 .hub-month-nav h2 { font-size:15px; }
 .hub-calendar,.hub-timeline { border-radius:6px; }
@@ -298,7 +310,7 @@
   .hub-metrics>div:nth-child(odd) { padding-left:0; }
   .hub-metrics>div:nth-child(2) { border-right:0; }
   .hub-metrics { grid-template-columns:1fr 1fr; }
-  .hub-search { max-width:none; }
+  .hub-search-field { max-width:none; }
   .hub-skill { grid-template-columns:24px 1fr; }
   .hub-skill h3 { grid-column:2; }
   .hub-skill p,.hub-skill small,.hub-skill>div:last-child { grid-column:1 / -1; }

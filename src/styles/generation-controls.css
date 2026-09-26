@@ -1,5 +1,5 @@
 /* Keep generation settings out of the composer's layout flow. */
-.ai-image-popover.ai-composer:not(.is-moodboard-composer) { height:auto; }
+.ai-image-popover.ai-composer:not(.is-moodboard-composer) { height:auto;container-type:inline-size; }
 .ai-composer:not(.is-moodboard-composer) .ai-composer-form { height:auto;min-height:176px; }
 .ai-composer:not(.is-moodboard-composer) .ai-composer-prompt {
   field-sizing: content;
@@ -10,14 +10,25 @@
   overflow-y: auto;
 }
 .ai-composer:not(.is-moodboard-composer) .ai-options-panel {
-  left:var(--options-anchor-left, 12px);right:auto;bottom:var(--options-anchor-bottom, 56px);width:min(360px,calc(100% - 24px));
-  box-sizing:border-box;z-index:8;border-radius:8px;
-  max-height:min(520px,calc(100vh - 310px));overflow-y:auto;
+  left:var(--options-anchor-left, 12px);right:auto;bottom:var(--options-anchor-bottom, 56px);width:min(420px,calc(100% - 24px));
+  box-sizing:border-box;z-index:8;border-radius:18px;
+  max-height:min(520px,calc(100vh - 310px));overflow-x:hidden;overflow-y:auto;
 }
 .ai-composer:not(.is-moodboard-composer) .ai-composer-controls { flex-wrap:wrap;gap:6px; }
 .ai-composer:not(.is-moodboard-composer) .ai-composer-controls > .ai-model-picker { flex:0 1 auto;max-width:100%; }
 .ai-composer:not(.is-moodboard-composer) .ai-model-picker-trigger { max-width:100%; }
 .ai-composer:not(.is-moodboard-composer) .ai-options-toggle { flex:0 0 auto;min-height:32px;height:auto; }
+@container (max-width: 640px) {
+  .ai-composer:not(.is-moodboard-composer) .ai-composer-footer { flex-wrap:wrap; }
+  .ai-composer:not(.is-moodboard-composer) .ai-composer-controls { flex:1 1 100%; }
+  .ai-composer:not(.is-moodboard-composer) .ai-composer-submit-wrap {
+    flex:1 1 100%; justify-content:flex-end; max-width:100%;
+  }
+}
+@container (max-width: 520px) {
+  .ai-composer:not(.is-moodboard-composer) .ai-ratio-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
+  .ai-composer:not(.is-moodboard-composer) .ai-options-panel { left:8px;right:8px;width:auto;max-width:none;padding-inline:14px; }
+}
 .ai-composer:not(.is-moodboard-composer):has(.ai-options-panel:not([hidden])) :is(.ai-composer-close, .ai-composer-optimize) {
   visibility:hidden;
 }

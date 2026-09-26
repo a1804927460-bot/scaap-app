@@ -25,6 +25,10 @@ assert.match(controls, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?animati
   'Composer motion must respect reduced-motion preferences.');
 assert.match(controls, /@media \(max-width: 760px\)[\s\S]*?\.ai-composer:not\(\.is-moodboard-composer\) \.ai-options-panel[\s\S]*?left: 8px;[\s\S]*?right: 8px;/,
   'Generation settings should remain fully inside the composer on narrow screens.');
+assert.match(controls, /@container \(max-width: 640px\)[\s\S]*?\.ai-composer-footer[\s\S]*?flex-wrap:wrap/,
+  'A narrow canvas beside Agent must wrap the composer footer instead of clipping its submit button.');
+assert.match(controls, /@container \(max-width: 520px\)[\s\S]*?\.ai-ratio-grid[\s\S]*?repeat\(4,minmax\(0,1fr\)\)/,
+  'Generation ratios must reflow from the composer width, not the full window width.');
 assert.match(motion, /\.ai-composer-submit[\s\S]*?\.ai-model-picker-trigger/,
   'Generation controls should receive the shared press feedback.');
 

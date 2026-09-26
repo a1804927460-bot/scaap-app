@@ -78,7 +78,7 @@ test('performance image reservation uses mode-aware SQL and never falls back to 
     assert.equal(calls.length,1);
     assert.ok(calls[0].url.endsWith('/reserve_ai_mode_media_credits'));
     assert.equal(calls[0].body.p_performance_mode,'performance');
-    assert.equal(calls[0].body.p_expected_credits,26);
+    assert.equal(calls[0].body.p_expected_credits,32);
   } finally {
     if (old === undefined) delete process.env.SUPABASE_SECRET_KEY;
     else process.env.SUPABASE_SECRET_KEY = old;

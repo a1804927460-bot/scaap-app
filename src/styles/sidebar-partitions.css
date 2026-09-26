@@ -12,21 +12,20 @@
 #sidebar:not(.is-collapsed) .workspace-shortcuts button {
   position:relative; display:flex; align-items:center; justify-content:flex-start; gap:10px;
   width:100%; min-height:44px; padding:9px 10px; box-sizing:border-box;
-  border:1px solid transparent; border-radius:6px;
+  border:1px solid transparent; border-radius:16px;
   background:transparent; color:var(--text-secondary);
   transition:background 150ms,color 150ms;
 }
 #sidebar:not(.is-collapsed) .workspace-shortcuts button > span {
-  flex:0 0 24px; width:24px; height:24px; aspect-ratio:auto;
+  display:grid; place-items:center; flex:0 0 24px; width:24px; height:24px; aspect-ratio:auto;
   border:0; border-radius:0; background:transparent; transform:none;
+  line-height:0;
 }
-#sidebar:not(.is-collapsed) .workspace-shortcuts button svg { width:22px; height:22px; }
+#sidebar:not(.is-collapsed) .workspace-shortcuts button svg { display:block; width:22px; height:22px; overflow:visible; }
 #sidebar:not(.is-collapsed) .workspace-shortcuts small { font-size:14px; font-weight:600; line-height:1.2; }
 #sidebar:not(.is-collapsed) .workspace-shortcuts button:hover { background:var(--bg-hover); color:var(--text-primary); }
-#sidebar:not(.is-collapsed) .workspace-shortcuts button.is-active { background:var(--accent-soft); color:var(--accent); }
-#sidebar:not(.is-collapsed) .workspace-shortcuts button.is-active::before {
-  content:""; position:absolute; left:-1px; top:9px; bottom:9px; width:2px; border-radius:2px; background:currentColor;
-}
+#sidebar:not(.is-collapsed) .workspace-shortcuts button.is-active { background:var(--accent); color:#fff; }
+#sidebar:not(.is-collapsed) .workspace-shortcuts button.is-active::before { display:none; }
 #sidebar:not(.is-collapsed) .workspace-shortcuts button[data-workspace-area="schedule"] {
   margin-top:9px; padding-top:9px; min-height:44px;
 }
@@ -84,12 +83,12 @@
   color:#fff;
 }
 [data-theme="dark"] #sidebar:not(.is-collapsed) .workspace-shortcuts button.is-active {
-  background:#19272d;
+  background:#1677e8;
   border-color:transparent;
-  color:#f4fbff;
+  color:#fff;
 }
 [data-theme="dark"] #sidebar:not(.is-collapsed) .workspace-shortcuts button.is-active > span {
-  color:#75c8ec;
+  color:#fff;
 }
 [data-theme="dark"] #sidebar > .search-box {
   background:#24272a;

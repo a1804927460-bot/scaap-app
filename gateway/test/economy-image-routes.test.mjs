@@ -6,14 +6,14 @@ const primary = {id:'image-2',logicalModel:'nano-banana-2',model:'nano_banana_v2
 const fal = {...primary,id:'fal-backup-nano-2',endpoint:'https://queue.fal.run/fal-ai/nano-banana-2'};
 const select = (routes, body={}, prices) => economy.selectEconomyImageRoutes(primary,routes,body,prices).map(r=>r.id);
 
-test('ordinary GPT 2.5 retains all published resolutions without admitting loss-making routes',()=>{
+test('ordinary GPT 2.5 retains all published resolutions and only admits routes that preserve the target margin',()=>{
   const gpt={...primary,id:'image-19',logicalModel:'gpt-image-2.5',model:'gpt_image_2_5_flare'};
   const backup={...gpt,id:'fal-backup-gpt-image-25-flare',endpoint:'https://queue.fal.run/openai/gpt-image-2.5/flare'};
   for(const size of ['1K','2K','4K']) {
     assert.deepEqual(economy.selectEconomyImageRoutes(gpt,[gpt],{size,aspectRatio:'1:1'}).map(r=>r.id),['image-19']);
     assert.deepEqual(economy.selectEconomyImageRoutes(gpt,[gpt],{size},{'image-19':{[size]:1}}),[]);
   }
-  assert.deepEqual(economy.selectEconomyImageRoutes(gpt,[backup],{size:'1K'}),[]);
+  assert.deepEqual(economy.selectEconomyImageRoutes(gpt,[backup],{size:'1K'}).map(route=>route.id),['fal-backup-gpt-image-25-flare']);
   assert.deepEqual(economy.selectEconomyImageRoutes(gpt,[gpt],{size:'8K'}),[]);
 });
 

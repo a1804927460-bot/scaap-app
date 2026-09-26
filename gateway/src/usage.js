@@ -17,14 +17,14 @@ export const CREDIT_PRICING_VERSION = creditPricing.CREDIT_PRICING_VERSION;
 const LEGACY_POINTS_PER_CNY = 10;
 const POINTS_PER_CNY = 1000 / 70;
 const POINT_DENOMINATION_SCALE = POINTS_PER_CNY / LEGACY_POINTS_PER_CNY;
-export const IMAGE_GROSS_MARGIN_PERCENT = 25;
-export const VIDEO_GROSS_MARGIN_PERCENT = 25;
+export const IMAGE_GROSS_MARGIN_PERCENT = 30;
+export const VIDEO_GROSS_MARGIN_PERCENT = 30;
 // Existing callers use these names for image quotes. Video quotes below use
 // their dedicated margin multiplier.
 export const RETAIL_GROSS_MARGIN_PERCENT = IMAGE_GROSS_MARGIN_PERCENT;
-export const RETAIL_MULTIPLIER = 1 / (1 - RETAIL_GROSS_MARGIN_PERCENT / 100);
+export const RETAIL_MULTIPLIER = 1 / (1 - RETAIL_GROSS_MARGIN_PERCENT / 100 - 0.081);
 export const RETAIL_MARKUP_PERCENT = (RETAIL_MULTIPLIER - 1) * 100;
-export const VIDEO_RETAIL_MULTIPLIER = 1 / (1 - VIDEO_GROSS_MARGIN_PERCENT / 100);
+export const VIDEO_RETAIL_MULTIPLIER = 1 / (1 - VIDEO_GROSS_MARGIN_PERCENT / 100 - 0.081);
 export const UPSTREAM_COST_SAFETY_PERCENT = 10;
 export const UPSTREAM_COST_SAFETY_MULTIPLIER = 1 + UPSTREAM_COST_SAFETY_PERCENT / 100;
 export const USD_TO_CNY = 7.3;
@@ -136,7 +136,7 @@ export const GPT_IMAGE_25_UPSTREAM_CREDITS = Object.freeze({
   '2k': 0.025 * PTC_TO_CREDITS,
   '4k': 0.035 * PTC_TO_CREDITS
 });
-export const GPT_IMAGE_25_RETAIL_CREDITS = Object.freeze({ '1k': 3, '2k': 4, '4k': 5 });
+export const GPT_IMAGE_25_RETAIL_CREDITS = retailRateTable(GPT_IMAGE_25_UPSTREAM_CREDITS);
 
 export const IMAGE_QUALITY_UPSTREAM_CREDITS = Object.freeze({
   'image-6': Object.freeze(Object.fromEntries(Object.entries(GPT_IMAGE_2_GENERATE_UPSTREAM_CREDITS).map(([quality, rates]) => [quality, rates['1k']]))),
