@@ -75,6 +75,12 @@ async function rpc(name, body, fetchImpl = fetch) {
       await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
       continue;
     }
+    // Older recovery RPCs reject private storage references with HTTP 400
+    // while still returning the structured reason needed for the HTTPS
+    // provider-reference compatibility retry.
+    if (!response.ok && String(payload && payload.reason || '') === 'invalid-result-url') {
+      return payload;
+    }
     if (!response.ok) throw serviceError('image-job-service-failed', 'The image recovery service rejected the request.');
     return payload;
   }
