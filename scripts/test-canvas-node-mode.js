@@ -151,7 +151,7 @@ assert.match(source, /const anchorNodeId = upstream \? draft\.input_id : draft\.
   'Connected nodes must be placed beside their anchor node instead of at a distant cursor location.');
 assert.match(boardSource, /generationHooks\.placeOnBoard === false\) request\.placeOnBoard = false/);
 assert.match(boardSource, /const placeOnBoard = request\.placeOnBoard !== false/);
-assert.match(boardSource, /const placeholders = placeOnBoard \? createAiPlaceholders\(generationRequest\) : \[\]/);
+assert.match(boardSource, /const placeholders = placeOnBoard\s*\?\s*createAiPlaceholders\(generationRequest, \{ silent: true \}\)\s*:\s*\[\]/);
 assert.match(boardSource, /if \(placeOnBoard\) \{[\s\S]*?replaceAiPlaceholders[\s\S]*?selectFileForPreview/);
 assert.match(mainSource, /const boardItem = request\.placeOnBoard === false[\s\S]*?\? null[\s\S]*?: addGeneratedMediaBoardItem/,
   'The main process must archive node outputs without adding ordinary board items.');

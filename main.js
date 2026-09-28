@@ -197,11 +197,12 @@ const PUBLIC_RELEASE = Object.freeze({
 });
 const WINDOW_BACKGROUND_COLORS = Object.freeze({
   dark: '#080A0D',
-  light: '#FFFFFF'
+  light: '#FFFFFF',
+  neumorphic: '#e7dfe1'
 });
 
 function normalizeTheme(theme) {
-  return theme === 'dark' ? 'dark' : 'light';
+  return ['dark', 'light', 'neumorphic'].includes(theme) ? theme : 'light';
 }
 
 const TEXT_SIZE_LEVELS = Object.freeze(['extra-small', 'small', 'medium', 'large', 'extra-large']);
@@ -5457,7 +5458,7 @@ function conciseAiErrorMessage(error, context = {}) {
   if (['provider-task-recovery-pending', 'image-job-record-failed'].includes(code)) {
     return localizedMessage(
       'The generated result is being recovered safely. Points are temporarily held until delivery is confirmed; please retry shortly.',
-      '生成结果正在安全恢复中，积分暂时保留，确认结果后才会结算，请稍后重试。',
+      '模型排队较多，请稍后重试。',
       '생성 결과를 안전하게 복구하고 있습니다. 전달이 확인될 때까지 포인트가 임시 보류됩니다. 잠시 후 다시 시도하세요.'
     );
   }

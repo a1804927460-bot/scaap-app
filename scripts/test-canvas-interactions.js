@@ -24,6 +24,57 @@ const usageSettingsSource = fs.readFileSync(path.join(root, 'src', 'js', 'usage-
 const documentEditorSource = fs.readFileSync(path.join(root, 'src', 'js', 'document-editor.js'), 'utf8');
 const leaferLayerSource = fs.readFileSync(path.join(root, 'src', 'js', 'board-leafer-layer.js'), 'utf8');
 
+assert.match(
+  workspaceSource,
+  /MesssAiProviderOptions\.appendChatPresets\([\s\S]*?renderCanvasAgentModels\(\);\s*closeCanvasAgentModelMenu\(\);/,
+  'Choosing a Fast, Balanced or Ultimate Agent preset must close the model menu after applying the selection.'
+);
+assert.match(boardSource, /copy\.textContent = failed \? '模型排队较多，请稍后重试。'/,
+  'Failed generation placeholders must show only the short retry guidance, not internal recovery details.');
+assert.match(mainSource, /\['provider-task-recovery-pending', 'image-job-record-failed'\][\s\S]*?'模型排队较多，请稍后重试。'/,
+  'Temporary generation recovery errors must use the same concise, user-facing retry message.');
+const closeModelMenuStart = workspaceSource.indexOf('function closeCanvasAgentModelMenu()');
+const closeModelMenuEnd = workspaceSource.indexOf('\nfunction renderCanvasAgentModels', closeModelMenuStart);
+assert.notEqual(closeModelMenuStart, -1, 'The Agent model menu close helper must be defined.');
+const modelMenu = { hidden: false };
+const modelTrigger = { attributes: {}, setAttribute(name, value) { this.attributes[name] = value; } };
+const modelMenuSandbox = {
+  document: { getElementById(id) { return id === 'board-agent-model-menu' ? modelMenu : modelTrigger; } }
+};
+vm.runInNewContext(
+  `${workspaceSource.slice(closeModelMenuStart, closeModelMenuEnd)}\ncloseCanvasAgentModelMenu();`,
+  modelMenuSandbox
+);
+assert.equal(modelMenu.hidden, true);
+assert.equal(modelTrigger.attributes['aria-expanded'], 'false');
+
+const renderSignatureStart = boardSource.indexOf('function boardItemRenderSignature(');
+const renderSignatureEnd = boardSource.indexOf('\nfunction syncMountedBoardItemGeometry', renderSignatureStart);
+assert.notEqual(renderSignatureStart, -1, 'Board item render signatures must be defined.');
+assert.notEqual(renderSignatureEnd, -1, 'Board item render signatures must end before geometry synchronization.');
+const renderSignatureSandbox = {};
+vm.runInNewContext(
+  `${boardSource.slice(renderSignatureStart, renderSignatureEnd)}\nthis.boardItemRenderSignature = boardItemRenderSignature;`,
+  renderSignatureSandbox
+);
+const placeholder = {
+  id: 'video-placeholder',
+  isAiPlaceholder: true,
+  aiPlaceholderState: 'pending',
+  aiPlaceholderEstimate: '预计约 30 秒'
+};
+const pendingPlaceholderSignature = renderSignatureSandbox.boardItemRenderSignature(placeholder, null);
+placeholder.aiPlaceholderState = 'failed';
+placeholder.aiPlaceholderEstimate = '';
+placeholder.aiPlaceholderError = '生成失败，请重试';
+const failedPlaceholderSignature = renderSignatureSandbox.boardItemRenderSignature(placeholder, null);
+assert.notEqual(
+  failedPlaceholderSignature,
+  pendingPlaceholderSignature,
+  'Changing an AI placeholder from pending to failed must invalidate its rendered content.'
+);
+assert.match(failedPlaceholderSignature, /failed[\s\S]*生成失败/);
+
 assert.doesNotMatch(
   indexHtml,
   /id="board-theme-toggle"|id="board-shortcuts-btn"/,
@@ -362,8 +413,8 @@ const legacyBoardGeneration = boardSource.slice(
 );
 assert.match(
   legacyBoardGeneration,
-  /const placeholders = createAiPlaceholders\(generationRequest\)[\s\S]*?const placements = placeholders\.map/,
-  'The legacy board generation entry point must create placements before submitting to the gateway.'
+  /const placeholders = createAiPlaceholders\(generationRequest, \{ silent: true \}\)[\s\S]*?const placements = placeholders\.map/,
+  'The legacy board generation entry point must create silent placements before submitting to the gateway.'
 );
 assert.match(
   legacyBoardGeneration,
