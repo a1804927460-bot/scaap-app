@@ -64,11 +64,11 @@ const output = path.join(root, 'test-artifacts', 'three-d-director');
     assert.equal(await overlay.isVisible(), true);
     const canvas = page.locator('.three-d-director-viewport canvas');
     assert.equal(await canvas.count(), 1, 'The director must reuse one WebGL canvas.');
-    assert.ok((await canvas.boundingBox()).width > 600);
+    assert.ok(await page.evaluate(() => document.querySelector('.three-d-director-viewport canvas').getBoundingClientRect().width > 600));
 
     fs.mkdirSync(output, { recursive: true });
     const canvasPath = path.join(output, 'scene.png');
-    const canvasDataUrl = await canvas.evaluate(element => element.toDataURL('image/png'));
+    const canvasDataUrl = await page.evaluate(() => document.querySelector('.three-d-director-viewport canvas').toDataURL('image/png'));
     fs.writeFileSync(canvasPath, Buffer.from(canvasDataUrl.split(',')[1], 'base64'));
     const stats = await sharp(canvasPath).stats();
     const spread = stats.channels.slice(0, 3).reduce((sum, channel) => sum + channel.stdev, 0);
