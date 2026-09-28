@@ -30,3 +30,20 @@ test('image recovery remains fail-closed for an unknown RPC failure', () => {
   assert.doesNotMatch(loadImageJob, /image-job-service-failed.*return null/s);
   assert.match(loadImageJob, /throw error;/);
 });
+
+test('stored image results retain the provider reference for legacy RPC compatibility', () => {
+  const tracker = server.slice(
+    server.indexOf('function createImageJobTracker'),
+    server.indexOf('async function persistImageResult')
+  );
+  assert.match(tracker, /providerResultUrl: ''/);
+  assert.match(tracker, /state\.providerResultUrl = String\(mediaUrl \|\| ''\)\.trim\(\)/);
+  assert.match(tracker, /recordImageProviderResult\(userId, requestId, reference, fetch, mediaUrl\)/);
+
+  const persist = server.slice(
+    server.indexOf('async function persistImageResult'),
+    server.indexOf('function publicDownloadUrl', server.indexOf('async function persistImageResult'))
+  );
+  assert.match(persist, /tracker\.state\.providerResultUrl/);
+  assert.match(persist, /recordImageProviderResult\(\s*userId, requestId, reference, fetch, tracker\.state\.providerResultUrl/s);
+});

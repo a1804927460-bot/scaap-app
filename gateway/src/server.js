@@ -1224,6 +1224,7 @@ function createImageJobTracker(userId, requestId, body, existingJob = null, opti
     taskId: String(existingJob && existingJob.providerTaskId || '').trim(),
     providerId: String(existingJob && existingJob.providerId || '').trim().toLowerCase(),
     requestHash: hashImageRequest(body),
+    providerResultUrl: '',
     resultReference: '',
     resultRecorded: false
   };
@@ -1258,9 +1259,10 @@ function createImageJobTracker(userId, requestId, body, existingJob = null, opti
     },
     onReady: async ({ mediaUrl, buffer }) => {
       state.accepted = true;
+      state.providerResultUrl = String(mediaUrl || '').trim();
       if (!state.durable || !Buffer.isBuffer(buffer) || buffer.length === 0) return;
       const reference = await storeImageResult(userId, requestId, buffer);
-      await recordImageProviderResult(userId, requestId, reference);
+      await recordImageProviderResult(userId, requestId, reference, fetch, mediaUrl);
       state.resultReference = reference;
       state.resultRecorded = true;
     }
@@ -1274,7 +1276,7 @@ async function persistImageResult(userId, requestId, image, tracker) {
     return tracker.state.resultReference;
   }
   const reference = await storeImageResult(userId, requestId, image);
-  await recordImageProviderResult(userId, requestId, reference);
+  await recordImageProviderResult(userId, requestId, reference, fetch, tracker.state.providerResultUrl);
   tracker.state.resultReference = reference;
   tracker.state.resultRecorded = true;
   return reference;

@@ -170,16 +170,24 @@ export async function recordImageProviderTask({
   return normalizeJob(payload);
 }
 
-export async function recordImageProviderResult(userId, requestId, resultUrl, fetchImpl = fetch) {
+export async function recordImageProviderResult(userId, requestId, resultUrl, fetchImpl = fetch, fallbackUrl = '') {
   const resultReference = safeResultReference(resultUrl);
   if (!resultReference) {
     throw serviceError('image-job-record-failed', 'The image result reference is invalid.');
   }
-  const payload = await rpc('record_ai_image_provider_result', {
+  const record = (reference) => rpc('record_ai_image_provider_result', {
     p_user_id: userId,
     p_request_id: requestId,
-    p_result_url: resultReference
+    p_result_url: reference
   }, fetchImpl);
+  let payload = await record(resultReference);
+  const legacyProviderReference = safeResultReference(fallbackUrl);
+  if (payload && payload.ok === false
+      && String(payload.reason || '') === 'invalid-result-url'
+      && resultReference.startsWith('storage://')
+      && legacyProviderReference.startsWith('https://')) {
+    payload = await record(legacyProviderReference);
+  }
   if (!payload || payload.ok !== true) {
     if (payload && payload.reason === 'schema-missing') throw schemaMissingError();
     throw serviceError('image-job-record-failed', 'The image result could not be recorded safely.');
