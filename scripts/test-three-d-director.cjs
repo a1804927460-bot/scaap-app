@@ -76,9 +76,9 @@ const output = path.join(root, 'test-artifacts', 'three-d-director');
     assert.ok(spread > 18, `The 3D scene must contain visible geometry; spread=${spread}.`);
     assert.ok(brightness > 20, `The 3D scene must not be blank; brightness=${brightness}.`);
 
-    await page.locator('[data-shot="close"]').click({ force: true });
-    await page.locator('[data-layout="product"]').evaluate(button => button.click());
-    await page.locator('[data-light="sunset"]').evaluate(button => button.click());
+    await page.evaluate(() => document.querySelector('[data-shot="close"]').click());
+    await page.evaluate(() => document.querySelector('[data-layout="product"]').click());
+    await page.evaluate(() => document.querySelector('[data-light="sunset"]').click());
     // WebGL can intercept the scroll phase on hosted Windows runners even
     // when the control is visible and stable; the click target is verified.
     await page.evaluate(() => document.querySelector('[data-aspect="9:16"]').click());
@@ -87,8 +87,12 @@ const output = path.join(root, 'test-artifacts', 'three-d-director');
     await page.waitForFunction(() => (
       getComputedStyle(document.querySelector('[data-aspect="9:16"]')).backgroundColor === 'rgb(27, 48, 57)'
     ));
-    assert.equal(await page.locator('[data-aspect="9:16"]').evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(27, 48, 57)');
-    await page.locator('#three-d-director-movement').selectOption('dolly');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('[data-aspect="9:16"]')).backgroundColor), 'rgb(27, 48, 57)');
+    await page.evaluate(() => {
+      const movement = document.querySelector('#three-d-director-movement');
+      movement.value = 'dolly';
+      movement.dispatchEvent(new Event('change', { bubbles: true }));
+    });
     const prompt = await page.locator('.three-d-director-prompt').inputValue();
     assert.match(prompt, /\u7279\u5199/);
     assert.match(prompt, /85mm/);
@@ -102,12 +106,12 @@ const output = path.join(root, 'test-artifacts', 'three-d-director');
     });
     assert.ok(bounds.stage.x + bounds.stage.width <= bounds.inspector.x + 1, 'Stage and inspector must not overlap.');
 
-    await page.locator('[data-director-action="snapshot"]').evaluate(button => button.click());
+    await page.evaluate(() => document.querySelector('[data-director-action="snapshot"]').click());
     await page.waitForFunction(() => Array.isArray(window.addedDirectorFiles) && window.addedDirectorFiles.length === 1);
     const importPayload = await page.evaluate(() => window.directorImport);
     assert.match(importPayload.dataUrl, /^data:image\/png;base64,/);
 
-    await page.locator('[data-director-action="image"]').click({ force: true });
+    await page.evaluate(() => document.querySelector('[data-director-action="image"]').click());
     await page.waitForFunction(() => document.querySelector('#ai-image-popover .ai-composer-prompt'));
     assert.equal(await page.locator('#three-d-director-overlay').isVisible(), false);
     assert.equal(await page.locator('#ai-image-popover').getAttribute('data-kind'), 'image');
