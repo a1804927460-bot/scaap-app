@@ -41,14 +41,15 @@ async function run() {
     window.showToast=()=>{};
     window.promptOptimizerRequests=0;
     window.promptOptimizerSource='';
-    window.requestCanvasAgentText=async(options)=>{
+    window.CanvasWorkspace={agentBusy:true,agentMessages:[{role:'user',content:'Keep this conversation untouched'}]};
+    window.requestCanvasAgentText=()=>{throw new Error('Optimizer must not enter Agent');};
+    window.messsAPI={optimizePrompt:async(options)=>{
       window.promptOptimizerRequests+=1;
-      window.promptOptimizerSource=options.contextualPrompt;
+      window.promptOptimizerSource=options.source;
       await new Promise((resolve)=>setTimeout(resolve,40));
       const text='将图1的 Logo 清晰地置于图2左上角，保持图2原有构图与画面比例，并严格保留 Logo 的品牌色。';
-      await options.onResponse(text,{ok:true,text});
       return {ok:true,text};
-    };
+    }};
   </script>
   <script src="${contextMenuUrl}"></script>
   <script>document.querySelector('.ai-composer-prompt').addEventListener('contextmenu',showPromptTextContextMenu);</script>

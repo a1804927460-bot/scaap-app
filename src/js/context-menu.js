@@ -494,21 +494,20 @@ async function runPromptOptimization(overlay, options) {
   overlay.dataset.optimizing = 'true';
   confirmButton.disabled = true;
   status.dataset.state = 'working';
-  status.textContent = t('Agent is optimizing...', 'Agent 正在优化...', 'Agent가 최적화하고 있습니다...');
-  resultField.placeholder = t('Agent is optimizing...', 'Agent 正在优化...', 'Agent가 최적화하고 있습니다...');
+  status.textContent = t('Optimizing prompt...', '正在优化提示词...', '프롬프트 최적화 중...');
+  resultField.placeholder = status.textContent;
+  replaceButton.disabled = true;
+  replaceButton.hidden = true;
   resultField.value = '';
   let requestFailed = false;
   let response = null;
   try {
-    response = await requestCanvasAgentText({
-      displayPrompt: selectedOnly
-        ? t('Optimize the selected prompt text', '优化选中的提示词', '선택한 프롬프트 텍스트 최적화')
-        : t(`Optimize the current ${kind} prompt`, `优化当前${kind === 'video' ? '视频' : '生图'}提示词`, `현재 ${kind === 'video' ? '비디오' : '이미지'} 프롬프트 최적화`),
-      contextualPrompt: promptOptimizerInstruction(sourceText, kind, selectedOnly, options.mode),
-      referenceFiles: [],
-      focusInput: false,
-      isolated: true,
-      onResponse: (responseText) => {
+    response = await window.messsAPI.optimizePrompt({
+      source: sourceText, kind, mode: options.mode, selectedOnly
+    });
+    if (!response?.ok) throw new Error(response?.message || 'Optimization failed');
+    {
+        const responseText = response.text;
         if (revision !== PromptOptimizerState.revision || !overlay.isConnected) return;
         const optimized = normalizeAgentPromptSuggestion(responseText);
         if (!optimized) return;
@@ -522,9 +521,7 @@ async function runPromptOptimization(overlay, options) {
         status.dataset.state = 'ready';
         resultField.focus({ preventScroll: true });
         resultField.setSelectionRange(0, 0);
-      },
-      onError: () => { requestFailed = true; }
-    });
+    }
   } catch (error) {
     requestFailed = true;
   }
@@ -534,8 +531,8 @@ async function runPromptOptimization(overlay, options) {
     confirmButton.disabled = false;
     resultField.placeholder = t('Confirm to start optimization', '确认后开始优化', '확인 후 최적화를 시작합니다');
     status.textContent = requestFailed
-      ? t('Agent could not optimize this prompt. Edit it or try again.', 'Agent 未能完成优化，可以修改后重试。', 'Agent가 프롬프트를 최적화하지 못했습니다. 수정하거나 다시 시도하세요.')
-      : t('Agent is busy. Please try again shortly.', 'Agent 正在处理其他任务，请稍后重试。', 'Agent가 다른 작업을 처리 중입니다. 잠시 후 다시 시도하세요.');
+      ? t('Could not optimize this prompt. Edit it or try again.', '未能完成优化，可以修改后重试。', '최적화하지 못했습니다. 수정하거나 다시 시도하세요.')
+      : t('Please try optimizing again.', '请重新尝试优化。', '최적화를 다시 시도하세요.');
     status.dataset.state = 'error';
     sourceField.focus({ preventScroll: true });
   }
@@ -551,7 +548,7 @@ async function openPromptOptimizerDialog(input, selection = {}) {
     showToast(t('Enter a prompt before asking Agent to optimize it.', '请先输入提示词，再交给 Agent 优化。', '먼저 프롬프트를 입력한 후 Agent에게 최적화를 요청하세요.'), 'AI');
     return null;
   }
-  if (typeof requestCanvasAgentText !== 'function') {
+  if (typeof window.messsAPI?.optimizePrompt !== 'function') {
     showToast(t('Agent is unavailable.', 'Agent 当前不可用。', 'Agent를 사용할 수 없습니다.'), 'AI');
     return null;
   }

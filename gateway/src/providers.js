@@ -1398,6 +1398,25 @@ async function generateAireiterImage(provider, body, signal, hooks = {}) {
       if (!recovered && typeof hooks.onAccepted === 'function') {
         await hooks.onAccepted({ providerId: provider.id, taskId, pollUrl: provider.resultEndpoint });
       }
+      // A durable ready record may already contain the completed download
+      // URL. Do not make delivery depend on a second successful status query.
+      const savedMediaUrl = String(recovered && recovered.mediaUrl || '').trim();
+      if (/^https:\/\//i.test(savedMediaUrl)) {
+        let readyBuffer;
+        try {
+          readyBuffer = validateGeneratedMediaBuffer('image', await downloadGeneratedImage(savedMediaUrl, signal));
+        } catch (error) {
+          // Signed links can expire; refresh only the original task, never
+          // resubmit generation. Other delivery failures remain recoverable.
+          if (error.code !== 'provider-download-failed' || ![401, 403, 404, 410].includes(error.status)) throw error;
+        }
+        if (readyBuffer) {
+          if (typeof hooks.onReady === 'function') {
+            await hooks.onReady({ providerId: provider.id, taskId, mediaUrl: savedMediaUrl, buffer: readyBuffer });
+          }
+          return readyBuffer;
+        }
+      }
       const startedAt = Date.now();
       while (Date.now() - startedAt < 20 * 60_000) {
         const payload = await queryAireiterTask(provider, taskId, signal);

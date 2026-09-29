@@ -59,6 +59,10 @@ assert.match(workflow, /CSC_IDENTITY_AUTO_DISCOVERY=false/);
 assert.match(workflow, /Do not export empty CSC_LINK\/CSC_KEY_PASSWORD values/);
 assert.match(workflow, /macos-release:/);
 const workflowJobs = require('js-yaml').load(workflow).jobs;
+assert.deepEqual(workflowJobs['publish-release'].needs, ['windows-release', 'macos-release']);
+assert.match(workflowJobs['publish-release'].if, /needs\.macos-release\.result == 'success'/);
+assert.match(workflowJobs['publish-release'].steps.at(-1).run, /verify-release-assets\.cjs[\s\S]*--draft=false/);
+assert.doesNotMatch(JSON.stringify(workflowJobs['windows-release']), /--draft=false/);
 for (const name of ['windows-release', 'macos-release']) {
   const steps = workflowJobs[name].steps;
   const install = steps.findIndex(step => step.run === 'npm --prefix gateway ci');

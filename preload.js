@@ -306,6 +306,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   confirmAiMediaDelivery: (deliveryToken) => ipcRenderer.invoke('ai:confirmMediaDelivery', deliveryToken),
   releaseAiMediaDelivery: (deliveryToken) => ipcRenderer.invoke('ai:releaseMediaDelivery', deliveryToken),
   chatWithAi: (request) => ipcRenderer.invoke('ai:chat', request),
+  optimizePrompt: (request) => ipcRenderer.invoke('ai:optimizePrompt', request),
   onAiChatDelta: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('ai:chatDelta', listener);

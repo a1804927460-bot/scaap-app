@@ -27,8 +27,10 @@ const assert=require('node:assert/strict');const fs=require('node:fs');const pat
   assert.ok(Math.abs(creditAlignment.iconCenter-creditAlignment.valueCenter)<=1,'Lightning and point value must share the same vertical center.');
   await page.screenshot({path:'test-artifacts/sidebar-rail/credits-aligned.png'});
   await page.evaluate(()=>{const sidebar=document.getElementById('sidebar');sidebar.classList.remove('is-density-minimal');sidebar.style.width='';});
+  await page.locator('#workspace-shortcuts').hover();await page.waitForTimeout(120);
+  assert.equal(await toggle.getAttribute('aria-expanded'),'true');
   await toggle.click();await page.waitForTimeout(450);
-  assert.equal(await toggle.getAttribute('aria-expanded'),'false');assert.equal(await page.evaluate(()=>savedCollapsed),true);
+  assert.equal(await toggle.getAttribute('aria-expanded'),'false');
   const rail=await page.locator('#sidebar').boundingBox();assert.ok(rail.width>=70&&rail.width<=74);
   assert.equal(await page.locator('#file-list-wrap').isVisible(),false);
   for(const selector of ['#sidebar .brand-mark','#collapse-sidebar-btn','#workspace-shortcuts button','#account-menu-open'])for(const node of await page.locator(selector).all()){assert.ok(await node.isVisible());const rect=await node.boundingBox();assert.ok(rect.x>=rail.x&&rect.x+rect.width<=rail.x+rail.width+1);}

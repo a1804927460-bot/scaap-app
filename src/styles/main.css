@@ -7329,24 +7329,46 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
     color-mix(in srgb, var(--bg-surface-2) 94%, var(--accent) 6%) 78%
   );
   background-size: 220% 100%;
-  animation: ai-placeholder-sweep 1.8s ease-in-out infinite;
+  /* Composite opacity rather than repainting a large moving gradient. */
+  animation: ai-placeholder-breathe 1.8s ease-in-out infinite alternate;
+}
+@keyframes ai-placeholder-breathe {
+  from { opacity: .35; }
+  to { opacity: .8; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .board-item-ai-pending .ai-pending-visual::before { animation: none; }
 }
 .ai-pending-spinner {
-  position: relative;
+  position: absolute;
+  top: calc(50% - 31px);
+  left: 50%;
   z-index: 1;
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
+  margin-left: -16px;
   box-sizing: border-box;
-  border: 2px solid color-mix(in srgb, var(--text-primary) 20%, transparent);
-  border-top-color: var(--text-primary);
+  background: conic-gradient(
+    from 10deg,
+    transparent 0deg 205deg,
+    color-mix(in srgb, var(--text-primary) 28%, transparent) 258deg,
+    var(--text-primary) 330deg,
+    transparent 360deg
+  );
   border-radius: 50%;
-  animation: ai-placeholder-spin .8s linear infinite;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--text-primary) 22%, transparent));
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
+  animation: ai-placeholder-spin .9s linear infinite;
 }
 .ai-pending-failure-mark {
-  position: relative;
+  position: absolute;
+  top: calc(50% - 31px);
+  left: 50%;
   z-index: 1;
   width: 26px;
   height: 26px;
+  margin-left: -13px;
   display: grid;
   place-items: center;
   border: 1px solid var(--text-secondary);
@@ -7358,7 +7380,7 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .ai-pending-copy {
   position: absolute;
   left: 50%;
-  top: calc(50% + 26px);
+  top: calc(50% + 5px);
   width: calc(100% - 24px);
   display: grid;
   justify-items: center;
@@ -7367,12 +7389,30 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
   transform: translateX(-50%);
 }
 .ai-pending-copy strong { color: var(--text-primary); font-size: 11px; }
+.board-item-ai-pending .ai-pending-copy > strong,
+.board-item-ai-pending .ai-pending-copy > small,
+.board-item-ai-pending .ai-pending-failure-mark { display: none !important; }
 .ai-pending-copy small { color: var(--text-tertiary); font-size: 9.5px; }
+.board-item-ai-pending.is-failed .ai-pending-failure-mark { top: calc(50% - 48px); }
+.board-item-ai-pending.is-failed .ai-pending-copy {
+  top: calc(50% - 6px);
+  gap: 12px;
+}
+.board-item-ai-pending.is-failed .ai-pending-copy strong { display: none; }
+.board-item-ai-pending.is-failed .ai-pending-copy small {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
 @keyframes ai-placeholder-sweep { to { background-position: -220% 0; } }
 @keyframes ai-placeholder-spin { to { transform: rotate(360deg); } }
-.board-item-ai-pending.is-failed { background: color-mix(in srgb, var(--bg-surface-2) 90%, #b34d4d 10%); }
-.board-item-ai-pending.is-failed .ai-pending-visual::before { animation: none; background: color-mix(in srgb, var(--bg-surface-2) 88%, #b34d4d 12%); }
-.ai-pending-actions { display: flex; gap: 6px; margin-top: 6px; }
+@media (prefers-reduced-motion: reduce) {
+  .ai-pending-spinner { animation-duration: 2.4s; }
+  .ai-pending-visual::before { animation-duration: 6s; }
+}
+.board-item-ai-pending.is-failed { background: var(--bg-surface-2); }
+.board-item-ai-pending.is-failed .ai-pending-visual::before { animation: none; background: var(--bg-surface-2); }
+.ai-pending-actions { display: flex; justify-content: center; gap: 8px; margin-top: 0; }
 .ai-pending-actions button { border: 0; border-radius: 999px; padding: 4px 9px; color: var(--text-primary); background: var(--bg-elevated); font-size: 10px; cursor: var(--cursor-click); }
 .ai-pending-actions button:first-child { color: var(--accent-contrast, #fff); background: var(--accent); }
 

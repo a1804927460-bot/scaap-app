@@ -37,6 +37,15 @@ assert.match(mainCss, /\.titlebar-drag-region\s*\{\s*flex:\s*1\s*;/,
   'The title bar drag region must fill the area beside the native window controls.');
 assert.match(sidebarPartitionsJs, /id:'agent', label:'Agent', surface:true[\s\S]*?id:'market', label:'市场', surface:true[\s\S]*?id:'workshop', label:'创意工坊', surface:true/,
   'Agent, Market and Workshop must live in the sidebar shortcut group.');
+assert.match(appJs, /setSidebarCollapsed\(true\);[\s\S]*?setSidebarCollapsed\(true\);/,
+  'The workspace must start in the compact icon-rail state.');
+assert.match(sidebarPartitionsJs, /collapse-sidebar-btn.*?addEventListener\('click', toggleSidebarCollapsed\)/,
+  'The navigation rail must expand and collapse from its button.');
+const sidebarPartitionsCss = read('src/styles/sidebar-partitions.css');
+assert.match(sidebarPartitionsCss, /#main-app \{ transition:grid-template-columns/,
+  'The rail must animate when its width changes.');
+assert.doesNotMatch(sidebarPartitionsCss, /#sidebar:not\(\.is-collapsed\):not\(:focus-within\) \.sidebar-collapse-toggle \{ display:none; \}/,
+  'The expanded sidebar toggle must remain available for click interaction.');
 assert.match(titlebarJs, /function openAppSurface\(surface\)[\s\S]*?setAssistantFullscreen\(true\)[\s\S]*?section\.classList\.add\('is-active'\)/,
   'Sidebar navigation must open Agent and the content surfaces as dialogs.');
 assert.match(statsDetailJs, /function syncAssistantFullscreenNavigation\(expanded\)[\s\S]*?setAppSurfaceNavigationActive\(expanded \? 'agent' : ''\)/,
@@ -95,7 +104,7 @@ assert.match(main, /ipcMain\.on\('window:syncThemeSurface',[\s\S]*?setWindowBack
 assert.match(preload, /syncThemeSurface:\s*\(theme\)\s*=>\s*ipcRenderer\.send\('window:syncThemeSurface',\s*theme\)/);
 assert.ok(indexHtml.indexOf('<script src="js/startup-theme.js"></script>') < indexHtml.indexOf('<link rel="stylesheet" href="styles/theme.css"'), 'startup theme must run before CSS');
 assert.match(startupThemeJs, /new URLSearchParams\(window\.location\.search\)\.get\('theme'\)/);
-assert.match(startupThemeJs, /dataset\.theme\s*=\s*startupTheme\s*===\s*'dark'\s*\?\s*'dark'\s*:\s*'light'/);
+assert.match(startupThemeJs, /dataset\.theme\s*=\s*startupTheme === 'dark' \? 'dark' : 'light'/);
 assert.match(startupThemeJs, /get\('language'\)[\s\S]*?dataset\.language\s*=\s*normalizedStartupLanguage/);
 const evaluateStartupTheme = (search) => {
   const document = { documentElement: { dataset: {} } };

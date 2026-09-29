@@ -2,7 +2,7 @@
 // Pinned leafer-x-snap 1.0.7 bridge: Messs owns dragging, indexing and overlays.
 // The plugin only resolves candidate alignment; it never installs editor events.
 window.MesssCanvasPluginAdapter = {
-  snapCaptureRadius: 20,
+  snapCaptureRadius: 6,
   warmLocalFont(note) {
     if (!document.fonts) return Promise.resolve();
     const family = !note.fontFamily || note.fontFamily === 'inherit' ? 'Segoe UI, PingFang SC, Microsoft YaHei, Arial, sans-serif' : note.fontFamily;

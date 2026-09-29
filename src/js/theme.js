@@ -2,11 +2,12 @@
 /* Theme toggle: dark <-> light, persisted via main process. */
 
 function applyTheme(theme) {
+  const nextTheme = theme === 'dark' ? 'dark' : 'light';
   const previous = document.documentElement.getAttribute('data-theme');
-  document.documentElement.setAttribute('data-theme', theme);
-  AppState.theme = theme;
+  document.documentElement.setAttribute('data-theme', nextTheme);
+  AppState.theme = nextTheme;
   document.querySelectorAll('.theme-opt').forEach((btn) => {
-    btn.classList.toggle('is-active', btn.dataset.themeChoice === theme);
+    btn.classList.toggle('is-active', btn.dataset.themeChoice === nextTheme);
   });
   if (previous !== theme && AppState.boardItems?.length && typeof renderBoard === 'function' && document.getElementById('board-canvas')) {
     renderBoard();

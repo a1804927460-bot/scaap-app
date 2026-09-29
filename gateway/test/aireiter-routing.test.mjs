@@ -1,12 +1,41 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chat, createVideoTask, generateMedia, pollVideoTask } from '../src/providers.js';
+import { chat, createVideoTask, generateMedia, pollVideoTask, recoverMedia } from '../src/providers.js';
 import { getAi302RelayAsset } from '../src/ai302-tools.js';
 import { providerUserId } from '../src/provider-user.js';
 
 const PNG = Buffer.from('89504e470d0a1a0a', 'hex');
 const VALID_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 const VALID_PNG = Buffer.from(VALID_PNG_DATA_URL.split(',')[1], 'base64');
+
+test('ready image recovery downloads the known result and refreshes only expired links', async () => {
+  const previousFetch = globalThis.fetch;
+  await withEnvironment({ AIREITER_API_KEY: 'test-key' }, async () => {
+    for (const expired of [false, true]) {
+      const calls = [];
+      globalThis.fetch = async (url) => {
+        calls.push(String(url));
+        if (String(url) === 'https://assets.example.com/ready.png') {
+          return expired ? new Response(null, { status: 403 }) : new Response(VALID_PNG);
+        }
+        if (String(url).endsWith('/api/openapi/query') && expired) {
+          return jsonResponse({ statusCode: 200, data: { status: 'completed', output: [{ url: VALID_PNG_DATA_URL }] } });
+        }
+        throw new Error('Unexpected submission or polling: ' + url);
+      };
+      let delivered = 0;
+      const result = await recoverMedia('image', { prompt: 'test', size: '1K' }, {
+        providerId: 'aireiter-image-nano-pro',
+        providerTaskId: 'existing-paid-task',
+        resultUrl: 'https://assets.example.com/ready.png'
+      }, undefined, { onReady: async ({ buffer }) => { assert.deepEqual(buffer, VALID_PNG); delivered++; } });
+      assert.deepEqual(result, VALID_PNG);
+      assert.equal(delivered, 1);
+      assert.equal(calls.length, expired ? 2 : 1);
+      assert.equal(calls.some(url => url.endsWith('/submit')), false);
+    }
+  }).finally(() => { globalThis.fetch = previousFetch; });
+});
 
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {

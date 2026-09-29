@@ -331,7 +331,7 @@ async function testPaidImageCreationRecoversWithOneOperationId() {
     getAccessToken: async () => 'user-jwt',
     fetchImpl: async (url, options) => {
       calls.push({ url, options });
-      if (calls.length === 1) throw new TypeError('The response was lost after submission.');
+      if (calls.length <= 3) throw new TypeError('The response was lost after submission.');
       return new Response(Buffer.from([1, 2, 3]), { status: 200 });
     }
   });
@@ -339,7 +339,8 @@ async function testPaidImageCreationRecoversWithOneOperationId() {
   assert.deepStrictEqual(Buffer.from(recoveredImage), Buffer.from([1, 2, 3]));
   assert.strictEqual(recoveredImage.estimatedCredits, undefined);
   assert.strictEqual(recoveredImage.creditsCharged, undefined);
-  assert.strictEqual(calls.length, 2);
+  assert.strictEqual(calls.length, 4);
+  assert.strictEqual(new Set(calls.map(call => call.options.headers['X-Idempotency-Key'])).size, 1);
   assert.strictEqual(
     calls[0].options.headers['X-Idempotency-Key'],
     calls[1].options.headers['X-Idempotency-Key'],
@@ -366,6 +367,25 @@ async function testPaidImageRecoversFromUnexpectedAbort() {
   assert.deepStrictEqual(Buffer.from(image), Buffer.from([9, 8, 7]));
   assert.strictEqual(attempts, 2);
   assert.strictEqual(operationIds[0], operationIds[1]);
+}
+
+async function testImageRecoveryStopsOnCancelOrRejection() {
+  for (const reject of [false, true]) {
+    const controller = new AbortController();
+    let calls = 0;
+    const client = new AiGatewayClient({
+      baseUrl: 'https://gateway.example.com',
+      getAccessToken: async () => 'user-jwt',
+      fetchImpl: async () => {
+        calls += 1;
+        if (reject) return new Response(JSON.stringify({ code: 'insufficient-credits' }), { status: 402 });
+        controller.abort();
+        throw new DOMException('Cancelled', 'AbortError');
+      }
+    });
+    await assert.rejects(() => client.generateMedia('image', { prompt: 'test' }, controller.signal));
+    assert.strictEqual(calls, 1, 'Cancellation and permanent rejection must not restart generation.');
+  }
 }
 
 async function testChunkedTopazUpload() {
@@ -427,6 +447,7 @@ async function testVideoCreateRetriesTransientGatewayFailure() {
   const calls = [];
   const video = Buffer.from([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x70, 0x34, 0x32]);
   let createAttempts = 0;
+  let downloadAttempts = 0;
   const client = new AiGatewayClient({
     baseUrl: 'https://gateway.example.com',
     getAccessToken: async () => 'user-jwt',
@@ -438,6 +459,8 @@ async function testVideoCreateRetriesTransientGatewayFailure() {
         return new Response(JSON.stringify({ status: 'succeeded' }), { status: 202 });
       }
       if (url.endsWith('/v1/media/video/tasks/download')) {
+        downloadAttempts += 1;
+        if (downloadAttempts <= 3) return new Response(null, { status: 502 });
         return new Response(video, {
           status: 200,
           headers: { 'Content-Type': 'video/mp4', 'Content-Length': String(video.length) }
@@ -454,6 +477,10 @@ async function testVideoCreateRetriesTransientGatewayFailure() {
   assert.strictEqual(createCalls.length, 2);
   assert.strictEqual(createCalls[0].options.headers['X-Idempotency-Key'], createCalls[1].options.headers['X-Idempotency-Key']);
   assert.strictEqual(createCalls[0].options.body, createCalls[1].options.body);
+  assert.strictEqual(downloadAttempts, 4);
+  const downloads = calls.filter(call => call.url.endsWith('/v1/media/video/tasks/download'));
+  assert.strictEqual(new Set(downloads.map(call => call.options.body)).size, 1,
+    'Download recovery must keep the same task token without creating another video.');
 }
 
 function testButlerDesktopBridgeSurface() {
@@ -527,6 +554,7 @@ async function testOfflineRefreshKeepsLocalIdentity() {
   await testGatewayReadRecoveryAndTransportErrors();
   await testPaidImageCreationRecoversWithOneOperationId();
   await testPaidImageRecoversFromUnexpectedAbort();
+  await testImageRecoveryStopsOnCancelOrRejection();
   testButlerDesktopBridgeSurface();
   console.log('security client tests passed');
 })().catch((error) => {

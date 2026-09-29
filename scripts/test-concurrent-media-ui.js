@@ -8,14 +8,20 @@ const boardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'boa
 const assistantSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'js', 'ai-assistant.js'), 'utf8');
 const boardStyles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles', 'main.css'), 'utf8');
 
-assert.match(boardSource, /class="ai-pending-spinner"/,
-  'Canvas generation placeholders must render the rotating loader.');
+assert.doesNotMatch(boardSource, /class="ai-pending-spinner"/,
+  'Canvas generation placeholders must not render the removed rotating symbol.');
 assert.doesNotMatch(boardSource, /ai-pending-visual[^']*<span><\/span><span><\/span><span><\/span>/,
   'Canvas generation placeholders must not restore the old three-dot indicator.');
-assert.match(boardStyles, /\.ai-pending-spinner \{[\s\S]*?animation:\s*ai-placeholder-spin \.8s linear infinite/,
+assert.match(boardStyles, /\.ai-pending-spinner \{[\s\S]*?animation:\s*ai-placeholder-spin \.9s linear infinite/,
   'The generation loader must rotate continuously.');
 assert.match(boardStyles, /\.ai-pending-copy \{[\s\S]*?left:\s*50%;[\s\S]*?justify-items:\s*center;[\s\S]*?text-align:\s*center;/,
   'Generation status text and its estimate must stay centered.');
+assert.match(boardStyles, /\.ai-pending-spinner \{[\s\S]*?top:\s*calc\(50% - 31px\);[\s\S]*?left:\s*50%;[\s\S]*?margin-left:\s*-16px;[\s\S]*?mask:\s*radial-gradient/,
+  'The refined loader arc must be precisely centered above the status copy.');
+assert.match(boardStyles, /\.ai-pending-copy \{[\s\S]*?top:\s*calc\(50% \+ 5px\);/,
+  'The status copy must be positioned as part of the centered loader group.');
+assert.match(boardStyles, /prefers-reduced-motion:\s*reduce[\s\S]*?\.ai-pending-spinner \{\s*animation-duration:\s*2\.4s;/,
+  'The generation loader must respect reduced-motion preferences.');
 
 assert.doesNotMatch(
   boardSource,

@@ -59,9 +59,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       clone.destroy();
       for (const zoom of [.25, 1, 4]) {
         const bounds = { x:0,y:0,w:100,h:100 };
-        for (const distance of [19.9, 20.1]) {
+        for (const distance of [5.9, 6.1]) {
           const snap = MesssCanvasPluginAdapter.snap(bounds, [{x:100+distance/zoom,y:300,w:100,h:100}], zoom);
-          if (Math.abs(snap.dx*zoom - (distance < 20 ? distance : 0)) > .001) throw new Error('Incorrect screen-space snap threshold');
+          if (Math.abs(snap.dx*zoom - (distance < 6 ? distance : 0)) > .001) throw new Error('Incorrect screen-space snap threshold');
           if (snap.lines.length > 2) throw new Error('Unbounded guide count');
         }
       }
@@ -128,6 +128,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     assert.ok(await page.locator('.board-snap-guides i').count() > 0);
     await page.mouse.up();
     assert.equal(await page.locator('.board-snap-guides').count(),0);
-    console.log('Canvas plugins: rich input/style serialization/cancel cleanup, 20px long-range snap across zoom and no external font requests passed.');
+    console.log('Canvas plugins: rich input/style serialization/cancel cleanup, 6px snap across zoom and no external font requests passed.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -195,12 +195,9 @@ jobs:
           }
           & gh release upload $env:MESSS_RELEASE_TAG @assets --repo $repo --clobber
           if ($LASTEXITCODE -ne 0) { throw 'Uploading the verified updater artifacts failed.' }
-          & gh release edit $env:MESSS_RELEASE_TAG --repo $repo --draft=false --latest
-          if ($LASTEXITCODE -ne 0) { throw 'Publishing the verified draft release failed.' }
 
   macos-release:
-    # Windows remains the release gate. macOS then adds both architectures to
-    # the same public release so electron-updater can consume latest-mac.yml.
+    # Keep new releases private until both platforms have uploaded their assets.
     needs: windows-release
     if: ${{ always() && (inputs.macos_only == true || needs.windows-release.result == 'success') }}
     # macos-13 no longer receives standard hosted runners. macos-14 remains
@@ -309,3 +306,25 @@ jobs:
           assets=(release/latest-mac.yml release/*.dmg release/*.zip)
           if [ "${#assets[@]}" -lt 5 ]; then echo 'macOS release asset set is incomplete.' >&2; exit 1; fi
           gh release upload "$MESSS_RELEASE_TAG" "${assets[@]}" --repo a1804927460-bot/messs-releases --clobber
+
+  publish-release:
+    needs: [windows-release, macos-release]
+    if: ${{ always() && needs.macos-release.result == 'success' && (needs.windows-release.result == 'success' || inputs.macos_only == true) }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify complete release and publish automatic update
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          version="${INPUT_VERSION:-${GITHUB_REF_NAME#v}}"
+          tag="v$version"
+          gh release download "$tag" --repo a1804927460-bot/messs-releases --dir verified-release
+          npm ci --ignore-scripts
+          node scripts/verify-release-assets.cjs verified-release "$version"
+          gh release edit "$tag" --repo a1804927460-bot/messs-releases --draft=false --latest --notes "Messs $tag — Windows, Intel Mac and Apple Silicon Mac."

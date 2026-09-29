@@ -203,6 +203,12 @@ export async function readStoredVideoResult(userId, requestId, reference, fetchI
       throw serviceError('video-result-storage-unavailable', 'The saved video result is temporarily unavailable.');
     }
     if (response.status === 404) continue;
+    if (response.status === 400) {
+      let payload = {};
+      try { payload = await response.json(); } catch {}
+      if (['NoSuchKey', 'not_found', 'ObjectNotFound'].includes(String(payload.code || payload.error || ''))
+          || String(payload.statusCode || '') === '404') continue;
+    }
     if (!response.ok) throw serviceError('video-result-storage-unavailable', 'The saved video result is temporarily unavailable.');
     const advertised = Number(response.headers.get('content-length')) || 0;
     if (advertised > MAX_VIDEO_RESULT_BYTES) throw serviceError('video-result-storage-invalid', 'The saved video result is too large.', 502);

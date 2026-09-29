@@ -2851,7 +2851,7 @@ function buildAiPlaceholderElement(item) {
   el.classList.toggle('is-failed', failed);
   el.innerHTML = failed
     ? '<div class="ai-pending-visual" aria-hidden="true"><span class="ai-pending-failure-mark">!</span></div><div class="ai-pending-copy"><strong>生成失败</strong><small></small><div class="ai-pending-actions"><button type="button" data-ai-placeholder-retry>重试</button><button type="button" data-ai-placeholder-cancel>取消</button></div></div>'
-    : '<div class="ai-pending-visual" aria-hidden="true"><span class="ai-pending-spinner"></span></div><div class="ai-pending-copy"><strong>生成中</strong><small></small></div>';
+    : '<div class="ai-pending-visual" aria-hidden="true"></div><div class="ai-pending-copy"><strong>生成中</strong><small></small></div>';
   const copy = el.querySelector('.ai-pending-copy small');
   if (copy) copy.textContent = failed ? '模型排队较多，请稍后重试。' : (item.aiPlaceholderEstimate || '正在准备，请稍候');
   el.querySelector('[data-ai-placeholder-retry]')?.addEventListener('click', (event) => {
@@ -2881,7 +2881,7 @@ function buildAiPlaceholderElementLocalized(item) {
   el.classList.toggle('is-failed', failed);
   el.innerHTML = failed
     ? '<div class="ai-pending-visual" aria-hidden="true"><span class="ai-pending-failure-mark">!</span></div><div class="ai-pending-copy"><strong>生成失败</strong><small></small><div class="ai-pending-actions"><button type="button" data-ai-placeholder-retry>重试</button><button type="button" data-ai-placeholder-cancel>取消</button></div></div>'
-    : '<div class="ai-pending-visual" aria-hidden="true"><span class="ai-pending-spinner"></span></div><div class="ai-pending-copy"><strong>生成中</strong><small></small></div>';
+    : '<div class="ai-pending-visual" aria-hidden="true"></div><div class="ai-pending-copy"><strong>生成中</strong><small></small></div>';
   const copy = el.querySelector('.ai-pending-copy small');
   if (copy) copy.textContent = failed ? '模型排队较多，请稍后重试。' : (item.aiPlaceholderEstimate || '正在准备，请稍候');
   el.querySelector('[data-ai-placeholder-retry]')?.addEventListener('click', (event) => {
@@ -3860,7 +3860,7 @@ function makeBoardItemDraggable(el, item) {
         const boxes = groupStartPositions.map(entry => ({ ...boardItemBounds(entry.item), x: entry.startLeft, y: entry.startTop }));
         const x = Math.min(...boxes.map(b => b.x)), y = Math.min(...boxes.map(b => b.y));
         const moving = { x: x + dx, y: y + dy, w: Math.max(...boxes.map(b => b.x+b.w))-x, h: Math.max(...boxes.map(b => b.y+b.h))-y };
-        const snapRadius = Math.max(8, Number(adapter.snapCaptureRadius) || 20);
+        const snapRadius = Math.max(1, Number(adapter.snapCaptureRadius) || 6);
         const margin = snapRadius / Board.zoom;
         const viewport = document.getElementById('board-viewport');
         const viewportRect = viewport.getBoundingClientRect();
@@ -6027,14 +6027,20 @@ function buildAiImagePopover(aiConfig) {
   return pop;
 }
 async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) {
+  const aiMediaFilesFromResponse = (response) => {
+    const candidates = [response, response && response.result, response && response.data].filter((value) => value && typeof value === 'object');
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate.files)) return candidate.files.filter(Boolean);
+      if (candidate.file && typeof candidate.file === 'object') return [candidate.file];
+    }
+    return [];
+  };
   const taskId = beginAiMediaTask(request);
   submitBtn.disabled = true;
   cancelBtn.disabled = true;
   controls.forEach((control) => { control.disabled = true; });
   const generationRequest = { ...request, performanceMode: 'normal', watermark: boardAiWatermarkEnabled(), canvasId: activeCanvasId() };
-  // Keep placement geometry for the durable result without showing a
-  // transient "generating" card on the canvas.
-  const placeholders = createAiPlaceholders(generationRequest, { silent: true });
+  const placeholders = createAiPlaceholders(generationRequest, { silent: request.kind !== 'image' });
   const defaultButtonText = request.kind === 'video' ? '生成视频' : '生成图片';
   submitBtn.textContent = defaultButtonText;
   let generatedFiles = [];
@@ -6060,7 +6066,7 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
       placements
     });
 
-    const files = res && Array.isArray(res.files) ? res.files : (res && res.file ? [res.file] : []);
+    const files = aiMediaFilesFromResponse(res);
     generatedFiles = files;
     if (!res || !res.ok || !files.length) {
       const msg = res && res.reason === 'missing-api-key'
@@ -8762,12 +8768,20 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
 }
 
 async function generateAiMediaForBoardV2(request, pop, status, submit) {
+  const aiMediaFilesFromResponse = (response) => {
+    const candidates = [response, response && response.result, response && response.data].filter((value) => value && typeof value === 'object');
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate.files)) return candidate.files.filter(Boolean);
+      if (candidate.file && typeof candidate.file === 'object') return [candidate.file];
+    }
+    return [];
+  };
   const targetCanvasId = activeCanvasId();
   const generationRequest = { ...request, performanceMode: 'normal', watermark: boardAiWatermarkEnabled(), canvasId: targetCanvasId };
   const taskId = beginAiMediaTask(generationRequest);
   const controls = [...pop.querySelectorAll('button, textarea, select, input')];
   controls.forEach((control) => { control.disabled = true; });
-  const placeholders = createAiPlaceholders(generationRequest, { silent: true });
+  const placeholders = createAiPlaceholders(generationRequest, { silent: request.kind !== 'image' });
   let generatedFiles = [];
   status.textContent = '';
 
@@ -8776,7 +8790,7 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
       ? AppState.activeFolderId
       : null;
     const res = await window.messsAPI.generateAiMedia({ ...generationRequest, folderId });
-    const files = res && Array.isArray(res.files) ? res.files : (res && res.file ? [res.file] : []);
+    const files = aiMediaFilesFromResponse(res);
     generatedFiles = files;
     if (!res || !res.ok || !files.length) {
       const message = res && res.reason === 'missing-api-key'
@@ -8839,12 +8853,20 @@ function aiMediaCanvasCompletionMessage(kind, count, canvasId, failedCount = 0) 
 }
 
 async function generateAiMediaForBoardV3(request) {
+  const aiMediaFilesFromResponse = (response) => {
+    const candidates = [response, response && response.result, response && response.data].filter((value) => value && typeof value === 'object');
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate.files)) return candidate.files.filter(Boolean);
+      if (candidate.file && typeof candidate.file === 'object') return [candidate.file];
+    }
+    return [];
+  };
   const targetCanvasId = activeCanvasId();
   const generationRequest = { ...request, performanceMode: 'normal', watermark: boardAiWatermarkEnabled(), canvasId: targetCanvasId };
   const taskId = beginAiMediaTask(generationRequest);
   const placeOnBoard = request.placeOnBoard !== false;
   const placeholders = placeOnBoard
-    ? createAiPlaceholders(generationRequest, { silent: true })
+    ? createAiPlaceholders(generationRequest, { silent: request.kind !== 'image' })
     : [];
   let generatedFiles = [];
   const retry = async () => {
@@ -8880,7 +8902,7 @@ async function generateAiMediaForBoardV3(request) {
     }));
     const res = await window.messsAPI.generateAiMedia({ ...generationRequest, folderId, placements });
     if (res && res.membership) window.MesssCredits.publish(res.membership);
-    const files = res && Array.isArray(res.files) ? res.files : (res && res.file ? [res.file] : []);
+    const files = aiMediaFilesFromResponse(res);
     generatedFiles = files;
     if (!res || !res.ok || !files.length) {
       const message = res && res.reason === 'missing-api-key'

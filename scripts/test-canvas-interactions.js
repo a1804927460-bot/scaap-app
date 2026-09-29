@@ -413,12 +413,12 @@ const legacyBoardGeneration = boardSource.slice(
 );
 assert.match(
   legacyBoardGeneration,
-  /const placeholders = createAiPlaceholders\(generationRequest, \{ silent: true \}\)[\s\S]*?const placements = placeholders\.map/,
-  'The legacy board generation entry point must create silent placements before submitting to the gateway.'
+  /const placeholders = createAiPlaceholders\(generationRequest, \{ silent: request\.kind !== 'image' \}\)[\s\S]*?const placements = placeholders\.map/,
+  'The legacy board generation entry point must preserve image wait placements before submitting to the gateway.'
 );
 assert.match(
   legacyBoardGeneration,
-  /const files = res && Array\.isArray\(res\.files\)[\s\S]*?!files\.length[\s\S]*?removeAiPlaceholders\(placeholders\)/,
+  /const files = (?:res && Array\.isArray\(res\.files\) \? res\.files : \(res && res\.file \? \[res\.file\] : \[\]\)|aiMediaFilesFromResponse\(res\))[\s\S]*?!files\.length[\s\S]*?removeAiPlaceholders\(placeholders\)/,
   'An empty or failed legacy generation response must remove every pending canvas item.'
 );
 assert.match(

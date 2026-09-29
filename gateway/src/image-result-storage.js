@@ -141,6 +141,14 @@ export async function readStoredImageResult(userId, requestId, reference, fetchI
       throw serviceError('image-result-storage-unavailable', 'The saved image result is temporarily unavailable.');
     }
     if (response.status === 404) continue;
+    if (response.status === 400) {
+      // Supabase Storage can report a missing object as HTTP 400 with
+      // NoSuchKey. Do not confuse that with an outage and block task recovery.
+      let payload = {};
+      try { payload = await response.json(); } catch {}
+      if (['NoSuchKey', 'not_found', 'ObjectNotFound'].includes(String(payload.code || payload.error || ''))
+          || String(payload.statusCode || '') === '404') continue;
+    }
     missing = false;
     if (!response.ok) {
       throw serviceError('image-result-storage-unavailable', 'The saved image result is temporarily unavailable.');

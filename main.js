@@ -197,12 +197,11 @@ const PUBLIC_RELEASE = Object.freeze({
 });
 const WINDOW_BACKGROUND_COLORS = Object.freeze({
   dark: '#080A0D',
-  light: '#FFFFFF',
-  neumorphic: '#e7dfe1'
+  light: '#e7dfe1'
 });
 
 function normalizeTheme(theme) {
-  return ['dark', 'light', 'neumorphic'].includes(theme) ? theme : 'light';
+  return theme === 'dark' ? 'dark' : 'light';
 }
 
 const TEXT_SIZE_LEVELS = Object.freeze(['extra-small', 'small', 'medium', 'large', 'extra-large']);
@@ -5054,7 +5053,21 @@ async function generateAiMediaBuffer(kind, prompt, options = {}) {
   const timeout = setTimeout(() => controller.abort(), kind === 'video' ? 22 * 60 * 1000 : 20 * 60 * 1000);
   try {
     if (assertAiTransportReady() === 'gateway') {
-      await requireGatewayProvider(kind, kind === 'video' ? options.videoProviderId : options.imageProviderId);
+      // The catalog is only a UI capability check. A transient catalog/edge
+      // failure must not prevent the real generation request from reaching
+      // the gateway, which can still route a valid provider and recover an
+      // already accepted operation. Authentication and explicit provider
+      // errors remain blocking so we do not hide actionable account issues.
+      try {
+        await requireGatewayProvider(kind, kind === 'video' ? options.videoProviderId : options.imageProviderId);
+      } catch (catalogError) {
+        const catalogCode = String(catalogError && catalogError.code || '').trim().toLowerCase();
+        const catalogStatus = Number(catalogError && catalogError.status) || 0;
+        const transientCatalogFailure = !catalogCode
+          || ['gateway-request-failed', 'gateway-timeout', 'invalid-gateway-response'].includes(catalogCode)
+          || [408, 425, 429, 500, 502, 503, 504].includes(catalogStatus);
+        if (!transientCatalogFailure) throw catalogError;
+      }
       return await aiGateway.generateMedia(kind, {
         prompt,
         providerId: kind === 'video' ? options.videoProviderId : options.imageProviderId,
@@ -9938,11 +9951,13 @@ function registerIpcHandlers() {
         aiMediaDeliveryGroups.delete(deliveryGroup.groupId);
         removeAiMediaDeliveryGroup(deliveryGroup.groupId);
       }
-      if (runtimeConfig.gatewayConfigured) await syncGatewayAccount({ force: true });
       store.scheduleSave();
       // Do not return a successful result until its file record, canvas item,
       // delivery token and membership reservation are on disk together.
       await flushStoreDurably();
+      // Account refresh is independent of file delivery. A slow account
+      // endpoint must not hold already persisted media outside the canvas.
+      if (runtimeConfig.gatewayConfigured) void syncGatewayAccount({ force: true }).catch(() => {});
       return {
         ok: true,
         file: files[0],
@@ -10010,6 +10025,29 @@ function registerIpcHandlers() {
       return require('./lib/agent-credit-estimate').estimateAgentCredits({...request,messages,attachmentsResolved:true});
     } catch { return {available:false,reason:'context-unavailable'}; }
   });
+  ipcMain.handle('ai:optimizePrompt', async (_evt, request = {}) => {
+    let usage;
+    let creditsCharged = 0;
+    try {
+      const optimizer = require('./lib/prompt-optimizer');
+      const { source, messages } = optimizer.buildOptimizationRequest(request);
+      assertPromptHasNoSecrets(source);
+      usage = membershipService.beginUsage('ai.chat', { estimatedCredits: 0, metadata: { purpose: 'prompt-optimization' } });
+      if (!usage.ok) return { ok: false, reason: usage.reason || 'not-entitled', message: '当前无法使用提示词优化。' };
+      const owner = aiWorkspaceOwner();
+      const text = await generateAiChatReply(source, messages, '', '', 'fast', undefined, {
+        owner, onCharge: value => { if (Number.isFinite(value) && value >= 0) creditsCharged += value; }
+      });
+      if (owner !== aiWorkspaceOwner()) throw new Error('账号已切换，请重新优化。');
+      const result = optimizer.validateOptimizationResult(text);
+      membershipService.finishUsage(usage.usageId, { status: 'succeeded', resultUnits: 1, settledCredits: creditsCharged, serverSettled: Boolean(runtimeConfig.gatewayConfigured) });
+      return { ok: true, text: result };
+    } catch (error) {
+      if (usage?.ok) membershipService.finishUsage(usage.usageId, { status: 'failed', resultUnits: 0, failureCode: 'prompt-optimization-failed', settledCredits: creditsCharged, serverSettled: Boolean(runtimeConfig.gatewayConfigured) });
+      return { ok: false, reason: 'prompt-optimization-failed', message: '未能完成提示词优化，请调整描述后重试。' };
+    }
+  });
+
   ipcMain.handle('ai:chat', async (_evt, request = {}) => {
     const brandPolicy = require('./src/js/agent-brand-policy');
     const directBrandReply = brandPolicy.replyForRequest(request.prompt);

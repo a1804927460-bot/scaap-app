@@ -2303,6 +2303,13 @@ function canvasAgentMediaProviders(kind = CanvasWorkspace.agentGenerationKind) {
   return typeof getConfiguredImageProviders === 'function' ? getConfiguredImageProviders(config) : [];
 }
 
+function closeCanvasAgentModelMenu() {
+  const menu = document.getElementById('board-agent-model-menu');
+  const trigger = document.getElementById('board-agent-model-trigger');
+  if (menu) menu.hidden = true;
+  if (trigger) trigger.setAttribute('aria-expanded', 'false');
+}
+
 function renderCanvasAgentModels() {
   const list = document.getElementById('board-agent-model-options');
   const chatList = document.getElementById('board-agent-chat-options');
@@ -2325,6 +2332,7 @@ function renderCanvasAgentModels() {
       CanvasWorkspace.agentChatModel = entry.model;
       CanvasWorkspace.agentChatUsePreset = true;
       renderCanvasAgentModels();
+      closeCanvasAgentModelMenu();
     }, t);
   const providers = canvasAgentMediaProviders();
   if (!providers.some((provider) => provider.id === CanvasWorkspace.agentProviderId)) {
@@ -2947,8 +2955,7 @@ async function initCanvasWorkspace(initial) {
     CanvasWorkspace.agentChatModel = option.dataset.agentChatModel;
     renderCanvasAgentModels();
     renderCanvasAgentReferences();
-    modelMenu.hidden = true;
-    modelTrigger.setAttribute('aria-expanded', 'false');
+    closeCanvasAgentModelMenu();
   });
   document.querySelector('.board-agent-kind-switch').addEventListener('click', (event) => {
     const button = event.target.closest('[data-agent-kind]');
@@ -2966,8 +2973,7 @@ async function initCanvasWorkspace(initial) {
     CanvasWorkspace.agentProviderId = option.dataset.providerId;
     renderCanvasAgentModels();
     renderCanvasAgentReferences();
-    modelMenu.hidden = true;
-    modelTrigger.setAttribute('aria-expanded', 'false');
+    closeCanvasAgentModelMenu();
   });
   document.getElementById('board-agent-add-reference').addEventListener('click', addSelectedImagesToCanvasAgent);
   document.addEventListener('pointerdown', (event) => {

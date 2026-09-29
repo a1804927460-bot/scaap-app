@@ -1285,8 +1285,10 @@ async function persistImageResult(userId, requestId, image, tracker) {
 async function recoverStoredImageResult(userId, requestId, job) {
   const reference = String(job && job.resultUrl || '').trim();
   if (!isStoredImageResult(reference, userId, requestId)
-      && !['starting', 'submitted', 'ready'].includes(String(job && job.status || '').toLowerCase())
       && !/^inline:/i.test(String(job && job.providerTaskId || ''))) {
+    // An asynchronous provider already has a resumable task ID. Query it
+    // directly instead of probing five nonexistent storage objects first.
+    // Inline providers alone need discovery after a crash before recording.
     return null;
   }
   try {

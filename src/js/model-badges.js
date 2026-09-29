@@ -2,7 +2,7 @@
 
 const AI_MODEL_PRESENTATION = Object.freeze({
   'image-1': Object.freeze({
-    kind: 'banana', best: true,
+    kind: 'banana',
     description: ['High precision, stable references and polished detail', '高精度与稳定参考图，细节表现出色', '높은 정밀도와 안정적인 참조 이미지']
   }),
   'image-2': Object.freeze({
@@ -76,12 +76,6 @@ function appendAiModelLabel(container, provider, options = {}) {
     ? publicModelLabel(provider && (provider.name || provider.model) || '')
     : String(provider && (provider.name || provider.model) || '');
   titleRow.appendChild(label);
-  if (presentation?.best) {
-    const best = document.createElement('span');
-    best.className = 'ai-model-best';
-    best.textContent = 'Best';
-    titleRow.appendChild(best);
-  }
   if (options.details && presentation) {
     const description = document.createElement('span');
     description.className = 'ai-model-description';
