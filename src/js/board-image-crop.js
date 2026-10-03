@@ -48,6 +48,36 @@ async function openBoardImageCrop(file, item) {
   for (const [value, title] of [['', t('Free', '自由')], ['original', t('Original', '原比例')], ['1:1', '1:1'], ['4:3', '4:3'], ['3:4', '3:4'], ['16:9', '16:9'], ['9:16', '9:16']]) {
     const option = document.createElement('option'); option.value = value; option.textContent = title; ratios.append(option);
   }
+  ratios.hidden = true;
+  const ratioPicker = document.createElement('div'); ratioPicker.className = 'board-crop-ratio-picker';
+  const ratioTrigger = document.createElement('button'); ratioTrigger.type = 'button';
+  ratioTrigger.className = 'board-crop-ratio-trigger';
+  ratioTrigger.setAttribute('aria-label', t('Aspect ratio', '裁切比例'));
+  ratioTrigger.setAttribute('aria-expanded', 'false');
+  ratioTrigger.disabled = true;
+  const ratioMenu = document.createElement('div'); ratioMenu.className = 'board-crop-ratio-menu'; ratioMenu.hidden = true;
+  ratioMenu.setAttribute('role', 'group'); ratioMenu.setAttribute('aria-label', t('Aspect ratio', '裁切比例'));
+  const closeRatios = () => { ratioMenu.hidden = true; ratioTrigger.setAttribute('aria-expanded', 'false'); };
+  const syncRatios = () => {
+    ratioTrigger.textContent = ratios.selectedOptions[0].textContent + ' ⌄';
+    ratioMenu.querySelectorAll('button').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.value === ratios.value)));
+  };
+  for (const option of ratios.options) {
+    const button = document.createElement('button'); button.type = 'button';
+    button.textContent = option.textContent; button.dataset.value = option.value;
+    button.addEventListener('click', () => {
+      ratios.value = option.value; ratios.dispatchEvent(new Event('change'));
+      syncRatios(); closeRatios(); ratioTrigger.focus();
+    });
+    ratioMenu.append(button);
+  }
+  ratioTrigger.addEventListener('click', () => {
+    ratioMenu.hidden = !ratioMenu.hidden;
+    ratioTrigger.setAttribute('aria-expanded', String(!ratioMenu.hidden));
+    ratioPicker.classList.toggle('opens-up', viewport.clientHeight - parseFloat(toolbar.style.top) - toolbar.offsetHeight < 160);
+  });
+  ratios.addEventListener('change', syncRatios);
+  syncRatios(); ratioPicker.append(ratioTrigger, ratioMenu, ratios);
   const status = document.createElement('output'); status.textContent = t('Loading...', '加载中...');
   const action = (icon, title) => {
     const button = document.createElement('button'); button.type = 'button'; button.title = title; button.setAttribute('aria-label', title);
@@ -63,16 +93,17 @@ async function openBoardImageCrop(file, item) {
   ratios.disabled = reset.disabled = apply.disabled = true;
   const divider = document.createElement('span'); divider.className = 'board-image-crop-divider'; divider.setAttribute('aria-hidden', 'true');
   toolbar.classList.toggle('is-compact', viewport.clientWidth < 420);
-  toolbar.append(label, ratios, status, divider, reset, cancel, apply);
+  toolbar.append(label, ratioPicker, status, divider, reset, cancel, apply);
   toolbar.style.left = '12px'; toolbar.style.top = '12px';
   overlay.append(surface, toolbar); viewport.append(overlay);
   const state = { overlay, image: new Image(), abort: new AbortController(), app: null, saving: false, canvasId: activeCanvasId() };
   boardImageCrop = state;
   const signal = state.abort.signal;
+  overlay.addEventListener('pointerdown', event => { if (!ratioPicker.contains(event.target)) closeRatios(); }, { capture: true, signal });
   cancel.addEventListener('click', closeBoardImageCrop);
   window.addEventListener('keydown', event => {
     event.stopImmediatePropagation();
-    if (event.key === 'Escape') { event.preventDefault(); closeBoardImageCrop(); }
+    if (event.key === 'Escape') { event.preventDefault(); if (!ratioMenu.hidden) { closeRatios(); ratioTrigger.focus(); } else closeBoardImageCrop(); }
     if (event.key === 'Enter' && !event.repeat && !['SELECT', 'BUTTON'].includes(document.activeElement?.tagName)) {
       event.preventDefault(); if (!apply.disabled) apply.click();
     }
@@ -161,6 +192,7 @@ async function openBoardImageCrop(file, item) {
     node.on(MesssCanvasCrop.PropertyEvent.CHANGE, updateStatus);
     updateStatus();
     ratios.disabled = reset.disabled = apply.disabled = false;
+    ratioTrigger.disabled = false;
     ratios.addEventListener('change', () => {
       const inner = app.editor.innerEditor;
       if (!inner) return;
@@ -168,10 +200,11 @@ async function openBoardImageCrop(file, item) {
       if (ratios.value) inner.updateClipRatio(ratios.value === 'original' ? `${sw}:${sh}` : ratios.value);
       updateStatus();
     });
-    reset.addEventListener('click', () => { app.editor.innerEditor?.reset(); ratios.value = ''; node.lockRatio = false; updateStatus(); });
+    reset.addEventListener('click', () => { app.editor.innerEditor?.reset(); ratios.value = ''; syncRatios(); closeRatios(); node.lockRatio = false; updateStatus(); });
     apply.addEventListener('click', async () => {
       if (state.saving) return;
       state.saving = true;
+      closeRatios(); ratioTrigger.disabled = true;
       ratios.disabled = reset.disabled = apply.disabled = cancel.disabled = true;
       status.textContent = t('Saving...', '保存中...');
       try {
@@ -187,6 +220,7 @@ async function openBoardImageCrop(file, item) {
         }
         if (typeof renderFileList === 'function') renderFileList(currentFileListScope());
         state.saving = false;
+        ratioTrigger.disabled = false;
         closeBoardImageCrop();
         showToast(t('Cropped image saved. Original preserved.', '裁切图片已保存，原图已保留。'));
       } catch (error) {

@@ -63,11 +63,17 @@ async function prepareFalExpansion(imageDataUrl, options) {
 
 export async function normalizeFalEnhanceOptions(imageDataUrl) {
   const { buffer } = parseImageDataUrl(imageDataUrl);
-  const metadata = await sharp(buffer, { limitInputPixels: 6_000_000 }).metadata();
-  if (!metadata.width || !metadata.height || metadata.pages > 1 || metadata.width * metadata.height > 6_000_000) {
-    throw failure('invalid-image-tool-options', '画质提升支持不超过 600 万像素的静态图片，请先缩小图片。', 400);
+  let metadata;
+  try { metadata = await sharp(buffer, { limitInputPixels: 40_000_000 }).metadata(); }
+  catch { throw failure('invalid-image-tool-options', '请选择有效的静态图片，最大支持 4000 万像素。', 400); }
+  if (!metadata.width || !metadata.height || metadata.pages > 1) {
+    throw failure('invalid-image-tool-options', '画质提升需要静态图片。', 400);
   }
-  return { megapixels: Math.ceil(metadata.width * metadata.height * 4 / 1_000_000) };
+  const ratio = Math.min(1, Math.sqrt(6_000_000 / (metadata.width * metadata.height)));
+  const swapped = metadata.orientation >= 5 && metadata.orientation <= 8;
+  const width = Math.max(1, Math.floor((swapped ? metadata.height : metadata.width) * ratio));
+  const height = Math.max(1, Math.floor((swapped ? metadata.width : metadata.height) * ratio));
+  return { megapixels: Math.ceil(width * height * 4 / 1_000_000), width, height };
 }
 
 export async function runFalImageTool(model, imageDataUrl, options = {}, dependencies = {}) {
@@ -75,6 +81,14 @@ export async function runFalImageTool(model, imageDataUrl, options = {}, depende
   const key = assertFalConfigured(dependencies.env || process.env);
   parseImageDataUrl(imageDataUrl);
   const expansion = model === 'smart-resize' ? await prepareFalExpansion(imageDataUrl, options) : null;
+  if (model === 'topaz/upscale/image') {
+    const dimensions = await normalizeFalEnhanceOptions(imageDataUrl);
+    const { buffer } = parseImageDataUrl(imageDataUrl);
+    const prepared = await sharp(buffer, { limitInputPixels: 40_000_000 }).rotate()
+      .resize(dimensions.width, dimensions.height, { fit: 'inside', withoutEnlargement: true })
+      .png().toBuffer();
+    imageDataUrl = `data:image/png;base64,${prepared.toString('base64')}`;
+  }
   const input = expansion ? expansion.input : model === 'topaz/upscale/image' ? { image_url: imageDataUrl, upscale_factor: 2, model: 'Standard MAX', output_format: 'png', face_enhancement: false } : { image_url: imageDataUrl };
   const fetchImpl = dependencies.fetchImpl || fetch;
   const sleep = dependencies.sleep || delay;

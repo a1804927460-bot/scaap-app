@@ -444,3 +444,16 @@
 .board-image-crop-toolbar.is-compact .board-image-crop-title { display: none; }
 .board-image-crop-toolbar.is-compact .board-image-crop-size { min-width: 64px; font-size: 10px; padding: 0 2px; }
 .board-image-crop-toolbar.is-compact { gap: 2px; }
+.board-crop-ratio-picker { position: relative; flex: 0 0 auto; }
+.board-image-crop-toolbar .board-crop-ratio-trigger { width: 78px; padding: 0 8px; justify-content: space-between; background: var(--bg-surface-2); white-space: nowrap; }
+.board-image-crop-toolbar select[hidden], .board-crop-ratio-menu[hidden] { display: none; }
+.board-crop-ratio-menu {
+  position: absolute; z-index: 2; top: calc(100% + 14px); left: 0;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+  width: 204px; padding: 8px; box-sizing: border-box;
+  border: 1px solid var(--border-hairline); border-radius: 14px;
+  background: var(--bg-elevated); box-shadow: 0 8px 24px #0003;
+}
+.board-crop-ratio-picker.opens-up .board-crop-ratio-menu { top: auto; bottom: calc(100% + 14px); }
+.board-image-crop-toolbar .board-crop-ratio-menu button { width: 100%; height: 32px; font-size: 12px; border-radius: 8px; }
+.board-image-crop-toolbar .board-crop-ratio-menu button[aria-pressed="true"] { background: var(--brand-blue); color: #fff; }

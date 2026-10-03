@@ -34,7 +34,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     });
     await page.evaluate(() => openBoardImageCrop(cropFile, cropItem));
     assert.ok(await page.locator('.board-image-crop').count(), await page.evaluate(() => window.lastToast));
-    await page.locator('.board-image-crop select').selectOption('1:1');
+    await page.getByRole('button', { name: '裁切比例', exact: true }).click();
+    await page.getByRole('button', { name: '1:1', exact: true }).click();
+    assert.equal(await page.locator('.board-crop-ratio-menu').isVisible(), false);
     await page.waitForTimeout(250);
     const sizes = await page.evaluate(() => ({ width: boardImageCrop.node.width, height: boardImageCrop.node.height, inner: !!boardImageCrop.app.editor.innerEditor }));
     assert.equal(sizes.inner, true); assert.ok(Math.abs(sizes.width - sizes.height) < 1);
@@ -94,6 +96,12 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
         assert.ok(bar.x >= 11 && bar.x + bar.width <= width - 11, 'Toolbar must stay inside viewport');
         assert.equal(await page.locator('.board-image-crop-toolbar img').evaluateAll(images => images.every(img => img.complete && img.naturalWidth > 0)), true);
         await page.screenshot({ path: `test-artifacts/canvas-crop/${theme}-${width}.png` });
+        await page.getByRole('button', { name: '裁切比例', exact: true }).click();
+        const menu = await page.locator('.board-crop-ratio-menu').boundingBox();
+        assert.ok(menu.x >= 0 && menu.x + menu.width <= width && menu.y >= 0 && menu.y + menu.height <= 740, JSON.stringify(menu));
+        await page.screenshot({ path: `test-artifacts/canvas-crop/ratios-${theme}-${width}.png` });
+        await page.keyboard.press('Escape');
+        assert.equal(await page.locator('.board-image-crop').count(), 1);
         await page.getByRole('button', { name: '取消', exact: true }).click();
       }
     }

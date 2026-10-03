@@ -88,7 +88,7 @@ for (const model of ['smart-resize', 'feynobg', 'topaz/upscale/image']) {
             assert.match(submitted.prompt, /Outpaint only/);
             const corner = await sharp(padded).extract({left:0,top:0,width:1,height:1}).ensureAlpha().raw().toBuffer();
             assert.equal(corner[3],0);
-          } else assert.equal(submitted.image_url, input);
+          } else if (model !== 'topaz/upscale/image') assert.equal(submitted.image_url, input);
           if (model === 'topaz/upscale/image') {
             assert.equal(JSON.parse(options.body).model, 'Standard MAX');
             assert.equal(JSON.parse(options.body).upscale_factor, 2);
@@ -127,5 +127,18 @@ test('Topaz enhancement derives billed tier from real image bytes', async () => 
   assert.throws(() => falPricing.quoteFalTool('clipdrop-upscale', {megapixels:25}));
   const sharp = (await import('sharp')).default;
   const large = await sharp({create:{width:3000,height:2100,channels:3,background:'#fff'}}).png().toBuffer();
-  await assert.rejects(normalizeFalEnhanceOptions('data:image/png;base64,'+large.toString('base64')));
+  const largeInput = 'data:image/png;base64,'+large.toString('base64');
+  const prepared = await normalizeFalEnhanceOptions(largeInput);
+  assert.ok(prepared.width * prepared.height <= 6_000_000);
+  assert.equal(prepared.megapixels, 24);
+  await assert.rejects(runFalImageTool('topaz/upscale/image', largeInput, {}, {
+    env: { FAL_API_KEY: 'test' },
+    fetchImpl: async (_url, request) => {
+      const submitted = Buffer.from(JSON.parse(request.body).image_url.split(',')[1], 'base64');
+      const metadata = await sharp(submitted).metadata();
+      assert.ok(metadata.width * metadata.height <= 6_000_000);
+      assert.ok(Math.abs(metadata.width / metadata.height - 3000 / 2100) < .002);
+      throw Object.assign(new Error('verified-input'), { name: 'VerifiedInput' });
+    }
+  }), /verified-input/);
 });
