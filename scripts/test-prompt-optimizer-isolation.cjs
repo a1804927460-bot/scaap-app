@@ -15,6 +15,15 @@ const brand = require('../src/js/agent-brand-policy');
   assert.throws(() => optimizer.validateOptimizationResult(brand.reply('中文')));
   assert.equal(optimizer.validateOptimizationResult(text), text);
   const main = fs.readFileSync('main.js', 'utf8');
+  const resolverSource = main.slice(main.indexOf('async function requireGatewayChatProvider('), main.indexOf('\nfunction assertAiTransportReady('));
+  const catalog = { compatible: true, providers: [{ id: 'chat-test', kind: 'chat', models: ['test-model'] }] };
+  const resolveProvider = vm.runInNewContext(resolverSource + '; requireGatewayChatProvider', {
+    getVerifiedGatewayCatalog: async () => catalog,
+    assertGatewayProvider: require('../lib/gateway-catalog').assertGatewayProvider
+  });
+  assert.equal((await resolveProvider('', '')).id, 'chat-test', 'Optimizer must resolve a default rather than reject its empty provider ID');
+  assert.equal((await resolveProvider('', 'test-model')).id, 'chat-test');
+  await assert.rejects(resolveProvider('missing-provider', ''), { code: 'provider-not-configured' });
   const handler = main.split("ipcMain.handle('ai:optimizePrompt', ")[1].split("\n  ipcMain.handle('ai:chat'")[0];
   let captured, settle = [], calls = [];
   let release;

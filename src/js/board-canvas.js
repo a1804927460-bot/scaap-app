@@ -2243,13 +2243,19 @@ function constrainedBoardMoveDeltas(startPositions, dx, dy) {
 
 function boardItemBounds(item) {
   if (item && item.isNote) {
-    const width = Math.max(24, Number(item.width) || 220);
+    const text = String(item.text || '');
+    const fontSize = Math.max(10, Number(item.fontSize) || 32);
+    const longestLine = text.split(/\r?\n/).reduce((max, line) => Math.max(max, [...line].length), 0);
+    // Text notes grow sideways first. Keep a readable working width and only
+    // wrap once the note reaches the board's comfortable maximum.
+    const preferredWidth = Math.max(220, Math.min(720, Math.ceil(longestLine * fontSize * 0.92 + 18)));
+    const width = Math.max(preferredWidth, Number(item.width) || 0);
     const contentHeight = window.MesssBoardLeaferLayer?.measureTextNote(item, width);
     return {
       x: Number.isFinite(item.x) ? item.x : 0,
       y: Number.isFinite(item.y) ? item.y : 0,
       w: width,
-      h: Math.max(Number(item.height) || 0, contentHeight || 140)
+      h: contentHeight || Math.max(Number(item.height) || 0, 140)
     };
   }
   if (item && item.isMoodboard) {
@@ -5184,6 +5190,8 @@ function buildTextNoteEl(item) {
   content.textContent = item.text;
   content.addEventListener('input', () => {
     item.text = content.textContent;
+    syncMountedBoardItemGeometry(el, item);
+    updateBoardItemIndex(item);
   });
   content.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -7086,7 +7094,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
             <span>CameraCtrl</span>
           </div>
           <div class="ai-camera-control-actions">
-            <button type="button" class="ai-camera-control-disable">${t('Disable', '关闭')}</button>
+            <button type="button" class="ai-camera-control-disable">${t('Close', '关闭')}</button>
             <button type="button" class="ai-camera-control-save">${t('Save', '保存')}</button>
           </div>
         </header>
@@ -7190,6 +7198,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     if (typeof syncSelectedSkillModel === 'function') syncSelectedSkillModel(true);
   }).catch(() => {});
   let cameraControl = normalizeAiCameraControl();
+  let cameraControlDraft = null;
   let styleLoadRevision = 0;
   const boardReferences = new Map();
   let boardReferenceSequence = 0;
@@ -7305,9 +7314,10 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     promptStyleToggle.querySelector('span').textContent = selected ? selected.name : t('Skill', '技能');
   }
 
-  function setCameraControlOpen(open, enable = false) {
+  function setCameraControlOpen(open) {
     const shouldOpen = open === true && kind === 'video';
-    if (enable && shouldOpen) cameraControl.enabled = true;
+    if (shouldOpen && cameraControlPanel.hidden) cameraControlDraft = { ...cameraControl };
+    if (!shouldOpen) cameraControlDraft = null;
     cameraControlPanel.hidden = !shouldOpen;
     cameraControlToggle.setAttribute('aria-expanded', String(shouldOpen));
     if (shouldOpen) {
@@ -7318,6 +7328,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   }
 
   function renderCameraControl() {
+    const displayedControl = cameraControlDraft || cameraControl;
     const isVideo = kind === 'video';
     cameraControlToggle.hidden = !isVideo;
     cameraControlToggle.classList.toggle('is-active', isVideo && cameraControl.enabled);
@@ -7329,7 +7340,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     cameraControlPanel.querySelectorAll('.ai-camera-control-column').forEach((column) => {
       const field = column.dataset.cameraField;
       const values = AI_CAMERA_CONTROL_PRESETS[field] || [];
-      const current = aiCameraPreset(field, cameraControl[field]);
+      const current = aiCameraPreset(field, displayedControl[field]);
       const index = Math.max(0, values.findIndex((entry) => entry.id === current?.id));
       const before = values[(index - 1 + values.length) % values.length];
       const after = values[(index + 1) % values.length];
@@ -7357,21 +7368,21 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
       const button = document.createElement('button');
       button.type = 'button';
       button.dataset.cameraMotion = motion.id;
-      button.className = cameraControl.motion === motion.id ? 'is-active' : '';
+      button.className = displayedControl.motion === motion.id ? 'is-active' : '';
       button.setAttribute('role', 'option');
-      button.setAttribute('aria-selected', String(cameraControl.motion === motion.id));
+      button.setAttribute('aria-selected', String(displayedControl.motion === motion.id));
       button.innerHTML = `<span>${escapeHtml(t(motion.label, motion.zh))}</span>`;
       cameraMotionGrid.appendChild(button);
     });
   }
 
   function cycleCameraControl(field, direction) {
+    if (!cameraControlDraft) return;
     const values = AI_CAMERA_CONTROL_PRESETS[field] || [];
     if (!values.length) return;
-    const currentIndex = Math.max(0, values.findIndex((entry) => entry.id === cameraControl[field]));
+    const currentIndex = Math.max(0, values.findIndex((entry) => entry.id === cameraControlDraft[field]));
     const nextIndex = (currentIndex + direction + values.length) % values.length;
-    cameraControl[field] = values[nextIndex].id;
-    cameraControl.enabled = true;
+    cameraControlDraft[field] = values[nextIndex].id;
     renderCameraControl();
   }
 
@@ -7810,7 +7821,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     close.setAttribute('aria-label', close.title);
     cameraControlPanel.setAttribute('aria-label', t('Camera control', '摄影机控制'));
     cameraControlPanel.querySelector('.ai-camera-control-header strong').textContent = t('Camera control', '摄影机控制');
-    cameraControlPanel.querySelector('.ai-camera-control-disable').textContent = t('Disable', '关闭');
+    cameraControlPanel.querySelector('.ai-camera-control-disable').textContent = t('Close', '关闭');
     cameraControlPanel.querySelector('.ai-camera-control-save').textContent = t('Save', '保存');
     cameraControlPanel.querySelector('.ai-camera-motion-heading strong').textContent = t('Camera movement', '镜头运动');
     cameraControlPanel.querySelector('.ai-camera-motion-heading span').textContent = t(
@@ -8419,7 +8430,7 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
   });
   cameraControlToggle.addEventListener('click', () => {
     if (kind !== 'video') return;
-    setCameraControlOpen(cameraControlPanel.hidden, true);
+    setCameraControlOpen(cameraControlPanel.hidden);
   });
   cameraControlPanel.addEventListener('pointerdown', (event) => event.stopPropagation());
   cameraControlPanel.addEventListener('wheel', (event) => event.stopPropagation(), { passive: true });
@@ -8433,17 +8444,19 @@ function buildAiComposer(aiConfig, initialKind = 'image') {
     }
     const motion = event.target.closest('[data-camera-motion]');
     if (motion) {
-      cameraControl.motion = aiCameraPreset('motion', motion.dataset.cameraMotion)?.id || AI_CAMERA_CONTROL_DEFAULTS.motion;
-      cameraControl.enabled = true;
+      if (!cameraControlDraft) return;
+      cameraControlDraft.motion = aiCameraPreset('motion', motion.dataset.cameraMotion)?.id || AI_CAMERA_CONTROL_DEFAULTS.motion;
       renderCameraControl();
       return;
     }
     if (event.target.closest('.ai-camera-control-disable')) {
-      cameraControl.enabled = false;
       setCameraControlOpen(false);
       return;
     }
-    if (event.target.closest('.ai-camera-control-save')) setCameraControlOpen(false);
+    if (event.target.closest('.ai-camera-control-save') && cameraControlDraft) {
+      cameraControl = normalizeAiCameraControl({ ...cameraControlDraft, enabled: true });
+      setCameraControlOpen(false);
+    }
   });
   optionsPanel.addEventListener('pointerdown', (event) => {
     event.stopPropagation();

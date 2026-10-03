@@ -785,6 +785,34 @@ async function resolveBoardButlerImageToolResult(api, hook, initialResult, state
   return downloadedFiles;
 }
 
+function createBoardButlerPlaceholder(file, item, action, options = {}) {
+  const request = {
+    kind: 'image', count: action === 'imageLayer' ? Math.min(4, Number(options.numLayers) || 4) : 1,
+    canvasId: item.canvasId || activeCanvasId(),
+    aspectRatio: `${options.width || file.sourceWidth || item.width || 300}:${options.height || file.sourceHeight || item.height || 220}`,
+    modelName: action === 'imageExpand' ? t('Resize image', '修改尺寸') : action === 'removeBackground' ? t('Remove background', '去除背景') : t('Image processing', '图片处理')
+  };
+  const placeholders = createAiPlaceholders(request, { silent: true });
+  placeholders.forEach((pending, index) => {
+    pending.x = (Number(item.x) || 0) + (Number(item.width) || 300) + 34 + index * (pending.width + 24);
+    pending.y = Number(item.y) || 0;
+    if (item.partitionId) pending.partitionId = item.partitionId;
+    else delete pending.partitionId;
+    AppState.allBoardItems.push(pending);
+    if (request.canvasId === activeCanvasId()) AppState.boardItems.push(pending);
+    canvasWorkspaceAddItem(pending);
+  });
+  renderBoard();
+  return { request, placeholders };
+}
+
+async function placeBoardButlerPlaceholderResults(pending, files) {
+  files.forEach(file => { AppState.files = [file, ...AppState.files.filter(entry => entry.id !== file.id)]; });
+  await replaceAiPlaceholders(pending.placeholders, files, pending.request);
+  await confirmBoardButlerDeliveries(files);
+  if (typeof renderFileList === 'function') renderFileList(currentFileListScope());
+}
+
 async function runBoardButlerImageTool(action, file, item, options) {
   if (getBoardButlerTask(file.id, action)?.status === 'running') return;
   const api = boardButlerApi();
@@ -800,7 +828,9 @@ async function runBoardButlerImageTool(action, file, item, options) {
   }
   const state = { status: 'running', phase: 'creating' };
   setBoardButlerTask(file.id, action, state);
+  let pending;
   try {
+    pending = createBoardButlerPlaceholder(file, item, action, options);
     const requestOptions = { ...options, modelId: hook.toolId };
     const initialResult = await invoke(file.id, requestOptions);
     if (!initialResult || !initialResult.ok) {
@@ -812,7 +842,7 @@ async function runBoardButlerImageTool(action, file, item, options) {
     }
     state.phase = 'saving';
     syncBoardButlerTaskUi(file.id);
-    await placeBoardButlerResults(resultFiles, item, action);
+    await placeBoardButlerPlaceholderResults(pending, resultFiles);
     state.status = 'success';
     syncBoardButlerTaskUi(file.id);
     showToast(t(
@@ -824,6 +854,10 @@ async function runBoardButlerImageTool(action, file, item, options) {
   } catch (error) {
     state.status = 'error';
     state.message = error && error.message;
+    if (pending) preserveAiPlaceholders(pending.placeholders, state.message, () => {
+      removeAiPlaceholders(pending.placeholders);
+      void runBoardButlerImageTool(action, file, item, options);
+    });
     syncBoardButlerTaskUi(file.id);
     showToast(state.message || t('Image processing failed.', '图片处理失败。', '이미지 처리에 실패했습니다.'), 'AI', { category: 'ai-generation-failure' });
   }
@@ -1771,6 +1805,9 @@ function openBoardButlerExpandPanel(anchor, file, item) {
     frame.append(handle);
   }
   editor.addEventListener('pointerdown',e=>e.stopPropagation());
+  editor.addEventListener('mousedown',e=>e.stopPropagation());
+  editor.addEventListener('dblclick',e=>e.stopPropagation());
+  editor.addEventListener('dragstart',e=>{e.preventDefault();e.stopPropagation();});
   editor.addEventListener('click',e=>e.stopPropagation());
   cancel.addEventListener('click',closeBoardButlerExpandEditor);
   editor.addEventListener('submit',e=>{
@@ -1778,6 +1815,9 @@ function openBoardButlerExpandPanel(anchor, file, item) {
     if(launchBoardButlerImageTool('imageExpand',file,item,{width,height}))closeBoardButlerExpandEditor();
   });
   boardButlerExpandEditorKeyHandler=e=>{
+    if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key) && !editor.contains(e.target)) {
+      e.preventDefault(); e.stopImmediatePropagation(); return;
+    }
     if(e.key!=='Escape')return;e.preventDefault();e.stopImmediatePropagation();closeBoardButlerExpandEditor();
   };
   document.addEventListener('keydown',boardButlerExpandEditorKeyHandler,true);
@@ -2522,14 +2562,16 @@ async function runBoardButlerRemoveBackground(file, item, options = {}) {
   }
   const state = { status: 'running', phase: 'processing' };
   setBoardButlerTask(file.id, action, state);
+  let pending;
   try {
+    pending = createBoardButlerPlaceholder(file, item, action, options);
     const result = await api.removeBackground(file.id, options);
     if (!result || !result.ok || !result.file) {
       throw boardButlerError(result, t('Could not remove the background.', '去除背景失败。', '배경을 제거하지 못했습니다.'));
     }
     state.phase = 'saving';
     syncBoardButlerTaskUi(file.id);
-    await placeBoardButlerResult(result.file, item, action);
+    await placeBoardButlerPlaceholderResults(pending, [result.file]);
     state.status = 'success';
     syncBoardButlerTaskUi(file.id);
     showToast(t('Background removed and added to the canvas.', '已去除背景并加入画布。', '배경을 제거해 캔버스에 추가했습니다.'));
@@ -2537,6 +2579,10 @@ async function runBoardButlerRemoveBackground(file, item, options = {}) {
   } catch (error) {
     state.status = 'error';
     state.message = error && error.message;
+    if (pending) preserveAiPlaceholders(pending.placeholders, state.message, () => {
+      removeAiPlaceholders(pending.placeholders);
+      void runBoardButlerRemoveBackground(file, item, options);
+    });
     syncBoardButlerTaskUi(file.id);
     showToast(state.message || t('Could not remove the background.', '去除背景失败。', '배경을 제거하지 못했습니다.'), 'AI', { category: 'ai-generation-failure' });
   }

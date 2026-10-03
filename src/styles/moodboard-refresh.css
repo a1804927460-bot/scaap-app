@@ -56,6 +56,15 @@
 .board-moodboard .board-moodboard-generate:hover { background: #41464b; }
 .board-moodboard .board-moodboard-open { display: none; }
 .board-moodboard-generate img { filter: invert(1); pointer-events: none; }
+[data-theme="light"] .board-moodboard { background: #fff; border-color: #dedde0; }
+[data-theme="light"] .board-moodboard-title,
+[data-theme="light"] .board-moodboard-preview { color: #252329; }
+[data-theme="light"] .board-moodboard-header::after { background: #e6e4e7; }
+[data-theme="light"] .board-moodboard .board-moodboard-generate { background: #f4f3f5; color: #252329; border-color: #dedde0; }
+[data-theme="light"] .board-moodboard .board-moodboard-generate:hover { background: #e9e7eb; }
+[data-theme="light"] .board-moodboard-generate img,
+[data-theme="light"] #board-canvas[data-board-renderer="leafer"].is-transforming .board-moodboard-generate img { filter: none !important; }
+[data-theme="light"] .board-moodboard.is-selected { border-color: #53b8dd; }
 .ai-image-popover.ai-composer.is-moodboard-composer {
   transform: none; animation: none; transition: none;
   min-width: 0; height: auto; overflow-y: auto; border-radius: 12px;

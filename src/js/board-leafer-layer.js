@@ -395,6 +395,7 @@
   }
 
   function createMoodboardDrawable(api, item, bounds) {
+    const light = document.documentElement.dataset.theme === 'light';
     const group = new api.Group({
       ...baseOptions(item, bounds, '#202122'),
       hittable: false
@@ -405,13 +406,13 @@
       y: 0,
       width: bounds.width,
       height: bounds.height,
-      fill: '#202223',
-      stroke: item.selected ? '#53b8dd' : '#36393b',
+      fill: light ? '#ffffff' : '#202223',
+      stroke: item.selected ? '#53b8dd' : light ? '#dedde0' : '#36393b',
       strokeWidth: 1,
       cornerRadius: 8,
       hittable: false
     });
-    const title = new api.Text(textOptions(item, bounds, moodboardTitleForItem(item), '#f3f5f8', {
+    const title = new api.Text(textOptions(item, bounds, moodboardTitleForItem(item), light ? '#252329' : '#f3f5f8', {
       x: 24,
       y: 20,
       width: Math.max(1, bounds.width - 82),
@@ -421,7 +422,7 @@
       lineHeight: { type: 'percent', value: 1.25 },
       textOverflow: 'ellipsis'
     }));
-    const body = new api.Text(textOptions(item, bounds, moodboardBodyForItem(item), '#f3f5f8', {
+    const body = new api.Text(textOptions(item, bounds, moodboardBodyForItem(item), light ? '#252329' : '#f3f5f8', {
       x: 24,
       y: 80,
       width: Math.max(1, bounds.width - 48),
@@ -432,7 +433,7 @@
       verticalAlign: 'top',
       textOverflow: 'ellipsis'
     }));
-    const divider = new api.Rect({ x: 24, y: 60, width: Math.max(1, bounds.width - 48), height: 1, fill: '#383c3e', hittable: false });
+    const divider = new api.Rect({ x: 24, y: 60, width: Math.max(1, bounds.width - 48), height: 1, fill: light ? '#e6e4e7' : '#383c3e', hittable: false });
     return addChildren(group, [background, title, body, divider]);
   }
 
@@ -561,24 +562,31 @@
         title.text = textForItem(item);
       }
     } else if (kind === 'moodboard') {
+      const light = document.documentElement.dataset.theme === 'light';
       const [background, title, body] = drawable._messsParts || [];
       if (background) {
         background.width = bounds.width;
         background.height = bounds.height;
-        background.stroke = item.selected ? '#53b8dd' : '#36393b';
+        background.fill = light ? '#ffffff' : '#202223';
+        background.stroke = item.selected ? '#53b8dd' : light ? '#dedde0' : '#36393b';
         background.strokeWidth = 1;
       }
       if (title) {
+        title.fill = light ? '#252329' : '#f3f5f8';
         title.width = Math.max(1, bounds.width - 82);
         title.text = moodboardTitleForItem(item);
       }
       if (body) {
+        body.fill = light ? '#252329' : '#f3f5f8';
         body.width = Math.max(1, bounds.width - 48);
         body.height = Math.max(1, bounds.height - 104);
         body.text = moodboardBodyForItem(item);
       }
       const divider = drawable._messsParts?.[3];
-      if (divider) divider.width = Math.max(1, bounds.width - 48);
+      if (divider) {
+        divider.width = Math.max(1, bounds.width - 48);
+        divider.fill = light ? '#e6e4e7' : '#383c3e';
+      }
     } else if (kind === 'text') {
       if (drawable.isEditing) return;
       drawable.text = textForItem(item);

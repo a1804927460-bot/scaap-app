@@ -81,6 +81,8 @@ async function run() {
       modes:document.querySelectorAll('button[data-optimizer-mode]').length
     }))()`);
     if (beforeConfirm.requests !== 0 || !beforeConfirm.editable || beforeConfirm.result || !beforeConfirm.confirmVisible || beforeConfirm.brand !== 'Messs.' || beforeConfirm.modes !== 2) throw new Error(`Optimization dialog was not ready: ${JSON.stringify(beforeConfirm)}`);
+    const focusShadow = await win.webContents.executeJavaScript(`getComputedStyle(document.querySelector('.prompt-optimizer-original')).boxShadow`);
+    if (focusShadow !== 'none') throw new Error('Composer must not draw a blue inner focus border');
     fs.writeFileSync(path.join(outputDir, 'prompt-optimizer-confirm.png'), (await win.webContents.capturePage()).toPNG());
     const editedSource = '把图1的 Logo 放到图2左上角，保持构图、比例和品牌颜色不变。';
     await win.webContents.executeJavaScript(`(() => {
@@ -114,6 +116,14 @@ async function run() {
     await wait(220);
     const replaced = await win.webContents.executeJavaScript(`({prompt:document.querySelector('.ai-composer-prompt').value,dialog:!!document.getElementById('prompt-optimizer-overlay')})`);
     if (replaced.dialog || replaced.prompt !== replacement) throw new Error(`Confirmed replacement failed: ${JSON.stringify(replaced)}`);
+    const emptyResultState = await win.webContents.executeJavaScript(`(async () => {
+      window.messsAPI.optimizePrompt = async () => ({ok:true,text:''});
+      await openPromptOptimizerDialog(document.querySelector('.ai-composer-prompt'));
+      const overlay = document.getElementById('prompt-optimizer-overlay');
+      await runPromptOptimization(overlay, {kind:'image',revision:PromptOptimizerState.revision});
+      return {busy:overlay.dataset.optimizing,disabled:overlay.querySelector('.prompt-optimizer-confirm').disabled,readonly:overlay.querySelector('.prompt-optimizer-original').readOnly};
+    })()`);
+    if (emptyResultState.busy !== 'false' || emptyResultState.disabled || emptyResultState.readonly) throw new Error('Empty response left optimization stuck');
     process.stdout.write(`PROMPT_OPTIMIZER_VISUAL_OK desktop=${desktop.dialog.width}x${desktop.dialog.height} compact=${compact.dialog.width}x${compact.dialog.height}\n`);
   } finally {
     win.destroy();

@@ -5035,7 +5035,10 @@ async function requireGatewayChatProvider(providerId, model) {
     : null;
   const exactMatchesModel = exact && (!requestedModel || (Array.isArray(exact.models)
     && exact.models.some((candidate) => String(candidate).trim().toLowerCase() === requestedModel)));
-  return assertGatewayProvider(catalog, 'chat', exactMatchesModel ? exact.id : matching && matching.id);
+  // Utility requests (including prompt optimization) have no explicit model.
+  // Resolve a published default before validating; an empty ID never matches.
+  const defaultProvider = !String(providerId || '').trim() && !requestedModel ? providers[0] : null;
+  return assertGatewayProvider(catalog, 'chat', exactMatchesModel ? exact.id : matching?.id || defaultProvider?.id);
 }
 
 function assertAiTransportReady() {

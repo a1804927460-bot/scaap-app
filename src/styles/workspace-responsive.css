@@ -87,7 +87,7 @@
 [data-theme="dark"] .text-color-popover header img { filter:invert(1); }
 .text-color-popover input[type="range"] { appearance:none; height:6px; border-radius:3px; }
 .text-color-popover input[type="range"]::-webkit-slider-thumb { appearance:none; width:14px; height:14px; border:2px solid #fff; border-radius:50%; background:var(--brand-blue); box-shadow:0 0 0 1px rgb(0 0 0 / 30%); }
-.board-inline-resize { position:absolute; inset:0; z-index:30; pointer-events:none; }
+.board-inline-resize { position:absolute; inset:0; z-index:30; pointer-events:auto; }
 .board-inline-resize-frame { position:absolute; box-sizing:border-box; outline:1px solid var(--brand-blue-bright); background:var(--canvas-control-panel); box-shadow:0 0 0 9999px rgb(0 0 0 / 40%); }
 .board-inline-resize-preview { display:block; width:100%; height:100%; object-fit:contain; pointer-events:none; }
 .board-inline-resize-ratios { display:flex; flex-wrap:wrap; gap:3px; flex-basis:100%; }

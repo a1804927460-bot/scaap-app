@@ -9487,7 +9487,8 @@ body.is-ai-assistant-fullscreen { overflow: hidden; }
 .prompt-optimizer-compare textarea { padding: 0; background: transparent; font-size: 14px; line-height: 1.65; }
 .prompt-optimizer-original { min-height: 78px !important; padding: 27px 64px 10px 18px !important; color: var(--text-primary) !important; }
 .prompt-optimizer-result { height: 100%; color: var(--text-secondary); }
-.prompt-optimizer-original:not([readonly]):focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 38%, transparent); }
+.prompt-optimizer-original:not([readonly]):focus { box-shadow: none; outline: none; }
+.prompt-optimizer-compare > .prompt-optimizer-composer:focus-within { border-color: color-mix(in srgb, var(--text-primary) 30%, var(--bg-surface-2)); }
 .prompt-optimizer-result:not([readonly]):focus { color: var(--text-primary); box-shadow: none; }
 .prompt-optimizer-composer .prompt-optimizer-confirm {
   position: absolute;

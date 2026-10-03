@@ -659,8 +659,8 @@ assert.match(
 );
 assert.match(
   boardSource,
-  /cameraControlToggle\.addEventListener\('click'[\s\S]*?setCameraControlOpen\(cameraControlPanel\.hidden, true\)[\s\S]*?ai-camera-control-disable[\s\S]*?cameraControl\.enabled = false[\s\S]*?ai-camera-control-save[\s\S]*?setCameraControlOpen\(false\)/,
-  'Opening, saving, and disabling camera control must remain distinct actions.'
+  /cameraControlToggle\.addEventListener\('click'[\s\S]*?setCameraControlOpen\(cameraControlPanel\.hidden\)[\s\S]*?ai-camera-control-disable[\s\S]*?ai-camera-control-save[\s\S]*?cameraControl = normalizeAiCameraControl\([\s\S]*?enabled: true[\s\S]*?setCameraControlOpen\(false\)/,
+  'Only saving camera control should apply and enable the draft.'
 );
 assert.match(
   boardSource,

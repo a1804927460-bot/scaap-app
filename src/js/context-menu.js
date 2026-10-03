@@ -510,7 +510,7 @@ async function runPromptOptimization(overlay, options) {
         const responseText = response.text;
         if (revision !== PromptOptimizerState.revision || !overlay.isConnected) return;
         const optimized = normalizeAgentPromptSuggestion(responseText);
-        if (!optimized) return;
+        if (!optimized) throw new Error('Optimization returned an empty result');
         overlay.dataset.optimizing = 'false';
         resultField.value = optimized;
         resultField.readOnly = false;
