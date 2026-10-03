@@ -24,7 +24,7 @@ const AiAssistant = {
   referenceAutoState: null
 };
 
-const AI_CHAT_HISTORY_KEY = 'messs.ai-chat-history.v1';
+const AI_CHAT_HISTORY_KEY = 'scaap.ai-chat-history.v1';
 const AI_CHAT_HISTORY_LIMIT = 60;
 const AI_ASSISTANT_CHAT_MODELS = new Set([
   'gemini-3.8-flash',

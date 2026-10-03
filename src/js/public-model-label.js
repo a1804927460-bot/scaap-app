@@ -15,13 +15,13 @@ function compactPublicText(value) {
 function brandedPublicModelLabel(value) {
   const key = compactPublicText(value).toLowerCase().replace(/[^a-z0-9]+/g, '');
   const labels = {
-    nanobananapro: 'Mess NPro',
-    nanobanapro: 'Mess NPro',
-    nanobanana2: 'Mess N2',
-    gptimage2: 'Mess Image2',
-    gptimage25: 'Mess Image2.5',
-    midjourneyv82: 'Mess Jennie',
-    midjoureyv82: 'Mess Jennie'
+    nanobananapro: 'SCAAP NPro',
+    nanobanapro: 'SCAAP NPro',
+    nanobanana2: 'SCAAP N2',
+    gptimage2: 'SCAAP Image2',
+    gptimage25: 'SCAAP Image2.5',
+    midjourneyv82: 'SCAAP Jennie',
+    midjoureyv82: 'SCAAP Jennie'
   };
   return labels[key] || value;
 }

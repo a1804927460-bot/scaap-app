@@ -49,7 +49,7 @@ const providers = [
     }, providers);
 
     assert.deepEqual(await page.locator('.ai-model-label-text').allTextContents(),
-      ['Mess NPro', 'Mess N2', 'Mess Image2', 'Mess Image2.5', 'Mess Jennie']);
+      ['SCAAP NPro', 'SCAAP N2', 'SCAAP Image2', 'SCAAP Image2.5', 'SCAAP Jennie']);
     assert.equal(await page.locator('.ai-model-description').count(), 5);
     assert.equal(await page.locator('.ai-model-best').count(), 1);
     assert.equal(await page.locator('.ai-model-badge-banana').count(), 2);

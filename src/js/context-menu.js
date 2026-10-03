@@ -1215,7 +1215,6 @@ function showBoardItemContextMenu(item, x, y) {
     items.push({
       label: t('View points usage', '\u67e5\u770b\u79ef\u5206\u7528\u91cf'),
       icon: 'M4 19V5M4 19h16M8 16v-4M12 16V8M16 16v-7',
-      divider: true,
       action: openCanvasUsageDetails
     });
     items.push({

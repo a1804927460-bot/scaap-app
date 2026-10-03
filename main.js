@@ -1689,7 +1689,7 @@ function createWindow() {
     minWidth: 1040,
     minHeight: 680,
     show: false,
-    icon: app.isPackaged ? process.execPath : path.join(__dirname, 'build-resources', 'icon.png'),
+    icon: app.isPackaged ? process.execPath : path.join(__dirname, 'build-resources', 'icon-rounded.png'),
     // Match Chromium's first paint to the persisted theme so Windows never
     // exposes a differently colored native surface during startup.
     backgroundColor: WINDOW_BACKGROUND_COLORS.light,
@@ -2001,7 +2001,7 @@ if (!hasSingleInstanceLock) {
 
 function trayIconPath() {
   const packaged = path.join(__dirname, 'src', 'assets', 'logo-mark.png');
-  const development = path.join(__dirname, 'build-resources', 'icon.png');
+    const development = path.join(__dirname, 'build-resources', 'icon-rounded.png');
   return app.isPackaged && fs.existsSync(packaged) ? packaged : development;
 }
 
@@ -3486,7 +3486,7 @@ function createDetachedCanvasWindow(canvasId, launchPoint = {}, sourceWebContent
     minWidth: 720,
     minHeight: 500,
     show: false,
-    icon: app.isPackaged ? process.execPath : path.join(__dirname, 'build-resources', 'icon.png'),
+    icon: app.isPackaged ? process.execPath : path.join(__dirname, 'build-resources', 'icon-rounded.png'),
     backgroundColor: WINDOW_BACKGROUND_COLORS[initialTheme],
     frame: false,
     title: `${canvas.name} - SCAAP.`,

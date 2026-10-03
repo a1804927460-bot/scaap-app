@@ -15,6 +15,7 @@ files:
   - lib/**/*
   - src/**/*
   - vendor/**/*
+  - node_modules/**/*
   - node_modules/@napi-rs/**/*
   - node_modules/ffmpeg-static/**/*
   - node_modules/pdfjs-dist/**/*
@@ -54,7 +55,7 @@ extraResources:
     filter:
       - "**/*"
 win:
-  icon: build-resources/icon.png
+  icon: build-resources/icon-rounded-v2.png
   target:
     - target: nsis
       arch:
@@ -63,7 +64,7 @@ win:
 mac:
   # Keep both Intel and Apple Silicon artifacts in the same latest-mac.yml so
   # electron-updater can select the correct download for each Mac.
-  icon: build-resources/icon.png
+  icon: build-resources/icon-rounded-v2.png
   category: public.app-category.graphics-design
   target:
     - target: dmg

@@ -274,7 +274,7 @@
 .chat-tool-button:active { transform: translateY(0); }
 .chat-tool-button[aria-expanded="true"] { border-color: color-mix(in srgb, var(--accent) 42%, var(--border-hairline)); background: var(--accent-soft); color: var(--accent); }
 .chat-send-button { position: absolute; right: 12px; bottom: 10px; display: inline-flex; width: 78px; height: 38px; align-items: center; justify-content: center; gap: 9px; padding: 0 10px; border: 1px solid var(--chat-button-border); border-radius: 10px; background: var(--chat-button-gradient); color: #ffffff; box-shadow: var(--chat-button-shadow); backdrop-filter: blur(14px) saturate(145%); }
-.chat-send-logo { width: 20px; height: 20px; object-fit: contain; filter: brightness(0) saturate(100%) invert(28%) sepia(98%) saturate(2251%) hue-rotate(201deg) brightness(94%) contrast(103%); }
+.chat-send-logo { width: 20px; height: 20px; object-fit: contain; filter: grayscale(1) brightness(0) invert(1); }
 .chat-send-divider { width: 1px; height: 20px; flex: 0 0 1px; background: rgba(255, 255, 255, .48); }
 .chat-send-button:hover:not(:disabled) { filter: brightness(1.05); box-shadow: var(--chat-button-shadow-hover); transform: translateY(-1px); }
 .chat-send-button:active:not(:disabled) { transform: translateY(0); }

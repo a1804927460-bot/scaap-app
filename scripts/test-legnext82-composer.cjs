@@ -31,7 +31,7 @@ const catalog=require('../config/provider-catalog.json');
       return offer.bottom < submit.top;
     }), true);
     await page.locator('.ai-options-toggle').click();
-    assert.equal(await page.locator('.ai-model-picker-trigger').innerText(),'Mess Jennie');
+    assert.equal(await page.locator('.ai-model-picker-trigger').innerText(),'SCAAP Jennie');
     assert.deepEqual(await page.locator('[data-option="size"] [data-value]').evaluateAll(es=>es.map(e=>e.dataset.value)),['1K','2K']);
     assert.equal(await page.locator('[data-generation-heading="count"]').innerText(),'组数（每组四宫格）');
     await page.locator('[data-option="size"] [data-value="2K"]').click();

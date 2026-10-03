@@ -194,7 +194,8 @@
 }
 .work-hub {
   width:min(1440px,calc(100vw - 64px));
-  height:calc(100vh - 104px);
+  height:min(900px, calc(100dvh - 48px));
+  min-height:min(420px, calc(100dvh - 48px));
 }
 .work-hub::backdrop { background:rgba(0, 0, 0, .48); backdrop-filter:blur(8px); }
 .hub-top { min-height:52px; padding:0 18px; gap:14px; }

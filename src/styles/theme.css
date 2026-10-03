@@ -24,11 +24,11 @@
   --app-shell-radius: var(--radius-lg);
   --dialog-radius: var(--radius-lg);
 
-  --ease-spring: cubic-bezier(0.34, 1.26, 0.36, 1);
+  --ease-spring: cubic-bezier(0.2, 1.55, 0.3, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --motion-popup-spring: cubic-bezier(.18, .89, .24, 1.18);
-  --motion-popup-duration: 380ms;
-  --motion-menu-duration: 300ms;
+  --motion-popup-spring: cubic-bezier(.16, 1.55, .3, 1);
+  --motion-popup-duration: 420ms;
+  --motion-menu-duration: 280ms;
   --motion-exit-duration: 150ms;
   --dur-fast: 180ms;
   --dur-base: 320ms;
@@ -53,14 +53,15 @@
 
 /* -------- Dark theme (default) -------- */
 [data-theme="dark"] {
-  --bg-deep: #080808;
-  --bg-base: #0c0c0c;
-  --bg-elevated: #1a1a1a;
-  --bg-surface: #131313;
-  --bg-surface-2: #272727;
-  --bg-frame: #0c0c0c;
-  --board-workspace-bg: #080808;
-  --canvas-toolbar-bg: rgba(19, 19, 19, .97);
+  /* Radix Gray dark steps: gray1/3/6/12 for the main surface hierarchy. */
+  --bg-deep: #111111;
+  --bg-base: #191919;
+  --bg-elevated: #222222;
+  --bg-surface: #191919;
+  --bg-surface-2: #313131;
+  --bg-frame: #191919;
+  --board-workspace-bg: #111111;
+  --canvas-toolbar-bg: rgba(34, 34, 34, .97);
   --canvas-toolbar-border: rgba(255, 255, 255, .12);
   --canvas-toolbar-text: var(--text-secondary);
   --canvas-toolbar-hover: var(--bg-surface-2);
@@ -75,15 +76,19 @@
   --border-hairline: rgba(255, 255, 255, 0.10);
   --border-strong: rgba(255, 255, 255, 0.18);
 
-  --text-primary: #f5f5f5;
-  --text-secondary: #c4c4c4;
-  --text-tertiary: #898989;
+  --text-primary: #eeeeee;
+  --text-secondary: #b5b5b5;
+  --text-tertiary: #838383;
 
   --title-accent: #f3f3f3;
 
   --accent: #aaaaaa;
   --accent-soft: rgba(170, 170, 170, 0.14);
   --accent-ink: #101010;
+  --action-gradient: #111111;
+  --action-border: #111111;
+  --action-shadow: 0 5px 16px rgba(0, 0, 0, .36);
+  --action-shadow-hover: 0 7px 20px rgba(0, 0, 0, .48);
   --accent-glow: rgba(170, 170, 170, 0.22);
   --selection-outline: #b5b5b5;
   --selection-handle: #f5f5f5;
@@ -111,16 +116,14 @@
 
 /* -------- Light theme -------- */
 [data-theme="light"] {
-  /* Neutral light surfaces sampled from the reference interface. Keep the
-     blue limited to branding and explicit actions so the UI reads white and
-     graphite instead of blue-gray. */
-  --bg-deep: #e3e3e3;
-  --bg-base: #ffffff;
+  /* Radix Gray light steps: gray1/3/6/12 keep contrast without blue tint. */
+  --bg-deep: #f0f0f0;
+  --bg-base: #fcfcfc;
   --bg-elevated: #ffffff;
-  --bg-surface: #f6f6f6;
-  --bg-surface-2: #ededed;
-  --bg-frame: #ffffff;
-  --board-workspace-bg: #ffffff;
+  --bg-surface: #f0f0f0;
+  --bg-surface-2: #e0e0e0;
+  --bg-frame: #fcfcfc;
+  --board-workspace-bg: #fcfcfc;
   --canvas-toolbar-bg: rgba(255, 255, 255, .98);
   --canvas-toolbar-border: rgba(86, 86, 86, .20);
   --canvas-toolbar-text: #565656;
@@ -136,14 +139,19 @@
   --border-hairline: rgba(28, 28, 28, 0.12);
   --border-strong: rgba(28, 28, 28, 0.20);
 
-  --text-primary: #1c1c1c;
-  --text-secondary: #565656;
-  --text-tertiary: #858585;
+  --text-primary: #202020;
+  --text-secondary: #646464;
+  --text-tertiary: #838383;
 
   --title-accent: #111111;
 
   --accent: var(--brand-blue);
   --accent-soft: rgba(86, 86, 86, 0.16);
+
+  --action-gradient: #111111;
+  --action-border: #111111;
+  --action-shadow: 0 5px 16px rgba(0, 0, 0, .16);
+  --action-shadow-hover: 0 7px 20px rgba(0, 0, 0, .22);
   --accent-ink: #ffffff;
   --accent-glow: rgba(71, 71, 71, 0.25);
   --selection-outline: #565656;

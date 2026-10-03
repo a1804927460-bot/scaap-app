@@ -61,13 +61,13 @@
 .ai-assistant-panel .messs-composer-menu button[aria-checked="true"] { background:var(--accent-soft); }
 .messs-composer-menu strong { display:block;padding:8px 10px;color:var(--text-secondary);font-size:12px; }
 .ai-assistant-panel #ai-assistant-upload { display:grid;place-items:center;flex:0 0 32px;width:32px;min-width:32px;height:32px;padding:0;line-height:1;background:transparent;border:0; }
-.ai-assistant-panel #ai-assistant-upload > img { display:block;width:18px;height:18px;object-fit:contain;filter:invert(38%) sepia(94%) saturate(2420%) hue-rotate(201deg) brightness(99%) contrast(101%); }
+.ai-assistant-panel #ai-assistant-upload > img { display:block;width:18px;height:18px;object-fit:contain;filter:grayscale(1) brightness(0) invert(1); }
 .ai-assistant-panel #ai-assistant-permissions { flex:none;height:30px;padding:0 8px;font-size:12px;color:var(--text-secondary);border:0;border-radius:6px;background:transparent; }
 .ai-assistant-panel #ai-assistant-permissions,
 #messs-permission-menu button { display:flex;align-items:center;gap:8px; }
 .messs-permission-icon { display:block;width:16px;height:16px;flex:0 0 16px;object-fit:contain; }
 [data-theme="dark"] .messs-permission-icon { filter:invert(1); }
-#messs-permission-menu button[aria-checked="true"] .messs-permission-icon { filter:invert(38%) sepia(94%) saturate(2420%) hue-rotate(201deg) brightness(99%) contrast(101%); }
+#messs-permission-menu button[aria-checked="true"] .messs-permission-icon { filter:grayscale(1) brightness(0) invert(1); }
 .messs-permission-dialog { width:min(360px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;padding:20px;border:1px solid var(--border-hairline);border-radius:8px;color:var(--text-primary);background:var(--bg-elevated); }
 .messs-permission-dialog::backdrop { background:#00000066; }
 .messs-permission-dialog h3 { font-size:15px;margin:0 0 10px; }
@@ -314,10 +314,15 @@
   opacity: .82;
 }
 .ai-composer:not(.is-moodboard-composer) .ai-composer-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   min-height: 43px;
   margin-inline: -2px;
   padding: 7px 2px 0;
   border-top: 1px solid color-mix(in srgb, var(--border-hairline) 72%, transparent);
+  min-width: 0;
+  overflow: visible;
 }
 .ai-composer:not(.is-moodboard-composer) :is(
   .ai-model-picker-trigger,
@@ -359,12 +364,24 @@
 }
 .ai-composer:not(.is-moodboard-composer) .ai-composer-submit {
   height: 38px;
+  width: 112px;
+  min-width: 84px;
   border-radius: 11px;
   transition:
     translate var(--motion-feedback, 160ms) var(--motion-standard, ease),
     scale var(--motion-feedback, 160ms) var(--motion-standard, ease),
     filter var(--motion-feedback, 160ms) linear,
     box-shadow var(--motion-feedback, 160ms) var(--motion-standard, ease);
+}
+.ai-composer:not(.is-moodboard-composer) .ai-composer-controls {
+  min-width: 0;
+  overflow: visible;
+}
+.ai-composer:not(.is-moodboard-composer) .ai-composer-submit-wrap {
+  grid-column: 2;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 .ai-composer:not(.is-moodboard-composer) .ai-composer-submit:hover:not(:disabled) {
   transform: none;

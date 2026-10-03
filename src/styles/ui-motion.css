@@ -1,13 +1,14 @@
 /* Fluent 2: short, interruptible feedback local to the interaction.
    https://fluent2.microsoft.design/motion */
 :root {
-  --motion-press: 80ms;
-  --motion-feedback: 160ms;
-  --motion-settle: 220ms;
-  --motion-standard: cubic-bezier(.2, 0, 0, 1);
-  --motion-popup-spring: cubic-bezier(.16, 1, .3, 1);
-  --motion-popup-duration: 220ms;
-  --motion-menu-duration: 160ms;
+  /* Motion spring-inspired timing: higher stiffness with a soft overshoot. */
+  --motion-press: 110ms;
+  --motion-feedback: 240ms;
+  --motion-settle: 360ms;
+  --motion-standard: cubic-bezier(.16, 1.35, .3, 1);
+  --motion-popup-spring: cubic-bezier(.16, 1.55, .3, 1);
+  --motion-popup-duration: 360ms;
+  --motion-menu-duration: 260ms;
 }
 
 /* Individual scale composes with positioned controls' existing transforms. */
@@ -43,6 +44,17 @@
   transition-duration: var(--motion-press);
 }
 .canvas-start-creating:active:not(:disabled) { scale: .995; }
+
+/* Keep every interactive surface on the same interruptible spring curve. */
+:is(button, [role="button"], input[type="button"], input[type="submit"]):not(:disabled):not([aria-disabled="true"]) {
+  transition-timing-function: var(--motion-standard);
+}
+:is(button, [role="button"], input[type="button"], input[type="submit"]):not(:disabled):not([aria-disabled="true"]):hover {
+  transition-duration: var(--motion-settle);
+}
+:is(button, [role="button"], input[type="button"], input[type="submit"]):not(:disabled):not([aria-disabled="true"]):active {
+  transition-duration: var(--motion-press);
+}
 
 /* Transient surfaces finish without leaving compositing layers behind. */
 :is(.work-hub, .hub-editor, #profile-editor)[open] {

@@ -93,7 +93,7 @@ assert.match(
 assert.match(
   boardSource,
   /pop\.querySelector\('\.ai-gpt25-background'\)\.hidden = !supportsGpt25Variants;/,
-  'Mess Image2.5 background controls must remain available without a performance mode.'
+  'SCAAP Image2.5 background controls must remain available without a performance mode.'
 );
 assert.match(
   boardSource,
@@ -103,7 +103,7 @@ assert.match(
 assert.doesNotMatch(
   boardSource,
   /supportsGpt25Variants && performanceMode|performanceMode !== 'performance'/,
-  'Mess Image2.5 options must not depend on the removed mode.'
+  'SCAAP Image2.5 options must not depend on the removed mode.'
 );
 
 assert.match(

@@ -53,9 +53,11 @@ window.MesssWorkHub = (() => {
     if(restoring)root.classList.add('is-preview-return');
     else if(!root.open)root.classList.remove('is-preview-return');
     if(!root.open)root.showModal();
+    content.scrollTop=0;
     content.innerHTML='<div class="hub-empty">正在读取…</div>';
     try{
       await reload();
+      if (!restoring) content.scrollTop=0;
       if(restoring){
         const state=previewReturnState;
         previewReturnState=null;

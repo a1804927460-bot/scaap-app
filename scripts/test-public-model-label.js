@@ -31,11 +31,11 @@ const renderer = { window: null };
 renderer.window = renderer;
 vm.createContext(renderer);
 vm.runInContext(rendererSource, renderer);
-assert.equal(renderer.publicModelLabel('GPT Image 2 (Atlas Cloud)'), 'Mess Image2');
-assert.equal(renderer.publicModelLabel('Nano Banana Pro'), 'Mess NPro');
-assert.equal(renderer.publicModelLabel('Nano Banana 2'), 'Mess N2');
-assert.equal(renderer.publicModelLabel('GPT Image 2.5'), 'Mess Image2.5');
-assert.equal(renderer.publicModelLabel('Midjourney V8.2'), 'Mess Jennie');
+assert.equal(renderer.publicModelLabel('GPT Image 2 (Atlas Cloud)'), 'SCAAP Image2');
+assert.equal(renderer.publicModelLabel('Nano Banana Pro'), 'SCAAP NPro');
+assert.equal(renderer.publicModelLabel('Nano Banana 2'), 'SCAAP N2');
+assert.equal(renderer.publicModelLabel('GPT Image 2.5'), 'SCAAP Image2.5');
+assert.equal(renderer.publicModelLabel('Midjourney V8.2'), 'SCAAP Jennie');
 assert.doesNotMatch(renderer.publicAiErrorMessage('Atlas Cloud returned an API error.'), /atlas/i);
 renderer.document = { documentElement: { dataset: { language: 'zh' } } };
 assert.equal(
