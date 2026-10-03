@@ -6,6 +6,57 @@ import { assertFalConfigured, falResizeInput, normalizeFalResizeOptions, normali
 import falPricing from '../../lib/fal-pricing.js';
 const png = fs.readFileSync(new URL('../../src/assets/canvas-folder-3d.png', import.meta.url));
 const input = `data:image/png;base64,${png.toString('base64')}`;
+
+test('temporary status and result outages recover without another paid submission', async () => {
+  let submissions = 0;
+  let polls = 0;
+  let results = 0;
+  const output = await runFalImageTool('feynobg', input, {}, {
+    env: { FAL_API_KEY: 'test' }, sleep: async () => {},
+    fetchImpl: async (url, options) => {
+      url = String(url);
+      if (options.method === 'POST') {
+        submissions++;
+        return Response.json({ request_id: 'original-task' });
+      }
+      if (url.endsWith('/status')) {
+        polls++;
+        if (polls === 1) throw new TypeError('fetch failed');
+        if (polls === 2) return new Response('', { status: 503 });
+        return Response.json({ status: 'COMPLETED' });
+      }
+      if (url.includes('/requests/')) {
+        results++;
+        if (results === 1) return new Response('', { status: 429 });
+        return Response.json({ image: { url: 'https://fal.media/result.png' } });
+      }
+      return new Response(png, { headers: { 'Content-Type': 'image/png' } });
+    }
+  });
+  assert.deepEqual(output, png);
+  assert.equal(submissions, 1);
+  assert.equal(polls, 3);
+  assert.equal(results, 2);
+});
+
+test('ambiguous submission is never replayed and remains recoverable', async () => {
+  let calls = 0;
+  await assert.rejects(runFalImageTool('feynobg', input, {}, {
+    env: { FAL_API_KEY: 'test' }, sleep: async () => {},
+    fetchImpl: async () => { calls++; throw new TypeError('fetch failed'); }
+  }), { submissionAmbiguous: true });
+  assert.equal(calls, 1);
+});
+
+test('terminal status failure is not retried', async () => {
+  let calls = 0;
+  await assert.rejects(runFalImageTool('feynobg', input, {}, {
+    env: { FAL_API_KEY: 'test' }, existingTaskId: 'original-task',
+    sleep: async () => {},
+    fetchImpl: async () => { calls++; return new Response('', { status: 403 }); }
+  }), { upstreamStatus: 403, providerTaskAccepted: true });
+  assert.equal(calls, 1);
+});
 test('FAL legacy offsets and price tiers agree with submitted resolution', async () => {
   const options = await normalizeFalResizeOptions(input, { left: 100, right: 100, up: 0, down: 0 });
   assert.ok(options.width > 200);

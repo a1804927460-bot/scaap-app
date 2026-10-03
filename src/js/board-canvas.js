@@ -6040,7 +6040,7 @@ async function generateAiMediaForBoard(request, submitBtn, cancelBtn, controls) 
   cancelBtn.disabled = true;
   controls.forEach((control) => { control.disabled = true; });
   const generationRequest = { ...request, performanceMode: 'normal', watermark: boardAiWatermarkEnabled(), canvasId: activeCanvasId() };
-  const placeholders = createAiPlaceholders(generationRequest, { silent: request.kind !== 'image' });
+  const placeholders = createAiPlaceholders(generationRequest);
   const defaultButtonText = request.kind === 'video' ? '生成视频' : '生成图片';
   submitBtn.textContent = defaultButtonText;
   let generatedFiles = [];
@@ -8781,7 +8781,7 @@ async function generateAiMediaForBoardV2(request, pop, status, submit) {
   const taskId = beginAiMediaTask(generationRequest);
   const controls = [...pop.querySelectorAll('button, textarea, select, input')];
   controls.forEach((control) => { control.disabled = true; });
-  const placeholders = createAiPlaceholders(generationRequest, { silent: request.kind !== 'image' });
+  const placeholders = createAiPlaceholders(generationRequest);
   let generatedFiles = [];
   status.textContent = '';
 
@@ -8866,7 +8866,7 @@ async function generateAiMediaForBoardV3(request) {
   const taskId = beginAiMediaTask(generationRequest);
   const placeOnBoard = request.placeOnBoard !== false;
   const placeholders = placeOnBoard
-    ? createAiPlaceholders(generationRequest, { silent: request.kind !== 'image' })
+    ? createAiPlaceholders(generationRequest)
     : [];
   let generatedFiles = [];
   const retry = async () => {

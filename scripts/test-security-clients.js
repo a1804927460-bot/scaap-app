@@ -542,7 +542,27 @@ async function testOfflineRefreshKeepsLocalIdentity() {
   fs.rmSync(tempDir, { recursive: true, force: true });
 }
 
+async function testEdge404Recovery() {
+  const client = new AiGatewayClient({baseUrl: 'https://gateway.example', getAccessToken: async () => 'token',
+    fetchImpl: async () => new Response(JSON.stringify({code:404,message:'Application not found'}), {status:404})});
+  await assert.rejects(client.request('/v1/config'), error => error.code === 'gateway-request-failed' && error.status === 503);
+  client.fetch = async () => new Response(JSON.stringify({code:'not-found',message:'Route not found.'}), {status:404,headers:{'x-request-id':'app-request'}});
+  await assert.rejects(client.request('/v1/config'), error => error.code === 'not-found' && error.status === 404);
+  const operations = [];
+  client.fetch = async (_url, options) => {
+    operations.push(options.headers['X-Idempotency-Key']);
+    return operations.length === 1
+      ? new Response(JSON.stringify({code:404,message:'Application not found'}), {status:404})
+      : new Response(JSON.stringify({status:'queued'}), {status:202});
+  };
+  const operationId = 'ee94a638-372a-4a20-8a27-d81180009904';
+  const result = await client.idempotentPaidRequest('/v1/media/video/tasks/create',{body:{taskToken:'same-token'},operationId});
+  assert.equal(result.status,'queued');
+  assert.deepEqual(operations,[operationId,operationId]);
+}
+
 (async () => {
+  await testEdge404Recovery();
   assert.strictEqual(normalizeHttpsUrl('http://example.com'), '');
   assert.strictEqual(normalizeHttpsUrl('https://example.com/path/'), 'https://example.com/path');
   await testSupabaseSessionStorage();

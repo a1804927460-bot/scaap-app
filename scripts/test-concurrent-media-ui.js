@@ -68,12 +68,17 @@ async function testCompletionDestination() {
   const vm = require('node:vm');
   const source = boardSource.slice(boardSource.indexOf('function aiMediaCanvasCompletionMessage('), boardSource.indexOf('let boardQuickGenerateOutsideClick'));
   const notices = [];
+  const visiblePlaceholders = [];
   const state = { activeCanvasId: 'origin', canvases: [{ id: 'origin', name: 'EVEN' }, { id: 'other', name: 'Other' }], files: [] };
   const context = vm.createContext({
     AppState: state, t: (en, zh) => zh,
     activeCanvasId: () => state.activeCanvasId,
     boardAiWatermarkEnabled: () => false,
-    beginAiMediaTask: () => 'task', finishAiMediaTask() {}, createAiPlaceholders: () => [],
+    beginAiMediaTask: () => 'task', finishAiMediaTask() {},
+    createAiPlaceholders: (request, options = {}) => {
+      if (!options.silent) visiblePlaceholders.push(request.kind);
+      return [];
+    },
     removeAiPlaceholders() {}, replaceAiPlaceholders: async () => {},
     confirmAiMediaDeliveries: async files => files, renderFileList() {}, currentFileListScope() {},
     renderFolderGridIfActive() {}, selectFileForPreview() {}, showToast: (message, type) => notices.push({ message, type }),
@@ -87,6 +92,9 @@ async function testCompletionDestination() {
   vm.runInContext(source, context);
   await context.generateAiMediaForBoardV3({ kind: 'image' });
   assert.deepEqual(notices.pop(), { message: '1 张 AI 图片已加入【EVEN】画布', type: 'AI' });
+  state.activeCanvasId = 'origin';
+  await context.generateAiMediaForBoardV3({ kind: 'video' });
+  assert.deepEqual(visiblePlaceholders, ['image', 'video'], 'Both media kinds must show a canvas waiting card.');
   state.canvases[0].name = 'Renamed';
   assert.equal(context.aiMediaCanvasCompletionMessage('video', 2, 'origin', 1), '2 个 AI 视频已加入【Renamed】画布；1 个失败');
   assert.equal(context.aiMediaCanvasCompletionMessage('image', 1, 'deleted'), '1 张 AI 图片已加入原画布');
@@ -95,6 +103,7 @@ async function testCompletionDestination() {
   state.activeCanvasId = 'origin'; context.t = (en, zh) => zh;
   await context.generateAiMediaForBoardV3({ kind: 'video', placeOnBoard: false });
   assert.equal(notices.pop().message, '生成完成');
+  assert.deepEqual(visiblePlaceholders, ['image', 'video'], 'Non-canvas generation must not add a waiting card.');
   console.log('Completion toast: switched canvas, renamed target, partial success, missing target and non-canvas generation passed.');
 }
 testCompletionDestination().catch(error => { console.error(error); process.exitCode = 1; });

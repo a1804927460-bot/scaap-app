@@ -481,6 +481,7 @@ function isTransientBoardButlerStatusFailure(result) {
     'image-tool-task-not-ready', 'three-d-task-not-ready', 'video-tool-task-not-ready'
   ].includes(reason)) return true;
   if (Number.isInteger(httpStatus) && httpStatus >= 400 && httpStatus < 500 && httpStatus !== 429) return false;
+  if ([429, 500, 502, 503, 504].includes(httpStatus)) return true;
   return [
     'ai302-invalid-response', 'ai302-upstream-error', 'ai302-timeout',
     'ai302-unavailable', 'ai302-rate-limited', 'gateway-request-failed',

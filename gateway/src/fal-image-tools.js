@@ -81,7 +81,7 @@ export async function runFalImageTool(model, imageDataUrl, options = {}, depende
   const endpoint = `${origin}/fal-ai/${model}`;
   let accepted = Boolean(dependencies.existingTaskId);
   let submitted = false;
-  const json = async (url, method = 'GET', body) => {
+  const jsonOnce = async (url, method = 'GET', body) => {
     const response = await fetchImpl(url, {
       method, headers: { Authorization: `Key ${key}`, 'Content-Type': 'application/json' },
       ...(body ? { body: JSON.stringify(body) } : {}),
@@ -89,6 +89,7 @@ export async function runFalImageTool(model, imageDataUrl, options = {}, depende
     });
     if (!response.ok) {
       const error = failure('provider-request-failed', '图片工具请求失败，请稍后重试。', 502);
+      error.upstreamStatus = response.status;
       error.rejected = method === 'POST' && [400, 401, 403, 422, 429].includes(response.status);
       throw error;
     }
@@ -105,6 +106,21 @@ export async function runFalImageTool(model, imageDataUrl, options = {}, depende
       }
     } finally { await reader.cancel().catch(() => {}); }
     return JSON.parse(Buffer.concat(chunks, size).toString('utf8'));
+  };
+  const json = async (url, method = 'GET', body) => {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await jsonOnce(url, method, body);
+      } catch (error) {
+        // Only retry reads of an existing task. Replaying an ambiguous POST
+        // could create another paid job before its ID has been persisted.
+        const transient = [408, 429, 500, 502, 503, 504].includes(error.upstreamStatus)
+          || (!error.upstreamStatus && (error instanceof TypeError
+            || ['AbortError', 'TimeoutError', 'SyntaxError'].includes(error.name)));
+        if (method !== 'GET' || !transient || attempt >= 3) throw error;
+        await sleep(Math.min(4000, 500 * (2 ** attempt)));
+      }
+    }
   };
   try {
     submitted = !dependencies.existingTaskId;

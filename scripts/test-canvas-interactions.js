@@ -413,8 +413,8 @@ const legacyBoardGeneration = boardSource.slice(
 );
 assert.match(
   legacyBoardGeneration,
-  /const placeholders = createAiPlaceholders\(generationRequest, \{ silent: request\.kind !== 'image' \}\)[\s\S]*?const placements = placeholders\.map/,
-  'The legacy board generation entry point must preserve image wait placements before submitting to the gateway.'
+  /const placeholders = createAiPlaceholders\(generationRequest\)[\s\S]*?const placements = placeholders\.map/,
+  'The legacy board generation entry point must preserve image and video wait placements before submitting to the gateway.'
 );
 assert.match(
   legacyBoardGeneration,
