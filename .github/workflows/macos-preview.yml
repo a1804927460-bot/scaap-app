@@ -1,0 +1,36 @@
+name: Build SCAAP macOS preview
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-preview:
+    runs-on: macos-14
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run release:mac
+      - name: Verify installers
+        run: |
+          test -f release/SCAAP-0.0.2-x64.dmg
+          test -f release/SCAAP-0.0.2-arm64.dmg
+          test -f release/SCAAP-0.0.2-x64.zip
+          test -f release/SCAAP-0.0.2-arm64.zip
+          shasum -a 256 release/*.dmg release/*.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SCAAP-0.0.2-macOS-preview
+          path: |
+            release/*.dmg
+            release/*.zip
+          retention-days: 7
