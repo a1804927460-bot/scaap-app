@@ -348,7 +348,7 @@
       fill: 'rgba(125, 135, 152, 0.22)',
       stroke: item.selected ? '#f5f7fb' : 'rgba(190, 198, 212, 0.4)',
       strokeWidth: item.selected ? 1.2 : 0.8,
-      cornerRadius: 0,
+      cornerRadius: 24,
       hittable: false
     });
     const title = new api.Text(textOptions(
@@ -356,7 +356,7 @@
       bounds,
       textForItem(item),
       '#f5f7fb',
-      { x: 18, y: 14, width: bounds.width - 36, height: 34, fontSize: 15, fontWeight: 720 }
+      { x: 18, y: 4, width: bounds.width - 36, height: 48, fontSize: 40, fontWeight: 720 }
     ));
     return addChildren(group, [rect, title]);
   }
@@ -556,9 +556,9 @@
       }
       if (title) {
         title.x = 18;
-        title.y = 14;
+        title.y = 4;
         title.width = Math.max(1, bounds.width - 36);
-        title.height = 34;
+        title.height = 48;
         title.text = textForItem(item);
       }
     } else if (kind === 'moodboard') {

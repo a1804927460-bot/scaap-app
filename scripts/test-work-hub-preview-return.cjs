@@ -16,12 +16,12 @@ assert.match(
 );
 assert.match(
   preview,
-  /MesssWorkHub\.open\('files', \{ restoreFromPreview: true \}\)/,
-  'Fullscreen cleanup must identify the preview return when reopening Files.'
+  /MesssWorkHub\.open\(returnArea, \{ restoreFromPreview: true \}\)/,
+  'Fullscreen cleanup must restore the originating Files or Assets area.'
 );
 assert.match(
   hub,
-  /async function open\(next='schedule', options=\{\}\)[\s\S]*?options\.restoreFromPreview === true\)root\.classList\.add\('is-preview-return'\)[\s\S]*?root\.showModal\(\)/,
+  /async function open\(next='schedule', options=\{\}\)[\s\S]*?const restoring = options\.restoreFromPreview === true && previewReturnState\?\.area === next;[\s\S]*?if\(restoring\)root\.classList\.add\('is-preview-return'\)[\s\S]*?root\.showModal\(\)/,
   'The work hub must suppress its entrance before becoming modal.'
 );
 assert.match(

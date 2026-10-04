@@ -277,6 +277,7 @@ try { sharp = require('sharp'); } catch (err) { sharp = null; }
 Menu.setApplicationMenu(null);
 
 protocol.registerSchemesAsPrivileged([
+  { scheme: 'messs-director', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
   { scheme: 'messs-file', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
   { scheme: 'messs-preview', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
   { scheme: 'messs-thumb', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
@@ -11203,6 +11204,7 @@ app.whenReady().then(() => {
   // system PATH 锟?see lib/preview.js "Bundled-tool resolution".
   preview.configureToolsRoot(app.isPackaged ? process.resourcesPath : path.join(__dirname, 'build-resources'));
 
+  protocol.handle('messs-director', request => require('./lib/director-protocol.cjs').createDirectorResponse(path.join(__dirname, 'src/vendor/awplanet'), request));
   protocol.handle('messs-file', (request) => {
     const id = request.url.replace('messs-file://', '').replace(/\/$/, '');
     const f = store.getFile(id);

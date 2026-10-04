@@ -14,6 +14,7 @@ files:
   - lib/**/*
   - src/**/*
   - vendor/**/*
+  - "!vendor/awplanet{,/**/*}"
   - scripts/**/*
   - node_modules/@napi-rs/**/*
   - node_modules/pdfjs-dist/**/*

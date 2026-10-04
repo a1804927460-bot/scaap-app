@@ -71,6 +71,20 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       proto._measureText=original;return count;
     });
     assert.equal(cached,0,'Unchanged bounds must use cached layout');
+    const resized = await page.evaluate(() => {
+      note.text = 'Jinx周君怡'; note.styleRanges = [];
+      note.width = 320; note.height = 260; paint(1);
+      const before = boardItemBounds(note);
+      const restored = boardItemBounds(JSON.parse(JSON.stringify(note)));
+      note.text = '长文字应在手动宽度内换行'.repeat(30);
+      paint(1);
+      return { before, restored, long: boardItemBounds(note) };
+    });
+    assert.equal(resized.before.w,320);
+    assert.equal(resized.before.h,260,'Short text must retain a manually enlarged rectangular frame');
+    assert.deepEqual(resized.restored,resized.before,'Saved dimensions must survive reload');
+    assert.equal(resized.long.w,320,'Typing must respect the chosen wrapping width');
+    assert.ok(resized.long.h>=260,'Long text must remain fully visible');
     console.log('Text bounds passed: long CJK text, mixed font sizes, full content, resize/zoom, matching DOM/hit geometry and no overflow pixels.');
   } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -103,7 +103,10 @@ function closeMesssTemplateLibrary() {
   const overlay = document.getElementById('messs-template-library');
   if (!overlay) return;
   overlay.classList.add('is-closing');
-  setTimeout(() => overlay.remove(), 170);
+  setTimeout(() => {
+    overlay.remove();
+    if (overlay._returnFocus?.isConnected) overlay._returnFocus.focus({ preventScroll: true });
+  }, 170);
 }
 
 function createMesssTemplateCard(item) {
@@ -178,6 +181,9 @@ function openMesssTemplateLibrary(options = {}) {
   const overlay = document.createElement('div');
   overlay.id = 'messs-template-library';
   overlay.className = 'messs-template-overlay';
+  overlay._returnFocus = document.activeElement;
+  // This is a child dialog of the composer; interactions must not dismiss it.
+  overlay.addEventListener('click', event => event.stopPropagation());
   overlay.innerHTML = `
     <button type="button" class="messs-template-backdrop" aria-label="${messsTemplateText('Close templates', '关闭模板库')}"></button>
     <section class="messs-template-dialog" role="dialog" aria-modal="true" aria-labelledby="messs-template-title">
@@ -213,6 +219,7 @@ function openMesssTemplateLibrary(options = {}) {
     renderMesssTemplateLibrary();
   }));
   overlay.addEventListener('keydown', (event) => {
+    event.stopPropagation();
     if (event.key === 'Escape') { event.preventDefault(); closeMesssTemplateLibrary(); }
   });
   renderMesssTemplateLibrary();

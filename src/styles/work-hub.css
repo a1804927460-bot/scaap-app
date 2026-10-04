@@ -2,7 +2,7 @@
 .work-hub { width:min(1440px,calc(100vw - 48px)); height:calc(100vh - 88px); max-width:none; max-height:none; overflow:hidden; }
 .work-hub[open] { display:flex; flex-direction:column; }
 .work-hub::backdrop { background:rgba(0,0,0,.5); backdrop-filter:blur(8px); }
-.hub-top { min-height:68px; display:flex; align-items:center; justify-content:space-between; gap:20px; padding:0 28px; border-bottom:1px solid var(--border-hairline); }
+.hub-top { flex-shrink:0; min-height:68px; display:flex; align-items:center; justify-content:space-between; gap:20px; padding:0 28px; border-bottom:1px solid var(--border-hairline); }
 .hub-top>div { display:flex; align-items:center; gap:18px; }
 .hub-wordmark { font-weight:850; font-size:24px; color:var(--brand-blue-bright); letter-spacing:-1px; }
 .hub-top nav { display:flex; gap:8px; }
@@ -14,7 +14,7 @@
 .work-hub .hub-primary:hover,.hub-editor .hub-primary:hover { background:#328ced; color:white; }
 .hub-top nav button { background:transparent; border-color:transparent; }
 .work-hub button.is-active { background:var(--accent-soft); color:var(--brand-blue-bright); border-color:transparent; }
-.work-hub .hub-close { border:0; border-radius:50%; width:32px; height:32px; padding:0; font-size:23px; }
+.work-hub .hub-close { display:grid; place-items:center; flex-shrink:0; min-height:0; min-width:0; border:0; border-radius:50%; width:32px; height:32px; padding:0; font-size:23px; line-height:1; }
 .hub-content { padding:30px 32px; overflow:auto; flex:1; min-height:0; }
 .work-hub .hub-scroll-top {
   position:absolute; right:20px; bottom:20px; z-index:4;
@@ -66,19 +66,20 @@
 .hub-weekdays { display:grid; grid-template-columns:repeat(7,1fr); background:var(--bg-elevated); }
 .hub-weekdays span { text-align:center; font-size:10px; color:var(--text-tertiary); padding:13px; }
 .hub-days { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); }
-.hub-day { min-height:clamp(64px,calc((100vh - 560px)/6),96px); padding:7px 5px; border-top:1px solid var(--border-hairline); border-right:1px solid var(--border-hairline); overflow:hidden; box-sizing:border-box; }
+.hub-day { min-height:84px; min-width:0; padding:7px 5px; border-top:1px solid var(--border-hairline); border-right:1px solid var(--border-hairline); overflow:hidden; box-sizing:border-box; }
 .hub-day:nth-child(7n) { border-right:0; }
 .hub-day.is-other { opacity:.45; }
 .hub-day.is-selected { background:color-mix(in srgb,var(--accent-soft) 35%,transparent); }
-.work-hub .hub-day-number { display:block; border:0; background:none; border-radius:50%; padding:0; width:25px; height:25px; margin:0 0 5px 3px; font-size:11px; }
+/* Compact calendar controls must not inherit the 32px action-button minimum. */
+.work-hub .hub-day-number { display:grid; place-items:center; box-sizing:border-box; min-width:0; min-height:0; border:0; background:none; border-radius:50%; padding:0; width:28px; height:28px; aspect-ratio:1; margin:0 0 5px 3px; font-size:12px; line-height:1; }
 .work-hub .hub-day-number.is-today { background:#267cd9; color:white; }
-.work-hub .hub-calendar-event { display:block; width:100%; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; border:0; border-left:2px solid currentColor; padding:4px; margin-bottom:3px; font-size:10px; text-align:left; border-radius:4px; }
+.work-hub .hub-calendar-event { display:block; min-height:0; width:100%; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; border:0; border-left:2px solid currentColor; padding:4px; margin-bottom:3px; font-size:10px; line-height:1.4; text-align:left; border-radius:4px; }
 .hub-calendar-event span { font-size:9px; opacity:.75; }
 .work-hub .status-active { color:#73b9f3; background:rgba(56,131,216,.14); }
 .work-hub .status-planned { color:#b5a4e2; background:rgba(150,115,211,.13); }
 .work-hub .status-blocked { color:#e9ac6e; background:rgba(213,146,78,.12); }
 .work-hub .status-done { color:#7fc6ae; background:rgba(92,168,142,.12); }
-.work-hub .hub-more { background:none; border:0; font-size:9px; padding:2px 4px; }
+.work-hub .hub-more { min-height:0; background:none; border:0; font-size:9px; padding:2px 4px; }
 .hub-agenda { width:244px; flex-shrink:0; }
 .hub-agenda>div:first-child { display:flex; align-items:center; justify-content:space-between; }
 .hub-agenda h3 { margin:5px 0; font-size:17px; }
@@ -103,7 +104,7 @@
 .hub-timeline-row strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .hub-timeline-row small { display:block; font-size:10px; color:var(--text-tertiary); margin-top:5px; }
 .hub-track { position:relative; background:repeating-linear-gradient(to right,transparent 0,transparent calc(100% / var(--days) - 1px),var(--border-hairline) calc(100% / var(--days) - 1px),var(--border-hairline) calc(100% / var(--days))); }
-.work-hub .hub-bar { position:absolute; top:20px; height:25px; padding:0; min-width:8px; border-radius:5px; border:1px solid currentColor; overflow:hidden; }
+.work-hub .hub-bar { position:absolute; top:20px; height:25px; min-height:0; padding:0; min-width:8px; border-radius:5px; border:1px solid currentColor; overflow:hidden; }
 .hub-bar i { position:absolute; left:0; top:0; bottom:0; background:currentColor; opacity:.3; }
 .hub-bar span { position:relative; font-size:9px; }
 .hub-diamond { position:absolute; top:3px; font-size:14px; color:#92c6f7; transform:translateX(-50%); pointer-events:none; }
@@ -159,7 +160,7 @@
 [data-theme="light"] .work-hub .status-planned { color:#765997; }
 [data-theme="light"] .work-hub .status-blocked { color:#956320; }
 [data-theme="light"] .work-hub .status-done { color:#2c7961; }
-@media(max-width:1100px) { .hub-agenda { width:210px; } .hub-content { padding:24px; } .hub-month-nav>span { display:none; } .hub-day { min-height:93px; } }
+@media(max-width:1100px) { .hub-agenda { width:210px; } .hub-content { padding:24px; } .hub-month-nav>span { display:none; } }
 @media(max-width:850px) { .hub-schedule-body { flex-direction:column; } .hub-calendar,.hub-agenda { width:100%; } .hub-agenda { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; } .hub-agenda>div:first-child,.hub-agenda>p { grid-column:1/-1; } .hub-heading { align-items:flex-start; flex-direction:column; } .hub-metrics { gap:8px; } .hub-metrics>div { padding:12px; } }
 @media(max-width:540px) { .work-hub { width:calc(100vw - 12px); height:calc(100vh - 24px); border-radius:16px; } .hub-top { padding:0 12px; gap:8px; } .hub-wordmark { display:none; } .hub-top nav { gap:2px; } .hub-content { padding:16px 10px; } .hub-metrics { grid-template-columns:1fr 1fr; } .hub-day { min-height:78px; padding:4px 2px; } .hub-weekdays span { padding:10px 0; } .work-hub .hub-calendar-event { font-size:9px; padding:3px 2px; } .hub-calendar-event span { display:none; } .hub-form-grid { grid-template-columns:1fr; } .hub-editor { padding:16px; } .hub-milestone { grid-template-columns:18px 1fr 112px 22px; gap:4px; } .hub-milestone input { padding:7px 3px; } .hub-actions { flex-wrap:wrap; } .hub-agenda { grid-template-columns:1fr; } }
 
@@ -246,7 +247,7 @@
 .hub-toolbar { gap:9px; margin-bottom:14px; }
 .hub-toolbar>small { font-size:10px; }
 .hub-segment { padding:2px; border:1px solid var(--border-hairline); border-radius:6px; background:transparent; }
-.hub-segment button { min-height:27px; padding:4px 10px; border-radius:4px; font-size:11px; }
+.work-hub .hub-segment button { min-height:27px; padding:4px 10px; border-radius:4px; font-size:11px; }
 .work-hub input,.work-hub select,.hub-editor input,.hub-editor textarea,.hub-editor select { border-radius:6px; }
 .hub-search-field { max-width:360px; min-height:40px; }
 .hub-month-nav { margin:13px 0; }

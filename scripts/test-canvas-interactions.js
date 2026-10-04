@@ -346,7 +346,7 @@ assert.match(boardStyles, /\.board-canvas\.is-transforming\s*\{[\s\S]*?will-chan
   'Transforming the infinite canvas should promote only during camera movement.');
 assert.match(
   boardSource,
-  /const groupMates = item\.isPartition[\s\S]*?: \(item\.selected && selectedMates\.length > 1\)[\s\S]*?\? selectedMates\s*: \[item\]/,
+  /const groupMates = item\.isPartition[\s\S]*?: \(!sourcePartition && item\.selected && selectedMates\.length > 1\)[\s\S]*?\? selectedMates\s*: \[item\]/,
   'Dragging must use the current selection, never a legacy explicit group.');
 assert.match(
   boardSource,
@@ -1582,7 +1582,7 @@ assert.match(
 assert.match(boardStyles, /\.fullscreen-stage > img \{[\s\S]*?max-width:\s*var\(--fullscreen-media-max-width\);[\s\S]*?max-height:\s*var\(--fullscreen-media-max-height\);/);
 assert.match(
   contextMenuSource,
-  /function arrangeItemsGrid[\s\S]*?startFrames[\s\S]*?boardItemBounds\(item\)[\s\S]*?compactMediaGrid\(measuredItems,[\s\S]*?gap:\s*20[\s\S]*?columns:\s*Math\.max\(1,\s*Math\.ceil\(Math\.sqrt\(mediaItems\.length\s*\*\s*1\.35\)\)\)[\s\S]*?minWidth:[\s\S]*?recordBoardResizeHistory\(startFrames\)[\s\S]*?persistBoardMoveHistory\(mediaItems\)/,
+  /function arrangeItemsGrid[\s\S]*?startFrames[\s\S]*?boardItemBounds\(item\)[\s\S]*?compactMediaGrid[\s\S]*?pack\(measuredItems,[\s\S]*?gap:\s*20[\s\S]*?columns:\s*Math\.max\(1,\s*Math\.ceil\(Math\.sqrt\(mediaItems\.length\s*\*\s*1\.35\)\)\)[\s\S]*?minWidth:[\s\S]*?recordBoardResizeHistory\(startFrames\)[\s\S]*?persistBoardMoveHistory\(mediaItems\)/,
   'Compact arrangement must reject tiny outlier widths, retain the wide rectangle, and remain undoable.'
 );
 assert.match(

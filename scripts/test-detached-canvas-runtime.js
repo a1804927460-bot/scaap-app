@@ -122,6 +122,19 @@ async function run() {
     throw new Error(`Detached renderer did not lock to the source canvas: ${JSON.stringify(detachedLayout)}`);
   }
   await waitForRenderer(mainDebugger.send, `Boolean(document.getElementById('board-panel') && document.getElementById('board-panel').classList.contains('is-canvas-library') && !document.getElementById('canvas-library-view').hidden)`);
+  // A detached window can inherit the main window's collapsed sidebar state.
+  // Visibility alone misses a board squeezed into the sidebar's 72px track.
+  for (const collapsed of [true, false]) {
+    await evaluate(detachedDebugger.send, `document.getElementById('main-app').classList.toggle('sidebar-collapsed', ${collapsed})`);
+    await wait(400);
+    const bounds = await evaluate(detachedDebugger.send, `(() => {
+      const board = document.getElementById('board-panel').getBoundingClientRect();
+      return { width: board.width, height: board.height, viewport: innerWidth, x: board.x };
+    })()`);
+    if (bounds.width < bounds.viewport - 40 || bounds.x > 20 || bounds.height < 300) {
+      throw new Error('Detached canvas must fill its window: ' + JSON.stringify({ collapsed, ...bounds }));
+    }
+  }
   await detachedDebugger.send('Page.enable');
   const screenshot = await detachedDebugger.send('Page.captureScreenshot', { format: 'png' });
   const screenshotDir = path.join(root, 'test-artifacts');

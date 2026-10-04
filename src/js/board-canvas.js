@@ -255,10 +255,10 @@ function recordBoardHistoryEntry(entry, canvasId = activeCanvasId()) {
 }
 
 function recordBoardMoveHistory(startPositions) {
-  const changes = startPositions.map(({ item, startLeft, startTop }) => ({
+  const changes = startPositions.map(({ item, startLeft, startTop, startPartitionId }) => ({
     id: item.id,
-    before: { x: startLeft, y: startTop },
-    after: { x: item.x, y: item.y }
+    before: { x: startLeft, y: startTop, ...(startPartitionId !== undefined ? { partitionId: startPartitionId } : {}) },
+    after: { x: item.x, y: item.y, ...(startPartitionId !== undefined ? { partitionId: item.partitionId || null } : {}) }
   })).filter((change) => (
     change.before.x !== change.after.x || change.before.y !== change.after.y
   ));
@@ -339,6 +339,10 @@ function applyBoardMoveHistory(entry, direction) {
     const position = change[direction];
     item.x = position.x;
     item.y = position.y;
+    if (Object.prototype.hasOwnProperty.call(position, 'partitionId')) {
+      if (position.partitionId) item.partitionId = position.partitionId;
+      else delete item.partitionId;
+    }
     updateBoardItemIndex(item);
     const element = Board.mounted.get(item.id) || document.querySelector(`.board-item[data-board-id="${item.id}"]`);
     if (element) {
@@ -2249,13 +2253,13 @@ function boardItemBounds(item) {
     // Text notes grow sideways first. Keep a readable working width and only
     // wrap once the note reaches the board's comfortable maximum.
     const preferredWidth = Math.max(220, Math.min(720, Math.ceil(longestLine * fontSize * 0.92 + 18)));
-    const width = Math.max(preferredWidth, Number(item.width) || 0);
+    const width = Math.max(80, Number(item.width) || preferredWidth);
     const contentHeight = window.MesssBoardLeaferLayer?.measureTextNote(item, width);
     return {
       x: Number.isFinite(item.x) ? item.x : 0,
       y: Number.isFinite(item.y) ? item.y : 0,
       w: width,
-      h: contentHeight || Math.max(Number(item.height) || 0, 140)
+      h: Math.max(Number(item.height) || 0, contentHeight || 140)
     };
   }
   if (item && item.isMoodboard) {
@@ -2954,7 +2958,7 @@ function beginBoardPartitionRename(item, partitionElement = null) {
 
 function makeBoardPartitionDraggable(handle, element, partition) {
   handle.addEventListener('mousedown', (event) => {
-    if (event.button !== 0 || event.altKey || event.target.closest('input')) return;
+    if (event.button !== 0 || event.altKey || event.target.closest('input, .board-resize-handle')) return;
     event.preventDefault();
     event.stopPropagation();
     setActiveBoardPartition(partition);
@@ -3174,7 +3178,7 @@ function buildBoardPartitionElement(partition) {
     showBoardItemContextMenu(partition, event.clientX, event.clientY);
   });
   element.appendChild(title);
-  makeBoardPartitionDraggable(title, element, partition);
+  makeBoardPartitionDraggable(element, element, partition);
   addBoardPartitionResizeHandles(element, partition);
 
   if (Board.partitionCelebrations.has(partition.id)) {
@@ -3838,14 +3842,17 @@ function makeBoardItemDraggable(el, item) {
     let moved = false;
 
     // Move the current selection or partition members as one rigid selection.
+    const holdStartedAt = Date.now();
+    const sourcePartition = item.partitionId && AppState.boardItems.find(entry => entry.id === item.partitionId);
+    let releaseFromPartition = false;
     const selectedMates = AppState.boardItems.filter((b) => b.selected);
     const partitionMates = item.isPartition ? boardPartitionMembers(item) : [];
     const groupMates = item.isPartition
       ? [item, ...partitionMates]
-      : (item.selected && selectedMates.length > 1)
+      : (!sourcePartition && item.selected && selectedMates.length > 1)
       ? selectedMates
       : [item];
-    const groupStartPositions = groupMates.map((b) => ({ item: b, startLeft: b.x, startTop: b.y }));
+    const groupStartPositions = groupMates.map((b) => ({ item: b, startLeft: b.x, startTop: b.y, startPartitionId: b.partitionId || null }));
     const selectionGroup = groupMates.length > 1 && !item.isPartition
       ? ensureBoardSelectionGroup()
       : null;
@@ -3914,7 +3921,9 @@ function makeBoardItemDraggable(el, item) {
         const snap = adapter.snap(moving, candidates, Board.zoom);
         dx += snap.dx; dy += snap.dy; snapLines = snap.lines;
       }
-      const deltas = constrainedBoardMoveDeltas(groupStartPositions, dx, dy);
+      const deltas = releaseFromPartition
+        ? new Map(groupStartPositions.map(entry => [entry.item.id, { dx, dy }]))
+        : constrainedBoardMoveDeltas(groupStartPositions, dx, dy);
       if (adapter) {
         const constrained = [...deltas.values()].some(delta => Math.abs(delta.dx-dx)>0.01 || Math.abs(delta.dy-dy)>0.01);
         adapter.showGuides(constrained ? [] : snapLines, Board, document.getElementById('board-viewport'));
@@ -3936,12 +3945,25 @@ function makeBoardItemDraggable(el, item) {
       }
     });
     function onMove(ev) {
-      if (Math.hypot(ev.clientX - startClientX, ev.clientY - startClientY) > 4) moved = true;
+      if (!moved && Math.hypot(ev.clientX - startClientX, ev.clientY - startClientY) > 4) {
+        releaseFromPartition = Boolean(sourcePartition && Date.now() - holdStartedAt >= 450);
+        moved = true;
+      }
       markBoardInteraction();
       moveRunner.push({ clientX: ev.clientX, clientY: ev.clientY, altKey: ev.altKey });
     }
     function onUp() {
       moveRunner.flush();
+      if (releaseFromPartition && moved) {
+        const bounds = boardItemBounds(item), partitionBounds = boardItemBounds(sourcePartition);
+        const cx = bounds.x + bounds.w / 2, cy = bounds.y + bounds.h / 2;
+        if (cx < partitionBounds.x || cx > partitionBounds.x + partitionBounds.w ||
+            cy < partitionBounds.y || cy > partitionBounds.y + partitionBounds.h) {
+          delete item.partitionId;
+        } else {
+          constrainBoardItemToPartition(item);
+        }
+      }
       window.MesssCanvasPluginAdapter?.clearGuides();
       if (moved) {
         Board.lastDragEndedAt = Date.now();
@@ -4118,12 +4140,12 @@ function addResizeHandles(el, item) {
 
     const startClientX = e.clientX;
       const startClientY = e.clientY;
-      const startWidth = item.isMoodboard ? boardItemBounds(item).w : item.width || el.getBoundingClientRect().width / Board.zoom;
+      const startWidth = (item.isMoodboard || item.isNote) ? boardItemBounds(item).w : item.width || el.getBoundingClientRect().width / Board.zoom;
       const mediaAspectRatio = boardMediaResizeAspect(el, item);
       const locksMediaAspect = Number.isFinite(mediaAspectRatio) && mediaAspectRatio > 0;
       const startHeight = locksMediaAspect
         ? startWidth * mediaAspectRatio
-        : item.isMoodboard ? boardItemBounds(item).h : item.height || el.getBoundingClientRect().height / Board.zoom;
+        : (item.isMoodboard || item.isNote) ? boardItemBounds(item).h : item.height || el.getBoundingClientRect().height / Board.zoom;
       const startLeft = item.x;
       const startTop = item.y;
       const aspectRatio = locksMediaAspect ? mediaAspectRatio : startHeight / startWidth;
@@ -4142,7 +4164,7 @@ function addResizeHandles(el, item) {
         const proportionalWidth = Math.abs(dx) >= Math.abs(dy / aspectRatio) ? widthFromX : widthFromY;
         const freeResize = !locksMediaAspect && point.shiftKey;
         const freeMoodboardResize = !locksMediaAspect && item.isMoodboard;
-        const usesFreeResize = freeResize || freeMoodboardResize;
+        const usesFreeResize = freeResize || freeMoodboardResize || item.isNote;
         const newWidth = Math.max(minWidth, Math.min(MAX_BOARD_ITEM_WIDTH, usesFreeResize ? widthFromX : proportionalWidth));
         const newHeight = usesFreeResize
           ? Math.max(minHeight, Math.min(MAX_BOARD_ITEM_WIDTH, startHeight + dy))
@@ -9561,6 +9583,7 @@ async function showAiImagePopover(initialKind = 'image') {
   setTimeout(() => textarea.focus(), 0);
 
   aiImagePopoverClickCloser = (e) => {
+    if (document.getElementById('messs-template-library')) return;
     const eventPath = typeof e.composedPath === 'function' ? e.composedPath() : [];
     if (pop.contains(e.target) || eventPath.includes(pop)) return;
     const agentInteraction = eventPath.some((entry) =>
@@ -9576,6 +9599,7 @@ async function showAiImagePopover(initialKind = 'image') {
     closeAiImagePopover();
   };
   aiImagePopoverKeyCloser = (e) => {
+    if (e.defaultPrevented || document.getElementById('messs-template-library')) return;
     if (e.key === 'Escape') closeAiImagePopover();
   };
   setTimeout(() => {

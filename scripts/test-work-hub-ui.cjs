@@ -34,9 +34,37 @@ const {createScheduleService}=require('../lib/project-schedule');const {createRe
     await page.locator('.hub-editor [type=submit]').click();await page.locator('.hub-editor').waitFor({state:'detached'});
     assert.equal(service.list().find(p=>p.title==='真实流程测试').progress,45);
     assert.equal(await page.locator('.hub-day').count(),42);
+    const dateSize=await page.locator('.hub-day-number.is-today').evaluate(e=>({width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height}));
+    assert.equal(dateSize.width,dateSize.height,'Calendar date must remain circular, not stretched by shared button min-height');
     fs.mkdirSync('test-artifacts/work-hub',{recursive:true});
+    const assertLayout=async()=>{
+      const layout=await page.locator('.work-hub').evaluate(root=>{
+        const content=root.querySelector('.hub-content');
+        const dimensions=selector=>[...root.querySelectorAll(selector)].map(e=>({width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height}));
+        return {overflow:content.scrollWidth-content.clientWidth,close:dimensions('.hub-close'),dates:dimensions('.hub-day-number'),events:dimensions('.hub-calendar-event'),bars:dimensions('.hub-bar'),tabs:dimensions('.hub-top nav button'),header:root.querySelector('.hub-top').getBoundingClientRect().height};
+      });
+      assert.ok(layout.overflow<=1,`Hub content must not overflow horizontally: ${JSON.stringify(layout)}`);
+      for(const size of [...layout.dates,...layout.close])assert.ok(Math.abs(size.width-size.height)<.1,'Date and close controls must be square');
+      for(const size of layout.events)assert.ok(size.height<30,'Calendar events must not inherit action-button height');
+      for(const size of layout.bars)assert.equal(size.height,25,'Timeline bars must keep their intended height');
+      for(const size of layout.tabs)assert.ok(size.height<=layout.header,'Navigation must fit its header');
+    };
+    await page.locator('.hub-content').evaluate(e=>e.scrollTop=0);
     await page.screenshot({path:'test-artifacts/work-hub/schedule-dark.png'});
+    // CSS viewport equivalents of a 1560px screen at 100%, 150%, and 200%
+    // desktop scaling, plus narrow windows. Do not counteract user zoom in CSS.
+    for(const theme of ['dark','light'])for(const [width,height] of [[1560,1020],[1040,680],[780,510],[520,900],[390,844]]){
+      await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);
+      await page.setViewportSize({width,height});
+      await assertLayout();
+      if(width===1040)await page.screenshot({path:`test-artifacts/work-hub/schedule-${theme}-scaled.png`});
+    }
+    await page.evaluate(()=>applyTextSize('extra-large'));
+    await assertLayout();
+    await page.evaluate(()=>applyTextSize('medium'));
+    await page.setViewportSize({width:1440,height:1000});await page.evaluate(()=>document.documentElement.dataset.theme='dark');
     await page.locator('[data-hub-action="view-timeline"]').click();assert.ok(await page.locator('.hub-bar').count()>=5);
+    await assertLayout();
     await page.screenshot({path:'test-artifacts/work-hub/timeline-dark.png'});
     await page.locator('[data-hub-action="view-month"]').click();await page.setViewportSize({width:520,height:900});
     assert.ok(await page.locator('.work-hub').evaluate(e=>e.scrollWidth<=e.clientWidth));
@@ -44,17 +72,23 @@ const {createScheduleService}=require('../lib/project-schedule');const {createRe
     await page.setViewportSize({width:1440,height:1000});await page.evaluate(()=>document.documentElement.dataset.theme='light');await page.waitForTimeout(220);
     await page.screenshot({path:'test-artifacts/work-hub/schedule-light.png'});
     await page.locator('.hub-top [data-hub-action="files"]').click();
+    for(const width of [1440,780,390]){await page.setViewportSize({width,height:900});await assertLayout();}
+    await page.setViewportSize({width:1440,height:1000});
     assert.equal(await page.locator('.hub-local').count(),0);
     assert.equal(await page.locator('.hub-search').getAttribute('placeholder'),'搜索名称');
     assert.equal(await page.locator('.hub-search-field > svg').count(),1);
     await page.screenshot({path:'test-artifacts/work-hub/files-light.png'});
     await page.locator('[data-hub-action="collect"]').click();
     await page.locator('.hub-top [data-hub-action="assets"]').click();assert.equal(await page.locator('.hub-asset').count(),1);
+    for(const width of [1440,780,390]){await page.setViewportSize({width,height:900});await assertLayout();}
+    await page.setViewportSize({width:1440,height:1000});
     await page.screenshot({path:'test-artifacts/work-hub/assets-light.png'});
     await page.locator('[data-hub-action="asset-edit"]').click();await page.locator('[name=tags]').fill('品牌, 包装');await page.locator('[name=favorite]').check();await page.locator('.hub-editor [type=submit]').click();await page.locator('.hub-editor').waitFor({state:'detached'});
     assert.equal(resources.list().find(r=>r.kind==='asset').favorite,true);
     await page.locator('.hub-top [data-hub-action="skills"]').click();await page.locator('[data-hub-action="new-skill"]').click();await page.locator('.hub-editor [type=submit]').click();await page.locator('.hub-editor').waitFor({state:'detached'});
     assert.equal(await page.locator('.hub-skill').count(),1);
+    for(const width of [1440,780,390]){await page.setViewportSize({width,height:900});await assertLayout();}
+    await page.setViewportSize({width:1440,height:1000});
     await page.evaluate(()=>document.documentElement.dataset.theme='dark');
     await page.waitForTimeout(240);
     const darkSearchRgb=await page.locator('.hub-search-field').evaluate(element=>getComputedStyle(element).backgroundColor.match(/\d+/g).map(Number));

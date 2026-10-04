@@ -45,3 +45,4 @@ Thumbs.db
 # Pinned source checkout used to rebuild the committed plugin bundle.
 third-party/leafer-x-richtext/
 third-party/leafer-x-snap-1.0.7.tgz
+src/vendor/awplanet/

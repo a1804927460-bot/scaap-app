@@ -82,6 +82,29 @@ const { chromium } = require('playwright');
     assert.ok(mobileBounds.x >= 11 && mobileBounds.x + mobileBounds.width <= 379);
     assert.ok(mobileBounds.y >= 11 && mobileBounds.y + mobileBounds.height <= 789);
     await page.screenshot({ path: path.join(artifactDir, 'template-library-mobile.png') });
+    await page.evaluate(()=>closeMesssTemplateLibrary());
+    await page.waitForFunction(()=>!document.getElementById('messs-template-library'));
+    // Install the production outside-click/Escape handlers around a draft.
+    const closers=board.slice(board.indexOf('  aiImagePopoverClickCloser = (e) => {'),board.indexOf('  setTimeout(() => {',board.indexOf('  aiImagePopoverClickCloser = (e) => {')));
+    await page.addScriptTag({content:`
+      const pop=document.createElement('div');pop.id='ai-image-popover';
+      pop.innerHTML='<textarea>保留我的提示词</textarea>';document.body.append(pop);
+      const nodeComposer=false;let aiImagePopoverClickCloser,aiImagePopoverKeyCloser;
+      function closeAiImagePopover(){pop.remove();}
+      ${closers}
+      document.addEventListener('click',aiImagePopoverClickCloser);
+      document.addEventListener('keydown',aiImagePopoverKeyCloser);
+    `});
+    for(const close of ['button','escape','backdrop']){
+      await page.evaluate(()=>{document.querySelector('#ai-image-popover textarea').focus();openMesssTemplateLibrary();});
+      await page.locator('.messs-template-search input').fill('保留');
+      if(close==='button')await page.locator('.messs-template-close').click();
+      else if(close==='escape')await page.keyboard.press('Escape');
+      else await page.locator('.messs-template-backdrop').click({position:{x:2,y:2}});
+      await page.waitForFunction(()=>!document.getElementById('messs-template-library'));
+      assert.equal(await page.locator('#ai-image-popover textarea').inputValue(),'保留我的提示词');
+      assert.ok(await page.locator('#ai-image-popover textarea').evaluate(e=>e===document.activeElement));
+    }
   } finally {
     await browser.close();
   }

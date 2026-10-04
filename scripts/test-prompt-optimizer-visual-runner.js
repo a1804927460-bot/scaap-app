@@ -124,6 +124,23 @@ async function run() {
       return {busy:overlay.dataset.optimizing,disabled:overlay.querySelector('.prompt-optimizer-confirm').disabled,readonly:overlay.querySelector('.prompt-optimizer-original').readOnly};
     })()`);
     if (emptyResultState.busy !== 'false' || emptyResultState.disabled || emptyResultState.readonly) throw new Error('Empty response left optimization stuck');
+    const history=await win.webContents.executeJavaScript(`(()=>{
+      const overlay=document.getElementById('prompt-optimizer-overlay');
+      overlay.querySelector('.prompt-optimizer-history-toggle').click();
+      const count=overlay.querySelectorAll('.prompt-optimizer-history details').length;
+      overlay.querySelector('.prompt-optimizer-history details').open=true;
+      overlay.querySelector('.prompt-optimizer-history button').click();
+      return {count,source:overlay.querySelector('.prompt-optimizer-original').value};
+    })()`);
+    if(!history.count||history.source!==editedSource)throw new Error('History did not persist and restore the original prompt');
+    const working=await win.webContents.executeJavaScript(`(()=>{
+      window.messsAPI.optimizePrompt=()=>new Promise(resolve=>window.finishOptimization=resolve);
+      document.querySelector('.prompt-optimizer-confirm').click();
+      const spinner=document.querySelector('.prompt-optimizer-loading i');
+      return {animation:getComputedStyle(spinner).animationName,visible:getComputedStyle(spinner.parentElement).display};
+    })()`);
+    if(working.visible==='none'||working.animation!=='prompt-optimizer-spin')throw new Error('Optimization spinner must animate while waiting');
+    await win.webContents.executeJavaScript(`window.finishOptimization({ok:false});void 0;`);
     process.stdout.write(`PROMPT_OPTIMIZER_VISUAL_OK desktop=${desktop.dialog.width}x${desktop.dialog.height} compact=${compact.dialog.width}x${compact.dialog.height}\n`);
   } finally {
     win.destroy();

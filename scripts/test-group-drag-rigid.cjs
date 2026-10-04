@@ -3,6 +3,7 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const source=fs.readFileSync('src/js/board-canvas.js','utf8');
 const context={
+ window:{addEventListener(){},removeEventListener(){}},
  boardPartitionById:id=>({id}),boardPartitionContentBounds:()=>({x:0,y:0,w:300,h:300}),
  boardItemBounds:item=>({w:item.width,h:item.height}),
  boardSelectionBounds:items=>{

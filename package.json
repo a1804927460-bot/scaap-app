@@ -1,6 +1,6 @@
 {
   "name": "messs",
-  "version": "0.0.164",
+  "version": "0.0.167",
   "description": "Messs. — Resolve your confusion. A file preview & organizing desktop app.",
   "main": "main.js",
   "author": "Messs.",
@@ -11,6 +11,7 @@
   "license": "UNLICENSED",
   "private": true,
   "scripts": {
+    "build:awplanet": "node scripts/build-awplanet.cjs",
     "test:butler-recovery": "node scripts/test-butler-recovery.cjs",
     "test:agent-isolation": "node scripts/test-agent-session-isolation.cjs && node scripts/test-agent-history-writes.cjs && node scripts/test-ai-host-tools.cjs",
     "test:chat-stream": "node --test scripts/test-chat-stream.cjs scripts/test-chat-stream-main.cjs",
@@ -21,7 +22,7 @@
     "build:model-viewer": "node scripts/build-model-viewer.js",
     "build:model-exporters": "node scripts/build-model-exporters.cjs",
     "build:ui-motion": "node scripts/build-ui-motion.cjs",
-    "pretest": "npm run build:model-exporters && npm run build:ui-motion && node scripts/test-agent-estimate.cjs && node scripts/test-packaged-model-export.cjs && node scripts/test-ai-model-export.cjs && node scripts/test-file-output-integrity.cjs && node scripts/test-chat-continuation.cjs && npm run test:chat-stream",
+    "pretest": "npm run build:awplanet && npm run build:model-exporters && npm run build:ui-motion && node scripts/test-agent-estimate.cjs && node scripts/test-packaged-model-export.cjs && node scripts/test-ai-model-export.cjs && node scripts/test-file-output-integrity.cjs && node scripts/test-chat-continuation.cjs && npm run test:chat-stream",
     "build:canvas-plugins": "node scripts/build-canvas-plugins.cjs",
     "build:canvas-crop": "node scripts/build-canvas-crop.cjs",
     "test": "node scripts/test-activation.js && node scripts/test-auth-screen.js && node scripts/test-profile-avatar.js && node scripts/test-model-badges.js && node scripts/test-provider-catalog-migration.js && node scripts/test-ai-provider-options.js && node scripts/test-video-resolution.js && node scripts/test-video-frame-normalization.js && node scripts/test-ai-media-provider.js && node scripts/test-ai-media-fallback.js && node scripts/test-ai-media-persistence.js && node scripts/test-ai-chat-provider.js && node scripts/test-ai-attachments.js && node scripts/test-ai-assistant-layout.js && node scripts/test-workshop.js && node scripts/test-dynamic-content.cjs && node scripts/test-gateway-providers.mjs && node scripts/test-board-engine.js && electron scripts/test-board-leafer-layer.js && node scripts/test-clipboard-images.js && node scripts/test-file-drop.js && node scripts/test-storage-location.js && node scripts/test-canvas-interactions.js && node scripts/test-shortcut-settings.cjs && node scripts/test-three-d-director.cjs && node scripts/test-moodboard.js && node scripts/test-canvas-package.js && node scripts/test-date-folders.js && node scripts/test-file-download-order.js && node scripts/test-canvas-node-mode.js && node scripts/test-butler-model-ui.js && node scripts/test-cursors.js && node scripts/test-language-localization.js && node scripts/test-color-management.js && node scripts/test-thumbnails.js && node scripts/test-media-metadata.js && node scripts/test-document-preview.js && node scripts/test-local-file-response.js && node scripts/test-video-preview.js && node scripts/test-concurrent-media-ui.js && node scripts/test-adobe-launcher.js && node scripts/test-credit-pricing.js && node scripts/test-membership-service.js && node scripts/test-usage-settings.js && node scripts/test-privacy-guard.js && node scripts/test-security-clients.js && node scripts/test-chat.js && node scripts/test-window-layout.js && node scripts/test-toast.js && node scripts/test-release-config.js && npm --prefix gateway run check",
@@ -36,9 +37,9 @@
     "test:usage-visual": "node scripts/test-usage-visual.js",
     "stress:canvas": "node scripts/stress-canvas-performance.js",
     "start": "electron .",
-    "build:dev": "npm run build:model-exporters && npm run build:model-viewer && electron-builder --config electron-builder.dev.yml",
-    "release:win": "npm run build:model-exporters && npm run build:model-viewer && electron-builder --config electron-builder.release.yml --win --publish never",
-    "release:mac": "npm run build:model-exporters && npm run build:model-viewer && electron-builder --config electron-builder.release.yml --mac --publish never",
+    "build:dev": "npm run build:awplanet && npm run build:model-exporters && npm run build:model-viewer && electron-builder --config electron-builder.dev.yml",
+    "release:win": "npm run build:awplanet && npm run build:model-exporters && npm run build:model-viewer && electron-builder --config electron-builder.release.yml --win --publish never",
+    "release:mac": "npm run build:awplanet && npm run build:model-exporters && npm run build:model-viewer && electron-builder --config electron-builder.release.yml --mac --publish never",
     "test:work-hub": "node --test scripts/test-work-hub.cjs && node scripts/test-work-hub-media-preview.cjs",
     "test:agent-app-actions": "node --test scripts/test-agent-app-actions.cjs",
     "test:updater-ui": "node scripts/test-updater-ui.cjs"

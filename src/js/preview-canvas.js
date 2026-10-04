@@ -1337,7 +1337,15 @@ function showFullscreenMedia(media, options = {}) {
   if (!overlay.hidden) finalizeFullscreenPreviewClose();
   const assistant = media.closest?.('.ai-assistant-panel');
   const assistantHost = assistant?.querySelector('.ai-assistant-main');
-  if (assistantHost && assistant.classList.contains('is-fullscreen')) {
+  const history = document.getElementById('canvas-generation-history-overlay');
+  if (history && !history.hidden) {
+    // Escape the app shell's stacking context. History is a body-level modal;
+    // increasing a child's z-index inside the shell cannot place it above it.
+    overlay._homeAnchor = document.createComment('media-preview-home');
+    overlay.before(overlay._homeAnchor);
+    document.body.appendChild(overlay);
+    overlay._returnFocus = document.activeElement;
+  } else if (assistantHost && assistant.classList.contains('is-fullscreen')) {
     overlay._homeAnchor = document.createComment('media-preview-home');
     overlay.before(overlay._homeAnchor);
     assistantHost.appendChild(overlay);

@@ -345,6 +345,39 @@ function normalizeAgentPromptSuggestion(value) {
   return text.slice(0, 20000);
 }
 
+function readPromptOptimizerHistory(key) {
+  try { const rows=JSON.parse(localStorage.getItem(key)||'[]');return Array.isArray(rows)?rows.filter(r=>r&&typeof r.source==='string'&&typeof r.result==='string').slice(0,50):[]; } catch { return []; }
+}
+function showPromptOptimizerHistory(overlay) {
+  const panel=overlay.querySelector('.prompt-optimizer-history');
+  panel.hidden=!panel.hidden;
+  if(panel.hidden)return;
+  panel.replaceChildren();
+  const rows=readPromptOptimizerHistory(overlay.dataset.historyKey);
+  if(!rows.length){panel.textContent=t('No prompt history yet.', '暂无历史提示词');return;}
+  rows.forEach(row=>{
+    const item=document.createElement('details');
+    const title=document.createElement('summary');title.textContent=new Date(row.time).toLocaleString()+' · '+row.source.slice(0,45);
+    item.append(title);
+    for(const [label,text] of [[t('Original','原文'),row.source],[t('Optimized','优化结果'),row.result]]){
+      const heading=document.createElement('strong');heading.textContent=label;
+      const content=document.createElement('p');content.textContent=text;
+      const use=document.createElement('button');use.type='button';use.textContent=t('Use this prompt','使用此提示词');
+      use.disabled=overlay.dataset.optimizing==='true';
+      use.onclick=()=>{
+        if(overlay.dataset.optimizing==='true')return;
+        const source=overlay.querySelector('.prompt-optimizer-original');source.value=text;source.readOnly=false;
+        const result=overlay.querySelector('.prompt-optimizer-result');result.value='';
+        const confirm=overlay.querySelector('.prompt-optimizer-confirm');confirm.hidden=false;confirm.disabled=false;
+        overlay.querySelector('.prompt-optimizer-replace').hidden=true;panel.hidden=true;source.focus();
+        overlay.querySelector('.prompt-optimizer-status').textContent=t('Review before optimizing.','请确认文字后再优化。');
+      };
+      item.append(heading,content,use);
+    }
+    panel.append(item);
+  });
+}
+
 function closePromptOptimizerDialog(options = {}) {
   const overlay = document.getElementById('prompt-optimizer-overlay');
   if (!overlay) return;
@@ -416,9 +449,11 @@ function createPromptOptimizerDialog(selectedOnly) {
     <section class="prompt-optimizer-dialog" role="dialog" aria-modal="true" aria-labelledby="prompt-optimizer-title">
       <header class="prompt-optimizer-header">
         <h2 id="prompt-optimizer-title">${t('Prompt optimization', '提示词优化', '프롬프트 최적화')}</h2>
+        <button type="button" class="prompt-optimizer-history-toggle">${t('Prompt history','历史提示词')}</button>
         <button class="prompt-optimizer-close" type="button" title="${t('Keep original', '保留原文', '원문 유지')}" aria-label="${t('Keep original', '保留原文', '원문 유지')}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       </header>
       <div class="prompt-optimizer-compare">
+        <div class="prompt-optimizer-history" hidden></div>
         <div class="prompt-optimizer-intro">
           <div class="prompt-optimizer-brand"><img src="assets/logo-mark.png" alt="" draggable="false"><strong>Messs.</strong></div>
           <p>${t('I can help turn your idea into a clearer generation prompt.', '我可以帮你把想法整理成更清晰的生成提示词。', '아이디어를 더 명확한 생성 프롬프트로 다듬어 드릴게요.')}</p>
@@ -429,6 +464,7 @@ function createPromptOptimizerDialog(selectedOnly) {
         </div>
         <label class="prompt-optimizer-response">
           <span class="prompt-optimizer-brand"><img src="assets/logo-mark.png" alt="" draggable="false"><strong>Messs.</strong></span>
+          <span class="prompt-optimizer-loading" role="status"><i aria-hidden="true"></i>${t('Optimizing prompt','正在优化提示词')}</span>
           <textarea class="prompt-optimizer-result" readonly spellcheck="true" placeholder="${t('The optimized prompt will appear here.', '优化后的提示词会显示在这里。', '최적화된 프롬프트가 여기에 표시됩니다.')}"></textarea>
         </label>
         <label class="prompt-optimizer-composer">
@@ -447,6 +483,7 @@ function createPromptOptimizerDialog(selectedOnly) {
     </section>
   `;
   const close = () => closePromptOptimizerDialog();
+  overlay.querySelector('.prompt-optimizer-history-toggle').addEventListener('click',()=>showPromptOptimizerHistory(overlay));
   overlay.querySelector('.prompt-optimizer-backdrop').addEventListener('click', close);
   overlay.querySelector('.prompt-optimizer-close').addEventListener('click', close);
   overlay.querySelector('.prompt-optimizer-keep').addEventListener('click', close);
@@ -495,7 +532,8 @@ async function runPromptOptimization(overlay, options) {
   confirmButton.disabled = true;
   status.dataset.state = 'working';
   status.textContent = t('Optimizing prompt...', '正在优化提示词...', '프롬프트 최적화 중...');
-  resultField.placeholder = status.textContent;
+  resultField.placeholder = '';
+  overlay.querySelector('.prompt-optimizer-history').hidden=true;
   replaceButton.disabled = true;
   replaceButton.hidden = true;
   resultField.value = '';
@@ -511,6 +549,11 @@ async function runPromptOptimization(overlay, options) {
         if (revision !== PromptOptimizerState.revision || !overlay.isConnected) return;
         const optimized = normalizeAgentPromptSuggestion(responseText);
         if (!optimized) throw new Error('Optimization returned an empty result');
+        const historyKey=overlay.dataset.historyKey;
+        if(historyKey)try {
+          const rows=readPromptOptimizerHistory(historyKey).filter(r=>r.source!==sourceText||r.result!==optimized);
+          localStorage.setItem(historyKey,JSON.stringify([{source:sourceText,result:optimized,time:Date.now(),kind,mode:options.mode},...rows].slice(0,50)));
+        } catch { /* Storage quota must not discard the successful result. */ }
         overlay.dataset.optimizing = 'false';
         resultField.value = optimized;
         resultField.readOnly = false;
@@ -563,6 +606,13 @@ async function openPromptOptimizerDialog(input, selection = {}) {
   PromptOptimizerState.revision += 1;
   const revision = PromptOptimizerState.revision;
   const overlay = createPromptOptimizerDialog(selectedOnly);
+  overlay.querySelector('.prompt-optimizer-history-toggle').disabled=true;
+  try {
+    const session=await window.messsAPI.getCloudSession?.();
+    overlay.dataset.historyKey='messs.prompt-optimizer.history.v1.'+(session?.user?.id||'local');
+    overlay.querySelector('.prompt-optimizer-history-toggle').disabled=false;
+  } catch { /* Do not expose another account's history when session lookup fails. */ }
+  if(revision!==PromptOptimizerState.revision||!overlay.isConnected)return null;
   const sourceField = overlay.querySelector('.prompt-optimizer-original');
   sourceField.value = sourceText;
   const kind = composer && composer.dataset.kind === 'video' ? 'video' : 'image';
@@ -1013,7 +1063,8 @@ function initCanvasGenerationHistoryDialog() {
     if (event.target === overlay) closeCanvasGenerationHistory();
   });
   window.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && !overlay.hidden) closeCanvasGenerationHistory();
+    const preview = document.getElementById('fullscreen-overlay');
+    if (event.key === 'Escape' && !overlay.hidden && !event.defaultPrevented && (!preview || preview.hidden)) closeCanvasGenerationHistory();
   });
   return overlay;
 }
@@ -1421,6 +1472,8 @@ function scaleBoardItemsToWidth(items, targetWidth) {
 
 async function arrangeItemsGrid(items) {
   const mediaItems = items.filter((item) => {
+    if (!item || item.isPartition) return false;
+    if (item.isNote || item.isDoodle || item.isMoodboard) return true;
     const file = AppState.files.find((entry) => entry.id === item.fileId);
     return file && (isImageExt(file.ext) || isVideoExt(file.ext));
   });
@@ -1445,7 +1498,12 @@ async function arrangeItemsGrid(items) {
       : { w: item.width || 220, h: item.height || 180 };
     return { ...item, width: bounds.w, height: bounds.h };
   });
-  const packed = window.MesssBoardEngine.compactMediaGrid(measuredItems, {
+  // Preserve text wrapping, drawing geometry and moodboard minimum sizes in
+  // mixed layouts. Media-only selections retain their uniform-width packing.
+  const pack = mediaItems.some(item => item.isNote || item.isDoodle || item.isMoodboard)
+    ? window.MesssBoardEngine.packRows
+    : window.MesssBoardEngine.compactMediaGrid;
+  const packed = pack(measuredItems, {
     originX,
     originY,
     gap: 20,
@@ -1478,20 +1536,21 @@ async function arrangeItemsGrid(items) {
 
 function arrangeItemsLine(items, direction) {
   const gap = 12;
-  const originX = items.reduce((min, it) => Math.min(min, it.x), Infinity);
-  const originY = items.reduce((min, it) => Math.min(min, it.y), Infinity);
-  let cursor = direction === 'row' ? originX : originY;
   const changedItems = items.filter((item) => item && !item.isPartition);
+  if (!changedItems.length) return;
+  const originX = changedItems.reduce((min, it) => Math.min(min, it.x), Infinity);
+  const originY = changedItems.reduce((min, it) => Math.min(min, it.y), Infinity);
+  let cursor = direction === 'row' ? originX : originY;
   changedItems.forEach((item) => {
-    const w = item.width || 220;
+    const bounds = boardItemBounds(item);
     if (direction === 'row') {
       item.x = Math.round(cursor);
       item.y = Math.round(originY);
-      cursor += w + gap;
+      cursor += bounds.w + gap;
     } else {
       item.x = Math.round(originX);
       item.y = Math.round(cursor);
-      cursor += w * 0.75 + gap;
+      cursor += bounds.h + gap;
     }
   });
   if (typeof fitBoardItemsIntoPartitions === 'function') fitBoardItemsIntoPartitions(changedItems);

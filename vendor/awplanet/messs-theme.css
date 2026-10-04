@@ -1,0 +1,27 @@
+:root { color-scheme:dark; --messs-fg-rgb:239,240,242; --messs-panel-rgb:25,27,30; --messs-panel:#191b1e; --messs-surface:#25272a; --messs-text:#eff0f2; --messs-muted:#a6a9af; --messs-border:#383b40; --messs-accent:#4098e9; }
+:root[data-theme="light"] { color-scheme:light; --messs-fg-rgb:36,38,43; --messs-panel-rgb:247,248,250; --messs-panel:#f7f8fa; --messs-surface:#fff; --messs-text:#24262b; --messs-muted:#626873; --messs-border:#d9dde4; }
+@font-face { font-family:"Messs Source Han Sans"; src:url('/fonts/source-han-sans/SourceHanSansCN-VF.woff2') format('woff2'); font-weight:100 900; font-style:normal; font-display:swap; }
+body { background:var(--messs-panel); font-family:"Messs Source Han Sans",sans-serif; font-size:14px; }
+.engine-app,.engine-app * { font-family:"Messs Source Han Sans",sans-serif!important; }
+/* Product chrome is Messs; attribution and all notices remain in the bundle. */
+.engine-native-badge { display:none!important; }
+.engine-hud { --engine-ui-scale:1; }
+.engine-panel-stack { width:min(420px,calc(100vw - 40px)); height:calc(100vh - 36px); padding-left:0; }
+.engine-app button { line-height:1.35; }
+.engine-panel-tabs button { min-height:34px; padding:6px 8px; }
+.engine-info-row { gap:10px; min-height:26px; }
+.engine-info-row > :last-child { min-width:0; overflow-wrap:anywhere; }
+.engine-section-label { letter-spacing:.02em!important; }
+.engine-hud .engine-panel-stack :is(.terrain-panel,.asset-panel,.object-editor-panel,.map-panel,.camera-panel,.brush-panel),.engine-inspector-card,.engine-tool-panel__section {background:var(--messs-panel)!important;border-color:var(--messs-border)!important;border-radius:14px!important;backdrop-filter:none!important;}
+[data-theme="light"] .dock-button__godot-icon {filter:brightness(.25);}
+.engine-panel-stack, .engine-panel-tabs, .engine-toolbar, .engine-topbar, .engine-timeline, .engine-panel, .engine-menu, .engine-inspector { background:var(--messs-panel)!important; color:var(--messs-text)!important; border-color:var(--messs-border)!important; border-radius:16px!important; backdrop-filter:none!important; box-shadow:0 8px 24px #0002!important; }
+.engine-app button,.engine-app input,.engine-app select,.engine-app textarea { color:var(--messs-text)!important; background-color:var(--messs-surface)!important; border-color:var(--messs-border)!important; border-radius:9px; }
+.engine-app button:hover { border-color:var(--messs-accent); }
+.engine-app button.is-active,.engine-app button[aria-pressed="true"] { color:var(--messs-accent)!important; border-color:var(--messs-accent)!important; }
+[data-theme="light"] .engine-app :is(label,h1,h2,h3,h4,strong,summary) { color:var(--messs-text); }
+[data-theme="light"] .engine-app :is(p,small) { color:var(--messs-muted); }
+[data-theme="light"] :is(.engine-info-row > span,.engine-section-label,.engine-scene-tree__kind,.engine-tool-panel__section label,.engine-scene-tree__node span) {color:var(--messs-muted)!important;}
+.engine-scene-tree{background:var(--messs-surface)!important;border-color:var(--messs-border)!important;}
+/* Phone Pilot needs the upstream server; do not advertise an unavailable link. */
+.engine-phone-entry,.engine-mode-button--phone { display:none!important; }
+@media (prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none!important; transition:none!important; } }
