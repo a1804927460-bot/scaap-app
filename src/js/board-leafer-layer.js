@@ -184,6 +184,7 @@
   function itemSignature(item, file, bounds, source, kind, color) {
     return [
       kind,
+      document.documentElement.dataset.theme || 'dark',
       item.id,
       bounds.x,
       bounds.y,
@@ -406,7 +407,7 @@
       y: 0,
       width: bounds.width,
       height: bounds.height,
-      fill: light ? '#ffffff' : '#202223',
+      fill: light ? '#f7f7f8' : '#161819',
       stroke: item.selected ? '#53b8dd' : light ? '#dedde0' : '#36393b',
       strokeWidth: 1,
       cornerRadius: 8,
@@ -567,7 +568,7 @@
       if (background) {
         background.width = bounds.width;
         background.height = bounds.height;
-        background.fill = light ? '#ffffff' : '#202223';
+        background.fill = light ? '#f7f7f8' : '#161819';
         background.stroke = item.selected ? '#53b8dd' : light ? '#dedde0' : '#36393b';
         background.strokeWidth = 1;
       }

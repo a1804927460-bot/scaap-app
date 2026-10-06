@@ -230,52 +230,47 @@ select option, select optgroup {
   color: var(--text-primary);
 }
 
-/* Neumorphic option: soft rose-gray surfaces, rounded geometry and tactile
-   inset/extruded shadows. Existing light and dark themes remain unchanged. */
+/* Neutral light hierarchy inspired by Radix Colors: quiet canvas, raised
+   surfaces, readable graphite text and blue reserved for active controls. */
 [data-theme="light"] {
-  --bg-deep: #d8ced1;
-  --bg-base: #e7dfe1;
-  --bg-elevated: #eee7e8;
-  --bg-surface: #e7dfe1;
-  --bg-surface-2: #ded4d7;
-  --bg-frame: #e7dfe1;
-  --board-workspace-bg: #e1d7da;
-  --canvas-toolbar-bg: rgba(231,223,225,.96);
-  --canvas-toolbar-border: rgba(255,255,255,.62);
-  --canvas-toolbar-text: #5a4b50;
-  --canvas-toolbar-hover: #ded4d7;
-  --canvas-control-bg: #e7dfe1;
-  --canvas-control-bg-muted: #ded4d7;
-  --canvas-control-border: rgba(118,96,105,.18);
-  --canvas-control-text: #675860;
-  --canvas-control-strong: #382d32;
-  --canvas-control-muted: #88777d;
-  --canvas-control-panel: #eee7e8;
-  --canvas-control-panel-border: rgba(118,96,105,.16);
-  --border-hairline: rgba(118,96,105,.16);
-  --border-strong: rgba(118,96,105,.24);
-  --text-primary: #382d32;
-  --text-secondary: #675860;
-  --text-tertiary: #88777d;
-  --title-accent: #382d32;
-  --accent: #9b5261;
-  --accent-soft: rgba(155,82,97,.14);
-  --accent-ink: #fff8f8;
-  --accent-glow: rgba(155,82,97,.20);
-  --selection-outline: #9b5261;
-  --selection-handle: #fff8f8;
-  --glow-color: rgba(155,82,97,.10);
-  --resize-handle-line: rgba(118,96,105,.14);
-  --resize-handle-hover: rgba(118,96,105,.28);
-  --resize-handle-active: rgba(155,82,97,.58);
-  --shadow-subtle: 7px 7px 16px rgba(120,95,104,.18), -7px -7px 16px rgba(255,255,255,.72);
-  --shadow-elevated: 18px 18px 42px rgba(120,95,104,.23), -14px -14px 34px rgba(255,255,255,.66);
-  --scrollbar-thumb: rgba(118,96,105,.25);
-  --cursor-default: url('../assets/cursors/arrow-light.svg') 4 3, default;
-  --cursor-click: url('../assets/cursors/click-light.svg') 9 3, pointer;
-  --cursor-grab: url('../assets/cursors/hand-light.svg') 10 3, grab;
-  --cursor-grabbing: url('../assets/cursors/grabbing-light.svg') 10 8, grabbing;
-  --cursor-text: url('../assets/cursors/text-light.svg') 12 12, text;
+  --bg-deep: #e8e8ec;
+  --bg-base: #fafafa;
+  --bg-elevated: #ffffff;
+  --bg-surface: #f4f4f5;
+  --bg-surface-2: #ebebef;
+  --bg-frame: #fafafa;
+  --board-workspace-bg: #f2f2f4;
+  --canvas-toolbar-bg: rgba(255,255,255,.98);
+  --canvas-toolbar-border: #dedee3;
+  --canvas-toolbar-text: #505057;
+  --canvas-toolbar-hover: #ededf0;
+  --canvas-control-bg: #f9f9fb;
+  --canvas-control-bg-muted: #ebebef;
+  --canvas-control-border: #dcdce1;
+  --canvas-control-text: #505057;
+  --canvas-control-strong: #202024;
+  --canvas-control-muted: #66666e;
+  --canvas-control-panel: #fafafa;
+  --canvas-control-panel-border: #dedee3;
+  --border-hairline: rgba(32,32,36,.10);
+  --border-strong: rgba(32,32,36,.20);
+  --text-primary: #202024;
+  --text-secondary: #505057;
+  --text-tertiary: #66666e;
+  --title-accent: #202024;
+  --accent: var(--brand-blue);
+  --accent-soft: rgba(0,82,166,.08);
+  --accent-ink: #ffffff;
+  --accent-glow: rgba(0,82,166,.12);
+  --selection-outline: var(--brand-blue);
+  --selection-handle: #ffffff;
+  --glow-color: rgba(0,0,0,.03);
+  --resize-handle-line: rgba(32,32,36,.12);
+  --resize-handle-hover: rgba(32,32,36,.25);
+  --resize-handle-active: rgba(0,82,166,.58);
+  --shadow-subtle: 0 2px 6px rgba(20,20,24,.05);
+  --shadow-elevated: 0 12px 36px rgba(20,20,24,.10), 0 2px 8px rgba(20,20,24,.04);
+  --scrollbar-thumb: rgba(32,32,36,.24);
 }
 select option:disabled { color: var(--text-tertiary); }
 @supports (appearance: base-select) {

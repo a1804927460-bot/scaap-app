@@ -121,6 +121,24 @@ async function run() {
   try {
     await window.loadFile(fixturePath);
     const result = await window.webContents.executeJavaScript('runLeaferFixture()');
+    const themeColors = await window.webContents.executeJavaScript(`(() => {
+      const layer = window.MesssBoardLeaferLayer;
+      const item = { id: 'theme-moodboard', isMoodboard: true, moodboardTitle: '主题测试', moodboardText: '无需点击即可刷新', width: 360, height: 260 };
+      const sync = () => layer.sync({
+        cacheKey: 'same-moodboard',
+        items: [item],
+        getBounds: () => ({ x: 0, y: 0, w: 360, h: 260 }),
+        getFile: () => null, getSource: () => '', getColor: () => '#536176'
+      });
+      return ['dark', 'light', 'dark'].map(theme => {
+        document.documentElement.dataset.theme = theme;
+        sync();
+        return layer.getTextDrawable(item.id)._messsParts[0].fill;
+      });
+    })()`);
+    if (JSON.stringify(themeColors) !== JSON.stringify(['#161819', '#f7f7f8', '#161819'])) {
+      throw new Error('Moodboards must refresh on theme changes without selection: ' + JSON.stringify(themeColors));
+    }
     if (!result.initialized || !result.synced || !result.cachedSync || result.itemCount !== 5000 ||
         result.syncMs > 2000 || result.syncCalls !== result.syncCallsAfterCached ||
         result.initialPixelRatio !== 1 || result.pixelRatio !== 1.5 || result.beforeResize.width !== 800 ||

@@ -132,10 +132,10 @@ export async function storeVideoResult(userId, requestId, buffer, contentType = 
   if (r2MediaConfigured()) {
     try {
       await putR2Media(`video/${key}`, video, type.contentType);
+      return `storage://${VIDEO_RESULT_BUCKET}/${key}`;
     } catch (error) {
-      throw Object.assign(serviceError('video-result-storage-failed', 'The generated video could not be stored safely.'), { retryable: true });
+      // Continue to the existing private storage backend on R2 failure.
     }
-    return `storage://${VIDEO_RESULT_BUCKET}/${key}`;
   }
   let response;
   try {
@@ -176,11 +176,12 @@ export async function readStoredVideoResult(userId, requestId, reference, fetchI
     : ['mp4', 'webm', 'mov'].map((extension) => (
       `${String(userId).toLowerCase()}/${String(requestId).toLowerCase()}.${extension}`
     ));
+  let backendUnavailable = false;
   for (const key of keys) {
     if (r2MediaConfigured()) {
       let stored;
       try { stored = await getR2Media(`video/${key}`, MAX_VIDEO_RESULT_BYTES); }
-      catch { throw serviceError('video-result-storage-unavailable', 'The saved video result is temporarily unavailable.'); }
+      catch { backendUnavailable = true; }
       if (stored) {
         const type = videoType(stored.body, stored.contentType);
         if (!type || !stored.body.length || stored.body.length > MAX_VIDEO_RESULT_BYTES) {
@@ -238,5 +239,6 @@ export async function readStoredVideoResult(userId, requestId, reference, fetchI
       storageRef: `storage://${VIDEO_RESULT_BUCKET}/${key}`
     };
   }
+  if (backendUnavailable) throw serviceError('video-result-storage-unavailable', 'The saved video result is temporarily unavailable.');
   throw serviceError('video-result-storage-missing', 'The saved video result is not available yet.', 404);
 }

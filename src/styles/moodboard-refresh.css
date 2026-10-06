@@ -19,7 +19,7 @@
 .moodboard-editor-panel .ql-toolbar { display: flex; flex-wrap: wrap; padding: 8px 12px; }
 .moodboard-editor-panel .ql-editor { padding: 20px; font-size: 16px; line-height: 1.7; color: var(--text-primary); }
 .board-moodboard {
-  background: #202223; border: 1px solid #36393b; border-radius: 8px;
+  background: #161819; border: 1px solid #36393b; border-radius: 8px;
   box-shadow: none; grid-template-rows: 61px minmax(0, 1fr);
 }
 .board-moodboard.is-selected { border-color: #53b8dd; box-shadow: none; }
@@ -56,7 +56,7 @@
 .board-moodboard .board-moodboard-generate:hover { background: #41464b; }
 .board-moodboard .board-moodboard-open { display: none; }
 .board-moodboard-generate img { filter: invert(1); pointer-events: none; }
-[data-theme="light"] .board-moodboard { background: #fff; border-color: #dedde0; }
+[data-theme="light"] .board-moodboard { background: #f7f7f8; border-color: #dedde0; }
 [data-theme="light"] .board-moodboard-title,
 [data-theme="light"] .board-moodboard-preview { color: #252329; }
 [data-theme="light"] .board-moodboard-header::after { background: #e6e4e7; }

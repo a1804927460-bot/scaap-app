@@ -264,7 +264,7 @@ contextBridge.exposeInMainWorld('messsAPI', {
   setAiMediaConfig: (config) => ipcRenderer.invoke('settings:setAiMediaConfig', config),
   discoverAiModels: (request) => ipcRenderer.invoke('settings:discoverAiModels', request),
   saveCanvasState: (state) => ipcRenderer.invoke('canvas:saveState', state),
-  getCanvasCreditUsage: (canvasId) => ipcRenderer.invoke('canvas:getCreditUsage', canvasId),
+  getCanvasCreditUsage: (canvasId, fileIds) => ipcRenderer.invoke('canvas:getCreditUsage', canvasId, fileIds),
   exportCanvas: (canvasId) => ipcRenderer.invoke('canvas:export', canvasId),
   importCanvas: (projectId) => ipcRenderer.invoke('canvas:import', projectId),
   deleteCanvas: (canvasId) => ipcRenderer.invoke('canvas:delete', canvasId),

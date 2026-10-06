@@ -1723,7 +1723,7 @@ assert.match(
 );
 assert.match(
   contextMenuSource,
-  /function openCanvasUsageDetails\(canvasId\)[\s\S]*?requestedCanvasId = [^;]*activeCanvasId\(\)[\s\S]*?getCanvasCreditUsage\(requestedCanvasId\)[\s\S]*?renderCanvasUsageDetails/,
+  /function openCanvasUsageDetails\(canvasId, selectedItems\)[\s\S]*?requestedCanvasId = [^;]*activeCanvasId\(\)[\s\S]*?getCanvasCreditUsage\(requestedCanvasId, fileIds\)[\s\S]*?renderCanvasUsageDetails/,
   'Canvas usage must query the requested canvas, defaulting to the active canvas.'
 );
 assert.match(
@@ -1737,7 +1737,7 @@ assert.match(indexHtml, /id="canvas-usage-overlay"[\s\S]*?id="canvas-usage-summa
   'Canvas usage needs an accessible summary and detailed rows dialog.');
 assert.match(
   mainSource,
-  /function ensureCanvasUsageLedger\(\)[\s\S]*?canvasUsageEntryFromFile[\s\S]*?async function canvasCreditUsage\(canvasId\)[\s\S]*?getCanvasUsage\(id\)[\s\S]*?breakdown[\s\S]*?ipcMain\.handle\('canvas:getCreditUsage'/,
+  /function ensureCanvasUsageLedger\(\)[\s\S]*?canvasUsageEntryFromFile[\s\S]*?async function canvasCreditUsage\(canvasId, fileIds\)[\s\S]*?getCanvasUsage\(id\)[\s\S]*?breakdown[\s\S]*?ipcMain\.handle\('canvas:getCreditUsage'/,
   'The main process must preserve an append-only local ledger, merge cloud billing, and expose a dedicated IPC route.'
 );
 assert.match(mainSource, /recordCanvasUsageFile\(record\)/,

@@ -4470,14 +4470,17 @@ function recordCanvasUsageFile(file) {
   else store.data.canvasUsageLedger[index] = entry;
 }
 
-async function canvasCreditUsage(canvasId) {
+async function canvasCreditUsage(canvasId, fileIds) {
   const id = String(canvasId || '').trim();
   const canvas = store.data.canvases.find((entry) => entry.id === id);
   if (!canvas) return { ok: false, reason: 'canvas-not-found' };
   ensureCanvasUsageLedger();
+  // An explicit empty selection must stay empty, never fall back to the canvas.
+  const selectedFileIds = Array.isArray(fileIds) ? new Set(fileIds.filter(id => typeof id === 'string')) : null;
   const localDetails = store.data.canvasUsageLedger
-    .filter((entry) => entry && entry.canvasId === id)
+    .filter((entry) => entry && entry.canvasId === id && (!selectedFileIds || selectedFileIds.has(entry.sourceFileId)))
     .map((entry) => ({ ...entry }));
+  const selectedRequestIds = new Set(localDetails.map(entry => entry.requestId).filter(Boolean));
   let cloudDetails = [];
   let cloudAvailable = false;
   if (runtimeConfig.gatewayConfigured && hasAuthenticatedGatewaySession()
@@ -4498,6 +4501,7 @@ async function canvasCreditUsage(canvasId) {
   cloudDetails.forEach((entry) => {
     const requestId = String(entry && entry.requestId || '').trim().slice(0, 80);
     if (!requestId) return;
+    if (selectedFileIds && !selectedRequestIds.has(requestId)) return;
     const key = `request:${requestId}`;
     const local = detailsByKey.get(key) || {};
     const estimatedCredits = Number(entry.estimatedCredits ?? entry.creditsReserved);
@@ -4570,6 +4574,7 @@ async function canvasCreditUsage(canvasId) {
   return {
     ok: true,
     canvas: { id: canvas.id, name: canvas.name },
+    scope: selectedFileIds ? 'selection' : 'canvas',
     totals: {
       creditsCharged: details.reduce((sum, entry) => sum + (Number(entry.creditsCharged) || 0), 0),
       pendingCredits: details.filter(entry => entry.status === 'pending').reduce((sum, entry) => sum + (Number(entry.estimatedCredits) || 0), 0),
@@ -8201,7 +8206,7 @@ function registerIpcHandlers() {
     return { ok: true, sessions: normalized };
   });
 
-  ipcMain.handle('canvas:getCreditUsage', (_evt, canvasId) => canvasCreditUsage(canvasId));
+  ipcMain.handle('canvas:getCreditUsage', (_evt, canvasId, fileIds) => canvasCreditUsage(canvasId, fileIds));
 
   ipcMain.handle('settings:setLanguage', (_evt, language) => {
     store.data.settings.language = normalizeLanguage(language);

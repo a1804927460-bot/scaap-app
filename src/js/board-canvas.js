@@ -3201,10 +3201,12 @@ function createSecondaryPartition(items) {
   const filesById = new Map(AppState.files.map((file) => [file.id, file]));
   const members = (items || []).filter((item) => {
     const file = item && filesById.get(item.fileId);
-    return item && !item.isPartition && !item.partitionId && file && (isImageExt(file.ext) || isVideoExt(file.ext));
+    const supported = item && (item.isNote || item.isDoodle || item.isMoodboard ||
+      (file && (isImageExt(file.ext) || isVideoExt(file.ext) || isAudioExt(file.ext) || isModelFile(file))));
+    return supported && !item.isPartition && !item.partitionId;
   });
   if (members.length < 2) {
-    showToast(t('Select at least two unpartitioned images or videos.', '请至少选择两个尚未分区的图片或视频。'));
+    showToast(t('Select at least two unpartitioned items.', '请至少选择两个尚未分区的内容。'));
     return null;
   }
   const bounds = boardSelectionBounds(members);
@@ -3529,6 +3531,14 @@ function reconcileBoardViewport(force = false) {
   const mountIds = prioritizeSelectedBoardMounts(
     Board.spatialIndex.queryLimited(regions.mount, BOARD_DOM_ITEM_LIMIT), regions.visible
   );
+  // Keep partition frames mounted as a live interaction layer in overview
+  // mode. Leafer owns their visual rendering, but removing the DOM frame
+  // makes a small partition impossible to click or drag.
+  AppState.boardItems.forEach((item) => {
+    if (!item?.isPartition) return;
+    const bounds = Board.spatialIndex.getBounds(item.id);
+    if (bounds && BoardEngine.intersects(bounds, regions.keep)) mountIds.add(item.id);
+  });
   const visibleIds = Board.spatialIndex.query(regions.visible);
   Board.visibleIds = visibleIds;
   updateLeaferFullImageWindow();
@@ -3845,6 +3855,14 @@ function makeBoardItemDraggable(el, item) {
     const holdStartedAt = Date.now();
     const sourcePartition = item.partitionId && AppState.boardItems.find(entry => entry.id === item.partitionId);
     let releaseFromPartition = false;
+    let detachArmed = false;
+    const detachArmTimer = sourcePartition ? window.setTimeout(() => {
+      if (moved) return;
+      detachArmed = true;
+      el.classList.add('is-detach-armed');
+      const partitionElement = Board.mounted.get(sourcePartition.id);
+      partitionElement?.classList.add('is-detach-source');
+    }, 450) : 0;
     const selectedMates = AppState.boardItems.filter((b) => b.selected);
     const partitionMates = item.isPartition ? boardPartitionMembers(item) : [];
     const groupMates = item.isPartition
@@ -3946,7 +3964,7 @@ function makeBoardItemDraggable(el, item) {
     });
     function onMove(ev) {
       if (!moved && Math.hypot(ev.clientX - startClientX, ev.clientY - startClientY) > 4) {
-        releaseFromPartition = Boolean(sourcePartition && Date.now() - holdStartedAt >= 450);
+        releaseFromPartition = Boolean(sourcePartition && (detachArmed || Date.now() - holdStartedAt >= 450));
         moved = true;
       }
       markBoardInteraction();
@@ -3954,6 +3972,7 @@ function makeBoardItemDraggable(el, item) {
     }
     function onUp() {
       moveRunner.flush();
+      if (detachArmTimer) window.clearTimeout(detachArmTimer);
       if (releaseFromPartition && moved) {
         const bounds = boardItemBounds(item), partitionBounds = boardItemBounds(sourcePartition);
         const cx = bounds.x + bounds.w / 2, cy = bounds.y + bounds.h / 2;
@@ -3971,6 +3990,8 @@ function makeBoardItemDraggable(el, item) {
       }
       markBoardInteraction();
       el.classList.remove('is-dragging');
+      el.classList.remove('is-detach-armed');
+      Board.mounted.get(sourcePartition?.id)?.classList.remove('is-detach-source');
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       window.removeEventListener('blur', onUp);

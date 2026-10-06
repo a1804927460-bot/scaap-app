@@ -81,10 +81,11 @@ export async function storeImageResult(userId, requestId, buffer, fetchImpl = fe
   if (r2MediaConfigured()) {
     try {
       await putR2Media(`image/${key}`, image, type.contentType);
+      return `storage://${IMAGE_RESULT_BUCKET}/${key}`;
     } catch {
-      throw serviceError('image-result-storage-failed', 'The generated image could not be stored safely.');
+      // Both backends use owner-scoped private keys. A broken optional R2
+      // configuration must not discard an already paid generation.
     }
-    return `storage://${IMAGE_RESULT_BUCKET}/${key}`;
   }
   let response;
   try {
@@ -123,7 +124,7 @@ export async function readStoredImageResult(userId, requestId, reference, fetchI
     if (r2MediaConfigured()) {
       let stored;
       try { stored = await getR2Media(`image/${key}`, MAX_IMAGE_RESULT_BYTES); }
-      catch { throw serviceError('image-result-storage-unavailable', 'The saved image result is temporarily unavailable.'); }
+      catch { missing = false; }
       if (stored) {
         if (!imageType(stored.body) || !stored.body.length || stored.body.length > MAX_IMAGE_RESULT_BYTES) {
           throw serviceError('image-result-storage-invalid', 'The saved image result is invalid.', 502);
@@ -149,7 +150,6 @@ export async function readStoredImageResult(userId, requestId, reference, fetchI
       if (['NoSuchKey', 'not_found', 'ObjectNotFound'].includes(String(payload.code || payload.error || ''))
           || String(payload.statusCode || '') === '404') continue;
     }
-    missing = false;
     if (!response.ok) {
       throw serviceError('image-result-storage-unavailable', 'The saved image result is temporarily unavailable.');
     }

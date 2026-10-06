@@ -9,7 +9,7 @@ function applyTheme(theme) {
   document.querySelectorAll('.theme-opt').forEach((btn) => {
     btn.classList.toggle('is-active', btn.dataset.themeChoice === nextTheme);
   });
-  if (previous !== theme && AppState.boardItems?.length && typeof renderBoard === 'function' && document.getElementById('board-canvas')) {
+  if (previous !== nextTheme && AppState.boardItems?.length && typeof renderBoard === 'function' && document.getElementById('board-canvas')) {
     renderBoard();
   }
 }

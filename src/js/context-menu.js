@@ -811,7 +811,9 @@ function renderCanvasUsageDetails(result) {
   const details = Array.isArray(result.details) ? result.details : [];
   const totals = result.totals || {};
   const breakdown = result.breakdown || {};
-  document.getElementById('canvas-usage-kicker').textContent = t('Canvas points usage', '\u753b\u5e03\u79ef\u5206\u7528\u91cf');
+  document.getElementById('canvas-usage-kicker').textContent = result.scope === 'selection'
+    ? t('Selected files points usage', '所选文件积分用量')
+    : t('Canvas points usage', '\u753b\u5e03\u79ef\u5206\u7528\u91cf');
   document.getElementById('canvas-usage-title').textContent = result.canvas && result.canvas.name
     ? result.canvas.name
     : t('Usage details', '\u4f7f\u7528\u660e\u7ec6');
@@ -870,15 +872,20 @@ function renderCanvasUsageDetails(result) {
     return row;
   }));
   empty.hidden = details.length > 0;
-  empty.textContent = t('No AI usage recorded on this canvas.', '\u8fd9\u4e2a\u753b\u5e03\u8fd8\u6ca1\u6709 AI \u4f7f\u7528\u8bb0\u5f55\u3002');
+  empty.textContent = result.scope === 'selection'
+    ? t('No AI usage recorded for the selected files.', '所选文件没有 AI 积分使用记录。')
+    : t('No AI usage recorded on this canvas.', '\u8fd9\u4e2a\u753b\u5e03\u8fd8\u6ca1\u6709 AI \u4f7f\u7528\u8bb0\u5f55\u3002');
   document.getElementById('canvas-usage-account').textContent = t('View account usage', '\u67e5\u770b\u8d26\u6237\u7528\u91cf');
   document.getElementById('canvas-usage-done').textContent = t('Done', '\u5b8c\u6210');
 }
 
 let canvasUsageRequestId = 0;
 
-async function openCanvasUsageDetails(canvasId) {
+async function openCanvasUsageDetails(canvasId, selectedItems) {
   const requestedCanvasId = typeof canvasId === 'string' && canvasId ? canvasId : activeCanvasId();
+  const fileIds = Array.isArray(selectedItems)
+    ? [...new Set(selectedItems.map(item => item.fileId).filter(Boolean))]
+    : undefined;
   const requestId = ++canvasUsageRequestId;
   const overlay = initCanvasUsageDialog();
   if (!overlay || !window.messsAPI || typeof window.messsAPI.getCanvasCreditUsage !== 'function') {
@@ -894,7 +901,7 @@ async function openCanvasUsageDetails(canvasId) {
   requestAnimationFrame(() => overlay.classList.add('is-visible'));
   document.getElementById('canvas-usage-close').focus({ preventScroll: true });
   try {
-    const result = await window.messsAPI.getCanvasCreditUsage(requestedCanvasId);
+    const result = await window.messsAPI.getCanvasCreditUsage(requestedCanvasId, fileIds);
     if (requestId !== canvasUsageRequestId) return;
     if (!result || !result.ok) throw new Error(result && result.reason || 'usage-unavailable');
     renderCanvasUsageDetails(result);
@@ -1264,7 +1271,7 @@ function showBoardItemContextMenu(item, x, y) {
       label: t('View points usage', '\u67e5\u770b\u79ef\u5206\u7528\u91cf'),
       icon: 'M4 19V5M4 19h16M8 16v-4M12 16V8M16 16v-7',
       divider: true,
-      action: openCanvasUsageDetails
+      action: () => openCanvasUsageDetails(activeCanvasId(), [item])
     });
     items.push({
       label: t('Delete', '\u5220\u9664'),
@@ -1442,7 +1449,7 @@ async function runMultiMenuAction(key, x, y) {
       showToast(t(`Exported ${selected.length} file${selected.length === 1 ? '' : 's'}`, `已导出 ${selected.length} 个文件`));
       break;
     case 'usage':
-      openCanvasUsageDetails();
+      await openCanvasUsageDetails(activeCanvasId(), selected);
       break;
     case 'secondary-partition':
       createSecondaryPartition(selected);

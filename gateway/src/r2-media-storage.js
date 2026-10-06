@@ -6,6 +6,7 @@ const requiredEnvironment = [
 ];
 
 export function r2MediaConfigured(env = process.env) {
+  if (String(env.MEDIA_STORAGE_BACKEND || '').trim().toLowerCase() === 'supabase') return false;
   return requiredEnvironment.every((name) => String(env[name] || '').trim());
 }
 

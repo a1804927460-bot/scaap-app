@@ -12,6 +12,7 @@ import { authenticate } from './auth.js';
 import { handleAdminRequest } from './admin.js';
 import { publicGatewayError } from './public-errors.js';
 import { moderateGenerationPrompt, requiresPromptModeration } from './moderation.js';
+import { startMediaRetention } from './media-retention.js';
 import {
   appendVideoUploadChunk,
   appendAudioUploadChunk,
@@ -2870,6 +2871,7 @@ const server = http.createServer((request, response) => {
   });
 });
 
+const mediaRetention = startMediaRetention();
 const videoWorker = String(process.env.SUPABASE_SECRET_KEY || '').trim()
   ? startVideoJobWorker({
       concurrency: Math.max(1, Number(process.env.VIDEO_JOB_WORKER_CONCURRENCY) || 4),

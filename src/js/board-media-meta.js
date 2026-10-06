@@ -814,6 +814,10 @@ async function placeBoardButlerPlaceholderResults(pending, files) {
 }
 
 async function runBoardButlerImageTool(action, file, item, options) {
+  if (action === 'imageEnhance' && Math.max(Number(file.sourceWidth) || 0, Number(file.sourceHeight) || 0) >= 3840) {
+    showToast(t('Image quality is already at maximum (4K).', '画质已最高（4K），无需再次提升。'));
+    return;
+  }
   if (getBoardButlerTask(file.id, action)?.status === 'running') return;
   const api = boardButlerApi();
   const hook = BOARD_BUTLER_IMAGE_TOOL_HOOKS[action];
@@ -1691,10 +1695,10 @@ function openBoardButlerExpandPanel(anchor, file, item) {
   closeBoardButlerPanel(); closeBoardButlerExpandEditor(); closeBoardButlerMenu();
   const editor = document.createElement('form');
   editor.className = 'board-inline-resize';
-  editor.dataset.boardUiLayer = 'true';
   editor.setAttribute('aria-label', t('Resize image', '修改尺寸'));
   const frame = document.createElement('div'); frame.className = 'board-inline-resize-frame';
   const toolbar = document.createElement('div'); toolbar.className = 'board-inline-resize-toolbar';
+  toolbar.dataset.boardUiLayer = 'true';
   const ratioChoices = document.createElement('div'); ratioChoices.className = 'board-inline-resize-ratios';
   ratioChoices.setAttribute('role', 'group'); ratioChoices.setAttribute('aria-label', t('Aspect ratio','尺寸比例'));
   const detected = document.createElement('output'); detected.className = 'board-inline-resize-detected';
@@ -1784,7 +1788,7 @@ function openBoardButlerExpandPanel(anchor, file, item) {
     const handle=document.createElement('button');handle.type='button';handle.className=`board-smart-resize-handle is-${corner}`;
     handle.setAttribute('aria-label',t(`Resize ${corner}`,`调整尺寸 ${corner}`));
     handle.addEventListener('pointerdown',e=>{
-      if(e.button!==0)return;e.preventDefault();e.stopPropagation();
+      if(e.button!==0 || e.altKey)return;e.preventDefault();e.stopPropagation();
       const bounds=boardItemBounds(item);
       drag={id:e.pointerId,x:e.clientX,y:e.clientY,width,height,scaleX:bounds.w*Board.zoom/sourceWidth,scaleY:bounds.h*Board.zoom/sourceHeight};
       handle.setPointerCapture(e.pointerId);
@@ -1804,7 +1808,11 @@ function openBoardButlerExpandPanel(anchor, file, item) {
     });
     frame.append(handle);
   }
-  editor.addEventListener('pointerdown',e=>e.stopPropagation());
+  editor.addEventListener('pointerdown',e=>{
+    if (!e.target.closest('.board-inline-resize-toolbar') && !drag &&
+        (e.button === 1 || (e.button === 0 && e.altKey))) return;
+    e.stopPropagation();
+  });
   editor.addEventListener('mousedown',e=>e.stopPropagation());
   editor.addEventListener('dblclick',e=>e.stopPropagation());
   editor.addEventListener('dragstart',e=>{e.preventDefault();e.stopPropagation();});

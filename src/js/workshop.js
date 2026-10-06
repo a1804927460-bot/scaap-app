@@ -287,7 +287,19 @@ function renderWorkshop() {
   const empty = document.getElementById('workshop-empty');
   if (!grid || !empty) return;
   const posts = workshopVisiblePosts();
+  grid._cardResizeObserver?.disconnect();
   grid.replaceChildren(...posts.map(workshopBuildCard));
+  // Keep DOM/search order while fitting unequal-height cards into the grid.
+  const observer = new ResizeObserver(entries => {
+    const gap = parseFloat(getComputedStyle(grid).rowGap) || 16;
+    for (const { target } of entries) {
+      const card = target.closest('.workshop-card');
+      const span = Math.ceil((target.getBoundingClientRect().height + gap) / (4 + gap));
+      card.style.gridRowEnd = `span ${Math.max(1, span)}`;
+    }
+  });
+  grid._cardResizeObserver = observer;
+  grid.querySelectorAll('.workshop-card-button').forEach(button => observer.observe(button));
   empty.hidden = posts.length > 0;
 }
 

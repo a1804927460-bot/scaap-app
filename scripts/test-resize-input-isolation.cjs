@@ -34,6 +34,25 @@ const path = require('node:path');
     await page.getByRole('button',{name:'取消',exact:true}).click();
     await page.mouse.click(400,250);
     assert.equal(await page.evaluate(() => pointerLeaks),1);
+    const navigation = await page.evaluate(async () => {
+      openBoardButlerExpandPanel(null,{sourceWidth:1000,sourceHeight:600},{x:200,y:120,width:500,height:300});
+      const frame=document.querySelector('.board-inline-resize-frame');
+      const toolbar=document.querySelector('.board-inline-resize-toolbar');
+      const before=pointerLeaks;
+      frame.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:1}));
+      frame.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,altKey:true}));
+      const allowed=!isBoardUiEventTarget(frame), blocked=isBoardUiEventTarget(toolbar);
+      const messages=[];window.showToast=message=>messages.push(message);
+      window.getBoardButlerTask=()=>{throw Error('4K enhancement must not start a task');};
+      for(const [sourceWidth,sourceHeight] of [[3840,2160],[2160,3840],[4096,4096]])
+        await runBoardButlerImageTool('imageEnhance',{sourceWidth,sourceHeight},{},{});
+      closeBoardButlerExpandEditor();
+      return {panEvents:pointerLeaks-before,allowed,blocked,messages};
+    });
+    assert.equal(navigation.panEvents,2);
+    assert.ok(navigation.allowed && navigation.blocked,'Canvas navigation passes through the frame, not the toolbar');
+    assert.equal(navigation.messages.length,3);
+    assert.ok(navigation.messages.every(message=>message.includes('画质已最高')));
     console.log('Resize input isolation, handle dragging and cleanup passed.');
   } finally { await browser.close(); }
 })().catch(e=>{console.error(e);process.exitCode=1;});
